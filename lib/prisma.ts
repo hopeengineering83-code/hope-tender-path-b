@@ -1418,11 +1418,11 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 
   // ── seed admin user ───────────────────────────────────────────────────────
   //
-  // Gap 2 — never seed admin@hope.local with the built-in "Admin123!" default
-  // in production. The runtime seed is gated by the same policy the login
-  // route uses to repair a missing password hash. In development the seed
-  // still runs with the legacy password so `npm run dev` continues to work
-  // without ceremony.
+  // Never seed admin@hope.local with a built-in default password in ANY
+  // environment. Runtime seeding requires explicit BOOTSTRAP_ADMIN_ENABLED
+  // plus a strong, non-default BOOTSTRAP_ADMIN_PASSWORD (validated by the
+  // policy module) — including development and test. Login-time credential
+  // repair is permanently disabled (resolveBootstrapAdminPolicy).
   const policy = resolveRuntimeBootstrapAdminPolicy();
   if (!policy.allowRepair) {
     if (process.env.NODE_ENV === "production") {

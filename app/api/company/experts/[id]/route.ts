@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
+import { expertReviewFields, reviewEvidenceEquals } from "../../../../../lib/vault-review-provenance";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -64,24 +65,46 @@ export async function PUT(
   try {
     const body = await req.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+    const nextValues = {
+      fullName: String(body.fullName ?? existing.fullName),
+      title: body.title !== undefined ? (String(body.title) || null) : existing.title,
+      email: body.email !== undefined ? (String(body.email) || null) : existing.email,
+      phone: body.phone !== undefined ? (String(body.phone) || null) : existing.phone,
+      yearsExperience: body.yearsExperience !== undefined
+        ? (body.yearsExperience ? Number(body.yearsExperience) : null)
+        : existing.yearsExperience,
+      disciplines: body.disciplines !== undefined ? toJsonArray(body.disciplines) : existing.disciplines,
+      sectors: body.sectors !== undefined ? toJsonArray(body.sectors) : existing.sectors,
+      certifications: body.certifications !== undefined ? toJsonArray(body.certifications) : existing.certifications,
+      profile: body.profile !== undefined ? (String(body.profile) || null) : existing.profile,
+      isActive: body.isActive !== undefined ? Boolean(body.isActive) : existing.isActive,
+    };
+    // A REVIEWED record whose reviewed-evidence fields change is no longer
+    // the record that was reviewed: its stored provenance hashes describe the
+    // old content, so the review must be invalidated (demoted to draft) or
+    // matching/generation would keep consuming stale evidence as reviewed.
+    // Non-evidence fields (email, phone, profile, isActive) edit freely.
+    const reviewInvalidated =
+      existing.trustLevel === "REVIEWED" &&
+      !reviewEvidenceEquals(expertReviewFields(existing), expertReviewFields(nextValues));
     const updated = await prisma.expert.update({
       where: { id },
       data: {
-        fullName: String(body.fullName ?? existing.fullName),
-        title: body.title !== undefined ? (String(body.title) || null) : existing.title,
-        email: body.email !== undefined ? (String(body.email) || null) : existing.email,
-        phone: body.phone !== undefined ? (String(body.phone) || null) : existing.phone,
-        yearsExperience: body.yearsExperience !== undefined
-          ? (body.yearsExperience ? Number(body.yearsExperience) : null)
-          : existing.yearsExperience,
-        disciplines: body.disciplines !== undefined ? toJsonArray(body.disciplines) : existing.disciplines,
-        sectors: body.sectors !== undefined ? toJsonArray(body.sectors) : existing.sectors,
-        certifications: body.certifications !== undefined ? toJsonArray(body.certifications) : existing.certifications,
-        profile: body.profile !== undefined ? (String(body.profile) || null) : existing.profile,
-        isActive: body.isActive !== undefined ? Boolean(body.isActive) : existing.isActive,
+        ...nextValues,
+        ...(reviewInvalidated ? { trustLevel: "AI_DRAFT" } : {}),
         updatedAt: new Date(),
       },
     });
+    if (reviewInvalidated) {
+      await logAction({
+        userId: actor.id,
+        action: "EXPERT_REVIEW",
+        entityType: "Expert",
+        entityId: id,
+        description: `Expert "${existing.fullName}" review invalidated — reviewed evidence fields were edited; record demoted to draft pending re-review`,
+        metadata: { expertId: id, action: "review-invalidated-by-edit" },
+      });
+    }
     return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
   } catch (error) {
     logger.error("Request failed", { detail: error });

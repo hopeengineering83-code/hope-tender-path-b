@@ -489,6 +489,26 @@ export function publicVaultIdentifier(value: string): string {
   return sha256(value).slice(0, 16);
 }
 
+/**
+ * True when two review-evidence field sets carry identical evidence values
+ * under the same normalization and hashing isDurablyReviewed() verifies.
+ *
+ * Edit endpoints use this to decide whether a change to a REVIEWED record
+ * touches the reviewed evidence itself: when it does, the record must be
+ * demoted back to a draft trust level, because the stored provenance no
+ * longer describes the record's current content and every downstream
+ * consumer (matching, generation, export) would otherwise keep treating
+ * stale evidence as reviewed.
+ */
+export function reviewEvidenceEquals(a: ReviewEvidenceField[], b: ReviewEvidenceField[]): boolean {
+  const left = normalizedEvidenceFields(a);
+  const right = normalizedEvidenceFields(b);
+  if (left.length !== right.length) return false;
+  const rightHashes = new Map(right.map((item) => [item.field, evidenceValueHash(item.value)]));
+  if (rightHashes.size !== right.length) return false;
+  return left.every((item) => rightHashes.get(item.field) === evidenceValueHash(item.value));
+}
+
 export function safeVaultFileLabel(category: string, index: number): string {
   const label = category.replace(/_/g, " ").replace(/\s+/g, " ").trim().toLocaleLowerCase("en-US");
   const safeCategory = label ? label.replace(/\b\w/g, (character) => character.toUpperCase()) : "Vault";

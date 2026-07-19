@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
+import { projectReviewFields, reviewEvidenceEquals } from "../../../../../lib/vault-review-provenance";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
@@ -59,22 +60,44 @@ export async function PUT(
   try {
     const body = await req.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+    const nextValues = {
+      name: String(body.name ?? existing.name),
+      clientName: body.clientName !== undefined ? (String(body.clientName) || null) : existing.clientName,
+      country: body.country !== undefined ? (String(body.country) || null) : existing.country,
+      sector: body.sector !== undefined ? (String(body.sector) || null) : existing.sector,
+      serviceAreas: body.serviceAreas !== undefined ? toJsonArray(body.serviceAreas) : existing.serviceAreas,
+      summary: body.summary !== undefined ? (String(body.summary) || null) : existing.summary,
+      contractValue: body.contractValue !== undefined
+        ? (body.contractValue ? Number(body.contractValue) : null)
+        : existing.contractValue,
+      currency: body.currency !== undefined ? (String(body.currency) || null) : existing.currency,
+    };
+    // A REVIEWED record whose reviewed-evidence fields change is no longer
+    // the record that was reviewed: its stored provenance hashes describe the
+    // old content, so the review must be invalidated (demoted to draft) or
+    // matching/generation would keep consuming stale evidence as reviewed.
+    // Non-evidence fields (summary) edit freely.
+    const reviewInvalidated =
+      existing.trustLevel === "REVIEWED" &&
+      !reviewEvidenceEquals(projectReviewFields(existing), projectReviewFields(nextValues));
     const updated = await prisma.project.update({
       where: { id },
       data: {
-        name: String(body.name ?? existing.name),
-        clientName: body.clientName !== undefined ? (String(body.clientName) || null) : existing.clientName,
-        country: body.country !== undefined ? (String(body.country) || null) : existing.country,
-        sector: body.sector !== undefined ? (String(body.sector) || null) : existing.sector,
-        serviceAreas: body.serviceAreas !== undefined ? toJsonArray(body.serviceAreas) : existing.serviceAreas,
-        summary: body.summary !== undefined ? (String(body.summary) || null) : existing.summary,
-        contractValue: body.contractValue !== undefined
-          ? (body.contractValue ? Number(body.contractValue) : null)
-          : existing.contractValue,
-        currency: body.currency !== undefined ? (String(body.currency) || null) : existing.currency,
+        ...nextValues,
+        ...(reviewInvalidated ? { trustLevel: "AI_DRAFT" } : {}),
         updatedAt: new Date(),
       },
     });
+    if (reviewInvalidated) {
+      await logAction({
+        userId: actor.id,
+        action: "PROJECT_REVIEW",
+        entityType: "Project",
+        entityId: id,
+        description: `Project "${existing.name}" review invalidated — reviewed evidence fields were edited; record demoted to draft pending re-review`,
+        metadata: { projectId: id, action: "review-invalidated-by-edit" },
+      });
+    }
     return NextResponse.json(normalizeProject(updated as unknown as Record<string, unknown>));
   } catch (error) {
     logger.error("Request failed", { detail: error });
