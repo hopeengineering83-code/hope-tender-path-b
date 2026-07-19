@@ -48,6 +48,7 @@ jobs:
           } > audit-output/context.txt
           git diff --name-status "$PARENT_BASE_SHA" "$START_SHA" > audit-output/pr1175-changed-files.txt
           git log --oneline --decorate --no-merges "$PARENT_BASE_SHA..$START_SHA" > audit-output/pr1175-commits.txt
+          git archive --format=tar.gz --output=audit-output/pr1175-source.tar.gz "$START_SHA"
 
       - name: Baseline compiler and lint verification
         shell: bash
