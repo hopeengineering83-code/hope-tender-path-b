@@ -241,7 +241,7 @@ function buildProjectUserPrompt(opts: { tenderTitle: string; tenderRequirementsT
       `sector: ${p.sector ?? "<unknown>"}`,
       `service_areas: ${p.serviceAreas.length ? p.serviceAreas.join(", ") : "<not specified>"}`,
       `universal_candidate_profile: ${universalProfileSummary(profile)}`,
-      `contract_value: ${p.contractValue ? `${p.currency || "USD"} ${p.contractValue.toLocaleString()}` : "<unknown value>"}`,
+      `contract_value: ${p.contractValue ? `${p.currency?.trim() ? p.currency : "Currency unresolved"} ${p.contractValue.toLocaleString()}` : "<unknown value>"}`,
       `period: ${p.startDate ? new Date(p.startDate).getFullYear() : "?"}-${p.endDate ? new Date(p.endDate).getFullYear() : "ongoing"}`,
       `summary: ${(p.summary ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
       `trustLevel: ${p.trustLevel ?? "unknown"}`,

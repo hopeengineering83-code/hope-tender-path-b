@@ -19,7 +19,7 @@ type LifecycleState =
   | "EXPORT_READINESS_BLOCKED" | "EXPORT_READY" | "ZIP_READY" | "CLOSED";
 
 type BlockedAction = { action: string; reason: string };
-type Blocker = { code: string; message: string; action: string };
+type Blocker = { code: string; message: string; action: string; nextAction?: string };
 type Warning = { code: string; message: string };
 
 type LifecycleResult = {
@@ -605,7 +605,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             {data.blockers.map((b) => (
               <li key={b.code} className="rounded border border-red-200 bg-red-50 px-3 py-1.5">
                 <p className="text-xs font-medium text-red-800">{b.message}</p>
-                <p className="mt-0.5 text-xs text-red-600">Action: {b.action}</p>
+                <p className="mt-0.5 text-xs text-red-600">Action: {b.nextAction ?? b.action}</p>
                 {/* Quick-action shortcuts for specific blocker codes */}
                 {/* METADATA_INCOMPLETE quick-actions removed — metadata is advisory only */}
                 {canMutate && b.code === "ANALYSIS_REGEX_FALLBACK_UNAPPROVED" && (

@@ -166,7 +166,7 @@ async function buildProposalContent(params: {
       if (project.clientName) paras.push(labelValue("Client", project.clientName));
       if (project.country) paras.push(labelValue("Country", project.country));
       if (project.sector) paras.push(labelValue("Sector", project.sector));
-      if (project.contractValue) paras.push(labelValue("Contract Value", `${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}`));
+      if (project.contractValue) paras.push(labelValue("Contract Value", `${project.currency?.trim() ? project.currency : "Currency unresolved"} ${project.contractValue.toLocaleString()}`));
       const areas = safeParseArr(project.serviceAreas);
       if (areas.length > 0) paras.push(labelValue("Service Areas", areas.join(", ")));
       if (project.summary) paras.push(body(project.summary, { color: "333333" }));
@@ -216,7 +216,7 @@ function buildProjectReferenceContent(project: {
   if (project.clientName) paras.push(labelValue("Client", project.clientName));
   if (project.country) paras.push(labelValue("Country", project.country));
   if (project.sector) paras.push(labelValue("Sector", project.sector));
-  if (project.contractValue) paras.push(labelValue("Contract Value", `${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}`));
+  if (project.contractValue) paras.push(labelValue("Contract Value", `${project.currency?.trim() ? project.currency : "Currency unresolved"} ${project.contractValue.toLocaleString()}`));
   if (project.startDate) paras.push(labelValue("Start Date", new Date(project.startDate).toLocaleDateString("en-US")));
   if (project.endDate) paras.push(labelValue("Completion Date", new Date(project.endDate).toLocaleDateString("en-US")));
   const areas = safeParseArr(project.serviceAreas);

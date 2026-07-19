@@ -22,20 +22,42 @@ export interface WorkflowStageInfo {
 
 export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const [stages, setStages] = useState<WorkflowStageInfo[] | null>(null);
+  const [loadError, setLoadError] = useState(false);
 
-  const fetchStages = useCallback(() => {
-    fetch(`/api/tenders/${tenderId}/workflow-center`)
-      .then(res => res.json())
-      .then(json => setStages(json.stages))
-      .catch((e: unknown) => clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) }));
+  const fetchStages = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/tenders/${tenderId}/workflow-center`, {
+        cache: "no-store",
+        credentials: "include",
+      });
+      if (!res.ok) { setLoadError(true); return; }
+      const json = await res.json();
+      if (Array.isArray(json.stages)) {
+        setStages(json.stages);
+        setLoadError(false);
+      } else {
+        setLoadError(true);
+      }
+    } catch (e: unknown) {
+      clientLogger.error("fetch failed", e instanceof Error ? { message: e.message } : { error: String(e) });
+      setLoadError(true);
+    }
   }, [tenderId]);
 
   useEffect(() => {
-    fetchStages();
-    const interval = setInterval(fetchStages, 10000);
+    void fetchStages();
+    const interval = setInterval(() => {
+      if (!document.hidden) void fetchStages();
+    }, 10000);
     return () => clearInterval(interval);
   }, [fetchStages]);
 
+  if (loadError) return (
+    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 mb-6">
+      <p className="text-sm text-amber-800">Workflow state could not be loaded.</p>
+      <button onClick={() => void fetchStages()} className="mt-2 rounded border border-amber-300 px-3 py-1 text-xs text-amber-700 hover:bg-amber-100">Retry</button>
+    </div>
+  );
   if (!stages) return <div className="animate-pulse h-64 bg-slate-50 rounded-2xl border mb-6" />;
 
   const handleAction = async (s: WorkflowStageInfo) => {

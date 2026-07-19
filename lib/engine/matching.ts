@@ -306,11 +306,19 @@ export function capabilityScore(queryText: string, recordText: string, type: "ex
 
   // Senior-consultant equivalence: a firm with design/supervision/water/infra
   // experience can be strongly relevant even when wording is not identical.
+  // Cap total bonus at 0.20 to prevent score inflation from stacking.
+  const MAX_BONUS_TOTAL = 0.20;
+  let bonusTotal = 0;
   const broadInfra = ["WATER_SUPPLY", "FEASIBILITY_DESIGN", "SUPERVISION_CONTRACT", "CIVIL_INFRASTRUCTURE"] as CapabilityFamily[];
   const sharedBroadInfra = broadInfra.filter((family) => qFamilies.includes(family) && rFamilies.includes(family)).length;
-  if (sharedBroadInfra >= 2) score += type === "project" ? 0.18 : 0.14;
-  if (qFamilies.includes("SOLAR_PUMPING") && rFamilies.some((f) => ["ELECTRO_MECHANICAL", "WATER_SUPPLY", "SOLAR_PUMPING"].includes(f))) score += 0.16;
-  if (qFamilies.includes("GEOTECH_HYDROGEOLOGY") && rFamilies.some((f) => ["GEOTECH_HYDROGEOLOGY", "WATER_SUPPLY", "FEASIBILITY_DESIGN"].includes(f))) score += 0.10;
+  if (sharedBroadInfra >= 2) bonusTotal += type === "project" ? 0.18 : 0.14;
+  if (qFamilies.includes("SOLAR_PUMPING") && rFamilies.some((f) => ["ELECTRO_MECHANICAL", "WATER_SUPPLY", "SOLAR_PUMPING"].includes(f))) bonusTotal += 0.16;
+  if (qFamilies.includes("GEOTECH_HYDROGEOLOGY") && rFamilies.some((f) => ["GEOTECH_HYDROGEOLOGY", "WATER_SUPPLY", "FEASIBILITY_DESIGN"].includes(f))) bonusTotal += 0.10;
+  score += Math.min(bonusTotal, MAX_BONUS_TOTAL);
+
+  // Coverage < 1.0 means the candidate does not have ALL required capability
+  // families — cap at 0.95 so 100% requires full family coverage.
+  if (coverage < 1.0) score = Math.min(score, 0.95);
 
   // ─── PR XX-MATCH-FIX Fix B — dominant-family penalty ─────────────────────
   // When the tender has a strong sector signal (e.g., HEALTHCARE_FACILITIES
@@ -346,6 +354,10 @@ const SECTOR_CONFLICT_GROUPS: RegExp[] = [
   /\bport\b.*\b(design|master.*plan|infrastructure|facilit|terminal|study)\b|\b(berth|quay.*wall|dredging.*scheme|maritime.*infrastructure|harbour.*develop|ISPS.*audit)\b/,
   /\b(HAZOP|P&ID|upstream.*petroleum|petrochemical.*plant|refinery.*design|wellhead.*design|pipeline.*design|oil.*facilit|gas.*facilit)\b/,
   /\b(KYC|AML|core.*banking|microfinance.*platform|credit.*risk.*model|prudential.*regul|capital.*adequacy|Basel.*compliance)\b/,
+  // Additional off-sector conflict groups to prevent false-positive matching.
+  /abattoir|slaughter|livestock|butcher|meat.?process/,
+  /residential|housing|apartment|condo|villa|dormitor/,
+  /commercial|retail|shop|mall|office.?building|storefront/,
 ];
 
 function sectorBoost(tenderSector: string | null | undefined, items: string[]): number {
