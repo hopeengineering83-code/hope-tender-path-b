@@ -435,7 +435,7 @@ describe("API routes — source-level verification", () => {
 
   it("diagnostics returns quality assessment", () => {
     const src = read("app/api/tenders/[id]/extraction-diagnostics/route.ts");
-    assert.ok(src.includes("assessExtractionQuality"), "must assess extraction quality");
+    assert.ok(src.includes("assessTenderExtractionQuality"), "must assess extraction quality");
     assert.ok(src.includes("quality,"), "must return quality object in response");
     assert.ok(src.includes("failedFiles"), "must return failed files list");
     assert.ok(src.includes("ocrRequiredFiles"), "must return OCR-required files list");
