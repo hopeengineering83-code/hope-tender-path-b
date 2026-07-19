@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/pr1175-final-gap-repair
+  pull_request:
+    branches:
+      - release/consolidated-recovery-20260717
 
 permissions:
   contents: write
