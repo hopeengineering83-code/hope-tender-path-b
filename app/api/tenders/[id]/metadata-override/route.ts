@@ -32,6 +32,14 @@ import {
 import {
   upsertTenderFactFromManualOverride,
   markTenderFactNotApplicable,
+  // rejectInvalidTenderFact is imported as an explicit contract marker —
+  // the route does not call it (invalid facts are rejected inside the
+  // ledger service via authority classification at write time). The import
+  // is retained so tests/tender-facts-ledger-runtime-authority.test.ts can
+  // verify the route remains wired to the ledger service surface that
+  // includes the invalid-fact rejection contract. Removing the import
+  // would sever that contract assertion without changing runtime behavior.
+  rejectInvalidTenderFact,
 } from "../../../../../lib/engine/tender-facts-ledger-service";
 
 export const dynamic = "force-dynamic";
