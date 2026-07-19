@@ -7,6 +7,7 @@ on:
   pull_request:
     branches:
       - release/consolidated-recovery-20260717
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -64,6 +65,7 @@ jobs:
           PY
           bash /tmp/pr1209-apply.sh
           rm -f .github/pr1208-direct-correction-trigger
+          rm -f .github/pr1209-run-trigger
           rm -f .github/workflows/pr1209-run-direct-corrections.yml
           git diff --check
           git status --short
