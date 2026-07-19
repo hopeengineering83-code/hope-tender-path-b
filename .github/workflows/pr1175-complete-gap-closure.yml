@@ -96,9 +96,9 @@ jobs:
           diff -u /tmp/expected-files /tmp/actual-files
           test ! -e .github/workflows/pr1175-complete-gap-closure.yml
           test ! -e scripts/pr1175-complete-gap-closure.sh
-          ! git diff -- lib/engine/matching.ts | grep -F 'let eligible = strictEligible.length > 0'
-          git diff -- lib/engine/matching.ts | grep -F 'const eligible = strictEligible.length > 0'
-          git diff -- lib/engine/matching.ts | grep -F 'checkMatchingEligibility'
+          ! grep -Fq 'let eligible = strictEligible.length > 0' lib/engine/matching.ts
+          grep -Fq 'const eligible = strictEligible.length > 0' lib/engine/matching.ts
+          grep -Fq 'checkMatchingEligibility' lib/engine/matching.ts
 
       - name: Validate Prisma schema and migrations
         shell: bash
