@@ -14,8 +14,9 @@ import {
 } from "../../../../../lib/engine/ai-multi-perspective-matcher";
 import { exactSelectionLimit } from "../../../../../lib/engine/scope-policy";
 import { logAction } from "../../../../../lib/audit";
-import { childLogger, time, reportError, logger } from "../../../../../lib/observability";
+import { childLogger, time, reportError } from "../../../../../lib/observability";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT } from "../../../../../lib/vault-review-provenance";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -188,15 +189,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         include: {
           expert: {
             select: {
+              ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT,
               id: true,
-              fullName: true,
-              title: true,
-              yearsExperience: true,
-              disciplines: true,
-              sectors: true,
-              certifications: true,
               profile: true,
-              trustLevel: true,
             },
           },
         },
@@ -207,18 +202,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         include: {
           project: {
             select: {
+              ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT,
               id: true,
-              name: true,
-              clientName: true,
-              country: true,
-              sector: true,
-              serviceAreas: true,
               summary: true,
-              contractValue: true,
-              currency: true,
               startDate: true,
               endDate: true,
-              trustLevel: true,
             },
           },
         },
@@ -231,7 +219,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "No matches to rematch. Run the tender engine first to produce initial matches.", code: "NO_MATCHES" }, { status: 400 });
   }
 
-  const expertCandidates: ExpertCandidateInput[] = tender.expertMatches.map((match) => ({
+  const expertCandidates: ExpertCandidateInput[] = tender.expertMatches
+    .filter((match) => canUseVaultRecord(match.expert, "MATCHING"))
+    .map((match) => ({
     id: match.expert.id,
     fullName: match.expert.fullName,
     title: match.expert.title,
@@ -243,7 +233,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     trustLevel: match.expert.trustLevel,
   }));
 
-  const projectCandidates: ProjectCandidateInput[] = tender.projectMatches.map((match) => ({
+  const projectCandidates: ProjectCandidateInput[] = tender.projectMatches
+    .filter((match) => canUseVaultRecord(match.project, "MATCHING"))
+    .map((match) => ({
     id: match.project.id,
     name: match.project.name,
     clientName: match.project.clientName,
@@ -312,11 +304,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   //
   // Fail-closed rematch semantics: existing manual selections are preserved,
   // but new AI-selected rows must pass the threshold/critical-floor gate above.
+  const eligibleExpertIds = new Set(expertCandidates.map((candidate) => candidate.id));
+  const eligibleProjectIds = new Set(projectCandidates.map((candidate) => candidate.id));
   const userSelectedExpertIds = new Set(
-    tender.expertMatches.filter((m) => m.isSelected).map((m) => m.expert.id)
+    tender.expertMatches.filter((m) => m.isSelected && eligibleExpertIds.has(m.expert.id)).map((m) => m.expert.id)
   );
   const userSelectedProjectIds = new Set(
-    tender.projectMatches.filter((m) => m.isSelected).map((m) => m.project.id)
+    tender.projectMatches.filter((m) => m.isSelected && eligibleProjectIds.has(m.project.id)).map((m) => m.project.id)
   );
   const selectedExpertIds = new Set<string>([...userSelectedExpertIds, ...aiSelectedExpertIds]);
   const selectedProjectIds = new Set<string>([...userSelectedProjectIds, ...aiSelectedProjectIds]);
@@ -335,27 +329,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ? { ...projectBatch, assessments: projectBatch.assessments.map((assessment) => withAppliedSelection(assessment, selectedProjectIds)) }
     : null;
 
-  // PR XX-G3 — write per-dimension scores into MatchScoreBreakdown so
-  // readiness, bid/no-bid, evaluator simulator, and proposal generator
-  // can consume identical 12-dimension scoring objects. The scalar
-  // overallScore is still written to TenderExpertMatch.score for
-  // backward-compatible UI ranking.
+  // Persist authoritative match state atomically. Score breakdown rows are
+  // derived diagnostics and are written after the authoritative transaction.
   const { writeScoreBreakdown } = await import("../../../../../lib/engine/score-breakdown-writer");
+  const expertPersistence = (expertBatchForResponse?.assessments ?? []).flatMap((assessment) => {
+    const match = tender.expertMatches.find((candidate) => candidate.expert.id === assessment.candidateId);
+    return match ? [{ assessment, match }] : [];
+  });
+  const projectPersistence = (projectBatchForResponse?.assessments ?? []).flatMap((assessment) => {
+    const match = tender.projectMatches.find((candidate) => candidate.project.id === assessment.candidateId);
+    return match ? [{ assessment, match }] : [];
+  });
 
-  let expertsUpdated = 0;
-  if (expertBatchForResponse) {
-    for (const assessment of expertBatchForResponse.assessments) {
-      const match = tender.expertMatches.find((candidate) => candidate.expert.id === assessment.candidateId);
-      if (!match) continue;
-      // Wrap each match's updates in a try/catch so a partial failure on
-      // one assessment (DB connectivity blip, constraint violation, etc.)
-      // cannot abort the entire rematch and leave the tender in a
-      // half-updated state. The match.update and the per-dimension
-      // breakdown writes are paired best-effort: writeScoreBreakdown
-      // already catches per-row errors internally, so the catch below
-      // only fires for the authoritative match.update failure.
-      try {
-        await prisma.tenderExpertMatch.update({
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const { assessment, match } of expertPersistence) {
+        await tx.tenderExpertMatch.update({
           where: { id: match.id },
           data: {
             score: assessment.overallScore,
@@ -363,33 +352,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             ...(applySelections ? { isSelected: selectedExpertIds.has(assessment.candidateId) } : {}),
           },
         });
-        // Persist per-dimension scores. AI scoring uses 0–10; writer expects
-        // 0–100, so multiply by 10.
-        const perspectives100 = Object.fromEntries(
-          Object.entries(assessment.perspectives).map(([k, v]) => [k, Number(v) * 10])
-        ) as Partial<Record<MatchPerspective, number>>;
-        await writeScoreBreakdown({
-          tenderId,
-          entityType: "EXPERT",
-          entityId: assessment.candidateId,
-          perspectives: perspectives100,
-          rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
-          source: "AI_REMATCH",
-        });
-        expertsUpdated += 1;
-      } catch (err) {
-        logger.warn(`[ai-rematch] expert ${assessment.candidateId} update failed; continuing with remaining assessments`, { detail: err instanceof Error ? err.message : err });
       }
-    }
-  }
-
-  let projectsUpdated = 0;
-  if (projectBatchForResponse) {
-    for (const assessment of projectBatchForResponse.assessments) {
-      const match = tender.projectMatches.find((candidate) => candidate.project.id === assessment.candidateId);
-      if (!match) continue;
-      try {
-        await prisma.tenderProjectMatch.update({
+      for (const { assessment, match } of projectPersistence) {
+        await tx.tenderProjectMatch.update({
           where: { id: match.id },
           data: {
             score: assessment.overallScore,
@@ -397,32 +362,53 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             ...(applySelections ? { isSelected: selectedProjectIds.has(assessment.candidateId) } : {}),
           },
         });
-        const perspectives100 = Object.fromEntries(
-          Object.entries(assessment.perspectives).map(([k, v]) => [k, Number(v) * 10])
-        ) as Partial<Record<MatchPerspective, number>>;
-        await writeScoreBreakdown({
-          tenderId,
-          entityType: "PROJECT",
-          entityId: assessment.candidateId,
-          perspectives: perspectives100,
-          rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
-          source: "AI_REMATCH",
-        });
-        projectsUpdated += 1;
-      } catch (err) {
-        logger.warn(`[ai-rematch] project ${assessment.candidateId} update failed; continuing with remaining assessments`, { detail: err instanceof Error ? err.message : err });
       }
-    }
+      if (applySelections) {
+        await tx.tender.update({
+          where: { id: tenderId },
+          data: {
+            status: "COMPLIANCE_REVIEW",
+            stage: "COMPLIANCE",
+            notes: appendRematchNote(tender.notes, selectedExpertIds.size, selectedProjectIds.size),
+          },
+        });
+      }
+    });
+  } catch (err) {
+    void reportError(err, { tenderId, route: "/api/tenders/[id]/ai-rematch", phase: "persistence" });
+    log.error("ai_rematch_persistence_failed", { error: sanitizeError(err) });
+    return NextResponse.json({
+      error: "AI rematch results could not be committed atomically. No partial selection update was retained.",
+      code: "AI_REMATCH_PERSISTENCE_FAILED",
+    }, { status: 500 });
   }
 
-  if (applySelections) {
-    await prisma.tender.update({
-      where: { id: tenderId },
-      data: {
-        status: "COMPLIANCE_REVIEW",
-        stage: "COMPLIANCE",
-        notes: appendRematchNote(tender.notes, selectedExpertIds.size, selectedProjectIds.size),
-      },
+  const expertsUpdated = expertPersistence.length;
+  const projectsUpdated = projectPersistence.length;
+  for (const { assessment } of expertPersistence) {
+    const perspectives100 = Object.fromEntries(
+      Object.entries(assessment.perspectives).map(([key, value]) => [key, Number(value) * 10]),
+    ) as Partial<Record<MatchPerspective, number>>;
+    await writeScoreBreakdown({
+      tenderId,
+      entityType: "EXPERT",
+      entityId: assessment.candidateId,
+      perspectives: perspectives100,
+      rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
+      source: "AI_REMATCH",
+    });
+  }
+  for (const { assessment } of projectPersistence) {
+    const perspectives100 = Object.fromEntries(
+      Object.entries(assessment.perspectives).map(([key, value]) => [key, Number(value) * 10]),
+    ) as Partial<Record<MatchPerspective, number>>;
+    await writeScoreBreakdown({
+      tenderId,
+      entityType: "PROJECT",
+      entityId: assessment.candidateId,
+      perspectives: perspectives100,
+      rationales: { DISCIPLINE_FIT: assessment.strength?.slice(0, 400), DELIVERY_RISK: assessment.concern?.slice(0, 400) },
+      source: "AI_REMATCH",
     });
   }
 
@@ -443,6 +429,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       perspectives: 12,
       criticalFloorControl: true,
       complianceStatePreserved: true,
+      persistenceAtomic: true,
     },
   });
 
@@ -459,6 +446,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     perspectives: 12,
     criticalFloorControl: true,
     complianceStatePreserved: true,
+    persistenceAtomic: true,
     expertBatch: expertBatchForResponse,
     projectBatch: projectBatchForResponse,
   });

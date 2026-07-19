@@ -15,6 +15,7 @@ import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
+import { isDurablyReviewed } from "../vault-review-provenance";
 
 // ─── Vercel function-budget reserves ────────────────────────────────────
 // The engine route passes deadlineAt = Date.now() + 50_000 so the whole run
@@ -140,8 +141,20 @@ export async function runTenderEngine(
   const company = await prisma.company.findUnique({
     where: { userId },
     include: {
-      experts: true,
-      projects: true,
+      experts: {
+        include: {
+          sourceDocument: {
+            select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
+          },
+        },
+      },
+      projects: {
+        include: {
+          sourceDocument: {
+            select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
+          },
+        },
+      },
       documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
       legalRecords: true,
       financialRecords: true,
@@ -235,8 +248,10 @@ export async function runTenderEngine(
       analysis = analyzeTender(tender);
     }
 
-    const reviewedExperts = company.experts.filter((expert) => expert.trustLevel === "REVIEWED");
-    const reviewedProjects = company.projects.filter((project) => project.trustLevel === "REVIEWED");
+    const reviewedExperts = company.experts.filter((expert) => isDurablyReviewed(expert));
+    const reviewedProjects = company.projects.filter((project) => isDurablyReviewed(project));
+    const unsupportedReviewedExpertCount = company.experts.filter((expert) => expert.trustLevel === "REVIEWED" && !isDurablyReviewed(expert)).length;
+    const unsupportedReviewedProjectCount = company.projects.filter((project) => project.trustLevel === "REVIEWED" && !isDurablyReviewed(project)).length;
     const aiDraftExpertCount = company.experts.filter((e) => e.trustLevel === "AI_DRAFT").length;
     const aiDraftProjectCount = company.projects.filter((p) => p.trustLevel === "AI_DRAFT").length;
     const regexDraftExpertCount = company.experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT").length;
@@ -255,14 +270,16 @@ export async function runTenderEngine(
     const knowledgeReadiness = {
       reviewedExperts: reviewedExperts.length,
       reviewedProjects: reviewedProjects.length,
+      unsupportedReviewedExperts: unsupportedReviewedExpertCount,
+      unsupportedReviewedProjects: unsupportedReviewedProjectCount,
       aiDraftExperts: aiDraftExpertCount,
       aiDraftProjects: aiDraftProjectCount,
       regexDraftExperts: regexDraftExpertCount,
       regexDraftProjects: regexDraftProjectCount,
       hasUsableExperts: reviewedExperts.length > 0,
       hasUsableProjects: reviewedProjects.length > 0,
-      hasBlockingExperts: aiDraftExpertCount + regexDraftExpertCount > 0,
-      hasBlockingProjects: aiDraftProjectCount + regexDraftProjectCount > 0,
+      hasBlockingExperts: aiDraftExpertCount + regexDraftExpertCount + unsupportedReviewedExpertCount > 0,
+      hasBlockingProjects: aiDraftProjectCount + regexDraftProjectCount + unsupportedReviewedProjectCount > 0,
     };
 
     // PR XX-MATCH-FIX MERGE Fix C — pass the INFERRED sector (from tender

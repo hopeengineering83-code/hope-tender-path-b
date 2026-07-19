@@ -1,7 +1,9 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { buildMatches } from "../lib/engine/matching";
 import type { CompanyKnowledgeSnapshot, RequirementDraft } from "../lib/engine/types";
+import { buildReviewProvenance, projectReviewFields } from "../lib/vault-review-provenance";
 
 const requirements: RequirementDraft[] = [
   {
@@ -13,7 +15,8 @@ const requirements: RequirementDraft[] = [
 ];
 
 function reviewedProject(overrides: Partial<CompanyKnowledgeSnapshot["projects"][number]> & Pick<CompanyKnowledgeSnapshot["projects"][number], "id" | "name" | "sector" | "summary">): CompanyKnowledgeSnapshot["projects"][number] {
-  return {
+  const reviewedAt = new Date("2026-07-01T00:00:00.000Z");
+  const base = {
     companyId: "c1",
     clientName: "Client",
     country: "ET",
@@ -22,17 +25,43 @@ function reviewedProject(overrides: Partial<CompanyKnowledgeSnapshot["projects"]
     currency: "USD",
     startDate: null,
     endDate: null,
-    sourceDocumentId: `source-${overrides.id}`,
     trustLevel: "REVIEWED",
     reviewedBy: "reviewer-1",
-    reviewedAt: new Date("2026-07-01T00:00:00.000Z"),
-    reviewNotes: "Reviewed against durable source evidence.",
+    reviewedAt,
     deletedAt: null,
     deletedBy: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
   };
+  if (overrides.sourceDocumentId === null) {
+    return { ...base, sourceDocumentId: null } as CompanyKnowledgeSnapshot["projects"][number];
+  }
+  const serviceAreas = JSON.parse(base.serviceAreas || "[]") as string[];
+  const sourceText = `Project ${base.name}. Client ${base.clientName}. Country ${base.country}. Sector ${base.sector}. Service areas ${serviceAreas.join(", ")}. Contract value ${base.contractValue}. Currency ${base.currency}. This verified project reference contains complete durable source evidence.`;
+  const sourceDocument = {
+    id: `source-${base.id}`,
+    companyId: "c1",
+    extractedText: sourceText,
+    contentSha256: createHash("sha256").update(sourceText, "utf8").digest("hex"),
+    contentByteLength: Buffer.byteLength(sourceText),
+    integrityStatus: "VERIFIED",
+  };
+  const provenance = buildReviewProvenance({
+    recordType: "PROJECT",
+    sourceDocument,
+    fields: projectReviewFields(base),
+    reviewerId: "reviewer-1",
+    reviewedAt,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("strict-domain fixture provenance failed");
+  return {
+    ...base,
+    sourceDocumentId: sourceDocument.id,
+    sourceDocument,
+    reviewNotes: provenance.serialized,
+  } as unknown as CompanyKnowledgeSnapshot["projects"][number];
 }
 
 const knowledge: CompanyKnowledgeSnapshot = {

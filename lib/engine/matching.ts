@@ -1,7 +1,7 @@
 import type { CompanyKnowledgeSnapshot, MatchingResult, RequirementDraft } from "./types";
 import { exactSelectionLimit } from "./scope-policy";
 import { deriveRequirementConstraintProfile } from "./requirement-constraints";
-import { enforceMatchingEligibility } from "./matching-eligibility";
+import { checkMatchingEligibility } from "./matching-eligibility";
 
 // Per-record lexical interpretation cycles. For each candidate expert /
 // project, the matcher runs MATCHING_CYCLES different tokenization
@@ -858,18 +858,28 @@ export function buildMatches(
       // GLM-A2 Issue #1135 Gap #3: Enforce durable provenance eligibility.
       // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
       // reviewedBy, or reviewedAt) scores zero and cannot be selected.
-      const score = enforceMatchingEligibility(rawScore, {
+      const matchingEligibility = checkMatchingEligibility({
         id: expert.id,
+        companyId: (expert as { companyId?: string }).companyId ?? knowledge.companyId,
         trustLevel,
         sourceDocumentId: (expert as { sourceDocumentId?: string | null }).sourceDocumentId ?? null,
         reviewedBy: (expert as { reviewedBy?: string | null }).reviewedBy ?? null,
         reviewedAt: (expert as { reviewedAt?: Date | string | null }).reviewedAt ?? null,
+        reviewNotes: (expert as { reviewNotes?: string | null }).reviewNotes ?? null,
+        sourceDocument: (expert as { sourceDocument?: never }).sourceDocument ?? null,
+        fullName: expert.fullName,
+        title: expert.title,
+        yearsExperience: expert.yearsExperience,
+        disciplines: expert.disciplines,
+        sectors: expert.sectors,
+        certifications: expert.certifications,
       });
+      const score = matchingEligibility.eligible ? rawScore : 0;
       const evidence = [expert.title, ...parseArr(expert.disciplines), ...parseArr(expert.sectors)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;
       const families = recordFamilies.join(", ");
-      const trustLabel = trustLevelLabel(trustLevel);
+      const trustLabel = matchingEligibility.eligible ? trustLevelLabel(trustLevel) : "⚠ Provenance required";
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       const domainLabel = constraintProfile.strictDomain
         ? (domainScore > 0 ? `Domain-tag overlap ${(domainScore * 100).toFixed(0)}%.` : "No strict-domain overlap; hard-excluded.")
@@ -929,18 +939,29 @@ export function buildMatches(
       // GLM-A2 Issue #1135 Gap #3: Enforce durable provenance eligibility.
       // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
       // reviewedBy, or reviewedAt) scores zero and cannot be selected.
-      const score = enforceMatchingEligibility(rawScore, {
+      const matchingEligibility = checkMatchingEligibility({
         id: project.id,
+        companyId: (project as { companyId?: string }).companyId ?? knowledge.companyId,
         trustLevel,
         sourceDocumentId: (project as { sourceDocumentId?: string | null }).sourceDocumentId ?? null,
         reviewedBy: (project as { reviewedBy?: string | null }).reviewedBy ?? null,
         reviewedAt: (project as { reviewedAt?: Date | string | null }).reviewedAt ?? null,
+        reviewNotes: (project as { reviewNotes?: string | null }).reviewNotes ?? null,
+        sourceDocument: (project as { sourceDocument?: never }).sourceDocument ?? null,
+        name: project.name,
+        clientName: project.clientName,
+        country: project.country,
+        sector: project.sector,
+        serviceAreas: project.serviceAreas,
+        contractValue: project.contractValue,
+        currency: project.currency,
       });
+      const score = matchingEligibility.eligible ? rawScore : 0;
       const evidence = [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;
       const families = recordFamilies.join(", ");
-      const trustLabel = trustLevelLabel(trustLevel);
+      const trustLabel = matchingEligibility.eligible ? trustLevelLabel(trustLevel) : "⚠ Provenance required";
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       const domainLabel = constraintProfile.strictDomain
         ? (domainScore > 0 ? `Domain-tag overlap ${(domainScore * 100).toFixed(0)}%.` : "No strict-domain overlap; hard-excluded.")
