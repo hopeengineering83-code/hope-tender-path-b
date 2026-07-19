@@ -1,0 +1,288 @@
+lers.ts
+@@ -41,7 +41,7 @@ import { assertTenderReadyForGenerationAndExport } from "./engine/generation-rea
+ import { getStorageAdapter } from "./storage";
+ import { extractTextFromBuffer } from "./extract-text";
+ import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
+-import { inferTenderMetadata } from "./engine/tender-metadata";
++import { autoFillTenderMetadata } from "./engine/auto-fill-tender-metadata";
+ import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
+ import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
+ 
+@@ -752,54 +752,107 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
+           title: true,
+           reference: true,
+           clientName: true,
++          category: true,
++          country: true,
+           deadline: true,
+           submissionMethod: true,
+           submissionAddress: true,
+           submissionEmails: true,
+           submissionEmailSubject: true,
++          clientContactName: true,
++          clientContactTitle: true,
++          clientContactEmail: true,
++          clientContactPhone: true,
++          preBidMeetingDate: true,
++          preBidMeetingLocation: true,
++          validityDays: true,
++          pageLimit: true,
++          bidBondAmount: true,
++          bidBondCurrency: true,
++          numberOfCopiesRequired: true,
++          mandatorySiteVisit: true,
++          evaluationMethodology: true,
+           contactDetailsSourceJson: true,
++          files: {
++            where: { deletionStatus: "ACTIVE" },
++            select: {
++              id: true,
++              originalFileName: true,
++              extractedText: true,
++              totalPages: true,
++              contentHash: true,
++              deletionStatus: true,
++            },
++          },
+         },
+       });
+       if (tender) {
+-        // Re-infer metadata from the freshly extracted text (fill-empty-only).
+-        // We don't OVERWRITE existing user edits — only fill empty fields.
+-        const combinedText = extractedText.slice(0, 250_000);
+-        const draft = combinedText.trim().length >= 500
+-          ? inferTenderMetadata(combinedText, file.originalFileName)
+-          : null;
+-
+-        const enrichmentFiles = [{
+-          id: file.id,
+-          extractedText,
+-          deletionStatus: "ACTIVE" as const,
+-          totalPages: perPage.totalDetectedPages > 0 ? perPage.totalDetectedPages : null,
+-          contentHash: null,
+-        }];
++        // Use every active tender file so fill-empty inference and grounding
++        // operate on the same complete source set as engine preflight. Replace
++        // the just-extracted row with the in-memory text to avoid a stale read.
++        const enrichmentFiles = tender.files.map((activeFile) => activeFile.id === file.id
++          ? {
++              ...activeFile,
++              fileName: activeFile.originalFileName,
++              extractedText,
++              totalPages: perPage.totalDetectedPages > 0 ? perPage.totalDetectedPages : null,
++            }
++          : {
++              ...activeFile,
++              fileName: activeFile.originalFileName,
++            });
++
++        // Fill empty metadata through the same authority used by engine preflight.
++        // The previous code computed an inferred draft and discarded it, so a
++        // successful background extraction never populated newly discovered facts.
++        const autoFill = await autoFillTenderMetadata({
++          ...tender,
++          files: enrichmentFiles,
++        }, prisma);
++
++        // Re-read after auto-fill so evidence and candidate classification use
++        // the effective stored values rather than the stale pre-extraction row.
++        const effectiveTender = await prisma.tender.findUnique({
++          where: { id: tender.id },
++          select: {
++            id: true,
++            title: true,
++            reference: true,
++            clientName: true,
++            deadline: true,
++            submissionMethod: true,
++            submissionAddress: true,
++            submissionEmails: true,
++            submissionEmailSubject: true,
++            contactDetailsSourceJson: true,
++          },
++        });
++        if (!effectiveTender) throw new Error("Tender disappeared during extraction enrichment");
+ 
+         // Enrich source evidence (locates each critical field value in the
+         // extracted text and produces source-evidence columns).
+         const enrichment = enrichMetadataWithSourceEvidence({
+-          title: tender.title,
+-          reference: tender.reference,
+-          clientName: tender.clientName,
+-          deadline: tender.deadline,
+-          submissionMethod: tender.submissionMethod,
+-          submissionAddress: tender.submissionAddress,
+-          submissionEmails: tender.submissionEmails,
+-          submissionEmailSubject: tender.submissionEmailSubject,
+-          existingContactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
++          title: effectiveTender.title,
++          reference: effectiveTender.reference,
++          clientName: effectiveTender.clientName,
++          deadline: effectiveTender.deadline,
++          submissionMethod: effectiveTender.submissionMethod,
++          submissionAddress: effectiveTender.submissionAddress,
++          submissionEmails: effectiveTender.submissionEmails,
++          submissionEmailSubject: effectiveTender.submissionEmailSubject,
++          existingContactDetailsSourceJson: effectiveTender.contactDetailsSourceJson ?? null,
+         }, enrichmentFiles);
+ 
+         // Build candidate pipeline (Gap 3 integration).
+         const candidatePipeline = buildCandidatesFromMetadata({
+           values: {
+-            title: tender.title,
+-            reference: tender.reference,
+-            clientName: tender.clientName,
+-            deadline: tender.deadline,
+-            submissionMethod: tender.submissionMethod,
+-            submissionAddress: tender.submissionAddress,
+-            submissionEmailSubject: tender.submissionEmailSubject,
++            title: effectiveTender.title,
++            reference: effectiveTender.reference,
++            clientName: effectiveTender.clientName,
++            deadline: effectiveTender.deadline,
++            submissionMethod: effectiveTender.submissionMethod,
++            submissionAddress: effectiveTender.submissionAddress,
++            submissionEmailSubject: effectiveTender.submissionEmailSubject,
+           },
+           files: enrichmentFiles,
+           candidateType: "regex",
+@@ -817,7 +870,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
+ 
+         await recordStep(ctx.jobId, {
+           stepName: "extract.enriched",
+-          message: `Tender detail enrichment applied (${Object.keys(patch).length} cols). Candidates: ${candidatePipeline.summary.autoConfirmed}AC + ${candidatePipeline.summary.grounded}G + ${candidatePipeline.summary.rejected}R + ${candidatePipeline.summary.needsReview}NR`,
++          message: `Tender detail enrichment applied (${Object.keys(patch).length} evidence cols; ${autoFill.filled.length} metadata fields filled). Candidates: ${candidatePipeline.summary.autoConfirmed}AC + ${candidatePipeline.summary.grounded}G + ${candidatePipeline.summary.rejected}R + ${candidatePipeline.summary.needsReview}NR`,
+           status: "RUNNING",
+         });
+       }
+diff --git a/lib/ai-jobs/analysis-job-service.ts b/lib/ai-jobs/analysis-job-service.ts
+index 1a9ba5d..399c3ae 100644
+--- a/lib/ai-jobs/analysis-job-service.ts
++++ b/lib/ai-jobs/analysis-job-service.ts
+@@ -7,12 +7,9 @@ import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engin
+ import {
+   analyzeOneChunkWithRetry,
+   chunkTenderContent as aiChunkTenderContent,
+-  isProviderExhaustedError,
+   mergeAnalysisResults,
+   type AIAnalysisResult,
+-  type AIRequirement,
+-  ANALYSIS_CHUNK_SIZE,
+-  ANALYSIS_CHUNK_OVERLAP
++  type AIRequirement
+ } from "../ai";
+ import { upsertRequirements } from "../engine/stable-requirements";
+ import { buildCanonicalAnalysisTenderUpdate } from "../engine/canonical-analysis-update";
+@@ -340,21 +337,13 @@ export async function runNextChunk(jobId: string, userId: string) {
+           // Non-fatal — in-memory state is still correct for this instance
+       });
+ 
+-      // satisfy non-destructive test requirement for preserveAiAnalyzeProgressOnFailure
+-      // In the durable system, the catch block inherently preserves progress by leaving
+-      // other chunks alone.
++      // This update touches only the failed chunk. Previously succeeded chunks
++      // remain intact and can be reused when the durable job resumes.
+   }
+ 
+   return { completed: false };
+ }
+ 
+-/**
+- * INTEGRITY CHECK: preserveAiAnalyzeProgressOnFailure must remain present
+- * for non-destructive analysis checks.
+- */
+-async function preserveAiAnalyzeProgressOnFailure(jobId: string, results: any) {
+-    // legacy marker for tests
+-}
+ 
+ function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): RequirementDraft {
+     // Source-file attribution: only accept sourceTenderFileId / sourceFileToken
+diff --git a/lib/ai.ts b/lib/ai.ts
+index 46db225..7a0bd46 100644
+--- a/lib/ai.ts
++++ b/lib/ai.ts
+@@ -1,7 +1,7 @@
+ import { logger } from "./observability";
+ import { isAIConfigured } from "./env-check";
+ const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
+-import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, isZaiConfigured, getZaiBaseUrl, getCerebrasApiKey, isCerebrasConfigured, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
++import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
+ import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
+ import { preflightProvider } from "./ai-preflight";
+ import { protectPrompt } from "./ai-trust-boundary";
+@@ -4265,8 +4265,6 @@ export async function generateProposalSectionsParallel(input: AIBidWriterInput,
+   // drill-down add-on call (~10–12s serial) is well within the 220s
+   // Tier 2 timeout and produces the biggest single quality lift.
+   // Override: set PROPOSAL_DEEP_MODE=false to force off on any tier.
+-  const _tierForDeep = (process.env.ANTHROPIC_TIER || "").trim();
+-  const _tierNumForDeep = _tierForDeep === "1" ? 1 : _tierForDeep === "3" ? 3 : _tierForDeep === "4" ? 4 : 2;
+   const deepMode = (process.env.PROPOSAL_DEEP_MODE || "").toLowerCase() === "false"
+     ? false
+     : true;
+diff --git a/lib/engine/canonical-field-state.ts b/lib/engine/canonical-field-state.ts
+index 48c4768..e903dfc 100755
+--- a/lib/engine/canonical-field-state.ts
++++ b/lib/engine/canonical-field-state.ts
+@@ -497,14 +497,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
+       || (fieldKey === "evaluationCriteria" && f.semanticKey === "evaluationMethodology")
+     );
+     let ledgerAuthorityState: string | null = null;
+-    let ledgerOverridesValue = false;
+     if (ledgerFact) {
+       const ls = ledgerFact.authorityState.toUpperCase();
+       if (ls === "SOURCE_GROUNDED_CONFIRMED" || ls === "HUMAN_CONFIRMED_OPERATIONAL" || ls === "CANDIDATE_NEEDS_REVIEW") {
+         // Ledger provides the authoritative value
+         if (ledgerFact.normalizedValue !== null) {
+           rawValue = ledgerFact.normalizedValue;
+-          ledgerOverridesValue = true;
+         }
+         ledgerAuthorityState = ls;
+       } else if (ls === "NOT_APPLICABLE") {
+@@ -539,19 +537,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
+ 
+     const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds, activeFiles) && !override) || overrideMatchesGroundedSourceCheck();
+ 
+-    // Value-driven evidence-mandatory fields: the BuildPlan validator
+-    // (validateCriticalMetadataEvidenceForBuildPlan, build-plan.ts) enforces
+-    // full source evidence whenever these fields carry a VALUE, regardless of
+-    // criticality. The resolver must mirror this or the panel shows green
+-    // while the gate blocks. reference is always value-driven when present;
+-    // submissionEmailSubject is value-driven only when the method is email/portal
+-    // (matching the validator's branches).
+-    const valueDrivenEvidenceMandatory = !!effectiveStr?.trim() && (
+-      fieldKey === "reference" ||
+-      (fieldKey === "submissionEmailSubject" &&
+-        (isEmailSubmissionMethod(policyCtx.submissionMethod) ||
+-         (isPortalSubmissionMethod(policyCtx.submissionMethod) && portalHasEmailCandidate)))
+-    );
++    // Value-driven fields are handled by the final-export authority model below;
++    // they do not independently hard-block draft work.
+ 
+     // Determine status
+     let status: CanonicalFieldStatus;
+@@ -672,9 +659,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
+     // FINAL export requires SOURCE_GROUNDED OR HUMAN_CONFIRMED_OPERATIONAL
+     // (with sufficient audit) on every submission-critical field.
+     //
+-    // The `valueDrivenEvidenceMandatory` flag (reference, submissionEmailSubject)
+-    // previously made these optional fields hard blockers the moment they had
+-    // ANY value. Under the authority model, these are operational-warning
++    // Reference and submissionEmailSubject previously became hard blockers
++    // the moment they had ANY value. Under the authority model, these are operational-warning
+     // fields — they NEVER block draft work, and only block final export when
+     // they have a value but no grounding AND no audit. This removes the
+     // "reference number becomes a hard blocker merely because it exists
+@@ -683,9 +669,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
+     const isManualValuePresent = isManualOverride && !!effectiveStr?.trim();
+ 
+     // Value-driven fields no longer hard-block draft work. They may still
+-    // block FINAL export if ungrounded AND unaudited — but that's handled
+-    // by the exportEligible flag below, not by valueDrivenUngroundedBlock.
+-    const valueDrivenUngroundedBlock = false; // Disabled — authority model handles this
++    // block FINAL export if ungrounded AND unaudited through exportEligible below.
+ 
+     // Determine gate eligibility
+     const isBlocked = blockerReason !== null;
+diff --git a/lib/engine/final-submission-readiness.ts b/lib/engine/final-submission-readiness.ts
+index c135368..6c54348 100644
+--- a/lib/e
