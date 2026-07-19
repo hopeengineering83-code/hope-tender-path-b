@@ -429,6 +429,20 @@ export function effectiveReviewTrustLevel(
   return record.trustLevel === "AI_DRAFT" ? "AI_DRAFT" : "REGEX_DRAFT";
 }
 
+/**
+ * Single consumption gate for vault records: every purpose (matching,
+ * generation, export) requires full durable review — trust level, stored
+ * provenance, verified source bytes, and current field values all bound
+ * together. The purpose parameter documents the call site; all purposes
+ * currently share the same fail-closed rule.
+ */
+export function canUseVaultRecord(
+  record: ReviewRecordState,
+  _purpose: "MATCHING" | "GENERATION" | "EXPORT",
+): boolean {
+  return isDurablyReviewed(record);
+}
+
 export function parseStoredStringList(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
   if (typeof value !== "string") return [];
