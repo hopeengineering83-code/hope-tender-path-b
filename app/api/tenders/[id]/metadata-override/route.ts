@@ -21,6 +21,7 @@ import { resolveCanonicalFieldState, canonicalToClientChip } from "../../../../.
 import { isCriticalField, canBeNotApplicable, type TenderPolicyContext } from "../../../../../lib/engine/tender-policy-registry";
 import { enrichMetadataWithSourceEvidence } from "../../../../../lib/engine/metadata-source-enrichment";
 import {
+  classifyTenderFactAuthority,
   isMeaningfulReason,
   isValidConfirmationBasis,
   isSubmissionCriticalField,

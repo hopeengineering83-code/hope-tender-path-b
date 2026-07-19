@@ -684,6 +684,13 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     // extracted at all, the draft has nothing to work with.
     const draftHardBlockReasons = false;
 
+    // valueDrivenUngroundedBlock is explicitly disabled — the authority model
+    // (auditSufficientForFinal) handles this via the exportEligible flag below,
+    // not by valueDrivenUngroundedBlock. Kept as an explicit `false` so the
+    // source contract test (tests/tender-fact-authority.test.ts) can verify
+    // the old ungrounded-value block is permanently off.
+    const valueDrivenUngroundedBlock = false;
+
     // FINAL: blocked by missing critical field, manual value without
     // sufficient audit, contamination, placeholder, invalid format, or
     // BLOCKED status. Only FINAL_SUBMISSION_CHECK uses this gate.

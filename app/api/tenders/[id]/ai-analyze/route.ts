@@ -21,6 +21,7 @@ import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type A
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
+import { redactSecrets } from "../../../../../lib/sanitize-error";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../../../../../lib/engine/tender-analysis-content";
 import { createAnalysisJob } from "../../../../../lib/ai-jobs/analysis-job-service";
 import {
@@ -790,7 +791,7 @@ async function handleStreamingAnalyze(
               if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
               if (analysisJob) {
                 const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
-                const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+                const safeErrMsg = redactSecrets(errMsg).slice(0, 300);
                 await preserveAiAnalyzeProgressOnFailure(analysisJob.id, {
                   analysisSource: "REGEX_FALLBACK",
                   errorMessage: safeErrMsg,
@@ -1639,7 +1640,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // Fail the job before re-throwing
           if (analysisJob) {
             const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
-            const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+            const safeErrMsg = redactSecrets(errMsg).slice(0, 300);
             await preserveAiAnalyzeProgressOnFailure(analysisJob.id, {
               analysisSource: "REGEX_FALLBACK",
               errorMessage: safeErrMsg,

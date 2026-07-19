@@ -33,7 +33,15 @@
 //     for METADATA_INCOMPLETE_FOR_FINAL_GENERATION)
 //   - generated-document quality gate (rejects "Bid-Team to confirm")
 
-import { DOCUMENT_PLACEHOLDER_PATTERNS as _DOCUMENT_PLACEHOLDER_PATTERNS } from "./detection-patterns";
+import {
+  DOCUMENT_PLACEHOLDER_PATTERNS as _DOCUMENT_PLACEHOLDER_PATTERNS,
+  METADATA_PLACEHOLDER_PATTERNS,
+} from "./detection-patterns";
+// Re-export so existing callers that import METADATA_PLACEHOLDER_PATTERNS from
+// this module continue to work. The canonical declaration lives in
+// detection-patterns.ts — keeping a single source of truth prevents the two
+// copies from drifting (they were byte-for-byte identical before this change).
+export { METADATA_PLACEHOLDER_PATTERNS };
 // Submission-method classification lives in the neutral submission-method-policy
 // module so the policy registry, the canonical field-state resolver, and this
 // completeness gate all share ONE definition (no duplicated regex that could
@@ -42,19 +50,6 @@ import {
   isPhysicalSubmissionMethod,
   isEmailSubmissionMethod,
 } from "./submission-method-policy";
-
-export const METADATA_PLACEHOLDER_PATTERNS: RegExp[] = [
-  /\bbid[\s-]?team\s+to\s+confirm\b/i,
-  /\bto\s+be\s+(?:confirmed|determined|provided|completed|inserted)\b/i,
-  /\b(?:tbd|tbc|tba)\b/i,
-  /\b(?:not\s+provided|not\s+available|not\s+specified|unknown|pending)\b/i,
-  /\bn\/?a\b/i,
-  /\bplaceholder\b/i,
-  /\b(?:insert|add|fill)\b.{0,40}\b(?:here|later|manually)\b/i,
-  /\b\[?fill[\s_-]?in\]?/i,
-  /\bexact\s+site\s+to\s+be\s+determined\b/i,
-  /\bwith\s+consultant'?s\s+assistance\b/i,
-];
 
 // Criticality classification here is kept in lock-step with the canonical
 // tender-policy registry (lib/engine/tender-policy-registry.ts), which imports

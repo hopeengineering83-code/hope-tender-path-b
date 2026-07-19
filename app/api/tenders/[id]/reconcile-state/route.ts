@@ -21,18 +21,24 @@ export async function POST(
 
     const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, actor.id);
 
-    // Explicitly update tender stage/status based on resolved truth
-    let status = undefined;
+    // Explicitly update tender stage/status based on resolved truth.
+    // Update status AND analysisExtractionStatus atomically so the two
+    // denormalized columns cannot disagree. Previously this route set
+    // status="ANALYZED" but left a stale analysisExtractionStatus (e.g.
+    // "OCR_REQUIRED"), causing export-readiness.ts to see a mismatch.
+    const data: { updatedAt: Date; status?: string; analysisExtractionStatus?: string } = {
+        updatedAt: new Date(),
+    };
     if (analysisInfo.state === "AI_SUCCEEDED") {
-        status = "ANALYZED";
+        data.status = "ANALYZED";
+        // Set analysisExtractionStatus to the AI-analyzed terminal state so
+        // it matches the resolved analysis state.
+        data.analysisExtractionStatus = "FULL_EXTRACTION_AI_ANALYZED";
     }
 
     await prisma.tender.update({
         where: { id: tenderId },
-        data: {
-            updatedAt: new Date(),
-            ...(status ? { status } : {})
-        }
+        data,
     });
 
     await logAction({

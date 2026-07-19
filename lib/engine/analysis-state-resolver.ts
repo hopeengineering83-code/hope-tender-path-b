@@ -17,6 +17,7 @@
 
 import { prisma } from "@/lib/prisma";
 import type { PrismaClient } from "@prisma/client";
+import { redactSecrets } from "../sanitize-error";
 
 export const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
 
@@ -105,11 +106,11 @@ export interface DeriveAnalysisStateInput {
 
 /** Redact API keys and obvious secrets from a free-text error for safe UI display. */
 function redactSafe(message: string): string {
-  return message
-    .replace(/sk-[a-zA-Z0-9-]+/g, "[KEY]")
-    .replace(/(api[_-]?key\s*[=:]\s*)\S+/gi, "$1[KEY]")
-    .replace(/Bearer\s+\S+/gi, "Bearer [KEY]")
-    .slice(0, 200);
+  // Delegate to the canonical redactSecrets() helper so the redaction
+  // patterns cannot diverge from the other 4 call sites. Previously this
+  // used a weaker regex (/sk-[a-zA-Z0-9-]+/g — no underscore, no min length)
+  // that could miss short keys or false-positive on legitimate strings.
+  return redactSecrets(message).slice(0, 200);
 }
 
 /** Parse the staged result's analysisSource without throwing on malformed JSON. */
