@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - fix/pr1175-dead-broken-overlap-audit-replacement
+  workflow_dispatch:
 
 permissions:
   actions: write
