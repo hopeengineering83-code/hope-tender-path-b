@@ -1,0 +1,208 @@
+name: Complete PR 1175 gap closure
+
+on:
+  pull_request:
+    branches:
+      - release/consolidated-recovery-20260717
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr1175-complete-gap-closure-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  repair-validate-publish:
+    if: github.event.pull_request.head.ref == 'agent/pr1175-complete-gap-closure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hope_gap_closure
+          POSTGRES_DB: hope_gap_closure
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hope_gap_closure -d hope_gap_closure"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://hope_gap_closure@127.0.0.1:5432/hope_gap_closure?schema=public
+      SESSION_SECRET: gap-closure-session-${{ github.run_id }}-${{ github.run_attempt }}
+      NEXTAUTH_SECRET: gap-closure-nextauth-${{ github.run_id }}-${{ github.run_attempt }}
+      GEMINI_API_KEY: validation-placeholder-not-used-at-runtime
+      ANTHROPIC_API_KEY: ""
+      OPENAI_API_KEY: ""
+      GROQ_API_KEY: ""
+      DEEPSEEK_API_KEY: ""
+      RUN_DB_INTEGRATION: "true"
+
+    steps:
+      - name: Checkout exact repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/pr1175-complete-gap-closure
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Apply assertion-checked product repair
+        run: bash scripts/pr1175-complete-gap-closure.sh
+
+      - name: Remove temporary automation before product validation
+        run: |
+          rm -f .github/workflows/pr1175-complete-gap-closure.yml
+          rm -f scripts/pr1175-complete-gap-closure.sh
+
+      - name: Verify exact intended product scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/expected-files <<'EOF'
+          app/api/company/experts/[id]/route.ts
+          app/api/company/projects/[id]/route.ts
+          app/api/tenders/[id]/ai-rematch/route.ts
+          lib/engine/matching-eligibility.ts
+          lib/engine/matching.ts
+          lib/engine/run-tender-engine.ts
+          scripts/capture-production-pages.mjs
+          scripts/seed-e2e-user.mjs
+          tests/matching-fail-closed-negative-tests.test.ts
+          tests/matching-relevance-gates.test.ts
+          tests/matching-strict-domain.test.ts
+          tests/pr1175-final-gap-repair.test.ts
+          tests/vault-review-route-postgres.test.ts
+          EOF
+          sed -i 's/^          //' /tmp/expected-files
+          sort -o /tmp/expected-files /tmp/expected-files
+          git diff --name-only bfe688c22c89afbe1ce40d5aa1ab183ba44d25d2 | sort > /tmp/actual-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          test ! -e .github/workflows/pr1175-complete-gap-closure.yml
+          test ! -e scripts/pr1175-complete-gap-closure.sh
+          ! git diff -- lib/engine/matching.ts | grep -F 'let eligible = strictEligible.length > 0'
+          git diff -- lib/engine/matching.ts | grep -F 'const eligible = strictEligible.length > 0'
+          git diff -- lib/engine/matching.ts | grep -F 'checkMatchingEligibility'
+
+      - name: Validate Prisma schema and migrations
+        shell: bash
+        run: |
+          set -o pipefail
+          npx prisma validate 2>&1 | tee /tmp/prisma-validate.log
+          npx prisma generate 2>&1 | tee /tmp/prisma-generate.log
+          npx prisma migrate deploy 2>&1 | tee /tmp/prisma-migrate.log
+          npm run db:check-critical-schema 2>&1 | tee /tmp/critical-schema.log
+          npx prisma migrate diff \
+            --from-schema-datasource prisma/schema.prisma \
+            --to-schema-datamodel prisma/schema.prisma \
+            --exit-code 2>&1 | tee /tmp/prisma-zero-drift.log
+
+      - name: Run focused provenance and matching regressions
+        shell: bash
+        run: |
+          set -o pipefail
+          npx tsx --test \
+            tests/matching-fail-closed-negative-tests.test.ts \
+            tests/matching-relevance-gates.test.ts \
+            tests/matching-strict-domain.test.ts \
+            tests/pr1175-final-gap-repair.test.ts \
+            tests/vault-review-route-postgres.test.ts \
+            2>&1 | tee /tmp/focused-tests.log
+
+      - name: Audit release integrity
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run audit:release-integrity 2>&1 | tee /tmp/release-integrity.log
+
+      - name: Typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee /tmp/typecheck.log
+
+      - name: Lint
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee /tmp/lint.log
+
+      - name: Run complete PostgreSQL test suite
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee /tmp/full-tests.log
+
+      - name: Build production application
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee /tmp/production-build.log
+
+      - name: Reverify fail-closed contracts after full validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'const SELECTION_THRESHOLD = 0.75' lib/engine/matching.ts
+          grep -Fq 'const eligible = strictEligible.length > 0' lib/engine/matching.ts
+          ! grep -Fq 'let eligible = strictEligible.length > 0' lib/engine/matching.ts
+          ! grep -Fq 'candidates.slice(0, Math.min(limit, candidates.length))' lib/engine/matching.ts
+          grep -Fq 'canUseVaultRecord' lib/engine/matching-eligibility.ts
+          grep -Fq 'persistenceAtomic: true' 'app/api/tenders/[id]/ai-rematch/route.ts'
+          grep -Fq 'isDurablyReviewed' lib/engine/run-tender-engine.ts
+          git diff --name-only bfe688c22c89afbe1ce40d5aa1ab183ba44d25d2 | sort > /tmp/actual-files-final
+          diff -u /tmp/expected-files /tmp/actual-files-final
+
+      - name: Commit validated ordinary product files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+          git diff --cached --quiet && { echo 'No validated product diff was produced.'; exit 1; }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: close final provenance and rematch gaps'
+          git push origin HEAD:agent/pr1175-complete-gap-closure
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr1175-complete-gap-closure-diagnostics
+          path: |
+            /tmp/expected-files
+            /tmp/actual-files
+            /tmp/actual-files-final
+            /tmp/prisma-validate.log
+            /tmp/prisma-generate.log
+            /tmp/prisma-migrate.log
+            /tmp/critical-schema.log
+            /tmp/prisma-zero-drift.log
+            /tmp/focused-tests.log
+            /tmp/release-integrity.log
+            /tmp/typecheck.log
+            /tmp/lint.log
+            /tmp/full-tests.log
+            /tmp/production-build.log
+            lib/engine/matching.ts
+            lib/engine/matching-eligibility.ts
+            app/api/tenders/[id]/ai-rematch/route.ts
+          if-no-files-found: warn
+          retention-days: 7
