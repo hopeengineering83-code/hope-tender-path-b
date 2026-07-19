@@ -60,6 +60,27 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Disambiguate repeated matching patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/repair-pr1175-final-gaps.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''    if count != 1:
+              raise RuntimeError(f"{path}: expected one occurrence, found {count}: {old[:100]!r}")
+          '''
+          new = '''    if count != 1:
+              if path == "lib/engine/matching.ts" and old.startswith("      const trustLabel = trustLevelLabel(trustLevel);") and count == 2:
+                  write(path, text.replace(old, new, 1))
+                  return
+              raise RuntimeError(f"{path}: expected one occurrence, found {count}: {old[:100]!r}")
+          '''
+          if old not in text:
+              raise SystemExit("replace_once assertion block not found")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+
       - name: Apply assertion-checked repair
         id: repair
         continue-on-error: true
