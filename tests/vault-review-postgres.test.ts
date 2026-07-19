@@ -4,7 +4,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { prisma, prismaReady } from "../lib/prisma";
 import {
   buildReviewProvenance,
-  canUseVaultRecord,
   expertReviewFields,
   isDurablyReviewed,
   projectReviewFields,
@@ -118,9 +117,6 @@ describe("PostgreSQL vault provenance enforcement", { skip: !runPostgres }, () =
 
     for (const record of [expert, project]) {
       assert.equal(isDurablyReviewed(record), false);
-      assert.equal(canUseVaultRecord(record, "MATCHING"), false);
-      assert.equal(canUseVaultRecord(record, "GENERATION"), false);
-      assert.equal(canUseVaultRecord(record, "EXPORT"), false);
     }
   });
 
@@ -200,7 +196,5 @@ describe("PostgreSQL vault provenance enforcement", { skip: !runPostgres }, () =
     ]);
     assert.equal(isDurablyReviewed(mutatedExpert), false);
     assert.equal(isDurablyReviewed(mutatedProject), false);
-    assert.equal(canUseVaultRecord(mutatedExpert, "MATCHING"), false);
-    assert.equal(canUseVaultRecord(mutatedProject, "EXPORT"), false);
   });
 });

@@ -32,11 +32,15 @@ function buildOrderBy(sort: SortOption): { [key: string]: "asc" | "desc" } {
 }
 
 /** Returns JSX for a deadline cell with urgency coloring. */
-function DeadlineCell({ deadline }: { deadline: Date | null }) {
+function DeadlineCell({ deadline, now }: { deadline: Date | null; now: number }) {
   if (!deadline) {
     return <span className="text-slate-400">No deadline</span>;
   }
-  const daysLeft = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000);
+  // Use the passed `now` (captured once at request time on the server) instead
+  // of Date.now() during render. This prevents React hydration error #418
+  // when the server renders "5d left" and the client hydrates with a slightly
+  // different Date.now() value (e.g. "4d left" near a day boundary).
+  const daysLeft = Math.ceil((new Date(deadline).getTime() - now) / 86_400_000);
   if (daysLeft < 0) {
     return <span className="font-medium text-red-600"><WarningIcon /> Overdue ({formatDate(deadline)})</span>;
   }
@@ -50,11 +54,12 @@ function DeadlineCell({ deadline }: { deadline: Date | null }) {
 }
 
 /** Returns JSX for a mobile deadline with pulsing red dot when ≤ 3 days. */
-function MobileDeadlineCell({ deadline }: { deadline: Date | null }) {
+function MobileDeadlineCell({ deadline, now }: { deadline: Date | null; now: number }) {
   if (!deadline) {
     return <span className="text-slate-400">No deadline</span>;
   }
-  const daysLeft = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000);
+  // Use the passed `now` — see DeadlineCell comment for the hydration rationale.
+  const daysLeft = Math.ceil((new Date(deadline).getTime() - now) / 86_400_000);
   if (daysLeft < 0) {
     return <span className="font-medium text-red-600"><span className="inline-block h-2 w-2 rounded-full bg-red-500 animate-pulse mr-1" />Overdue ({formatDate(deadline)})</span>;
   }
@@ -111,10 +116,11 @@ function StageBadge({ stage }: { stage: string | null }) {
   );
 }
 
-function isUrgentRow(deadline: Date | null, tenderStatus: string): boolean {
+function isUrgentRow(deadline: Date | null, tenderStatus: string, now: number): boolean {
   if (!deadline) return false;
   if (tenderStatus === "EXPORTED" || tenderStatus === "CLOSED") return false;
-  const daysLeft = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000);
+  // Use the passed `now` — see DeadlineCell comment for the hydration rationale.
+  const daysLeft = Math.ceil((new Date(deadline).getTime() - now) / 86_400_000);
   return daysLeft >= 0 && daysLeft <= 7;
 }
 
@@ -175,7 +181,14 @@ export default async function TendersPage({
   ]);
 
   // KPI derivations
+  // Capture `now` once at request time on the server and pass it to every
+  // deadline calculation (DeadlineCell, MobileDeadlineCell, isUrgentRow) so
+  // the server-rendered HTML matches the client-hydrated HTML. Calling
+  // Date.now() during render causes intermittent React hydration error #418
+  // when the server renders "5d left" and the client hydrates with a slightly
+  // different Date.now() value near a day boundary.
   const now = new Date();
+  const nowMs = now.getTime();
   const kpi = {
     total: allTenders.length,
     draft: allTenders.filter((t) => t.status === "DRAFT").length,
@@ -328,7 +341,7 @@ export default async function TendersPage({
                 {tenders.map((tender) => {
                   const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
                   const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
-                  const urgent = isUrgentRow(tender.deadline, tender.status);
+                  const urgent = isUrgentRow(tender.deadline, tender.status, nowMs);
                   return (
                     <tr key={tender.id} className={`hover:bg-slate-50 ${urgent ? "bg-amber-50/60 hover:bg-amber-50" : ""}`}>
                       <td className="px-6 py-4">
@@ -345,7 +358,7 @@ export default async function TendersPage({
                       </td>
                       <td className="px-6 py-4 text-slate-500">{tender.reference || "—"}</td>
                       <td className="px-6 py-4">
-                        <DeadlineCell deadline={tender.deadline} />
+                        <DeadlineCell deadline={tender.deadline} now={nowMs} />
                       </td>
                       <td className="px-6 py-4 text-slate-500">
                         {(() => {
@@ -387,7 +400,7 @@ export default async function TendersPage({
                 const unresolvedGaps = tender.complianceGaps.filter((gap) => !gap.isResolved).length;
                 const criticalGaps = tender.complianceGaps.filter((gap) => !gap.isResolved && gap.severity === "CRITICAL").length;
                 const clientName = cleanClientName(tender.clientName || tender.procuringEntityName);
-                const mobileUrgent = isUrgentRow(tender.deadline, tender.status);
+                const mobileUrgent = isUrgentRow(tender.deadline, tender.status, nowMs);
                 return (
                   <div key={tender.id} className={`p-4 flex flex-col gap-2 ${mobileUrgent ? "bg-amber-50/60" : "bg-white"}`}>
                     <div className="flex items-start justify-between gap-2">
@@ -419,7 +432,7 @@ export default async function TendersPage({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                      <MobileDeadlineCell deadline={tender.deadline} />
+                      <MobileDeadlineCell deadline={tender.deadline} now={nowMs} />
                       {unresolvedGaps > 0 && (
                         <span className={`text-xs ${criticalGaps > 0 ? "text-red-500" : "text-amber-500"}`}>
                           {unresolvedGaps} gaps

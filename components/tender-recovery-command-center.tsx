@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
+import { subscribeTenderWorkflowSync, emitTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
@@ -335,6 +336,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
         setApprovalNote("");
         await load();
         router.refresh();
+        emitTenderWorkflowSync({ tenderId, source: "recovery-command-center" });
         return;
       }
 
@@ -353,6 +355,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
       if (spec.kind === "refresh") {
         await load();
         router.refresh();
+        emitTenderWorkflowSync({ tenderId, source: "recovery-command-center" });
         setActionMsg("Readiness re-checked. Review the command center and export-readiness panels for current blockers.");
         return;
       }
@@ -363,6 +366,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
           setActionMsg(msg);
           await load();
           router.refresh();
+        emitTenderWorkflowSync({ tenderId, source: "recovery-command-center" });
           return;
         }
         const fetchOptions: RequestInit = {
@@ -401,17 +405,20 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
             const blockerCode = json.evidenceMatchingBlocker?.code ?? "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED";
             await load();
             router.refresh();
+        emitTenderWorkflowSync({ tenderId, source: "recovery-command-center" });
             setActionMsg(`Engine did NOT complete fully. ${blockerText} Next: ${nextLabel}. (Code: ${blockerCode})`);
             return;
           }
           const refreshed = await load();
           router.refresh();
+        emitTenderWorkflowSync({ tenderId, source: "recovery-command-center" });
           setActionMsg(engineFollowUpMessage(refreshed));
           return;
         }
         setActionMsg(messageForApiAction(action, json));
         await load();
         router.refresh();
+        emitTenderWorkflowSync({ tenderId, source: "recovery-command-center" });
         if (action === "RESOLVE_EXPORT_BLOCKERS" || action === "EXPORT_READINESS") {
           document.getElementById("export-readiness")?.scrollIntoView({ behavior: "smooth" });
         }
@@ -482,6 +489,21 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
   }, [tenderId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Subscribe to cross-panel workflow sync events so this panel refreshes
+  // when any other panel takes an action (e.g., workflow center runs AI Analyze).
+  // Also emit after our own actions so other panels refresh.
+  useEffect(() => {
+    return subscribeTenderWorkflowSync(tenderId, () => { void load(); });
+  }, [tenderId, load]);
+
+  // Poll every 15s when tab is visible for background job completion
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!document.hidden) void load();
+    }, 15_000);
+    return () => clearInterval(interval);
+  }, [load]);
 
   if (loading) {
     return (

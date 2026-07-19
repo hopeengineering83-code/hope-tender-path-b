@@ -9,7 +9,7 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { assessExtractionQuality } from "../../../../../lib/extraction/tender-extraction-quality";
+import { assessTenderExtractionQuality } from "../../../../../lib/extraction/tender-extraction-quality";
 import { safeTextPreview } from "../../../../../lib/extraction/tender-source-integrity";
 import { classifyMultiFilePack } from "../../../../../lib/extraction/tender-file-classifier";
 
@@ -72,7 +72,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }));
 
   // Assess extraction quality
-  const quality = assessExtractionQuality({
+  const quality = assessTenderExtractionQuality({
     tenderId,
     files: files.map((f) => ({
       fileId: f.id,

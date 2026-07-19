@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
-import { getJob as getMemoryJob } from "../../../../lib/job-store";
+import { getInMemoryJob as getMemoryJob } from "../../../../lib/job-store";
 import { getJob as getDurableJob } from "../../../../lib/ai-jobs";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 

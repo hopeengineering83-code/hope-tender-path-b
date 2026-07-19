@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { CheckIcon, WarningIcon, ClockIcon, BoltIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon } from "./icons";
+import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -117,6 +118,12 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || retryingAnalysis || repairingSource || reclassifying || deduplicating || repairingAssets;
+
+  // Subscribe to cross-panel workflow sync so this panel refreshes when
+  // other panels (workflow center, recovery center) take actions.
+  useEffect(() => {
+    return subscribeTenderWorkflowSync(tenderId, () => { void refresh(); });
+  }, [tenderId]);
 
   async function refresh() {
     setLoading(true);
