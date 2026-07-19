@@ -14,7 +14,7 @@ import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-outpu
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
 import { extractRequestId } from "../../../../../lib/request-id";
-import { createJob, advanceJob, completeJob, failJob } from "../../../../../lib/job-store";
+import { createJob, advanceJob, completeInMemoryJob, failInMemoryJob } from "../../../../../lib/job-store";
 import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time, logger } from "../../../../../lib/observability";
@@ -1104,7 +1104,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
     const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount };
-    completeJob(job.id, jobResult);
+    completeInMemoryJob(job.id, jobResult);
     void createNotification({ userId, type: "TENDER_GENERATED", title: `Documents generated for "${tender.title}"`, body: `${(updatedTender?.generatedDocuments ?? []).length} document(s) ready for review.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });
     // Extract quality score and axis scores from contentSummary so the UI
     // doesn't need to parse a text string — structured fields are more reliable.
@@ -1116,7 +1116,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     try { axisScoresValue = aMatch ? JSON.parse(aMatch[1]) as Record<string, number> : null; } catch { axisScoresValue = null; }
     return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, readiness: readiness.totals, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, qualityScore: qualityScoreValue, axisScores: axisScoresValue, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null, sourceDrivenDetail: { tenderId: sourceDrivenDetail.tenderId, extractedCount: sourceDrivenDetail.extractedCount, missingRelevantCount: sourceDrivenDetail.missingRelevantCount, coverageRatio: sourceDrivenDetail.coverageRatio, submissionMethod: sourceDrivenDetail.submissionMethod, requiresDeadline: sourceDrivenDetail.requiresDeadline, requiresEmailEndpoint: sourceDrivenDetail.requiresEmailEndpoint, requiresPhysicalAddress: sourceDrivenDetail.requiresPhysicalAddress }, operationGate: { ok: operationGate.ok, warnings: operationGate.warnings, placeholderFields: operationGate.placeholderFields }, ...(metadataOverrideLookupFailed ? { metadataOverrideLookupFailed: true, metadataOverrideLookupWarning: "TenderMetadataOverride table is not yet available — run database migration." } : {}) });
   } catch (error) {
-    failJob(job.id, error instanceof Error ? error.message : String(error));
+    failInMemoryJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
     const mapped = mapGenerationError(error, { failedStage: "GENERATION_PIPELINE" });
     return NextResponse.json(

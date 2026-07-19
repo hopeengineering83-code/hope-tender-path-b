@@ -124,13 +124,24 @@ export async function buildTenderAnalysisContent(
 }
 
 /**
- * Compute deterministic hash of content.
+ * Compute deterministic hash of a TenderAnalysisContent object.
+ *
+ * Renamed from `computeAnalysisContentHash` to
+ * `computeTenderAnalysisContentHash` to disambiguate from the
+ * string-input `computeAnalysisContentHash` in
+ * lib/engine/tender-analysis-content.ts (which is the canonical
+ * 16-char truncated hash used by the checkpoint system). This variant
+ * takes the structured TenderAnalysisContent object and returns the
+ * full 64-char hex hash.
+ *
+ * Backward-compat alias `computeAnalysisContentHash` is preserved at
+ * the bottom of the file so existing imports continue to work.
  *
  * Returns a stable hex-encoded SHA-256 hash.
  * Same content → same hash.
  * Different content → different hash.
  */
-export function computeAnalysisContentHash(content: TenderAnalysisContent): string {
+export function computeTenderAnalysisContentHash(content: TenderAnalysisContent): string {
   // Serialize content in a stable order
   const serialized = JSON.stringify(content, null, 0); // No whitespace for determinism
   return crypto.createHash("sha256").update(serialized).digest("hex");
@@ -156,6 +167,13 @@ export async function buildAndHashTenderAnalysisContent(
   prismaClient: PrismaClient,
 ): Promise<{ content: TenderAnalysisContent; hash: string }> {
   const content = await buildTenderAnalysisContent(tenderId, userId, prismaClient);
-  const hash = computeAnalysisContentHash(content);
+  const hash = computeTenderAnalysisContentHash(content);
   return { content, hash };
 }
+
+// Backward-compat alias — preserved so existing imports
+// `computeAnalysisContentHash` from this module continue to work. New code
+// should prefer the explicit `computeTenderAnalysisContentHash` name to
+// avoid confusion with the string-input `computeAnalysisContentHash` in
+// lib/engine/tender-analysis-content.ts.
+export const computeAnalysisContentHash = computeTenderAnalysisContentHash;

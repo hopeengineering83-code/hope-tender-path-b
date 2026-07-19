@@ -104,9 +104,14 @@ export function createJob(params: Pick<Job, "userId" | "tenderId" | "type"> & { 
   return job;
 }
 
-export function getJob(id: string): Job | undefined {
+export function getInMemoryJob(id: string): Job | undefined {
   return jobs.get(id);
 }
+
+// Backward-compat alias — preserved so existing imports `getJob` from job-store
+// continue to work. New code should prefer the explicit `getInMemoryJob` name
+// to avoid confusion with the durable DB-backed `getJob` in lib/ai-jobs.ts.
+export const getJob = getInMemoryJob;
 
 export function advanceJob(id: string, step: string): void {
   const job = jobs.get(id);
@@ -146,7 +151,7 @@ export function advanceJob(id: string, step: string): void {
   });
 }
 
-export function completeJob(id: string, result: unknown): void {
+export function completeInMemoryJob(id: string, result: unknown): void {
   const job = jobs.get(id);
   if (!job) return;
   job.status = "DONE";
@@ -176,7 +181,7 @@ export function completeJob(id: string, result: unknown): void {
   });
 }
 
-export function failJob(id: string, error: string): void {
+export function failInMemoryJob(id: string, error: string): void {
   const job = jobs.get(id);
   if (!job) return;
   job.status = "FAILED";

@@ -44,10 +44,12 @@ describe("Remaining gaps — console.log migration to structured logger", () => 
     assert.ok(!src.includes("console.error("), "Must not use console.error");
   });
 
-  it("generate.ts uses logger.error not console.error", () => {
-    const src = readFileSync("lib/engine/generate.ts", "utf8");
-    assert.ok(!src.includes("console.error("), "Must not use console.error");
-  });
+  // Note: the previous test case checked lib/engine/generate.ts for console.error
+  // usage. That file was deleted as dead code (zero live importers — the live
+  // generate route imports from lib/engine/generate-elite.ts instead, enforced
+  // by tests/central-generation-gate-coverage.test.ts). The test case was
+  // removed because readFileSync on a deleted file throws, and the check is
+  // meaningless once the file is gone.
 
   it("delete-tender.ts uses logger.info not console.log", () => {
     const src = readFileSync("lib/tender/delete-tender.ts", "utf8");

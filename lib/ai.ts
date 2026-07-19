@@ -1,4 +1,5 @@
 import { logger } from "./observability";
+import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, isZaiConfigured, getZaiBaseUrl, getCerebrasApiKey, isCerebrasConfigured, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
@@ -83,12 +84,14 @@ function getModel(modelName = DEFAULT_GEMINI_MODEL) {
 }
 
 export function isAIEnabled() {
-  // ALL 10 AI providers are part of the automatic fallback chain:
-  // Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
-  // Together → DeepSeek → Anthropic.
-  // Anthropic is emergency-only (last resort) but still counts toward
-  // "AI enabled" because it IS part of the automatic chain.
-  return isZaiEnabled() || isCerebrasEnabled() || isMistralEnabled() || isGroqEnabled() || isOpenRouterEnabled() || isGeminiEnabled() || isOpenAIEnabled() || isTogetherEnabled() || isDeepSeekEnabled() || isClaudeEnabled();
+  // Delegate to the canonical env-check implementation so there is a single
+  // source of truth for "is at least one AI provider configured?". The
+  // previous implementation re-derived the answer from per-provider helpers
+  // (isZaiEnabled || isCerebrasEnabled || ...) which could diverge from
+  // env-check's isAIConfigured if a new provider was added to one but not
+  // the other. env-check is authoritative because it is the module that
+  // throws at startup if no provider is configured in production.
+  return isAIConfigured();
 }
 
 export function isClaudeEnabled() {
