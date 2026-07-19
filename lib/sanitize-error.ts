@@ -24,11 +24,11 @@ import { getCurrentRequestId } from "./request-id";
 export function redactSecrets(text: string): string {
   return text
     // OpenAI / Anthropic / Groq sk- keys (min 10 chars after prefix)
-    .replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]")
+    .replace(/sk-[a-zA-Z0-9_-]{8,}/g, "[KEY_REDACTED]")
     // Google AIza keys (min 30 chars)
-    .replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
+    .replace(/AIza[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
     // Bearer tokens
-    .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+    .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     // Anthropic ant- keys
     .replace(/ant-[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
     // OpenAI org-/proj- keys
@@ -42,7 +42,7 @@ export function redactSecrets(text: string): string {
     // Vercel Blob tokens
     .replace(/vercel_blob_[a-zA-Z0-9_-]{20,}/gi, "[KEY_REDACTED]")
     // api_key= query params
-    .replace(/api_key=[a-zA-Z0-9_-]{10,}/gi, "api_key=[KEY_REDACTED]")
+    .replace(/(api[_-]?key\s*[:=]\s*)[^\s&,;]+/gi, "$1[KEY_REDACTED]")
     // Database connection strings
     .replace(/postgres(?:ql)?:\/\/[^\s"]+/gi, "postgresql://[redacted]")
     .replace(/(mongodb(?:\+srv)?|mysql|redis):\/\/[^\s"]+/gi, "$1://[redacted]");

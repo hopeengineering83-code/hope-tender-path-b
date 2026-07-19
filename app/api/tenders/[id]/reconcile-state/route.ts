@@ -15,30 +15,19 @@ export async function POST(
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const { id: tenderId } = await params;
-
-    // Ensure the runtime schema bootstrap has completed before any DB query.
     await prismaReady;
 
     const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, actor.id);
 
-    // Explicitly update tender stage/status based on resolved truth.
-    // Update status AND analysisExtractionStatus atomically so the two
-    // denormalized columns cannot disagree. Previously this route set
-    // status="ANALYZED" but left a stale analysisExtractionStatus (e.g.
-    // "OCR_REQUIRED"), causing export-readiness.ts to see a mismatch.
-    const data: { updatedAt: Date; status?: string; analysisExtractionStatus?: string } = {
-        updatedAt: new Date(),
-    };
-    if (analysisInfo.state === "AI_SUCCEEDED") {
-        data.status = "ANALYZED";
-        // Set analysisExtractionStatus to the AI-analyzed terminal state so
-        // it matches the resolved analysis state.
-        data.analysisExtractionStatus = "FULL_EXTRACTION_AI_ANALYZED";
-    }
-
+    // Reconcile workflow status only. Extraction quality is an independent
+    // source-file fact: AI success does not prove OCR or page extraction was complete.
+    const status = analysisInfo.state === "AI_SUCCEEDED" ? "ANALYZED" : undefined;
     await prisma.tender.update({
-        where: { id: tenderId },
-        data,
+      where: { id: tenderId },
+      data: {
+        updatedAt: new Date(),
+        ...(status ? { status } : {}),
+      },
     });
 
     await logAction({
@@ -49,10 +38,7 @@ export async function POST(
       description: `Owner triggered state reconciliation. Resolved state: ${analysisInfo.state}`,
     });
 
-    return NextResponse.json({
-      ok: true,
-      analysisInfo
-    });
+    return NextResponse.json({ ok: true, analysisInfo });
   } catch (error) {
     logger.error("[reconcile-state]", { detail: error });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

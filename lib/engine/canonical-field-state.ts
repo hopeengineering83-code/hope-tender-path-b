@@ -497,21 +497,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       || (fieldKey === "evaluationCriteria" && f.semanticKey === "evaluationMethodology")
     );
     let ledgerAuthorityState: string | null = null;
-    // ledgerOverridesValue is tracked as an explicit contract marker — the
-    // resolver does not currently branch on it (the ledger substitution
-    // into rawValue above is the behavioral contract). It is retained so
-    // tests/tender-facts-ledger-runtime-authority.test.ts can verify the
-    // resolver remains wired to the ledger-fact lookup path that overrides
-    // the scalar rawValue. Removing the flag would sever that contract
-    // assertion without changing runtime behavior.
-    let ledgerOverridesValue = false;
     if (ledgerFact) {
       const ls = ledgerFact.authorityState.toUpperCase();
       if (ls === "SOURCE_GROUNDED_CONFIRMED" || ls === "HUMAN_CONFIRMED_OPERATIONAL" || ls === "CANDIDATE_NEEDS_REVIEW") {
         // Ledger provides the authoritative value
         if (ledgerFact.normalizedValue !== null) {
           rawValue = ledgerFact.normalizedValue;
-          ledgerOverridesValue = true;
         }
         ledgerAuthorityState = ls;
       } else if (ls === "NOT_APPLICABLE") {
@@ -692,13 +683,6 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     // (handled above at lines 562-571) — when no requirements are
     // extracted at all, the draft has nothing to work with.
     const draftHardBlockReasons = false;
-
-    // valueDrivenUngroundedBlock is explicitly disabled — the authority model
-    // (auditSufficientForFinal) handles this via the exportEligible flag below,
-    // not by valueDrivenUngroundedBlock. Kept as an explicit `false` so the
-    // source contract test (tests/tender-fact-authority.test.ts) can verify
-    // the old ungrounded-value block is permanently off.
-    const valueDrivenUngroundedBlock = false;
 
     // FINAL: blocked by missing critical field, manual value without
     // sufficient audit, contamination, placeholder, invalid format, or

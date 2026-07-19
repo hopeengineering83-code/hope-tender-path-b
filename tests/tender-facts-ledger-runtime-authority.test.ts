@@ -169,7 +169,7 @@ describe("metadata override — writes ledger mutations", () => {
     const src = read("app/api/tenders/[id]/metadata-override/route.ts");
     assert.ok(src.includes("upsertTenderFactFromManualOverride"), "must import upsertTenderFactFromManualOverride");
     assert.ok(src.includes("markTenderFactNotApplicable"), "must import markTenderFactNotApplicable");
-    assert.ok(src.includes("rejectInvalidTenderFact"), "must import rejectInvalidTenderFact");
+    assert.ok(!src.includes("rejectInvalidTenderFact"), "must not retain an unused rejection import");
   });
 
   it("USER_EDITED writes USER_EDITED ledger fact with value/user/timestamp", () => {
@@ -316,7 +316,7 @@ describe("canonical-field-state — ledger authority", () => {
   it("resolver prefers ledger fact over scalar rawValue", () => {
     const src = read("lib/engine/canonical-field-state.ts");
     assert.ok(src.includes("input.ledgerFacts?.find"), "must look up ledger facts");
-    assert.ok(src.includes("ledgerOverridesValue"), "must track when ledger overrides value");
+    assert.ok(!src.includes("ledgerOverridesValue"), "must not retain a write-only ledger marker");
     assert.ok(src.includes("rawValue = ledgerFact.normalizedValue"), "must use ledger value over scalar");
   });
 
