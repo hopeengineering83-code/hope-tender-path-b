@@ -27,34 +27,13 @@ jobs:
           ref: fix/pr1175-dead-broken-overlap-audit-replacement
           fetch-depth: 0
 
-      - name: Run correction script with captured diagnostics
+      - name: Apply idempotent replacement corrections
         shell: bash
         run: |
           set -euo pipefail
-          set +e
-          python .github/pr1209-apply.py > /tmp/pr1209-fix.log 2>&1
-          status=$?
-          set -e
-          cat /tmp/pr1209-fix.log
-          printf '%s\n' "$status" > /tmp/pr1209-fix-status
-
-      - name: Upload correction diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr1209-fix-diagnostics-${{ github.sha }}
-          path: |
-            /tmp/pr1209-fix.log
-            /tmp/pr1209-fix-status
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Require successful corrections and clean temporary files
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(cat /tmp/pr1209-fix-status)" = "0"
+          python .github/pr1209-run-idempotent.py
           rm -f .github/pr1209-apply.py
+          rm -f .github/pr1209-run-idempotent.py
           rm -f .github/pr1208-direct-correction-trigger
           rm -f .github/pr1209-run-trigger
           rm -f .github/workflows/pr1209-run-direct-corrections.yml
