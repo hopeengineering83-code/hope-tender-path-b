@@ -29,26 +29,34 @@ jobs:
           python <<'PY'
           from pathlib import Path
           import hashlib
+          import itertools
 
           root = Path('.github/pr1208-patch')
-          expected_sizes = [16000, 16000, 16000, 16000, 15013]
-          chunks = []
-          for index, expected in enumerate(expected_sizes):
-              path = root / f'plain-{index:02d}.patch'
-              data = path.read_bytes()
-              if len(data) == expected + 1 and data.endswith(b'\n'):
-                  data = data[:-1]
-              if len(data) != expected:
-                  raise SystemExit(f'{path}: expected {expected} bytes, found {len(data)}')
-              chunks.append(data)
-
-          patch = b''.join(chunks)
-          digest = hashlib.sha256(patch).hexdigest()
+          parts = [(root / f'plain-{index:02d}.patch').read_bytes() for index in range(5)]
           expected_digest = '3b0d1fe26f866e178bf1b181124fedfe4e44be945f19a8556cc0e84c7915d9e8'
-          if digest != expected_digest:
-              raise SystemExit(f'patch checksum mismatch: {digest} != {expected_digest}')
-          Path('/tmp/pr1208-product.patch').write_bytes(patch)
-          print(f'patch bytes={len(patch)} sha256={digest}')
+
+          for trim_flags in itertools.product((False, True), repeat=len(parts)):
+              chunks = []
+              valid = True
+              for data, trim in zip(parts, trim_flags):
+                  if trim:
+                      if not data.endswith(b'\n'):
+                          valid = False
+                          break
+                      data = data[:-1]
+                  chunks.append(data)
+              if not valid:
+                  continue
+              patch = b''.join(chunks)
+              digest = hashlib.sha256(patch).hexdigest()
+              if digest == expected_digest:
+                  Path('/tmp/pr1208-product.patch').write_bytes(patch)
+                  print(f'patch bytes={len(patch)} sha256={digest} trim_flags={trim_flags}')
+                  break
+          else:
+              lengths = [len(part) for part in parts]
+              digests = [hashlib.sha256(part).hexdigest() for part in parts]
+              raise SystemExit(f'no checksum-valid reconstruction; lengths={lengths}; part_sha256={digests}')
           PY
 
       - name: Apply product fixes and remove temporary transport files
