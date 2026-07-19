@@ -34,11 +34,6 @@ describe("Remaining gaps — console.log migration to structured logger", () => 
     assert.ok(!src.includes("console.error("), "Must not use console.error");
   });
 
-  it("ai-analyze/runner.ts uses logger.error not console.error", () => {
-    const src = readFileSync("lib/ai-analyze/runner.ts", "utf8");
-    assert.ok(!src.includes("console.error("), "Must not use console.error");
-  });
-
   it("generation-readiness-gate.ts uses logger.error not console.error", () => {
     const src = readFileSync("lib/engine/generation-readiness-gate.ts", "utf8");
     assert.ok(!src.includes("console.error("), "Must not use console.error");

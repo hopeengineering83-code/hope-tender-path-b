@@ -172,9 +172,3 @@ export function assessTenderExtractionQuality(args: {
     nextActions,
   };
 }
-
-// Backward-compat alias — preserved so existing imports `assessExtractionQuality` from
-// this module continue to work. New code should prefer the explicit
-// `assessTenderExtractionQuality` name to avoid confusion with the text-level
-// `assessExtractionQuality` in lib/extraction-quality.ts.
-export const assessExtractionQuality = assessTenderExtractionQuality;

@@ -497,14 +497,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       || (fieldKey === "evaluationCriteria" && f.semanticKey === "evaluationMethodology")
     );
     let ledgerAuthorityState: string | null = null;
-    let ledgerOverridesValue = false;
     if (ledgerFact) {
       const ls = ledgerFact.authorityState.toUpperCase();
       if (ls === "SOURCE_GROUNDED_CONFIRMED" || ls === "HUMAN_CONFIRMED_OPERATIONAL" || ls === "CANDIDATE_NEEDS_REVIEW") {
         // Ledger provides the authoritative value
         if (ledgerFact.normalizedValue !== null) {
           rawValue = ledgerFact.normalizedValue;
-          ledgerOverridesValue = true;
         }
         ledgerAuthorityState = ls;
       } else if (ls === "NOT_APPLICABLE") {
@@ -539,19 +537,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
     const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds, activeFiles) && !override) || overrideMatchesGroundedSourceCheck();
 
-    // Value-driven evidence-mandatory fields: the BuildPlan validator
-    // (validateCriticalMetadataEvidenceForBuildPlan, build-plan.ts) enforces
-    // full source evidence whenever these fields carry a VALUE, regardless of
-    // criticality. The resolver must mirror this or the panel shows green
-    // while the gate blocks. reference is always value-driven when present;
-    // submissionEmailSubject is value-driven only when the method is email/portal
-    // (matching the validator's branches).
-    const valueDrivenEvidenceMandatory = !!effectiveStr?.trim() && (
-      fieldKey === "reference" ||
-      (fieldKey === "submissionEmailSubject" &&
-        (isEmailSubmissionMethod(policyCtx.submissionMethod) ||
-         (isPortalSubmissionMethod(policyCtx.submissionMethod) && portalHasEmailCandidate)))
-    );
+    // Value-driven fields are handled by the final-export authority model below;
+    // they do not independently hard-block draft work.
 
     // Determine status
     let status: CanonicalFieldStatus;
@@ -672,9 +659,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     // FINAL export requires SOURCE_GROUNDED OR HUMAN_CONFIRMED_OPERATIONAL
     // (with sufficient audit) on every submission-critical field.
     //
-    // The `valueDrivenEvidenceMandatory` flag (reference, submissionEmailSubject)
-    // previously made these optional fields hard blockers the moment they had
-    // ANY value. Under the authority model, these are operational-warning
+    // Reference and submissionEmailSubject previously became hard blockers
+    // the moment they had ANY value. Under the authority model, these are operational-warning
     // fields — they NEVER block draft work, and only block final export when
     // they have a value but no grounding AND no audit. This removes the
     // "reference number becomes a hard blocker merely because it exists
@@ -683,9 +669,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     const isManualValuePresent = isManualOverride && !!effectiveStr?.trim();
 
     // Value-driven fields no longer hard-block draft work. They may still
-    // block FINAL export if ungrounded AND unaudited — but that's handled
-    // by the exportEligible flag below, not by valueDrivenUngroundedBlock.
-    const valueDrivenUngroundedBlock = false; // Disabled — authority model handles this
+    // block FINAL export if ungrounded AND unaudited through exportEligible below.
 
     // Determine gate eligibility
     const isBlocked = blockerReason !== null;

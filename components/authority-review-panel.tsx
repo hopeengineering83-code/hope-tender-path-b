@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { errorCodeLabel } from "@/lib/ui/human-labels";
-import { RefreshIcon, WarningIcon, CheckCircleIcon, CrossIcon, InfoIcon, ChevronDownIcon } from "./icons";
+import { RefreshIcon, WarningIcon, CheckCircleIcon, CrossIcon, ChevronDownIcon } from "./icons";
 import type {
   AuthorityReviewResult,
   AuthorityBlocker,

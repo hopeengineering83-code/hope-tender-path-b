@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useEffect } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { CheckIcon, WarningIcon, ClockIcon, BoltIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon } from "./icons";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
@@ -119,13 +119,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
 
   const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || retryingAnalysis || repairingSource || reclassifying || deduplicating || repairingAssets;
 
-  // Subscribe to cross-panel workflow sync so this panel refreshes when
-  // other panels (workflow center, recovery center) take actions.
-  useEffect(() => {
-    return subscribeTenderWorkflowSync(tenderId, () => { void refresh(); });
-  }, [tenderId]);
-
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -144,7 +138,11 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
     } finally {
       setLoading(false);
     }
-  }
+  }, [router, tenderId]);
+
+  // Subscribe to cross-panel workflow sync so this panel refreshes when
+  // other panels (workflow center, recovery center) take actions.
+  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void refresh(); }), [refresh, tenderId]);
 
   async function generateMissingPlanned() {
     setGeneratingMissing(true);

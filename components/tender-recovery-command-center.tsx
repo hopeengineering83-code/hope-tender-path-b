@@ -197,7 +197,6 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
       // Versioned-safe contract: API returns { outcomes: [...] } not { repaired: [...] }
       const outcomes: Array<{ field?: string; status?: string }> = Array.isArray(json.outcomes) ? json.outcomes as Array<{ field?: string; status?: string }> : [];
       const repairedFields = outcomes.filter((o) => o.status === "REPAIRED").map((o) => o.field ?? "unknown");
-      const skippedFields = outcomes.filter((o) => o.status === "SKIPPED").map((o) => o.field ?? "unknown");
       // Treat NOT_FOUND, REJECTED, UNRESOLVED, and ERROR as unresolved
       const unresolvedFields = outcomes.filter((o) => o.status === "NOT_FOUND" || o.status === "REJECTED" || o.status === "UNRESOLVED" || o.status === "ERROR").map((o) => o.field ?? "unknown");
       if (repairedFields.length > 0 && unresolvedFields.length === 0) {

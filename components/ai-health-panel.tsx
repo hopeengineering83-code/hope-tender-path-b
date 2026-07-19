@@ -9,7 +9,6 @@ import {
   getCanonicalProviderEntries,
   getProviderModel,
   isProviderConfigured,
-  providerDisplayName,
   openRouterModelValidity,
   CANONICAL_AI_FALLBACK_CHAIN_DISPLAY,
 } from "../lib/ai-provider-registry";

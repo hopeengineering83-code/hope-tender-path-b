@@ -13,7 +13,7 @@ import { describe, it, beforeEach, afterEach } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { evaluateEnv, isAIConfigured } from "../lib/env-check";
+import { evaluateEnv } from "../lib/env-check";
 import { __testing__ as featureFlagTesting } from "../lib/engine/feature-flags";
 import { AI_ANALYSIS_TIMEOUT_MS, AI_PROPOSAL_TIMEOUT_MS } from "../lib/timeout-config";
 

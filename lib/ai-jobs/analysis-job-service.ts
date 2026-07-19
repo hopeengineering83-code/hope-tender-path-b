@@ -7,12 +7,9 @@ import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engin
 import {
   analyzeOneChunkWithRetry,
   chunkTenderContent as aiChunkTenderContent,
-  isProviderExhaustedError,
   mergeAnalysisResults,
   type AIAnalysisResult,
-  type AIRequirement,
-  ANALYSIS_CHUNK_SIZE,
-  ANALYSIS_CHUNK_OVERLAP
+  type AIRequirement
 } from "../ai";
 import { upsertRequirements } from "../engine/stable-requirements";
 import { buildCanonicalAnalysisTenderUpdate } from "../engine/canonical-analysis-update";
@@ -340,21 +337,13 @@ export async function runNextChunk(jobId: string, userId: string) {
           // Non-fatal — in-memory state is still correct for this instance
       });
 
-      // satisfy non-destructive test requirement for preserveAiAnalyzeProgressOnFailure
-      // In the durable system, the catch block inherently preserves progress by leaving
-      // other chunks alone.
+      // This update touches only the failed chunk. Previously succeeded chunks
+      // remain intact and can be reused when the durable job resumes.
   }
 
   return { completed: false };
 }
 
-/**
- * INTEGRITY CHECK: preserveAiAnalyzeProgressOnFailure must remain present
- * for non-destructive analysis checks.
- */
-async function preserveAiAnalyzeProgressOnFailure(jobId: string, results: any) {
-    // legacy marker for tests
-}
 
 function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): RequirementDraft {
     // Source-file attribution: only accept sourceTenderFileId / sourceFileToken

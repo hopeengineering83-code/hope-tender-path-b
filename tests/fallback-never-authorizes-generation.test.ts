@@ -5,7 +5,7 @@ import {
   getStateMessage,
   getTenderAnalysisState,
 } from "../lib/ai-analyze/state-resolver";
-import { computeAnalysisContentHash } from "../lib/ai-analyze/content-hash";
+import { computeTenderAnalysisContentHash } from "../lib/ai-analyze/content-hash";
 
 function mockPrisma(job: Record<string, unknown>, tender?: Record<string, unknown>) {
   return {
@@ -41,7 +41,7 @@ const tenderContentRow = {
   ],
 };
 
-const expectedHash = computeAnalysisContentHash({
+const expectedHash = computeTenderAnalysisContentHash({
   tenderId: "tender-1",
   fileHashes: [
     {

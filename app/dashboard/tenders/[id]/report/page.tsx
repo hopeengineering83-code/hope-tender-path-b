@@ -113,7 +113,6 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
     canonicalReadiness?.ok === true &&
     (canonicalReadiness.tenderLevelBlockers.length === 0);
   const canonicalBlockers = [...(canonicalReadiness?.tenderLevelBlockers ?? [])];
-  const canonicalAdvisories = canonicalReadiness?.advisoryWarnings ?? [];
 
   // ── Currency display (from canonical readiness result) ──────────────
   // Per REVISION_REQUIRED: the report page must NOT call the canonical

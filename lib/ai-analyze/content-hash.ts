@@ -134,9 +134,6 @@ export async function buildTenderAnalysisContent(
  * takes the structured TenderAnalysisContent object and returns the
  * full 64-char hex hash.
  *
- * Backward-compat alias `computeAnalysisContentHash` is preserved at
- * the bottom of the file so existing imports continue to work.
- *
  * Returns a stable hex-encoded SHA-256 hash.
  * Same content → same hash.
  * Different content → different hash.
@@ -170,10 +167,3 @@ export async function buildAndHashTenderAnalysisContent(
   const hash = computeTenderAnalysisContentHash(content);
   return { content, hash };
 }
-
-// Backward-compat alias — preserved so existing imports
-// `computeAnalysisContentHash` from this module continue to work. New code
-// should prefer the explicit `computeTenderAnalysisContentHash` name to
-// avoid confusion with the string-input `computeAnalysisContentHash` in
-// lib/engine/tender-analysis-content.ts.
-export const computeAnalysisContentHash = computeTenderAnalysisContentHash;

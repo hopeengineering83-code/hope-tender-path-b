@@ -12,7 +12,7 @@ import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
+import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus } from "../../../../../lib/engine/extraction-quality-gate";
 import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
 import { safeApiError, newDiagnosticId } from "../../../../../lib/engine/safe-api-error";
 import { attributeMetadataSourceFileId } from "../../../../../lib/engine/metadata-source-attribution";
@@ -22,7 +22,6 @@ import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../../../../../lib/engine/tender-analysis-content";
-import { executeAnalysis } from "../../../../../lib/engine/analysis-orchestrator";
 import { createAnalysisJob } from "../../../../../lib/ai-jobs/analysis-job-service";
 import {
   AiAnalyzeCheckpointPersistenceError,
@@ -997,7 +996,6 @@ async function handleStreamingAnalyze(
             });
             // Non-destructive: stage fallback result without touching canonical tender data.
             const result = analyzeTender(tenderRecord);
-            const diagnosticsLine = formatFallbackDiagnosticsLine(diagnostics);
             const providerDiagnostics = buildProviderDiagnosticsSnapshot();
             // When the AiJob was never created (rare transient DB failure on startup),
             // create a minimal tracking record so the fallback draft can be staged
@@ -1430,7 +1428,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   async function runRegexFallback(errorMessage?: string, diagnostics?: AnalysisFallbackDiagnostics) {
     const result = analyzeTender(tenderRecord);
     const fallbackDiagnostics = diagnostics ?? (errorMessage ? buildAnalysisFallbackDiagnostics(errorMessage) : buildAnalysisFallbackDiagnostics("No AI provider configured"));
-    const diagnosticsLine = formatFallbackDiagnosticsLine(fallbackDiagnostics);
     const providerDiagnostics = buildProviderDiagnosticsSnapshot();
 
     if (nsJobIdForFallback) {

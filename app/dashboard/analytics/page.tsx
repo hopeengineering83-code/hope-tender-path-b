@@ -62,12 +62,6 @@ function qualityTextColor(score: number): string {
   return "text-red-500";
 }
 
-function qualityLabel(score: number): string {
-  if (score >= 80) return "Excellent";
-  if (score >= 60) return "Good";
-  return "Needs work";
-}
-
 // ─── page ─────────────────────────────────────────────────────────────────
 
 export default async function AnalyticsPage() {

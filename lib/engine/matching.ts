@@ -474,36 +474,9 @@ function selectedLimit(requirements: RequirementDraft[], type: string, available
   return Math.min(available, type === "EXPERT" ? 6 : 8);
 }
 
-function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(matches: T[], limit: number): T[] {
-  if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
-
-  // GLM-A2 Issue #1135 Gap #2:
-  // Fail-closed selection: only candidates that meet the canonical
-  // SELECTION_THRESHOLD are ever selected. The previous
-  // code had a below-threshold fallback that force-promoted
-  // candidates to avoid an empty selection set. This violated fail-closed
-  // evidence rules: for strict sectors or absent source-grounded candidates,
-  // selection must remain empty, a blocking evidence gap must be created,
-  // and generation must remain locked.
-  //
-  // The fallback has been removed. Only candidates scoring >= SELECTION_THRESHOLD
-  // (0.75) are selected. If zero candidates clear the threshold, the selection
-  // set is empty — the caller is responsible for creating a blocking evidence
-  // gap and locking generation.
-  let selected = 0;
-  return matches.map((m) => {
-    if (m.score >= SELECTION_THRESHOLD && selected < limit) {
-      selected += 1;
-      return { ...m, isSelected: true };
-    }
-    return { ...m, isSelected: false };
-  });
-}
-
-// ─── Portfolio optimization (Stage 2 selection) ──────────────────────────────
+// ─── Portfolio optimization (authoritative selection) ──────────────────────────────
 //
-// `selectAboveThreshold` (Stage 1) just picks top-N by individual score.
-// That can over-concentrate: e.g., for a healthcare tender it might pick
+// A simple top-N selection can over-concentrate: e.g., for a healthcare tender it might pick
 // 5 experts who all duplicate "structural engineer" capability and miss
 // MEP, biomedical, or healthcare-planning experts that the evaluator
 // specifically wants. Stage 2 below evaluates multiple candidate sets
@@ -677,7 +650,7 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     // exploration that catches alternative seeds we'd otherwise miss.
     const seedIdx = cycle % eligible.length;
     const seed = eligible[seedIdx];
-    const remaining = eligible.filter((c, i) => i !== seedIdx);
+    const remaining = eligible.filter((_, i) => i !== seedIdx);
     const set: PortfolioCandidate<T>[] = [seed];
 
     while (set.length < limit && remaining.length > 0) {

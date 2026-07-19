@@ -79,7 +79,6 @@ export default async function ExportPage() {
           // ── Canonical readiness from server authority ──────────────
           const canonical = readinessByTenderId.get(tender.id) ?? null;
           const canonicalBlockers = canonical?.tenderLevelBlockers ?? [];
-          const canonicalAdvisories = canonical?.advisoryWarnings ?? [];
           const isCanonicalReady = canonical?.ok === true && canonicalBlockers.length === 0;
           // FinalReadinessTenderBlocker has {category, severity, title, recommendedAction}.
           // Use category as the blocker code and title/recommendedAction for the next action.
@@ -118,7 +117,6 @@ export default async function ExportPage() {
               key={tender.id}
               tenderId={tender.id}
               tenderTitle={tender.title}
-              tenderStatus={tender.status}
               isReady={isReady}
               isExported={isExported}
               generatedCount={generated.length}

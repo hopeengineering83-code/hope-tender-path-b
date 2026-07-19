@@ -41,7 +41,7 @@ import { assertTenderReadyForGenerationAndExport } from "./engine/generation-rea
 import { getStorageAdapter } from "./storage";
 import { extractTextFromBuffer } from "./extract-text";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
-import { inferTenderMetadata } from "./engine/tender-metadata";
+import { autoFillTenderMetadata } from "./engine/auto-fill-tender-metadata";
 import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
 import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
 
@@ -752,54 +752,107 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
           title: true,
           reference: true,
           clientName: true,
+          category: true,
+          country: true,
           deadline: true,
           submissionMethod: true,
           submissionAddress: true,
           submissionEmails: true,
           submissionEmailSubject: true,
+          clientContactName: true,
+          clientContactTitle: true,
+          clientContactEmail: true,
+          clientContactPhone: true,
+          preBidMeetingDate: true,
+          preBidMeetingLocation: true,
+          validityDays: true,
+          pageLimit: true,
+          bidBondAmount: true,
+          bidBondCurrency: true,
+          numberOfCopiesRequired: true,
+          mandatorySiteVisit: true,
+          evaluationMethodology: true,
           contactDetailsSourceJson: true,
+          files: {
+            where: { deletionStatus: "ACTIVE" },
+            select: {
+              id: true,
+              originalFileName: true,
+              extractedText: true,
+              totalPages: true,
+              contentHash: true,
+              deletionStatus: true,
+            },
+          },
         },
       });
       if (tender) {
-        // Re-infer metadata from the freshly extracted text (fill-empty-only).
-        // We don't OVERWRITE existing user edits — only fill empty fields.
-        const combinedText = extractedText.slice(0, 250_000);
-        const draft = combinedText.trim().length >= 500
-          ? inferTenderMetadata(combinedText, file.originalFileName)
-          : null;
+        // Use every active tender file so fill-empty inference and grounding
+        // operate on the same complete source set as engine preflight. Replace
+        // the just-extracted row with the in-memory text to avoid a stale read.
+        const enrichmentFiles = tender.files.map((activeFile) => activeFile.id === file.id
+          ? {
+              ...activeFile,
+              fileName: activeFile.originalFileName,
+              extractedText,
+              totalPages: perPage.totalDetectedPages > 0 ? perPage.totalDetectedPages : null,
+            }
+          : {
+              ...activeFile,
+              fileName: activeFile.originalFileName,
+            });
 
-        const enrichmentFiles = [{
-          id: file.id,
-          extractedText,
-          deletionStatus: "ACTIVE" as const,
-          totalPages: perPage.totalDetectedPages > 0 ? perPage.totalDetectedPages : null,
-          contentHash: null,
-        }];
+        // Fill empty metadata through the same authority used by engine preflight.
+        // The previous code computed an inferred draft and discarded it, so a
+        // successful background extraction never populated newly discovered facts.
+        const autoFill = await autoFillTenderMetadata({
+          ...tender,
+          files: enrichmentFiles,
+        }, prisma);
+
+        // Re-read after auto-fill so evidence and candidate classification use
+        // the effective stored values rather than the stale pre-extraction row.
+        const effectiveTender = await prisma.tender.findUnique({
+          where: { id: tender.id },
+          select: {
+            id: true,
+            title: true,
+            reference: true,
+            clientName: true,
+            deadline: true,
+            submissionMethod: true,
+            submissionAddress: true,
+            submissionEmails: true,
+            submissionEmailSubject: true,
+            contactDetailsSourceJson: true,
+          },
+        });
+        if (!effectiveTender) throw new Error("Tender disappeared during extraction enrichment");
 
         // Enrich source evidence (locates each critical field value in the
         // extracted text and produces source-evidence columns).
         const enrichment = enrichMetadataWithSourceEvidence({
-          title: tender.title,
-          reference: tender.reference,
-          clientName: tender.clientName,
-          deadline: tender.deadline,
-          submissionMethod: tender.submissionMethod,
-          submissionAddress: tender.submissionAddress,
-          submissionEmails: tender.submissionEmails,
-          submissionEmailSubject: tender.submissionEmailSubject,
-          existingContactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
+          title: effectiveTender.title,
+          reference: effectiveTender.reference,
+          clientName: effectiveTender.clientName,
+          deadline: effectiveTender.deadline,
+          submissionMethod: effectiveTender.submissionMethod,
+          submissionAddress: effectiveTender.submissionAddress,
+          submissionEmails: effectiveTender.submissionEmails,
+          submissionEmailSubject: effectiveTender.submissionEmailSubject,
+          existingContactDetailsSourceJson: effectiveTender.contactDetailsSourceJson ?? null,
         }, enrichmentFiles);
 
         // Build candidate pipeline (Gap 3 integration).
         const candidatePipeline = buildCandidatesFromMetadata({
           values: {
-            title: tender.title,
-            reference: tender.reference,
-            clientName: tender.clientName,
-            deadline: tender.deadline,
-            submissionMethod: tender.submissionMethod,
-            submissionAddress: tender.submissionAddress,
-            submissionEmailSubject: tender.submissionEmailSubject,
+            title: effectiveTender.title,
+            reference: effectiveTender.reference,
+            clientName: effectiveTender.clientName,
+            deadline: effectiveTender.deadline,
+            submissionMethod: effectiveTender.submissionMethod,
+            submissionAddress: effectiveTender.submissionAddress,
+            submissionEmailSubject: effectiveTender.submissionEmailSubject,
           },
           files: enrichmentFiles,
           candidateType: "regex",
@@ -817,7 +870,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
 
         await recordStep(ctx.jobId, {
           stepName: "extract.enriched",
-          message: `Tender detail enrichment applied (${Object.keys(patch).length} cols). Candidates: ${candidatePipeline.summary.autoConfirmed}AC + ${candidatePipeline.summary.grounded}G + ${candidatePipeline.summary.rejected}R + ${candidatePipeline.summary.needsReview}NR`,
+          message: `Tender detail enrichment applied (${Object.keys(patch).length} evidence cols; ${autoFill.filled.length} metadata fields filled). Candidates: ${candidatePipeline.summary.autoConfirmed}AC + ${candidatePipeline.summary.grounded}G + ${candidatePipeline.summary.rejected}R + ${candidatePipeline.summary.needsReview}NR`,
           status: "RUNNING",
         });
       }

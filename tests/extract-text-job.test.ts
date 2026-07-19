@@ -56,7 +56,7 @@ describe("EXTRACT_TEXT job — handler registration", () => {
     assert.ok(src.includes("from \"./storage\""), "must import storage");
     assert.ok(src.includes("from \"./extract-text\""), "must import extract-text");
     assert.ok(src.includes("from \"./extraction-quality\""), "must import extraction-quality");
-    assert.ok(src.includes("from \"./engine/tender-metadata\""), "must import tender-metadata");
+    assert.ok(src.includes("from \"./engine/auto-fill-tender-metadata\""), "must import canonical metadata auto-fill");
     assert.ok(src.includes("from \"./engine/metadata-source-enrichment\""), "must import metadata-source-enrichment");
     assert.ok(src.includes("from \"./engine/candidate-pipeline\""), "must import candidate-pipeline");
   });
@@ -103,10 +103,13 @@ describe("EXTRACT_TEXT job — handler registration", () => {
     assert.ok(src.includes("OCR_RATE_LIMITED"), "must distinguish OCR_RATE_LIMITED");
   });
 
-  it("EXTRACT_TEXT handler runs metadata enrichment + candidate pipeline", () => {
+  it("EXTRACT_TEXT handler applies inferred metadata before enrichment + candidate classification", () => {
     const src = read("lib/ai-job-handlers.ts");
+    assert.ok(src.includes("autoFillTenderMetadata"), "must fill empty metadata through the canonical helper");
+    assert.ok(src.includes("const effectiveTender = await prisma.tender.findUnique"), "must re-read effective stored values after auto-fill");
     assert.ok(src.includes("enrichMetadataWithSourceEvidence"), "must call enrichMetadataWithSourceEvidence");
     assert.ok(src.includes("buildCandidatesFromMetadata"), "must call buildCandidatesFromMetadata");
+    assert.ok(!src.includes("const draft = combinedText"), "must not compute and discard an inferred metadata draft");
   });
 
   it("EXTRACT_TEXT handler records step progress", () => {

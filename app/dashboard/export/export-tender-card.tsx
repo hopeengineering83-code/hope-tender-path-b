@@ -12,7 +12,6 @@ type DocItem = { id: string; name: string; exactFileName: string | null; exactOr
 type Props = {
   tenderId: string;
   tenderTitle: string;
-  tenderStatus: string;
   isReady: boolean;
   isExported: boolean;
   generatedCount: number;
@@ -33,7 +32,7 @@ type Props = {
 };
 
 export function ExportTenderCard({
-  tenderId, tenderTitle, tenderStatus, isReady, isExported,
+  tenderId, tenderTitle, isReady, isExported,
   generatedCount, totalDocs, blockingGaps, warningGaps,
   checks, criticalGaps, highGaps, documents,
   canonicalBlockerCodes = [], canonicalNextAction,
