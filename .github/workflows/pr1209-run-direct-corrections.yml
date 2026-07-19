@@ -27,7 +27,7 @@ jobs:
           ref: fix/pr1175-dead-broken-overlap-audit-replacement
           fetch-depth: 0
 
-      - name: Execute the staged exact correction script
+      - name: Execute staged correction with diagnostics
         shell: bash
         run: |
           set -euo pipefail
@@ -63,7 +63,30 @@ jobs:
 
           Path('/tmp/pr1209-apply.sh').write_text('\n'.join(script_lines) + '\n')
           PY
-          bash /tmp/pr1209-apply.sh
+          set +e
+          bash -x /tmp/pr1209-apply.sh > /tmp/pr1209-apply.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/pr1209-apply.log
+          printf '%s\n' "$status" > /tmp/pr1209-apply-status
+
+      - name: Upload correction diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr1209-direct-correction-diagnostics-${{ github.sha }}
+          path: |
+            /tmp/pr1209-apply.sh
+            /tmp/pr1209-apply.log
+            /tmp/pr1209-apply-status
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Require successful source correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(cat /tmp/pr1209-apply-status)" = "0"
           rm -f .github/pr1208-direct-correction-trigger
           rm -f .github/pr1209-run-trigger
           rm -f .github/workflows/pr1209-run-direct-corrections.yml
