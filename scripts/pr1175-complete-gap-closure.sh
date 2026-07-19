@@ -5,8 +5,18 @@ SOURCE_BRANCH="agent/pr1175-final-gap-repair"
 SOURCE_SHA="69bddb0753bb644e469aea4c7db0d33338349ea3"
 BASE_SHA="bfe688c22c89afbe1ce40d5aa1ab183ba44d25d2"
 
-if [[ "$(git rev-parse HEAD)" != "$BASE_SHA" && ! -f .gap-closure-applied ]]; then
-  echo "Expected the exact current PR #1175 head $BASE_SHA before applying the repair." >&2
+if ! git merge-base --is-ancestor "$BASE_SHA" HEAD; then
+  echo "Repair branch is not based on the exact current PR #1175 head $BASE_SHA." >&2
+  exit 1
+fi
+
+# Before the repair runs, only this temporary runner and its workflow may differ
+# from the pinned parent. This prevents accidental unrelated changes from being
+# swept into the final product commit.
+unexpected_before=$(git diff --name-only "$BASE_SHA"...HEAD | grep -v -E '^scripts/pr1175-complete-gap-closure\.sh$|^\.github/workflows/pr1175-complete-gap-closure\.yml$' || true)
+if [[ -n "$unexpected_before" ]]; then
+  echo "Unexpected pre-existing branch changes:" >&2
+  echo "$unexpected_before" >&2
   exit 1
 fi
 
@@ -150,7 +160,5 @@ grep -Fq 'canUseVaultRecord' lib/engine/matching-eligibility.ts
 grep -Fq 'VAULT_REVIEW_CONSUMER_SELECT' 'app/api/tenders/[id]/ai-rematch/route.ts'
 grep -Fq 'persistenceAtomic: true' 'app/api/tenders/[id]/ai-rematch/route.ts'
 grep -Fq 'isDurablyReviewed' lib/engine/run-tender-engine.ts
-
-touch .gap-closure-applied
 
 echo "PR #1204 product delta applied to the exact latest PR #1175 head with the matching conflict resolved."
