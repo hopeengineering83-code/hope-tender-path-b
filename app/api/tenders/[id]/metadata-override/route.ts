@@ -245,6 +245,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // ─── SERVER-SIDE POLICY VALIDATION (P0) ──────────────────────────
   // The API must enforce policy. Hidden UI buttons are not security controls.
 
+  // NEVER trust client-supplied previousValue — compute it server-side.
   // Load existing override to compute real prior value
   const existingOverride = await prisma.tenderMetadataOverride.findUnique({
     where: { tenderId_field: { tenderId: id, field } },

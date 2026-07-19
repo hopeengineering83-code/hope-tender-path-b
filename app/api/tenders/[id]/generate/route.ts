@@ -44,6 +44,16 @@ export const dynamic = "force-dynamic";
 
 type SupportDocKind = "EXPERT_CV" | "PROJECT_REFERENCES" | "METHODOLOGY" | "COMPANY_PROFILE" | "FINANCIAL_PLACEHOLDER" | "LEGAL_PLACEHOLDER" | "FORM_PLACEHOLDER" | "DECLARATION_PLACEHOLDER" | "ANNEX_PLACEHOLDER" | "SUBMISSION_RULES_PLACEHOLDER" | "SECTOR_TECHNICAL_SCOPE" | "GENERIC";
 
+// PERMANENTLY DISABLED contract marker — do not remove. Creating
+// GeneratedDocument rows from the submission plan before preflight was a
+// bypass; the stub's name and `return 0;` body are pinned by
+// tests/quality-gaps-phase28.test.ts and tests/route-behavioral-gate.test.ts
+// so any re-enablement (under this name) fails loudly. Real document rows
+// are only ever created by the gated generation path below.
+async function ensurePlannedGeneratedDocumentRecords(_tenderId: string, _plannedFiles: unknown): Promise<number> {
+  return 0;
+}
+
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
   const text = `${gap.title} ${gap.description} ${gap.mitigationPlan ?? ""}`;
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
