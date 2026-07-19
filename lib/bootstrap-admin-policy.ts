@@ -41,12 +41,12 @@ export function resolveBootstrapAdminPolicy(): BootstrapAdminPolicy {
   };
 }
 
-/** Resolve runtime seeding independently from the permanently disabled login repair path. */
+/**
+ * Resolve runtime seeding independently from the permanently disabled login
+ * repair path. Runtime admin creation always requires explicit opt-in and a
+ * strong, non-default password, including development and test environments.
+ */
 export function resolveRuntimeBootstrapAdminPolicy(): BootstrapAdminPolicy {
-  if (process.env.NODE_ENV !== "production") {
-    return { allowRepair: true, password: readEnv("BOOTSTRAP_ADMIN_PASSWORD") || "Admin123!", reason: null };
-  }
-
   if (!envFlag("BOOTSTRAP_ADMIN_ENABLED")) {
     return { allowRepair: false, password: "", reason: "Runtime bootstrap admin seeding is disabled." };
   }
