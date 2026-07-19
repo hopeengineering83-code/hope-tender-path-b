@@ -1,0 +1,79 @@
+name: PR 1209 run direct audit corrections
+
+on:
+  push:
+    branches:
+      - fix/pr1175-dead-broken-overlap-audit-replacement
+  pull_request:
+    branches:
+      - release/consolidated-recovery-20260717
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr1209-run-direct-corrections
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout replacement branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/pr1175-dead-broken-overlap-audit-replacement
+          fetch-depth: 0
+
+      - name: Execute the staged exact correction script
+        shell: bash
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/workflows/pr1208-direct-final-corrections.yml')
+          lines = path.read_text().splitlines()
+          marker = '      - name: Apply exact evidence-backed source corrections'
+          try:
+              marker_index = lines.index(marker)
+          except ValueError as error:
+              raise SystemExit('staged direct-correction step not found') from error
+
+          run_index = None
+          for index in range(marker_index + 1, len(lines)):
+              if lines[index] == '        run: |':
+                  run_index = index
+                  break
+          if run_index is None:
+              raise SystemExit('staged correction run block not found')
+
+          script_lines = []
+          for line in lines[run_index + 1:]:
+              if line.startswith('      - name:'):
+                  break
+              if line.startswith('          '):
+                  script_lines.append(line[10:])
+              elif line == '':
+                  script_lines.append('')
+              else:
+                  raise SystemExit(f'unexpected staged script indentation: {line!r}')
+
+          Path('/tmp/pr1209-apply.sh').write_text('\n'.join(script_lines) + '\n')
+          PY
+          bash /tmp/pr1209-apply.sh
+          rm -f .github/pr1208-direct-correction-trigger
+          rm -f .github/workflows/pr1209-run-direct-corrections.yml
+          git diff --check
+          git status --short
+
+      - name: Commit clean replacement corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "PR 1209 Audit Worker"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: finalize evidence-backed PR 1175 audit corrections"
+          git push origin HEAD:fix/pr1175-dead-broken-overlap-audit-replacement
