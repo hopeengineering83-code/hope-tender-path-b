@@ -27,66 +27,12 @@ jobs:
           ref: fix/pr1175-dead-broken-overlap-audit-replacement
           fetch-depth: 0
 
-      - name: Execute staged correction with diagnostics
+      - name: Apply exact replacement corrections
         shell: bash
         run: |
           set -euo pipefail
-          python <<'PY'
-          from pathlib import Path
-
-          path = Path('.github/workflows/pr1208-direct-final-corrections.yml')
-          lines = path.read_text().splitlines()
-          marker = '      - name: Apply exact evidence-backed source corrections'
-          try:
-              marker_index = lines.index(marker)
-          except ValueError as error:
-              raise SystemExit('staged direct-correction step not found') from error
-
-          run_index = None
-          for index in range(marker_index + 1, len(lines)):
-              if lines[index] == '        run: |':
-                  run_index = index
-                  break
-          if run_index is None:
-              raise SystemExit('staged correction run block not found')
-
-          script_lines = []
-          for line in lines[run_index + 1:]:
-              if line.startswith('      - name:'):
-                  break
-              if line.startswith('          '):
-                  script_lines.append(line[10:])
-              elif line == '':
-                  script_lines.append('')
-              else:
-                  raise SystemExit(f'unexpected staged script indentation: {line!r}')
-
-          Path('/tmp/pr1209-apply.sh').write_text('\n'.join(script_lines) + '\n')
-          PY
-          set +e
-          bash -x /tmp/pr1209-apply.sh > /tmp/pr1209-apply.log 2>&1
-          status=$?
-          set -e
-          cat /tmp/pr1209-apply.log
-          printf '%s\n' "$status" > /tmp/pr1209-apply-status
-
-      - name: Upload correction diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr1209-direct-correction-diagnostics-${{ github.sha }}
-          path: |
-            /tmp/pr1209-apply.sh
-            /tmp/pr1209-apply.log
-            /tmp/pr1209-apply-status
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Require successful source correction
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(cat /tmp/pr1209-apply-status)" = "0"
+          python .github/pr1209-apply.py
+          rm -f .github/pr1209-apply.py
           rm -f .github/pr1208-direct-correction-trigger
           rm -f .github/pr1209-run-trigger
           rm -f .github/workflows/pr1209-run-direct-corrections.yml
