@@ -1,7 +1,7 @@
 import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
-import { prisma } from "../../../../../lib/prisma";
+import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
 import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
@@ -31,6 +31,9 @@ export async function GET(
     if (!actor) return unauthorizedResponse();
 
     const { id: tenderId } = await params;
+
+    // Ensure the runtime schema bootstrap has completed before any DB query.
+    await prismaReady;
 
     // The canonical decision is the SINGLE source of stage truth.
     // workflow-center still calls getCanonicalTenderWorkflowState for the

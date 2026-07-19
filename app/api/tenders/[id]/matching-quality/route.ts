@@ -5,7 +5,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { assessMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
-import { randomUUID } from "node:crypto";
+import { safeApiError } from "../../../../../lib/engine/safe-api-error";
 
 export const dynamic = "force-dynamic";
 
@@ -74,22 +74,20 @@ export async function GET(
       quality,
     });
   } catch (error) {
-    const diagnosticId = randomUUID();
-    logger.error("[matching-quality]", {
+    // Use the shared safeApiError helper so the response shape matches every
+    // other readiness/route error in the app (ok/success/error/code/
+    // diagnosticId/blockers/warnings). The previous hand-rolled response
+    // omitted `ok` and `success` fields and the response shape diverged from
+    // the shared contract. Server-side log keeps errorClass for diagnostics;
+    // raw error.message is never exposed to the API consumer.
+    logger.error("[matching-quality] route failed", {
       route: "/api/tenders/[id]/matching-quality",
       tenderId: id,
-      diagnosticId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      message: error instanceof Error ? error.message : String(error),
     });
-    return NextResponse.json({
-      error: "Matching quality panel failed to load.",
-      panel: "matching-quality",
-      endpoint: "/api/tenders/[id]/matching-quality",
-      diagnosticId,
-      code: "MATCHING_QUALITY_RUNTIME_ERROR",
-      retryable: true,
-      staleDataPossible: false,
-    }, { status: 500 });
+    return safeApiError("matching-quality", error, {
+      status: 500,
+      message: "Matching quality panel failed to load. Refresh to retry.",
+    });
   }
 }

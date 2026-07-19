@@ -622,19 +622,28 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     return matches.map((m) => ({ ...m, isSelected: false }));
   }
 
-  // PR XX-MATCH-FIX MERGE: combine remote's "strict family gate" (only
-  // candidates whose families include a strict-required family qualify
-  // when a strict family is required) with my "below-threshold fallback"
-  // (select top-N below threshold and tag rationale, so the engine never
-  // produces an empty selection set that leaves the cover letter
-  // unanchored).
+  // Strict-family gate: when the tender requires a strict family
+  // (healthcare, education, mining, telecoms, oil/gas, etc.), only
+  // candidates that BOTH (a) clear the canonical SELECTION_THRESHOLD
+  // (0.75) AND (b) carry at least one of the required families are
+  // eligible. If no candidate clears both filters, we fall back to
+  // candidates that clear the threshold alone (without the family
+  // restriction) — but the strict-family coverage rescue pass below
+  // will still prefer family-carrying candidates during set assembly.
+  //
+  // Fail-closed: if NO candidate clears SELECTION_THRESHOLD, the
+  // eligible set is empty and the function returns zero selections
+  // (see the empty-eligible guard below). The previous below-threshold
+  // fallback that promoted borderline candidates was removed because it
+  // violated fail-closed evidence rules and could select irrelevant
+  // candidates in strict sectors.
   const hardFamilyGate = strictFamilyRequired(requiredFamilies);
   const strictEligible = candidates.filter((c) => {
     if (c.match.score < SELECTION_THRESHOLD) return false;
     if (!hardFamilyGate) return true;
     return c.capabilityFamilies.some((family) => requiredFamilies.includes(family));
   });
-  let eligible = strictEligible.length > 0
+  const eligible = strictEligible.length > 0
     ? strictEligible
     : candidates.filter((c) => c.match.score >= SELECTION_THRESHOLD);
 

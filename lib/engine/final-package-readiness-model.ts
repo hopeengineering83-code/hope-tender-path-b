@@ -718,6 +718,23 @@ function deriveSummaryStatus(args: {
   return "export_blocked";
 }
 
+/**
+ * getFinalPackageReadinessModel — prisma client typing.
+ *
+ * The `prisma` parameter is intentionally typed as `any` rather than
+ * `PrismaClient` so unit tests can pass a minimal mock object that
+ * implements only `tender.findFirst` and (optionally) `buildPlan.findFirst`.
+ * The production runtime passes the real PrismaClient from lib/prisma.ts.
+ *
+ * A structural interface (e.g. `{ tender: { findFirst: ... } }`) was attempted
+ * but broke down because the function body reads specific columns off the
+ * returned tender (requirements, expertMatches, projectMatches, etc.) that
+ * would each need their own structural type, and the test mocks return
+ * partial shapes that don't match any strict type.
+ *
+ * If you change the queries inside this function, update the test mocks in
+ * tests/final-package-readiness-model.test.ts to match.
+ */
 export async function getFinalPackageReadinessModel(
   prisma: any,
   tenderId: string,
