@@ -1,0 +1,107 @@
+name: PR 1175 final-gap repair
+
+on:
+  push:
+    branches:
+      - agent/pr1175-final-gap-repair
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pr1175-final-gap-repair
+  cancel-in-progress: false
+
+jobs:
+  repair-and-validate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hope_repair
+          POSTGRES_DB: hope_repair
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hope_repair -d hope_repair"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: postgresql://hope_repair@127.0.0.1:5432/hope_repair?schema=public
+      SESSION_SECRET: repair-session-secret-2026-at-least-thirty-two-characters
+      NEXTAUTH_SECRET: repair-nextauth-secret-2026-at-least-thirty-two-characters
+      GEMINI_API_KEY: repair-provider-placeholder
+      RUN_DB_INTEGRATION: "true"
+      CSRF_MODE: "off"
+    steps:
+      - name: Checkout isolated repair branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/pr1175-final-gap-repair
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Apply assertion-checked repair
+        run: python3 scripts/repair-pr1175-final-gaps.py
+
+      - name: Validate database and schema
+        run: |
+          npx prisma validate
+          npx prisma generate
+          npx prisma migrate deploy
+          npm run db:check-critical-schema
+
+      - name: Run focused regressions
+        run: >-
+          npx tsx --test
+          tests/pr1175-final-gap-repair.test.ts
+          tests/matching-fail-closed-negative-tests.test.ts
+          tests/vault-review-provenance.test.ts
+          tests/vault-review-contract.test.ts
+          tests/vault-review-route-postgres.test.ts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Full test suite
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Verify patch hygiene
+        run: |
+          git diff --check
+          test -f tests/pr1175-final-gap-repair.test.ts
+          grep -Fq 'AI_REMATCH_PERSISTENCE_FAILED' 'app/api/tenders/[id]/ai-rematch/route.ts'
+          grep -Fq 'canUseVaultRecord' lib/engine/matching-eligibility.ts
+          grep -Fq 'baselineScenarioRoutes' scripts/capture-production-pages.mjs
+
+      - name: Commit validated product repair
+        shell: bash
+        run: |
+          rm scripts/repair-pr1175-final-gaps.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: close PR 1175 provenance rematch and evidence gaps"
+          git push origin HEAD:agent/pr1175-final-gap-repair
