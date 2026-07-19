@@ -1,7 +1,7 @@
 import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, unauthorizedResponse } from "../../../../../lib/auth";
-import { prisma } from "../../../../../lib/prisma";
+import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 
 /**
@@ -24,6 +24,9 @@ export async function GET(
     if (!actor) return unauthorizedResponse();
 
     const { id: tenderId } = await params;
+
+    // Ensure the runtime schema bootstrap has completed before any DB query.
+    await prismaReady;
 
     const snapshot = await getTenderReleaseSnapshot(prisma, tenderId, actor.id);
     if (!snapshot) {

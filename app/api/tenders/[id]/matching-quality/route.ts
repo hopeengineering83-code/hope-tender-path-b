@@ -36,6 +36,9 @@ export async function GET(
   const { id } = await params;
 
   try {
+    // await prismaReady must be INSIDE the try block so DB bootstrap failures
+    // produce a structured error response (with diagnosticId) instead of a
+    // raw 500. Verified by tests/panel-runtime-stability.test.ts.
     await prismaReady;
     const [company, tender] = await Promise.all([
       ensureCompanyForUser(prisma, userId),
@@ -74,13 +77,19 @@ export async function GET(
       quality,
     });
   } catch (error) {
+    // Hand-rolled structured error response (mirrors the shape used by the
+    // other panel routes: analysis-quality, extraction-quality, readiness,
+    // generation-readiness). The shared safeApiError() helper produces a
+    // different shape (ok/success/blockers/warnings) that breaks the
+    // panel-runtime-stability contract — so we keep this shape here.
+    // Raw error.message is logged server-side only; the response exposes
+    // only a diagnosticId + safe code.
     const diagnosticId = randomUUID();
     logger.error("[matching-quality]", {
       route: "/api/tenders/[id]/matching-quality",
       tenderId: id,
       diagnosticId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      message: error instanceof Error ? error.message : String(error),
     });
     return NextResponse.json({
       error: "Matching quality panel failed to load.",

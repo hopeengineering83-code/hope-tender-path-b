@@ -1,7 +1,7 @@
 import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
-import { prisma } from "../../../../../lib/prisma";
+import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { resolveTenderAnalysisState } from "../../../../../lib/engine/analysis-state-resolver";
 import { logAction } from "../../../../../lib/audit";
 
@@ -15,6 +15,9 @@ export async function POST(
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const { id: tenderId } = await params;
+
+    // Ensure the runtime schema bootstrap has completed before any DB query.
+    await prismaReady;
 
     const analysisInfo = await resolveTenderAnalysisState(prisma, tenderId, actor.id);
 

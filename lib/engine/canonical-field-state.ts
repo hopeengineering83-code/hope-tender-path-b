@@ -289,19 +289,12 @@ function normalizeFieldValue(fieldKey: string, value: string): string {
   return v;
 }
 
-/**
- * Format a Date object as a human-readable string (e.g. 12 Dec 2026).
- */
-export function formatDateUnambiguous(value: string | Date | null): string | null {
-  if (!value) return null;
-  const d = value instanceof Date ? value : new Date(value);
-  if (isNaN(d.getTime())) return null;
-  return d.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
+// Note: formatDateUnambiguous was previously exported here but never imported
+// externally. The canonical implementation lives at
+// lib/engine/metadata-validators.ts:formatDateUnambiguous — every consumer
+// (tests/metadata-field-state.test.ts, app routes, lib files) imports from
+// there. The dead duplicate was removed on 2026-07-19 during post-#1175
+// gap closure.
 
 function validateFieldFormat(fieldKey: string, value: string | null): { valid: boolean; reason: string | null } {
   if (!value) return { valid: true, reason: null };

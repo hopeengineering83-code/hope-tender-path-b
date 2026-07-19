@@ -46,9 +46,14 @@ import {
 import { assessExtractionQuality } from "../extraction-quality";
 import { hasActiveExtractionOverride } from "./readiness-overrides";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
+import type { MetadataFieldState } from "./metadata-override";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
 // @prisma/client types are not yet generated in the current environment.
+// Stubs MUST stay aligned with the columns selected by assertTenderReadyForGenerationAndExport
+// and validateCriticalMetadataEvidenceForBuildPlan. If you add a column to one
+// of those queries, add it here too — otherwise the runtime value reaches the
+// gate via `as any` and TypeScript cannot catch a missing column.
 type _TenderFileRow = {
   id: string;
   originalFileName: string;
@@ -73,11 +78,41 @@ type _RequirementRow = {
 };
 type _MetadataOverrideRow = {
   field: string;
-  fieldState: string;
+  fieldState: MetadataFieldState;
   overrideValue: string | null;
   reason: string | null;
-  overriddenBy: string | null;
-  createdAt: Date;
+  overriddenBy?: string | null;
+  createdAt?: Date;
+  confirmationBasis: string | null;
+  authorityClass: string | null;
+  confirmedAt: Date | null;
+};
+type _TenderRow = {
+  id: string;
+  deadline: Date | null;
+  clientNameSourcePage: number | null;
+  clientNameSourceQuote: string | null;
+  clientNameSourceFileId: string | null;
+  submissionMethodSourcePage: number | null;
+  submissionMethodSourceQuote: string | null;
+  submissionMethodSourceFileId: string | null;
+  submissionAddressSourcePage: number | null;
+  submissionAddressSourceQuote: string | null;
+  submissionAddressSourceFileId: string | null;
+  submissionEmailSourcePage: number | null;
+  submissionEmailSourceFileId: string | null;
+  submissionEmailSourceQuote: string | null;
+  titleSourceFileId: string | null;
+  titleSourcePage: number | null;
+  titleSourceQuote: string | null;
+  deadlineSourceFileId: string | null;
+  deadlineSourcePage: number | null;
+  deadlineSourceQuote: string | null;
+  contactDetailsSourceJson: string | null;
+  metadataContaminated: boolean | null;
+  submissionMethod: string | null;
+  metadataOverrides: _MetadataOverrideRow[] | null;
+  files: _TenderFileRow[];
 };
 
 export type GenerationPurpose =
@@ -602,7 +637,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         sourceExactQuote: r.sourceExactQuote,
         sourceFileActiveInTender: !!r.sourceTenderFileId && activeFileIds.has(r.sourceTenderFileId),
         sourceFileExtractedText: sourceFile?.extractedText ?? null,
-        sourceFileTotalPages: (sourceFile as any)?.totalPages ?? null,
+        sourceFileTotalPages: sourceFile?.totalPages ?? null,
       };
     });
 
@@ -624,17 +659,17 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         submissionAddressSourceFileId: tender.submissionAddressSourceFileId ?? null,
         submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
         submissionEmailSourceFileId: tender.submissionEmailSourceFileId ?? null,
-        submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
-        titleSourceFileId: (tender as any).titleSourceFileId ?? null,
-        titleSourcePage: (tender as any).titleSourcePage ?? null,
-        titleSourceQuote: (tender as any).titleSourceQuote ?? null,
-        deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
-        deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
-        deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
+        submissionEmailSourceQuote: tender.submissionEmailSourceQuote ?? null,
+        titleSourceFileId: tender.titleSourceFileId ?? null,
+        titleSourcePage: tender.titleSourcePage ?? null,
+        titleSourceQuote: tender.titleSourceQuote ?? null,
+        deadlineSourceFileId: tender.deadlineSourceFileId ?? null,
+        deadlineSourcePage: tender.deadlineSourcePage ?? null,
+        deadlineSourceQuote: tender.deadlineSourceQuote ?? null,
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         metadataContaminated: tender.metadataContaminated ?? false,
       },
-      overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
+      overrides: ((tender.metadataOverrides ?? []) as _MetadataOverrideRow[]).map((o) => ({
         field: o.field,
         fieldState: o.fieldState,
         overrideValue: o.overrideValue,
@@ -656,7 +691,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       // (quote containment + page <= totalPages) — the same evidence rules
       // validateCriticalMetadataEvidenceForBuildPlan applies below, so this
       // resolver verdict and the validator verdict cannot diverge.
-      activeFiles: activeFiles.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: (f as any).totalPages ?? null })),
+      activeFiles: activeFiles.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: f.totalPages ?? null })),
     });
 
     // H — Build/Submission plan prerequisite for GENERATION.
@@ -801,7 +836,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             },
           });
           if (!fullTender) return false;
-          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? [], "final");
+          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as unknown as _TenderRow, fullTender.files as _TenderFileRow[], (fullTender.metadataOverrides ?? []) as _MetadataOverrideRow[], "final");
           return metaValidation.ok;
         } catch { return false; }
       })()) : true),

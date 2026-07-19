@@ -1,7 +1,7 @@
 import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
-import { prisma } from "../../../../../lib/prisma";
+import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
 import { safeApiError, newDiagnosticId } from "../../../../../lib/engine/safe-api-error";
 import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
@@ -18,6 +18,9 @@ export async function GET(
     catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
     const { id: tenderId } = await params;
+
+    // Ensure the runtime schema bootstrap has completed before any DB query.
+    await prismaReady;
 
     const result = await computeTenderLifecycle(prisma, tenderId, actor.id);
 

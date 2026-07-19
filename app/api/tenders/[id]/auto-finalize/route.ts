@@ -317,17 +317,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  // Reconcile old wrong rows: submission rules + outside-plan supersede
-  for (const doc of tender.generatedDocuments) {
-    const name = (doc.exactFileName ?? doc.name ?? "").toLowerCase();
-    if (/submission formatting|packaging rules|submission method|deadline|delivery rules|submission rules/.test(name)) {
-      await prisma.generatedDocument.update({ where: { id: doc.id }, data: { format: "CONTROL", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Submission control metadata; excluded from final export." } });
-      continue;
+  // Reconcile old wrong rows: submission rules + outside-plan supersede.
+  // Wrap the loop in a transaction so a partial failure cannot leave the
+  // tender with a mix of reconciled and stale document states. The later
+  // per-document finalization at lines 455-461 is separately wrapped in its
+  // own $transaction — this transaction covers only the reconciliation pass.
+  await prisma.$transaction(async (tx) => {
+    for (const doc of tender.generatedDocuments) {
+      const name = (doc.exactFileName ?? doc.name ?? "").toLowerCase();
+      if (/submission formatting|packaging rules|submission method|deadline|delivery rules|submission rules/.test(name)) {
+        await tx.generatedDocument.update({ where: { id: doc.id }, data: { format: "CONTROL", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Submission control metadata; excluded from final export." } });
+        continue;
+      }
+      if (!planEmpty && !plannedNames.has((doc.exactFileName ?? doc.name ?? "").trim().toLowerCase())) {
+        await tx.generatedDocument.update({ where: { id: doc.id }, data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Superseded as outside submission plan." } });
+      }
     }
-    if (!planEmpty && !plannedNames.has((doc.exactFileName ?? doc.name ?? "").trim().toLowerCase())) {
-      await prisma.generatedDocument.update({ where: { id: doc.id }, data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Superseded as outside submission plan." } });
-    }
-  }
+  });
 
   // Explicit select — fileContent is included here because the finalization loop
   // calls extractDocxVisibleText(doc.fileContent, ...) to read the existing content

@@ -1100,10 +1100,25 @@ async function handleStreamingAnalyze(
           }),
         });
       } catch (err) {
-        const raw = err instanceof Error ? err.message : String(err);
-        const safe = raw.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+        // SSE error branch — emit a safe generic code + diagnosticId to the
+        // client stream and log the raw error server-side. The previous
+        // implementation sent `err.message` (with only partial API-key
+        // redaction) directly to the client, which could leak Prisma SQL,
+        // internal file paths, PII, or org- keys. The non-SSE POST handler
+        // at lines 2075-2094 already uses this safe pattern — this branch
+        // now mirrors it.
+        const sseDiagnosticId = newDiagnosticId("ai-analyze-stream");
+        logger.error("[ai-analyze] SSE stream error", {
+          diagnosticId: sseDiagnosticId,
+          errorClass: err instanceof Error ? err.constructor.name : "UnknownError",
+        });
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ phase: "error", message: safe })}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            phase: "error",
+            code: "AI_ANALYZE_STREAM_ERROR",
+            diagnosticId: sseDiagnosticId,
+            message: "AI analysis stream failed. Check server logs for details.",
+          })}\n\n`));
         } catch { /* ignore — client may have disconnected */ }
       } finally {
         try { controller.close(); } catch { /* already closed */ }
