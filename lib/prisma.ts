@@ -1176,15 +1176,19 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS "Project_deletedAt_idx" ON "Project"("deletedAt")`,
     `CREATE INDEX IF NOT EXISTS "ProposalVersion_tenderId_idx" ON "ProposalVersion"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "ProposalVersion_tenderId_version_idx" ON "ProposalVersion"("tenderId", "version")`,
-    // G3 — MatchScoreBreakdown
-    `CREATE UNIQUE INDEX IF NOT EXISTS "MatchScoreBreakdown_unique_dim" ON "MatchScoreBreakdown"("tenderId", "entityType", "entityId", "dimensionCode")`,
+    // G3 — MatchScoreBreakdown. The uniqueness of (tenderId, entityType,
+    // entityId, dimensionCode) is enforced by the Prisma-declared constraint
+    // (…_dimensionC_key from the migrations); do NOT re-create it here under
+    // another name — a second identical unique index doubles write cost and
+    // makes app-booted databases fail the release zero-drift check.
     `CREATE INDEX IF NOT EXISTS "MatchScoreBreakdown_tenderId_entityType_idx" ON "MatchScoreBreakdown"("tenderId", "entityType")`,
     `CREATE INDEX IF NOT EXISTS "MatchScoreBreakdown_tenderId_entityId_idx" ON "MatchScoreBreakdown"("tenderId", "entityId")`,
     // G4 — EvaluatorObjection
     `CREATE INDEX IF NOT EXISTS "EvaluatorObjection_tenderId_status_idx" ON "EvaluatorObjection"("tenderId", "status")`,
     `CREATE INDEX IF NOT EXISTS "EvaluatorObjection_tenderId_severity_status_idx" ON "EvaluatorObjection"("tenderId", "severity", "status")`,
-    // G5 — SectionEvidenceMap
-    `CREATE UNIQUE INDEX IF NOT EXISTS "SectionEvidenceMap_unique_section" ON "SectionEvidenceMap"("tenderId", "proposalVersion", "sectionId")`,
+    // G5 — SectionEvidenceMap. Uniqueness of (tenderId, proposalVersion,
+    // sectionId) is enforced by the Prisma-declared …_key constraint from the
+    // migrations — see the MatchScoreBreakdown note above.
     `CREATE INDEX IF NOT EXISTS "SectionEvidenceMap_tenderId_idx" ON "SectionEvidenceMap"("tenderId")`,
     // G6 — AiJob / AiJobStep
     `CREATE INDEX IF NOT EXISTS "AiJob_userId_status_idx" ON "AiJob"("userId", "status")`,
@@ -1200,7 +1204,11 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     // DocumentReview / DocumentComment — correct Prisma-matching index names
     `CREATE INDEX IF NOT EXISTS "DocumentReview_documentId_createdAt_idx" ON "DocumentReview"("documentId", "createdAt")`,
     `CREATE INDEX IF NOT EXISTS "DocumentReview_reviewerId_idx" ON "DocumentReview"("reviewerId")`,
-    `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_idx" ON "DocumentComment"("documentId")`,
+    // NOTE: no single-column DocumentComment(documentId) index here — the
+    // schema declares only the two composite documentId-leading indexes below,
+    // which already serve documentId lookups. Creating an extra undeclared
+    // index at runtime makes app-booted databases fail zero-drift.
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_createdAt_idx" ON "DocumentComment"("documentId", "createdAt")`,
     `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_parentId_idx" ON "DocumentComment"("documentId", "parentId")`,
     `CREATE INDEX IF NOT EXISTS "DocumentComment_authorId_idx" ON "DocumentComment"("authorId")`,
     // PasswordResetToken indexes (migration 20260614*)

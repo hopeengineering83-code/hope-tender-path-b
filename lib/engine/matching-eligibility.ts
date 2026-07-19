@@ -69,8 +69,3 @@ export function isEligibleForMatching(record: MatchingEligibilityRecord): boolea
 export function enforceMatchingEligibility(score: number, record: MatchingEligibilityRecord): number {
   return checkMatchingEligibility(record).eligible ? score : 0;
 }
-
-export function eligibilityLabel(record: MatchingEligibilityRecord): string {
-  const result = checkMatchingEligibility(record);
-  return result.eligible ? "Eligible — durably reviewed and grounded" : `Ineligible: ${result.detail}`;
-}

@@ -1,5 +1,0 @@
-{
-  "status": "ENVIRONMENT_BLOCKER",
-  "reason": "The execution environment has no GitHub/Vercel/session credentials and outbound shell access is denied by a CONNECT 403. Authenticated or exact-deployment route evidence could not be captured without violating the no-production-credentials rule.",
-  "routesTested": []
-}

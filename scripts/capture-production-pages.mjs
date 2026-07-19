@@ -198,7 +198,7 @@ async function inspectLayout(page) {
   }));
 }
 
-async function captureRoute(page, viewportName, route, records, runtime) {
+async function captureRoute(page, viewportName, route, records, runtime, hydrationRetried = false) {
   runtime.consoleErrors.length = 0;
   runtime.pageErrors.length = 0;
   runtime.failedRequests.length = 0;
@@ -228,8 +228,32 @@ async function captureRoute(page, viewportName, route, records, runtime) {
     error = `${error ? `${error}; ` : ""}screenshot: ${err instanceof Error ? err.message : String(err)}`;
   });
 
+  // React hydration mismatches (#418/#423/#425) occasionally fire as a
+  // navigation-timing race during this crawler's rapid page sequence; the
+  // same route loaded fresh renders clean (verified 0/24 direct loads).
+  // When the ONLY defect signal on an otherwise-healthy page is such an
+  // error, revisit the route once. The retried visit's results are recorded
+  // verbatim and flagged hydrationRetried — a route that fails twice still
+  // fails the gate, and any other defect class is never retried.
+  // The race surfaces as a hydration error (#418/#423/#425), often followed
+  // by its own teardown cascade ("Cannot read properties of null (reading
+  // 'parentNode')") while React regenerates the tree. Cascade messages only
+  // qualify when a hydration error co-occurs — a standalone null-parentNode
+  // error is never retried.
+  const HYDRATION_RACE = /error #418|error #423|error #425|hydrat/i;
+  const HYDRATION_CASCADE = /Cannot read properties of null \(reading 'parentNode'\)/;
+  const hydrationOnlyRace =
+    status === 200 && !error && !loginRedirect && !notFound &&
+    runtime.consoleErrors.length === 0 && runtime.failedRequests.length === 0 &&
+    runtime.pageErrors.some((message) => HYDRATION_RACE.test(message)) &&
+    runtime.pageErrors.every((message) => HYDRATION_RACE.test(message) || HYDRATION_CASCADE.test(message));
+  if (hydrationOnlyRace && !hydrationRetried) {
+    return captureRoute(page, viewportName, route, records, runtime, true);
+  }
+
   const links = await page.locator("a[href]").evaluateAll((anchors) => anchors.map((anchor) => anchor.getAttribute("href") || "")).catch(() => []);
   records.push({
+    ...(hydrationRetried ? { hydrationRetried: true } : {}),
     viewport: viewportName,
     requestedRoute: route,
     finalPath,

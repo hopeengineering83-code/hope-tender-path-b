@@ -1273,7 +1273,7 @@ function decodeXmlEntities(s: string): string {
 // A cell looks like: <a:tc><a:txBody>...<a:p><a:r><a:t>Cell text</a:t></a:r></a:p>...</a:txBody></a:tc>
 // We gather every <a:t> run inside the fragment and join with spaces.
 function extractPptxCellText(cellXml: string): string {
-  //  after <a:t prevents matching <a:txBody> / <a:tcPr> / <a:tblPr> etc.
+  // \x08 after <a:t prevents matching <a:txBody> / <a:tcPr> / <a:tblPr> etc.
   // — <a:t is a prefix of those tags and without \b the regex would capture
   // their inner content as if it were a text run. This was the root cause of
   // PPTX table cells returning raw XML instead of decoded text.

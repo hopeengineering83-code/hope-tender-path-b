@@ -1,9 +1,0 @@
-{
-  "evidenceSource": "operator-supplied; remote verification blocked in this environment",
-  "deploymentId": "dpl_25rmPtkMEQ7D8R6SgncotgyL5ALc",
-  "url": "https://hope-tender-path-cm6nnj7ft-hopeengineering83-codes-projects.vercel.app",
-  "githubCommitRef": "main",
-  "githubCommitSha": "808ed4b8992647a3dec7bbd2a2a6a8aca149d800",
-  "target": "production",
-  "state": "READY"
-}
