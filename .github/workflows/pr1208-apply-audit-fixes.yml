@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/pr1175-dead-broken-overlap-audit
+  pull_request:
+    branches:
+      - release/consolidated-recovery-20260717
 
 permissions:
   contents: write
@@ -16,6 +19,7 @@ jobs:
       - name: Checkout audit branch
         uses: actions/checkout@v4
         with:
+          ref: fix/pr1175-dead-broken-overlap-audit
           fetch-depth: 0
 
       - name: Reconstruct checksum-guarded patch
@@ -32,8 +36,6 @@ jobs:
           for index, expected in enumerate(expected_sizes):
               path = root / f'plain-{index:02d}.patch'
               data = path.read_bytes()
-              # The contents API may append one terminal newline. Remove only
-              # that transport newline when the original chunk ended mid-line.
               if len(data) == expected + 1 and data.endswith(b'\n'):
                   data = data[:-1]
               if len(data) != expected:
