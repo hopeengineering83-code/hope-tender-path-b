@@ -1383,9 +1383,7 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   const policy = resolveBootstrapAdminPolicy();
   if (!policy.allowRepair) {
     if (process.env.NODE_ENV === "production") {
-      logger.warn(
-        "[bootstrap] Skipping bootstrap admin seed in production. Set BOOTSTRAP_ADMIN_ENABLED=true with a secure BOOTSTRAP_ADMIN_PASSWORD to enable.",
-      );
+      logger.debug("[bootstrap] Bootstrap admin seed is disabled by policy.");
     }
     return;
   }
