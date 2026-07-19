@@ -27,7 +27,10 @@ describe("AI Analyze provider diagnostics wiring", () => {
   });
 
   it("never returns raw provider bodies, prompts, or keys (sanitises the 500 path)", () => {
-    assert.match(source, /KEY_REDACTED/);
+    // The route delegates secret redaction to the canonical redactSecrets()
+    // helper from lib/sanitize-error.ts. Previously this checked for inline
+    // KEY_REDACTED — consolidated so patterns cannot diverge.
+    assert.match(source, /redactSecrets/);
   });
 });
 

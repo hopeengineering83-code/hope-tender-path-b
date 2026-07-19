@@ -42,7 +42,6 @@ function deriveFileExtractionMetrics(extractedText: string): {
   ocrModel: string | null;
 } {
   const quality = assessExtractionQuality(extractedText);
-  const pageMarkers = (extractedText.match(/\[Page\s+\d+\]/gi) ?? []).length;
   // Fixed: the regex was looking for "[OCR text...]" but extract-text.ts emits
   // "[PDF text extracted via Claude vision OCR...]". The old regex never matched,
   // so ocrPages was always null from this path. Now matches the actual marker.

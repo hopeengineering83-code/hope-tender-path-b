@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useCallback, useMemo, useState, useEffect } from "react";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
@@ -59,12 +59,6 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
   const [exportReadiness, setExportReadiness] = useState<ExportReadiness | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Subscribe to cross-panel workflow sync so this panel auto-refreshes
-  // when other panels take actions.
-  useEffect(() => {
-    return subscribeTenderWorkflowSync(tenderId, () => { void checkFinalExport(); });
-  }, [tenderId]);
 
   const generationBlocked = Boolean(
     generationReadiness?.analysisSourceGate === "BLOCKED_REGEX_FALLBACK" ||
@@ -147,7 +141,7 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
     ];
   }, [exportReadiness, generationBlocked, generationReadiness?.analysisSourceGate, generationReady, tenderId, docBlockers, tenderBlockers, advisoryCount, strictTwoEnvelope]);
 
-  async function checkFinalExport() {
+  const checkFinalExport = useCallback(async () => {
     setChecking(true);
     setError(null);
     try {
@@ -160,7 +154,11 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }: 
     } finally {
       setChecking(false);
     }
-  }
+  }, [tenderId]);
+
+  // Subscribe to cross-panel workflow sync so this panel auto-refreshes
+  // when other panels take actions.
+  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void checkFinalExport(); }), [checkFinalExport, tenderId]);
 
   return (
     <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

@@ -21,11 +21,9 @@ import { resolveCanonicalFieldState, canonicalToClientChip } from "../../../../.
 import { isCriticalField, canBeNotApplicable, type TenderPolicyContext } from "../../../../../lib/engine/tender-policy-registry";
 import { enrichMetadataWithSourceEvidence } from "../../../../../lib/engine/metadata-source-enrichment";
 import {
-  classifyTenderFactAuthority,
   isMeaningfulReason,
   isValidConfirmationBasis,
   isSubmissionCriticalField,
-  isOperationalWarningField,
   isConditionallySubmissionCritical,
   MIN_CRITICAL_REASON_LENGTH,
   type HumanConfirmedAudit,
@@ -33,7 +31,6 @@ import {
 import {
   upsertTenderFactFromManualOverride,
   markTenderFactNotApplicable,
-  rejectInvalidTenderFact,
 } from "../../../../../lib/engine/tender-facts-ledger-service";
 
 export const dynamic = "force-dynamic";
@@ -245,9 +242,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const overrideValue = typeof body.overrideValue === "string" ? body.overrideValue.trim() || null : null;
   const reason = typeof body.reason === "string" ? body.reason.trim() || null : null;
-  // NEVER trust client-supplied previousValue — compute it server-side.
-  const previousValue = null; // Will be set from the existing override row below.
-
   // ─── SERVER-SIDE POLICY VALIDATION (P0) ──────────────────────────
   // The API must enforce policy. Hidden UI buttons are not security controls.
 

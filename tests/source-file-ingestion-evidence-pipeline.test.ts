@@ -272,10 +272,10 @@ describe("chunking", () => {
 // ─── 7. Extraction quality tests ───────────────────────────────────────────
 
 describe("extraction quality", () => {
-  const { assessExtractionQuality } = require("../lib/extraction/tender-extraction-quality");
+  const { assessTenderExtractionQuality } = require("../lib/extraction/tender-extraction-quality");
 
   it("good text returns good quality", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "extracted",
@@ -288,7 +288,7 @@ describe("extraction quality", () => {
   });
 
   it("partial extraction returns partial, not blocked", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "partial",
@@ -301,7 +301,7 @@ describe("extraction quality", () => {
   });
 
   it("encrypted PDF blocks with next action", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "encrypted",
@@ -314,7 +314,7 @@ describe("extraction quality", () => {
   });
 
   it("OCR-required but unavailable blocks with next action", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "ocr_required",
@@ -326,7 +326,7 @@ describe("extraction quality", () => {
   });
 
   it("no submission instructions creates warning, not extraction failure", () => {
-    const result = assessExtractionQuality({
+    const result = assessTenderExtractionQuality({
       tenderId: "t1",
       files: [{
         fileId: "f1", fileName: "tender.pdf", extractionStatus: "extracted",

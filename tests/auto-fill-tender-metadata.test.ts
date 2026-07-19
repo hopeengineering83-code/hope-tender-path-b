@@ -191,3 +191,48 @@ describe("autoFillTenderMetadata — fills missing fields", () => {
     assert.ok(true);
   });
 });
+
+describe("autoFillTenderMetadata — preserves existing non-string values", () => {
+  it("does not throw or overwrite existing dates, numbers, or booleans", async () => {
+    const prismaMock = makePrismaMock();
+    const deadline = new Date("2026-07-31T12:00:00.000Z");
+    const tender = {
+      id: "t-existing-scalars",
+      clientName: "World Bank",
+      reference: "RFP-EXISTING",
+      category: "Healthcare",
+      country: "Ethiopia",
+      deadline,
+      submissionMethod: "Online Portal",
+      submissionAddress: "https://example.test/submit",
+      submissionEmails: "bid@example.test",
+      clientContactName: "Existing Contact",
+      clientContactTitle: "Procurement Lead",
+      clientContactEmail: "contact@example.test",
+      clientContactPhone: "+251900000000",
+      validityDays: 90,
+      pageLimit: 75,
+      bidBondAmount: 25000,
+      bidBondCurrency: "USD",
+      numberOfCopiesRequired: 3,
+      mandatorySiteVisit: false,
+      evaluationMethodology: "Quality and cost based selection",
+      files: [{ extractedText: RICH_TEXT, originalFileName: "rfp.pdf" }],
+    };
+
+    const result = await autoFillTenderMetadata(tender, prismaMock as never);
+    const patch = prismaMock.getLastPatch();
+
+    for (const field of [
+      "deadline",
+      "validityDays",
+      "pageLimit",
+      "bidBondAmount",
+      "numberOfCopiesRequired",
+      "mandatorySiteVisit",
+    ]) {
+      assert.ok(!result.filled.includes(field), `${field} must not be overwritten`);
+      assert.ok(!patch || patch[field] === undefined, `${field} must not be present in the update patch`);
+    }
+  });
+});

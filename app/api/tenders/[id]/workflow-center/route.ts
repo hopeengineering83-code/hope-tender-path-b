@@ -1,6 +1,6 @@
 import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+import { requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";

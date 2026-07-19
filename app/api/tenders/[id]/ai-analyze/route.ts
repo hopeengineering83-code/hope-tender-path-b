@@ -12,7 +12,7 @@ import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
+import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus } from "../../../../../lib/engine/extraction-quality-gate";
 import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
 import { safeApiError, newDiagnosticId } from "../../../../../lib/engine/safe-api-error";
 import { attributeMetadataSourceFileId } from "../../../../../lib/engine/metadata-source-attribution";
@@ -21,8 +21,8 @@ import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type A
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
+import { redactSecrets } from "../../../../../lib/sanitize-error";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../../../../../lib/engine/tender-analysis-content";
-import { executeAnalysis } from "../../../../../lib/engine/analysis-orchestrator";
 import { createAnalysisJob } from "../../../../../lib/ai-jobs/analysis-job-service";
 import {
   AiAnalyzeCheckpointPersistenceError,
@@ -791,7 +791,7 @@ async function handleStreamingAnalyze(
               if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
               if (analysisJob) {
                 const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
-                const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+                const safeErrMsg = redactSecrets(errMsg).slice(0, 300);
                 await preserveAiAnalyzeProgressOnFailure(analysisJob.id, {
                   analysisSource: "REGEX_FALLBACK",
                   errorMessage: safeErrMsg,
@@ -997,7 +997,6 @@ async function handleStreamingAnalyze(
             });
             // Non-destructive: stage fallback result without touching canonical tender data.
             const result = analyzeTender(tenderRecord);
-            const diagnosticsLine = formatFallbackDiagnosticsLine(diagnostics);
             const providerDiagnostics = buildProviderDiagnosticsSnapshot();
             // When the AiJob was never created (rare transient DB failure on startup),
             // create a minimal tracking record so the fallback draft can be staged
@@ -1430,7 +1429,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   async function runRegexFallback(errorMessage?: string, diagnostics?: AnalysisFallbackDiagnostics) {
     const result = analyzeTender(tenderRecord);
     const fallbackDiagnostics = diagnostics ?? (errorMessage ? buildAnalysisFallbackDiagnostics(errorMessage) : buildAnalysisFallbackDiagnostics("No AI provider configured"));
-    const diagnosticsLine = formatFallbackDiagnosticsLine(fallbackDiagnostics);
     const providerDiagnostics = buildProviderDiagnosticsSnapshot();
 
     if (nsJobIdForFallback) {
@@ -1642,7 +1640,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // Fail the job before re-throwing
           if (analysisJob) {
             const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
-            const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+            const safeErrMsg = redactSecrets(errMsg).slice(0, 300);
             await preserveAiAnalyzeProgressOnFailure(analysisJob.id, {
               analysisSource: "REGEX_FALLBACK",
               errorMessage: safeErrMsg,

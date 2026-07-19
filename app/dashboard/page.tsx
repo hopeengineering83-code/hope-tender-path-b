@@ -18,7 +18,6 @@ export default async function DashboardPage() {
   await prismaReady;
 
   const now = new Date();
-  const in3days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
   const in7days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   // Truthful workspace totals — use real COUNT / GROUP-BY queries so global
@@ -33,7 +32,6 @@ export default async function DashboardPage() {
   const [
     activeTenderCount,
     overdueCount,
-    dueSoon3Count,
     dueSoon7Count,
     criticalComplianceGapCount,
     extractionStateRows,
@@ -48,13 +46,6 @@ export default async function DashboardPage() {
       where: {
         userId,
         deadline: { lt: now },
-        status: { notIn: ["EXPORTED", "CLOSED"] },
-      },
-    }),
-    prisma.tender.count({
-      where: {
-        userId,
-        deadline: { gte: now, lte: in3days },
         status: { notIn: ["EXPORTED", "CLOSED"] },
       },
     }),
@@ -144,7 +135,6 @@ export default async function DashboardPage() {
       requirementsCount: r._count?.requirements ?? 0,
     })),
   );
-  const recentTenderIds = recentTenders.map((t) => t.id);
   const recentCurrentnessVerdicts = await classifyTenderCurrentnessBatch(
     prisma,
     recentTenders.map((t) => ({

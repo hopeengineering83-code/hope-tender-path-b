@@ -290,7 +290,9 @@ test("derive: error message with API key is redacted in diagnostics", () => {
   }));
   assert.ok(!d.safeDiagnosticSummary.includes("sk-abc123XYZsecretkey"), "raw sk- key must not leak");
   assert.ok(!d.safeDiagnosticSummary.includes("topsecret999"), "raw api_key value must not leak");
-  assert.ok(d.safeDiagnosticSummary.includes("[KEY]"), "redaction marker present");
+  // redactSecrets() produces [KEY_REDACTED] (consolidated helper in sanitize-error.ts).
+  // The previous redactSafe() produced [KEY] — updated to match the canonical format.
+  assert.ok(d.safeDiagnosticSummary.includes("[KEY_REDACTED]"), "redaction marker present");
 });
 
 test("derive: Bearer token redacted", () => {

@@ -10,7 +10,7 @@ import { notFound, redirect } from "next/navigation";
 import { getSession, getCurrentUser } from "../../../../lib/auth";
 import { canMutateTender } from "../../../../lib/recovery-command-actions";
 import { getCurrentConfirmedBuildPlan } from "../../../../lib/engine/build-plan";
-import { prisma, prismaReady } from "../../../../lib/prisma";
+import { prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";

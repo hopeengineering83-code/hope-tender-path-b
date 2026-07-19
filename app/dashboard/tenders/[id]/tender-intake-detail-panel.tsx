@@ -322,8 +322,6 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const sValidity = sanitize("validityDays", tender.validityDays);
   const sCopies = sanitize("numberOfCopiesRequired", tender.numberOfCopiesRequired);
   const sEvaluation = sanitize("technicalWeight", evaluation);
-  const sDesc = sanitize("description", tender.description);
-  const sEvalMethod = sanitize("evaluationMethodology", tender.evaluationMethodology);
 
   // Source-driven text parsing: derive intelligence from the FULL extracted
   // tender content (extractedText, intakeSummary, analysisSummary, description,

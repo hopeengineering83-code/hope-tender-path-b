@@ -37,7 +37,6 @@ import {
 } from "./export-readiness";
 import {
   filterFinalExportCandidateDocuments,
-  isFinalExportCandidateDocument,
   type DocumentLike,
 } from "./document-output-state";
 import {

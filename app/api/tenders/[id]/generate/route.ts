@@ -2,12 +2,11 @@ import { NextResponse } from "next/server";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { Prisma } from "@prisma/client";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../../lib/engine/best-available-selection";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { inferType as inferRequirementType } from "../../../../../lib/engine/analysis";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
@@ -20,7 +19,6 @@ import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time, logger } from "../../../../../lib/observability";
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
-import { isValidClientName, containsMetadataPlaceholder, isClientNameContaminated, clientNameContaminationReason } from "../../../../../lib/engine/metadata-validators";
 import { validateTenderBeforeGeneration } from "../../../../../lib/engine/pre-generation-validation";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
@@ -46,10 +44,6 @@ export const dynamic = "force-dynamic";
 
 type SupportDocKind = "EXPERT_CV" | "PROJECT_REFERENCES" | "METHODOLOGY" | "COMPANY_PROFILE" | "FINANCIAL_PLACEHOLDER" | "LEGAL_PLACEHOLDER" | "FORM_PLACEHOLDER" | "DECLARATION_PLACEHOLDER" | "ANNEX_PLACEHOLDER" | "SUBMISSION_RULES_PLACEHOLDER" | "SECTOR_TECHNICAL_SCOPE" | "GENERIC";
 
-function hasRealClientName(value?: string | null): boolean {
-  return isValidClientName(value);
-}
-
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
   const text = `${gap.title} ${gap.description} ${gap.mitigationPlan ?? ""}`;
   return /(ineligible|debarred|blacklisted|deadline.*passed|late submission|missing required file name|missing exact file|tender not found|company profile required|no documents? have been generated|signature prohibited|branding prohibited)/i.test(text);
@@ -69,37 +63,6 @@ function para(text: string, bold = false): Paragraph {
 }
 function heading(text: string): Paragraph { return new Paragraph({ text: clean(text), heading: HeadingLevel.HEADING_1, spacing: { before: 260, after: 140 } }); }
 function bullet(text: string): Paragraph { return new Paragraph({ text: shortText(text, 560), bullet: { level: 0 }, spacing: { after: 80, line: 260 } }); }
-
-function plannedRecordDocumentType(file: SubmissionPlanFile): string {
-  const label = `${file.exactFileName} ${file.documentType}`.toLowerCase();
-  if (/technical[-\s_]*proposal|methodology|technical approach/.test(label)) return "TECHNICAL_PROPOSAL";
-  if (/financial|price|commercial/.test(label)) return "FINANCIAL_PROPOSAL";
-  if (/expert|cv|personnel|staff/.test(label)) return "EXPERT_CV_PACKAGE";
-  if (/project|experience|reference/.test(label)) return "PROJECT_REFERENCE_PACKAGE";
-  if (/form|declaration|annex|schedule|certificate|compliance/.test(label)) return "FORM_OR_ANNEX";
-  return file.documentType || "TENDER_REQUIRED_FILE";
-}
-
-/**
- * @deprecated PERMANENTLY DISABLED — do not call.
- *
- * This helper previously created PLANNED GeneratedDocument rows during the
- * planOnly path. Per the gate safety fix, Build Plan and planOnly must create
- * zero GeneratedDocument rows before readiness. PLANNED rows must never count
- * as generated, reviewed, approved, export-ready, or ZIP-ready.
- *
- * This function is retained as a no-op stub so any future call site fails
- * closed (returns 0, creates nothing). Do NOT re-enable it.
- */
-
-
-/**
- * @deprecated PERMANENTLY DISABLED — do not call.
- * Creates zero GeneratedDocument rows. Retained as no-op stub.
- */
-async function ensurePlannedGeneratedDocumentRecords(_tenderId: string, _plannedFiles: SubmissionPlanFile[]): Promise<number> {
-  return 0;
-}
 
 async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
   const children: Paragraph[] = [para(title, true), para(`Tender: ${shortText(tenderTitle, 200)}. Package item: ${title}.`)];
@@ -125,10 +88,6 @@ function classifySupportDoc(docName: string): SupportDocKind {
   if (/submission|deadline|delivery|formatting|packaging|schedule|programme/.test(name)) return "SUBMISSION_RULES_PLACEHOLDER";
   if (/scope|water|solar|design|supervision|feasibility|technical requirement/.test(name)) return "SECTOR_TECHNICAL_SCOPE";
   return "GENERIC";
-}
-
-function isReplacementOriginalKind(kind: SupportDocKind): boolean {
-  return kind.endsWith("_PLACEHOLDER") || kind === "GENERIC";
 }
 
 function placeholderIntro(): string[] {
@@ -523,7 +482,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
   if (analysisExtractionStatusForGen === "PARTIAL_EXTRACTION_AI_ANALYZED") {
-    const reqUrl2 = new URL(req.url);
     {
       return NextResponse.json({
         errorCode: "PARTIAL_EXTRACTION_ANALYSIS",
@@ -556,12 +514,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // requirements but classified none as MANDATORY, the mandatory-compliance
   // section may be incomplete. This is a warning for the user.
   {
-    const reqUrl0 = new URL(req.url);
-    {
-      const mandatoryCount = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
-      if (mandatoryCount === 0 && tender.requirements.length >= 3) {
-        logger.warn(`[generate] tender=${id} has ${tender.requirements.length} requirements but none classified as MANDATORY — advisory only for draft work`);
-      }
+    const mandatoryCount = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
+    if (mandatoryCount === 0 && tender.requirements.length >= 3) {
+      logger.warn(`[generate] tender=${id} has ${tender.requirements.length} requirements but none classified as MANDATORY — advisory only for draft work`);
     }
   }
 
@@ -571,31 +526,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // absence is a warning only (documents can still be generated without it, but
   // the plan may under-score sections).
   {
-    const reqUrl = new URL(req.url);
-    {
-      const explicitScope = hasExplicitSubmissionScope(tender);
-      let anySubmission = false;
-      let anyRequiredDocs = false;
-      let anyEvaluation = false;
-      let totalDetected = 0;
-      for (const file of effectiveExtractionFiles) {
-        const pp = assessExtractionQualityPerPage(file.extractedText);
-        totalDetected += pp.totalDetectedPages;
-        if (pp.submissionInstructionPages.length > 0) anySubmission = true;
-        if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
-        if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
-      }
-      if (totalDetected > 0) {
-        const contentWarnings: string[] = [];
-        if (!anySubmission) contentWarnings.push("No submission instruction pages detected — submission details will be omitted from draft output.");
-        if (!anyRequiredDocs) contentWarnings.push("No required document pages detected — required documents may be missing from draft output.");
-        if (!anyEvaluation) contentWarnings.push("No evaluation criteria pages detected — evaluation guidance will be limited in draft output.");
-        if (contentWarnings.length > 0) {
-          // Content-page coverage is NOT a hard block for draft work.
-          // Missing submission/required-doc/evaluation pages are warnings —
-          // draft generation proceeds with available source text.
-          logger.warn(`[generate] tender=${id} content-page coverage incomplete: ${contentWarnings.join("; ")}`);
-        }
+    let anySubmission = false;
+    let anyRequiredDocs = false;
+    let anyEvaluation = false;
+    let totalDetected = 0;
+    for (const file of effectiveExtractionFiles) {
+      const pp = assessExtractionQualityPerPage(file.extractedText);
+      totalDetected += pp.totalDetectedPages;
+      if (pp.submissionInstructionPages.length > 0) anySubmission = true;
+      if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
+      if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
+    }
+    if (totalDetected > 0) {
+      const contentWarnings: string[] = [];
+      if (!anySubmission) contentWarnings.push("No submission instruction pages detected — submission details will be omitted from draft output.");
+      if (!anyRequiredDocs) contentWarnings.push("No required document pages detected — required documents may be missing from draft output.");
+      if (!anyEvaluation) contentWarnings.push("No evaluation criteria pages detected — evaluation guidance will be limited in draft output.");
+      if (contentWarnings.length > 0) {
+        // Content-page coverage is NOT a hard block for draft work.
+        // Missing submission/required-doc/evaluation pages are warnings —
+        // draft generation proceeds with available source text.
+        logger.warn(`[generate] tender=${id} content-page coverage incomplete: ${contentWarnings.join("; ")}`);
       }
     }
   }
@@ -644,80 +595,76 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Policy point 7). This is a fast, targeted pre-check; the registry-backed
   // completeness gate further below is the full enforcing authority.
   {
-    const reqUrl = new URL(req.url);
-    {
-      const explicitScope = hasExplicitSubmissionScope(tender);
-      // Use canonical field-state resolver instead of raw column checks.
-      // A valid manual override must NOT fail just because the raw DB column is blank.
-      const overrides = await prisma.tenderMetadataOverride.findMany({
-        where: { tenderId: id },
-      }).catch(() => []);
-      const canonicalState = resolveCanonicalFieldState({
-        tender: {
-          ...tender,
-          submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
-          clientContactEmail: (tender as any).clientContactEmail ?? null,
-          // Per-field source-evidence columns — forward ALL of them so the
-          // canonical resolver can ground every critical field, not just
-          // clientName/submissionMethod. Without these, title/deadline/
-          // reference/submissionAddress/submissionEmails can never be
-          // GROUNDED in the generate route even when the DB has the evidence.
-          clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
-          clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
-          clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
-          titleSourcePage: (tender as any).titleSourcePage ?? null,
-          titleSourceQuote: (tender as any).titleSourceQuote ?? null,
-          titleSourceFileId: (tender as any).titleSourceFileId ?? null,
-          deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
-          deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
-          deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
-          submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
-          submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
-          submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
-          submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
-          submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
-          submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
-          submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
-          submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
-          submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
-          contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
-        } as any,
-        overrides: overrides as any[],
-        hasExtractedRequirements: tender.requirements.length > 0,
-        submissionMethodContext: tender.submissionMethod ?? undefined,
-        // Enforce active-file grounding: a fileId pointing to a
-        // deleted/superseded TenderFile must NOT count as GROUNDED.
-        activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f: any) => f.id)),
-        // Full active-file rows enable the STRONGEST shared grounding check
-        // (quote containment + page <= totalPages) — same rule the BuildPlan
-        // validator applies, so this pre-check and the validator agree.
-        activeFiles: (tender.files ?? [])
-          .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
-          .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
-      });
-      const policyCtx = { submissionMethod: tender.submissionMethod };
-      const missingCritical: string[] = canonicalState.fields
-        .filter(f => f.criticality !== "non-critical" && f.blockerReason)
-        .map(f => f.blockerReason!);
-      // Only require submissionEmails when the method clearly indicates email
-      // delivery — not when "email" appears in a prohibition phrase like
-      // "no email submissions" or "hard copy only; email not accepted".
-      if (
-        isCriticalField("submissionEndpoint", policyCtx) &&
-        tender.submissionMethod &&
-        /email/i.test(tender.submissionMethod) &&
-        !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&
-        !tender.submissionEmails
-      ) {
-        // Generation is DRAFT work — missing submission email is a warning,
-        // not a blocker. The user can still generate draft proposal material.
-        // Final submission gates enforce strict endpoint requirements.
-      }
-      if (missingCritical.length > 0) {
-        // Metadata is NOT a hard blocker for draft generation.
-        // Missing critical metadata is a warning — draft work proceeds.
-        logger.warn(`[generate] tender=${id} has missing critical metadata: ${missingCritical.join(", ")}`);
-      }
+    // Use canonical field-state resolver instead of raw column checks.
+    // A valid manual override must NOT fail just because the raw DB column is blank.
+    const overrides = await prisma.tenderMetadataOverride.findMany({
+      where: { tenderId: id },
+    }).catch(() => []);
+    const canonicalState = resolveCanonicalFieldState({
+      tender: {
+        ...tender,
+        submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
+        clientContactEmail: (tender as any).clientContactEmail ?? null,
+        // Per-field source-evidence columns — forward ALL of them so the
+        // canonical resolver can ground every critical field, not just
+        // clientName/submissionMethod. Without these, title/deadline/
+        // reference/submissionAddress/submissionEmails can never be
+        // GROUNDED in the generate route even when the DB has the evidence.
+        clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
+        clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
+        clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
+        titleSourcePage: (tender as any).titleSourcePage ?? null,
+        titleSourceQuote: (tender as any).titleSourceQuote ?? null,
+        titleSourceFileId: (tender as any).titleSourceFileId ?? null,
+        deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
+        deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
+        deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
+        submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
+        submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
+        submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
+        submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
+        submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
+        submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
+        submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
+        submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
+        submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
+        contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
+      } as any,
+      overrides: overrides as any[],
+      hasExtractedRequirements: tender.requirements.length > 0,
+      submissionMethodContext: tender.submissionMethod ?? undefined,
+      // Enforce active-file grounding: a fileId pointing to a
+      // deleted/superseded TenderFile must NOT count as GROUNDED.
+      activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f: any) => f.id)),
+      // Full active-file rows enable the STRONGEST shared grounding check
+      // (quote containment + page <= totalPages) — same rule the BuildPlan
+      // validator applies, so this pre-check and the validator agree.
+      activeFiles: (tender.files ?? [])
+        .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+        .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
+    });
+    const policyCtx = { submissionMethod: tender.submissionMethod };
+    const missingCritical: string[] = canonicalState.fields
+      .filter(f => f.criticality !== "non-critical" && f.blockerReason)
+      .map(f => f.blockerReason!);
+    // Only require submissionEmails when the method clearly indicates email
+    // delivery — not when "email" appears in a prohibition phrase like
+    // "no email submissions" or "hard copy only; email not accepted".
+    if (
+      isCriticalField("submissionEndpoint", policyCtx) &&
+      tender.submissionMethod &&
+      /email/i.test(tender.submissionMethod) &&
+      !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&
+      !tender.submissionEmails
+    ) {
+      // Generation is DRAFT work — missing submission email is a warning,
+      // not a blocker. The user can still generate draft proposal material.
+      // Final submission gates enforce strict endpoint requirements.
+    }
+    if (missingCritical.length > 0) {
+      // Metadata is NOT a hard blocker for draft generation.
+      // Missing critical metadata is a warning — draft work proceeds.
+      logger.warn(`[generate] tender=${id} has missing critical metadata: ${missingCritical.join(", ")}`);
     }
   }
 

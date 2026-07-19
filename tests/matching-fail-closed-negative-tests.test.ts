@@ -9,7 +9,6 @@ import { createHash } from "node:crypto";
 import { buildReviewProvenance, expertReviewFields } from "../lib/vault-review-provenance";
 import {
   capabilityScore,
-  capabilityFamilies,
   detectDominantFamily,
 } from "../lib/engine/matching";
 import {
