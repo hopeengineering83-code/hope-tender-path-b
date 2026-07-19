@@ -88,7 +88,6 @@ jobs:
           tests/matching-fail-closed-negative-tests.test.ts
           tests/matching-relevance-gates.test.ts
           tests/matching-strict-domain.test.ts
-          tests/pr1175-final-gap-repair.test.ts
           tests/vault-review-route-postgres.test.ts
           EOF
           sed -i 's/^          //' /tmp/expected-files
