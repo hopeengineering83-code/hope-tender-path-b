@@ -41,6 +41,15 @@ describe("PR 1175 final gap repair contracts", () => {
     assert.doesNotMatch(rematch, /continuing with remaining assessments/);
   });
 
+  it("matching relevance fixtures use current verified source bytes", () => {
+    const relevance = readFileSync("tests/matching-relevance-gates.test.ts", "utf8");
+    const strictDomain = readFileSync("tests/matching-strict-domain.test.ts", "utf8");
+    assert.match(relevance, /buildReviewProvenance/);
+    assert.match(relevance, /integrityStatus: "VERIFIED"/);
+    assert.match(strictDomain, /buildReviewProvenance/);
+    assert.match(strictDomain, /integrityStatus: "VERIFIED"/);
+  });
+
   it("screenshot audit is a superset of the retained 210-image baseline", () => {
     assert.match(capture, /baselineScenarioRoutes/);
     assert.match(capture, /REGEX_FALLBACK/);
