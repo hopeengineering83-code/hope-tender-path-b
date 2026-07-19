@@ -1,0 +1,19 @@
+name: PR 1209 dispatch exact-head CI
+
+on:
+  push:
+    branches:
+      - fix/pr1175-dead-broken-overlap-audit-replacement
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Dispatch exact-head validation workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pr1209-exact-head-ci.yml --ref fix/pr1175-dead-broken-overlap-audit-replacement
