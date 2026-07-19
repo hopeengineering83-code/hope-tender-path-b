@@ -1,0 +1,333 @@
+hboardPage() {
+       requirementsCount: r._count?.requirements ?? 0,
+     })),
+   );
+-  const recentTenderIds = recentTenders.map((t) => t.id);
+   const recentCurrentnessVerdicts = await classifyTenderCurrentnessBatch(
+     prisma,
+     recentTenders.map((t) => ({
+diff --git a/app/dashboard/tenders/[id]/page.tsx b/app/dashboard/tenders/[id]/page.tsx
+index ee1c54e..de59b39 100755
+--- a/app/dashboard/tenders/[id]/page.tsx
++++ b/app/dashboard/tenders/[id]/page.tsx
+@@ -10,7 +10,7 @@ import { notFound, redirect } from "next/navigation";
+ import { getSession, getCurrentUser } from "../../../../lib/auth";
+ import { canMutateTender } from "../../../../lib/recovery-command-actions";
+ import { getCurrentConfirmedBuildPlan } from "../../../../lib/engine/build-plan";
+-import { prisma, prismaReady } from "../../../../lib/prisma";
++import { prismaReady } from "../../../../lib/prisma";
+ import { isAIEnabled } from "../../../../lib/ai";
+ import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
+ import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
+diff --git a/app/dashboard/tenders/[id]/report/page.tsx b/app/dashboard/tenders/[id]/report/page.tsx
+index 269dde4..27b6e75 100644
+--- a/app/dashboard/tenders/[id]/report/page.tsx
++++ b/app/dashboard/tenders/[id]/report/page.tsx
+@@ -113,7 +113,6 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
+     canonicalReadiness?.ok === true &&
+     (canonicalReadiness.tenderLevelBlockers.length === 0);
+   const canonicalBlockers = [...(canonicalReadiness?.tenderLevelBlockers ?? [])];
+-  const canonicalAdvisories = canonicalReadiness?.advisoryWarnings ?? [];
+ 
+   // ── Currency display (from canonical readiness result) ──────────────
+   // Per REVISION_REQUIRED: the report page must NOT call the canonical
+diff --git a/app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx b/app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx
+index 441fc49..10b4297 100644
+--- a/app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx
++++ b/app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx
+@@ -322,8 +322,6 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
+   const sValidity = sanitize("validityDays", tender.validityDays);
+   const sCopies = sanitize("numberOfCopiesRequired", tender.numberOfCopiesRequired);
+   const sEvaluation = sanitize("technicalWeight", evaluation);
+-  const sDesc = sanitize("description", tender.description);
+-  const sEvalMethod = sanitize("evaluationMethodology", tender.evaluationMethodology);
+ 
+   // Source-driven text parsing: derive intelligence from the FULL extracted
+   // tender content (extractedText, intakeSummary, analysisSummary, description,
+diff --git a/components/ai-health-panel.tsx b/components/ai-health-panel.tsx
+index 47b2f12..3a3d0f5 100755
+--- a/components/ai-health-panel.tsx
++++ b/components/ai-health-panel.tsx
+@@ -9,7 +9,6 @@ import {
+   getCanonicalProviderEntries,
+   getProviderModel,
+   isProviderConfigured,
+-  providerDisplayName,
+   openRouterModelValidity,
+   CANONICAL_AI_FALLBACK_CHAIN_DISPLAY,
+ } from "../lib/ai-provider-registry";
+diff --git a/components/authority-review-panel.tsx b/components/authority-review-panel.tsx
+index bfdf83d..e0e7ed9 100755
+--- a/components/authority-review-panel.tsx
++++ b/components/authority-review-panel.tsx
+@@ -2,7 +2,7 @@
+ 
+ import { useCallback, useEffect, useState } from "react";
+ import { errorCodeLabel } from "@/lib/ui/human-labels";
+-import { RefreshIcon, WarningIcon, CheckCircleIcon, CrossIcon, InfoIcon, ChevronDownIcon } from "./icons";
++import { RefreshIcon, WarningIcon, CheckCircleIcon, CrossIcon, ChevronDownIcon } from "./icons";
+ import type {
+   AuthorityReviewResult,
+   AuthorityBlocker,
+diff --git a/components/export-readiness-panel.tsx b/components/export-readiness-panel.tsx
+index 7f6d67f..401bc76 100644
+--- a/components/export-readiness-panel.tsx
++++ b/components/export-readiness-panel.tsx
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useRef, useState, useEffect } from "react";
++import { useCallback, useRef, useState, useEffect } from "react";
+ import { useRouter } from "next/navigation";
+ import { CheckIcon, WarningIcon, ClockIcon, BoltIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon } from "./icons";
+ import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
+@@ -119,13 +119,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
+ 
+   const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || retryingAnalysis || repairingSource || reclassifying || deduplicating || repairingAssets;
+ 
+-  // Subscribe to cross-panel workflow sync so this panel refreshes when
+-  // other panels (workflow center, recovery center) take actions.
+-  useEffect(() => {
+-    return subscribeTenderWorkflowSync(tenderId, () => { void refresh(); });
+-  }, [tenderId]);
+-
+-  async function refresh() {
++  const refresh = useCallback(async () => {
+     setLoading(true);
+     setError(null);
+     try {
+@@ -144,7 +138,11 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
+     } finally {
+       setLoading(false);
+     }
+-  }
++  }, [router, tenderId]);
++
++  // Subscribe to cross-panel workflow sync so this panel refreshes when
++  // other panels (workflow center, recovery center) take actions.
++  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void refresh(); }), [refresh, tenderId]);
+ 
+   async function generateMissingPlanned() {
+     setGeneratingMissing(true);
+diff --git a/components/extraction-quality-dashboard.tsx b/components/extraction-quality-dashboard.tsx
+index f852d44..af461ad 100644
+--- a/components/extraction-quality-dashboard.tsx
++++ b/components/extraction-quality-dashboard.tsx
+@@ -1,8 +1,8 @@
+ import { prisma, prismaReady } from "../lib/prisma";
+ import { assessExtractionQuality, assessExtractionQualityPerPage } from "../lib/extraction-quality";
+ import { isExtractionCorrupted } from "../lib/engine/extraction-quality-gate";
+-import { scoreToSeverity, severityBadgeClasses, severityBgClass, severityTextClass, severityBorderClass } from "../lib/ui-tokens";
+-import { CheckIcon, WarningIcon, DocumentIcon } from "./icons";
++import { scoreToSeverity, severityBadgeClasses, severityTextClass } from "../lib/ui-tokens";
++import { WarningIcon, DocumentIcon } from "./icons";
+ 
+ type FileStatus = "GOOD" | "ACCEPTABLE" | "POOR";
+ 
+diff --git a/components/final-submission-control-center.tsx b/components/final-submission-control-center.tsx
+index 4945905..9d7895a 100644
+--- a/components/final-submission-control-center.tsx
++++ b/components/final-submission-control-center.tsx
+@@ -1,6 +1,6 @@
+ "use client";
+ 
+-import { useMemo, useState, useEffect } from "react";
++import { useCallback, useMemo, useState, useEffect } from "react";
+ import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
+ import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
+ 
+@@ -60,12 +60,6 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }:
+   const [checking, setChecking] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+ 
+-  // Subscribe to cross-panel workflow sync so this panel auto-refreshes
+-  // when other panels take actions.
+-  useEffect(() => {
+-    return subscribeTenderWorkflowSync(tenderId, () => { void checkFinalExport(); });
+-  }, [tenderId]);
+-
+   const generationBlocked = Boolean(
+     generationReadiness?.analysisSourceGate === "BLOCKED_REGEX_FALLBACK" ||
+     (generationReadiness?.fullProposalBlockers?.length ?? 0) > 0 ||
+@@ -147,7 +141,7 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }:
+     ];
+   }, [exportReadiness, generationBlocked, generationReadiness?.analysisSourceGate, generationReady, tenderId, docBlockers, tenderBlockers, advisoryCount, strictTwoEnvelope]);
+ 
+-  async function checkFinalExport() {
++  const checkFinalExport = useCallback(async () => {
+     setChecking(true);
+     setError(null);
+     try {
+@@ -160,7 +154,11 @@ export function FinalSubmissionControlCenter({ tenderId, generationReadiness }:
+     } finally {
+       setChecking(false);
+     }
+-  }
++  }, [tenderId]);
++
++  // Subscribe to cross-panel workflow sync so this panel auto-refreshes
++  // when other panels take actions.
++  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void checkFinalExport(); }), [checkFinalExport, tenderId]);
+ 
+   return (
+     <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+diff --git a/components/matching-quality-panel.tsx b/components/matching-quality-panel.tsx
+index 22027dd..9d0698c 100644
+--- a/components/matching-quality-panel.tsx
++++ b/components/matching-quality-panel.tsx
+@@ -1,4 +1,3 @@
+-import Link from "next/link";
+ import { getSession } from "../lib/auth";
+ import { prisma, prismaReady } from "../lib/prisma";
+ import { assessMatchingQuality } from "../lib/matching-quality";
+diff --git a/components/tender-recovery-command-center.tsx b/components/tender-recovery-command-center.tsx
+index 2d7d93e..a7160e5 100644
+--- a/components/tender-recovery-command-center.tsx
++++ b/components/tender-recovery-command-center.tsx
+@@ -197,7 +197,6 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
+       // Versioned-safe contract: API returns { outcomes: [...] } not { repaired: [...] }
+       const outcomes: Array<{ field?: string; status?: string }> = Array.isArray(json.outcomes) ? json.outcomes as Array<{ field?: string; status?: string }> : [];
+       const repairedFields = outcomes.filter((o) => o.status === "REPAIRED").map((o) => o.field ?? "unknown");
+-      const skippedFields = outcomes.filter((o) => o.status === "SKIPPED").map((o) => o.field ?? "unknown");
+       // Treat NOT_FOUND, REJECTED, UNRESOLVED, and ERROR as unresolved
+       const unresolvedFields = outcomes.filter((o) => o.status === "NOT_FOUND" || o.status === "REJECTED" || o.status === "UNRESOLVED" || o.status === "ERROR").map((o) => o.field ?? "unknown");
+       if (repairedFields.length > 0 && unresolvedFields.length === 0) {
+diff --git a/lib/ai-analyze/content-hash.ts b/lib/ai-analyze/content-hash.ts
+index 5426a81..950d792 100644
+--- a/lib/ai-analyze/content-hash.ts
++++ b/lib/ai-analyze/content-hash.ts
+@@ -134,9 +134,6 @@ export async function buildTenderAnalysisContent(
+  * takes the structured TenderAnalysisContent object and returns the
+  * full 64-char hex hash.
+  *
+- * Backward-compat alias `computeAnalysisContentHash` is preserved at
+- * the bottom of the file so existing imports continue to work.
+- *
+  * Returns a stable hex-encoded SHA-256 hash.
+  * Same content → same hash.
+  * Different content → different hash.
+@@ -170,10 +167,3 @@ export async function buildAndHashTenderAnalysisContent(
+   const hash = computeTenderAnalysisContentHash(content);
+   return { content, hash };
+ }
+-
+-// Backward-compat alias — preserved so existing imports
+-// `computeAnalysisContentHash` from this module continue to work. New code
+-// should prefer the explicit `computeTenderAnalysisContentHash` name to
+-// avoid confusion with the string-input `computeAnalysisContentHash` in
+-// lib/engine/tender-analysis-content.ts.
+-export const computeAnalysisContentHash = computeTenderAnalysisContentHash;
+diff --git a/lib/ai-analyze/runner.ts b/lib/ai-analyze/runner.ts
+deleted file mode 100755
+index 981e77f..0000000
+--- a/lib/ai-analyze/runner.ts
++++ /dev/null
+@@ -1,104 +0,0 @@
+-import crypto from "crypto";
+-import { logger } from "../observability";
+-import { prisma } from "@/lib/prisma";
+-import {
+-  createAnalysisJob,
+-  runNextChunk,
+-  finalizeJob
+-} from "@/lib/ai-jobs/analysis-job-service";
+-import { resolveTenderAnalysisState } from "@/lib/engine/analysis-state-resolver";
+-import { formatTenderFileAnalysisMarker } from "@/lib/engine/requirement-source-linkage";
+-import { toSafeAiFailureCategory } from "@/lib/engine/analysis/safe-diagnostics";
+-
+-/**
+- * The single authoritative runner for AI Analysis.
+- * All entry points (API routes, workers, recovery actions) MUST use this service
+- * to ensure consistent state transitions and non-destructive behavior.
+- */
+-export class AiAnalyzeRunner {
+-  /**
+-   * Start or resume an AI analysis job for a tender.
+-   */
+-  static async startOrResume(tenderId: string, userId: string, requestId?: string, force: boolean = false) {
+-    const tender = await prisma.tender.findUnique({
+-      where: { id: tenderId, userId },
+-      include: {
+-        files: {
+-          select: {
+-            id: true, fileName: true, originalFileName: true, classification: true, extractedText: true, createdAt: true
+-          }
+-        }
+-      }
+-    });
+-
+-    if (!tender) throw new Error("Tender not found or access denied");
+-
+-    // 1. Resolve current state to see if we have an active job
+-    const currentState = await resolveTenderAnalysisState(prisma, tenderId, userId);
+-
+-    // 2. Generate content hash to check for changes
+-    const fileTexts = tender.files
+-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+-      .map((f) => f.extractedText
+-        ? `${formatTenderFileAnalysisMarker(f)}\n${f.extractedText}`
+-        : `${formatTenderFileAnalysisMarker(f)} ${f.classification ?? ""}`)
+-      .join("\n\n");
+-
+-    const contentHash = crypto.createHash("sha256").update(fileTexts).digest("hex");
+-
+-    let jobId = currentState.latestJobId;
+-
+-    // Check if existing job matches current content
+-    const existingJob = jobId ? await prisma.aiJob.findUnique({ where: { id: jobId } }) : null;
+-    const contentMismatch = existingJob && existingJob.analysisInputHash !== contentHash;
+-
+-    if (!jobId || currentState.state === "NOT_STARTED" || currentState.state === "FAILED" || contentMismatch || force) {
+-      // Create a fresh job
+-      const job = await createAnalysisJob({ tenderId, userId });
+-      jobId = job.jobId;
+-    }
+-
+-    // Reload state after potential job creation
+-    const finalState = await resolveTenderAnalysisState(prisma, tenderId, userId);
+-
+-    return {
+-      jobId,
+-      status: finalState.state,
+-      totalChunks: finalState.totalChunks,
+-      completedChunks: finalState.completedChunks,
+-      failedChunks: finalState.totalChunks - finalState.completedChunks - (finalState.state === "RUNNING" ? 1 : 0),
+-      nextAction: finalState.resumable ? "RUN_NEXT_CHUNK" : (finalState.state === "RUNNING" ? "WAIT_FOR_CHUNKS" : "FINALIZE"),
+-    };
+-  }
+-
+-  /**
+-   * Process the next available chunk for a job.
+-   * Atomic and transaction-safe via SKIP LOCKED.
+-   */
+-  static async runNextChunk(jobId: string, userId: string) {
+-    // Verify ownership
+-    const job = await prisma.aiJob.findUnique({ where: { id: jobId, userId } });
+-    if (!job) throw new Error("Job not found or access denied");
+-
+-    try {
+-      return await runNextChunk(jobId, userId);
+-    } catch (error) {
+-      const category = toSafeAiFailureCategory(error);
+-      // We don't throw here to avoid 500ing the worker, but we log the safe category
+-      logger.error(`AI Chunk failed: ${category}`);
+-      throw error;
+-    }
+-  }
+-
+-  /**
+-   * Finalize the job and promote results to canonical requirements.
+-   * Handles source grounding validation and version protection.
+-   */
+-  static async finalize(jobId: string, userId: string) {
+-    // Verify ownership
+-    const job = await prisma.aiJob.findUnique({ where: { id: jobId, userId } });
+-    if (!job) throw new Error("Job not found or access denied");
+-
+-    return finalizeJob(jobId, userId);
+-  }
+-}
+diff --git a/lib/ai-job-handlers.ts b/lib/ai-job-handlers.ts
+index 11c2d05..8472607 100755
+--- a/lib/ai-job-handlers.ts
++++ b/lib/ai-job-hand
