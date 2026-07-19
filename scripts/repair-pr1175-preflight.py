@@ -16,6 +16,10 @@ new = '''def replace_once(path: str, old: str, new: str) -> None:
         if path == "lib/engine/matching.ts" and old.startswith("      const trustLabel = trustLevelLabel(trustLevel);") and count == 2:
             write(path, text.replace(old, new, 1))
             return
+        if path == "app/api/tenders/[id]/ai-rematch/route.ts" and old == "    complianceStatePreserved: true," and count == 2:
+            index = text.rfind(old)
+            write(path, text[:index] + new + text[index + len(old):])
+            return
         raise RuntimeError(f"{path}: expected one occurrence, found {count}: {old[:100]!r}")
     write(path, text.replace(old, new, 1))
 '''
