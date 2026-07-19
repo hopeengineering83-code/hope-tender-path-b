@@ -22,69 +22,34 @@ jobs:
           ref: fix/pr1175-dead-broken-overlap-audit
           fetch-depth: 0
 
-      - name: Export and reconstruct checksum-guarded patch
-        id: reconstruct
+      - name: Reconstruct checksum-guarded patch
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p /tmp/pr1208-diagnostics/variants
-          cp -R .github/pr1208-patch /tmp/pr1208-diagnostics/server-parts
           python <<'PY'
           from pathlib import Path
           import hashlib
-          import itertools
 
           root = Path('.github/pr1208-patch')
-          out = Path('/tmp/pr1208-diagnostics')
-          parts = [(root / f'plain-{index:02d}.patch').read_bytes() for index in range(5)]
+          expected_sizes = [16000, 16000, 16000, 16000, 15013]
+          chunks = []
+          for index, expected in enumerate(expected_sizes):
+              path = root / f'plain-{index:02d}.patch'
+              data = path.read_bytes()
+              if len(data) < expected:
+                  raise SystemExit(f'{path}: expected at least {expected} bytes, found {len(data)}')
+              # Fragment 0 contains an appended duplicate transport segment;
+              # the first expected bytes are the exact audited fragment.
+              chunks.append(data[:expected])
+
+          patch = b''.join(chunks)
+          digest = hashlib.sha256(patch).hexdigest()
           expected_digest = '3b0d1fe26f866e178bf1b181124fedfe4e44be945f19a8556cc0e84c7915d9e8'
-          manifest = []
-          found = False
-
-          for trim_flags in itertools.product((False, True), repeat=len(parts)):
-              chunks = []
-              valid = True
-              for data, trim in zip(parts, trim_flags):
-                  if trim:
-                      if not data.endswith(b'\n'):
-                          valid = False
-                          break
-                      data = data[:-1]
-                  chunks.append(data)
-              if not valid:
-                  continue
-              patch = b''.join(chunks)
-              digest = hashlib.sha256(patch).hexdigest()
-              name = ''.join('1' if flag else '0' for flag in trim_flags)
-              (out / 'variants' / f'{name}-{digest}.patch').write_bytes(patch)
-              manifest.append(f'{name} {len(patch)} {digest}')
-              if digest == expected_digest:
-                  Path('/tmp/pr1208-product.patch').write_bytes(patch)
-                  found = True
-
-          (out / 'manifest.txt').write_text('\n'.join(manifest) + '\n')
-          (out / 'part-manifest.txt').write_text('\n'.join(
-              f'{index} {len(data)} {hashlib.sha256(data).hexdigest()}'
-              for index, data in enumerate(parts)
-          ) + '\n')
-          Path('/tmp/pr1208-valid').write_text('yes\n' if found else 'no\n')
-          print((out / 'part-manifest.txt').read_text())
-          print(f'checksum_match={found}')
+          if digest != expected_digest:
+              raise SystemExit(f'patch checksum mismatch: {digest} != {expected_digest}')
+          Path('/tmp/pr1208-product.patch').write_bytes(patch)
+          print(f'patch bytes={len(patch)} sha256={digest}')
           PY
-
-      - name: Upload reconstruction diagnostics
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr1208-patch-transport-${{ github.sha }}
-          path: /tmp/pr1208-diagnostics
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Require exact audited checksum
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(cat /tmp/pr1208-valid)" = "yes"
 
       - name: Apply product fixes and remove temporary transport files
         shell: bash
