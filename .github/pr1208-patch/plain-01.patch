@@ -1,0 +1,284 @@
+ every critical field, not just
+-          // clientName/submissionMethod. Without these, title/deadline/
+-          // reference/submissionAddress/submissionEmails can never be
+-          // GROUNDED in the generate route even when the DB has the evidence.
+-          clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
+-          clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
+-          clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
+-          titleSourcePage: (tender as any).titleSourcePage ?? null,
+-          titleSourceQuote: (tender as any).titleSourceQuote ?? null,
+-          titleSourceFileId: (tender as any).titleSourceFileId ?? null,
+-          deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
+-          deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
+-          deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
+-          submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
+-          submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
+-          submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
+-          submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
+-          submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
+-          submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
+-          submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
+-          submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
+-          submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
+-          contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
+-        } as any,
+-        overrides: overrides as any[],
+-        hasExtractedRequirements: tender.requirements.length > 0,
+-        submissionMethodContext: tender.submissionMethod ?? undefined,
+-        // Enforce active-file grounding: a fileId pointing to a
+-        // deleted/superseded TenderFile must NOT count as GROUNDED.
+-        activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f: any) => f.id)),
+-        // Full active-file rows enable the STRONGEST shared grounding check
+-        // (quote containment + page <= totalPages) — same rule the BuildPlan
+-        // validator applies, so this pre-check and the validator agree.
+-        activeFiles: (tender.files ?? [])
+-          .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+-          .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
+-      });
+-      const policyCtx = { submissionMethod: tender.submissionMethod };
+-      const missingCritical: string[] = canonicalState.fields
+-        .filter(f => f.criticality !== "non-critical" && f.blockerReason)
+-        .map(f => f.blockerReason!);
+-      // Only require submissionEmails when the method clearly indicates email
+-      // delivery — not when "email" appears in a prohibition phrase like
+-      // "no email submissions" or "hard copy only; email not accepted".
+-      if (
+-        isCriticalField("submissionEndpoint", policyCtx) &&
+-        tender.submissionMethod &&
+-        /email/i.test(tender.submissionMethod) &&
+-        !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&
+-        !tender.submissionEmails
+-      ) {
+-        // Generation is DRAFT work — missing submission email is a warning,
+-        // not a blocker. The user can still generate draft proposal material.
+-        // Final submission gates enforce strict endpoint requirements.
+-      }
+-      if (missingCritical.length > 0) {
+-        // Metadata is NOT a hard blocker for draft generation.
+-        // Missing critical metadata is a warning — draft work proceeds.
+-        logger.warn(`[generate] tender=${id} has missing critical metadata: ${missingCritical.join(", ")}`);
+-      }
++    // Use canonical field-state resolver instead of raw column checks.
++    // A valid manual override must NOT fail just because the raw DB column is blank.
++    const overrides = await prisma.tenderMetadataOverride.findMany({
++      where: { tenderId: id },
++    }).catch(() => []);
++    const canonicalState = resolveCanonicalFieldState({
++      tender: {
++        ...tender,
++        submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
++        clientContactEmail: (tender as any).clientContactEmail ?? null,
++        // Per-field source-evidence columns — forward ALL of them so the
++        // canonical resolver can ground every critical field, not just
++        // clientName/submissionMethod. Without these, title/deadline/
++        // reference/submissionAddress/submissionEmails can never be
++        // GROUNDED in the generate route even when the DB has the evidence.
++        clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
++        clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
++        clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
++        titleSourcePage: (tender as any).titleSourcePage ?? null,
++        titleSourceQuote: (tender as any).titleSourceQuote ?? null,
++        titleSourceFileId: (tender as any).titleSourceFileId ?? null,
++        deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
++        deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
++        deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
++        submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
++        submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
++        submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
++        submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
++        submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
++        submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
++        submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
++        submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
++        submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
++        contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
++      } as any,
++      overrides: overrides as any[],
++      hasExtractedRequirements: tender.requirements.length > 0,
++      submissionMethodContext: tender.submissionMethod ?? undefined,
++      // Enforce active-file grounding: a fileId pointing to a
++      // deleted/superseded TenderFile must NOT count as GROUNDED.
++      activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f: any) => f.id)),
++      // Full active-file rows enable the STRONGEST shared grounding check
++      // (quote containment + page <= totalPages) — same rule the BuildPlan
++      // validator applies, so this pre-check and the validator agree.
++      activeFiles: (tender.files ?? [])
++        .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
++        .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
++    });
++    const policyCtx = { submissionMethod: tender.submissionMethod };
++    const missingCritical: string[] = canonicalState.fields
++      .filter(f => f.criticality !== "non-critical" && f.blockerReason)
++      .map(f => f.blockerReason!);
++    // Only require submissionEmails when the method clearly indicates email
++    // delivery — not when "email" appears in a prohibition phrase like
++    // "no email submissions" or "hard copy only; email not accepted".
++    if (
++      isCriticalField("submissionEndpoint", policyCtx) &&
++      tender.submissionMethod &&
++      /email/i.test(tender.submissionMethod) &&
++      !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&
++      !tender.submissionEmails
++    ) {
++      // Generation is DRAFT work — missing submission email is a warning,
++      // not a blocker. The user can still generate draft proposal material.
++      // Final submission gates enforce strict endpoint requirements.
++    }
++    if (missingCritical.length > 0) {
++      // Metadata is NOT a hard blocker for draft generation.
++      // Missing critical metadata is a warning — draft work proceeds.
++      logger.warn(`[generate] tender=${id} has missing critical metadata: ${missingCritical.join(", ")}`);
+     }
+   }
+ 
+diff --git a/app/api/tenders/[id]/metadata-override/route.ts b/app/api/tenders/[id]/metadata-override/route.ts
+index 32f33b7..befc657 100755
+--- a/app/api/tenders/[id]/metadata-override/route.ts
++++ b/app/api/tenders/[id]/metadata-override/route.ts
+@@ -21,11 +21,9 @@ import { resolveCanonicalFieldState, canonicalToClientChip } from "../../../../.
+ import { isCriticalField, canBeNotApplicable, type TenderPolicyContext } from "../../../../../lib/engine/tender-policy-registry";
+ import { enrichMetadataWithSourceEvidence } from "../../../../../lib/engine/metadata-source-enrichment";
+ import {
+-  classifyTenderFactAuthority,
+   isMeaningfulReason,
+   isValidConfirmationBasis,
+   isSubmissionCriticalField,
+-  isOperationalWarningField,
+   isConditionallySubmissionCritical,
+   MIN_CRITICAL_REASON_LENGTH,
+   type HumanConfirmedAudit,
+@@ -33,7 +31,6 @@ import {
+ import {
+   upsertTenderFactFromManualOverride,
+   markTenderFactNotApplicable,
+-  rejectInvalidTenderFact,
+ } from "../../../../../lib/engine/tender-facts-ledger-service";
+ 
+ export const dynamic = "force-dynamic";
+@@ -245,9 +242,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
+ 
+   const overrideValue = typeof body.overrideValue === "string" ? body.overrideValue.trim() || null : null;
+   const reason = typeof body.reason === "string" ? body.reason.trim() || null : null;
+-  // NEVER trust client-supplied previousValue — compute it server-side.
+-  const previousValue = null; // Will be set from the existing override row below.
+-
+   // ─── SERVER-SIDE POLICY VALIDATION (P0) ──────────────────────────
+   // The API must enforce policy. Hidden UI buttons are not security controls.
+ 
+diff --git a/app/api/tenders/[id]/workflow-center/route.ts b/app/api/tenders/[id]/workflow-center/route.ts
+index 83e8895..b62bd30 100755
+--- a/app/api/tenders/[id]/workflow-center/route.ts
++++ b/app/api/tenders/[id]/workflow-center/route.ts
+@@ -1,6 +1,6 @@
+ import { logger } from "../../../../../lib/observability";
+ import { NextRequest, NextResponse } from "next/server";
+-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
++import { requireRole, unauthorizedResponse } from "../../../../../lib/auth";
+ import { prisma, prismaReady } from "../../../../../lib/prisma";
+ import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
+ import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
+diff --git a/app/dashboard/analysis/page.tsx b/app/dashboard/analysis/page.tsx
+index 1c2e3e6..53d3065 100644
+--- a/app/dashboard/analysis/page.tsx
++++ b/app/dashboard/analysis/page.tsx
+@@ -4,7 +4,6 @@ import { getSession } from "../../../lib/auth";
+ import { prisma, prismaReady } from "../../../lib/prisma";
+ import { classifyTenderCurrentnessBatch } from "../../../lib/engine/tender-currentness";
+ import { StatusBadge } from "../../../components/status-badge";
+-import { formatDate } from "../../../lib/tender-workflow";
+ import { ArrowRightIcon, AlertCircleIcon } from "../../../components/icons";
+ 
+ export default async function AnalysisPage() {
+diff --git a/app/dashboard/analytics/page.tsx b/app/dashboard/analytics/page.tsx
+index 71d5da8..6f61dfa 100644
+--- a/app/dashboard/analytics/page.tsx
++++ b/app/dashboard/analytics/page.tsx
+@@ -62,12 +62,6 @@ function qualityTextColor(score: number): string {
+   return "text-red-500";
+ }
+ 
+-function qualityLabel(score: number): string {
+-  if (score >= 80) return "Excellent";
+-  if (score >= 60) return "Good";
+-  return "Needs work";
+-}
+-
+ // ─── page ─────────────────────────────────────────────────────────────────
+ 
+ export default async function AnalyticsPage() {
+diff --git a/app/dashboard/export/export-tender-card.tsx b/app/dashboard/export/export-tender-card.tsx
+index cc8c7ad..b0536c1 100644
+--- a/app/dashboard/export/export-tender-card.tsx
++++ b/app/dashboard/export/export-tender-card.tsx
+@@ -12,7 +12,6 @@ type DocItem = { id: string; name: string; exactFileName: string | null; exactOr
+ type Props = {
+   tenderId: string;
+   tenderTitle: string;
+-  tenderStatus: string;
+   isReady: boolean;
+   isExported: boolean;
+   generatedCount: number;
+@@ -33,7 +32,7 @@ type Props = {
+ };
+ 
+ export function ExportTenderCard({
+-  tenderId, tenderTitle, tenderStatus, isReady, isExported,
++  tenderId, tenderTitle, isReady, isExported,
+   generatedCount, totalDocs, blockingGaps, warningGaps,
+   checks, criticalGaps, highGaps, documents,
+   canonicalBlockerCodes = [], canonicalNextAction,
+diff --git a/app/dashboard/export/page.tsx b/app/dashboard/export/page.tsx
+index 1156dd3..4ca2777 100644
+--- a/app/dashboard/export/page.tsx
++++ b/app/dashboard/export/page.tsx
+@@ -79,7 +79,6 @@ export default async function ExportPage() {
+           // ── Canonical readiness from server authority ──────────────
+           const canonical = readinessByTenderId.get(tender.id) ?? null;
+           const canonicalBlockers = canonical?.tenderLevelBlockers ?? [];
+-          const canonicalAdvisories = canonical?.advisoryWarnings ?? [];
+           const isCanonicalReady = canonical?.ok === true && canonicalBlockers.length === 0;
+           // FinalReadinessTenderBlocker has {category, severity, title, recommendedAction}.
+           // Use category as the blocker code and title/recommendedAction for the next action.
+@@ -118,7 +117,6 @@ export default async function ExportPage() {
+               key={tender.id}
+               tenderId={tender.id}
+               tenderTitle={tender.title}
+-              tenderStatus={tender.status}
+               isReady={isReady}
+               isExported={isExported}
+               generatedCount={generated.length}
+diff --git a/app/dashboard/page.tsx b/app/dashboard/page.tsx
+index adbef49..f25e3b4 100644
+--- a/app/dashboard/page.tsx
++++ b/app/dashboard/page.tsx
+@@ -18,7 +18,6 @@ export default async function DashboardPage() {
+   await prismaReady;
+ 
+   const now = new Date();
+-  const in3days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
+   const in7days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+ 
+   // Truthful workspace totals — use real COUNT / GROUP-BY queries so global
+@@ -33,7 +32,6 @@ export default async function DashboardPage() {
+   const [
+     activeTenderCount,
+     overdueCount,
+-    dueSoon3Count,
+     dueSoon7Count,
+     criticalComplianceGapCount,
+     extractionStateRows,
+@@ -51,13 +49,6 @@ export default async function DashboardPage() {
+         status: { notIn: ["EXPORTED", "CLOSED"] },
+       },
+     }),
+-    prisma.tender.count({
+-      where: {
+-        userId,
+-        deadline: { gte: now, lte: in3days },
+-        status: { notIn: ["EXPORTED", "CLOSED"] },
+-      },
+-    }),
+     prisma.tender.count({
+       where: {
+         userId,
+@@ -144,7 +135,6 @@ export default async function Das
