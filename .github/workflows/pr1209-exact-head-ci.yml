@@ -1,0 +1,203 @@
+name: PR 1209 exact-head validation
+
+on:
+  push:
+    branches:
+      - fix/pr1175-dead-broken-overlap-audit-replacement
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr1209-exact-head-validation
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hope_ci
+          POSTGRES_DB: hope_tender_ci
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hope_ci -d hope_tender_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      DATABASE_URL: "postgresql://hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public"
+      SESSION_SECRET: "pr1209-session-${{ github.run_id }}-${{ github.sha }}"
+      NEXTAUTH_SECRET: "pr1209-nextauth-${{ github.run_id }}-${{ github.sha }}"
+      GEMINI_API_KEY: "ci-provider-placeholder-not-used-at-runtime"
+      ANTHROPIC_API_KEY: ""
+      RUN_DB_INTEGRATION: "true"
+      REQUIRE_MIGRATION_HISTORY: "true"
+      E2E_FULL_AUTH: "true"
+      E2E_SEED_ALLOWED: "true"
+      E2E_TEST_EMAIL: "e2e-primary@example.test"
+      E2E_TEST_PASSWORD: "CiPrimary-${{ github.run_id }}-A9!secure"
+      E2E_SECOND_EMAIL: "e2e-secondary@example.test"
+      E2E_SECOND_PASSWORD: "CiSecondary-${{ github.run_id }}-B8!secure"
+    steps:
+      - name: Checkout exact replacement head
+        uses: actions/checkout@v4
+        with:
+          ref: fix/pr1175-dead-broken-overlap-audit-replacement
+          fetch-depth: 0
+
+      - name: Record exact validation SHA
+        run: |
+          mkdir -p test-results build-results
+          git rev-parse HEAD | tee test-results/exact-head-sha.txt
+          git status --short | tee test-results/initial-status.txt
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Reject install-time source mutation
+        run: git diff --exit-code
+
+      - name: Validate and generate Prisma client
+        run: |
+          npx prisma validate
+          npx prisma generate
+
+      - name: Deploy complete migration history
+        shell: bash
+        run: |
+          set -o pipefail
+          npx prisma migrate deploy 2>&1 | tee test-results/migrate-deploy.log
+
+      - name: Verify critical schema and migration history
+        run: |
+          npm run db:check-critical-schema
+          npm run db:verify-retroactive-init
+
+      - name: Verify migration idempotency
+        shell: bash
+        run: |
+          set -o pipefail
+          npx prisma migrate deploy 2>&1 | tee test-results/migrate-idempotency.log
+
+      - name: Verify Prisma zero drift
+        shell: bash
+        run: |
+          set -o pipefail
+          npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code 2>&1 | tee test-results/prisma-zero-drift.log
+
+      - name: Audit release integrity
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run audit:release-integrity 2>&1 | tee test-results/release-integrity-audit.log
+
+      - name: Verify removed dead markers and unsafe reconciliation are absent
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -R "ledgerOverridesValue\|valueDrivenUngroundedBlock\|rejectInvalidTenderFact" app lib --include='*.ts' --include='*.tsx'
+          ! grep -F 'analysisExtractionStatus: "FULL_EXTRACTION_AI_ANALYZED"' app/api/tenders/[id]/reconcile-state/route.ts
+          ! test -e lib/ai-analyze/runner.ts
+          ! test -e lib/ai-analyze/state-resolver.ts
+          ! test -e lib/ai-analyze/content-hash.ts
+
+      - name: Focused audit regressions
+        run: >-
+          npx tsx --test
+          tests/auto-fill-tender-metadata.test.ts
+          tests/extract-text-job.test.ts
+          tests/non-destructive-ai-analysis.test.ts
+          tests/fallback-never-authorizes-generation.test.ts
+          tests/reconcile-state-preserves-extraction-quality.test.ts
+          tests/redact-secrets.test.ts
+          tests/tender-fact-authority.test.ts
+          tests/tender-facts-ledger-runtime-authority.test.ts
+          tests/matching-fail-closed-negative-tests.test.ts
+          tests/matching-relevance-gates.test.ts
+          tests/matching-strict-domain.test.ts
+
+      - name: Typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee test-results/typecheck.log
+
+      - name: Lint
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee test-results/lint.log
+
+      - name: Full unit and PostgreSQL integration tests
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-results/npm-test.log
+
+      - name: Production build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build-results/npm-build.log
+
+      - name: Reject build-time source mutation
+        run: git diff --exit-code
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Seed isolated two-user browser fixtures
+        run: node scripts/seed-e2e-user.mjs
+
+      - name: Browser smoke, intake, golden workflow, and cross-user isolation
+        env:
+          CSRF_MODE: "off"
+          MISTRAL_API_KEY: ""
+          GROQ_API_KEY: ""
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          TOGETHER_API_KEY: ""
+          DEEPSEEK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          E2E_GOLDEN_AUTH: "true"
+          SMOKE_TEST_EMAIL: ${{ env.E2E_TEST_EMAIL }}
+          SMOKE_TEST_PASSWORD: ${{ env.E2E_TEST_PASSWORD }}
+        run: npm run test:e2e
+
+      - name: Reject test-time source mutation
+        if: always()
+        run: git diff --exit-code
+
+      - name: Upload diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr1209-exact-head-ci-diagnostics-${{ github.sha }}
+          path: |
+            test-results/
+            build-results/
+            playwright-report/
+            test-results-e2e/
+            prisma/schema.prisma
+            prisma/migrations/
+            lib/ai-job-handlers.ts
+            lib/engine/analysis-state-resolver.ts
+            lib/engine/canonical-field-state.ts
+            app/api/tenders/[id]/reconcile-state/route.ts
+          if-no-files-found: error
+          retention-days: 7
