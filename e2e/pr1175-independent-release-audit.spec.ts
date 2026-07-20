@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { primaryTest as test, expect } from "./auth-helper";
 import type { Page } from "@playwright/test";
 
@@ -145,7 +147,18 @@ function expectSafeApiBody(body: string, label: string) {
   );
 }
 
-test.describe.serial("PR #1175 independent principal QA release audit", () => {
+test.describe("PR #1175 independent principal QA release audit", () => {
+  test("GitHub Actions checks out the exact pull-request head rather than a synthetic merge", async () => {
+    test.skip(!process.env.GITHUB_ACTIONS || !process.env.GITHUB_EVENT_PATH, "Only applicable to GitHub pull-request validation");
+    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!, "utf8")) as {
+      pull_request?: { head?: { sha?: string } };
+    };
+    const expectedHead = event.pull_request?.head?.sha;
+    expect(expectedHead, "pull_request.head.sha must be available to exact-head validation").toBeTruthy();
+    const actualCheckout = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    expect(actualCheckout, "CI must validate the exact PR head, not GitHub's synthetic merge commit").toBe(expectedHead);
+  });
+
   test("every authenticated route renders without hidden runtime failures or disconnected controls", async ({ page }) => {
     test.setTimeout(300_000);
     const monitor = attachRuntimeEvidence(page);
