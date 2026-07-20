@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { SecureUploadPolicyEnforcer } from "../../../components/secure-upload-policy-enforcer";
+import { CompanyProfileEditorAuthority } from "../../../components/company-profile-editor-authority";
 
 export default function CompanyVaultLayout({ children }: { children: ReactNode }) {
   return (
@@ -12,7 +13,13 @@ export default function CompanyVaultLayout({ children }: { children: ReactNode }
         <Link href="/dashboard/company/review-board" className="min-h-10 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Review Board</Link>
         <Link href="/dashboard/company/review" className="min-h-10 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">Diagnostics</Link>
       </nav>
-      {children}
+      <CompanyProfileEditorAuthority />
+      <style>{`
+        [data-company-vault-content] > .space-y-6 > form.max-w-3xl {
+          display: none !important;
+        }
+      `}</style>
+      <div data-company-vault-content>{children}</div>
     </>
   );
 }
