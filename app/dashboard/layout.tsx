@@ -8,6 +8,7 @@ import { MobileSidebarToggle } from "../../components/mobile-sidebar-toggle";
 import type { ReactNode } from "react";
 import { NotificationBell } from "../components/notification-bell";
 import { BuildVersionBadge } from "../../components/build-version-badge";
+import { HeaderPageTitle } from "../../components/header-page-title";
 import {
   DASHBOARD_NAV_GROUPS,
   filterDashboardNavGroupsByRole,
@@ -69,7 +70,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       </aside>
 
       <main id="main-content" className="min-w-0 flex-1" tabIndex={-1}>
-        <div className="sticky top-0 z-30 flex min-w-0 justify-end border-b bg-white/90 px-4 py-2 backdrop-blur-sm xl:px-8">
+        <div className="sticky top-0 z-30 flex min-w-0 items-center justify-between border-b bg-white/90 px-4 py-2 backdrop-blur-sm xl:px-8">
+          <HeaderPageTitle />
           <NotificationBell initialUnread={unreadCount} />
         </div>
         <div className="mx-auto w-full min-w-0 max-w-7xl p-4 sm:p-6 xl:p-8">
