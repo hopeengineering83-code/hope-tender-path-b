@@ -21,13 +21,13 @@ test.describe("actionable AI readiness", () => {
     await page.goto("/dashboard/admin/ai-readiness", { waitUntil: "domcontentloaded" });
 
     const details = page.locator("details").filter({ hasText: "Environment variable details" });
-    await expect(details).not.toHaveAttribute("open", "");
+    expect(await details.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(false);
     await expect(page.getByRole("region", { name: "Environment variables" })).toBeHidden();
 
     await details.locator("summary").click();
-    await expect(details).toHaveAttribute("open", "");
+    expect(await details.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true);
     await expect(page.getByRole("region", { name: "Environment variables" })).toBeVisible();
-    await expect(page.getByText("Secret values", { exact: false })).toBeVisible();
+    await expect(details.getByText(/secret values are never returned/i)).toBeVisible();
   });
 
   test("remediation controls remain usable at a 390px mobile viewport", async ({ page }) => {
