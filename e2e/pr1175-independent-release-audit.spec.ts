@@ -149,7 +149,10 @@ function expectSafeApiBody(body: string, label: string) {
 
 test.describe("PR #1175 independent principal QA release audit", () => {
   test("GitHub Actions checks out the exact pull-request head rather than a synthetic merge", async () => {
-    test.skip(!process.env.GITHUB_ACTIONS || !process.env.GITHUB_EVENT_PATH, "Only applicable to GitHub pull-request validation");
+    test.skip(
+      !process.env.GITHUB_ACTIONS || !process.env.GITHUB_EVENT_PATH || process.env.GITHUB_EVENT_NAME !== "pull_request",
+      "Only applicable to GitHub pull_request-triggered runs — push/workflow_dispatch payloads have no pull_request field",
+    );
     const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!, "utf8")) as {
       pull_request?: { head?: { sha?: string } };
     };
