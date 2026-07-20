@@ -136,8 +136,9 @@ export default function PlanBImportPage() {
         <h2 className="text-lg font-semibold text-slate-900">Upload exact extracted JSON</h2>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <div className="space-y-3">
-            <label className="block text-sm font-medium text-slate-700">JSON file</label>
+            <label htmlFor="plan-b-import-json-file" className="block text-sm font-medium text-slate-700">JSON file</label>
             <input
+              id="plan-b-import-json-file"
               type="file"
               accept="application/json,.json"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}

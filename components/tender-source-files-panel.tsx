@@ -215,6 +215,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
           ref={inputRef}
           type="file"
           multiple
+          aria-label="Upload tender source documents"
           className="sr-only"
           accept=".pdf,.docx,.xlsx,.csv,.txt"
           onChange={(event) => {

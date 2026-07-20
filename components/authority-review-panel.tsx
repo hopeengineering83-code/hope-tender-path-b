@@ -200,7 +200,7 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
         : "border-red-200 bg-red-50";
 
   return (
-    <section id="authority-review" className={`mb-4 rounded-2xl border p-5 shadow-sm ${result ? borderClass : "border-slate-200 bg-white"}`}>
+    <section id="authority-review-panel" className={`mb-4 rounded-2xl border p-5 shadow-sm ${result ? borderClass : "border-slate-200 bg-white"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
