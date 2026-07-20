@@ -9,6 +9,7 @@ import {
   type DashboardNavGroup,
 } from "../lib/dashboard-navigation";
 import { MenuIcon, CrossIcon } from "./icons";
+import { DashboardNavIcon } from "./dashboard-nav-icon";
 
 type Props = {
   groups: DashboardNavGroup[];
@@ -142,7 +143,9 @@ export function MobileSidebarToggle({ groups, user, company }: Props) {
                               : "text-slate-700 hover:bg-slate-100 hover:text-slate-950"
                           }`}
                         >
-                          <span className="text-base leading-none" aria-hidden="true">{link.icon}</span>
+                          <span className="text-base leading-none" aria-hidden="true">
+                            <DashboardNavIcon iconName={link.iconName} />
+                          </span>
                           <span className="min-w-0 truncate">{link.label}</span>
                         </Link>
                       );
