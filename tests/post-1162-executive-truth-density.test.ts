@@ -42,10 +42,11 @@ describe("post-1162 tender workspace density", () => {
     assert.ok(diagnostics > quickOverview);
   });
 
-  it("keeps duplicate overview and diagnostic panels accessible but collapsed by default", () => {
+  it("keeps overview and diagnostic panels grouped and collapsible, defaulting to visible (owner request 2026-07-20)", () => {
     assert.match(workspace, /function Disclosure/);
-    assert.match(workspace, /Optional compact overview of workflow steps and shortcuts/);
-    assert.match(workspace, /Open canonical score, health, recovery, bid verdict, and final-submission diagnostics/);
+    assert.match(workspace, /Compact overview of workflow steps and shortcuts/);
+    assert.match(workspace, /Canonical score, health, recovery, bid verdict, and final-submission diagnostics/);
+    assert.match(workspace, /defaultOpen/);
     assert.doesNotMatch(workspace, /<details open className="group rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">/);
   });
 

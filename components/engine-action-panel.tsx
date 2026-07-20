@@ -470,29 +470,34 @@ export function EngineActionPanel({
               <PlayIcon /> {running || isPending ? "Running…" : "Run Engine"}
             </button>
           )}
-          {/* For large vaults, the primary CTA automatically uses safe
-              mode (skips AI rematch). This is the only path that reliably
-              completes within Vercel's 60s function budget. */}
+          {/* For large vaults, the primary CTA uses safe mode (skips AI
+              rematch) so a run always completes within the sync budget.
+              The full-AI background run stays available alongside it —
+              Safe Mode's own result message says "Re-run in background
+              mode for AI multi-perspective scoring", so hiding the
+              background button for large vaults created a circular dead
+              end (observed live). The async ENGINE_RUN job has its own
+              per-chunk function budget and is exactly that remedy. */}
+          {canMutate && isLargeVault && (
+          <button
+            onClick={() => runEngineAsync(false, { safe: "true", skipAiRematch: "true" })}
+            disabled={running || isPending}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500 bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+            title="Large vault: Safe Mode (skips AI rematch) — always completes within the function budget"
+          >
+            {running && asyncStatus ? <><ClockIcon /> Running in background…</> : <><BoltIcon /> Run Engine (Safe Mode)</>}
+          </button>
+          )}
           {canMutate && (
           <button
-            onClick={() => isLargeVault
-              ? runEngineAsync(false, { safe: "true", skipAiRematch: "true" })
-              : runEngineAsync(false)}
+            onClick={() => runEngineAsync(false)}
             disabled={running || isPending}
-            className={`inline-flex items-center gap-1.5 rounded-lg border px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${
-              isLargeVault
-                ? "border-amber-500 bg-amber-600 text-white hover:bg-amber-700"
-                : "border-indigo-300 bg-indigo-50 text-indigo-800 hover:bg-indigo-100"
-            }`}
-            title={isLargeVault
-              ? "Large vault: auto-uses Safe Mode (skips AI rematch) to fit within 60s budget"
-              : "Queues an AiJob and watches it in the background — escapes the 60s cap for large tenders"}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+            title="Queues an AiJob with full AI evidence matching and watches it in the background — its own per-chunk budget escapes the 60s cap"
           >
             {running && asyncStatus
               ? <><ClockIcon /> Running in background…</>
-              : isLargeVault
-                ? <><BoltIcon /> Run Engine (Safe Mode)</>
-                : <><ClockIcon /> Run in background</>}
+              : <><ClockIcon /> Run in background{isLargeVault ? " (full AI)" : ""}</>}
           </button>
           )}
           {!canMutate && (

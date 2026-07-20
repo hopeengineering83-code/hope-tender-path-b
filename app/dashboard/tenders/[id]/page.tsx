@@ -65,13 +65,15 @@ function Disclosure({
   title,
   description,
   children,
+  defaultOpen = false,
 }: {
   title: string;
   description: string;
   children: ReactNode;
+  defaultOpen?: boolean;
 }) {
   return (
-    <details className="group rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
+    <details open={defaultOpen} className="group rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
       <summary className="flex cursor-pointer list-none items-start gap-3 px-5 py-4 marker:content-none">
         <span className="min-w-0 flex-1">
           <span className="block text-base font-semibold text-slate-900">{title}</span>
@@ -210,14 +212,16 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
       <Disclosure
         title="Quick workflow control"
-        description="Optional compact overview of workflow steps and shortcuts. Use the Next Required Action above first."
+        description="Compact overview of workflow steps and shortcuts. Use the Next Required Action above first."
+        defaultOpen
       >
         <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
       </Disclosure>
 
       <Disclosure
         title="Detailed readiness and submission controls"
-        description="Open canonical score, health, recovery, bid verdict, and final-submission diagnostics when deeper investigation is needed."
+        description="Canonical score, health, recovery, bid verdict, and final-submission diagnostics."
+        defaultOpen
       >
         <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
         <CanonicalReadinessScoreWidget tenderId={tender.id} />
