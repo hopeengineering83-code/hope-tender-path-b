@@ -12,35 +12,46 @@
 // This was the root cause of the "icons act independently" interlinking bug:
 // every step link and workflow shortcut button tried to navigate to panels
 // that were invisible inside closed disclosures.
+//
+// STAGE ALIGNMENT: The labels and targets below MUST match the server-side
+// stage definitions in app/api/tenders/[id]/workflow-center/route.ts (stages
+// 1-10). Both components navigate to the same 10 stages — if their labels or
+// targets disagree, the user sees inconsistent navigation. The
+// TenderWorkflowActionCenter uses a primary+fallback target list per stage;
+// here we use only the primary target (the first one) for the step link.
 
 import { useCallback } from "react";
 import { openParentDetailsAndScroll } from "@/lib/ui/tender-workflow-sync";
 import { CheckCircleIcon, ArrowRightIcon } from "./icons";
 
 const STEP_LABELS = [
-  "Upload Tender",
-  "Fix Extraction",
-  "Run AI Analyze",
-  "Confirm Requirements",
-  "Build Plan",
-  "Match Evidence",
-  "Generate Docs",
-  "Validate & Approve Docs",
-  "Review Manifest",
-  "Export ZIP",
+  "Source Files",           // Stage 1
+  "Extraction Quality",     // Stage 2
+  "AI Analyze",             // Stage 3
+  "Confirm Requirements",   // Stage 4
+  "Tender Details",         // Stage 5
+  "Build Plan",             // Stage 6
+  "Match Evidence",         // Stage 7
+  "Generate Documents",     // Stage 8
+  "Validate & Approve",     // Stage 9
+  "Export ZIP",             // Stage 10
 ] as const;
 
+// Primary targets — match the first entry in each stage's targets array in
+// TenderWorkflowActionCenter.handleAction(). If the primary target is absent
+// from the page, the user can still use the Workflow Control Center's stage
+// buttons which have fallback targets.
 const STEP_TARGETS = [
-  "#tender-files",
-  "#tender-files",
-  "#ai-analyze-section",
-  "#requirement-coverage",
-  "#submission-plan",
-  "#requirement-coverage",
-  "#generated-documents",
-  "#generated-documents",
-  "#final-package-manifest",
-  "#export-readiness",
+  "#tender-files",            // Stage 1 → Source Files
+  "#extraction-quality",      // Stage 2 → Extraction Quality
+  "#ai-analyze-section",      // Stage 3 → AI Analyze
+  "#requirement-coverage",    // Stage 4 → Confirm Requirements
+  "#tender-edit-form",        // Stage 5 → Tender Details
+  "#submission-plan",         // Stage 6 → Build Plan
+  "#match-evidence",          // Stage 7 → Match Evidence
+  "#generated-documents",     // Stage 8 → Generate Documents
+  "#authority-review",        // Stage 9 → Validate & Approve
+  "#export-readiness",        // Stage 10 → Export ZIP
 ] as const;
 
 export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {

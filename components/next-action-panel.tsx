@@ -17,16 +17,20 @@ import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-work
 import { CheckCircleIcon, WarningIcon, ArrowRightIcon } from "./icons";
 import { WorkflowStepLinks } from "./workflow-step-links";
 
+// Labels MUST match the server-side stage labels in
+// app/api/tenders/[id]/workflow-center/route.ts and the STEP_LABELS in
+// components/workflow-step-links.tsx. All three must agree so the step
+// counter, step links, and workflow control center show the same stage names.
 const STEPS = [
-  "Upload Tender",
-  "Fix Extraction",
-  "Run AI Analyze",
+  "Source Files",
+  "Extraction Quality",
+  "AI Analyze",
   "Confirm Requirements",
+  "Tender Details",
   "Build Plan",
   "Match Evidence",
-  "Generate Docs",
-  "Validate & Approve Docs",
-  "Review Manifest",
+  "Generate Documents",
+  "Validate & Approve",
   "Export ZIP",
 ] as const;
 
@@ -35,11 +39,11 @@ type WorkflowStep =
   | "FIX_EXTRACTION"
   | "RUN_AI_ANALYZE"
   | "CONFIRM_REQUIREMENTS"
-  | "BUILD_PLAN"
+  | "EDIT_TENDER_METADATA"
+  | "BUILD_SUBMISSION_PLAN"
   | "MATCH_EVIDENCE"
   | "GENERATE_DOCUMENTS"
-  | "VALIDATE_DOCUMENTS"
-  | "REVIEW_MANIFEST"
+  | "VALIDATE_DOCS"
   | "EXPORT_ZIP"
   | "COMPLETE";
 
@@ -48,27 +52,18 @@ const STEP_INDEX: Record<WorkflowStep, number> = {
   FIX_EXTRACTION: 1,
   RUN_AI_ANALYZE: 2,
   CONFIRM_REQUIREMENTS: 3,
-  BUILD_PLAN: 4,
-  MATCH_EVIDENCE: 5,
-  GENERATE_DOCUMENTS: 6,
-  VALIDATE_DOCUMENTS: 7,
-  REVIEW_MANIFEST: 8,
+  EDIT_TENDER_METADATA: 4,
+  BUILD_SUBMISSION_PLAN: 5,
+  MATCH_EVIDENCE: 6,
+  GENERATE_DOCUMENTS: 7,
+  VALIDATE_DOCS: 8,
   EXPORT_ZIP: 9,
   COMPLETE: 10,
 };
 
-const STEP_TARGETS = [
-  "#tender-files",
-  "#tender-files",
-  "#ai-analyze-section",
-  "#requirement-coverage",
-  "#submission-plan",
-  "#requirement-coverage",
-  "#generated-documents",
-  "#generated-documents",
-  "#final-package-manifest",
-  "#export-readiness",
-] as const;
+// STEP_TARGETS was moved to components/workflow-step-links.tsx so both the
+// step counter and the step links share the same source of truth. The labels
+// above (STEPS) must still match STEP_LABELS in workflow-step-links.tsx.
 
 // Map the canonical decision's nextRequiredAction to the panel's step index.
 // This MUST agree with workflow-center's stageStates — both read the same
@@ -80,10 +75,12 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
     case "RESUME_AI_ANALYZE":
     case "RUN_AI_ANALYZE": return "RUN_AI_ANALYZE";
     case "REVIEW_REQUIREMENTS": return "CONFIRM_REQUIREMENTS";
-    case "BUILD_SUBMISSION_PLAN": return "BUILD_PLAN";
+    case "EDIT_TENDER_METADATA": return "EDIT_TENDER_METADATA";
+    case "BUILD_SUBMISSION_PLAN": return "BUILD_SUBMISSION_PLAN";
     case "LINK_VAULT_EVIDENCE": return "MATCH_EVIDENCE";
     case "GENERATE_DOCUMENTS": return "GENERATE_DOCUMENTS";
-    case "FIX_EXPORT_BLOCKERS": return "VALIDATE_DOCUMENTS";
+    case "FIX_EXPORT_BLOCKERS":
+    case "VALIDATE_DOCS": return "VALIDATE_DOCS";
     case "EXPORT_READY": return "EXPORT_ZIP";
     default: return "UPLOAD_TENDER";
   }
@@ -91,8 +88,8 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
 
 function stepColor(step: WorkflowStep) {
   if (step === "COMPLETE" || step === "EXPORT_ZIP") return "border-emerald-200 bg-emerald-50";
-  if (step === "RUN_AI_ANALYZE" || step === "BUILD_PLAN" || step === "GENERATE_DOCUMENTS" || step === "REVIEW_MANIFEST" || step === "MATCH_EVIDENCE") return "border-amber-200 bg-amber-50";
-  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCUMENTS") return "border-red-200 bg-red-50";
+  if (step === "RUN_AI_ANALYZE" || step === "BUILD_SUBMISSION_PLAN" || step === "GENERATE_DOCUMENTS" || step === "MATCH_EVIDENCE") return "border-amber-200 bg-amber-50";
+  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCS") return "border-red-200 bg-red-50";
   return "border-amber-200 bg-amber-50";
 }
 
@@ -100,7 +97,7 @@ function stepIcon(step: WorkflowStep) {
   // SVG icons replace raw Unicode (✓ ⚠ →) for consistent rendering across
   // all browsers and font stacks. Per spec rule 3 & 7.
   if (step === "COMPLETE" || step === "EXPORT_ZIP") return <CheckCircleIcon />;
-  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCUMENTS") return <WarningIcon />;
+  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCS") return <WarningIcon />;
   return <ArrowRightIcon />;
 }
 
