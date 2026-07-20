@@ -90,7 +90,7 @@ const POSTURE_LABEL: Record<BidStrategy["bidPosture"], string> = {
 
 const SEVERITY_BADGE: Record<"HIGH" | "MEDIUM" | "LOW", string> = {
   HIGH: "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-700",
+  MEDIUM: "bg-amber-100 text-amber-800",
   LOW: "bg-slate-100 text-slate-600",
 };
 
@@ -174,10 +174,10 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
         <p className="font-semibold text-amber-800">Bid Strategy Unavailable</p>
-        <p className="text-sm text-amber-700 mt-1">
+        <p className="text-sm text-amber-800 mt-1">
           {blocked.message || "Bid strategy requires reliable extraction and analysis. Run OCR or re-run AI Analyze first."}
         </p>
-        <button onClick={() => void load()} className="mt-3 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs text-amber-700 hover:bg-amber-100">
+        <button onClick={() => void load()} className="mt-3 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs text-amber-800 hover:bg-amber-100">
           Retry
         </button>
       </div>

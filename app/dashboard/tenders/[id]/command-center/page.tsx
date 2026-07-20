@@ -13,20 +13,10 @@ import Link from "next/link";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
-import { formatTenderStatus } from "../../../../../lib/tender-workflow";
-import {
-  formatDocumentReadinessFailure,
-  formatOperationalCode,
-  formatOperationalReason,
-} from "../../../../../lib/operational-labels";
 import { VersionActionsTable } from "./version-actions";
 import { ArrowRightIcon, CheckIcon, CrossIcon } from "../../../../../components/icons";
 
 export const dynamic = "force-dynamic";
-
-// Non-rendered canonical contract markers retained for source-level regression
-// guards: Export readiness: OPEN; Export readiness: BLOCKED; No HIGH objections.
-// The visible copy below is deliberately humanized.
 
 export default async function TenderCommandCenter({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
@@ -60,6 +50,9 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   });
   if (!tender) notFound();
 
+  // ─── Readiness, blockers, evaluator state ───────────────────────────
+  // Use the canonical readiness helper so this page can NEVER show
+  // counts that disagree with Export Gate / Bid Control / FSCC.
   const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId, requireFileContent: false }).catch(() => null);
   const docReadiness = {
     ok: canonical ? canonical.summary.documentBlockers === 0 : false,
@@ -68,10 +61,24 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   const tenderBlockers = canonical?.tenderLevelBlockers ?? [];
   const advisoryWarnings = canonical?.advisoryWarnings ?? [];
   const canonicalBlockedCount = tenderBlockers.length + docReadiness.failures.length;
-  const canonicalReadinessLabel = canonical?.ok
-    ? "Export readiness: Open"
-    : `Export readiness: Blocked (${canonicalBlockedCount})`;
+  const canonicalReadinessLabel = canonical?.ok ? "Export readiness: OPEN" : `Export readiness: BLOCKED (${canonicalBlockedCount})`;
 
+  // Documents card (Issue #1134 recheck 12): use ONLY the counts returned by
+  // getFinalSubmissionReadiness(...). Do NOT create a local readiness
+  // projection or filter documents locally.
+  //
+  // Three canonical counts from summary:
+  //   - exportReadyCount: summary.exportReadyDocumentsTotal
+  //     (docs that are GENERATED, not SUPERSEDED/PLANNED, with review status
+  //      matching READY_FOR_EXPORT or APPROVED)
+  //   - finalCandidatesCount: summary.finalExportCandidates
+  //     (docs that are final-export candidates per the canonical helper)
+  //   - documentBlockerCount: summary.documentBlockers
+  //     (canonical document blockers)
+  //
+  // When canonical readiness is unavailable (catch returned null), fail
+  // closed: show 0 for all counts with a "canonical readiness unavailable"
+  // caption.
   const exportReadyCount = canonical?.summary.exportReadyDocumentsTotal ?? 0;
   const finalCandidatesCount = canonical?.summary.finalExportCandidates ?? 0;
   const documentBlockerCount = canonical?.summary.documentBlockers ?? 0;
@@ -100,6 +107,9 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
     include: { lines: true },
   });
 
+  // Query ONLY jobs for THIS tender — never include jobs from other tenders
+  // belonging to the same user. Cross-tender contamination causes stale
+  // failures from one tender to appear beside newer successes in another.
   const recentJobs: any[] = await (prisma as any).aiJob.findMany({
     where: { tenderId: id },
     orderBy: { createdAt: "desc" },
@@ -107,6 +117,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
     select: { id: true, jobType: true, status: true, createdAt: true, finishedAt: true },
   });
 
+  // ─── Next best action heuristic ─────────────────────────────────────
   let nextAction: { title: string; href?: string; rationale: string };
   if (tenderBlockers.length > 0) {
     nextAction = {
@@ -116,15 +127,15 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
     };
   } else if (docReadiness.failures.length > 0) {
     nextAction = {
-      title: "Bring documents to final export readiness",
+      title: "Bring documents to READY_FOR_EXPORT",
       href: `/dashboard/tenders/${id}#generated-documents`,
-      rationale: `${docReadiness.failures.length} document(s) still need review or validation.`,
+      rationale: `${docReadiness.failures.length} document(s) still need review/validation.`,
     };
   } else if (openHigh.length > 0) {
     nextAction = {
-      title: "Close high-severity evaluator objections",
+      title: "Close HIGH-severity evaluator objections",
       href: `#evaluator-objections`,
-      rationale: `${openHigh.length} high-severity objection(s) remain open from the last evaluator simulation.`,
+      rationale: `${openHigh.length} HIGH objection(s) open from the last evaluator simulation.`,
     };
   } else if (tender.expertMatches.length === 0) {
     nextAction = {
@@ -154,6 +165,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
 
   return (
     <div className="mx-auto max-w-screen-xl px-4 py-6 sm:px-6 lg:px-8">
+      {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-6">
         <div className="min-w-0">
           <Link href={`/dashboard/tenders/${id}`} className="text-sm text-slate-500 hover:text-slate-800 no-underline">
@@ -164,13 +176,15 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
         </div>
         <div className="shrink-0 text-right text-sm">
           <div className="text-xs text-slate-500">Status / Stage</div>
-          <div className="font-semibold text-slate-800">
-            {formatTenderStatus(tender.status)} / {formatOperationalCode(tender.stage)}
-          </div>
+          <div className="font-semibold text-slate-800">{tender.status} / {tender.stage}</div>
           <div className={`text-xs mt-1 ${canonical?.ok ? "text-emerald-700" : "text-red-700"}`}>{canonicalReadinessLabel}</div>
+          {/* Legacy workflow score line REMOVED — Issue #1134 recheck 10 item #3.
+              The persisted readinessScore is not a valid metric and must not
+              be displayed beside canonical readiness. */}
         </div>
       </div>
 
+      {/* Next best action banner */}
       <section className="rounded-xl bg-blue-700 text-white p-5 mb-6">
         <div className="text-xs font-semibold uppercase tracking-widest opacity-80">Next best action</div>
         <div className="mt-1 text-lg font-semibold">{nextAction.title}</div>
@@ -185,31 +199,30 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
         )}
       </section>
 
+      {/* 4-column status grid — responsive */}
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
         <StatCard title="Selected experts" value={tender.expertMatches.length} caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"} />
         <StatCard title="Selected projects" value={tender.projectMatches.length} caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"} />
         <StatCard title="Documents" value={exportReadyCount} caption={documentsCaption} />
-        <StatCard title="Open high-severity objections" value={openHigh.length} caption={openHigh.length > 0 ? "Objections open" : "No high-severity objections"} highlight={openHigh.length > 0} />
+        <StatCard title="Open HIGH objections" value={openHigh.length} caption={openHigh.length > 0 ? "Objections open" : "No HIGH objections"} highlight={openHigh.length > 0} />
       </section>
 
+      {/* Export gate */}
       <section id="blockers" className="mb-6">
         <h2 className="mb-2 text-sm font-semibold text-slate-900">Export gate</h2>
         {docReadiness.ok && tenderBlockers.length === 0 ? (
           <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
-            <CheckIcon /> Export gate is open. All documents are ready for export and there are no tender-level blockers.
+            <CheckIcon /> Export gate is open. All documents READY_FOR_EXPORT and no tender-level blockers.
           </div>
         ) : (
           <div className="space-y-2">
             {tenderBlockers.length > 0 && (
               <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
                 <p className="font-semibold mb-2">Tender-level blockers ({tenderBlockers.length})</p>
-                {tenderBlockers.map((blocker, index) => (
-                  <div key={index} className="mb-1.5 text-xs">
-                    <span className="font-semibold">{formatOperationalCode(blocker.severity)}:</span>{" "}
-                    {formatOperationalReason(blocker.title)}
-                    {blocker.recommendedAction && (
-                      <div className="text-red-600 mt-0.5">Action: {formatOperationalReason(blocker.recommendedAction)}</div>
-                    )}
+                {tenderBlockers.map((b, i) => (
+                  <div key={i} className="mb-1.5 text-xs">
+                    <span className="font-semibold">[{b.severity}]</span> {b.title}
+                    {b.recommendedAction && <div className="text-red-600 mt-0.5">Action: {b.recommendedAction}</div>}
                   </div>
                 ))}
               </div>
@@ -217,10 +230,8 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
             {docReadiness.failures.length > 0 && (
               <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
                 <p className="font-semibold mb-2">Documents not ready ({docReadiness.failures.length})</p>
-                {docReadiness.failures.slice(0, 6).map((failure) => (
-                  <div key={failure.documentId} className="mb-1 text-xs">
-                    • {formatDocumentReadinessFailure(failure.fileName, failure.reasons)}
-                  </div>
+                {docReadiness.failures.slice(0, 6).map((f) => (
+                  <div key={f.documentId} className="mb-1 text-xs">• {f.fileName} — {f.reasons.join("; ")}</div>
                 ))}
               </div>
             )}
@@ -229,15 +240,14 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
         {advisoryWarnings.length > 0 && (
           <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
             <p className="font-semibold mb-2">Advisory warnings ({advisoryWarnings.length}) — non-blocking</p>
-            {advisoryWarnings.slice(0, 6).map((advisory, index) => (
-              <div key={`${advisory.category}-${index}`} className="mb-1 text-xs">
-                • {formatOperationalCode(advisory.severity)}: {formatOperationalReason(advisory.title)}
-              </div>
+            {advisoryWarnings.slice(0, 6).map((a, i) => (
+              <div key={`${a.category}-${i}`} className="mb-1 text-xs">• [{a.severity}] {a.title}</div>
             ))}
           </div>
         )}
       </section>
 
+      {/* Evaluator objections */}
       <section id="evaluator" className="mb-6">
         <h2 className="mb-2 text-sm font-semibold text-slate-900">Evaluator objections</h2>
         {objections.length === 0 ? (
@@ -256,16 +266,16 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
                 </tr>
               </thead>
               <tbody>
-                {objections.slice(0, 15).map((objection) => (
-                  <tr key={objection.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                {objections.slice(0, 15).map((o) => (
+                  <tr key={o.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
                     <td className="px-3 py-2">
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${objection.severity === "HIGH" ? "bg-red-100 text-red-700" : objection.severity === "MEDIUM" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
-                        {formatOperationalCode(objection.severity)}
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${o.severity === "HIGH" ? "bg-red-100 text-red-700" : o.severity === "MEDIUM" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"}`}>
+                        {o.severity}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-xs text-slate-800">{formatOperationalReason(objection.title)}</td>
-                    <td className="px-3 py-2 text-xs text-slate-500">{formatOperationalCode(objection.status)}</td>
-                    <td className="px-3 py-2 text-xs text-slate-400 hidden sm:table-cell">{objection.sectionRef ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-800">{o.title}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{o.status}</td>
+                    <td className="px-3 py-2 text-xs text-slate-400 hidden sm:table-cell">{o.sectionRef ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -273,15 +283,17 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
           </div>
         )}
         {openMedium.length > 0 && (
-          <p className="mt-2 text-xs text-slate-400">{openMedium.length} medium-severity objection(s) remain open — non-blocking but worth closing before submission.</p>
+          <p className="mt-2 text-xs text-slate-400">{openMedium.length} MEDIUM objection(s) open — non-blocking but worth closing before submission.</p>
         )}
       </section>
 
+      {/* Proposal version history — with restore + preview actions */}
       <section className="mb-6">
         <h2 className="mb-2 text-sm font-semibold text-slate-900">Recent proposal versions</h2>
         <VersionActionsTable versions={proposalVersions} tenderId={id} />
       </section>
 
+      {/* Pricing workbook */}
       <section className="mb-6">
         <h2 className="mb-2 text-sm font-semibold text-slate-900">Pricing workbook</h2>
         {!workbook ? (
@@ -290,7 +302,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
           </div>
         ) : (
           <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-700 space-y-1.5">
-            <div>Currency: <strong>{workbook.currency}</strong> · Validity: {workbook.validityDays} days · Scenario: <strong>{formatOperationalCode(workbook.scenario)}</strong></div>
+            <div>Currency: <strong>{workbook.currency}</strong> · Validity: {workbook.validityDays} days · Scenario: <strong>{workbook.scenario}</strong></div>
             <div>VAT {workbook.vatPercent}% · Withholding {workbook.withholdingPct}% · Contingency {workbook.contingencyPct}%</div>
             <div>Cost lines: <strong>{workbook.lines.length}</strong></div>
             <div>
@@ -304,6 +316,13 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
         )}
       </section>
 
+      {/* Historical background AI jobs — NOT current canonical state.
+          Issue #1134 recheck 10 items #6 and #7: historical failed/succeeded
+          rows are shown only under a clearly labelled history section and
+          must not alter the current verdict. No green success styling from
+          stale job fields — use neutral slate for completed, red for failed,
+          amber for in-progress. The current canonical analysis state is
+          shown above via the canonical readiness helper. */}
       <section className="mb-6">
         <h2 className="mb-1 text-sm font-semibold text-slate-900">Historical background AI jobs</h2>
         <p className="mb-2 text-[10px] text-slate-400">History only — does not define current canonical analysis state. See canonical readiness above.</p>
@@ -323,16 +342,19 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
                 </tr>
               </thead>
               <tbody>
-                {recentJobs.map((job) => (
-                  <tr key={job.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                    <td className="px-3 py-2 text-xs text-slate-700">{formatOperationalCode(job.jobType)}</td>
+                {recentJobs.map((j) => (
+                  <tr key={j.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                    <td className="px-3 py-2 text-xs text-slate-700">{j.jobType}</td>
                     <td className="px-3 py-2">
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${job.status === "FAILED" ? "bg-red-100 text-red-700" : job.status === "SUCCEEDED" || job.status === "DONE" ? "bg-slate-100 text-slate-600" : "bg-amber-100 text-amber-700"}`}>
-                        {formatOperationalCode(job.status)}
+                      {/* Neutral slate for completed (NOT green — historical
+                          success does not define current canonical state).
+                          Red for failed, amber for in-progress. */}
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${j.status === "FAILED" ? "bg-red-100 text-red-700" : j.status === "SUCCEEDED" || j.status === "DONE" ? "bg-slate-100 text-slate-600" : "bg-amber-100 text-amber-800"}`}>
+                        {j.status}
                       </span>
                     </td>
-                    <td className="px-3 py-2 text-xs text-slate-500">{new Date(job.createdAt).toLocaleString()}</td>
-                    <td className="px-3 py-2 text-xs text-slate-500 hidden md:table-cell">{job.finishedAt ? new Date(job.finishedAt).toLocaleString() : "—"}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{new Date(j.createdAt).toLocaleString()}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500 hidden md:table-cell">{j.finishedAt ? new Date(j.finishedAt).toLocaleString() : "—"}</td>
                   </tr>
                 ))}
               </tbody>

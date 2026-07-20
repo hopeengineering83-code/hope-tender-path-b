@@ -29,7 +29,7 @@ type Summary = {
 
 const SEVERITY_BADGE: Record<string, string> = {
   HIGH: "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-700",
+  MEDIUM: "bg-amber-100 text-amber-800",
   LOW: "bg-slate-100 text-slate-600",
 };
 

@@ -5,7 +5,6 @@ import { CanonicalStatusBadge } from "@/components/canonical-status-badge";
 import { SnapshotConsistencyBadge } from "@/components/snapshot-consistency-badge";
 import type { CanonicalTenderReadiness } from "@/lib/canonical-tender-readiness";
 import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "@/lib/engine/canonical-readiness-state";
-import { formatOperationalCode, formatOperationalReason } from "@/lib/operational-labels";
 import { ArrowRightIcon, ShareIcon } from "@/components/icons";
 
 type GeneratedDocLike = {
@@ -101,7 +100,7 @@ function bidOutcomeBadgeClass(outcome: string): string {
   if (outcome === "WON") return "border-green-200 bg-green-100 text-green-700";
   if (outcome === "LOST") return "border-red-200 bg-red-100 text-red-700";
   if (outcome === "WITHDRAWN") return "border-slate-200 bg-slate-100 text-slate-600";
-  return "border-amber-200 bg-amber-100 text-amber-700";
+  return "border-amber-200 bg-amber-100 text-amber-800";
 }
 
 export function dedupeSnapshotActions(actions: SnapshotAction[]): string[] {
@@ -126,6 +125,8 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanIte
   const gaps = tender.complianceGaps ?? [];
   const generatedDocs = visiblePackageDocs(tender.generatedDocuments ?? []);
 
+  // Authoritative planned-document counts come only from the current confirmed
+  // Build Plan. A derived draft must never be shown as release authority.
   const submissionPlan = { files: confirmedPlanItems ?? [], warnings: [] as string[] } as SubmissionPlan;
   const missingPlannedDocs = findMissingGeneratedDocuments(submissionPlan, generatedDocs);
   const extraGeneratedDocs = findExtraGeneratedDocuments(submissionPlan, generatedDocs);
@@ -156,6 +157,8 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanIte
   const approvedCount = generatedDocs.filter((doc) => ["APPROVED", "ACCEPTED", "SIGNED_OFF", "SIGNED OFF"].includes(statusValue(doc.reviewStatus))).length;
   const extractedFiles = files.filter((file) => (file.extractedTextLength ?? 0) > 80).length;
 
+  // The lenient evidence score remains explanatory only. Canonical release
+  // readiness, not this percentage, controls the decision badge.
   const supportedEvidence = matrix.filter((row) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(row.supportLevel)).length;
   const evidenceScoreLegacy = pct(supportedEvidence, matrix.length);
 
@@ -199,7 +202,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanIte
     { key: "critical-compliance", text: unresolvedCritical > 0 ? `Resolve ${unresolvedCritical} critical blocker(s) before final export.` : null },
     { key: "high-compliance", text: unresolvedCritical === 0 && unresolvedHigh > 0 ? `Senior review ${unresolvedHigh} high-priority item(s).` : null },
     { key: "evidence-rows", text: hasRequirements && !hasConfirmedEvidenceRows ? `Confirm reviewed vault evidence for ${requirements.length} requirement(s); selected matches alone do not count as final evidence.` : null },
-    { key: "evidence-strength", text: hasRequirements && hasConfirmedEvidenceRows && hasStrongEvidenceGap ? `Strengthen evidence coverage: ${evidenceCoverage.totalRequirements - evidenceCoverage.requirementsWithStrongEvidence} requirement(s) still lack full or substantial evidence.` : null },
+    { key: "evidence-strength", text: hasRequirements && hasConfirmedEvidenceRows && hasStrongEvidenceGap ? `Strengthen evidence coverage: ${evidenceCoverage.totalRequirements - evidenceCoverage.requirementsWithStrongEvidence} requirement(s) still lack FULL/SUBSTANTIAL evidence.` : null },
     { key: "evidence-selection", text: hasRequirements && !hasSelectedEvidence ? "Run matching and select reviewed expert/project evidence before final generation." : null },
     { key: "document-generation", text: hasNoDocsForWorkflow ? "Build the submission plan and generate the required proposal documents before export." : null },
     { key: "document-generation", text: hasNoGeneratedDocs ? `Generate ${dashboardDocTotal} planned document(s); planned rows are not export-ready documents.` : null },
@@ -210,7 +213,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanIte
     { key: "document-generation", text: generatedDocs.length > 0 && generatedCount < generatedDocs.length ? `Generate ${generatedDocs.length - generatedCount} remaining visible package document(s).` : null },
     { key: "document-validation", text: generatedCount > 0 && validatedCount < generatedCount ? `Run validation for ${generatedCount - validatedCount} generated package document(s).` : null },
     { key: "document-approval", text: generatedCount > 0 && approvedCount < generatedCount ? `Approve or comment on ${generatedCount - approvedCount} generated package document(s).` : null },
-    { key: "extraction", text: extractedFiles < files.length ? `Review extraction for ${files.length - extractedFiles} tender file(s) with weak or missing text.` : null },
+    { key: "extraction", text: extractedFiles < files.length ? `Review extraction for ${files.length - extractedFiles} tender file(s) with weak/no text.` : null },
     { key: "plan-warning", text: submissionPlan.warnings.length > 0 ? submissionPlan.warnings[0] : null },
   ]);
 
@@ -234,13 +237,11 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanIte
         <div className="flex flex-wrap items-center gap-2">
           {tender.bidOutcome && (
             <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${bidOutcomeBadgeClass(tender.bidOutcome)}`}>
-              Bid: {formatOperationalCode(tender.bidOutcome)}
+              Bid: {tender.bidOutcome}
             </span>
           )}
           <CanonicalStatusBadge status={exportState} label={`Final package ${exportStatusConfig.label}`} />
-          <span className={`rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>
-            {formatOperationalCode(decision)}
-          </span>
+          <span className={`rounded-full border px-4 py-2 text-sm font-bold ${badgeClass(decision)}`}>{decision}</span>
           <Link
             href={`/dashboard/tenders/${tender.id}/command-center`}
             className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -267,11 +268,11 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanIte
               : blockerCount > 0
                 ? `${blockerCount} canonical blocker${blockerCount === 1 ? "" : "s"}`
                 : canonicalReadiness
-                  ? formatOperationalReason(canonicalReadiness.modules.export.reason)
+                  ? canonicalReadiness.modules.export.reason
                   : "Canonical readiness unavailable"}
           </p>
         </div>
-        <div className="rounded-xl bg-slate-50 p-4" title={`Strong evidence coverage: ${evidenceCoverage.requirementsWithStrongEvidence}/${evidenceCoverage.totalRequirements} requirement(s) linked to full or substantial evidence. Lenient (any link, including partial): ${evidenceScoreLegacy}%.`}>
+        <div className="rounded-xl bg-slate-50 p-4" title={`Strong evidence coverage: ${evidenceCoverage.requirementsWithStrongEvidence}/${evidenceCoverage.totalRequirements} requirement(s) linked to FULL or SUBSTANTIAL evidence. Lenient (any link, including PARTIAL): ${evidenceScoreLegacy}%.`}>
           <p className="text-xs text-slate-400">Evidence coverage</p>
           <p className="mt-1 text-2xl font-bold text-slate-900">{evidenceScore}%</p>
           <p className="text-xs text-slate-500">{evidenceCoverage.requirementsWithStrongEvidence}/{evidenceCoverage.totalRequirements} strong</p>
@@ -314,7 +315,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanIte
           ) : clearForHumanReview ? (
             <p className="mt-2 text-sm text-green-700">Canonical final-package gates pass. Complete the human release decision before submitting.</p>
           ) : (
-            <p className="mt-2 text-sm text-amber-700">Readiness is not final. Open the Full Command Center and resolve canonical export blockers before submission.</p>
+            <p className="mt-2 text-sm text-amber-800">Readiness is not final. Open the Full Command Center and resolve canonical export blockers before submission.</p>
           )}
         </div>
         <div className="rounded-xl border border-slate-100 p-4">

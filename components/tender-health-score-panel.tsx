@@ -302,7 +302,7 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness, ana
   const maxScore = dimensions.reduce((s, d) => s + d.max, 0);
   const healthPct = Math.round((totalScore / maxScore) * 100);
 
-  const healthColor = healthPct >= 80 ? "text-emerald-700" : healthPct >= 50 ? "text-amber-700" : "text-red-700";
+  const healthColor = healthPct >= 80 ? "text-emerald-700" : healthPct >= 50 ? "text-amber-800" : "text-red-700";
   const healthBg = healthPct >= 80 ? "border-emerald-200 bg-emerald-50" : healthPct >= 50 ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
   const healthLabel = healthPct >= 80 ? "Strong" : healthPct >= 60 ? "Acceptable" : healthPct >= 40 ? "Needs Work" : "Critical Issues";
   const healthState = canonicalReadiness?.modules.generation.state ?? canonicalReadiness?.modules.export.state ?? "NOT_RUN";

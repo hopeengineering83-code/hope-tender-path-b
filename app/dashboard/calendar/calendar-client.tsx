@@ -23,7 +23,7 @@ const STATUS_COLORS: Record<string, string> = {
   FALLBACK_DRAFT_CREATED: "border-orange-200 bg-orange-50 text-orange-700",
   ANALYSIS_REQUIRES_REVIEW: "border-red-200 bg-red-50 text-red-700",
   MATCHED: "border-violet-200 bg-violet-50 text-violet-700",
-  COMPLIANCE_REVIEW: "border-amber-200 bg-amber-50 text-amber-700",
+  COMPLIANCE_REVIEW: "border-amber-200 bg-amber-50 text-amber-800",
   READY_FOR_GENERATION: "border-cyan-200 bg-cyan-50 text-cyan-700",
   GENERATED: "border-blue-200 bg-blue-50 text-blue-700",
   IN_REVIEW: "border-orange-200 bg-orange-50 text-orange-700",
@@ -184,7 +184,7 @@ export function CalendarClient({ tenders }: { tenders: TenderItem[] }) {
                           <span className="block truncate text-xs font-medium text-slate-900">{tender.title}</span>
                           {tender.clientName && <span className="block truncate text-[10px] text-slate-500">{tender.clientName}</span>}
                         </span>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${daysRemaining <= 3 ? "bg-red-100 text-red-700" : daysRemaining <= 7 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${daysRemaining <= 3 ? "bg-red-100 text-red-700" : daysRemaining <= 7 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"}`}>
                           {daysRemaining === 0 ? "today" : daysRemaining === 1 ? "tomorrow" : `${daysRemaining}d`}
                         </span>
                       </Link>

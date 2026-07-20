@@ -193,7 +193,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
         All Clear
       </span>
     ) : (
-      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700">
+      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
         Review Recommended
       </span>
     );
@@ -223,7 +223,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
               </p>
               {overallCoverage !== null && (
                 <p className="mt-1.5 text-xs font-medium text-slate-700">
-                  Overall coverage: <span className={overallCoverage >= 95 ? "text-green-700" : overallCoverage >= 50 ? "text-amber-700" : "text-red-700"}>{extractedPagesOverall}/{totalPagesOverall} pages ({overallCoverage}%)</span>
+                  Overall coverage: <span className={overallCoverage >= 95 ? "text-green-700" : overallCoverage >= 50 ? "text-amber-800" : "text-red-700"}>{extractedPagesOverall}/{totalPagesOverall} pages ({overallCoverage}%)</span>
                 </p>
               )}
             </div>
@@ -272,7 +272,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     ).map(([label, value, tone]) => (
                       <div key={label} className="rounded-lg border bg-white px-2 py-2">
                         <p className="text-[10px] uppercase text-slate-400">{label}</p>
-                        <p className={`mt-0.5 text-base font-bold ${tone === "red" ? "text-red-700" : tone === "green" ? "text-green-700" : tone === "amber" ? "text-amber-700" : "text-slate-800"}`}>
+                        <p className={`mt-0.5 text-base font-bold ${tone === "red" ? "text-red-700" : tone === "green" ? "text-green-700" : tone === "amber" ? "text-amber-800" : "text-slate-800"}`}>
                           {value !== null ? (
                             value
                           ) : (
@@ -304,7 +304,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     {file.averageCharsPerPage !== null && (
                       <span>
                         Text density:{" "}
-                        <span className={`font-medium ${file.averageCharsPerPage < 300 ? "text-amber-700" : "text-slate-700"}`}>
+                        <span className={`font-medium ${file.averageCharsPerPage < 300 ? "text-amber-800" : "text-slate-700"}`}>
                           {file.averageCharsPerPage.toLocaleString()} chars/page
                           {file.averageCharsPerPage < 300 ? " (low)" : ""}
                         </span>
@@ -332,7 +332,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                               .map((p) => (
                                 <tr key={p.page} className="border-t border-slate-100">
                                   <td className="py-0.5 tabular-nums text-slate-700">{p.page}</td>
-                                  <td className={`py-0.5 font-semibold ${p.status === "FAILED" ? "text-red-700" : p.status === "BLANK" ? "text-slate-400" : p.status === "LOW_DENSITY" ? "text-amber-700" : p.status === "OCR" ? "text-blue-700" : "text-slate-500"}`}>
+                                  <td className={`py-0.5 font-semibold ${p.status === "FAILED" ? "text-red-700" : p.status === "BLANK" ? "text-slate-400" : p.status === "LOW_DENSITY" ? "text-amber-800" : p.status === "OCR" ? "text-blue-700" : "text-slate-500"}`}>
                                     {p.status}
                                   </td>
                                   <td className="py-0.5 text-right tabular-nums text-slate-500">{p.charCount}</td>
@@ -411,7 +411,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                       </p>
                     )}
                     {!file.corrupted && file.lowDensityPageNums.length > 0 && (
-                      <p className="inline-flex items-start gap-1 text-xs text-amber-700">
+                      <p className="inline-flex items-start gap-1 text-xs text-amber-800">
                         <WarningIcon className="mt-0.5 shrink-0" /> <span>Low-confidence pages ({file.lowDensityPageNums.length}): {pageList(file.lowDensityPageNums)}</span>
                       </p>
                     )}
@@ -428,12 +428,12 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                     {!file.corrupted &&
                       file.coverage !== null &&
                       file.coverage < 95 && (
-                        <p className="inline-flex items-start gap-1 text-xs text-amber-700">
+                        <p className="inline-flex items-start gap-1 text-xs text-amber-800">
                           <WarningIcon className="mt-0.5 shrink-0" /> <span>Only {file.coverage}% of pages extracted — submission instructions may be missing</span>
                         </p>
                       )}
                     {!file.corrupted && !file.notYetExtracted && file.submissionPages === 0 && file.score >= 45 && (
-                      <p className="inline-flex items-start gap-1 text-xs text-amber-700">
+                      <p className="inline-flex items-start gap-1 text-xs text-amber-800">
                         <WarningIcon className="mt-0.5 shrink-0" /> <span>No submission instructions detected — deadline and submission method may be missing</span>
                       </p>
                     )}
@@ -443,7 +443,7 @@ export async function ExtractionQualityDashboard({ tenderId }: { tenderId: strin
                       </p>
                     )}
                     {!file.corrupted && !file.notYetExtracted && file.clientDetailPages === 0 && file.score >= 45 && (
-                      <p className="inline-flex items-start gap-1 text-xs text-amber-700">
+                      <p className="inline-flex items-start gap-1 text-xs text-amber-800">
                         <WarningIcon className="mt-0.5 shrink-0" /> <span>No client/contact detail pages detected — procuring entity name, submission contact, and address may be missing</span>
                       </p>
                     )}
