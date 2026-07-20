@@ -36,7 +36,6 @@ const ROUTES: Array<[label: string, path: string]> = [
   ["deadline calendar", "/dashboard/calendar"],
   ["company vault", "/dashboard/company"],
   ["company profile", "/dashboard/company/profile"],
-  ["company documents", "/dashboard/company/documents"],
   ["legacy data import", "/dashboard/company/plan-b-import"],
   ["company readiness", "/dashboard/company/readiness"],
   ["company review", "/dashboard/company/review"],

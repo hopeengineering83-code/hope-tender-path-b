@@ -1,9 +1,11 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { requireDashboardRole } from "../../../lib/dashboard-role-guard";
 import { SecureUploadPolicyEnforcer } from "../../../components/secure-upload-policy-enforcer";
 import { CompanyProfileEditorAuthority } from "../../../components/company-profile-editor-authority";
 
-export default function CompanyVaultLayout({ children }: { children: ReactNode }) {
+export default async function CompanyVaultLayout({ children }: { children: ReactNode }) {
+  await requireDashboardRole("ADMIN", "PROPOSAL_MANAGER");
   return (
     <>
       <SecureUploadPolicyEnforcer />

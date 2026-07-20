@@ -131,10 +131,12 @@ describe("Company Vault add/reimport mutation failures", () => {
 });
 
 
-describe("Company Vault profile, expert, and project save failures", () => {
-  it("surfaces safe failures and duplicate-submit guards for profile, expert, and project saves", () => {
-    assert.match(source, /We could not save the Company Profile/);
-    assert.match(source, /Network interruption while saving the Company Profile/);
+describe("Company Vault expert and project save failures", () => {
+  it("surfaces safe failures and duplicate-submit guards for expert and project saves", () => {
+    // Profile saving moved entirely to the dedicated /dashboard/company/profile
+    // editor (see single-company-profile-editor.test.ts) — the Knowledge
+    // Vault's own legacy inline profile form and handleSubmit were removed as
+    // dead code once its "Company Profile" tab was suppressed and delisted.
     assert.match(source, /if \(expertSaving\) return/);
     assert.match(source, /if \(projectSaving\) return/);
     assert.match(source, /We could not add that expert record/);

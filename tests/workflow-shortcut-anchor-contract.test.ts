@@ -35,7 +35,10 @@ describe("workflow shortcut anchor contract", () => {
   });
 
   it("the Workflow Control Center references only contracted primary anchors", () => {
-    const source = readFileSync("components/tender-workflow-action-center.tsx", "utf8");
+    // TenderWorkflowActionCenter resolves its per-stage anchors from the
+    // canonical lib/tender-workflow-stage-targets.ts registry rather than an
+    // inline copy — assert against that shared source instead.
+    const source = readFileSync("lib/tender-workflow-stage-targets.ts", "utf8");
     for (const { anchor } of anchors) {
       assert.ok(source.includes(`#${anchor}`), `Workflow Control Center must link to #${anchor}`);
     }

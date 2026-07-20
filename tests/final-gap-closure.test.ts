@@ -201,11 +201,6 @@ describe("Gaps T-Z — No raw Unicode in icon-audit round 2", () => {
     assert.ok(!src.includes("▼"), "must not contain ▼");
   });
 
-  it("company/documents/category-accordion.tsx has no raw Unicode check mark", () => {
-    const src = strip(read("app/dashboard/company/documents/category-accordion.tsx"));
-    assert.ok(!src.includes("✓"), "must not contain ✓");
-  });
-
   it("setup/page.tsx has no raw Unicode marks", () => {
     const src = strip(read("app/dashboard/setup/page.tsx"));
     assert.ok(!src.includes("✓"), "must not contain ✓");

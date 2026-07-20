@@ -4,43 +4,17 @@
 // they're on — especially on mobile where the sidebar is hidden and the only
 // other context is the "Hope Tender" wordmark in the mobile top bar.
 //
-// Derives the page title from the current pathname using the same navigation
-// groups defined in lib/dashboard-navigation.ts. Falls back to "Dashboard"
-// for unknown routes.
+// Label resolution lives in lib/dashboard-navigation.ts's getDashboardPageLabel
+// so the nav sidebar, mobile menu, and this header all resolve a pathname to
+// exactly one label from the same canonical registry, instead of each
+// maintaining its own copy of the route list.
 
 import { usePathname } from "next/navigation";
-import { DASHBOARD_NAV_GROUPS, type DashboardNavGroup } from "../lib/dashboard-navigation";
-
-function findPageLabel(pathname: string, groups: DashboardNavGroup[]): string {
-  for (const group of groups) {
-    for (const link of group.links) {
-      if (pathname === link.href || pathname.startsWith(link.href + "/")) {
-        return link.label;
-      }
-    }
-  }
-  // Special cases for tender detail and sub-routes
-  if (pathname.startsWith("/dashboard/tenders/") && pathname.includes("/command-center")) {
-    return "Tender Command Center";
-  }
-  if (pathname.startsWith("/dashboard/tenders/") && pathname.includes("/report")) {
-    return "Tender Report";
-  }
-  if (pathname.startsWith("/dashboard/tenders/")) {
-    return "Tender Detail";
-  }
-  if (pathname.startsWith("/dashboard/company/")) {
-    return "Company";
-  }
-  if (pathname.startsWith("/dashboard/admin/")) {
-    return "Admin";
-  }
-  return "Dashboard";
-}
+import { getDashboardPageLabel } from "../lib/dashboard-navigation";
 
 export function HeaderPageTitle() {
   const pathname = usePathname();
-  const label = findPageLabel(pathname, DASHBOARD_NAV_GROUPS);
+  const label = getDashboardPageLabel(pathname);
 
   return (
     <div className="flex min-w-0 items-center gap-2">

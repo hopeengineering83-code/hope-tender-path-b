@@ -1,5 +1,4 @@
-import { redirect } from "next/navigation";
-import { getSession } from "../../../lib/auth";
+import { requireDashboardRole } from "../../../lib/dashboard-role-guard";
 import { getSystemReadiness } from "../../../lib/system-readiness";
 import {
   deploymentEnvironmentLabel,
@@ -14,8 +13,7 @@ function badge(severity: string) {
 }
 
 export default async function SystemReadinessPage() {
-  const userId = await getSession();
-  if (!userId) redirect("/login");
+  await requireDashboardRole("ADMIN");
 
   const readiness = await getSystemReadiness();
   const environment = resolveDeploymentEnvironment(process.env);

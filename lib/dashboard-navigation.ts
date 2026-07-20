@@ -142,3 +142,60 @@ export function filterDashboardNavGroupsByRole(
       roles: group.roles ? [...group.roles] : null,
     }));
 }
+
+/**
+ * Routes with a real, specific page title that are intentionally not (or not
+ * only) reached from the primary sidebar — e.g. the account menu, the admin
+ * index cards, or a workspace sub-nav rather than DASHBOARD_NAV_GROUPS. Keyed
+ * as "route", not "href": dashboard-route-inventory.test.ts scans this file
+ * for every literal `href:` key to build its nav-advertised-routes list, and
+ * these routes are deliberately NOT advertised in the primary nav — reusing
+ * "href" here would silently (and wrongly) enroll them in that list.
+ * getDashboardPageLabel below applies the same longest-prefix-match rule to
+ * these as it does to the primary registry, so a route being here doesn't
+ * let it accidentally win over a more specific primary nav entry, or lose to
+ * a shorter one.
+ */
+const SUPPLEMENTARY_ROUTE_LABELS: Array<{ route: string; label: string }> = [
+  { route: "/dashboard/account", label: "Account" },
+  { route: "/dashboard/admin", label: "Admin" },
+  { route: "/dashboard/company/profile", label: "Company Profile Editor" },
+];
+
+/**
+ * One canonical page-title resolver for the sticky header, combining the
+ * primary nav registry with the supplementary routes above. Longest matching
+ * route wins — the same rule getActiveDashboardHref already uses — so this
+ * can't regress into the first-match bug where a short prefix like
+ * "/dashboard/company" silently wins over a longer, more specific route
+ * such as "/dashboard/company/readiness" listed later in the same group.
+ */
+export function getDashboardPageLabel(pathname: string): string {
+  const current = normalizePath(pathname);
+  const candidates: Array<{ href: string; label: string }> = [
+    ...flattenDashboardLinks(DASHBOARD_NAV_GROUPS),
+    ...SUPPLEMENTARY_ROUTE_LABELS.map(({ route, label }) => ({ href: route, label })),
+  ];
+
+  const exact = candidates.find((link) => normalizePath(link.href) === current);
+  if (exact) return exact.label;
+
+  const parents = candidates
+    .filter((link) => isDashboardRouteWithin(current, link.href))
+    .sort((a, b) => normalizePath(b.href).length - normalizePath(a.href).length);
+  if (parents[0]) return parents[0].label;
+
+  // Dynamic tender sub-routes aren't static hrefs, so they can't live in the
+  // registry above — matched here instead, most specific first.
+  if (pathname.startsWith("/dashboard/tenders/") && pathname.includes("/command-center")) {
+    return "Tender Command Center";
+  }
+  if (pathname.startsWith("/dashboard/tenders/") && pathname.includes("/report")) {
+    return "Tender Report";
+  }
+  if (pathname.startsWith("/dashboard/tenders/")) return "Tender Detail";
+  if (pathname.startsWith("/dashboard/admin/")) return "Admin";
+  if (pathname.startsWith("/dashboard/company/")) return "Company";
+
+  return "Dashboard";
+}

@@ -136,6 +136,11 @@ describe("workflow-center consumer contract", () => {
     assert.match(src, /role="alert"/);
     assert.match(src, /disabled=\{actionStage !== null\}/);
     assert.doesNotMatch(src, /disabled=\{s\.status === "BLOCKED"/);
+    // The component resolves its per-stage shortcut map from the canonical
+    // lib/tender-workflow-stage-targets.ts registry (shared with
+    // WorkflowStepLinks) instead of an inline copy — assert against that.
+    assert.match(src, /TENDER_WORKFLOW_STAGE_TARGETS\[stage\.stage\]/);
+    const stageTargets = readFileSync("lib/tender-workflow-stage-targets.ts", "utf8");
     for (const anchor of [
       "#tender-files",
       "#extraction-quality",
@@ -149,7 +154,7 @@ describe("workflow-center consumer contract", () => {
       "#export-readiness",
       "#final-package-manifest",
     ]) {
-      assert.ok(src.includes(anchor), `workflow shortcut map must include ${anchor}`);
+      assert.ok(stageTargets.includes(anchor), `workflow shortcut map must include ${anchor}`);
     }
   });
 
