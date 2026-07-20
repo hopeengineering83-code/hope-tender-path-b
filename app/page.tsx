@@ -40,6 +40,29 @@ export default function HomePage() {
           </div>
         </div>
       </div>
+      <footer className="mx-auto mt-6 w-full max-w-4xl px-4 pb-6">
+        <div className="flex flex-col items-center justify-between gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:text-left">
+          <div className="text-xs text-slate-500">
+            <span className="font-medium text-slate-700">Hope Tender</span>
+            <span className="mx-2 text-slate-300">&middot;</span>
+            Hope Urban Planning Architectural and Engineering Consultancy
+          </div>
+          <div className="flex items-center gap-4 text-xs text-slate-500">
+            <Link href="/login" className="font-medium text-slate-700 hover:text-slate-900 hover:underline">
+              Sign in
+            </Link>
+            <Link href="/forgot-password" className="font-medium text-slate-700 hover:text-slate-900 hover:underline">
+              Forgot password
+            </Link>
+            <span className="text-slate-400">
+              &copy; {new Date().getFullYear()}
+            </span>
+          </div>
+        </div>
+        <p className="mt-4 text-center text-xs text-slate-400 sm:text-left">
+          AI-powered tender proposal generation &amp; compliance engine
+        </p>
+      </footer>
     </main>
   );
 }
