@@ -20,6 +20,7 @@ describe("actionable AI readiness diagnostics", () => {
     assert.match(page, /Do not paste secret values into Hope Tender/);
     assert.match(page, /Redeploy the same environment/);
     assert.match(page, /A running deployment cannot read newly added variables until a new deployment starts/);
+    assert.match(page, /confirm <strong>Runtime status: ready<\/strong>/);
   });
 
   it("links remediation to the other canonical admin diagnostics", () => {
@@ -28,6 +29,7 @@ describe("actionable AI readiness diagnostics", () => {
     assert.match(page, /href="\/dashboard\/admin\/safety-center"/);
     assert.match(page, /Open System Safety Center/);
     assert.match(page, /href="\/dashboard\/admin"/);
+    assert.ok((page.match(/min-h-11/g) ?? []).length >= 3, "all remediation links must meet the 44px target contract");
   });
 
   it("keeps the detailed variable inventory available but collapsed by default", () => {
