@@ -4,6 +4,20 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { PlayIcon, BoltIcon, ClockIcon } from "./icons";
 
+// Renders one engine blocker regardless of which route path produced it.
+// String blockers ARE the message and are shown verbatim; object blockers
+// show file name + severity + score. An object with neither field would
+// otherwise have rendered the contentless "File: blocked" — fall back to
+// an explicit unknown-blocker label instead of fake specificity.
+export function describeEngineBlocker(blocker: ExtractionBlocker | string): string {
+  if (typeof blocker === "string") return blocker;
+  const name = blocker.fileName?.trim();
+  const severity = blocker.quality?.severity?.trim();
+  if (!name && !severity) return "Blocked file (no diagnostic detail returned) — open the Extraction Quality panel for the full report.";
+  const score = typeof blocker.quality?.score === "number" ? ` (${blocker.quality.score}/100)` : "";
+  return `${name ?? "Unnamed file"}: ${severity ?? "extraction blocked"}${score}`;
+}
+
 type ExtractionBlocker = {
   fileName?: string;
   quality?: {
@@ -24,7 +38,13 @@ export type EngineResponse = {
   hint?: string;
   detail?: string;
   diagnosticId?: string;
-  blockers?: ExtractionBlocker[];
+  // The engine route returns `blockers` in TWO shapes depending on the
+  // failure path: extraction-quality failures send ExtractionBlocker objects
+  // (fileName + quality), while evidence-matching and engine-meta failures
+  // send plain strings. The renderer must handle both — object-rendering a
+  // string used to collapse to the contentless "File: blocked" and swallow
+  // the real message.
+  blockers?: (ExtractionBlocker | string)[];
   // Partial-success blockers (string[] from engine route when AI matching fails
   // but deterministic extraction succeeds). Separate from ExtractionBlocker[]
   // to avoid type collision.
@@ -627,10 +647,7 @@ export function EngineActionPanel({
               <p className="font-semibold">Extraction blockers</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
                 {result.blockers.slice(0, 5).map((blocker, index) => (
-                  <li key={`${blocker.fileName ?? "file"}-${index}`}>
-                    {blocker.fileName ?? "File"}: {blocker.quality?.severity ?? "blocked"}
-                    {typeof blocker.quality?.score === "number" ? ` (${blocker.quality.score}/100)` : ""}
-                  </li>
+                  <li key={index}>{describeEngineBlocker(blocker)}</li>
                 ))}
               </ul>
             </div>
