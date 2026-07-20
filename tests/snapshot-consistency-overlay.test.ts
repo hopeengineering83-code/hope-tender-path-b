@@ -52,14 +52,13 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
 
   it("is mounted across all readiness/verdict panels for full coverage", () => {
     // components/canonical-readiness-score-widget.tsx, bid-control-verdict-panel.tsx,
-    // and tender-health-score-panel.tsx were retired in favor of the canonical
-    // Tender Release State (components/tender-release-state-panel.tsx), which
-    // reads the same authoritative source this overlay cross-checks against —
-    // it has no independent local verdict to compare, so it does not mount
-    // this overlay.
+    // tender-health-score-panel.tsx, and app/dashboard/tenders/[id]/executive-snapshot.tsx
+    // were retired in favor of the canonical Tender Release State
+    // (components/tender-release-state-panel.tsx), which reads the same
+    // authoritative source this overlay cross-checks against — it has no
+    // independent local verdict to compare, so it does not mount this overlay.
     for (const panel of [
       "components/final-submission-control-center.tsx",
-      "app/dashboard/tenders/[id]/executive-snapshot.tsx",
       // Recovery Command Center and Workflow Control Center each compute
       // their verdict via their own separate orchestrator (respectively
       // tender-lifecycle-orchestrator.ts's computeTenderLifecycle, and

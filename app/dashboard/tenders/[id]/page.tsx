@@ -9,12 +9,10 @@ import { ExtractionSnapshotPanel } from "../../../../components/extraction-snaps
 import { notFound, redirect } from "next/navigation";
 import { getSession, getCurrentUser } from "../../../../lib/auth";
 import { canMutateTender } from "../../../../lib/recovery-command-actions";
-import { getCurrentConfirmedBuildPlan } from "../../../../lib/engine/build-plan";
 import { prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
-import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
 // ClientSubmissionDetailsPanel is intentionally NOT imported here — it was a
 // duplicate of TenderIntakeDetailPanel in the normal Stage 1 workflow.
@@ -188,8 +186,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
   const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
-  const confirmedPlanForSnapshot = await getCurrentConfirmedBuildPlan(prismaClient, tender.id, userId).catch(() => ({ ok: false as const, blocker: "unavailable" }));
-  const confirmedPlanItems = confirmedPlanForSnapshot.ok ? confirmedPlanForSnapshot.items : null;
 
   return (
     <main className="space-y-5" aria-label="Tender workflow workspace">
@@ -210,7 +206,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <ExtractionQualityPanel tenderId={tender.id} />
       </WorkflowStage>
 
-      <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} confirmedPlanItems={confirmedPlanItems} />
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
 

@@ -1,24 +1,23 @@
 // G10 — Tender Command Center.
 //
-// Single dashboard per tender that surfaces every state the engine has
-// computed: readiness, bid/no-bid, blockers, current best team / projects,
-// generated docs status, evaluator score, Copilot actions, export gate
-// status — and a "Next best action" at the top.
+// A concise, READ-ONLY view of the canonical Tender Release State plus
+// data that has no other home in the tender workspace: evaluator
+// objections, recent proposal versions, the pricing workbook summary, and
+// the background AI-job history. It must not independently compute its own
+// blockers, score, verdict, or next action — all of that comes from
+// getTenderReleaseState, the same canonical payload every other consumer
+// (the tender workspace panel, the report) reads.
 //
 // Lives at /dashboard/tenders/[id]/command-center so the existing detail
-// page stays untouched. Linked from the tender detail navigation.
+// page stays untouched. Linked from the tender workspace's release-state panel.
 
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { getTenderReleaseState } from "../../../../../lib/engine/tender-release-state";
 import { formatTenderStatus } from "../../../../../lib/tender-workflow";
-import {
-  formatDocumentReadinessFailure,
-  formatOperationalCode,
-  formatOperationalReason,
-} from "../../../../../lib/operational-labels";
+import { formatOperationalCode, formatOperationalReason } from "../../../../../lib/operational-labels";
 import { VersionActionsTable } from "./version-actions";
 import { ArrowRightIcon, CheckIcon, CrossIcon } from "../../../../../components/icons";
 
@@ -60,23 +59,14 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   });
   if (!tender) notFound();
 
-  const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: id, userId, requireFileContent: false }).catch(() => null);
-  const docReadiness = {
-    ok: canonical ? canonical.summary.documentBlockers === 0 : false,
-    failures: canonical?.documentBlockers ?? [],
-  };
-  const tenderBlockers = canonical?.tenderLevelBlockers ?? [];
-  const advisoryWarnings = canonical?.advisoryWarnings ?? [];
-  const canonicalBlockedCount = tenderBlockers.length + docReadiness.failures.length;
-  const canonicalReadinessLabel = canonical?.ok
-    ? "Export readiness: Open"
-    : `Export readiness: Blocked (${canonicalBlockedCount})`;
-
-  const exportReadyCount = canonical?.summary.exportReadyDocumentsTotal ?? 0;
-  const finalCandidatesCount = canonical?.summary.finalExportCandidates ?? 0;
-  const documentBlockerCount = canonical?.summary.documentBlockers ?? 0;
-  const documentsCaption = canonical
-    ? `${finalCandidatesCount} final candidates · ${documentBlockerCount} blocked`
+  const releaseState = await getTenderReleaseState(prisma, id, userId).catch(() => null);
+  const canonicalReadinessLabel = releaseState
+    ? releaseState.exportEligible
+      ? "Export readiness: Open"
+      : `Export readiness: Blocked (${releaseState.blockerTotal})`
+    : "Export readiness: unavailable";
+  const documentsCaption = releaseState
+    ? `${releaseState.blockerTotal} blocker(s) · ${releaseState.criticalBlockerTotal} critical/high`
     : "Canonical readiness unavailable";
 
   const objections: any[] = await (prisma as any).evaluatorObjection.findMany({
@@ -107,50 +97,11 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
     select: { id: true, jobType: true, status: true, createdAt: true, finishedAt: true },
   });
 
-  let nextAction: { title: string; href?: string; rationale: string };
-  if (tenderBlockers.length > 0) {
-    nextAction = {
-      title: "Resolve tender-level export blockers",
-      href: `#blockers`,
-      rationale: `${tenderBlockers.length} unresolved tender-level blocker(s) — export gate is closed.`,
-    };
-  } else if (docReadiness.failures.length > 0) {
-    nextAction = {
-      title: "Bring documents to final export readiness",
-      href: `/dashboard/tenders/${id}#generated-documents`,
-      rationale: `${docReadiness.failures.length} document(s) still need review or validation.`,
-    };
-  } else if (openHigh.length > 0) {
-    nextAction = {
-      title: "Close high-severity evaluator objections",
-      href: `#evaluator-objections`,
-      rationale: `${openHigh.length} high-severity objection(s) remain open from the last evaluator simulation.`,
-    };
-  } else if (tender.expertMatches.length === 0) {
-    nextAction = {
-      title: "Select experts for this tender",
-      href: `/dashboard/tenders/${id}#matching-quality`,
-      rationale: "No experts are selected yet — the engine will not generate a meaningful proposal.",
-    };
-  } else if (tender.projectMatches.length === 0) {
-    nextAction = {
-      title: "Select reference projects for this tender",
-      href: `/dashboard/tenders/${id}#matching-quality`,
-      rationale: "No projects are selected yet — the proposal needs comparable evidence.",
-    };
-  } else if (!latestVersion) {
-    nextAction = {
-      title: "Generate the technical proposal",
-      href: `/dashboard/tenders/${id}#generated-documents`,
-      rationale: "Selections are in place. Run the proposal engine.",
-    };
-  } else {
-    nextAction = {
-      title: "Run evaluator simulation on the latest version",
-      href: `/dashboard/tenders/${id}#evaluator-objections`,
-      rationale: "Last engine run produced a proposal; red-team it before final review.",
-    };
-  }
+  // ONE primary next action — the canonical workflow decision, passed
+  // through by getTenderReleaseState. Never recompute a competing one here.
+  const nextAction = releaseState?.primaryNextAction
+    ? { title: releaseState.primaryNextAction.label, rationale: releaseState.primaryNextAction.reason, href: `/dashboard/tenders/${id}` }
+    : null;
 
   return (
     <div className="mx-auto max-w-screen-xl px-4 py-6 sm:px-6 lg:px-8">
@@ -167,79 +118,83 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
           <div className="font-semibold text-slate-800">
             {formatTenderStatus(tender.status)} / {formatOperationalCode(tender.stage)}
           </div>
-          <div className={`text-xs mt-1 ${canonical?.ok ? "text-emerald-700" : "text-red-700"}`}>{canonicalReadinessLabel}</div>
+          <div className={`text-xs mt-1 ${releaseState?.exportEligible ? "text-emerald-700" : "text-red-700"}`}>{canonicalReadinessLabel}</div>
         </div>
       </div>
 
       <section className="rounded-xl bg-blue-700 text-white p-5 mb-6">
-        <div className="text-xs font-semibold uppercase tracking-widest opacity-80">Next best action</div>
-        <div className="mt-1 text-lg font-semibold">{nextAction.title}</div>
-        <div className="mt-1 text-sm opacity-90">{nextAction.rationale}</div>
-        {nextAction.href && (
-          <a
-            href={nextAction.href}
-            className="mt-3 inline-block rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 no-underline"
-          >
-            Take action <ArrowRightIcon />
-          </a>
+        <div className="text-xs font-semibold uppercase tracking-widest opacity-80">Next required action</div>
+        {nextAction ? (
+          <>
+            <div className="mt-1 text-lg font-semibold">{nextAction.title}</div>
+            <div className="mt-1 text-sm opacity-90">{nextAction.rationale}</div>
+            <a
+              href={nextAction.href}
+              className="mt-3 inline-block rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 no-underline"
+            >
+              Open tender workspace <ArrowRightIcon />
+            </a>
+          </>
+        ) : (
+          <div className="mt-1 text-lg font-semibold">Canonical release state unavailable</div>
         )}
       </section>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-6">
-        <StatCard title="Selected experts" value={tender.expertMatches.length} caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"} />
-        <StatCard title="Selected projects" value={tender.projectMatches.length} caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"} />
-        <StatCard title="Documents" value={exportReadyCount} caption={documentsCaption} />
+        <StatCard
+          title="Selected experts"
+          value={tender.expertMatches.length}
+          caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"}
+          href={`/dashboard/tenders/${id}#matching-quality`}
+        />
+        <StatCard
+          title="Selected projects"
+          value={tender.projectMatches.length}
+          caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"}
+          href={`/dashboard/tenders/${id}#matching-quality`}
+        />
+        <StatCard
+          title="Documents"
+          value={tender.generatedDocuments.length}
+          caption={documentsCaption}
+          href={`/dashboard/tenders/${id}#generated-documents`}
+        />
         <StatCard title="Open high-severity objections" value={openHigh.length} caption={openHigh.length > 0 ? "Objections open" : "No high-severity objections"} highlight={openHigh.length > 0} />
       </section>
 
       <section id="blockers" className="mb-6">
         <h2 className="mb-2 text-sm font-semibold text-slate-900">Export gate</h2>
-        {docReadiness.ok && tenderBlockers.length === 0 ? (
+        {releaseState && releaseState.blockerTotal === 0 ? (
           <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800">
-            <CheckIcon /> Export gate is open. All documents are ready for export and there are no tender-level blockers.
+            <CheckIcon /> Export gate is open. No blockers remain.
           </div>
-        ) : (
-          <div className="space-y-2">
-            {tenderBlockers.length > 0 && (
-              <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
-                <p className="font-semibold mb-2">Tender-level blockers ({tenderBlockers.length})</p>
-                {tenderBlockers.map((blocker, index) => (
-                  <div key={index} className="mb-1.5 text-xs">
-                    <span className="font-semibold">{formatOperationalCode(blocker.severity)}:</span>{" "}
-                    {formatOperationalReason(blocker.title)}
-                    {blocker.recommendedAction && (
-                      <div className="text-red-600 mt-0.5">Action: {formatOperationalReason(blocker.recommendedAction)}</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            {docReadiness.failures.length > 0 && (
-              <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
-                <p className="font-semibold mb-2">Documents not ready ({docReadiness.failures.length})</p>
-                {docReadiness.failures.slice(0, 6).map((failure) => (
-                  <div key={failure.documentId} className="mb-1 text-xs">
-                    • {formatDocumentReadinessFailure(failure.fileName, failure.reasons)}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {advisoryWarnings.length > 0 && (
-          <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
-            <p className="font-semibold mb-2">Advisory warnings ({advisoryWarnings.length}) — non-blocking</p>
-            {advisoryWarnings.slice(0, 6).map((advisory, index) => (
-              <div key={`${advisory.category}-${index}`} className="mb-1 text-xs">
-                • {formatOperationalCode(advisory.severity)}: {formatOperationalReason(advisory.title)}
+        ) : releaseState ? (
+          <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-800">
+            <p className="font-semibold mb-2">Blockers ({releaseState.blockerTotal})</p>
+            {releaseState.blockers.slice(0, 10).map((blocker) => (
+              <div key={blocker.category} className="mb-1.5 text-xs">
+                <span className="font-semibold">{formatOperationalCode(blocker.severity)}:</span>{" "}
+                {formatOperationalReason(blocker.title)}
+                {blocker.nextAction && (
+                  <div className="text-red-600 mt-0.5">Action: {formatOperationalReason(blocker.nextAction)}</div>
+                )}
               </div>
             ))}
+          </div>
+        ) : (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+            Canonical release state is unavailable. Refresh to retry.
           </div>
         )}
       </section>
 
       <section id="evaluator" className="mb-6">
-        <h2 className="mb-2 text-sm font-semibold text-slate-900">Evaluator objections</h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-slate-900">Evaluator objections</h2>
+          <Link href={`/dashboard/tenders/${id}#evaluator-objections`} className="text-xs text-blue-600 hover:text-blue-800 no-underline">
+            Manage on tender workspace <ArrowRightIcon />
+          </Link>
+        </div>
         {objections.length === 0 ? (
           <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-500">
             No evaluator simulation has been run yet for this tender.
@@ -344,12 +299,21 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
   );
 }
 
-function StatCard({ title, value, caption, highlight }: { title: string; value: number | string; caption?: string; highlight?: boolean }) {
-  return (
-    <div className={`rounded-lg border p-3 ${highlight ? "bg-red-50 border-red-200" : "bg-white border-slate-200"}`}>
+function StatCard({ title, value, caption, highlight, href }: { title: string; value: number | string; caption?: string; highlight?: boolean; href?: string }) {
+  const body = (
+    <>
       <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{title}</div>
       <div className={`mt-1 text-2xl font-bold ${highlight ? "text-red-700" : "text-slate-900"}`}>{value}</div>
       {caption && <div className="mt-1 text-xs text-slate-500 truncate">{caption}</div>}
-    </div>
+    </>
   );
+  const className = `rounded-lg border p-3 ${highlight ? "bg-red-50 border-red-200" : "bg-white border-slate-200"}`;
+  if (href) {
+    return (
+      <Link href={href} className={`${className} block no-underline hover:border-slate-300`}>
+        {body}
+      </Link>
+    );
+  }
+  return <div className={className}>{body}</div>;
 }

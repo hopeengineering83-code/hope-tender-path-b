@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { PrintButton } from "./print-button";
-import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
+import { getTenderReleaseState } from "../../../../../lib/engine/tender-release-state";
 import { formatTenderStatus } from "../../../../../lib/tender-workflow";
 import { formatOperationalCode, formatOperationalReason } from "../../../../../lib/operational-labels";
 import { ArrowRightIcon, WarningIcon } from "../../../../../components/icons";
@@ -97,18 +97,20 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
 
   if (!tender) notFound();
 
-  // Canonical readiness remains the only authority for Print/Save-as-PDF.
-  const canonicalReadiness = await getFinalSubmissionReadiness(prisma, {
-    tenderId: id,
-    userId,
-  }).catch(() => null);
+  // Canonical Tender Release State remains the only authority for
+  // Print/Save-as-PDF — the same blockers/eligibility every other surface
+  // (tender workspace, command center) reads. This page must never
+  // recompute its own readiness, blocker list, or authoritative verdict.
+  const releaseState = await getTenderReleaseState(prisma, id, userId).catch(() => null);
 
-  const isAuthoritative =
-    canonicalReadiness?.ok === true &&
-    canonicalReadiness.tenderLevelBlockers.length === 0;
-  const canonicalBlockers = [...(canonicalReadiness?.tenderLevelBlockers ?? [])];
+  const isAuthoritative = releaseState !== null && releaseState.exportEligible === true && releaseState.blockerTotal === 0;
+  const canonicalBlockers = [...(releaseState?.blockers ?? [])];
 
-  const currencyFieldState = canonicalReadiness?.canonicalFields?.find(
+  // Currency provenance is a per-field grounding state, not a
+  // blocker/score/verdict/action — sourced from releaseState.canonicalFields,
+  // the canonical field resolver's output computed once inside
+  // getTenderReleaseState, never a separate divergent call.
+  const currencyFieldState = releaseState?.canonicalFields?.find(
     (field) => field.fieldKey === "currency",
   ) ?? null;
   const currencyStatus = currencyFieldState?.status ?? "INVALID";
@@ -146,8 +148,8 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
                 <li key={index}>
                   <span className="font-semibold">{formatOperationalCode(blocker.category)}:</span>{" "}
                   {formatOperationalReason(blocker.title)}
-                  {blocker.recommendedAction ? (
-                    <span className="block pl-4 italic"><ArrowRightIcon /> {formatOperationalReason(blocker.recommendedAction)}</span>
+                  {blocker.nextAction ? (
+                    <span className="block pl-4 italic"><ArrowRightIcon /> {formatOperationalReason(blocker.nextAction)}</span>
                   ) : null}
                 </li>
               ))}

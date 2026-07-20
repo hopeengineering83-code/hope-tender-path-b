@@ -23,7 +23,7 @@ function snapshotShape(reqs: Array<{ id: string; rows?: Array<{ id: string; supp
   }));
 }
 
-describe("ExecutiveSnapshot canonical evidence coverage", () => {
+describe("canonical evidence coverage (lib/engine/requirement-evidence-profile)", () => {
   it("FULL/SUBSTANTIAL links count toward strong coverage", () => {
     const report = computeEvidenceCoverage(snapshotShape([
       { id: "r1", rows: [{ id: "m1", supportLevel: "FULL" }] },
@@ -64,14 +64,18 @@ describe("ExecutiveSnapshot canonical evidence coverage", () => {
   });
 });
 
-describe("ExecutiveSnapshot stale workflow progress isolation", () => {
-  it("uses canonical final-package state for GO/REVIEW/NO_GO, not tender.readinessScore", () => {
-    const source = readFileSync("app/dashboard/tenders/[id]/executive-snapshot.tsx", "utf8");
-    assert.match(source, /canonicalReadiness\?\.readyForFinalExport/);
-    assert.match(source, /canonicalReadiness\?\.modules\.export\.state/);
-    assert.match(source, /exportState === "BLOCKED" \|\| exportState === "STALE"/);
-    assert.match(source, /Final package status/);
-    assert.doesNotMatch(source, /workflowProgress/);
+// app/dashboard/tenders/[id]/executive-snapshot.tsx was removed entirely —
+// it was a fourth independent GO/REVIEW/NO_GO verdict on the tender detail
+// page (built on the canonical-tender-readiness.ts engine), now superseded
+// by the canonical Tender Release State's verdict. The property this test
+// protected — never trust the stale scalar tender.readinessScore column —
+// still holds structurally in the replacement: lib/engine/tender-release-state.ts's
+// readinessScore is derived exclusively from the gated evaluateBidDecision()
+// result and never reads the tender.readinessScore column.
+describe("canonical Tender Release State never reads the stale tender.readinessScore column", () => {
+  it("readinessScore is derived from the gated bid-decision result, not a scalar column", () => {
+    const source = readFileSync("lib/engine/tender-release-state.ts", "utf8");
+    assert.match(source, /readinessScore = decision\.score/);
     assert.doesNotMatch(source, /tender\.readinessScore/);
   });
 });

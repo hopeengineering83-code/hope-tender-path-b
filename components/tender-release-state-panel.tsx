@@ -14,8 +14,9 @@
 
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { WarningIcon, CrossIcon, CheckCircleIcon, RefreshIcon } from "./icons";
+import { WarningIcon, CrossIcon, CheckCircleIcon, RefreshIcon, ArrowRightIcon, ShareIcon } from "./icons";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 import { BidDecisionForm } from "./bid-decision-form";
 
@@ -140,6 +141,22 @@ export function TenderReleaseStatePanel({ tenderId, canMutate = false }: { tende
           <WarningIcon /> Fixture / test-environment data — deployment: {data.deploymentEnvironment}. Not production.
         </div>
       )}
+
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+        <Link
+          href={`/dashboard/tenders/${tenderId}/command-center`}
+          className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
+          Full Command Center <ArrowRightIcon />
+        </Link>
+        <Link
+          href={`/dashboard/tenders/${tenderId}/report`}
+          target="_blank"
+          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
+          PDF Report <ShareIcon />
+        </Link>
+      </div>
 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>

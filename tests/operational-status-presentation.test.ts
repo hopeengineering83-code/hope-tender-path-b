@@ -8,7 +8,6 @@ import {
 } from "../lib/operational-labels";
 
 const commandCenterSource = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
-const executiveSource = readFileSync("app/dashboard/tenders/[id]/executive-snapshot.tsx", "utf8");
 const reportSource = readFileSync("app/dashboard/tenders/[id]/report/page.tsx", "utf8");
 
 describe("operational status presentation", () => {
@@ -43,18 +42,22 @@ describe("operational status presentation", () => {
   it("humanizes the command center status, blocker, objection, and job surfaces", () => {
     assert.match(commandCenterSource, /formatTenderStatus\(tender\.status\)/);
     assert.match(commandCenterSource, /formatOperationalCode\(tender\.stage\)/);
-    assert.match(commandCenterSource, /formatDocumentReadinessFailure/);
+    // Blockers now come pre-humanized from the canonical Tender Release
+    // State's reconciled list (lib/engine/tender-release-state.ts), rendered
+    // via formatOperationalReason(blocker.title) — the command center no
+    // longer builds its own document-readiness-failure strings.
+    assert.match(commandCenterSource, /formatOperationalReason\(blocker\.title\)/);
     assert.match(commandCenterSource, /formatOperationalCode\(job\.jobType\)/);
     assert.doesNotMatch(commandCenterSource, /\{tender\.status\} \/ \{tender\.stage\}/);
     assert.doesNotMatch(commandCenterSource, /READY_FOR_EXPORT and no tender-level blockers/);
   });
 
-  it("humanizes executive decisions without changing the raw gate comparisons", () => {
-    assert.match(executiveSource, /const decision: "GO" \| "REVIEW" \| "NO_GO"/);
-    assert.match(executiveSource, /badgeClass\(decision\)/);
-    assert.match(executiveSource, /formatOperationalCode\(decision\)/);
-    assert.doesNotMatch(executiveSource, />\{decision\}<\/span>/);
-  });
+  // app/dashboard/tenders/[id]/executive-snapshot.tsx (its own independent
+  // GO/REVIEW/NO_GO verdict) was removed — superseded by the canonical
+  // Tender Release State panel, whose verdict labels are hand-written human
+  // strings ("BID", "BID WITH CONDITIONS", "NO BID", "Decision unavailable")
+  // rather than raw codes, so there is no formatOperationalCode dependency
+  // to protect there.
 
   it("humanizes printable report status and blocker surfaces", () => {
     assert.match(reportSource, /formatOperationalCode\(blocker\.category\)/);

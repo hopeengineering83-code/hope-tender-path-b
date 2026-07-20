@@ -866,24 +866,22 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(ccSrc, /No HIGH objections/);
     });
 
-    it("command center Documents card reads ONLY canonical summary values (no local filtering)", () => {
+    it("command center Documents card reads readiness ONLY from the canonical Tender Release State (no local filtering or re-derived counts)", () => {
       const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
-      // Must use ONLY the counts from getFinalSubmissionReadiness summary.
-      assert.match(ccSrc, /summary\.exportReadyDocumentsTotal/);
-      assert.match(ccSrc, /summary\.finalExportCandidates/);
-      assert.match(ccSrc, /summary\.documentBlockers/);
+      // The Documents card's blocker/readiness caption must come from the
+      // canonical releaseState (lib/engine/tender-release-state.ts), not a
+      // second, locally re-derived export-ready/final-candidate split.
+      assert.match(ccSrc, /releaseState\.blockerTotal/);
+      assert.match(ccSrc, /releaseState\.criticalBlockerTotal/);
       // Must NOT import or use local document filtering helpers.
       assert.doesNotMatch(ccSrc, /from ["']\.\.\/.+lib\/engine\/document-output-state["']/);
       assert.doesNotMatch(ccSrc, /filterFinalExportCandidateDocuments/);
       assert.doesNotMatch(ccSrc, /isExportReady/);
       // Must NOT use a local ACTIVE_DOC_STATUSES vocabulary.
       assert.doesNotMatch(ccSrc, /ACTIVE_DOC_STATUSES/);
-      // Must label the second count "final candidates" (not "generated").
-      assert.match(ccSrc, /final candidates/);
-      assert.doesNotMatch(ccSrc, /\d+ generated/);
-      // Must fail closed when canonical is unavailable.
+      // Must fail closed when the canonical release state is unavailable.
       assert.match(ccSrc, /Canonical readiness unavailable/);
-      assert.match(ccSrc, /canonical\s*\?\s*[\s\S]*?:\s*"Canonical readiness unavailable"/);
+      assert.match(ccSrc, /releaseState\s*\?\s*[\s\S]*?:\s*"Canonical readiness unavailable"/);
     });
 
     it("command center AI jobs section is labelled 'Historical' (not current state)", () => {

@@ -159,6 +159,7 @@ export function filterDashboardNavGroupsByRole(
 const SUPPLEMENTARY_ROUTE_LABELS: Array<{ route: string; label: string }> = [
   { route: "/dashboard/account", label: "Account" },
   { route: "/dashboard/admin", label: "Admin" },
+  { route: "/dashboard/admin/safety-center", label: "System Safety Center" },
   { route: "/dashboard/company/profile", label: "Company Profile Editor" },
 ];
 

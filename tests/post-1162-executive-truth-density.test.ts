@@ -2,34 +2,20 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
-const snapshot = readFileSync("app/dashboard/tenders/[id]/executive-snapshot.tsx", "utf8");
 const workspace = readFileSync("app/dashboard/tenders/[id]/page.tsx", "utf8");
 
-describe("post-1162 executive snapshot truth", () => {
-  it("uses canonical final-package status instead of legacy workflow progress as the primary metric", () => {
-    assert.match(snapshot, /Final package status/);
-    assert.match(snapshot, /canonicalReadiness\?\.readyForFinalExport/);
-    assert.match(snapshot, /modules\.export\.state/);
-    assert.doesNotMatch(snapshot, />Workflow Progress</);
-    assert.doesNotMatch(snapshot, /workflowProgress/);
-  });
-
-  it("uses the same selected population for strong expert and project metrics", () => {
-    assert.match(snapshot, /selectedExperts\.filter\(\(match\) => match\.score >= 0\.9\)/);
-    assert.match(snapshot, /selectedProjects\.filter\(\(match\) => match\.score >= 0\.9\)/);
-    assert.match(snapshot, /Selected experts ≥90%/);
-    assert.match(snapshot, /Selected projects ≥90%/);
-    assert.doesNotMatch(snapshot, /const strongExperts = expertMatches\.filter/);
-    assert.doesNotMatch(snapshot, /const strongProjects = projectMatches\.filter/);
-  });
-
-  it("deduplicates document-generation actions by root cause", () => {
-    assert.match(snapshot, /export function dedupeSnapshotActions/);
-    const documentKeys = snapshot.match(/key: "document-generation"/g) ?? [];
-    assert.ok(documentKeys.length >= 4, "all overlapping document-generation messages must share one root-cause key");
-    assert.match(snapshot, /unique\.has\(action\.key\)/);
-  });
-});
+// app/dashboard/tenders/[id]/executive-snapshot.tsx was removed entirely as
+// part of the app-wide consolidation onto the canonical Tender Release
+// State — it was a fourth independent GO/REVIEW/NO_GO verdict + its own
+// deduplicated next-actions list, built on a different readiness engine
+// (canonical-tender-readiness.ts) than the one the canonical panel uses.
+// The properties this block protected (canonical final-package status as
+// the primary metric, consistent expert/project population, deduplicated
+// actions) were specific to that component's own implementation and have
+// no direct analogue now that the whole surface is gone rather than
+// migrated — the canonical panel's readinessScore/verdict/blockers/
+// primaryNextAction are covered by tests/release-integration-panel-truth.test.ts
+// and tests/canonical-readiness-counts-and-blockers.test.ts instead.
 
 describe("post-1162 tender workspace density", () => {
   it("places the canonical next action before optional workflow and diagnostic overviews", () => {

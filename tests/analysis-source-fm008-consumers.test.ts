@@ -19,21 +19,16 @@ describe("detectAnalysisSource reads the notes marker (the real source of truth)
   });
 });
 
-describe("executive snapshot delegates analysis trust to canonical readiness", () => {
-  const source = readFileSync("app/dashboard/tenders/[id]/executive-snapshot.tsx", "utf8");
-
-  it("uses canonical final-package readiness for GO/REVIEW/NO_GO", () => {
-    assert.match(source, /canonicalReadiness\?\.readyForFinalExport/);
-    assert.match(source, /canonicalReadiness\?\.modules\.export\.state/);
-    assert.match(source, /Final package status/);
-  });
-
-  it("does not recreate an analysis-source resolver or read a missing model field", () => {
-    assert.doesNotMatch(source, /tender\.analysisSource/);
-    assert.doesNotMatch(source, /detectAnalysisSource\(tender\)/);
-    assert.doesNotMatch(source, /Analysis source:\s*regex fallback/i);
-  });
-});
+// app/dashboard/tenders/[id]/executive-snapshot.tsx was removed entirely as
+// part of the app-wide consolidation onto the canonical Tender Release
+// State. The FM-008-class property it protected — never reimplement an
+// analysis-source resolver or read the nonexistent tender.analysisSource
+// column — still holds in the replacement: lib/engine/tender-release-state.ts
+// and components/tender-release-state-panel.tsx reference neither
+// tender.analysisSource nor detectAnalysisSource(tender) (confirmed by grep);
+// grounding is instead read from getTenderReleaseSnapshot's
+// analysis.eligibleForExport, which goes through the established
+// resolveTenderAnalysisState resolver.
 
 describe("generate-elite passes a derived analysisSource into computeBidStrategy", () => {
   const source = readFileSync("lib/engine/generate-elite.ts", "utf8");

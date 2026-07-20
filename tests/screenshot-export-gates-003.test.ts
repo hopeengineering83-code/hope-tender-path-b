@@ -15,7 +15,7 @@ describe("[SCREENSHOT-EXPORT-003] Gap 1 — Tender.currency nullable", () => {
   it("the canonical report treats absent currency as not extracted", () => {
     const report = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.match(report, /const isCurrencyAbsent = !tender\.currency/);
-    assert.match(report, /\? "Not extracted"/);
+    assert.match(report, /"Not extracted"/);
   });
 
   it("Prisma zero-drift CI remains the migration-history authority", () => {
@@ -31,8 +31,8 @@ describe("[SCREENSHOT-EXPORT-003] Gap 1 — Tender.currency nullable", () => {
 describe("[SCREENSHOT-EXPORT-003] Gap 2 — Report page Print/Save-as-PDF gating", () => {
   const source = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
 
-  it("report page imports getFinalSubmissionReadiness", () => {
-    assert.match(source, /getFinalSubmissionReadiness/);
+  it("report page imports getTenderReleaseState (the canonical wrapper around getFinalSubmissionReadiness)", () => {
+    assert.match(source, /getTenderReleaseState/);
   });
 
   it("report page renders PrintButton only in the authoritative ternary branch", () => {

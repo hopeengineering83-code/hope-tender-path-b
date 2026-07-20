@@ -24,6 +24,7 @@ import { getCanonicalTenderWorkflowDecision } from "./canonical-workflow-decisio
 import { getFinalSubmissionReadiness, type FinalSubmissionReadiness } from "./final-submission-readiness";
 import { evaluateBidDecision, type BidDecisionOutcome } from "./bid-decision";
 import { resolveDeploymentEnvironment } from "../deployment-context.cjs";
+import type { CanonicalFieldState } from "./canonical-field-state";
 
 export type TenderReleaseBlockerSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
 
@@ -67,6 +68,12 @@ export type TenderReleaseState = {
   generationEligible: boolean;
   exportEligible: boolean;
   finalZipEligible: boolean;
+
+  /** Per-field canonical grounding state (resolveCanonicalFieldState), passed
+   *  through from the single getFinalSubmissionReadiness call above — never
+   *  refetched or recomputed by a consumer. Used for field-specific display
+   *  (e.g. currency provenance), not for blocker/score/verdict/action. */
+  canonicalFields: CanonicalFieldState[] | undefined;
 
   /** True whenever this deployment is not production (preview/CI/dev/local-build). */
   fixtureData: boolean;
@@ -217,6 +224,7 @@ export async function getTenderReleaseState(
     generationEligible: snapshot.generationEligible,
     exportEligible: snapshot.exportEligible,
     finalZipEligible: snapshot.finalZipEligible,
+    canonicalFields: finalSubmission.canonicalFields,
     fixtureData: deploymentEnvironment !== "production",
     deploymentEnvironment,
   };

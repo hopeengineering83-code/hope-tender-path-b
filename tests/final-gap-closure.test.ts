@@ -251,8 +251,8 @@ describe("Gaps T-Z — No raw Unicode in icon-audit round 2", () => {
     assert.ok(!src.includes("⌄"), "must not contain ⌄");
   });
 
-  it("tenders/[id]/executive-snapshot.tsx has no raw Unicode arrow", () => {
-    const src = strip(read("app/dashboard/tenders/[id]/executive-snapshot.tsx"));
+  it("components/tender-release-state-panel.tsx has no raw Unicode arrow", () => {
+    const src = strip(read("components/tender-release-state-panel.tsx"));
     assert.ok(!src.includes("↗"), "must not contain ↗");
   });
 

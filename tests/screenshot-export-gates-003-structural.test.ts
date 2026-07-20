@@ -443,19 +443,19 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Item 5 — migration DB-gated tests (SKIPPED
 // ─── Item 1: Currency provenance UI test ───────────────────────────────────
 
 describe("[SCREENSHOT-EXPORT-003] Item 1 — currency provenance (canonical resolver)", () => {
-  it("report page derives currency verdict from getFinalSubmissionReadiness result (not a separate divergent call)", () => {
+  it("report page derives currency verdict from getTenderReleaseState result (not a separate divergent call)", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
       !src.includes("resolveCanonicalFieldState"),
-      "report page must NOT call resolveCanonicalFieldState directly — uses the result from getFinalSubmissionReadiness",
+      "report page must NOT call resolveCanonicalFieldState directly — uses the result passed through by getTenderReleaseState",
     );
     assert.ok(
       src.includes("canonicalFields"),
-      "report page must consume canonicalFields from the getFinalSubmissionReadiness result",
+      "report page must consume canonicalFields from the getTenderReleaseState result",
     );
     assert.ok(
-      /canonicalReadiness.*canonicalFields/.test(src.replace(/\s+/g, " ")),
-      "report page must derive currency verdict from canonicalReadiness.canonicalFields",
+      /releaseState.*canonicalFields/.test(src.replace(/\s+/g, " ")),
+      "report page must derive currency verdict from releaseState.canonicalFields",
     );
   });
 
@@ -705,11 +705,11 @@ describe("[SCREENSHOT-EXPORT-003] Item 1 (recheck 7) — helper integrated into 
 // ─── Item 6: Single canonical currency verdict (RECOVERY EXECUTION ORDER) ──
 
 describe("[SCREENSHOT-EXPORT-003] Item 6 — single canonical currency verdict", () => {
-  it("report page derives currency verdict from getFinalSubmissionReadiness result only", () => {
+  it("report page derives currency verdict from getTenderReleaseState result only", () => {
     const src = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
     assert.ok(
-      src.includes("canonicalReadiness?.canonicalFields"),
-      "report page must derive currency verdict from canonicalReadiness.canonicalFields (the same result as final readiness)",
+      src.includes("releaseState?.canonicalFields"),
+      "report page must derive currency verdict from releaseState.canonicalFields (passed through from the same getFinalSubmissionReadiness call as final readiness)",
     );
     assert.ok(
       !src.includes("resolveCanonicalFieldState"),
@@ -799,10 +799,15 @@ describe("[SCREENSHOT-EXPORT-003] Item 7 — UI/server blocker code alignment", 
     );
   });
 
-  it("all surfaces consume getFinalSubmissionReadiness (one canonical authority)", () => {
-    // Report page
+  it("all surfaces consume getFinalSubmissionReadiness (one canonical authority, directly or via the release-state wrapper)", () => {
+    // Report page — consumes the canonical Tender Release State wrapper
+    // (lib/engine/tender-release-state.ts), which itself is the ONLY caller
+    // of getFinalSubmissionReadiness for this tender — never a second,
+    // divergent call from the page itself.
     const reportSrc = readFileSync(resolve("app/dashboard/tenders/[id]/report/page.tsx"), "utf8");
-    assert.ok(reportSrc.includes("getFinalSubmissionReadiness"), "report page");
+    assert.ok(reportSrc.includes("getTenderReleaseState"), "report page");
+    const releaseStateSrc = readFileSync(resolve("lib/engine/tender-release-state.ts"), "utf8");
+    assert.ok(releaseStateSrc.includes("getFinalSubmissionReadiness"), "tender-release-state.ts wrapper");
     // Export page
     const exportSrc = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
     assert.ok(exportSrc.includes("getFinalSubmissionReadiness"), "export page");
