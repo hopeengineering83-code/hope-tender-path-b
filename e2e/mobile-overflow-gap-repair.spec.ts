@@ -40,19 +40,19 @@ async function visitAtMobileWidth(page: Page, route: string) {
 test.describe("Mobile (390x844) overflow gap repair", () => {
   test("tender detail page has no horizontal overflow", async ({ page }) => {
     await visitAtMobileWidth(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
-    // TenderWorkflowActionCenter now lives inside a collapsed-by-default
-    // <details>/<summary> disclosure ("Quick workflow control") — the page
-    // was redesigned to lead with NextActionPanel and demote the full
-    // stage-by-stage panel to an optional expandable section. Its content
-    // (including the "Workflow Control Center" heading) is not visible
-    // until the disclosure is opened. Open it first, then wait for the
-    // heading: TenderWorkflowActionCenter fetches /workflow-center
-    // client-side and renders an animate-pulse skeleton (no text) until it
-    // resolves — waiting for the real heading stops a slow response from
-    // leaving this measuring the skeleton instead of the repaired row
-    // content.
-    await page.getByText("Quick workflow control").click();
-    await expect(page.getByRole("heading", { name: "Workflow Control Center" })).toBeVisible({ timeout: 15_000 });
+    // The disclosure's initial state is a product preference, not part of this
+    // overflow contract. Some release branches keep Quick workflow control
+    // open while others collapse the optional panel. Open it only when needed
+    // so this test never closes an already-visible Workflow Control Center.
+    const quickWorkflowGroup = page
+      .getByRole("group")
+      .filter({ hasText: "Quick workflow control" })
+      .first();
+    const isOpen = await quickWorkflowGroup.evaluate(
+      (element) => (element as HTMLDetailsElement).open,
+    );
+    if (!isOpen) await quickWorkflowGroup.locator("summary").click();
+    await expect(page.getByRole("heading", { name: "Workflow Control Center" })).toBeVisible({ timeout: 20_000 });
     await expectNoHorizontalScroll(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
   });
 
