@@ -159,7 +159,7 @@ test.describe.serial("PR #1175 independent principal QA release audit", () => {
       await page.waitForTimeout(150);
 
       expect.soft(await page.locator("main").count(), `${label}: page must expose a main landmark`).toBeGreaterThan(0);
-      expect.soft(await page.locator("h1,h2").filter({ visible: true }).count(), `${label}: page must expose a visible heading`).toBeGreaterThan(0);
+      expect.soft(await page.locator("h1:visible,h2:visible").count(), `${label}: page must expose a visible heading`).toBeGreaterThan(0);
       expect.soft(await unnamedVisibleControls(page), `${label}: every visible control must have an accessible name`).toEqual([]);
       expect.soft(await deadVisibleLinks(page), `${label}: visible links must have real destinations`).toEqual([]);
       expect.soft(await duplicateIds(page), `${label}: DOM ids must be unique`).toEqual([]);
@@ -211,7 +211,7 @@ test.describe.serial("PR #1175 independent principal QA release audit", () => {
         await expect.soft(button, `${route}: expandable control '${name.trim()}' must update aria-expanded`).toHaveAttribute("aria-expanded", "true");
       }
 
-      const tabs = page.getByRole("tab").filter({ visible: true });
+      const tabs = page.locator('[role="tab"]:visible');
       for (let index = 0; index < Math.min(await tabs.count(), 6); index += 1) {
         const tab = tabs.nth(index);
         await tab.click();
