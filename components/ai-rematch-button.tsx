@@ -168,7 +168,7 @@ export function AIRematchButton({ tenderId, experts = [], projects = [], onRemat
             </div>
             {floor !== null && <p className="mt-2 text-xs text-slate-600">Critical-floor: {floor}/10 across discipline, scope, evidence, compliance, and eligibility.</p>}
             {assessment.strength && <p className="mt-2 text-xs text-emerald-700 inline-flex items-center gap-0.5"><CheckIcon className="inline h-3 w-3" /> {assessment.strength}</p>}
-            {assessment.concern && <p className="mt-1 text-xs text-amber-700 inline-flex items-center gap-0.5"><WarningIcon className="inline h-3 w-3" /> {assessment.concern}</p>}
+            {assessment.concern && <p className="mt-1 text-xs text-amber-800 inline-flex items-center gap-0.5"><WarningIcon className="inline h-3 w-3" /> {assessment.concern}</p>}
           </div>
           <div className="shrink-0 text-right">
             <p className="text-2xl font-bold text-slate-900">{Math.round(assessment.overallScore * 100)}</p>
