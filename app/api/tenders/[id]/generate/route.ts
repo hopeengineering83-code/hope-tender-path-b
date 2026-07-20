@@ -6,7 +6,7 @@ import { generateTenderDocuments } from "../../../../../lib/engine/generate-elit
 import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../../lib/engine/best-available-selection";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { inferType as inferRequirementType } from "../../../../../lib/engine/analysis";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
@@ -74,21 +74,6 @@ function para(text: string, bold = false): Paragraph {
 }
 function heading(text: string): Paragraph { return new Paragraph({ text: clean(text), heading: HeadingLevel.HEADING_1, spacing: { before: 260, after: 140 } }); }
 function bullet(text: string): Paragraph { return new Paragraph({ text: shortText(text, 560), bullet: { level: 0 }, spacing: { after: 80, line: 260 } }); }
-
-/**
- * @deprecated PERMANENTLY DISABLED — do not call.
- *
- * This helper previously created PLANNED GeneratedDocument rows during the
- * planOnly path. Per the gate safety fix, Build Plan and planOnly must create
- * zero GeneratedDocument rows before readiness. PLANNED rows must never count
- * as generated, reviewed, approved, export-ready, or ZIP-ready.
- *
- * This function is retained as a no-op stub so any future call site fails
- * closed (returns 0, creates nothing). Do NOT re-enable it.
- */
-async function ensurePlannedGeneratedDocumentRecords(_tenderId: string, _plannedFiles: SubmissionPlanFile[]): Promise<number> {
-  return 0;
-}
 
 async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
   const children: Paragraph[] = [para(title, true), para(`Tender: ${shortText(tenderTitle, 200)}. Package item: ${title}.`)];
