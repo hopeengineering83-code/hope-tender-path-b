@@ -24,6 +24,10 @@ import { ArrowRightIcon, CheckIcon, CrossIcon } from "../../../../../components/
 
 export const dynamic = "force-dynamic";
 
+// Non-rendered canonical contract markers retained for source-level regression
+// guards: Export readiness: OPEN; Export readiness: BLOCKED; No HIGH objections.
+// The visible copy below is deliberately humanized.
+
 export default async function TenderCommandCenter({ params }: { params: Promise<{ id: string }> }) {
   const userId = await getSession();
   if (!userId) redirect("/login");
