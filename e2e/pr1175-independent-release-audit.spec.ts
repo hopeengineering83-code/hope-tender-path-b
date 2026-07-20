@@ -216,17 +216,21 @@ test.describe("PR #1175 independent principal QA release audit", () => {
       await page.goto(route, { waitUntil: "domcontentloaded" });
       await page.waitForTimeout(200);
 
-      const expandableButtons = page.locator('button[aria-expanded="false"]:visible');
-      for (let index = 0; index < Math.min(await expandableButtons.count(), 8); index += 1) {
-        const button = expandableButtons.nth(index);
-        const name = (await button.getAttribute("aria-label")) ?? (await button.textContent()) ?? `button ${index}`;
+      const controlIds = await page.locator('button[aria-expanded="false"][aria-controls]:visible').evaluateAll((buttons) =>
+        [...new Set(buttons.slice(0, 8).map((button) => button.getAttribute("aria-controls")).filter((value): value is string => Boolean(value)))],
+      );
+      for (const controlId of controlIds) {
+        const button = page.locator(`button[aria-controls="${controlId}"]`).first();
+        const name = (await button.getAttribute("aria-label")) ?? (await button.textContent()) ?? controlId;
         await button.click();
         await expect.soft(button, `${route}: expandable control '${name.trim()}' must update aria-expanded`).toHaveAttribute("aria-expanded", "true");
       }
 
-      const tabs = page.locator('[role="tab"]:visible');
-      for (let index = 0; index < Math.min(await tabs.count(), 6); index += 1) {
-        const tab = tabs.nth(index);
+      const tabNames = await page.locator('[role="tab"]:visible').evaluateAll((tabs) =>
+        tabs.slice(0, 6).map((tab) => (tab.getAttribute("aria-label") || tab.textContent || "").trim()).filter(Boolean),
+      );
+      for (const tabName of tabNames) {
+        const tab = page.getByRole("tab", { name: tabName, exact: true }).first();
         await tab.click();
         await expect.soft(tab, `${route}: clicked tab must become selected`).toHaveAttribute("aria-selected", "true");
       }
@@ -256,7 +260,7 @@ test.describe("PR #1175 independent principal QA release audit", () => {
 
     try {
       await page.goto(`/dashboard/tenders/${tenderId}`, { waitUntil: "domcontentloaded" });
-      await expect(page.getByText("pr1175-independent-qa.txt")).toBeVisible();
+      await expect(page.locator("#tender-files").getByText("pr1175-independent-qa.txt").first()).toBeVisible();
 
       const sourceFiles = await page.request.get(`/api/tenders/${tenderId}/source-files`);
       expect(sourceFiles.status(), await sourceFiles.text()).toBe(200);
