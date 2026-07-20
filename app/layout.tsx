@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { ReactNode } from "react";
+import { AmberContrastGuard } from "../components/amber-contrast-guard";
 
 export const metadata = {
   title: "Hope Tender Proposal Generator",
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="apple-touch-icon" href="/icon-192.png" />
       </head>
       <body className="antialiased">
+        <AmberContrastGuard />
         {children}
         <script
           dangerouslySetInnerHTML={{
