@@ -83,7 +83,8 @@ const nextConfig = {
     // Deployment identity is not equivalent to NODE_ENV. Next.js uses
     // NODE_ENV=production for Vercel previews, CI screenshot runs, and local
     // production-mode builds, so only VERCEL_ENV may claim a real production
-    // or preview deployment.
+    // or preview deployment. resolveBuildSha reads the safe Vercel system
+    // value process.env.VERCEL_GIT_COMMIT_SHA before the non-Vercel fallback.
     NEXT_PUBLIC_BUILD_SHA: resolveBuildSha(process.env),
     NEXT_PUBLIC_BUILD_ENV: resolveDeploymentEnvironment(process.env),
     NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
