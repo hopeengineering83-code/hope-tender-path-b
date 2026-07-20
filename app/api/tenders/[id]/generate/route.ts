@@ -20,6 +20,7 @@ import { childLogger, reportError, time, logger } from "../../../../../lib/obser
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { validateTenderBeforeGeneration } from "../../../../../lib/engine/pre-generation-validation";
+import { isValidClientName, containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";

@@ -45,8 +45,8 @@ export function AiAnalyzeStatusBanner({ chunks, jobId, isAnalyzing, onContinue, 
     <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="inline-flex items-center gap-1 text-amber-700 font-medium text-sm"><WarningIcon /> Analysis partially complete</span>
-          <span className="text-xs text-amber-700">
+          <span className="inline-flex items-center gap-1 text-amber-800 font-medium text-sm"><WarningIcon /> Analysis partially complete</span>
+          <span className="text-xs text-amber-800">
             {completed} of {total} chunks analyzed{detailStr}
           </span>
         </div>
@@ -62,7 +62,7 @@ export function AiAnalyzeStatusBanner({ chunks, jobId, isAnalyzing, onContinue, 
           <button
             onClick={onRetry}
             disabled={isAnalyzing}
-            className="inline-flex items-center gap-1 text-xs text-amber-700 underline hover:text-amber-900 disabled:opacity-60"
+            className="inline-flex items-center gap-1 text-xs text-amber-800 underline hover:text-amber-900 disabled:opacity-60"
             title="Retry AI Analyze from scratch"
           >
             <RefreshIcon /> Retry from scratch

@@ -469,6 +469,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Upsert: update if exists, create if not.
   // Guarded against P2021/P2010 in case the migration hasn't been applied yet.
   let upserted;
+  // NEVER trust client-supplied previousValue — compute it server-side.
+  // The realPriorValue above is loaded from the existing override row (or
+  // the tender scalar if no override exists). The client-supplied
+  // previousValue in the request body is read only for audit comparison,
+  // never persisted as the source of truth.
   try {
     upserted = await prisma.tenderMetadataOverride.upsert({
       where: { tenderId_field: { tenderId: id, field } },

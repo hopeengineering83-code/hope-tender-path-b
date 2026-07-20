@@ -15,6 +15,7 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
 import { CheckCircleIcon, WarningIcon, ArrowRightIcon } from "./icons";
+import { WorkflowStepLinks } from "./workflow-step-links";
 
 const STEPS = [
   "Upload Tender",
@@ -167,26 +168,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
       </div>
 
-      <nav className="mt-4 flex flex-wrap gap-1.5" aria-label="Tender workflow shortcuts">
-        {STEPS.map((s, i) => {
-          const done = i < currentIndex;
-          const active = i === currentIndex;
-          const baseClass = done ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" :
-            active ? "bg-slate-900 text-white hover:bg-slate-800" :
-            "bg-slate-100 text-slate-500 hover:bg-slate-200";
-          return (
-            <a
-              key={s}
-              href={STEP_TARGETS[i]}
-              aria-current={active ? "step" : undefined}
-              className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${baseClass}`}
-              title={`Go to ${s}`}
-            >
-              <span aria-hidden="true" className="inline-flex items-center">{done ? <CheckCircleIcon className="mr-0.5" /> : active ? <ArrowRightIcon className="mr-0.5" /> : null}</span>{s}
-            </a>
-          );
-        })}
-      </nav>
+      <WorkflowStepLinks currentIndex={currentIndex} />
 
       {blockers.length > 0 && (
         <div className="mt-3 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm">

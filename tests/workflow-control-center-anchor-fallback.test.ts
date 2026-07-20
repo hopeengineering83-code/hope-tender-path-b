@@ -17,7 +17,11 @@ describe("Workflow Control Center requirement-action anchor fallback", () => {
   it("selects the first attached target instead of silently doing nothing", () => {
     assert.match(actionCenter, /\.map\(\(selector\)\s*=>\s*document\.querySelector\(selector\)\)/);
     assert.match(actionCenter, /\.find\(\(candidate\): candidate is Element => candidate !== null\)/);
-    assert.match(actionCenter, /(?:el|element)\.scrollIntoView\(\{ behavior: "smooth", block: "start" \}\)/);
+    // The action center delegates scroll to openParentDetailsAndScroll() so
+    // parent <details>/disclosures are opened before scrolling. The helper
+    // itself calls scrollIntoView internally — the test checks for the helper
+    // call instead of the inline scrollIntoView.
+    assert.match(actionCenter, /openParentDetailsAndScroll\(element\)/);
     assert.match(actionCenter, /could not find its target panel/);
   });
 

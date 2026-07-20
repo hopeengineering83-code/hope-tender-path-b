@@ -40,18 +40,21 @@ async function visitAtMobileWidth(page: Page, route: string) {
 test.describe("Mobile (390x844) overflow gap repair", () => {
   test("tender detail page has no horizontal overflow", async ({ page }) => {
     await visitAtMobileWidth(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
-    // TenderWorkflowActionCenter now lives inside a collapsed-by-default
-    // <details>/<summary> disclosure ("Quick workflow control") — the page
-    // was redesigned to lead with NextActionPanel and demote the full
-    // stage-by-stage panel to an optional expandable section. Its content
-    // (including the "Workflow Control Center" heading) is not visible
-    // until the disclosure is opened. Open it first, then wait for the
-    // heading: TenderWorkflowActionCenter fetches /workflow-center
-    // client-side and renders an animate-pulse skeleton (no text) until it
-    // resolves — waiting for the real heading stops a slow response from
-    // leaving this measuring the skeleton instead of the repaired row
-    // content.
-    await page.getByText("Quick workflow control").click();
+    // The "Quick workflow control" disclosure now starts open (defaultOpen).
+    // If it's closed, click to open it; if it's already open, skip the click.
+    // Clicking an already-open disclosure would toggle it closed and hide the
+    // heading we're waiting for.
+    const disclosureSummary = page.getByText("Quick workflow control");
+    const disclosure = disclosureSummary.locator("xpath=ancestor::details").first();
+    const isOpen = await disclosure.evaluate((el) => (el as HTMLDetailsElement).open).catch(() => false);
+    if (!isOpen) {
+      await disclosureSummary.click();
+    }
+    // Wait for the real heading: TenderWorkflowActionCenter fetches
+    // /workflow-center client-side and renders an animate-pulse skeleton (no
+    // text) until it resolves — waiting for the real heading stops a slow
+    // response from leaving this measuring the skeleton instead of the
+    // repaired row content.
     await expect(page.getByRole("heading", { name: "Workflow Control Center" })).toBeVisible({ timeout: 15_000 });
     await expectNoHorizontalScroll(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
   });

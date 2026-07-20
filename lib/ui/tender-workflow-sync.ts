@@ -169,6 +169,50 @@ function formControlHasUnsavedValue(control: Element): boolean {
 }
 
 /**
+ * Open every closed `<details>` ancestor of `element` so the element becomes
+ * visible and scrollable. Without this, scrolling to an anchor that lives
+ * inside a closed disclosure silently fails — the element exists in the DOM
+ * but is not displayed, so `scrollIntoView()` does nothing. This was the root
+ * cause of the "icons act independently" problem: workflow shortcut buttons
+ * and step links tried to scroll to panels hidden inside closed
+ * `<details>`/`<WorkflowStage>`/`<Disclosure>` wrappers.
+ *
+ * Returns `true` if at least one `<details>` was opened (the layout may need
+ * a tick before the element's position is final).
+ */
+export function openParentDetails(element: Element): boolean {
+  let openedAny = false;
+  let node: Element | null = element.parentElement;
+  while (node) {
+    if (node.tagName === "DETAILS" && !(node as HTMLDetailsElement).open) {
+      (node as HTMLDetailsElement).open = true;
+      openedAny = true;
+    }
+    node = node.parentElement;
+  }
+  return openedAny;
+}
+
+/**
+ * Open all parent `<details>` wrappers, then scroll the element into view.
+ * If any disclosure was opened, wait one animation frame so the browser
+ * recomputes layout before scrolling — otherwise the scroll position can
+ * be off by the height of the newly-opened disclosure header.
+ */
+export function openParentDetailsAndScroll(element: Element, behavior: ScrollBehavior = "smooth"): void {
+  const openedAny = openParentDetails(element);
+  const doScroll = () => element.scrollIntoView({ behavior, block: "start" });
+  if (openedAny) {
+    // Wait for the browser to lay out the newly-opened disclosures before
+    // scrolling. Two rAFs ensure the layout is stable (one rAF is enough
+    // in most browsers, but two covers Safari's quirk).
+    requestAnimationFrame(() => requestAnimationFrame(doScroll));
+  } else {
+    doScroll();
+  }
+}
+
+/**
  * Detect both an actively edited field and a blurred form control whose value
  * differs from its original DOM value. This deliberately errs toward showing a
  * manual refresh prompt rather than allowing synchronization to overwrite an

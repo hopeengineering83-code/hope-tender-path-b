@@ -1,6 +1,10 @@
 // @ts-check
 const createNextIntlPlugin = require("next-intl/plugin");
 const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
+const {
+  resolveDeploymentEnvironment,
+  resolveBuildSha,
+} = require("./lib/deployment-context.cjs");
 
 function assertProductionEnv() {
   if (process.env.NODE_ENV !== "production") return;
@@ -76,8 +80,13 @@ const nextConfig = {
     NEXT_PUBLIC_AI_ENABLED: require("./lib/ai-provider-catalog.cjs").AI_PROVIDER_API_KEY_ENVS.some(
       (name) => Boolean(process.env[name]),
     ) ? "true" : "false",
-    NEXT_PUBLIC_BUILD_SHA: (process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.GIT_COMMIT_SHA ?? "").slice(0, 8) || "dev",
-    NEXT_PUBLIC_BUILD_ENV: process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? "development",
+    // Deployment identity is not equivalent to NODE_ENV. Next.js uses
+    // NODE_ENV=production for Vercel previews, CI screenshot runs, and local
+    // production-mode builds, so only VERCEL_ENV may claim a real production
+    // or preview deployment. resolveBuildSha reads the safe Vercel system
+    // value process.env.VERCEL_GIT_COMMIT_SHA before the non-Vercel fallback.
+    NEXT_PUBLIC_BUILD_SHA: resolveBuildSha(process.env),
+    NEXT_PUBLIC_BUILD_ENV: resolveDeploymentEnvironment(process.env),
     NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
   },
 };

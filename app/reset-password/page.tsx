@@ -14,6 +14,8 @@ function ResetForm() {
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
@@ -63,27 +65,53 @@ function ResetForm() {
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
       <div>
-        <label className="mb-2 block text-sm font-medium text-slate-700">New password</label>
-        <input
-          type="password"
-          required
-          minLength={8}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full rounded-xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-          placeholder="At least 8 characters"
-        />
+        <label htmlFor="reset-password-new" className="mb-2 block text-sm font-medium text-slate-700">New password</label>
+        <div className="relative">
+          <input
+            id="reset-password-new"
+            type={showPassword ? "text" : "password"}
+            required
+            minLength={8}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full rounded-xl border px-4 py-3 pr-12 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+            placeholder="At least 8 characters"
+            autoComplete="new-password"
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword((s) => !s)}
+            className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            tabIndex={-1}
+          >
+            {showPassword ? "Hide" : "Show"}
+          </button>
+        </div>
       </div>
       <div>
-        <label className="mb-2 block text-sm font-medium text-slate-700">Confirm new password</label>
-        <input
-          type="password"
-          required
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          className="w-full rounded-xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-          placeholder="Repeat new password"
-        />
+        <label htmlFor="reset-password-confirm" className="mb-2 block text-sm font-medium text-slate-700">Confirm new password</label>
+        <div className="relative">
+          <input
+            id="reset-password-confirm"
+            type={showConfirm ? "text" : "password"}
+            required
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            className="w-full rounded-xl border px-4 py-3 pr-12 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+            placeholder="Repeat new password"
+            autoComplete="new-password"
+          />
+          <button
+            type="button"
+            onClick={() => setShowConfirm((s) => !s)}
+            className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
+            aria-label={showConfirm ? "Hide password" : "Show password"}
+            tabIndex={-1}
+          >
+            {showConfirm ? "Hide" : "Show"}
+          </button>
+        </div>
       </div>
       <button
         type="submit"
@@ -98,17 +126,29 @@ function ResetForm() {
 
 export default function ResetPasswordPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-md space-y-6 rounded-2xl border bg-white p-8 shadow-sm">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Set new password</h1>
-          <p className="mt-1 text-sm text-slate-500">Choose a strong password for your account.</p>
+    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-8">
+      <div className="w-full max-w-md space-y-6">
+        <div className="text-center">
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white text-xl mb-4">
+            H
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900">Hope Tender</h1>
+          <p className="mt-1 text-sm text-slate-500">Hope Urban Planning Architectural and Engineering Consultancy</p>
         </div>
-        <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
-          <ResetForm />
-        </Suspense>
-        <p className="text-center text-sm text-slate-500">
-          <Link href="/login" className="font-medium text-slate-900 hover:underline">Back to sign in</Link>
+        <div className="space-y-6 rounded-2xl border bg-white p-8 shadow-sm">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Set new password</h2>
+            <p className="mt-0.5 text-sm text-slate-500">Choose a strong password for your account.</p>
+          </div>
+          <Suspense fallback={<p className="text-sm text-slate-500">Loading…</p>}>
+            <ResetForm />
+          </Suspense>
+          <p className="text-center text-sm text-slate-500">
+            <Link href="/login" className="font-medium text-slate-900 hover:underline">Back to sign in</Link>
+          </p>
+        </div>
+        <p className="text-center text-xs text-slate-400">
+          AI-powered tender proposal generation &amp; compliance engine
         </p>
       </div>
     </div>

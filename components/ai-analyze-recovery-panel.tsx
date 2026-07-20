@@ -59,7 +59,7 @@ export async function AIAnalyzeRecoveryPanel({ tenderId }: { tenderId: string })
 
     const highRisk = Boolean(staged?.source === "FALLBACK_DRAFT") || status === "OCR_REQUIRED" || status === "EXTRACTION_CORRUPTED_AI_SKIPPED" || status === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
     const shell = highRisk ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50";
-    const text = highRisk ? "text-red-700" : "text-amber-700";
+    const text = highRisk ? "text-red-700" : "text-amber-800";
 
     return (
       <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${shell}`}>

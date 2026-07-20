@@ -5,6 +5,7 @@ import { clientLogger } from "@/lib/ui/client-logger";
 import {
   emitTenderWorkflowSync,
   subscribeTenderWorkflowSync,
+  openParentDetailsAndScroll,
 } from "@/lib/ui/tender-workflow-sync";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
@@ -111,12 +112,27 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
       setActionMessage(`${stage.actionLabel ?? "Workflow action"} could not find its target panel. Refresh the page and retry.`);
       return;
     }
-    element.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Open every parent <details>/<WorkflowStage>/<Disclosure> that wraps the
+    // target panel, then scroll into view. Without this, the scroll silently
+    // fails when the panel is inside a closed disclosure.
+    openParentDetailsAndScroll(element);
     setActionMessage(`Opened ${stage.actionLabel ?? stage.label}.`);
   };
 
   if (!stages && !loadError) {
-    return <div className="mb-6 h-64 animate-pulse rounded-2xl border bg-slate-50" aria-busy="true" />;
+    return (
+      <section
+        className="mb-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
+        aria-busy="true"
+        aria-label="Workflow Control Center loading"
+      >
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <h2 className="text-lg font-bold text-slate-900">Workflow Control Center</h2>
+          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Loading state…</span>
+        </div>
+        <div className="h-48 animate-pulse rounded-xl bg-slate-50" />
+      </section>
+    );
   }
 
   return (

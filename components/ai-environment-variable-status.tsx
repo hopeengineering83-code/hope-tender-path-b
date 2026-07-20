@@ -27,7 +27,7 @@ export function getConfigurationState(variable: AIEnvironmentVariableStatus) {
     INACTIVE: "bg-slate-100 text-slate-500",
     NOT_CONFIGURED: "bg-slate-100 text-slate-600",
     DEFAULTED: "bg-blue-100 text-blue-700",
-    RECOMMENDED: "bg-amber-100 text-amber-700",
+    RECOMMENDED: "bg-amber-100 text-amber-800",
     OPTIONAL: "bg-slate-100 text-slate-600",
     MISSING: "bg-red-100 text-red-700",
   }[variable.configurationState];
