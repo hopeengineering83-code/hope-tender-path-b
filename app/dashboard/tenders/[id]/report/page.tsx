@@ -220,7 +220,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           Submission Details
         </h2>
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
+          <table className="w-full text-sm border-collapse">
             <tbody>
               {[
                 ["Submission Method", tender.submissionMethod ?? "—"],
@@ -262,7 +262,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
             Requirements (top {topRequirements.length} of {tender.requirements.length})
           </h2>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-800 text-left text-white">
                   <th className="w-28 px-2 py-2 font-semibold">Priority</th>
@@ -300,7 +300,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
             Generated Documents
           </h2>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-800 text-left text-white">
                   <th className="px-2 py-2 font-semibold">Document Type</th>
@@ -336,7 +336,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
             Open Compliance Gaps ({tender.complianceGaps.length})
           </h2>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-800 text-left text-white">
                   <th className="px-2 py-2 font-semibold">Gap Title</th>
@@ -366,7 +366,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
             File Extraction Summary
           </h2>
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
                 <tr className="bg-slate-800 text-left text-white">
                   <th className="px-2 py-2 font-semibold">File</th>
