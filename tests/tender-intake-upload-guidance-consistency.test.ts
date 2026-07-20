@@ -18,9 +18,12 @@ describe("tender intake upload guidance — consistent wording across entry poin
     const sourceFilesPanel = read("components/tender-source-files-panel.tsx");
     // The upload-help paragraph (id=uploadHelpId) is the guidance text shown next to
     // the file picker — this is what e2e/production-smoke.spec.ts asserts is visible.
+    // JSX formatting may place the text on the following line, so whitespace after
+    // the opening tag is intentionally ignored while the user-visible wording stays
+    // exact.
     assert.match(
       newTenderPage,
-      /id=\{uploadHelpId\}[^>]*>PDF, DOCX, XLSX, TXT, and CSV\./,
+      /id=\{uploadHelpId\}[^>]*>\s*PDF, DOCX, XLSX, TXT, and CSV\./,
       "the upload-help paragraph must use 'and CSV', matching the source-files panel",
     );
     assert.match(sourceFilesPanel, /PDF, DOCX, XLSX, TXT, and CSV/);
