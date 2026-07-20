@@ -292,7 +292,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
 
         {canMutate && metadataBlockerPresent && (
           <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-            <p className="text-xs font-semibold text-amber-700">Tender Details incomplete — source-grounded repair available</p>
+            <p className="text-xs font-semibold text-amber-800">Tender Details incomplete — source-grounded repair available</p>
             <p className="mt-1 text-xs text-amber-600">Use the source-grounded repair to extract missing Tender Details fields directly from the tender document.</p>
             <div className="mt-2 flex flex-wrap gap-2">
               <button

@@ -687,7 +687,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
       {/* Blocked Actions */}
       {data.blockedActions.length > 0 && (
         <div className="border-b border-gray-100 px-5 py-3">
-          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700">
+          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-800">
             Blocked Actions ({data.blockedActions.length})
           </p>
           <ul className="space-y-1">
@@ -751,7 +751,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
           {/* Warnings */}
           {data.warnings.length > 0 && (
             <div className="px-5 py-3">
-              <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700">
+              <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-800">
                 Warnings ({data.warnings.length})
               </p>
               <ul className="space-y-1">

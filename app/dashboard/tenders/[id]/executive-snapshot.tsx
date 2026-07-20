@@ -101,7 +101,7 @@ function bidOutcomeBadgeClass(outcome: string): string {
   if (outcome === "WON") return "border-green-200 bg-green-100 text-green-700";
   if (outcome === "LOST") return "border-red-200 bg-red-100 text-red-700";
   if (outcome === "WITHDRAWN") return "border-slate-200 bg-slate-100 text-slate-600";
-  return "border-amber-200 bg-amber-100 text-amber-700";
+  return "border-amber-200 bg-amber-100 text-amber-800";
 }
 
 export function dedupeSnapshotActions(actions: SnapshotAction[]): string[] {
@@ -314,7 +314,7 @@ export function ExecutiveSnapshot({ tender, canonicalReadiness, confirmedPlanIte
           ) : clearForHumanReview ? (
             <p className="mt-2 text-sm text-green-700">Canonical final-package gates pass. Complete the human release decision before submitting.</p>
           ) : (
-            <p className="mt-2 text-sm text-amber-700">Readiness is not final. Open the Full Command Center and resolve canonical export blockers before submission.</p>
+            <p className="mt-2 text-sm text-amber-800">Readiness is not final. Open the Full Command Center and resolve canonical export blockers before submission.</p>
           )}
         </div>
         <div className="rounded-xl border border-slate-100 p-4">

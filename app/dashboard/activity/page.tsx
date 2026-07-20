@@ -20,7 +20,7 @@ const ACTION_COLORS: Record<string, string> = {
   TENDER_CREATE: "bg-green-100 text-green-700",
   TENDER_ANALYZED: "bg-sky-100 text-sky-700",
   TENDER_MATCHED: "bg-violet-100 text-violet-700",
-  TENDER_GENERATED: "bg-amber-100 text-amber-700",
+  TENDER_GENERATED: "bg-amber-100 text-amber-800",
   TENDER_VALIDATED: "bg-teal-100 text-teal-700",
   TENDER_EXPORTED: "bg-emerald-100 text-emerald-700",
   ENGINE_RUN: "bg-orange-100 text-orange-700",

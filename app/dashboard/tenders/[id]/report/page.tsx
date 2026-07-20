@@ -30,7 +30,7 @@ function severityBadge(severity: string) {
   const base = "inline-block rounded px-2 py-0.5 text-xs font-semibold";
   if (severity === "CRITICAL") return `${base} bg-red-100 text-red-700`;
   if (severity === "HIGH") return `${base} bg-orange-100 text-orange-700`;
-  if (severity === "MEDIUM") return `${base} bg-amber-100 text-amber-700`;
+  if (severity === "MEDIUM") return `${base} bg-amber-100 text-amber-800`;
   return `${base} bg-slate-100 text-slate-600`;
 }
 
@@ -165,7 +165,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
           <PrintButton />
         ) : (
           <div className="flex flex-col items-end gap-1">
-            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
               Non-authoritative preview
             </span>
             <span className="text-xs text-slate-400">
@@ -180,7 +180,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
       {!isAuthoritative && (
         <div className="print:hidden mb-6 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
           <p className="text-sm font-semibold text-amber-800">Non-authoritative review preview</p>
-          <p className="mt-1 text-xs text-amber-700">
+          <p className="mt-1 text-xs text-amber-800">
             This report is for internal review only. It does not create a generated document, PDF, or ZIP record. Authoritative printing and export require all canonical final-submission gates to pass.
           </p>
         </div>
@@ -389,7 +389,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
                         {file.originalFileName ?? "—"}
                       </td>
                       <td className={`border border-slate-100 px-2 py-1.5 text-right font-mono text-xs ${
-                        isComplete ? "text-green-700" : "text-amber-700"
+                        isComplete ? "text-green-700" : "text-amber-800"
                       }`}>
                         {extracted} / {total}
                       </td>

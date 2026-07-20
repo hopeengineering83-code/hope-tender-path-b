@@ -62,7 +62,7 @@ type ReadinessScoreResponse = {
 
 function severityToClass(score: number): { text: string; bg: string; bar: string; label: ReadinessSeverity } {
   if (score >= 80) return { text: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", bar: "bg-emerald-500", label: "READY" };
-  if (score >= 50) return { text: "text-amber-700", bg: "bg-amber-50 border-amber-200", bar: "bg-amber-400", label: "PARTIAL" };
+  if (score >= 50) return { text: "text-amber-800", bg: "bg-amber-50 border-amber-200", bar: "bg-amber-400", label: "PARTIAL" };
   return { text: "text-red-700", bg: "bg-red-50 border-red-200", bar: "bg-red-500", label: "BLOCKED" };
 }
 
@@ -158,7 +158,7 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
         <div className="grid grid-cols-2 gap-2 text-center text-xs">
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
             <p className="text-slate-500">Analysis</p>
-            <p className={`font-semibold ${analysisTone.tone === "ok" ? "text-emerald-700" : analysisTone.tone === "warn" ? "text-amber-700" : "text-red-700"}`}>{analysisTone.label}</p>
+            <p className={`font-semibold ${analysisTone.tone === "ok" ? "text-emerald-700" : analysisTone.tone === "warn" ? "text-amber-800" : "text-red-700"}`}>{analysisTone.label}</p>
           </div>
           <div className="rounded-xl bg-white px-3 py-2 shadow-sm">
             <p className="text-slate-500">Required docs</p>
@@ -182,7 +182,7 @@ export function CanonicalReadinessScoreWidget({ tenderId }: { tenderId: string }
                     {missing > 0 && <span className="ml-1 text-[10px]">({missing} missing)</span>}
                   </p>
                   {ungenerated > 0 && (
-                    <p className="mt-0.5 text-[10px] text-amber-700">
+                    <p className="mt-0.5 text-[10px] text-amber-800">
                       {ungenerated} planned, not generated
                     </p>
                   )}

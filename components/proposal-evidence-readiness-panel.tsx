@@ -44,14 +44,14 @@ type ProposalEvidenceReadiness = {
 
 const BADGE: Record<Severity, string> = {
   HIGH: "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-700",
+  MEDIUM: "bg-amber-100 text-amber-800",
   LOW: "bg-slate-100 text-slate-600",
 };
 
 function scoreClass(score: number, ok: boolean): string {
   if (!ok) return "text-red-700";
   if (score >= 85) return "text-emerald-700";
-  if (score >= 70) return "text-amber-700";
+  if (score >= 70) return "text-amber-800";
   return "text-red-700";
 }
 
@@ -152,7 +152,7 @@ export function ProposalEvidenceReadinessPanel({ tenderId }: { tenderId: string 
 
           {readiness.warnings.length > 0 && (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Quality warnings</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Quality warnings</p>
               <ul className="mt-2 space-y-2">
                 {readiness.warnings.map((finding, i) => (
                   <li key={`${finding.category}-${i}`} className="rounded-lg border border-amber-100 bg-white p-3 text-xs">

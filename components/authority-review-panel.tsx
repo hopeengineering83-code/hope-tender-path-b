@@ -24,7 +24,7 @@ function statusBadge(status: AuthorityReviewStatus) {
   }
   if (status === "NEEDS_REVIEW") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
         <WarningIcon /> NEEDS REVIEW
       </span>
     );
@@ -46,7 +46,7 @@ function severityBadge(severity: "CRITICAL" | "HIGH" | "MEDIUM") {
   }
   if (severity === "HIGH") {
     return (
-      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-700">
+      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">
         HIGH
       </span>
     );
@@ -135,7 +135,7 @@ function DocumentRow({ doc }: { doc: DocumentAuthorityScore }) {
           )}
           {doc.warnings.length > 0 && (
             <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800">
                 Warnings
               </p>
               <ul className="list-disc space-y-1 pl-4 text-xs text-amber-800">
@@ -253,7 +253,7 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
               <p className="text-sm font-semibold text-slate-900">
                 Overall authority score
                 {preconditionBlocked && (
-                  <span className="ml-2 text-xs font-normal text-amber-700">Preliminary only — final authority review unavailable until required documents are generated and validated.</span>
+                  <span className="ml-2 text-xs font-normal text-amber-800">Preliminary only — final authority review unavailable until required documents are generated and validated.</span>
                 )}
               </p>
               <span className="text-2xl font-bold text-slate-900">{result.overallScore}/100</span>
