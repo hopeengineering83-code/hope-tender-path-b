@@ -9,6 +9,7 @@ import {
   classifyTenderCurrentnessBatch,
   isCanonicalCurrentnessCritical,
 } from "../../lib/engine/tender-currentness";
+import { isClientNameContaminated } from "../../lib/engine/metadata-validators";
 import { BrainIcon, PuzzleIcon, ShieldIcon, DatabaseIcon, PackageIcon, SparklesIcon, AlertCircleIcon, CrossIcon } from "../../components/icons";
 import type { ReactNode } from "react";
 
@@ -292,7 +293,7 @@ export default async function DashboardPage() {
             <div>
               <h2 className="font-bold text-slate-900">Live Pipeline</h2>
               <p className="mt-0.5 text-[10px] text-slate-400">
-                Recent {recentTenders.length} tenders · Workspace projection (NOT canonical Clear).
+                Last {recentTenders.length} tender{recentTenders.length === 1 ? "" : "s"} · workspace projection — the canonical state lives in each tender&apos;s Workflow Control Center.
               </p>
             </div>
             <Link href="/dashboard/tenders" className="text-sm font-medium text-blue-600 hover:underline">View All</Link>
@@ -328,7 +329,11 @@ export default async function DashboardPage() {
                     <tr key={tender.id} className="hover:bg-slate-50 group">
                       <td className="max-w-[240px] px-6 py-4">
                         <Link href={`/dashboard/tenders/${tender.id}`} className="break-words font-semibold text-slate-900 group-hover:text-blue-600 transition-colors">{tender.title}</Link>
-                        {tender.clientName && <p className="text-xs text-slate-400 mt-0.5">{tender.clientName}</p>}
+                        {tender.clientName && (
+                          isClientNameContaminated(tender.clientName)
+                            ? <p className="text-xs text-amber-600 mt-0.5">Client name needs review — the extracted value mixes several fields. Open the tender to correct it.</p>
+                            : <p className="text-xs text-slate-400 mt-0.5">{tender.clientName}</p>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <span className={isLate ? "text-red-600 font-bold" : "text-slate-500"}>

@@ -488,7 +488,7 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("labels the Live Pipeline table as limited to recent tenders", () => {
-      assert.match(dashboardSrc, /Recent \{recentTenders\.length\} tenders/);
+      assert.match(dashboardSrc, /Last \{recentTenders\.length\} tender\{recentTenders\.length === 1 \? "" : "s"\}/);
     });
   });
 
@@ -585,8 +585,8 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(dashboardSrc, /minimum — per-tender verification still required/);
     });
 
-    it("labels Live Pipeline as 'Workspace projection (NOT canonical Clear)'", () => {
-      assert.match(dashboardSrc, /Workspace projection \(NOT canonical Clear\)/);
+    it("labels Live Pipeline as a non-canonical workspace projection", () => {
+      assert.match(dashboardSrc, /workspace projection — the canonical state lives in each tender/);
     });
 
     it("does not use green color for the Critical blockers count", () => {
