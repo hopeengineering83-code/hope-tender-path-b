@@ -29,10 +29,28 @@ describe("engine background-run availability", () => {
     assert.match(src, /Run in background\{isLargeVault \? " \(full AI\)" : ""\}/);
   });
 
-  it("the tender page's panel groups default to open so the recovery/readiness centers stay visible", () => {
+  it("keeps detailed recovery controls open while the optional quick workflow stays collapsed", () => {
     const page = readFileSync("app/dashboard/tenders/[id]/page.tsx", "utf8");
     assert.match(page, /<details open=\{defaultOpen\}/);
-    const defaultOpenUses = page.match(/^\s*defaultOpen$/gm) ?? [];
-    assert.ok(defaultOpenUses.length >= 2, `both Disclosure groups must pass defaultOpen (found ${defaultOpenUses.length})`);
+
+    const quickDisclosure = page.match(
+      /<Disclosure\s+[\s\S]*?title="Quick workflow control"[\s\S]*?>/,
+    )?.[0] ?? "";
+    const detailedDisclosure = page.match(
+      /<Disclosure\s+[\s\S]*?title="Detailed readiness and submission controls"[\s\S]*?>/,
+    )?.[0] ?? "";
+
+    assert.ok(quickDisclosure, "quick workflow disclosure must exist");
+    assert.ok(detailedDisclosure, "detailed readiness disclosure must exist");
+    assert.doesNotMatch(
+      quickDisclosure,
+      /^\s*defaultOpen$/m,
+      "quick workflow is optional and must remain collapsed until opened",
+    );
+    assert.match(
+      detailedDisclosure,
+      /^\s*defaultOpen$/m,
+      "detailed recovery and readiness controls must remain visible by default",
+    );
   });
 });

@@ -213,7 +213,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <Disclosure
         title="Quick workflow control"
         description="Compact overview of workflow steps and shortcuts. Use the Next Required Action above first."
-        defaultOpen
       >
         <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
       </Disclosure>
