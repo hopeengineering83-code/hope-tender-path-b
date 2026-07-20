@@ -1,6 +1,11 @@
 import { redirect } from "next/navigation";
 import { getSession } from "../../../lib/auth";
 import { getSystemReadiness } from "../../../lib/system-readiness";
+import {
+  deploymentEnvironmentLabel,
+  resolveBuildSha,
+  resolveDeploymentEnvironment,
+} from "../../../lib/deployment-context.cjs";
 
 function badge(severity: string) {
   if (severity === "CRITICAL") return "bg-red-100 text-red-700 border-red-200";
@@ -11,25 +16,50 @@ function badge(severity: string) {
 export default async function SystemReadinessPage() {
   const userId = await getSession();
   if (!userId) redirect("/login");
+
   const readiness = await getSystemReadiness();
+  const environment = resolveDeploymentEnvironment(process.env);
+  const environmentLabel = deploymentEnvironmentLabel(environment);
+  const buildSha = resolveBuildSha(process.env);
 
   return (
     <div className="space-y-6">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">System Readiness</p>
-        <h1 className="mt-1 text-2xl font-bold text-slate-900">Production gap analysis</h1>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">System Status</p>
+        <h1 className="mt-1 text-2xl font-bold text-slate-900">Deployment context and production prerequisites</h1>
         <p className="mt-1 max-w-3xl text-sm text-slate-500">
-          This checks whether the deployed app satisfies the original production requirements for persistence, extraction, sessions, and file storage.
+          Deployment identity and operational readiness are separate facts. A preview or production-mode build does not prove that storage, extraction, sessions, and final-package prerequisites are ready.
         </p>
       </div>
 
-      <div className={`rounded-2xl border p-6 ${readiness.productionReady ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
-        <p className={`text-lg font-semibold ${readiness.productionReady ? "text-green-800" : "text-red-800"}`}>
-          {readiness.productionReady ? "Production ready" : "Not production ready yet"}
-        </p>
-        <p className="mt-2 text-sm text-slate-700">
-          Critical checks must be resolved before trusting final tender generation and submission packaging.
-        </p>
+      <div className="grid gap-4 md:grid-cols-2">
+        <section className="rounded-2xl border border-blue-200 bg-blue-50 p-6" aria-labelledby="deployment-context-title">
+          <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Deployment context</p>
+          <h2 id="deployment-context-title" className="mt-1 text-lg font-semibold text-blue-900">
+            {environmentLabel}
+          </h2>
+          <p className="mt-2 text-sm text-blue-800">
+            Commit: {buildSha === "unavailable" ? "unavailable — deployment identity is incomplete" : <code>{buildSha}</code>}
+          </p>
+          <p className="mt-2 text-xs text-blue-700">
+            Only Vercel&apos;s deployment environment may label this app as production or preview. CI and local production-mode builds are identified separately.
+          </p>
+        </section>
+
+        <section
+          className={`rounded-2xl border p-6 ${readiness.productionReady ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}
+          aria-labelledby="production-prerequisites-title"
+        >
+          <p className={`text-xs font-semibold uppercase tracking-wide ${readiness.productionReady ? "text-green-600" : "text-red-600"}`}>
+            Operational readiness
+          </p>
+          <h2 id="production-prerequisites-title" className={`mt-1 text-lg font-semibold ${readiness.productionReady ? "text-green-800" : "text-red-800"}`}>
+            {readiness.productionReady ? "Production prerequisites satisfied" : "Production prerequisites incomplete"}
+          </h2>
+          <p className="mt-2 text-sm text-slate-700">
+            Critical checks must be resolved before trusting final tender generation, final document approval, or submission packaging.
+          </p>
+        </section>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
