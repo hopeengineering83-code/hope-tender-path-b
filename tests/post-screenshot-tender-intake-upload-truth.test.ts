@@ -6,15 +6,23 @@ const source = readFileSync("app/dashboard/tenders/new/page.tsx", "utf8");
 
 describe("screenshot-driven tender intake upload truth", () => {
   it("mirrors the server upload batch limits in the upload-first UI", () => {
-    assert.match(source, /const MAX_UPLOAD_FILES = 10/);
-    assert.match(source, /const MAX_UPLOAD_FILE_BYTES = 10 \* 1024 \* 1024/);
-    assert.match(source, /const MAX_UPLOAD_TOTAL_BYTES = 30 \* 1024 \* 1024/);
-    assert.match(source, /Maximum 10 files, 10 MB each, and 30 MB total/);
+    // The secure large-package batching donor incorporation raised the
+    // user-facing selection limit to a 50-file/150MB package (validated by
+    // lib/tender-upload-package.ts's shared constants), while preserving the
+    // server's original 10-file/30MB per-request boundary internally via
+    // partitionTenderUploadPackage batching — not a weakening of the limit,
+    // just a package/request split. Assert the shared module is wired in and
+    // the per-file/per-request boundaries it preserves are still stated.
+    assert.match(
+      source,
+      /MAX_TENDER_PACKAGE_BYTES,\s*\n\s*MAX_TENDER_PACKAGE_FILES,\s*\n\s*MAX_TENDER_UPLOAD_FILE_BYTES,\s*\n\s*partitionTenderUploadPackage,\s*\n\s*validateTenderPackageSelection,\s*\n\s*\} from "..\/..\/..\/..\/lib\/tender-upload-package"/,
+    );
+    assert.match(source, /secure 10-file \/ 30-MB request boundary by uploading large packages in batches/);
   });
 
   it("keeps the upload action unavailable until a valid selection exists", () => {
     assert.match(source, /disabled=\{uploading \|\| files\.length === 0\}/);
-    assert.match(source, /validateTenderFiles\(files\)/);
+    assert.match(source, /validateTenderPackageSelection\(files\)/);
     assert.match(source, /No tender documents selected/);
   });
 
