@@ -3,9 +3,17 @@
 import { useEffect, useState } from "react";
 import { WarningIcon, CheckIcon, CrossIcon, ChevronDownIcon } from "./icons";
 
-const CLIENT_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? "dev";
+const CLIENT_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? "unavailable";
 const CLIENT_ENV = process.env.NEXT_PUBLIC_BUILD_ENV ?? "development";
 const CLIENT_TIME = process.env.NEXT_PUBLIC_BUILD_TIME ?? null;
+
+const ENVIRONMENT_LABELS: Record<string, string> = {
+  production: "Production deployment",
+  preview: "Preview deployment",
+  ci: "CI validation build",
+  "local-build": "Local production-mode build",
+  development: "Development environment",
+};
 
 type VersionInfo = {
   ok: boolean;
@@ -15,22 +23,28 @@ type VersionInfo = {
   featureFlags: Record<string, boolean>;
 };
 
+function isKnownSha(sha: string | null | undefined) {
+  return Boolean(sha && sha !== "dev" && sha !== "unavailable");
+}
+
 export function BuildVersionBadge() {
   const [serverSha, setServerSha] = useState<string | null>(null);
+  const [serverEnvironment, setServerEnvironment] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
   const [open, setOpen] = useState(false);
   const [flags, setFlags] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetch("/api/version")
-      .then((r) => r.json())
+      .then((response) => response.json())
       .then((data: VersionInfo) => {
         if (!data.ok) return;
         setServerSha(data.gitCommitSha);
+        setServerEnvironment(data.environment);
         setFlags(data.featureFlags ?? {});
         if (
-          CLIENT_SHA !== "dev" &&
-          data.gitCommitSha !== "dev" &&
+          isKnownSha(CLIENT_SHA) &&
+          isKnownSha(data.gitCommitSha) &&
           CLIENT_SHA !== data.gitCommitSha
         ) {
           setStale(true);
@@ -39,24 +53,30 @@ export function BuildVersionBadge() {
       .catch(() => null);
   }, []);
 
+  const environment = serverEnvironment ?? CLIENT_ENV;
+  const environmentLabel = ENVIRONMENT_LABELS[environment] ?? `${environment} environment`;
+  const effectiveSha = serverSha ?? CLIENT_SHA;
+  const identityAvailable = isKnownSha(effectiveSha);
   const envColor =
-    CLIENT_ENV === "production"
+    environment === "production"
       ? "text-emerald-600"
-      : CLIENT_ENV === "preview"
+      : environment === "preview"
         ? "text-amber-600"
-        : "text-slate-500";
+        : environment === "ci"
+          ? "text-blue-600"
+          : "text-slate-500";
 
   return (
     <div className="mt-1">
       {stale && (
-        <div className="mb-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-center gap-2">
-          <WarningIcon className="shrink-0 inline h-4 w-4" />
+        <div className="mb-1 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <WarningIcon className="inline h-4 w-4 shrink-0" />
           <span>
             Your browser may be showing a cached version (client: <code>{CLIENT_SHA}</code>, server: <code>{serverSha}</code>).{" "}
             <button
               type="button"
               onClick={() => window.location.reload()}
-              className="underline hover:no-underline font-medium"
+              className="font-medium underline hover:no-underline"
             >
               Hard refresh
             </button>{" "}
@@ -66,38 +86,44 @@ export function BuildVersionBadge() {
       )}
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="text-[10px] text-slate-400 hover:text-slate-600 transition-colors"
+        onClick={() => setOpen((value) => !value)}
+        className="text-left text-[10px] text-slate-400 transition-colors hover:text-slate-600"
         aria-expanded={open}
       >
-        {CLIENT_ENV !== "development" && (
-          <span className={`font-medium ${envColor}`}>{CLIENT_ENV} </span>
-        )}
-        build <code>{CLIENT_SHA}</code> <ChevronDownIcon className={open ? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"} />
+        <span className={`font-medium ${envColor}`}>{environmentLabel}</span>
+        <span> · {identityAvailable ? <>commit <code>{effectiveSha}</code></> : "commit unavailable"}</span>{" "}
+        <ChevronDownIcon className={open ? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"} />
       </button>
       {open && (
-        <div className="mt-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600 space-y-0.5">
-          <p><span className="font-medium">Commit:</span> {CLIENT_SHA}</p>
-          <p><span className="font-medium">Environment:</span> {CLIENT_ENV}</p>
+        <div className="mt-1 space-y-0.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600">
+          <p><span className="font-medium">Deployment context:</span> {environmentLabel}</p>
+          <p><span className="font-medium">Commit:</span> {identityAvailable ? effectiveSha : "Unavailable — deployment identity is incomplete"}</p>
           {CLIENT_TIME && (
             <p><span className="font-medium">Built:</span> {new Date(CLIENT_TIME).toLocaleString()}</p>
           )}
-          {serverSha && (
+          {!identityAvailable && (
+            <p className="text-amber-700">
+              Commit identity is not configured. Vercel should provide VERCEL_GIT_COMMIT_SHA; non-Vercel builds should provide GIT_COMMIT_SHA.
+            </p>
+          )}
+          {serverSha && isKnownSha(CLIENT_SHA) && isKnownSha(serverSha) && (
             <p>
-              <span className="font-medium">Server SHA:</span> {serverSha}{" "}
+              <span className="font-medium">Client/server:</span>{" "}
               {CLIENT_SHA === serverSha ? (
-                <span className="text-emerald-600 font-medium inline-flex items-center gap-0.5"><CheckIcon className="inline h-3 w-3" /> in sync</span>
+                <span className="inline-flex items-center gap-0.5 font-medium text-emerald-600"><CheckIcon className="inline h-3 w-3" /> in sync</span>
               ) : (
-                <span className="text-amber-600 font-medium inline-flex items-center gap-0.5"><WarningIcon className="inline h-3 w-3" /> mismatch</span>
+                <span className="inline-flex items-center gap-0.5 font-medium text-amber-600"><WarningIcon className="inline h-3 w-3" /> mismatch</span>
               )}
             </p>
           )}
           {Object.keys(flags).length > 0 && (
-            <div className="pt-1 border-t border-slate-200 mt-1">
-              <p className="font-medium mb-0.5">Feature flags:</p>
-              {Object.entries(flags).map(([k, v]) => (
-                <p key={k}>
-                  <span className="inline-flex items-center gap-1">{v ? <CheckIcon className="inline h-3 w-3 text-emerald-600" /> : <CrossIcon className="inline h-3 w-3 text-red-500" />} {k}</span>
+            <div className="mt-1 border-t border-slate-200 pt-1">
+              <p className="mb-0.5 font-medium">Feature flags:</p>
+              {Object.entries(flags).map(([key, enabled]) => (
+                <p key={key}>
+                  <span className="inline-flex items-center gap-1">
+                    {enabled ? <CheckIcon className="inline h-3 w-3 text-emerald-600" /> : <CrossIcon className="inline h-3 w-3 text-red-500" />} {key}
+                  </span>
                 </p>
               ))}
             </div>
