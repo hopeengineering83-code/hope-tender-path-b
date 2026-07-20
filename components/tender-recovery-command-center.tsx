@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
-import { subscribeTenderWorkflowSync, emitTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
+import { subscribeTenderWorkflowSync, emitTenderWorkflowSync, openParentDetailsAndScroll } from "../lib/ui/tender-workflow-sync";
 import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
@@ -175,7 +175,10 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
       setActionMsg(`${fallbackMessage} Panel #${anchorId} is not visible on this page; use the tender detail tabs manually.`);
       return;
     }
-    el.scrollIntoView({ behavior: "smooth" });
+    // Open parent <details>/disclosures before scrolling — otherwise the
+    // scroll silently fails when the panel is hidden inside a closed
+    // WorkflowStage/Disclosure wrapper.
+    openParentDetailsAndScroll(el);
     setActionMsg(fallbackMessage);
   }
 
@@ -419,7 +422,8 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
         router.refresh();
         emitTenderWorkflowSync({ tenderId, source: "recovery-command-center" });
         if (action === "RESOLVE_EXPORT_BLOCKERS" || action === "EXPORT_READINESS") {
-          document.getElementById("export-readiness")?.scrollIntoView({ behavior: "smooth" });
+          const exportEl = document.getElementById("export-readiness");
+          if (exportEl) openParentDetailsAndScroll(exportEl);
         }
         return;
       }
@@ -683,7 +687,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
       {/* Blocked Actions */}
       {data.blockedActions.length > 0 && (
         <div className="border-b border-gray-100 px-5 py-3">
-          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-800">
+          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700">
             Blocked Actions ({data.blockedActions.length})
           </p>
           <ul className="space-y-1">
@@ -747,7 +751,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
           {/* Warnings */}
           {data.warnings.length > 0 && (
             <div className="px-5 py-3">
-              <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-800">
+              <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700">
                 Warnings ({data.warnings.length})
               </p>
               <ul className="space-y-1">

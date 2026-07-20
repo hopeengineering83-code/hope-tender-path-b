@@ -25,7 +25,7 @@ export function severityBgClass(s: UISeverity): string {
 
 export function severityTextClass(s: UISeverity): string {
   if (s === "good") return "text-emerald-700";
-  if (s === "warning") return "text-amber-800";
+  if (s === "warning") return "text-amber-700";
   if (s === "poor") return "text-red-700";
   if (s === "stale") return "text-violet-700";
   if (s === "partial") return "text-orange-700";

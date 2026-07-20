@@ -76,7 +76,7 @@ function StatusBadge({ status }: { status: JobStatus }) {
     QUEUED: "bg-slate-100 text-slate-700",
     RUNNING: "bg-blue-100 text-blue-700",
     SUCCEEDED: "bg-emerald-100 text-emerald-700",
-    PARTIAL_SUCCESS: "bg-amber-100 text-amber-800",
+    PARTIAL_SUCCESS: "bg-amber-100 text-amber-700",
     FAILED: "bg-red-100 text-red-700",
     CANCELED: "bg-slate-100 text-slate-500",
   };
@@ -336,7 +336,7 @@ export function GenerationProgressPanel({ tenderId: _tenderId, jobId }: Generati
 
           {/* Fetch error (non-fatal, poll keeps running) */}
           {fetchError && (
-            <p className="text-xs text-amber-800">Status fetch warning: {fetchError}</p>
+            <p className="text-xs text-amber-700">Status fetch warning: {fetchError}</p>
           )}
         </div>
       )}

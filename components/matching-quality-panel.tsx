@@ -65,7 +65,7 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
   const labelCls = panelStyle.color === "green"
     ? "text-green-700"
     : panelStyle.color === "amber"
-      ? "text-amber-800"
+      ? "text-amber-700"
       : "text-red-700";
 
   return (

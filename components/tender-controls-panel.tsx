@@ -101,7 +101,7 @@ const TYPE_CONFIG: Record<ControlType, { label: string; color: string; icon: Rea
 
 const SEVERITY_CONFIG: Record<Severity, { label: string; color: string }> = {
   HIGH:   { label: "High",   color: "bg-red-100 text-red-700 border-red-300" },
-  MEDIUM: { label: "Medium", color: "bg-amber-100 text-amber-800 border-amber-300" },
+  MEDIUM: { label: "Medium", color: "bg-amber-100 text-amber-700 border-amber-300" },
   LOW:    { label: "Low",    color: "bg-gray-100 text-gray-600 border-gray-300" },
 };
 
@@ -373,7 +373,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
       <div className="grid grid-cols-4 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs">
         {[
           { label: "Total",    value: summary.total,    color: "text-gray-800" },
-          { label: "Open",     value: summary.open,     color: summary.open > 0 ? "text-amber-800" : "text-gray-400" },
+          { label: "Open",     value: summary.open,     color: summary.open > 0 ? "text-amber-700" : "text-gray-400" },
           { label: "Resolved", value: summary.resolved, color: "text-green-700" },
           { label: "High Risk",value: summary.highRisk, color: summary.highRisk > 0 ? "text-red-600" : "text-gray-400" },
         ].map((cell) => (
@@ -629,7 +629,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
                           {SEVERITY_CONFIG[record.severity].label}
                         </span>
                       )}
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${isResolved ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-800"}`}>
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${isResolved ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
                         {isResolved ? "Resolved" : "Open"}
                       </span>
                     </div>

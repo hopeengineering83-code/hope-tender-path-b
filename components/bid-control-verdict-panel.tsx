@@ -181,7 +181,7 @@ export async function BidControlVerdictPanel({ tenderId }: { tenderId: string })
         </div>
         <div className="rounded-xl bg-white px-4 py-3 text-right shadow-sm">
           <p className="text-xs text-slate-500">Analysis</p>
-          <p className={`text-sm font-bold ${hasStaleAnalysis ? "text-amber-800" : "text-slate-900"}`}>
+          <p className={`text-sm font-bold ${hasStaleAnalysis ? "text-amber-700" : "text-slate-900"}`}>
             {hasStaleAnalysis ? "Stale — re-run required" : analysisSourceFromNotes(tender.notes)}
           </p>
           <p className="text-[10px] text-slate-400">{statusText(tender.status)}</p>

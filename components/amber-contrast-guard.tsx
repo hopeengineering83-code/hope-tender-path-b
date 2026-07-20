@@ -1,10 +1,10 @@
 /**
  * Global compatibility guard for legacy amber status text.
  *
- * Focused donor branches may still contain `text-amber-700` while carrying
- * newer application behavior that must not be overwritten by a blanket file
- * replacement. This guard preserves those newer files and enforces the same
- * WCAG-oriented amber-800 foreground used by the direct source updates.
+ * Some historical donor heads contain stale unrelated source even though their
+ * intended change is only a color-token replacement. This guard preserves the
+ * current application tree and enforces the WCAG-oriented amber-800 foreground
+ * for every residual `text-amber-700` utility without copying stale files.
  */
 export function AmberContrastGuard() {
   return (
