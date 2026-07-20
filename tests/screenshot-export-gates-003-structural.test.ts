@@ -751,11 +751,11 @@ describe("[SCREENSHOT-EXPORT-003] Item 6 — single canonical currency verdict",
 // ─── Item 7: UI blocker codes and server denial from same canonical authority ─
 
 describe("[SCREENSHOT-EXPORT-003] Item 7 — UI/server blocker code alignment", () => {
-  it("export page derives blocker codes from getFinalSubmissionReadiness (canonical authority)", () => {
+  it("export page derives blocker codes from getTenderReleaseState (canonical authority)", () => {
     const src = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
     assert.ok(
-      src.includes("getFinalSubmissionReadiness"),
-      "export page must call getFinalSubmissionReadiness",
+      src.includes("getTenderReleaseState"),
+      "export page must call getTenderReleaseState",
     );
     assert.ok(
       /canonicalBlockerCodes.*canonicalBlockers.*map.*category/.test(src.replace(/\s+/g, " ")),
@@ -808,9 +808,10 @@ describe("[SCREENSHOT-EXPORT-003] Item 7 — UI/server blocker code alignment", 
     assert.ok(reportSrc.includes("getTenderReleaseState"), "report page");
     const releaseStateSrc = readFileSync(resolve("lib/engine/tender-release-state.ts"), "utf8");
     assert.ok(releaseStateSrc.includes("getFinalSubmissionReadiness"), "tender-release-state.ts wrapper");
-    // Export page
+    // Export page — also consumes the release-state wrapper, never a second
+    // divergent getFinalSubmissionReadiness call of its own.
     const exportSrc = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
-    assert.ok(exportSrc.includes("getFinalSubmissionReadiness"), "export page");
+    assert.ok(exportSrc.includes("getTenderReleaseState"), "export page");
     // Export-readiness API
     const apiSrc = readFileSync(resolve("app/api/tenders/[id]/export-readiness/route.ts"), "utf8");
     assert.ok(apiSrc.includes("getFinalSubmissionReadiness"), "export-readiness API");

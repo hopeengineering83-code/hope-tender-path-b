@@ -56,15 +56,15 @@ describe("[SCREENSHOT-EXPORT-003] Gap 2 — Report page Print/Save-as-PDF gating
 describe("[SCREENSHOT-EXPORT-003] Gap 3 — Export page canonical readiness", () => {
   const source = readFileSync(resolve("app/dashboard/export/page.tsx"), "utf8");
 
-  it("export page imports and calls getFinalSubmissionReadiness per tender", () => {
-    assert.match(source, /getFinalSubmissionReadiness/);
+  it("export page imports and calls getTenderReleaseState per tender (the canonical wrapper around getFinalSubmissionReadiness)", () => {
+    assert.match(source, /getTenderReleaseState/);
     assert.match(source, /for \(const tender of tenders\)/);
-    assert.match(source, /getFinalSubmissionReadiness\(prisma/);
+    assert.match(source, /getTenderReleaseState\(prisma/);
   });
 
-  it("export page derives card readiness from canonical ok and blocker state", () => {
-    assert.match(source, /const canonical = readinessByTenderId\.get\(tender\.id\) \?\? null/);
-    assert.match(source, /const isCanonicalReady = canonical\?\.ok === true && canonicalBlockers\.length === 0/);
+  it("export page derives card readiness from the canonical release state's exportEligible and blocker total", () => {
+    assert.match(source, /const releaseState = releaseStateByTenderId\.get\(tender\.id\) \?\? null/);
+    assert.match(source, /const isCanonicalReady = releaseState\?\.exportEligible === true/);
     assert.match(source, /const isReady = isCanonicalReady/);
     assert.match(source, /isReady=\{isReady\}/);
     assert.doesNotMatch(source, /const isReady = blockingGaps === 0 && generated\.length > 0/);
