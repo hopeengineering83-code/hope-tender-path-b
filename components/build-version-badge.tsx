@@ -70,7 +70,7 @@ export function BuildVersionBadge() {
     <div className="mt-1">
       {stale && (
         <div className="mb-1 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          <WarningIcon className="inline h-4 w-4 shrink-0" />
+          <WarningIcon className="shrink-0 inline h-4 w-4" />
           <span>
             Your browser may be showing a cached version (client: <code>{CLIENT_SHA}</code>, server: <code>{serverSha}</code>).{" "}
             <button
@@ -119,10 +119,10 @@ export function BuildVersionBadge() {
           {Object.keys(flags).length > 0 && (
             <div className="mt-1 border-t border-slate-200 pt-1">
               <p className="mb-0.5 font-medium">Feature flags:</p>
-              {Object.entries(flags).map(([key, enabled]) => (
+              {Object.entries(flags).map(([key, v]) => (
                 <p key={key}>
                   <span className="inline-flex items-center gap-1">
-                    {enabled ? <CheckIcon className="inline h-3 w-3 text-emerald-600" /> : <CrossIcon className="inline h-3 w-3 text-red-500" />} {key}
+                    {v ? <CheckIcon className="inline h-3 w-3 text-emerald-600" /> : <CrossIcon className="inline h-3 w-3 text-red-500" />} {key}
                   </span>
                 </p>
               ))}
