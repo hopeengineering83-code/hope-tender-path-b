@@ -37,50 +37,62 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-md space-y-6 rounded-2xl border bg-white p-8 shadow-sm">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">Reset password</h1>
-          <p className="mt-1 text-sm text-slate-500">Enter your account email to request password reset instructions.</p>
-        </div>
-
-        {!result ? (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
-            )}
-            <div>
-              <label htmlFor="forgot-email" className="mb-2 block text-sm font-medium text-slate-700">Email address</label>
-              <input
-                id="forgot-email"
-                name="email"
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full rounded-xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-                placeholder="you@example.com"
-                autoComplete="email"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
-            >
-              {loading ? "Sending…" : "Request reset instructions"}
-            </button>
-          </form>
-        ) : (
-          <div className="space-y-4">
-            <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-              {result.note}
-            </div>
+    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-8">
+      <div className="w-full max-w-md space-y-6">
+        <div className="text-center">
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-white text-xl mb-4">
+            H
           </div>
-        )}
+          <h1 className="text-2xl font-bold text-slate-900">Hope Tender</h1>
+          <p className="mt-1 text-sm text-slate-500">Hope Urban Planning Architectural and Engineering Consultancy</p>
+        </div>
+        <div className="space-y-6 rounded-2xl border bg-white p-8 shadow-sm">
+          <div>
+            <h2 className="text-lg font-semibold text-slate-900">Reset password</h2>
+            <p className="mt-0.5 text-sm text-slate-500">Enter your account email to request password reset instructions.</p>
+          </div>
 
-        <p className="text-center text-sm text-slate-500">
-          <Link href="/login" className="font-medium text-slate-900 hover:underline">Back to sign in</Link>
+          {!result ? (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+              )}
+              <div>
+                <label htmlFor="forgot-email" className="mb-2 block text-sm font-medium text-slate-700">Email address</label>
+                <input
+                  id="forgot-email"
+                  name="email"
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full rounded-xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-xl bg-slate-900 px-4 py-3 text-sm font-medium text-white disabled:opacity-60"
+              >
+                {loading ? "Sending…" : "Request reset instructions"}
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                {result.note}
+              </div>
+            </div>
+          )}
+
+          <p className="text-center text-sm text-slate-500">
+            <Link href="/login" className="font-medium text-slate-900 hover:underline">Back to sign in</Link>
+          </p>
+        </div>
+        <p className="text-center text-xs text-slate-400">
+          AI-powered tender proposal generation &amp; compliance engine
         </p>
       </div>
     </div>
