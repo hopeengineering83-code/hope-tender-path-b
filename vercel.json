@@ -5,8 +5,7 @@
   "git": {
     "deploymentEnabled": {
       "**": false,
-      "main": true,
-      "release/consolidated-recovery-20260717": true
+      "main": true
     }
   },
   "crons": [
