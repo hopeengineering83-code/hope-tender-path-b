@@ -8,6 +8,7 @@ const DB_RETRY_COUNTDOWN_S = 8;
 export function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isDbError, setIsDbError] = useState(false);
@@ -109,16 +110,27 @@ export function LoginForm() {
 
       <div>
         <label htmlFor="login-password" className="mb-2 block text-sm font-medium">Password</label>
-        <input
-          id="login-password"
-          name="password"
-          type="password"
-          required
-          className="w-full rounded-xl border px-4 py-3 outline-none"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="current-password"
-        />
+        <div className="relative">
+          <input
+            id="login-password"
+            name="password"
+            type={showPassword ? "text" : "password"}
+            required
+            className="w-full rounded-xl border px-4 py-3 pr-12 outline-none"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="current-password"
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword((s) => !s)}
+            className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            tabIndex={-1}
+          >
+            {showPassword ? "Hide" : "Show"}
+          </button>
+        </div>
       </div>
 
       <button
