@@ -14,6 +14,8 @@ function ResetForm() {
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
@@ -63,27 +65,53 @@ function ResetForm() {
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
       <div>
-        <label className="mb-2 block text-sm font-medium text-slate-700">New password</label>
-        <input
-          type="password"
-          required
-          minLength={8}
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          className="w-full rounded-xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-          placeholder="At least 8 characters"
-        />
+        <label htmlFor="reset-password-new" className="mb-2 block text-sm font-medium text-slate-700">New password</label>
+        <div className="relative">
+          <input
+            id="reset-password-new"
+            type={showPassword ? "text" : "password"}
+            required
+            minLength={8}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full rounded-xl border px-4 py-3 pr-12 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+            placeholder="At least 8 characters"
+            autoComplete="new-password"
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword((s) => !s)}
+            className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
+            aria-label={showPassword ? "Hide password" : "Show password"}
+            tabIndex={-1}
+          >
+            {showPassword ? "Hide" : "Show"}
+          </button>
+        </div>
       </div>
       <div>
-        <label className="mb-2 block text-sm font-medium text-slate-700">Confirm new password</label>
-        <input
-          type="password"
-          required
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          className="w-full rounded-xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-slate-900"
-          placeholder="Repeat new password"
-        />
+        <label htmlFor="reset-password-confirm" className="mb-2 block text-sm font-medium text-slate-700">Confirm new password</label>
+        <div className="relative">
+          <input
+            id="reset-password-confirm"
+            type={showConfirm ? "text" : "password"}
+            required
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            className="w-full rounded-xl border px-4 py-3 pr-12 text-sm outline-none focus:ring-2 focus:ring-slate-900"
+            placeholder="Repeat new password"
+            autoComplete="new-password"
+          />
+          <button
+            type="button"
+            onClick={() => setShowConfirm((s) => !s)}
+            className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
+            aria-label={showConfirm ? "Hide password" : "Show password"}
+            tabIndex={-1}
+          >
+            {showConfirm ? "Hide" : "Show"}
+          </button>
+        </div>
       </div>
       <button
         type="submit"
