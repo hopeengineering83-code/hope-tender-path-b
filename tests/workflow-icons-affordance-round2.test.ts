@@ -264,11 +264,10 @@ describe("Spec Test 12 — No raw Unicode in workflow components", () => {
     "generation-progress-panel.tsx",
     "tender-download-actions-panel.tsx",
     "document-review-panel.tsx",
-    "bid-control-verdict-panel.tsx",
     "bid-decision-form.tsx",
     "vault-evidence-search-panel.tsx",
-    "tender-health-score-panel.tsx",
     "score-breakdown-panel.tsx",
+    "tender-release-state-panel.tsx",
   ];
 
   for (const file of WORKFLOW_COMPONENTS) {

@@ -101,76 +101,28 @@ describe("Readiness-score API — exposes canonical required-doc model", () => {
 });
 
 // ─── 3. Widget display rules ────────────────────────────────────────────────
+//
+// components/canonical-readiness-score-widget.tsx was retired in favor of
+// the canonical Tender Release State panel. The required-docs X/Y fraction
+// display (denominator formula, "No required docs" / "0/10 export ready"
+// text) was specific to that widget's layout and is NOT replicated in the
+// new panel — that concern remains covered by the unchanged
+// components/export-readiness-panel.tsx and
+// components/final-package-manifest-panel.tsx. The new panel instead shows
+// a reconciled blocker list + total, and one primaryNextAction sourced from
+// the canonical workflow decision (see tests/release-snapshot-panel-truth.test.ts).
 
-describe("Canonical Readiness widget — display rules", () => {
-  it("uses requiredDocumentsTotal as denominator (not finalExportCandidates + missingRequiredDocuments)", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      src.includes("requiredDocumentsTotal"),
-      "widget must use requiredDocumentsTotal from the API",
-    );
-    // The old misleading formula must NOT be the primary path
-    assert.ok(
-      src.includes("exportReadyDocumentsTotal"),
-      "widget must use exportReadyDocumentsTotal as numerator",
-    );
+describe("Canonical Tender Release State panel — display rules", () => {
+  it("shows the reconciled blocker total and critical/high sub-count", () => {
+    const src = read("components/tender-release-state-panel.tsx");
+    assert.ok(src.includes("blockerTotal"), "panel must display blockerTotal");
+    assert.ok(src.includes("criticalBlockerTotal"), "panel must display criticalBlockerTotal");
   });
 
-  it("never shows 0/0 when PLANNED docs exist", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    // The widget must have a guard: if total === 0, show "No required docs"
-    // but when PLANNED docs exist, total must be > 0 (from the API)
-    assert.ok(
-      src.includes("No required docs"),
-      "widget must show 'No required docs' when total is genuinely 0",
-    );
-    assert.ok(
-      src.includes("export ready"),
-      "widget must label the count as 'export ready' (not just 'X/Y')",
-    );
-  });
-
-  it("shows primary blocker reason when blockers exist", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      src.includes("primaryBlockerReason"),
-      "widget must display primaryBlockerReason",
-    );
-    assert.ok(
-      src.includes("Primary blocker:"),
-      "widget must label the primary blocker",
-    );
-  });
-
-  it("shows primary fix action when blockers exist", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      src.includes("primaryFixAction"),
-      "widget must display primaryFixAction",
-    );
-    assert.ok(
-      src.includes("Next action:"),
-      "widget must label the fix action",
-    );
-  });
-
-  it("Export blockers tile shows totalBlockers and primary reason", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      src.includes("totalBlockers"),
-      "Export blockers tile must use totalBlockers",
-    );
-  });
-
-  it("does NOT use misleading denominator finalExportCandidates + missingRequiredDocuments as primary", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    // The old formula may appear as a fallback (backward compat) but must NOT
-    // be the primary computation. The primary must use requiredDocumentsTotal.
-    // Check that requiredDocumentsTotal is used with ?? fallback to old formula.
-    assert.ok(
-      /requiredDocumentsTotal\s*\?\?/.test(src),
-      "widget must prefer requiredDocumentsTotal with fallback to old formula",
-    );
+  it("shows one primary next action, not a list of independently computed actions", () => {
+    const src = read("components/tender-release-state-panel.tsx");
+    assert.ok(src.includes("primaryNextAction"), "panel must display primaryNextAction");
+    assert.ok(src.includes("Next required action"), "panel must label the single next action");
   });
 });
 
@@ -209,40 +161,26 @@ describe("Primary blocker — priority order", () => {
 // ─── 5. No user-facing metadata in readiness payload ───────────────────────
 
 describe("No user-facing metadata in readiness widget", () => {
-  it("widget does not display 'metadata' label to users", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
+  it("panel does not display 'metadata' label to users", () => {
+    const src = read("components/tender-release-state-panel.tsx");
     // Check for user-facing metadata strings (not internal field names)
     assert.ok(
       !/>.*[Mm]etadata.*</.test(src) || !/label.*[Mm]etadata/i.test(src),
-      "widget must not show 'metadata' as a user-facing label",
+      "panel must not show 'metadata' as a user-facing label",
     );
   });
 });
 
 // ─── 6. Screenshot regression fixture ──────────────────────────────────────
+//
+// The 0/0-vs-0/10 required-docs display regression was specific to
+// canonical-readiness-score-widget.tsx's now-retired denominator formula
+// (see the "display rules" note above) — the underlying data-correctness
+// fix (requiredDocumentsTotal = max(planCount, plannedDocs)) is unchanged
+// and still verified against lib/engine/final-submission-readiness.ts in
+// section 1 above.
 
 describe("Screenshot regression — 10 planned required docs scenario", () => {
-  it("widget would display 0/10 export ready (not 0/0)", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    // When requiredDocumentsTotal = 10 and exportReadyDocumentsTotal = 0:
-    // - total = 10 (not 0)
-    // - exportReady = 0
-    // - ungenerated = 10
-    // - Display: "0/10 export ready" + "10 planned, not generated"
-    assert.ok(
-      src.includes("export ready"),
-      "widget must label as 'export ready'",
-    );
-    assert.ok(
-      src.includes("planned, not generated"),
-      "widget must show 'planned, not generated' text",
-    );
-    assert.ok(
-      src.includes("requiredDocumentsTotal"),
-      "denominator must come from requiredDocumentsTotal (which includes PLANNED)",
-    );
-  });
-
   it("primary blocker says 'Generate required documents' when 10 planned", () => {
     const src = read("lib/engine/final-submission-readiness.ts");
     assert.ok(

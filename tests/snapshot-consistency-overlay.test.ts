@@ -51,11 +51,14 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
   });
 
   it("is mounted across all readiness/verdict panels for full coverage", () => {
+    // components/canonical-readiness-score-widget.tsx, bid-control-verdict-panel.tsx,
+    // and tender-health-score-panel.tsx were retired in favor of the canonical
+    // Tender Release State (components/tender-release-state-panel.tsx), which
+    // reads the same authoritative source this overlay cross-checks against —
+    // it has no independent local verdict to compare, so it does not mount
+    // this overlay.
     for (const panel of [
       "components/final-submission-control-center.tsx",
-      "components/canonical-readiness-score-widget.tsx",
-      "components/bid-control-verdict-panel.tsx",
-      "components/tender-health-score-panel.tsx",
       "app/dashboard/tenders/[id]/executive-snapshot.tsx",
       // Recovery Command Center and Workflow Control Center each compute
       // their verdict via their own separate orchestrator (respectively
@@ -102,24 +105,11 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
     );
   });
 
-  it("bid-control-verdict-panel compares its strict full-proposal verdict to the snapshot", () => {
-    const bid = read("components/bid-control-verdict-panel.tsx");
-    assert.ok(
-      bid.includes("localEligible={fullProposalReady}"),
-      "bid-control-verdict-panel must pass its strict full-proposal verdict so a disagreement is surfaced",
-    );
-  });
-
   it("does NOT remove the panels' own readiness fetches (overlay is additive, not a replacement)", () => {
     const finalCenter = read("components/final-submission-control-center.tsx");
     assert.ok(
       finalCenter.includes("/export-readiness"),
       "final-submission-control-center must KEEP its own export-readiness fetch (overlay is additive)",
-    );
-    const scoreWidget = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      scoreWidget.includes("/readiness-score"),
-      "canonical-readiness-score-widget must KEEP its own readiness-score fetch (overlay is additive)",
     );
   });
 

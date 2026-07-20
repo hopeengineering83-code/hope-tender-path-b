@@ -35,8 +35,7 @@ describe("UI metadata removal — no visible metadata text", () => {
   const componentFiles = [
     "components/generation-action-panel.tsx",
     "components/extraction-quality-panel.tsx",
-    "components/tender-health-score-panel.tsx",
-    "components/canonical-readiness-score-widget.tsx",
+    "components/tender-release-state-panel.tsx",
     "components/audit-trail-panel.tsx",
     "components/tender-recovery-command-center.tsx",
     "components/corrupted-metadata-banner.tsx",
@@ -110,74 +109,21 @@ describe("Stepper — no Confirm Metadata step", () => {
   });
 });
 
-// ─── 3. Canonical readiness card has no metadata tile ───────────────────────
-
-describe("Canonical readiness card — no metadata tile", () => {
-  it("widget does not render a 'Tender Details' percentage tile based on metadata completeness", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    // The old widget had a tile showing metadataCompletenessRatio as a
-    // percentage. After the polish, this tile is replaced by "Export blockers".
-    assert.ok(
-      !src.includes("metadataCompletenessRatio * 100"),
-      "must not show metadata completeness percentage tile",
-    );
-    assert.ok(
-      !src.includes("metadataPlaceholderCount > 0"),
-      "must not show metadata placeholder count in a tile",
-    );
-    assert.ok(
-      src.includes("Export blockers"),
-      "must show 'Export blockers' tile instead of metadata tile",
-    );
-  });
-
-  it("widget shows required docs, quality, analysis, and export blockers", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(src.includes("Required docs"), "must show Required docs tile");
-    assert.ok(src.includes("Quality"), "must show Quality tile");
-    assert.ok(src.includes("Analysis"), "must show Analysis tile");
-    assert.ok(src.includes("Export blockers"), "must show Export blockers tile");
-  });
-});
-
-// ─── 4. Required docs count is consistent (no 0/0) ──────────────────────────
-
-describe("Required docs count — consistent display", () => {
-  it("widget does not show 0/0 when planned required documents exist", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    // The widget shows finalExportCandidates / (finalExportCandidates + missingRequiredDocuments)
-    // and separately shows ungeneratedPlannedRequired. This is correct — it
-    // never shows 0/0 because the denominator includes missingRequiredDocuments.
-    assert.ok(
-      src.includes("data.summary.finalExportCandidates + data.summary.missingRequiredDocuments"),
-      "denominator must include missingRequiredDocuments (not just finalExportCandidates)",
-    );
-    assert.ok(
-      src.includes("ungeneratedPlannedRequired"),
-      "must show planned-but-not-generated count separately",
-    );
-  });
-});
-
-// ─── 5. Historical/superseded rows hidden inside audit details ──────────────
-
-describe("Audit details — historical/superseded rows collapsed", () => {
-  it("widget hides staleRowCount inside a <details> element", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      src.includes("<details"),
-      "must use <details> element for audit information",
-    );
-    assert.ok(
-      src.includes("Audit details"),
-      "must label the collapsed section 'Audit details'",
-    );
-    assert.ok(
-      src.includes("staleRowCount"),
-      "must include staleRowCount inside the audit details section",
-    );
-  });
-});
+// ─── 3-5. Canonical readiness card tile layout, required-docs count display,
+// and audit-details collapsing were specific to
+// components/canonical-readiness-score-widget.tsx, which was retired in
+// favor of the canonical Tender Release State
+// (components/tender-release-state-panel.tsx). The new panel has a
+// different, intentionally redesigned layout (readiness score, verdict,
+// reconciled blocker list, one primary next action) rather than the old
+// widget's Required-docs/Quality/Analysis tile set — required-doc counts
+// and historical/superseded rows remain covered by
+// components/export-readiness-panel.tsx and
+// components/final-package-manifest-panel.tsx, which are unchanged. The
+// underlying protective property these sections locked — no metadata
+// completion percentage standing in for readiness — holds structurally:
+// the new panel's readinessScore is the gated bid-decision score, not
+// metadataCompletenessRatio.
 
 // ─── 6. Partial AI Analyze does not show generation-ready state ─────────────
 
@@ -232,8 +178,8 @@ describe("Prisma error redaction — no raw Prisma text in UI", () => {
     );
   });
 
-  it("tender-health-score-panel uses safe error message", () => {
-    const src = read("components/tender-health-score-panel.tsx");
+  it("tender-release-state-panel uses safe error message", () => {
+    const src = read("components/tender-release-state-panel.tsx");
     assert.ok(src.includes("catch"), "must catch errors");
     // Must not expose raw error details
     assert.ok(
@@ -342,8 +288,8 @@ describe("Component renames — new tender-facts names", () => {
 // ─── 12. Loading states use skeletons ───────────────────────────────────────
 
 describe("Loading states — skeleton states", () => {
-  it("canonical-readiness-score-widget uses skeleton loading (not vague text)", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
+  it("tender-release-state-panel uses skeleton loading (not vague text)", () => {
+    const src = read("components/tender-release-state-panel.tsx");
     assert.ok(
       src.includes("animate-pulse"),
       "must use skeleton (animate-pulse) loading state",
@@ -355,8 +301,8 @@ describe("Loading states — skeleton states", () => {
     );
   });
 
-  it("canonical-readiness-score-widget has scoped retry button on error", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
+  it("tender-release-state-panel has scoped retry button on error", () => {
+    const src = read("components/tender-release-state-panel.tsx");
     assert.ok(
       src.includes("Retry"),
       "must have a scoped Retry button on error",

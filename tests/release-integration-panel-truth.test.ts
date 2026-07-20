@@ -61,42 +61,43 @@ describe("Integration — Generation Readiness blocked on stale/compliance/PDF",
   });
 });
 
-describe("Integration — Bid Control effective readiness", () => {
-  it("uses effectiveFullProposalReady not raw", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    assert.ok(src.includes("effectiveFullProposalReady"), "uses effective flag");
-    assert.ok(src.includes("hasSnapshotBlocker"), "computes snapshot blocker");
+// components/bid-control-verdict-panel.tsx and components/tender-health-score-panel.tsx
+// were retired in favor of the canonical Tender Release State
+// (lib/engine/tender-release-state.ts + components/tender-release-state-panel.tsx),
+// which replaced their independent readiness/verdict/score computations with
+// one reconciled, gated payload. The protective property these tests locked
+// — a stale or ungrounded analysis must never present as a confident ready
+// score/verdict — is now enforced at the engine layer via readinessCalculable,
+// which is gated on snapshot.analysis.eligibleForExport (true ONLY when
+// AI_SUCCEEDED AND the content hash still matches, i.e. NOT stale).
+describe("Integration — canonical Tender Release State gates on grounded, non-stale analysis", () => {
+  it("readinessScore/verdict are gated behind extraction + analysis grounding, not independently recomputed", () => {
+    const src = read("lib/engine/tender-release-state.ts");
+    assert.ok(src.includes("readinessCalculable"), "computes a single grounding gate");
+    assert.ok(src.includes("extractionGrounded = snapshot.extraction.overallOk"), "extraction grounding reads the authoritative snapshot");
+    assert.ok(src.includes("analysisGrounded = snapshot.analysis.eligibleForExport"), "analysis grounding reads eligibleForExport (false when stale)");
+    assert.ok(src.includes("if (readinessCalculable)"), "score/verdict only computed when the grounding gate passes");
   });
 
-  it("Analysis card shows stale when stale", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    assert.ok(src.includes("hasStaleAnalysis"), "computes stale");
-    assert.ok(src.includes("Stale — re-run required"), "shows stale label");
-  });
-});
-
-describe("Integration — Tender Health Score stale/compliance props", () => {
-  it("accepts analysisStale prop", () => {
-    const src = read("components/tender-health-score-panel.tsx");
-    assert.ok(src.includes("analysisStale"), "accepts analysisStale");
-    assert.ok(src.includes("analysisStale ? 0"), "scores 0 when stale");
-  });
-
-  it("accepts mandatoryComplianceRowsCount prop", () => {
-    const src = read("components/tender-health-score-panel.tsx");
-    assert.ok(src.includes("mandatoryComplianceRowsCount"), "accepts compliance rows count");
-    assert.ok(src.includes("hasNoComplianceRows"), "computes hasNoComplianceRows");
+  it("blockers are reconciled from the canonical final-submission readiness, not recomputed locally", () => {
+    const src = read("lib/engine/tender-release-state.ts");
+    assert.ok(src.includes("getFinalSubmissionReadiness"), "reads the canonical blocker source");
+    assert.ok(src.includes("reconcileBlockers"), "dedupes overlapping blockers from upstream engines");
   });
 });
 
-describe("Integration — Dashboard wires TenderHealthScorePanel", () => {
-  it("dashboard passes analysisStale, mandatoryComplianceRowsCount, mandatoryRequirementCount", () => {
+describe("Integration — Dashboard wires TenderReleaseStatePanel", () => {
+  it("dashboard mounts the canonical release-state panel with canMutate", () => {
     const src = read("app/dashboard/tenders/[id]/page.tsx");
-    assert.ok(src.includes("analysisStale"), "passes analysisStale");
-    assert.ok(src.includes("mandatoryComplianceRowsCount"), "passes compliance rows count");
-    assert.ok(src.includes("mandatoryRequirementCount"), "passes mandatory requirement count");
-    assert.ok(src.includes("workflowDecision"), "uses canonical workflow decision");
-    assert.ok(src.includes("getCanonicalTenderWorkflowDecision"), "imports getCanonicalTenderWorkflowDecision");
+    assert.ok(src.includes("<TenderReleaseStatePanel"), "mounts TenderReleaseStatePanel");
+    assert.ok(/<TenderReleaseStatePanel[^>]*canMutate=\{canMutate\}/.test(src), "passes canMutate");
+  });
+
+  it("release-state route resolves the canonical workflow decision server-side, not the page", () => {
+    const releaseState = read("lib/engine/tender-release-state.ts");
+    assert.ok(releaseState.includes("getCanonicalTenderWorkflowDecision"), "engine calls the canonical workflow decision");
+    const page = read("app/dashboard/tenders/[id]/page.tsx");
+    assert.ok(!page.includes("getCanonicalTenderWorkflowDecision"), "page no longer re-fetches it directly");
   });
 });
 

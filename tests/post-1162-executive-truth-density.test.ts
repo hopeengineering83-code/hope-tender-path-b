@@ -45,13 +45,18 @@ describe("post-1162 tender workspace density", () => {
   it("keeps overview and diagnostic panels grouped and collapsible, defaulting to visible (owner request 2026-07-20)", () => {
     assert.match(workspace, /function Disclosure/);
     assert.match(workspace, /Compact overview of workflow steps and shortcuts/);
-    assert.match(workspace, /Canonical score, health, recovery, bid verdict, and final-submission diagnostics/);
+    // Updated for the canonical Tender Release State consolidation: the old
+    // description named the retired health/bid-verdict panels directly.
+    assert.match(workspace, /Canonical release state, recovery actions, and final-submission diagnostics/);
     assert.match(workspace, /defaultOpen/);
     assert.doesNotMatch(workspace, /<details open className="group rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">/);
   });
 
   it("does not claim that every action appears once while optional duplicate overviews exist", () => {
     assert.doesNotMatch(workspace, /Each major action appears once/);
-    assert.match(workspace, /Start with Next Required Action/);
+    // Updated: Stage 1 (source intake/extraction) now renders before the
+    // executive controls, so the guidance banner says "Continue with" rather
+    // than "Start with" Next Required Action.
+    assert.match(workspace, /Continue with Next Required Action/);
   });
 });

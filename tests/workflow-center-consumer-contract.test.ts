@@ -180,9 +180,7 @@ describe("workflow-center consumer contract", () => {
     for (const center of [
       "TenderWorkflowActionCenter",
       "TenderRecoveryCommandCenter",
-      "CanonicalReadinessScoreWidget",
-      "TenderHealthScorePanel",
-      "BidControlVerdictPanel",
+      "TenderReleaseStatePanel",
       "FinalSubmissionControlCenter",
     ]) {
       assert.ok(page.includes(`<${center}`), `${center} must remain wired into the tender workspace`);

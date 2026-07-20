@@ -3,7 +3,7 @@
 // Single source of truth used by:
 //   - app/api/tenders/[id]/export-readiness/route.ts
 //   - app/api/tenders/[id]/download/route.ts (final ZIP gate)
-//   - components/bid-control-verdict-panel.tsx
+//   - lib/engine/tender-release-state.ts (canonical Tender Release State)
 //   - components/final-submission-control-center.tsx (via the API)
 //   - components/export-readiness-panel.tsx (via the API)
 //   - app/api/admin/generated-proposals/audit/route.ts

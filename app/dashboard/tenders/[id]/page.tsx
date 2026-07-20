@@ -14,7 +14,6 @@ import { prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
-import { getCanonicalTenderWorkflowDecision } from "../../../../lib/engine/canonical-workflow-decision";
 import { ExecutiveSnapshot } from "./executive-snapshot";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
 // ClientSubmissionDetailsPanel is intentionally NOT imported here — it was a
@@ -29,7 +28,6 @@ import { ProposalEvidenceReadinessPanel } from "../../../../components/proposal-
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 import { GenerationActionPanel } from "../../../../components/generation-action-panel";
 import { SubmissionPlanReconciliationPanel } from "../../../../components/submission-plan-reconciliation-panel";
-import { BidControlVerdictPanel } from "../../../../components/bid-control-verdict-panel";
 import { EngineActionPanel } from "../../../../components/engine-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
@@ -45,14 +43,13 @@ import { AIAnalyzePanel } from "../../../../components/ai-analyze-panel";
 // admin diagnostics via its component file.
 import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
 import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
-import { TenderHealthScorePanel } from "../../../../components/tender-health-score-panel";
 import { AICopilotSuggestionsPanel } from "../../../../components/ai-copilot-suggestions-panel";
 import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-search-panel";
 import { TenderSharePanel } from "../../../../components/tender-share-panel";
 import { AuditTrailPanel } from "../../../../components/audit-trail-panel";
 import { TenderChatPanelWrapper } from "../../../../components/tender-chat-panel-wrapper";
 import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
-import { CanonicalReadinessScoreWidget } from "../../../../components/canonical-readiness-score-widget";
+import { TenderReleaseStatePanel } from "../../../../components/tender-release-state-panel";
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
 import { TenderDownloadActionsPanel } from "../../../../components/tender-download-actions-panel";
@@ -191,7 +188,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const ai = isAIEnabled();
   const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
   const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
-  const workflowDecision = await getCanonicalTenderWorkflowDecision(prismaClient, userId, tender.id).catch(() => null);
   const confirmedPlanForSnapshot = await getCurrentConfirmedBuildPlan(prismaClient, tender.id, userId).catch(() => ({ ok: false as const, blocker: "unavailable" }));
   const confirmedPlanItems = confirmedPlanForSnapshot.ok ? confirmedPlanForSnapshot.items : null;
 
@@ -206,6 +202,14 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         clientContactName: tender.clientContactName,
       }} canMutate={canMutate} />
 
+      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical Tender Details." open>
+        <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
+        <ExtractionQualityDashboard tenderId={tender.id} />
+        <ExtractionSnapshotPanel tenderId={tender.id} />
+        <TenderIntakeDetailPanel tender={tenderForUi} />
+        <ExtractionQualityPanel tenderId={tender.id} />
+      </WorkflowStage>
+
       <ExecutiveSnapshot tender={tenderForUi} canonicalReadiness={canonicalReadiness} confirmedPlanItems={confirmedPlanItems} />
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
@@ -219,33 +223,17 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
       <Disclosure
         title="Detailed readiness and submission controls"
-        description="Canonical score, health, recovery, bid verdict, and final-submission diagnostics."
+        description="Canonical release state, recovery actions, and final-submission diagnostics."
         defaultOpen
       >
         <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
-        <CanonicalReadinessScoreWidget tenderId={tender.id} />
-        <TenderHealthScorePanel
-          tenderId={tender.id}
-          canonicalReadiness={canonicalReadiness}
-          analysisStale={workflowDecision?.staleAnalysis ?? false}
-          mandatoryComplianceRowsCount={workflowDecision?.mandatoryComplianceRowsCount}
-          mandatoryRequirementCount={workflowDecision?.mandatoryRequirementCount}
-        />
-        <BidControlVerdictPanel tenderId={tender.id} />
+        <TenderReleaseStatePanel tenderId={tender.id} canMutate={canMutate} />
         <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
       </Disclosure>
 
       <nav aria-label="Tender workflow stages" className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        Start with Next Required Action, then work from Stage 1 through Stage 5. The optional overview and diagnostic sections remain collapsed until needed.
+        Continue with Next Required Action above, then work through Stage 2 to Stage 5. The optional overview and diagnostic sections remain collapsed until needed.
       </nav>
-
-      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical Tender Details." open>
-        <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
-        <ExtractionQualityDashboard tenderId={tender.id} />
-        <ExtractionSnapshotPanel tenderId={tender.id} />
-        <TenderIntakeDetailPanel tender={tenderForUi} />
-        <ExtractionQualityPanel tenderId={tender.id} />
-      </WorkflowStage>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
         <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} canMutate={canMutate} />

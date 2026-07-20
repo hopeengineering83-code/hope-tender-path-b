@@ -130,48 +130,45 @@ describe("M3 — mergeFallbackRows no-op contradiction fixed", () => {
   });
 });
 
-// ─── H1 (UI): BidControlVerdictPanel role gate ───────────────────────────────
-
-describe("H1 (UI) — BidControlVerdictPanel role gate", () => {
-  it("uses getCurrentUser (not getSession)", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    assert.match(src, /import \{ getCurrentUser \} from "\.\.\/lib\/auth"/);
-    assert.match(src, /const user = await getCurrentUser\(\)/);
-    assert.doesNotMatch(src, /import \{ getSession \} from "\.\.\/lib\/auth"/);
+// ─── H1 (UI): BidDecisionForm role gate ──────────────────────────────────────
+//
+// components/bid-control-verdict-panel.tsx was retired in favor of the
+// canonical Tender Release State. BidDecisionForm (the genuine "record a
+// human bid decision" feature, not a duplicate verdict display) now mounts
+// inside components/tender-release-state-panel.tsx, gated by a canMutate
+// PROP computed once in app/dashboard/tenders/[id]/page.tsx via the same
+// getCurrentUser + canMutateTender pattern the old panel used locally —
+// the protected property (REVIEWER/VIEWER must never see the mutation form)
+// now holds via prop-drilling from the already-verified page-level check
+// rather than a component-local recomputation.
+describe("H1 (UI) — BidDecisionForm role gate", () => {
+  it("page.tsx computes canMutate via getCurrentUser + canMutateTender", () => {
+    const src = read("app/dashboard/tenders/[id]/page.tsx");
+    assert.match(src, /import \{ getSession, getCurrentUser \} from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/auth"/);
+    assert.match(src, /const currentUser = await getCurrentUser\(\)/);
+    assert.match(src, /const canMutate = canMutateTender\(currentUser\?\.role\)/);
   });
 
-  it("computes canMutate and gates BidDecisionForm", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    assert.match(src, /import \{ canMutateTender \} from "\.\.\/lib\/recovery-command-actions"/);
-    assert.match(src, /const canMutate = canMutateTender\(user\.role\)/);
-    assert.match(src, /\{canMutate && <BidDecisionForm tenderId=\{tenderId\} \/>/);
+  it("TenderReleaseStatePanel gates BidDecisionForm behind the canMutate prop, defaulting to false", () => {
+    const src = read("components/tender-release-state-panel.tsx");
+    assert.match(src, /canMutate = false/, "canMutate must default to false, never rendering the form by accident");
+    assert.match(src, /\{canMutate && <BidDecisionForm tenderId=\{tenderId\} \/>\}/);
   });
-});
 
-// ─── H6 (UI): tender-health-score-panel anchor fix ───────────────────────────
-
-describe("H6 (UI) — Build submission plan points to the correct anchor", () => {
-  it("uses #submission-plan-reconciliation (not #ai-analyze-section)", () => {
-    const src = read("components/tender-health-score-panel.tsx");
-    assert.match(src, /actionLabel: "Build submission plan", actionHref: "#submission-plan-reconciliation"/);
-    // The old wrong anchor must not appear for the "Build submission plan" label.
-    const buildPlanIdx = src.indexOf('"Build submission plan"');
-    const afterLabel = src.slice(buildPlanIdx, buildPlanIdx + 120);
-    assert.doesNotMatch(afterLabel, /#ai-analyze-section/);
-  });
-});
-
-// ─── L8 (UI): dead ternary collapsed ─────────────────────────────────────────
-
-describe("L8 (UI) — dead ternary collapsed to literal", () => {
-  it("document readiness actionHref is a literal (no ternary)", () => {
-    const src = read("components/tender-health-score-panel.tsx");
-    // The old code had: `actionHref: activeDocs.length === 0 || missingDocs.length > 0 ? "#generated-documents" : "#generated-documents"`
-    // which is a dead ternary (both branches identical).
-    assert.doesNotMatch(src, /actionHref: activeDocs\.length === 0 \|\| missingDocs\.length > 0 \? "#generated-documents" : "#generated-documents"/);
-    assert.match(src, /actionHref: "#generated-documents"/);
+  it("page.tsx passes canMutate into TenderReleaseStatePanel", () => {
+    const src = read("app/dashboard/tenders/[id]/page.tsx");
+    assert.match(src, /<TenderReleaseStatePanel tenderId=\{tender\.id\} canMutate=\{canMutate\}/);
   });
 });
+
+// H6 (UI) and L8 (UI) tested action-anchor href details specific to
+// tender-health-score-panel.tsx's per-item "next best action" tile list.
+// The canonical Tender Release State panel does not replicate that anchor-
+// link affordance — it surfaces one primaryNextAction as plain label/reason
+// text sourced directly from getCanonicalTenderWorkflowDecision (see the
+// "canonical Tender Release State inherits ... gating" tests in
+// tests/release-snapshot-panel-truth.test.ts), so there is no local anchor
+// mapping left to regress.
 
 // ─── M3 (UI): dead EXTRACTION_NOT_READY branch removed ───────────────────────
 

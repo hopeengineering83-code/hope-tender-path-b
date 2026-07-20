@@ -227,9 +227,10 @@ describe("Golden Tender Acceptance Suite", () => {
     assert.ok(src.includes("sourceFile"), "extractor must attribute to a source file");
   });
 
-  it("no contradictory UI state: health panel shows 'release blocked' when blocked", () => {
-    const src = read("components/tender-health-score-panel.tsx");
-    assert.ok(src.includes("Advisory only"), "health panel must show advisory when blocked");
+  it("no contradictory UI state: release state panel shows 'Not calculated' rather than a confident score when ungrounded", () => {
+    const src = read("components/tender-release-state-panel.tsx");
+    assert.ok(src.includes("Not calculated"), "must show Not calculated instead of a placeholder score when ungrounded");
+    assert.ok(src.includes("readinessCalculable"), "must gate the score on the calculable flag");
   });
 
   it("no export with stale analysis: gate blocks stale analysis", () => {
