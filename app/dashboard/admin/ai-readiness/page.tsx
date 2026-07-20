@@ -52,7 +52,7 @@ export default async function AIReadinessPage() {
       {report.warnings.length > 0 && (
         <section className="rounded-2xl border border-amber-200 bg-white p-5">
           <h2 className="font-semibold text-amber-800">Warnings</h2>
-          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-700">
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-800">
             {report.warnings.map((item) => <li key={item}>{item}</li>)}
           </ul>
         </section>

@@ -116,7 +116,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
 
   const priorityColors: Record<string, string> = {
     HIGH: "bg-red-100 text-red-700",
-    MEDIUM: "bg-amber-100 text-amber-700",
+    MEDIUM: "bg-amber-100 text-amber-800",
     LOW: "bg-slate-100 text-slate-600",
   };
 
@@ -129,7 +129,7 @@ export default async function SharePage({ params }: { params: Promise<{ token: s
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-center text-sm text-amber-700 font-medium">
+      <div className="bg-amber-50 border-b border-amber-200 px-4 py-2 text-center text-sm text-amber-800 font-medium">
         Shared Tender — Read Only
       </div>
 

@@ -105,14 +105,14 @@ function validationBadge(status: string | null) {
   const s = (status ?? "").toUpperCase();
   if (s === "PASSED" || s === "VALIDATED") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Validated</span>;
   if (s === "FAILED") return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Failed</span>;
-  if (s === "NEEDS_REVALIDATION") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Needs revalidation</span>;
+  if (s === "NEEDS_REVALIDATION") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Needs revalidation</span>;
   if (s === "PENDING" || s === "") return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">Pending</span>;
   return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">{status}</span>;
 }
 
 function scoreBadge(score: "GOOD" | "WARNING" | "BLOCKED") {
   if (score === "GOOD") return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700"><CheckIcon /> Clean</span>;
-  if (score === "WARNING") return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"><WarningIcon /> Review</span>;
+  if (score === "WARNING") return <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800"><WarningIcon /> Review</span>;
   return <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"><CrossIcon /> Blocked</span>;
 }
 
@@ -176,7 +176,7 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
           </div>
           <div className="rounded-xl border bg-amber-50 px-4 py-2">
             <p className="text-xs text-amber-600">Warning</p>
-            <p className="text-xl font-bold text-amber-700">{warningCount}</p>
+            <p className="text-xl font-bold text-amber-800">{warningCount}</p>
           </div>
           <div className="rounded-xl border bg-red-50 px-4 py-2">
             <p className="text-xs text-red-600">Blocked</p>
@@ -232,13 +232,13 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
 
             {check.envelopeMismatch && (
               <div className="mt-2">
-                <p className="text-xs font-semibold text-amber-700">Envelope mismatch</p>
-                <p className="text-xs text-amber-700 mt-0.5">{check.envelopeMismatch}. Move this content to the correct envelope before export.</p>
+                <p className="text-xs font-semibold text-amber-800">Envelope mismatch</p>
+                <p className="text-xs text-amber-800 mt-0.5">{check.envelopeMismatch}. Move this content to the correct envelope before export.</p>
               </div>
             )}
 
             {check.qualityWarnings.map((w) => (
-              <p key={w} className="mt-1 inline-flex items-start gap-1 text-xs text-amber-700"><WarningIcon className="mt-0.5 shrink-0" /> <span>{w}</span></p>
+              <p key={w} className="mt-1 inline-flex items-start gap-1 text-xs text-amber-800"><WarningIcon className="mt-0.5 shrink-0" /> <span>{w}</span></p>
             ))}
 
             {check.score === "GOOD" && check.hasContent && (

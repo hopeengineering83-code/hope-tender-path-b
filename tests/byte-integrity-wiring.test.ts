@@ -60,10 +60,12 @@ describe("byte-integrity wiring — every writer pins at creation", () => {
 });
 
 describe("review-status badge truthfulness", () => {
-  it("NEEDS_REVIEW renders an attention badge, not the neutral fallback", () => {
+  it("NEEDS_REVIEW renders an attention badge (amber-800 for WCAG AA)", () => {
     // auto-finalize routes documents to NEEDS_REVIEW; without a STATUS_COLORS
     // entry the badge fell through to the same grey as an untouched document.
+    // Uses amber-800 (not amber-700) for WCAG AA contrast compliance
+    // (~5.28:1 ratio against amber-100 vs ~4.0:1 for amber-700).
     const src = read("components/document-review-panel.tsx");
-    assert.ok(/NEEDS_REVIEW:\s*"bg-amber-100 text-amber-700"/.test(src), "NEEDS_REVIEW badge must be amber");
+    assert.ok(/NEEDS_REVIEW:\s*"bg-amber-100 text-amber-800"/.test(src), "NEEDS_REVIEW badge must be amber-800 for WCAG AA");
   });
 });

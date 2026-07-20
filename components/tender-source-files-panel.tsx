@@ -235,7 +235,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
                   </td>
                   <td className="px-3 py-3 text-slate-600">{file.classification?.replace(/_/g, " ") ?? "Not classified"}</td>
                   <td className="px-3 py-3">
-                    <span className={`rounded-full px-2 py-1 text-xs font-medium ${(file.failedPages ?? 0) > 0 ? "bg-red-50 text-red-700" : file.extractionScore != null && file.extractionScore >= 70 ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                    <span className={`rounded-full px-2 py-1 text-xs font-medium ${(file.failedPages ?? 0) > 0 ? "bg-red-50 text-red-700" : file.extractionScore != null && file.extractionScore >= 70 ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-800"}`}>
                       {extractionLabel(file)}
                     </span>
                     {(file.ocrPages ?? 0) > 0 && <div className="mt-1 text-xs text-slate-500">OCR: {file.ocrPages} page(s)</div>}

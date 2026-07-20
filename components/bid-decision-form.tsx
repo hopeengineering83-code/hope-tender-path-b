@@ -81,7 +81,7 @@ export function BidDecisionForm({ tenderId }: { tenderId: string }) {
   };
 
   if (result) {
-    const color = result.decision === "BID" ? "text-emerald-700 bg-emerald-50 border-emerald-200" : result.decision === "BID_WITH_CONDITIONS" ? "text-amber-700 bg-amber-50 border-amber-200" : "text-slate-700 bg-slate-50 border-slate-200";
+    const color = result.decision === "BID" ? "text-emerald-700 bg-emerald-50 border-emerald-200" : result.decision === "BID_WITH_CONDITIONS" ? "text-amber-800 bg-amber-50 border-amber-200" : "text-slate-700 bg-slate-50 border-slate-200";
     return (
       <div className={`mt-3 rounded-lg border px-4 py-3 text-sm ${color}`}>
         <span className="font-semibold">Bid decision recorded: {result.decision.replace(/_/g, " ")}</span>
@@ -130,7 +130,7 @@ export function BidDecisionForm({ tenderId }: { tenderId: string }) {
               )}
 
               {evaluated.conditions.length > 0 && (
-                <ul className="list-disc space-y-0.5 pl-4 text-xs text-amber-700">
+                <ul className="list-disc space-y-0.5 pl-4 text-xs text-amber-800">
                   {evaluated.conditions.slice(0, 5).map((c) => <li key={c}>{c}</li>)}
                 </ul>
               )}

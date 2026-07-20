@@ -189,7 +189,7 @@ function StatusBadge({ status }: { status: WorkflowStageInfo["status"] }) {
     case "IN_PROGRESS":
       return <span className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase text-blue-700">In Progress</span>;
     case "WARNING":
-      return <span className="inline-flex items-center gap-1 rounded-full border border-amber-100 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">Attention</span>;
+      return <span className="inline-flex items-center gap-1 rounded-full border border-amber-100 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-800">Attention</span>;
     case "BLOCKED":
       return <span className="inline-flex items-center gap-1 rounded-full border border-red-100 bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase text-red-700">Blocked</span>;
     case "BLOCKED_BY_PRIOR_STEP":

@@ -20,7 +20,7 @@ type TestResponse = {
 const STATUS_BADGE: Record<ProviderTestResult["status"], string> = {
   ok: "bg-emerald-100 text-emerald-800",
   failed: "bg-red-100 text-red-800",
-  skipped_cooldown: "bg-amber-100 text-amber-700",
+  skipped_cooldown: "bg-amber-100 text-amber-800",
   not_configured: "bg-slate-100 text-slate-500",
 };
 
