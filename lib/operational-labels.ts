@@ -41,13 +41,17 @@ function normalizeCode(value: string): string {
   return value.trim().toUpperCase().replace(/[\s-]+/g, "_");
 }
 
-function sentenceCase(value: string): string {
+function sentenceCaseCode(value: string): string {
   const words = value
     .trim()
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .toLowerCase();
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : "—";
+}
+
+function upperFirstPreservingDetail(value: string): string {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
 /**
@@ -57,15 +61,12 @@ function sentenceCase(value: string): string {
 export function formatOperationalCode(value: string | null | undefined): string {
   const text = (value ?? "").trim();
   if (!text) return "—";
-  return OPERATIONAL_LABELS[normalizeCode(text)] ?? sentenceCase(text);
+  return OPERATIONAL_LABELS[normalizeCode(text)] ?? sentenceCaseCode(text);
 }
 
 /**
- * Remove a machine-code prefix from a human-readable blocker reason.
- * Example:
- *   NO_ACTIVE_GENERATED_DOCUMENTS: final export requires ...
- * becomes:
- *   Final export requires ...
+ * Remove a machine-code prefix from a human-readable blocker reason while
+ * preserving acronyms and existing capitalization in the explanatory text.
  */
 export function formatOperationalReason(value: string | null | undefined): string {
   const text = (value ?? "").trim();
@@ -74,7 +75,9 @@ export function formatOperationalReason(value: string | null | undefined): strin
   const prefixed = text.match(/^([A-Z][A-Z0-9_]{2,})\s*:\s*(.+)$/s);
   if (prefixed) {
     const detail = prefixed[2].trim();
-    return detail ? sentenceCase(detail) : formatOperationalCode(prefixed[1]);
+    return detail
+      ? upperFirstPreservingDetail(detail)
+      : formatOperationalCode(prefixed[1]);
   }
 
   if (/^[A-Z][A-Z0-9_]{2,}$/.test(text)) {
