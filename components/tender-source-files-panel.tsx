@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 type TenderSourceFile = {
   id: string;
@@ -56,8 +56,15 @@ function extensionOf(fileName: string): string {
   return dot >= 0 ? fileName.slice(dot + 1).toLowerCase() : "";
 }
 
+function safePackageFailureCount(value: string | null): number {
+  const parsed = Number.parseInt(value ?? "0", 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
+  return Math.min(50, parsed);
+}
+
 export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = false }: { tenderId: string; initialFiles: TenderSourceFile[]; canMutate?: boolean }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [files, setFiles] = useState(initialFiles);
   const [classification, setClassification] = useState("");
@@ -65,6 +72,9 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ kind: "error" | "success"; text: string } | null>(null);
+  const packageIntake = searchParams.get("packageIntake") === "1";
+  const packageFailed = safePackageFailureCount(searchParams.get("packageFailed"));
+  const [showPackageNotice, setShowPackageNotice] = useState(packageIntake);
 
   const uploadFiles = useCallback(async (incoming: File[]) => {
     if (incoming.length === 0 || uploading) return;
@@ -162,6 +172,33 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
           </select>
         </div>
       </div>
+
+      {showPackageNotice && (
+        <div
+          role={packageFailed > 0 ? "alert" : "status"}
+          className={`mt-4 rounded-xl border px-4 py-3 text-sm ${packageFailed > 0 ? "border-amber-300 bg-amber-50 text-amber-900" : "border-blue-200 bg-blue-50 text-blue-900"}`}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="font-semibold">Large tender package intake completed</p>
+              <p className="mt-1 leading-6">
+                The authoritative source-file list currently contains <strong>{files.length}</strong> file(s).
+                {packageFailed > 0
+                  ? ` ${packageFailed} additional file(s) could not be uploaded; select those files again below.`
+                  : " Confirm that every selected document appears below before running AI Analyze."}
+              </p>
+              <p className="mt-1 text-xs opacity-80">The server&apos;s per-request security limits remained unchanged; the package was processed in smaller requests.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPackageNotice(false)}
+              className="min-h-11 shrink-0 rounded-lg border border-current bg-white/70 px-3 py-2 text-xs font-semibold hover:bg-white"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       <div
         className={`mt-4 rounded-xl border-2 border-dashed px-5 py-7 text-center transition-colors ${dragOver ? "border-blue-500 bg-blue-50" : "border-slate-300 bg-slate-50"}`}

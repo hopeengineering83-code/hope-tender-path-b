@@ -2,40 +2,36 @@
 
 import { useId, useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  MAX_TENDER_PACKAGE_BYTES,
+  MAX_TENDER_PACKAGE_FILES,
+  MAX_TENDER_UPLOAD_FILE_BYTES,
+  partitionTenderUploadPackage,
+  validateTenderPackageSelection,
+} from "../../../../lib/tender-upload-package";
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Infrastructure", "Urban Planning", "Environmental", "Feasibility Study", "NGO/Donor-Funded", "Other"];
 const CURRENCIES = ["USD", "EUR", "GBP", "ZAR", "AUD", "CAD", "AED", "SAR", "KWD", "EGP", "ETB", "NGN"];
-const ALLOWED_TENDER_EXTENSIONS = new Set(["pdf", "docx", "xlsx", "txt", "csv"]);
-const MAX_UPLOAD_FILES = 10;
-const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_UPLOAD_TOTAL_BYTES = 30 * 1024 * 1024;
 
-function fileExtension(name: string): string {
-  const dot = name.lastIndexOf(".");
-  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
-}
+type UploadProgress = {
+  completed: number;
+  total: number;
+  phase: "creating" | "adding";
+};
+
+type UploadFirstPayload = {
+  error?: string;
+  errors?: string[];
+  tenderId?: string;
+};
+
+type AdditionalUploadPayload = {
+  error?: string;
+  results?: Array<{ success?: boolean; fileRecord?: { id: string }; error?: string }>;
+};
 
 function formatMegabytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
-}
-
-function validateTenderFiles(selected: File[]): string | null {
-  if (selected.length === 0) return null;
-  if (selected.length > MAX_UPLOAD_FILES) return `Select no more than ${MAX_UPLOAD_FILES} files per tender intake.`;
-
-  const unsupported = selected.filter((file) => !ALLOWED_TENDER_EXTENSIONS.has(fileExtension(file.name)));
-  if (unsupported.length > 0) {
-    return `${unsupported.map((file) => file.name).join(", ")}: unsupported format. Use PDF, DOCX, XLSX, TXT, or CSV. Convert legacy DOC/XLS files first.`;
-  }
-
-  const oversized = selected.filter((file) => file.size > MAX_UPLOAD_FILE_BYTES);
-  if (oversized.length > 0) {
-    return `${oversized.map((file) => file.name).join(", ")}: each file must be 10 MB or smaller.`;
-  }
-
-  const totalBytes = selected.reduce((total, file) => total + file.size, 0);
-  if (totalBytes > MAX_UPLOAD_TOTAL_BYTES) return "The selected files exceed the 30 MB total upload limit.";
-  return null;
 }
 
 export default function NewTenderPage() {
@@ -45,20 +41,23 @@ export default function NewTenderPage() {
   const uploadStatusId = useId();
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
   const [error, setError] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [files, setFiles] = useState<File[]>([]);
 
   const totalSelectedBytes = files.reduce((total, file) => total + file.size, 0);
+  const uploadBatches = partitionTenderUploadPackage(files);
 
   function selectTenderFiles(selected: File[]) {
-    const validationError = validateTenderFiles(selected);
+    const validationError = validateTenderPackageSelection(selected);
     if (validationError) {
       setFiles([]);
       setUploadError(validationError);
       return;
     }
     setUploadError("");
+    setUploadProgress(null);
     setFiles(selected);
   }
 
@@ -66,23 +65,50 @@ export default function NewTenderPage() {
     const nextFiles = files.filter((_, fileIndex) => fileIndex !== index);
     setFiles(nextFiles);
     setUploadError("");
+    setUploadProgress(null);
+  }
+
+  async function appendTenderBatch(tenderId: string, batch: File[]): Promise<{ uploaded: number; failed: number }> {
+    const body = new FormData();
+    for (const file of batch) body.append("file", file);
+    body.append("tenderId", tenderId);
+    body.append("classification", "BID_DOCUMENT");
+
+    try {
+      const response = await fetch("/api/upload", { method: "POST", body });
+      const payload = await response.json().catch(() => ({})) as AdditionalUploadPayload;
+      if (!Array.isArray(payload.results)) return { uploaded: 0, failed: batch.length };
+      const uploaded = payload.results.filter((result) => result.success === true && Boolean(result.fileRecord)).length;
+      return { uploaded, failed: Math.max(0, batch.length - uploaded) };
+    } catch {
+      return { uploaded: 0, failed: batch.length };
+    }
   }
 
   async function handleUploadFirst() {
     if (uploading || files.length === 0) return;
     setUploading(true);
     setUploadError("");
+    setUploadProgress({ completed: 0, total: files.length, phase: "creating" });
+
     try {
-      const validationError = validateTenderFiles(files);
+      const validationError = validateTenderPackageSelection(files);
       if (validationError) {
         setUploadError(validationError);
         return;
       }
 
+      const batches = partitionTenderUploadPackage(files);
+      const firstBatch = batches[0];
+      if (!firstBatch || firstBatch.length === 0) {
+        setUploadError("Select at least one supported tender document.");
+        return;
+      }
+
       const form = new FormData();
-      for (const file of files) form.append("file", file);
+      for (const file of firstBatch) form.append("file", file);
       const res = await fetch("/api/tenders/upload-first", { method: "POST", body: form });
-      const data = await res.json().catch(() => ({})) as { error?: string; errors?: string[]; tenderId?: string };
+      const data = await res.json().catch(() => ({})) as UploadFirstPayload;
       if (!res.ok) {
         const details = Array.isArray(data.errors) && data.errors.length > 0 ? ` Details: ${data.errors.join("; ")}` : "";
         setUploadError(`${data.error || "Upload-first tender intake failed"}${details}`.trim());
@@ -92,7 +118,29 @@ export default function NewTenderPage() {
         setUploadError("Tender intake completed without a tender identifier. Refresh the tender list before retrying to avoid creating a duplicate.");
         return;
       }
-      router.push(`/dashboard/tenders/${data.tenderId}`);
+
+      let processed = firstBatch.length;
+      let failed = 0;
+      const additionalBatches = batches.slice(1);
+      if (additionalBatches.length > 0) {
+        setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
+        for (const batch of additionalBatches) {
+          const result = await appendTenderBatch(data.tenderId, batch);
+          failed += result.failed;
+          processed += batch.length;
+          setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
+        }
+      }
+
+      if (batches.length > 1) {
+        const query = new URLSearchParams({
+          packageIntake: "1",
+          packageFailed: String(failed),
+        });
+        router.push(`/dashboard/tenders/${data.tenderId}?${query.toString()}`);
+      } else {
+        router.push(`/dashboard/tenders/${data.tenderId}`);
+      }
     } catch {
       setUploadError("Network error. The tender was not confirmed as created. Check the tender list before retrying.");
     } finally {
@@ -131,56 +179,72 @@ export default function NewTenderPage() {
     }
   }
 
+  const uploadButtonLabel = uploading
+    ? uploadProgress?.phase === "adding"
+      ? `Adding package batches… ${uploadProgress.completed}/${uploadProgress.total}`
+      : `Creating tender… ${uploadProgress?.completed ?? 0}/${uploadProgress?.total ?? files.length}`
+    : files.length > 10
+      ? `Create Tender from ${files.length} Documents`
+      : "Create Tender from Uploaded Documents";
+
   return (
     <div className="max-w-4xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">New Tender Intake</h1>
-        <p className="mt-1 text-sm text-slate-500">Upload tender documents first so the app can extract details, requirements, matching, and compliance automatically. Manual fields remain available as a fallback.</p>
+        <p className="mt-1 text-sm text-slate-500">Upload tender documents first so the app can extract details and establish the source record. Review the created tender, then run AI Analyze for requirements, matching, and compliance.</p>
       </div>
 
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm sm:p-6" aria-labelledby="upload-first-heading">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Recommended</p>
           <h2 id="upload-first-heading" className="mt-1 text-xl font-bold text-slate-900">Upload tender documents first</h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-600">The app will create the tender record, extract title/reference/client/deadline/submission method from the uploaded files, run analysis, and rank best-fit experts and projects with 10 matching cycles.</p>
+          <p className="mt-1 max-w-2xl text-sm text-slate-600">The first secure batch creates the tender and extracts core details. Larger packages are then added to the same tender in request-safe batches. Confirm the complete source-file list before running AI Analyze.</p>
         </div>
 
         <div className="mt-5 rounded-2xl border border-dashed border-blue-300 bg-white p-4 sm:p-5">
           <label htmlFor={fileInputId} className="block text-sm font-semibold text-slate-800">Tender source documents</label>
-          <p id={uploadHelpId} className="mt-1 text-xs text-slate-500">PDF, DOCX, XLSX, TXT, and CSV. Maximum 10 files, 10 MB each, and 30 MB total. Convert legacy DOC/XLS files first.</p>
+          <p id={uploadHelpId} className="mt-1 text-xs leading-5 text-slate-500">
+            PDF, DOCX, XLSX, TXT, and CSV. Up to {MAX_TENDER_PACKAGE_FILES} files and {formatMegabytes(MAX_TENDER_PACKAGE_BYTES)} per intake package; {formatMegabytes(MAX_TENDER_UPLOAD_FILE_BYTES)} maximum per file. The app preserves the server&apos;s secure 10-file / 30-MB request boundary by uploading large packages in batches. Convert legacy DOC/XLS files first.
+          </p>
           <input
             id={fileInputId}
             type="file"
             multiple
+            disabled={uploading}
             accept=".pdf,.docx,.xlsx,.csv,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             aria-describedby={`${uploadHelpId} ${uploadStatusId}`}
             onChange={(event) => selectTenderFiles(Array.from(event.target.files ?? []))}
-            className="mt-3 block w-full min-w-0 rounded-xl border bg-white px-3 py-3 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700"
+            className="mt-3 block w-full min-w-0 rounded-xl border bg-white px-3 py-3 text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700 disabled:opacity-60"
           />
 
           <div id={uploadStatusId} role="status" aria-live="polite" className="mt-3 text-xs text-slate-600">
             {files.length === 0
               ? "No tender documents selected."
-              : `${files.length} of ${MAX_UPLOAD_FILES} files selected · ${formatMegabytes(totalSelectedBytes)} of 30.00 MB.`}
+              : `${files.length} of ${MAX_TENDER_PACKAGE_FILES} files selected · ${formatMegabytes(totalSelectedBytes)} of ${formatMegabytes(MAX_TENDER_PACKAGE_BYTES)} · ${uploadBatches.length} secure batch${uploadBatches.length === 1 ? "" : "es"}.`}
           </div>
 
           {files.length > 0 && (
-            <ul className="mt-3 space-y-2" aria-label="Selected tender documents">
-              {files.map((file, index) => (
-                <li key={`${file.name}-${file.size}-${file.lastModified}`} className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                  <span className="min-w-0 break-all">{file.name} · {formatMegabytes(file.size)}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeTenderFile(index)}
-                    disabled={uploading}
-                    className="shrink-0 rounded-md border border-slate-300 bg-white px-2 py-1 font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-60"
-                    aria-label={`Remove ${file.name}`}
-                  >
-                    Remove
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="mt-3 space-y-2" aria-label="Selected tender documents">
+                {files.slice(0, 12).map((file, index) => (
+                  <li key={`${file.name}-${file.size}-${file.lastModified}`} className="flex min-w-0 items-center justify-between gap-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    <span className="min-w-0 break-all">{file.name} · {formatMegabytes(file.size)}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeTenderFile(index)}
+                      disabled={uploading}
+                      className="shrink-0 rounded-md border border-slate-300 bg-white px-2 py-1 font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-60"
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {files.length > 12 && (
+                <p className="mt-2 text-xs text-slate-500">And {files.length - 12} more selected document(s). All selected files remain part of the package.</p>
+              )}
+            </>
           )}
 
           <div className="mt-4 flex flex-wrap gap-2">
@@ -190,12 +254,12 @@ export default function NewTenderPage() {
               disabled={uploading || files.length === 0}
               className="min-h-11 rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {uploading ? "Extracting and running engine…" : "Create Tender from Uploaded Documents"}
+              {uploadButtonLabel}
             </button>
             {files.length > 0 && (
               <button
                 type="button"
-                onClick={() => { setFiles([]); setUploadError(""); }}
+                onClick={() => { setFiles([]); setUploadError(""); setUploadProgress(null); }}
                 disabled={uploading}
                 className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
               >
