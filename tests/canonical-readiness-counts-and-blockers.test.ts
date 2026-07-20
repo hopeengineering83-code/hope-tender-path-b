@@ -10,6 +10,8 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { reconcileBlockers } from "../lib/engine/tender-release-state";
+import type { FinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
@@ -191,5 +193,81 @@ describe("Screenshot regression — 10 planned required docs scenario", () => {
       /primaryBlockerReason.*planned but not generated/s.test(src),
       "primaryBlockerReason must mention 'planned but not generated'",
     );
+  });
+});
+
+// ─── Blocker dedup — cross-engine aliases for the same underlying issue ────
+//
+// Confirmed by runtime inspection (real Playwright screenshot of the
+// command center against a live seeded tender): export-readiness.ts's
+// checkFullExportReadiness independently emits CLIENT_NAME_REQUIRED
+// (tenderLevelBlocker) alongside final-submission-readiness.ts's own
+// CLIENT_NAME_MISSING for the same empty-clientName condition, and
+// NO_ACTIVE_GENERATED_DOCUMENTS (tenderLevelBlocker) alongside a synthetic
+// __tender__ documentBlocker for the same zero-documents condition. Without
+// alias collapsing, reconcileBlockers's category-based dedup lets both
+// members of each pair through, rendering the same real issue as two
+// unrelated red warnings.
+
+function fakeReadiness(
+  tenderLevelBlockers: Array<{ category: string; severity: string; title: string; recommendedAction: string | null }>,
+  documentBlockers: Array<{ documentId: string; name: string; fileName: string; reasons: string[]; severity: string; nextActions: string[] }>,
+): FinalSubmissionReadiness {
+  return { tenderLevelBlockers, documentBlockers } as unknown as FinalSubmissionReadiness;
+}
+
+describe("reconcileBlockers — cross-engine category aliases collapse to one blocker", () => {
+  it("CLIENT_NAME_REQUIRED and CLIENT_NAME_MISSING collapse to a single blocker", () => {
+    const readiness = fakeReadiness(
+      [
+        { category: "CLIENT_NAME_REQUIRED", severity: "HIGH", title: "Client/procuring entity name is missing or invalid.", recommendedAction: "Edit Tender Detail." },
+        { category: "CLIENT_NAME_MISSING", severity: "HIGH", title: "Client/procuring entity name is missing or blank.", recommendedAction: "Enter the official procuring entity name." },
+      ],
+      [],
+    );
+    const { blockers, blockerTotal } = reconcileBlockers(readiness);
+    assert.equal(blockerTotal, 1, "must collapse to exactly one blocker, not two");
+    assert.equal(blockers.length, 1);
+  });
+
+  it("NO_ACTIVE_GENERATED_DOCUMENTS and the synthetic __tender__ document blocker collapse to a single blocker", () => {
+    const readiness = fakeReadiness(
+      [
+        { category: "NO_ACTIVE_GENERATED_DOCUMENTS", severity: "HIGH", title: "No active generated documents exist for export.", recommendedAction: "Generate, validate and review the required documents before final export." },
+      ],
+      [
+        { documentId: "__tender__", name: "No active generated documents", fileName: "NO_ACTIVE_GENERATED_DOCUMENTS", reasons: ["NO_ACTIVE_GENERATED_DOCUMENTS: final export requires at least one active generated document."], severity: "HIGH", nextActions: ["Generate the required documents before exporting."] },
+      ],
+    );
+    const { blockers, blockerTotal } = reconcileBlockers(readiness);
+    assert.equal(blockerTotal, 1, "must collapse to exactly one blocker, not two");
+    assert.equal(blockers.length, 1);
+  });
+
+  it("a real per-document failure (non-__tender__ documentId) is NOT collapsed into NO_ACTIVE_GENERATED_DOCUMENTS", () => {
+    const readiness = fakeReadiness(
+      [
+        { category: "NO_ACTIVE_GENERATED_DOCUMENTS", severity: "HIGH", title: "No active generated documents exist for export.", recommendedAction: "Generate, validate and review the required documents before final export." },
+      ],
+      [
+        { documentId: "doc-123", name: "Technical Proposal", fileName: "technical-proposal.docx", reasons: ["Validation failed"], severity: "HIGH", nextActions: ["Re-validate the document."] },
+      ],
+    );
+    const { blockers, blockerTotal } = reconcileBlockers(readiness);
+    assert.equal(blockerTotal, 2, "a real per-document blocker is a distinct issue and must NOT be collapsed");
+    assert.equal(blockers.length, 2);
+  });
+
+  it("unrelated categories are never collapsed", () => {
+    const readiness = fakeReadiness(
+      [
+        { category: "EXTRACTION_QUALITY_INSUFFICIENT", severity: "HIGH", title: "Extraction quality is insufficient.", recommendedAction: "Re-upload a clearer document." },
+        { category: "NO_CURRENT_CONFIRMED_BUILD_PLAN", severity: "HIGH", title: "No confirmed Build Plan exists.", recommendedAction: "Build and confirm the submission Build Plan." },
+      ],
+      [],
+    );
+    const { blockers, blockerTotal } = reconcileBlockers(readiness);
+    assert.equal(blockerTotal, 2, "distinct real issues must remain distinct blockers");
+    assert.equal(blockers.length, 2);
   });
 });

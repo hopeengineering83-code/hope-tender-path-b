@@ -222,7 +222,10 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         defaultOpen
       >
         <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
-        <TenderReleaseStatePanel tenderId={tender.id} canMutate={canMutate} />
+        {/* showNextAction=false: NextActionPanel above already renders the
+            one canonical next action for this page — this panel must not
+            repeat it. */}
+        <TenderReleaseStatePanel tenderId={tender.id} canMutate={canMutate} showNextAction={false} />
         <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
       </Disclosure>
 

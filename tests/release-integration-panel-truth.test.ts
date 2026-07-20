@@ -99,6 +99,24 @@ describe("Integration — Dashboard wires TenderReleaseStatePanel", () => {
     const page = read("app/dashboard/tenders/[id]/page.tsx");
     assert.ok(!page.includes("getCanonicalTenderWorkflowDecision"), "page no longer re-fetches it directly");
   });
+
+  it("suppresses the panel's own next-action banner since NextActionPanel already renders the one canonical next action on this page", () => {
+    // Confirmed via a real Playwright screenshot: with the panel's default
+    // showNextAction=true and the "Detailed readiness and submission
+    // controls" disclosure open by default (owner request 2026-07-20), the
+    // page rendered "Next required action" twice — once from NextActionPanel
+    // at the top, once from TenderReleaseStatePanel further down. Passing
+    // showNextAction={false} here keeps exactly one visible.
+    const page = read("app/dashboard/tenders/[id]/page.tsx");
+    assert.match(page, /<NextActionPanel /);
+    assert.match(page, /<TenderReleaseStatePanel[^>]*showNextAction=\{false\}/);
+  });
+
+  it("TenderReleaseStatePanel only renders its next-action block when showNextAction is not explicitly disabled", () => {
+    const panel = read("components/tender-release-state-panel.tsx");
+    assert.match(panel, /showNextAction\s*=\s*true/);
+    assert.match(panel, /\{showNextAction && data\.primaryNextAction && \(/);
+  });
 });
 
 describe("Integration — Duplicate blocker removed", () => {

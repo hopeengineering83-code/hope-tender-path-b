@@ -70,7 +70,18 @@ function severityBadgeClass(severity: TenderReleaseBlockerSeverity): string {
   return "bg-slate-100 text-slate-600";
 }
 
-export function TenderReleaseStatePanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
+export function TenderReleaseStatePanel({
+  tenderId,
+  canMutate = false,
+  showNextAction = true,
+}: {
+  tenderId: string;
+  canMutate?: boolean;
+  /** Set false when a host page already renders the canonical next action
+   *  elsewhere (e.g. NextActionPanel on the tender workspace) so it never
+   *  appears twice on the same page. */
+  showNextAction?: boolean;
+}) {
   const [data, setData] = useState<TenderReleaseState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -195,7 +206,7 @@ export function TenderReleaseStatePanel({ tenderId, canMutate = false }: { tende
         </div>
       )}
 
-      {data.primaryNextAction && (
+      {showNextAction && data.primaryNextAction && (
         <div className="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Next required action</p>
           <p className="mt-1 text-sm font-semibold text-slate-900">{data.primaryNextAction.label}</p>

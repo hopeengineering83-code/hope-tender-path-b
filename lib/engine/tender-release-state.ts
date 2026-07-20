@@ -90,7 +90,35 @@ function normalizeSeverity(value: string): TenderReleaseBlockerSeverity {
 
 const SEVERITY_RANK: Record<TenderReleaseBlockerSeverity, number> = { CRITICAL: 3, HIGH: 2, MEDIUM: 1, LOW: 0 };
 
-function reconcileBlockers(finalSubmission: FinalSubmissionReadiness): {
+// Cross-engine category aliases for the SAME underlying condition, verified
+// by runtime inspection to fire together and render as two unrelated red
+// warnings for one real issue:
+//   - export-readiness.ts's checkFullExportReadiness emits a tenderLevelBlocker
+//     CLIENT_NAME_REQUIRED, while final-submission-readiness.ts's own client
+//     name gate independently emits CLIENT_NAME_MISSING for the same
+//     empty-clientName condition.
+//   - export-readiness.ts's checkFullExportReadiness emits a tenderLevelBlocker
+//     NO_ACTIVE_GENERATED_DOCUMENTS when docs.length === 0, while its sibling
+//     checkExportReadiness independently emits a synthetic __tender__
+//     document failure (mapped below to DOCUMENT_NOT_READY:__tender__) for
+//     the exact same zero-documents condition.
+// Mapped to one dedup key (grouping only — the retained blocker keeps its
+// own original category for display) so the same real issue never renders
+// as two separate blockers here. The underlying engines are left unchanged
+// since export-readiness-panel.tsx and final-submission-control-center.tsx
+// still read their full, undeduped output directly.
+const CATEGORY_DEDUP_KEY: Record<string, string> = {
+  CLIENT_NAME_REQUIRED: "CLIENT_NAME_MISSING",
+  "DOCUMENT_NOT_READY:__tender__": "NO_ACTIVE_GENERATED_DOCUMENTS",
+};
+
+function dedupKey(category: string): string {
+  return CATEGORY_DEDUP_KEY[category] ?? category;
+}
+
+/** Exported for direct unit testing of the dedup/reconciliation rules — not
+ *  meant to be called by UI consumers, which must use getTenderReleaseState. */
+export function reconcileBlockers(finalSubmission: FinalSubmissionReadiness): {
   blockers: TenderReleaseBlocker[];
   blockerTotal: number;
   criticalBlockerTotal: number;
@@ -110,17 +138,19 @@ function reconcileBlockers(finalSubmission: FinalSubmissionReadiness): {
     })),
   ];
 
-  // Dedupe exact-category duplicates — the same underlying issue is
-  // sometimes independently flagged by more than one upstream engine (e.g.
+  // Dedupe by category (via dedupKey, which collapses known cross-engine
+  // aliases first) — the same underlying issue is sometimes independently
+  // flagged by more than one upstream engine (e.g.
   // export-readiness.ts's checkTenderLevelExportBlockers and
   // final-submission-readiness.ts's own checks both emit
   // EXTRACTION_QUALITY_INSUFFICIENT under the same category code). Keep the
   // highest-severity instance; a lower-severity duplicate adds no information.
   const byCategory = new Map<string, TenderReleaseBlocker>();
   for (const blocker of raw) {
-    const existing = byCategory.get(blocker.category);
+    const key = dedupKey(blocker.category);
+    const existing = byCategory.get(key);
     if (!existing || SEVERITY_RANK[blocker.severity] > SEVERITY_RANK[existing.severity]) {
-      byCategory.set(blocker.category, blocker);
+      byCategory.set(key, blocker);
     }
   }
   const blockers = Array.from(byCategory.values()).sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
