@@ -11,6 +11,7 @@ const isolatedFullAuth = process.env.E2E_FULL_AUTH === "true";
 const DESKTOP_AUTHENTICATED_SPECS = [
   "golden-tender-workflow.spec.ts",
   "production-smoke.spec.ts",
+  "pr1175-independent-release-audit.spec.ts",
   "tender-pipeline.spec.ts",
   "cross-user-isolation.spec.ts",
   "health.spec.ts",
