@@ -27,10 +27,10 @@ const STEPS = [
   "AI Analyze",
   "Confirm Requirements",
   "Tender Details",
-  "Build Plan",
+  "Verified Submission Plan",
   "Match Evidence",
   "Generate Documents",
-  "Validate & Approve",
+  "Validate and Approve",
   "Export ZIP",
 ] as const;
 

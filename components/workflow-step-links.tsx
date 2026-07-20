@@ -30,10 +30,10 @@ const STEP_LABELS = [
   "AI Analyze",             // Stage 3
   "Confirm Requirements",   // Stage 4
   "Tender Details",         // Stage 5
-  "Build Plan",             // Stage 6
+  "Verified Submission Plan", // Stage 6
   "Match Evidence",         // Stage 7
   "Generate Documents",     // Stage 8
-  "Validate & Approve",     // Stage 9
+  "Validate and Approve",   // Stage 9
   "Export ZIP",             // Stage 10
 ] as const;
 
