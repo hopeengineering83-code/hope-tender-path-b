@@ -35,13 +35,16 @@ describe("UI gap analysis — AI Analyze button + broken anchors", () => {
   });
 
   describe("Gap 3 — NextActionPanel anchors are valid", () => {
+    // STEP_TARGETS moved to components/workflow-step-links.tsx (the client
+    // component that renders the step links). NextActionPanel delegates to
+    // WorkflowStepLinks, so the anchor strings live there now.
     it("step 6 targets #submission-plan (not #submission-plan-completeness)", () => {
-      const src = read("components/next-action-panel.tsx");
+      const src = read("components/workflow-step-links.tsx");
       assert.match(src, /"#submission-plan"/);
       assert.ok(!src.includes("#submission-plan-completeness"), "must not reference #submission-plan-completeness");
     });
     it("step 10 targets #export-readiness (not #export-package)", () => {
-      const src = read("components/next-action-panel.tsx");
+      const src = read("components/workflow-step-links.tsx");
       assert.match(src, /"#export-readiness"/);
       assert.ok(!src.includes("#export-package"), "must not reference #export-package");
     });

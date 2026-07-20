@@ -114,7 +114,8 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
     }
     // Open every parent <details>/<WorkflowStage>/<Disclosure> that wraps the
     // target panel, then scroll into view. Without this, the scroll silently
-    // fails when the panel is inside a closed disclosure.
+    // fails when the panel is inside a closed disclosure — the root cause of
+    // the "icons act independently" interlinking bug.
     openParentDetailsAndScroll(element);
     setActionMessage(`Opened ${stage.actionLabel ?? stage.label}.`);
   };

@@ -198,10 +198,22 @@ export function openParentDetails(element: Element): boolean {
  * If any disclosure was opened, wait one animation frame so the browser
  * recomputes layout before scrolling — otherwise the scroll position can
  * be off by the height of the newly-opened disclosure header.
+ *
+ * SCROLL OFFSET: The dashboard layout has a sticky header (top-0 z-30 with
+ * py-2, ~48px tall). scrollIntoView({ block: "start" }) scrolls the element
+ * to the very top of the viewport, where the sticky header covers it. We
+ * use window.scrollTo with a manual offset instead so the element appears
+ * just below the sticky header. The offset (64px) accounts for the header
+ * height plus a small visual gap.
  */
 export function openParentDetailsAndScroll(element: Element, behavior: ScrollBehavior = "smooth"): void {
   const openedAny = openParentDetails(element);
-  const doScroll = () => element.scrollIntoView({ behavior, block: "start" });
+  const STICKY_HEADER_OFFSET = 64;
+  const doScroll = () => {
+    const rect = element.getBoundingClientRect();
+    const targetY = window.scrollY + rect.top - STICKY_HEADER_OFFSET;
+    window.scrollTo({ top: targetY, behavior });
+  };
   if (openedAny) {
     // Wait for the browser to lay out the newly-opened disclosures before
     // scrolling. Two rAFs ensure the layout is stable (one rAF is enough
