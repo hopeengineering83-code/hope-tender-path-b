@@ -6,8 +6,8 @@ import Link from "next/link";
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen bg-slate-50 p-6">
-      <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-4xl items-center justify-center">
+    <main className="flex min-h-screen flex-col bg-slate-50 p-6">
+      <div className="mx-auto flex w-full max-w-4xl flex-1 items-center justify-center">
         <div className="w-full rounded-2xl border bg-white p-8 shadow-sm space-y-8">
           <div className="space-y-3">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Hope Tender Platform</p>
@@ -40,7 +40,7 @@ export default function HomePage() {
           </div>
         </div>
       </div>
-      <footer className="mx-auto mt-6 w-full max-w-4xl px-4 pb-6">
+      <footer className="mx-auto mt-6 w-full max-w-4xl shrink-0 px-4 pb-6">
         <div className="flex flex-col items-center justify-between gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:text-left">
           <div className="text-xs text-slate-500">
             <span className="font-medium text-slate-700">Hope Tender</span>
