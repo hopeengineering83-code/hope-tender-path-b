@@ -27,7 +27,7 @@ type UploadFirstPayload = {
 
 type AdditionalUploadPayload = {
   error?: string;
-  results?: Array<{ fileRecord?: { id: string }; error?: string }>;
+  results?: Array<{ success?: boolean; fileRecord?: { id: string }; error?: string }>;
 };
 
 function formatMegabytes(bytes: number): string {
@@ -68,19 +68,20 @@ export default function NewTenderPage() {
     setUploadProgress(null);
   }
 
-  async function appendTenderFile(tenderId: string, file: File): Promise<boolean> {
+  async function appendTenderBatch(tenderId: string, batch: File[]): Promise<{ uploaded: number; failed: number }> {
     const body = new FormData();
-    body.append("file", file);
+    for (const file of batch) body.append("file", file);
     body.append("tenderId", tenderId);
     body.append("classification", "BID_DOCUMENT");
 
     try {
       const response = await fetch("/api/upload", { method: "POST", body });
       const payload = await response.json().catch(() => ({})) as AdditionalUploadPayload;
-      const result = payload.results?.[0];
-      return response.ok && Boolean(result?.fileRecord);
+      if (!Array.isArray(payload.results)) return { uploaded: 0, failed: batch.length };
+      const uploaded = payload.results.filter((result) => result.success === true && Boolean(result.fileRecord)).length;
+      return { uploaded, failed: Math.max(0, batch.length - uploaded) };
     } catch {
-      return false;
+      return { uploaded: 0, failed: batch.length };
     }
   }
 
@@ -118,16 +119,16 @@ export default function NewTenderPage() {
         return;
       }
 
-      let completed = firstBatch.length;
+      let processed = firstBatch.length;
       let failed = 0;
-      const additionalFiles = batches.slice(1).flat();
-      if (additionalFiles.length > 0) {
-        setUploadProgress({ completed, total: files.length, phase: "adding" });
-        for (const file of additionalFiles) {
-          const uploaded = await appendTenderFile(data.tenderId, file);
-          if (uploaded) completed += 1;
-          else failed += 1;
-          setUploadProgress({ completed: completed + failed, total: files.length, phase: "adding" });
+      const additionalBatches = batches.slice(1);
+      if (additionalBatches.length > 0) {
+        setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
+        for (const batch of additionalBatches) {
+          const result = await appendTenderBatch(data.tenderId, batch);
+          failed += result.failed;
+          processed += batch.length;
+          setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
         }
       }
 
@@ -180,7 +181,7 @@ export default function NewTenderPage() {
 
   const uploadButtonLabel = uploading
     ? uploadProgress?.phase === "adding"
-      ? `Adding package files… ${uploadProgress.completed}/${uploadProgress.total}`
+      ? `Adding package batches… ${uploadProgress.completed}/${uploadProgress.total}`
       : `Creating tender… ${uploadProgress?.completed ?? 0}/${uploadProgress?.total ?? files.length}`
     : files.length > 10
       ? `Create Tender from ${files.length} Documents`
