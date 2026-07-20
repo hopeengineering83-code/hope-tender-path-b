@@ -7,6 +7,8 @@ import { formatTenderStatus } from "../../../../../lib/tender-workflow";
 import { formatOperationalCode, formatOperationalReason } from "../../../../../lib/operational-labels";
 import { ArrowRightIcon, WarningIcon } from "../../../../../components/icons";
 
+// This watermark is print-visible to prevent browser print dialog bypass.
+
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return { title: `Tender Report — ${id}` };
@@ -136,7 +138,7 @@ export default async function TenderReportPage({ params }: { params: Promise<{ i
             <WarningIcon /> NON-AUTHORITATIVE PREVIEW — NOT FOR SUBMISSION
           </p>
           <p className="mt-1 text-xs text-amber-800 print:text-amber-900">
-            This report has not passed canonical final-submission readiness. It must not be submitted to any procuring entity. Resolve the blockers below and re-run the engine to produce an authoritative document. This watermark remains visible when printed.
+            This report has not passed canonical final-submission readiness. It must not be submitted to any procuring entity. Resolve the blockers below and re-run the engine to produce an authoritative document. This watermark is print-visible to prevent browser print dialog bypass.
           </p>
           {canonicalBlockers.length > 0 && (
             <ul className="mt-2 list-inside list-disc text-xs text-amber-800 print:text-amber-900">
