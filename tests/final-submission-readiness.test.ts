@@ -203,6 +203,17 @@ describe("final-submission-readiness — CLIENT_NAME_MISSING blocker (source-lev
     const blockContext = source.slice(blockIndex, blockIndex + 200);
     assert.ok(blockContext.includes("HIGH"), "CLIENT_NAME_MISSING blocker must use HIGH severity");
   });
+
+  it("does not push CLIENT_NAME_MISSING when checkFullExportReadiness's own CLIENT_NAME_REQUIRED already covers it", () => {
+    // Confirmed by a real Playwright screenshot: checkFullExportReadiness
+    // (export-readiness.ts) seeds tenderLevelBlockers with CLIENT_NAME_REQUIRED
+    // for the same empty-clientName condition this later check independently
+    // re-flagged as CLIENT_NAME_MISSING — both landed in the same
+    // tenderLevelBlockers array and rendered as two unrelated red warnings for
+    // one real issue. Guarded here at the source so every consumer (not just
+    // the Tender Release State wrapper) gets the deduped list.
+    assert.match(source, /!tenderLevelBlockers\.some\(\(b\) => b\.category === "CLIENT_NAME_REQUIRED"\)/);
+  });
 });
 
 describe("final-submission-readiness — Prisma select includes extended entity fields", () => {

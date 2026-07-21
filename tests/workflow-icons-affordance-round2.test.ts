@@ -42,9 +42,9 @@ describe("Spec Test 1 — Recovery Command Center primary action", () => {
     assert.ok(src.includes('"Execute"'), "Execute button must have visible 'Execute' text");
   });
 
-  it("Download ZIP has DownloadIcon and visible text", () => {
+  it("no longer renders its own Download ZIP control (DOWNLOAD_FINAL_ZIP is not a recovery state; FinalSubmissionControlCenter / TenderDownloadActionsPanel own that action)", () => {
     const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(src.includes("<DownloadIcon /> Download ZIP"), "Download ZIP must render DownloadIcon + text");
+    assert.ok(!src.includes("<DownloadIcon"), "Recovery Command Center must not render its own Download ZIP button/icon");
   });
 });
 

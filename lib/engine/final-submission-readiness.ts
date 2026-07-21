@@ -886,8 +886,12 @@ export async function getFinalSubmissionReadiness(
   // Client name gate — an empty/whitespace-only clientName (and no
   // procuringEntityName fallback) must block export so a proposal is
   // never sent without knowing who the procuring entity is.
+  // Only emit when checkFullExportReadiness's own CLIENT_NAME_REQUIRED check
+  // did not already cover it, so we do not double-count the same missing-
+  // client-name condition under two category codes (verified by a real
+  // screenshot showing both blockers rendered together for one issue).
   const effectiveClientName = (tender.clientName ?? "").trim() || (tender.procuringEntityName ?? "").trim();
-  if (!effectiveClientName) {
+  if (!effectiveClientName && !tenderLevelBlockers.some((b) => b.category === "CLIENT_NAME_REQUIRED")) {
     tenderLevelBlockers.push({
       category: "CLIENT_NAME_MISSING",
       severity: "HIGH",

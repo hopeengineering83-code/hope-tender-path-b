@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
 import { subscribeTenderWorkflowSync, emitTenderWorkflowSync, openParentDetailsAndScroll } from "../lib/ui/tender-workflow-sync";
-import { PlayIcon, DownloadIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
+import { PlayIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
@@ -115,6 +115,28 @@ const STATE_LABELS: Record<LifecycleState, string> = {
   ZIP_READY: "ZIP Ready",
   CLOSED: "Closed (WON/LOST/WITHDRAWN)",
 };
+
+// States that represent a genuine recoverable inconsistency — something
+// failed, stalled, or produced a degraded/unexpected result — as opposed to
+// ordinary forward progress through the workflow (e.g. "upload a file",
+// "run AI Analyze for the first time", "generate the planned documents").
+// Every dedicated stage panel (AIAnalyzePanel, EngineActionPanel,
+// GenerationActionPanel, SubmissionPlanReconciliationPanel, etc.) already
+// exposes the ordinary forward action for its own stage, so this panel's
+// generic banner is redundant — and, per NextActionPanel already owning the
+// tender's one general next action, actively contradictory — for those
+// states. It is only useful, and only shown, when the workflow has actually
+// gone wrong and needs an exceptional repair/retry/override operation.
+const RECOVERY_LIFECYCLE_STATES: ReadonlySet<LifecycleState> = new Set([
+  "AI_ANALYSIS_FAILED",
+  "PARTIAL_AI_ANALYSIS_BLOCKED",
+  "ANALYSIS_FALLBACK_UNAPPROVED",
+  "ANALYSIS_FALLBACK_APPROVED_AUDIT_ONLY",
+  "SOURCE_REFERENCES_INCOMPLETE",
+  "EVIDENCE_MATCHING_EMPTY",
+  "QUALITY_REVIEW_REQUIRED",
+  "EXPORT_READINESS_BLOCKED",
+]);
 
 const ACTION_LABELS = new Proxy({} as Record<string, string>, {
   get: (_target, prop: string | symbol) => typeof prop === "string" ? recoveryCommandLabel(prop) : undefined,
@@ -535,6 +557,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
   // "All good" / release-ready framing in the header — show the BLOCKED
   // badge prominently and treat the lifecycle state as secondary context.
   const isBlocked = data.finalSubmissionStatus === "BLOCKED";
+  const isRecoveryState = RECOVERY_LIFECYCLE_STATES.has(data.lifecycleState);
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
@@ -586,59 +609,65 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
         />
       </div>
 
-      {/* Primary Next Action */}
-      <div className="border-b border-gray-100 bg-blue-50 px-5 py-3">
-        <p className="text-xs font-medium uppercase tracking-wide text-blue-600">Primary Next Action</p>
-        <div className="mt-1.5 flex flex-wrap items-center gap-2">
-          <p className="text-sm font-semibold text-blue-900">{actionLabel}</p>
-          {data.primaryNextAction !== "DOWNLOAD_FINAL_ZIP" && (canMutate && !isMutationAction(data.primaryNextAction) ? (
-            <button
-              onClick={() => void executeAction(data.primaryNextAction)}
-              disabled={actioning}
-              title={`Execute: ${actionLabel}`}
-              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-            >
-              <PlayIcon /> {actioning ? "Working…" : "Execute"}
-            </button>
-          ) : canMutate && isMutationAction(data.primaryNextAction) ? (
-            <button
-              onClick={() => void executeAction(data.primaryNextAction)}
-              disabled={actioning}
-              title={`Execute: ${actionLabel}`}
-              className="inline-flex items-center gap-1 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60"
-            >
-              <PlayIcon /> {actioning ? "Working…" : "Execute"}
-            </button>
-          ) : null)}
-          {data.primaryNextAction === "DOWNLOAD_FINAL_ZIP" && (
-            <a href={`/api/tenders/${tenderId}/download`} className="inline-flex items-center gap-1 rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700" title="Download the final submission ZIP">
-              <DownloadIcon /> Download ZIP
-            </a>
-          )}
-        </div>
-        {analyzeProgress !== null && (
-          <div className="mt-2">
+      {/* Action feedback — persistent regardless of whether the recovery
+          banner below is shown, since the per-blocker quick-action buttons
+          further down (Retry AI Analyze, Run Engine, Link Vault Evidence,
+          etc.) can set actionMsg / analyzeProgress even when this panel is
+          in an ordinary forward-progress state, not a recovery state. */}
+      {(analyzeProgress !== null || actionMsg) && (
+        <div className="border-b border-gray-100 bg-blue-50 px-5 py-3">
+          {analyzeProgress !== null && (
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-blue-100">
               <div className="h-full rounded-full bg-blue-600 transition-all duration-500" style={{ width: `${analyzeProgress}%` }} />
             </div>
+          )}
+          {actionMsg && (
+            <p className={`text-xs text-blue-700 font-medium ${analyzeProgress !== null ? "mt-2" : ""}`}>{actionMsg}</p>
+          )}
+        </div>
+      )}
+
+      {/* Recovery operation — ONLY rendered for a genuine recoverable
+          inconsistency (RECOVERY_LIFECYCLE_STATES), never for ordinary
+          forward progress. NextActionPanel, rendered near the top of the
+          tender workspace, is the sole owner of the tender's one general
+          next-action directive — this banner must never repeat, compete
+          with, or be labeled as that. It explicitly explains that it
+          repairs an inconsistent/stalled state rather than replacing the
+          canonical next action. */}
+      {isRecoveryState && (
+        <div className="border-b border-gray-100 bg-amber-50 px-5 py-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-amber-700">Recovery operation available</p>
+          <p className="mt-0.5 text-xs text-amber-700">
+            This repairs an inconsistent or stalled workflow state — it does not replace the tender&apos;s canonical next action shown above.
+          </p>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-amber-900">{actionLabel}</p>
+            {canMutate && (
+              <button
+                onClick={() => void executeAction(data.primaryNextAction)}
+                disabled={actioning}
+                title={`Execute: ${actionLabel}`}
+                className="inline-flex items-center gap-1 rounded bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-60"
+              >
+                <PlayIcon /> {actioning ? "Working…" : "Execute"}
+              </button>
+            )}
           </div>
-        )}
-        {canMutate && data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
-          <div className="mt-2 flex gap-2">
-            <input
-              type="text"
-              value={approvalNote}
-              onChange={(e) => setApprovalNote(e.target.value)}
-              placeholder="Approval note (required)…"
-              className="flex-1 rounded border border-blue-200 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400"
-              maxLength={200}
-            />
-          </div>
-        )}
-        {actionMsg && (
-          <p className="mt-2 text-xs text-blue-700 font-medium">{actionMsg}</p>
-        )}
-      </div>
+          {canMutate && data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
+            <div className="mt-2 flex gap-2">
+              <input
+                type="text"
+                value={approvalNote}
+                onChange={(e) => setApprovalNote(e.target.value)}
+                placeholder="Approval note (required)…"
+                className="flex-1 rounded border border-amber-200 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400"
+                maxLength={200}
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Blockers */}
       {data.blockers.length > 0 && (

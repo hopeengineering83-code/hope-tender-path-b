@@ -156,11 +156,23 @@ describe("Spec Test 8 — Recovery Command Center primary action renders SVG ico
     );
   });
 
-  it("tender-recovery-command-center.tsx Download ZIP has DownloadIcon", () => {
+  it("tender-recovery-command-center.tsx no longer renders its own Download ZIP link", () => {
+    // Removed: DOWNLOAD_FINAL_ZIP only occurs for EXPORT_READY/CLOSED, which
+    // are not RECOVERY_LIFECYCLE_STATES, so this panel's recovery banner
+    // never shows in that state. The authoritative download control lives
+    // in FinalSubmissionControlCenter / TenderDownloadActionsPanel — this
+    // panel repeating it was a redundant, non-recovery-scoped action. (A
+    // one-time completion status message may still say "Download ZIP is
+    // available" after Run Engine finishes — that's transient feedback, not
+    // a persistent competing action control.)
     const src = readComponent("tender-recovery-command-center.tsx");
     assert.ok(
-      src.includes("<DownloadIcon /> Download ZIP"),
-      "Recovery Command Center Download ZIP must render DownloadIcon + text",
+      !src.includes("<DownloadIcon"),
+      "Recovery Command Center must not render its own Download ZIP button/icon",
+    );
+    assert.ok(
+      !/href=\{`\/api\/tenders\/\$\{tenderId\}\/download`\}/.test(src),
+      "Recovery Command Center must not link directly to the download route",
     );
   });
 
