@@ -210,19 +210,28 @@ test.describe("Tablet and responsive dashboard contracts", () => {
         await expectMainDoesNotHideOverflow(page);
         await expectNoHorizontalScroll(page);
 
+        // /dashboard/search is intentionally not part of the primary sidebar
+        // destinations post-consolidation — Global Search moved to the
+        // sticky header (see app/dashboard/layout.tsx), so no sidebar item
+        // resolves as active for it. Every other owned route here still
+        // resolves to exactly one active parent destination via
+        // lib/dashboard-navigation.ts's memberHrefs mechanism (e.g.
+        // /dashboard/settings activates "Company Vault").
+        const expectedActiveCount = route === "/dashboard/search" ? 0 : 1;
+
         if (viewport.width < 1280) {
           const opener = page.getByRole("button", { name: "Open navigation" });
           await expect(opener).toBeVisible();
           await opener.click();
           const drawer = page.getByRole("dialog", { name: "Hope Tender" });
           await expect(drawer).toBeVisible();
-          await expect(drawer.locator('[aria-current="page"]')).toHaveCount(1);
+          await expect(drawer.locator('[aria-current="page"]')).toHaveCount(expectedActiveCount);
           await page.getByRole("button", { name: "Close navigation" }).last().click();
           await expect(drawer).toBeHidden();
         } else {
           const navigation = page.getByRole("navigation", { name: "Primary navigation" });
           await expect(navigation).toBeVisible();
-          await expect(navigation.locator('[aria-current="page"]')).toHaveCount(1);
+          await expect(navigation.locator('[aria-current="page"]')).toHaveCount(expectedActiveCount);
         }
       }
     });
@@ -256,15 +265,37 @@ test.describe("Tablet and responsive dashboard contracts", () => {
     );
     const advertised = [...new Set(hrefs)];
 
+    // Post-consolidation the primary sidebar advertises only the top-level
+    // destinations (Overview, Tenders, Company Vault, Engine, Documents &
+    // Export, Administration for this ADMIN fixture) — formerly-separate
+    // routes like /dashboard/admin/ai-readiness are now memberHrefs of
+    // Administration, reached via its own sub-nav tab bar
+    // (components/dashboard-group-subnav.tsx), not a literal sidebar link.
     expect(advertised).not.toContain("/dashboard/admin");
-    expect(advertised).toContain("/dashboard/admin/ai-readiness");
-    expect(advertised.length).toBeGreaterThan(10);
+    expect(advertised).not.toContain("/dashboard/admin/ai-readiness");
+    expect(advertised.length).toBe(6);
 
     for (const href of advertised) {
       const response = await page.goto(href, { waitUntil: "domcontentloaded" });
       await expect(page, href).not.toHaveURL(/\/login/);
       expect(response?.status(), `${href} must not be a dead route`).toBeLessThan(400);
       await expect(page.getByRole("navigation", { name: "Primary navigation" }).locator('[aria-current="page"]'), href).toHaveCount(1);
+    }
+
+    // Formerly-standalone routes now consolidated as memberHrefs must still
+    // resolve directly and activate exactly one (their parent) sidebar item.
+    const consolidatedMemberRoutes: Array<[string, string]> = [
+      ["/dashboard/admin/ai-readiness", "/dashboard/activity"],
+      ["/dashboard/history", "/dashboard/tenders"],
+      ["/dashboard/company/readiness", "/dashboard/company"],
+    ];
+    for (const [memberHref, expectedParent] of consolidatedMemberRoutes) {
+      const response = await page.goto(memberHref, { waitUntil: "domcontentloaded" });
+      await expect(page, memberHref).not.toHaveURL(/\/login/);
+      expect(response?.status(), `${memberHref} must not be a dead route`).toBeLessThan(400);
+      const active = page.getByRole("navigation", { name: "Primary navigation" }).locator('[aria-current="page"]');
+      await expect(active, memberHref).toHaveCount(1);
+      await expect(active, `${memberHref} must activate its consolidated parent ${expectedParent}`).toHaveAttribute("href", expectedParent);
     }
 
     // /dashboard/admin is intentionally unadvertised but, since SCREENSHOT-R2,
@@ -294,7 +325,12 @@ test.describe("Tablet and responsive dashboard contracts", () => {
     // both.
     const mobileNav = page.getByRole("navigation", { name: "Mobile primary navigation" });
     await expect(mobileNav.locator('a[href="/dashboard/admin"]')).toHaveCount(0);
-    await expect(mobileNav.locator('a[href="/dashboard/admin/ai-readiness"]')).toHaveCount(1);
+    // /dashboard/admin/ai-readiness is consolidated as a memberHref of the
+    // Administration destination (lib/dashboard-navigation.ts) — it is no
+    // longer its own literal sidebar link either, so it must not appear
+    // directly, but its parent Administration destination must.
+    await expect(mobileNav.locator('a[href="/dashboard/admin/ai-readiness"]')).toHaveCount(0);
+    await expect(mobileNav.locator('a[href="/dashboard/activity"]')).toHaveCount(1);
   });
 
   test("settings failure is visible and never claims success", async ({ page }) => {
