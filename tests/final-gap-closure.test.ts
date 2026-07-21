@@ -145,6 +145,30 @@ describe("Gaps M-S — No raw Unicode in remaining components", () => {
     assert.match(src, /SearchIcon/);
   });
 
+  it("ai-copilot-suggestions-panel.tsx ICON_MAP resolves every suggestion key to a distinct icon", () => {
+    const src = read("components/ai-copilot-suggestions-panel.tsx");
+    const mapBody = src.match(/const ICON_MAP[^{]*\{([\s\S]*?)\};/);
+    assert.ok(mapBody, "ICON_MAP definition must exist");
+    const entries = [...mapBody![1].matchAll(/(\w+):\s*(\w+),/g)].map(([, key, icon]) => ({ key, icon }));
+    // Up to 6 suggestions can render together (suggestions.length < 6 guards),
+    // so two keys sharing an icon component makes distinct suggestions
+    // visually indistinguishable — e.g. "pin"/"folder" both silently
+    // fell back to DocumentIcon before this test existed.
+    assert.ok(entries.length >= 10, "expected all 10 suggestion icon keys to be present");
+    const iconCounts = new Map<string, string[]>();
+    for (const { key, icon } of entries) {
+      const keys = iconCounts.get(icon) ?? [];
+      keys.push(key);
+      iconCounts.set(icon, keys);
+    }
+    const duplicates = [...iconCounts.entries()].filter(([, keys]) => keys.length > 1);
+    assert.deepEqual(
+      duplicates,
+      [],
+      `ICON_MAP has duplicate icon components: ${duplicates.map(([icon, keys]) => `${icon} used by ${keys.join(", ")}`).join("; ")}`,
+    );
+  });
+
   it("icons.tsx exports SearchIcon", () => {
     const src = read("components/icons.tsx");
     assert.match(src, /export function SearchIcon/);

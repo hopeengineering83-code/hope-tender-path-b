@@ -5,16 +5,20 @@
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { clientLogger } from "@/lib/ui/client-logger";
-import { SearchIcon, WarningIcon, ListIcon, UploadIcon, DocumentIcon, AlertCircleIcon, CheckCircleIcon, ClockIcon } from "./icons";
+import { SearchIcon, WarningIcon, ListIcon, UploadIcon, DocumentIcon, AlertCircleIcon, CheckCircleIcon, ClockIcon, LinkIcon, FolderIcon } from "./icons";
 
-// Map suggestion icon keys to SVG components
+// Map suggestion icon keys to SVG components. Each key must resolve to a
+// visually distinct icon — up to 6 suggestions can render together in one
+// list, so two unrelated suggestions sharing a glyph (e.g. "pin"/"folder"
+// both previously falling back to DocumentIcon) makes them indistinguishable
+// at a glance.
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   search: SearchIcon,
   warning: WarningIcon,
   list: ListIcon,
   upload: UploadIcon,
-  pin: DocumentIcon,
-  folder: DocumentIcon,
+  pin: LinkIcon,
+  folder: FolderIcon,
   document: DocumentIcon,
   alert: AlertCircleIcon,
   check: CheckCircleIcon,

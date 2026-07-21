@@ -22,6 +22,8 @@ import {
   SearchIcon,
   UsersIcon,
   GaugeIcon,
+  FlagIcon,
+  BellIcon,
 } from "./icons";
 
 type DashboardIconComponent = ComponentType<
@@ -50,6 +52,8 @@ const ICON_COMPONENTS = {
   SearchIcon,
   UsersIcon,
   GaugeIcon,
+  FlagIcon,
+  BellIcon,
 } satisfies Record<DashboardNavIconName, DashboardIconComponent>;
 
 export function DashboardNavIcon({

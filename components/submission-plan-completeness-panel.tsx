@@ -9,7 +9,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DocumentIcon, RefreshIcon, CheckCircleIcon, WarningIcon, ClockIcon, BanIcon } from "./icons";
+import { DocumentIcon, RefreshIcon, CheckCircleIcon, WarningIcon, ClockIcon, BanIcon, FolderIcon } from "./icons";
 
 type Status =
   | "GENERATED"
@@ -76,7 +76,7 @@ const STATUS_BADGE: Record<Status, { label: string; tone: "ok" | "warn" | "bad" 
   REPLACE_WITH_ORIGINAL: { label: "REPLACE WITH ORIGINAL", tone: "warn", icon: <WarningIcon /> },
   MISSING: { label: "MISSING", tone: "bad", icon: <BanIcon /> },
   OUTSIDE_PLAN: { label: "OUTSIDE PLAN", tone: "warn", icon: <WarningIcon /> },
-  SUPERSEDED: { label: "HISTORICAL", tone: "neutral", icon: <ClockIcon /> },
+  SUPERSEDED: { label: "HISTORICAL", tone: "neutral", icon: <FolderIcon /> },
 };
 
 function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {

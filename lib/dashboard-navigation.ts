@@ -19,7 +19,9 @@ export type DashboardNavIconName =
   | "BarChartIcon"
   | "SearchIcon"
   | "UsersIcon"
-  | "GaugeIcon";
+  | "GaugeIcon"
+  | "FlagIcon"
+  | "BellIcon";
 
 export type DashboardNavLink = {
   href: string;
@@ -101,7 +103,7 @@ export const DASHBOARD_NAV_GROUPS: DashboardNavGroup[] = [
       { href: "/dashboard/company/review-board", label: "Review Board", iconName: "ClipboardCheckIcon" },
       { href: "/dashboard/company/review", label: "Data Diagnostics", iconName: "CodeIcon" },
       { href: "/dashboard/assets", label: "Brand Assets", iconName: "ImageIcon" },
-      { href: "/dashboard/setup", label: "Setup Wizard", iconName: "SparklesIcon" },
+      { href: "/dashboard/setup", label: "Setup Wizard", iconName: "FlagIcon" },
       { href: "/dashboard/settings", label: "Settings", iconName: "SettingsIcon" },
     ],
   },
@@ -114,7 +116,7 @@ export const DASHBOARD_NAV_GROUPS: DashboardNavGroup[] = [
       { href: "/dashboard/compliance", label: "Global Compliance", iconName: "ShieldIcon" },
       { href: "/dashboard/documents", label: "Document Archive", iconName: "DocumentIcon" },
       { href: "/dashboard/export", label: "Export Hub", iconName: "PackageIcon" },
-      { href: "/dashboard/activity", label: "Activity Logs", iconName: "ListIcon" },
+      { href: "/dashboard/activity", label: "Activity Logs", iconName: "BellIcon" },
       { href: "/dashboard/analytics", label: "System Analytics", iconName: "BarChartIcon" },
       { href: "/dashboard/search", label: "Global Search", iconName: "SearchIcon" },
     ],

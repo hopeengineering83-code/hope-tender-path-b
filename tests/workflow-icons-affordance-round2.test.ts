@@ -227,6 +227,13 @@ describe("Spec Test 11 — Status badges render SVG icon + text", () => {
     assert.ok(src.includes("icon: <ClockIcon />"), "PLANNED must have ClockIcon");
   });
 
+  it("submission-plan STATUS_BADGE does not reuse PLANNED's waiting-clock icon for SUPERSEDED (contradicts 'historical/already replaced')", () => {
+    const src = read("components/submission-plan-completeness-panel.tsx");
+    const supersededLine = src.split("\n").find((line) => line.includes('SUPERSEDED: { label: "HISTORICAL"'));
+    assert.ok(supersededLine, "SUPERSEDED status badge entry must exist");
+    assert.ok(supersededLine!.includes("icon: <FolderIcon />"), "SUPERSEDED must use FolderIcon, not ClockIcon (a clock implies still-pending, not already-replaced)");
+  });
+
   it("authority-review statusBadge uses SVG icons", () => {
     const src = read("components/authority-review-panel.tsx");
     assert.ok(src.includes("<CheckCircleIcon /> AUTHORITY READY"), "AUTHORITY READY must have CheckCircleIcon");

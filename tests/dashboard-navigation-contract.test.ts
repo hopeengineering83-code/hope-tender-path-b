@@ -52,6 +52,23 @@ test("canonical navigation keeps route and icon identities unique and complete",
   assert.ok(links.every((link) => link.iconName.endsWith("Icon")));
   assert.ok(links.some((link) => link.href === "/dashboard/admin/ai-readiness"));
   assert.ok(links.some((link) => link.href === "/dashboard/documents"));
+
+  // Every nav item must render a visually distinct icon. Two links sharing an
+  // iconName is a real user-facing bug (the sidebar shows the identical glyph
+  // for two unrelated pages) that the href-uniqueness check above cannot
+  // catch, since it only asserts routes are unique, not icons.
+  const iconCounts = new Map<string, string[]>();
+  for (const link of links) {
+    const existing = iconCounts.get(link.iconName) ?? [];
+    existing.push(link.href);
+    iconCounts.set(link.iconName, existing);
+  }
+  const duplicates = [...iconCounts.entries()].filter(([, hrefs]) => hrefs.length > 1);
+  assert.deepEqual(
+    duplicates,
+    [],
+    `duplicate nav icons: ${duplicates.map(([icon, hrefs]) => `${icon} used by ${hrefs.join(", ")}`).join("; ")}`,
+  );
 });
 
 test("role presentation filtering preserves shared groups and hides restricted groups", () => {
