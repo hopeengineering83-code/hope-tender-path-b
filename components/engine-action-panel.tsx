@@ -330,6 +330,44 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
     }
 
     if (finalStatus === "SUCCEEDED") {
+      // A SUCCEEDED job status only means the worker didn't throw — it does
+      // NOT mean the engine run was a full success. The ENGINE_RUN handler
+      // (lib/ai-job-handlers.ts) returns without throwing in two honest-but-
+      // partial cases: `{ result: { partial: true, blockers, ... } }` (AI
+      // rematch skipped/failed) and `{ code: "ENGINE_COMPLETED_WITH_BLOCKERS",
+      // blockers, ... }` (postcondition check failed, e.g. zero evidence
+      // rows). Mirror the same partial-vs-success honesty the synchronous
+      // path already applies (see the `data.partial` branch above) instead
+      // of unconditionally showing a plain "Engine completed successfully" —
+      // otherwise a background run that skipped AI matching or produced zero
+      // evidence rows would read as a clean success with no indication
+      // anything needs review.
+      const jobOutput = finalJob?.output as Record<string, unknown> | null | undefined;
+      const engineResult = (jobOutput?.result ?? jobOutput) as {
+        partial?: boolean;
+        blockers?: string[];
+        nextAction?: string | null;
+        evidenceMatchingBlocker?: { code: string; message: string } | null;
+        code?: string;
+      } | undefined;
+      const isPartial = engineResult?.partial === true || engineResult?.code === "ENGINE_COMPLETED_WITH_BLOCKERS";
+      if (isPartial) {
+        const rawBlockers = engineResult?.blockers;
+        const blockerText = Array.isArray(rawBlockers) && rawBlockers.length > 0
+          ? rawBlockers.join(" ")
+          : "AI evidence matching did not complete. Review-required fallback rows were created for source-grounded requirements.";
+        callbacks.setResult({
+          success: false,
+          async: true,
+          jobId,
+          error: `Engine completed partially (background). ${blockerText}`,
+          code: engineResult?.evidenceMatchingBlocker?.code ?? engineResult?.code ?? "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED",
+          nextAction: engineResult?.nextAction ?? "REVIEW_MATCHING_INPUTS",
+          blockers: Array.isArray(rawBlockers) ? rawBlockers : undefined,
+        });
+        callbacks.onSuccess();
+        return;
+      }
       // Per spec rule 8: include the true next action hint in the success
       // message. When lifecycleBlockersExist is true, the user MUST be told
       // that "Engine completed" does NOT equal "ready to generate" — the

@@ -8,6 +8,7 @@ import { actionableEngineError } from "../../../../../lib/engine/actionable-engi
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-jobs";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -114,6 +115,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
     if (engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
       return NextResponse.json({ error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
+    }
+
+    // ─── Async/background mode ──────────────────────────────────────────
+    // The "Run Engine (Safe Mode)" / "Run in background" buttons
+    // (components/engine-action-panel.tsx executeEngineRunAsync) call this
+    // same route with ?async=true expecting a 202 + jobId to poll, exactly
+    // like AI Analyze's ?mode=background path. This branch was previously
+    // MISSING entirely — every "background" run silently fell back to the
+    // synchronous 60s-capped path below with no jobId in the response, so
+    // the client's `if (!enqueueRes.ok || !enqueueData.jobId)` guard always
+    // fired and passed the raw synchronous result straight to the UI. That
+    // raw shape has no `error` field on a partial-success response, so the
+    // panel rendered the generic "Engine failed." fallback for what was
+    // often a legitimate partial success (e.g. AI rematch skipped for a
+    // deadline) — and large vaults never actually escaped the 60s cap this
+    // was supposed to provide.
+    const reqUrl = new URL(req.url);
+    if (reqUrl.searchParams.get("async") === "true") {
+      const safe = reqUrl.searchParams.get("safe") === "true";
+      const skipAiRematch = reqUrl.searchParams.get("skipAiRematch") === "true";
+      const maxCharsParam = reqUrl.searchParams.get("maxChars");
+      const maxChars = maxCharsParam ? Number(maxCharsParam) : undefined;
+      const active = await findActiveEngineRunForTender(id, userId);
+      const jobId = active?.id ?? (await enqueueJob({
+        userId,
+        tenderId: id,
+        jobType: "ENGINE_RUN",
+        input: {
+          safe,
+          skipAiRematch,
+          ...(typeof maxChars === "number" && Number.isFinite(maxChars) ? { maxChars } : {}),
+        },
+      })).id;
+      return NextResponse.json({ jobId, status: "QUEUED", diagnosticId }, { status: 202 });
     }
 
     const deadlineAt = Date.now() + 50_000;
