@@ -67,7 +67,26 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const reconciledTenderBlockers = readiness.tenderLevelBlockers.filter((blocker) =>
       !(blocker.category === "MANDATORY_EVIDENCE_INCOMPLETE" && evidenceStats.total > 0 && evidenceStats.percent >= 50),
     );
-    const finalPackageDocumentBlockers = finalPackage.documents.blockers.length + finalPackage.export.blockers.length;
+    // finalPackage.export.blockers (final-package-readiness-model.ts) and
+    // reconciledTenderBlockers (final-submission-readiness.ts -- the engine
+    // behind the canonical Tender Release State used by the tender
+    // workspace/command-center/report) both independently detect "no
+    // confirmed Build Plan exists": the former as NO_CONFIRMED_BUILD_PLAN,
+    // the latter as NO_CURRENT_CONFIRMED_BUILD_PLAN. Confirmed by a real
+    // cross-page comparison against a live seeded tender: this route (which
+    // backs the Documents page and the Export Readiness panel) showed 10
+    // canonical blockers while the Tender Release State showed 9 for the
+    // identical tender at the identical moment. Drop the older engine's
+    // duplicate here so this route's count and list agree with the
+    // canonical Tender Release State; NO_CURRENT_CONFIRMED_BUILD_PLAN still
+    // blocks export via reconciledTenderBlockers, so no gate is weakened.
+    const hasCanonicalNoConfirmedBuildPlan = reconciledTenderBlockers.some(
+      (blocker) => blocker.category === "NO_CURRENT_CONFIRMED_BUILD_PLAN",
+    );
+    const reconciledExportBlockers = finalPackage.export.blockers.filter(
+      (blocker) => !(blocker.code === "NO_CONFIRMED_BUILD_PLAN" && hasCanonicalNoConfirmedBuildPlan),
+    );
+    const finalPackageDocumentBlockers = finalPackage.documents.blockers.length + reconciledExportBlockers.length;
     const reconciledOk = readiness.ok && finalPackageDocumentBlockers === 0 && reconciledTenderBlockers.length === 0 && finalPackage.export.zipReady;
 
     const submissionPlanBuilt = readiness.summary.planStatus !== "NO_PLAN_NO_DOCS" && readiness.summary.planStatus !== "NO_PLAN_WITH_ACTIVE_DOCS";
@@ -77,7 +96,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
     const publicBlockers = [
       ...finalPackage.documents.blockers,
-      ...finalPackage.export.blockers,
+      ...reconciledExportBlockers,
       ...reconciledTenderBlockers.map((blocker) => ({
         code: blocker.category,
         message: blocker.title,

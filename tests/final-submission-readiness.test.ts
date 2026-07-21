@@ -214,6 +214,23 @@ describe("final-submission-readiness — CLIENT_NAME_MISSING blocker (source-lev
     // the Tender Release State wrapper) gets the deduped list.
     assert.match(source, /!tenderLevelBlockers\.some\(\(b\) => b\.category === "CLIENT_NAME_REQUIRED"\)/);
   });
+
+  it("does not emit the synthetic __tender__ document blocker when NO_ACTIVE_GENERATED_DOCUMENTS already covers it", () => {
+    // Confirmed by a real cross-page comparison against a live seeded
+    // tender: app/dashboard/documents/page.tsx (which calls
+    // getFinalSubmissionReadiness via /export-readiness directly, not
+    // through the Tender Release State wrapper) showed 10 blockers, while
+    // the tender workspace/command-center/report (which go through
+    // lib/engine/tender-release-state.ts's reconcileBlockers) showed 9 for
+    // the exact same tender at the exact same moment. checkExportReadiness's
+    // synthetic __tender__ document failure and
+    // checkFullExportReadiness's own NO_ACTIVE_GENERATED_DOCUMENTS
+    // tenderLevelBlocker both fire from the identical docs.length === 0
+    // condition. Guarded here at the source so every direct consumer
+    // agrees, not just the wrapper.
+    assert.match(source, /hasNoActiveDocumentsTenderBlocker/);
+    assert.match(source, /failure\.documentId === "__tender__"/);
+  });
 });
 
 describe("final-submission-readiness — Prisma select includes extended entity fields", () => {

@@ -583,14 +583,30 @@ export async function getFinalSubmissionReadiness(
     requireFileContent: opts.requireFileContent ?? false,
   });
 
-  const documentBlockers: FinalReadinessDocumentBlocker[] = readiness.failures.map((failure) => ({
-    documentId: failure.documentId,
-    name: failure.name,
-    fileName: failure.fileName,
-    reasons: failure.reasons,
-    severity: severityForReasons(failure.reasons),
-    nextActions: Array.from(new Set(failure.reasons.map(nextActionForReason))),
-  }));
+  // checkExportReadiness (which produced readiness.failures) and
+  // checkFullExportReadiness's own tenderLevelBlockers both independently
+  // detect docs.length === 0 -- the former as a synthetic __tender__ entry,
+  // the latter as a NO_ACTIVE_GENERATED_DOCUMENTS blocker -- so the two
+  // always co-occur and double-count the same zero-documents condition.
+  // Confirmed by a real cross-page comparison: the Documents page (which
+  // calls this function via /export-readiness, not through the Tender
+  // Release State wrapper) showed 10 blockers for a tender the tender
+  // workspace/command-center/report showed 9 for. Drop the synthetic
+  // per-document entry here at the source so every direct consumer of
+  // getFinalSubmissionReadiness agrees, not just the wrapper.
+  const hasNoActiveDocumentsTenderBlocker = (readiness.tenderLevelBlockers ?? []).some(
+    (b) => b.category === "NO_ACTIVE_GENERATED_DOCUMENTS",
+  );
+  const documentBlockers: FinalReadinessDocumentBlocker[] = readiness.failures
+    .filter((failure) => !(hasNoActiveDocumentsTenderBlocker && failure.documentId === "__tender__"))
+    .map((failure) => ({
+      documentId: failure.documentId,
+      name: failure.name,
+      fileName: failure.fileName,
+      reasons: failure.reasons,
+      severity: severityForReasons(failure.reasons),
+      nextActions: Array.from(new Set(failure.reasons.map(nextActionForReason))),
+    }));
 
   // Donor advisory persistence: honour user-saved resolutions so re-check
   // does not re-surface advisories the user already triaged.
