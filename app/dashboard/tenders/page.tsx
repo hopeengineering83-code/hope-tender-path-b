@@ -206,11 +206,20 @@ export default async function TendersPage({
     }).length,
   };
 
-  // Stage counts for pipeline visualization
+  // Stage counts for pipeline visualization.
+  // tender.stage is a free-form String column (not a Prisma enum), and at
+  // least one real production write path (app/api/tenders/[id]/ai-rematch/route.ts
+  // sets stage: "COMPLIANCE") writes a value outside STAGE_ORDER's six
+  // canonical names — those tenders were previously silently absent from
+  // every bucket below, so the bucket counts could sum to less than the
+  // "Total" tenders shown above them. otherCount makes that reconcile
+  // instead of hiding the discrepancy.
   const stageCounts = STAGE_ORDER.reduce<Record<string, number>>((acc, s) => {
     acc[s] = allTenders.filter((t) => t.stage === s).length;
     return acc;
   }, {});
+  const classifiedCount = STAGE_ORDER.reduce((sum, s) => sum + stageCounts[s], 0);
+  const otherCount = allTenders.length - classifiedCount;
 
   return (
     <div className="space-y-6">
@@ -276,6 +285,15 @@ export default async function TendersPage({
                   </div>
                 );
               })}
+              {otherCount > 0 && (
+                <div
+                  className="flex items-center gap-1.5 rounded-lg bg-slate-200 px-2.5 py-1 text-xs font-medium text-slate-700"
+                  title="Tenders whose stage value does not match one of the six pipeline stages above (e.g. set by a workflow outside the standard pipeline)"
+                >
+                  <span>Other</span>
+                  <span className="font-bold">{otherCount}</span>
+                </div>
+              )}
             </div>
           </div>
         </div>
