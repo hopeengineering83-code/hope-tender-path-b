@@ -231,6 +231,20 @@ describe("final-submission-readiness — CLIENT_NAME_MISSING blocker (source-lev
     assert.match(source, /hasNoActiveDocumentsTenderBlocker/);
     assert.match(source, /failure\.documentId === "__tender__"/);
   });
+
+  it("does not push SOURCE_TRACEABILITY_MISSING when checkFullExportReadiness's own SOURCE_REFERENCES_MISSING already covers it", () => {
+    // lib/engine/export-readiness.ts's ungroundedMandatory filter (seeded
+    // into tenderLevelBlockers above, producing SOURCE_REFERENCES_MISSING)
+    // uses the identical untraced-mandatory-requirement predicate as
+    // missingTraceability here (sourceConfidence <= 0, no
+    // sourceTenderFileId/sourcePageNumber/sourceExactQuote/sectionReference).
+    // SOURCE_REFERENCES_MISSING fires whenever any such requirement exists at
+    // all, so it always also fires once this function's own 10%-ratio
+    // SOURCE_TRACEABILITY_MISSING condition is met -- the same untraced-
+    // requirements fact would otherwise render as two separate blockers.
+    // Guarded here at the source so every consumer agrees.
+    assert.match(source, /!tenderLevelBlockers\.some\(\(b\) => b\.category === "SOURCE_REFERENCES_MISSING"\)/);
+  });
 });
 
 describe("final-submission-readiness — Prisma select includes extended entity fields", () => {

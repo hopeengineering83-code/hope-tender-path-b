@@ -1112,7 +1112,17 @@ export async function getFinalSubmissionReadiness(
         !(r.sectionReference ?? "").trim(),
     ).length;
     const missingRatio = missingTraceability / mandatoryRequirements.length;
-    if (missingRatio > 0.1) {
+    // checkFullExportReadiness (seeded into tenderLevelBlockers above) already
+    // pushes SOURCE_REFERENCES_MISSING from the exact same untraced-mandatory-
+    // requirement predicate (sourceConfidence <= 0, no file/page/quote/section)
+    // whenever any such requirement exists at all -- a strict subset of this
+    // 10%-ratio condition, so the two always co-occur once the ratio is
+    // crossed. Confirmed by a real cross-check: the underlying predicate in
+    // lib/engine/export-readiness.ts's ungroundedMandatory filter is
+    // identical to missingTraceability's filter here. Only emit when that
+    // check did not already cover it, so the same untraced-requirements fact
+    // does not render as two separate blockers.
+    if (missingRatio > 0.1 && !tenderLevelBlockers.some((b) => b.category === "SOURCE_REFERENCES_MISSING")) {
       tenderLevelBlockers.push({
         category: "SOURCE_TRACEABILITY_MISSING",
         severity: "MEDIUM",
