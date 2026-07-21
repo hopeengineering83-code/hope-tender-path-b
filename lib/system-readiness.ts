@@ -1,6 +1,6 @@
 import { prisma, prismaReady } from "./prisma";
 import { isEmailDeliveryConfigured } from "./email";
-import { resolveStorageProvider } from "./storage";
+import { getStorageReadiness } from "./storage";
 import {
   CANONICAL_AI_PROVIDER_ORDER,
   CANONICAL_AI_PROVIDER_DISPLAY_NAMES,
@@ -97,11 +97,20 @@ async function databaseChecks(): Promise<ReadinessCheck[]> {
 export async function getSystemReadiness(): Promise<SystemReadiness> {
   const checks = await databaseChecks();
   const configuredProviders = configuredAiProviders();
-  const storageProvider = resolveStorageProvider();
+  // getStorageReadiness() (lib/storage.ts) is the single canonical policy
+  // resolver for storage readiness -- it already accounts for
+  // isDatabaseStorageAllowed()'s default-allow-when-unset-and-no-token
+  // behavior. This check previously re-derived its own, subtly different
+  // condition (requiring ALLOW_DB_FILE_STORAGE === "true" exactly), which
+  // reported CRITICAL for a configuration lib/storage.ts itself treats as
+  // ready (unset ALLOW_DB_FILE_STORAGE + no Blob token, the default
+  // bounded-fallback-allowed state) -- an operator dashboard false alarm
+  // for storage that was actually working. Delegating avoids the two
+  // modules disagreeing about the same fact.
+  const storageReadiness = getStorageReadiness();
   const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
   const strongSessionSecret = (process.env.SESSION_SECRET ?? process.env.AUTH_SECRET ?? "").length >= 32;
   const smtpConfigured = isEmailDeliveryConfigured();
-  const durableStorage = storageProvider === "blob" || (storageProvider === "db-base64" && process.env.ALLOW_DB_FILE_STORAGE === "true");
 
   checks.push(
     {
@@ -114,11 +123,9 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
     {
       key: "file_storage",
       title: "Durable private file storage",
-      severity: !production || durableStorage ? "OK" : "CRITICAL",
+      severity: !production || storageReadiness.ready ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail: !production || durableStorage
-        ? `Storage provider: ${storageProvider}.`
-        : "Production requires Vercel Blob or an explicitly approved durable database storage mode.",
+      detail: `Storage provider: ${storageReadiness.provider}. ${storageReadiness.detail}`,
     },
     {
       key: "ai_providers",
