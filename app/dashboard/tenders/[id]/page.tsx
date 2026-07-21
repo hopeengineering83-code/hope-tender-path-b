@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
 import { ChevronDownIcon } from "../../../../components/icons";
 import { SubmissionPlanTruthPanel } from "../../../../components/submission-plan-truth-panel";
-import { AuthorityReviewTruthPanel } from "../../../../components/authority-review-truth-panel";
 import { RequirementTruthBanner } from "../../../../components/requirement-truth-banner";
 import { TenderWorkflowActionCenter } from "../../../../components/tender-workflow-action-center";
 import { ExtractionSnapshotPanel } from "../../../../components/extraction-snapshot-panel";
@@ -264,7 +263,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} canMutate={canMutate} />
         <SubmissionPlanTruthPanel tenderId={tender.id} />
         <SubmissionPlanReconciliationPanel tenderId={tender.id} />
-        <AuthorityReviewTruthPanel tenderId={tender.id} />
         <AuthorityReviewPanel tenderId={tender.id} />
         <DocumentValidatorPanel tenderId={tender.id} />
         <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />

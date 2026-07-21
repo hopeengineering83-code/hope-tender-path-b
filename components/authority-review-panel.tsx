@@ -156,6 +156,7 @@ function DocumentRow({ doc }: { doc: DocumentAuthorityScore }) {
 
 export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
   const [result, setResult] = useState<AuthorityReviewResult | null>(null);
+  const [primaryBlockerReason, setPrimaryBlockerReason] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -170,12 +171,15 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
       if (!res.ok || !body.success) {
         setError(body.message ?? body.error ?? "Authority review failed.");
         setResult(null);
+        setPrimaryBlockerReason(null);
       } else {
         setResult(body.authorityReview as AuthorityReviewResult);
+        setPrimaryBlockerReason(typeof body.primaryBlockerReason === "string" ? body.primaryBlockerReason : null);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Network error.");
       setResult(null);
+      setPrimaryBlockerReason(null);
     } finally {
       setLoading(false);
     }
@@ -200,7 +204,7 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
         : "border-red-200 bg-red-50";
 
   return (
-    <section id="authority-review-panel" className={`mb-4 rounded-2xl border p-5 shadow-sm ${result ? borderClass : "border-slate-200 bg-white"}`}>
+    <section id="authority-review" className={`mb-4 rounded-2xl border p-5 shadow-sm ${result ? borderClass : "border-slate-200 bg-white"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -224,6 +228,9 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
               ? "Final authority review is unavailable until required documents are generated and validated. Complete earlier workflow stages first."
               : "Scans all generated documents for AI traces, placeholders, internal notes, envelope mismatches, and manifest inconsistencies."}
           </p>
+          {!isReady && primaryBlockerReason && (
+            <p className="mt-1 text-sm font-medium text-red-700">{primaryBlockerReason}</p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {result && statusBadge(result.status)}

@@ -69,14 +69,24 @@ describe("workflow-center consumer contract", () => {
     assert.ok(branchCount >= 3, `id="submission-plan" must exist in loading, error, and loaded branches (found ${branchCount})`);
   });
 
-  it("AuthorityReviewTruthPanel consumes the dedicated route, keeps its anchor, and synchronizes", () => {
-    const src = readFileSync("components/authority-review-truth-panel.tsx", "utf8");
+  it("AuthorityReviewPanel consumes the dedicated route, keeps its anchor, and reads primaryBlockerReason", () => {
+    // The compact AuthorityReviewTruthPanel (a separate component previously
+    // mounted directly above this one, showing the same status/score fetched
+    // from the same endpoint) was removed as a confirmed duplicate panel —
+    // its one genuinely unique value, the #authority-review scroll anchor
+    // and the primaryBlockerReason text, were folded into this panel
+    // instead, so nothing is lost and the page no longer shows two
+    // authority-review status cards back to back.
+    const src = readFileSync("components/authority-review-panel.tsx", "utf8");
     assert.match(src, /fetch\(`\/api\/tenders\/\$\{tenderId\}\/authority-review`/);
     assert.match(src, /authorityReview/);
     assert.match(src, /primaryBlockerReason/);
-    assert.match(src, /subscribeTenderWorkflowSync/);
-    const branchCount = (src.match(/id="authority-review"/g) ?? []).length;
-    assert.ok(branchCount >= 3, `id="authority-review" must exist in loading, error, and loaded branches (found ${branchCount})`);
+    // AuthorityReviewPanel renders one persistent <section id="authority-review">
+    // wrapping every state (loading/error/loaded), not separate early-return
+    // branches, so the anchor is always present rather than needing to be
+    // duplicated per branch.
+    const idCount = (src.match(/id="authority-review"/g) ?? []).length;
+    assert.equal(idCount, 1, `id="authority-review" must exist exactly once on the persistent wrapping section (found ${idCount})`);
   });
 
   it("RequirementTruthBanner reads canonical analysis state and synchronizes the whole page", () => {

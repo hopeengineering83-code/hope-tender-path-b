@@ -11,7 +11,7 @@ const anchors: Array<{ anchor: string; file: string }> = [
   { anchor: "submission-plan", file: "components/submission-plan-truth-panel.tsx" },
   { anchor: "match-evidence", file: "components/matching-quality-panel.tsx" },
   { anchor: "generated-documents", file: "components/generation-action-panel.tsx" },
-  { anchor: "authority-review", file: "components/authority-review-truth-panel.tsx" },
+  { anchor: "authority-review", file: "components/authority-review-panel.tsx" },
   { anchor: "export-readiness", file: "components/export-readiness-panel.tsx" },
   { anchor: "final-package-manifest", file: "components/final-package-manifest-panel.tsx" },
 ];

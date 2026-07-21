@@ -102,6 +102,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
     });
 
+    // result.recommendedFixes was computed by runAuthorityReview from its own
+    // internal status (document-level blockers only) BEFORE canonicalBlockers
+    // and finalPackage.buildPlan.confirmed are folded into the outer `ok`
+    // gate below. When those add a blocker runAuthorityReview never saw (e.g.
+    // no confirmed Build Plan, zero documents generated), its "All authority
+    // review checks pass. Document is ready for final export." fix can leak
+    // through even though the tender is actually BLOCKED — confirmed by a
+    // real screenshot showing that exact contradiction. Strip it whenever the
+    // outer gate disagrees with the inner status.
+    const recommendedFixes = ok
+      ? result.recommendedFixes
+      : result.recommendedFixes.filter((fix) => fix !== "All authority review checks pass. Document is ready for final export.");
+
     return NextResponse.json({
       success: true,
       ...envelope,
@@ -109,6 +122,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       authorityReview: {
         ...result,
         status: ok ? "AUTHORITY_READY" : "BLOCKED",
+        recommendedFixes,
       },
       buildPlan: finalPackage.buildPlan,
       finalPackageBlockers: canonicalBlockers,
