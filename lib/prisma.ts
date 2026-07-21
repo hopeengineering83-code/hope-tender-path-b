@@ -100,7 +100,11 @@ async function verifySchemaPresent(client: PrismaClient): Promise<void> {
   }
 }
 
-async function bootstrap(client: PrismaClient): Promise<void> {
+// Exported so DB-integration tests can exercise the real seed path (schema
+// bootstrap + role/admin seeding) against a live database, instead of only
+// asserting on source text. Not used by any other application code path —
+// ensureBootstrapped() below is what production code actually calls.
+export async function bootstrap(client: PrismaClient): Promise<void> {
   if (!isRuntimeSchemaBootstrapEnabled()) {
     // Gap 6 — production path: never mutate schema or seed bootstrap users.
     // We only verify connectivity and that the schema exists so the first
