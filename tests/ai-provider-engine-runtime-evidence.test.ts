@@ -321,7 +321,11 @@ describe("Fix 13 — Engine response is partial/honest when AI matching fails", 
   it("engine route propagates partial/blockers/nextAction in the response", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
     assert.match(src, /partial: isPartial/);
-    assert.match(src, /blockers: engineMeta\.blockers/);
+    // blockers now combines the engine's own evidenceMatchingBlocker-derived
+    // blockers with any postcondition-check blockers (sync/async success
+    // criteria parity) — see combinedBlockers.
+    assert.match(src, /blockers: combinedBlockers/);
+    assert.match(src, /const combinedBlockers = \[\.\.\.\(engineMeta\.blockers \?\? \[\]\)/);
     assert.match(src, /nextAction: engineMeta\.nextAction/);
     // ok must be false when partial is true (honesty).
     assert.match(src, /ok: !isPartial/);
@@ -388,8 +392,11 @@ describe("Fix 16 — No raw provider/org/prompt error leaks", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
     // The catch block uses actionableEngineError (sanitized).
     assert.match(src, /actionableEngineError/);
-    // The success response includes blockers (array of safe messages) not raw errors.
-    assert.match(src, /blockers: engineMeta\.blockers \?\? \[\]/);
+    // The success response includes blockers (array of safe messages — engine
+    // blockers plus postcondition check codes, e.g. "NO_REQUIREMENTS_PERSISTED")
+    // not raw errors.
+    assert.match(src, /blockers: combinedBlockers/);
+    assert.match(src, /postconditions\.blockers/);
   });
 });
 

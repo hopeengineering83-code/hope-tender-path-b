@@ -9,6 +9,8 @@ import type { ReactNode } from "react";
 import { NotificationBell } from "../components/notification-bell";
 import { BuildVersionBadge } from "../../components/build-version-badge";
 import { HeaderPageTitle } from "../../components/header-page-title";
+import { SearchIcon } from "../../components/icons";
+import { DashboardGroupSubnav } from "../../components/dashboard-group-subnav";
 import {
   DASHBOARD_NAV_GROUPS,
   filterDashboardNavGroupsByRole,
@@ -72,9 +74,20 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       <main id="main-content" className="min-w-0 flex-1" tabIndex={-1}>
         <div className="sticky top-0 z-30 flex min-w-0 items-center justify-between border-b bg-white/90 px-4 py-2 backdrop-blur-sm xl:px-8">
           <HeaderPageTitle />
-          <NotificationBell initialUnread={unreadCount} />
+          <div className="flex items-center gap-1">
+            <Link
+              href="/dashboard/search"
+              aria-label="Global Search"
+              title="Global Search"
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            >
+              <SearchIcon />
+            </Link>
+            <NotificationBell initialUnread={unreadCount} />
+          </div>
         </div>
         <div className="mx-auto w-full min-w-0 max-w-7xl p-4 sm:p-6 xl:p-8">
+          <DashboardGroupSubnav setupComplete={Boolean(company?.setupCompletedAt)} />
           {children}
         </div>
       </main>

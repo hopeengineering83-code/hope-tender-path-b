@@ -23,34 +23,38 @@ describe("engine background-run availability", () => {
     );
   });
 
-  it("large vaults keep Safe Mode as a separate button alongside the background run", () => {
-    assert.match(src, /canMutate && isLargeVault && \(/);
-    assert.match(src, /Run Engine \(Safe Mode\)/);
-    assert.match(src, /Run in background\{isLargeVault \? " \(full AI\)" : ""\}/);
+  it("Safe Mode and the background run are both always visible, regardless of vault size (no vault-size-conditional swap)", () => {
+    // Consolidated to exactly two engine actions, unconditionally rendered
+    // for every mutating role — no isLargeVault ternary hides or swaps
+    // either one, and neither is duplicated in a banner below.
+    assert.match(src, /Run Safe Mode — Recommended/);
+    assert.match(src, /Run Full AI in Background/);
+    assert.doesNotMatch(src, /canMutate && isLargeVault && \(/, "Safe Mode must not be gated behind isLargeVault");
+    assert.doesNotMatch(src, /canMutate && !isLargeVault && \(/, "no vault-size-conditional sync-only button should remain");
   });
 
-  it("keeps detailed recovery controls open while the optional quick workflow stays collapsed", () => {
+  it("NextActionPanel is the one always-visible authoritative status card; Recovery Command Center / Release State / Final Submission Control Center are collapsed advanced diagnostics", () => {
     const page = readFileSync("app/dashboard/tenders/[id]/page.tsx", "utf8");
-    assert.match(page, /<details open=\{defaultOpen\}/);
+    assert.match(page, /<NextActionPanel tenderId=\{tender\.id\} \/>/, "NextActionPanel must render directly, not inside a collapsible Disclosure");
 
     const quickDisclosure = page.match(
       /<Disclosure\s+[\s\S]*?title="Quick workflow control"[\s\S]*?>/,
     )?.[0] ?? "";
-    const detailedDisclosure = page.match(
-      /<Disclosure\s+[\s\S]*?title="Detailed readiness and submission controls"[\s\S]*?>/,
+    const advancedDisclosure = page.match(
+      /<Disclosure\s+[\s\S]*?title="Advanced diagnostics"[\s\S]*?<\/Disclosure>/,
     )?.[0] ?? "";
 
     assert.ok(quickDisclosure, "quick workflow disclosure must exist");
-    assert.ok(detailedDisclosure, "detailed readiness disclosure must exist");
-    assert.doesNotMatch(
-      quickDisclosure,
-      /^\s*defaultOpen$/m,
-      "quick workflow is optional and must remain collapsed until opened",
-    );
-    assert.match(
-      detailedDisclosure,
-      /^\s*defaultOpen$/m,
-      "detailed recovery and readiness controls must remain visible by default",
-    );
+    assert.ok(advancedDisclosure, "advanced diagnostics disclosure must exist");
+    // Both secondary disclosures must be collapsed by default — neither
+    // duplicates NextActionPanel's status, so neither needs to compete for
+    // primary attention on page load.
+    assert.doesNotMatch(quickDisclosure, /defaultOpen/, "quick workflow must remain collapsed until opened");
+    assert.doesNotMatch(advancedDisclosure, /title="Advanced diagnostics"[\s\S]*?defaultOpen/, "advanced diagnostics (Recovery Command Center, Release State, Final Submission Control Center) must be collapsed, not competing with the status card above");
+    // The three previously-competing panels are still present (moved, not
+    // deleted) inside the collapsed advanced-diagnostics section.
+    assert.match(advancedDisclosure, /<TenderRecoveryCommandCenter/);
+    assert.match(advancedDisclosure, /<TenderReleaseStatePanel/);
+    assert.match(advancedDisclosure, /<FinalSubmissionControlCenter/);
   });
 });

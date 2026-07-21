@@ -3,13 +3,15 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
 const editor = readFileSync("app/dashboard/company/profile/page.tsx", "utf8");
-const layout = readFileSync("app/dashboard/company/layout.tsx", "utf8");
+const subnav = readFileSync("components/company-subnav.tsx", "utf8");
 
 describe("screenshot-driven company profile field labels", () => {
   it("provides a dedicated labeled editor from the Company Vault navigation", () => {
-    assert.match(layout, /href="\/dashboard\/company\/profile"/);
-    assert.match(layout, /Labeled Profile Editor/);
-    assert.match(layout, /aria-label="Company workspace"/);
+    assert.match(subnav, /href: "\/dashboard\/company\/profile"/);
+    assert.match(subnav, /Labeled Profile Editor/);
+    // The "Company workspace" aria-label is passed through to the shared
+    // SectionSubnav component, which renders it as aria-label={label}.
+    assert.match(subnav, /label="Company workspace"/);
   });
 
   it("keeps visible labels for company identity and contact values", () => {

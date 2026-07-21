@@ -21,11 +21,40 @@ const read = (p: string) => readFileSync(p, "utf8");
 describe("GAP A — Engine route returns success:false when partial", () => {
   it("does NOT return success:true when partial=true", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
-    assert.match(src, /const isPartial = engineMeta\.partial \?\? false/);
+    // isPartial now also considers the postcondition check (parity fix — see
+    // GAP I below) — must still be true whenever engineMeta.partial is true.
+    assert.match(src, /const isPartial = \(engineMeta\.partial \?\? false\) \|\| !postconditions\.ok/);
     assert.match(src, /success: !isPartial/);
     assert.match(src, /ok: !isPartial/);
     // Must NOT unconditionally return success: true.
     assert.doesNotMatch(src, /success: true,\s*\n\s*ok: !engineMeta\.partial/);
+  });
+});
+
+// ─── GAP I: Synchronous engine route uses the same postcondition check as
+//            the async ENGINE_RUN job handler (success-criteria parity) ────
+
+describe("GAP I — Synchronous Run Engine checks postconditions, same as the background job", () => {
+  it("calls checkEnginePostconditions after runTenderEngine, same as lib/ai-job-handlers.ts", () => {
+    const src = read("app/api/tenders/[id]/engine/route.ts");
+    assert.match(src, /import \{ checkEnginePostconditions \} from "\.\.\/\.\.\/\.\.\/\.\.\/\.\.\/lib\/engine\/engine-postconditions"/);
+    const runPos = src.indexOf("const result = await runTenderEngine(");
+    const postconditionsPos = src.indexOf("const postconditions = await checkEnginePostconditions(id)");
+    assert.ok(runPos > -1 && postconditionsPos > runPos, "postcondition check must run after the synchronous engine run completes");
+  });
+
+  it("a postcondition failure alone (no evidenceMatchingBlocker) still forces isPartial/success:false", () => {
+    const src = read("app/api/tenders/[id]/engine/route.ts");
+    assert.match(src, /const isPartial = \(engineMeta\.partial \?\? false\) \|\| !postconditions\.ok/);
+    assert.match(src, /const combinedBlockers = \[\.\.\.\(engineMeta\.blockers \?\? \[\]\), \.\.\.\(postconditions\.ok \? \[\] : postconditions\.blockers\)\]/);
+    assert.match(src, /nextAction: engineMeta\.nextAction \?\? \(postconditions\.ok \? null : "REVIEW_MATCHING_INPUTS"\)/);
+  });
+
+  it("does not weaken the pre-run extraction/analysis gates that still return early", () => {
+    const src = read("app/api/tenders/[id]/engine/route.ts");
+    for (const code of ["NO_TENDER_FILES", "EXTRACTION_CORRUPTED_ENGINE_SKIPPED", "EXTRACTION_QUALITY_ENGINE_BLOCKED", "ANALYSIS_FROM_CORRUPTED_EXTRACTION", "ANALYSIS_FROM_WEAK_EXTRACTION"]) {
+      assert.match(src, new RegExp(code));
+    }
   });
 });
 

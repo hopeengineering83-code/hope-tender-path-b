@@ -45,12 +45,14 @@ test("unadvertised admin root has no active item", () => {
   assert.equal(getActiveDashboardHref("/dashboard/admin", groups), null);
 });
 
-test("canonical navigation keeps route and icon identities unique and complete", () => {
+test("canonical navigation keeps route and icon identities unique and complete (post-consolidation: 6 primary destinations)", () => {
   const links = flattenDashboardLinks(DASHBOARD_NAV_GROUPS);
-  assert.equal(links.length, 23);
+  // Consolidated from 23 top-level items down to 6 — Tenders (+2 members),
+  // Company Vault (+7 members), Engine (+2 members), Documents & Export
+  // (+1 member), Administration (+6 members), plus Overview.
+  assert.equal(links.length, 6);
   assert.equal(new Set(links.map((link) => link.href)).size, links.length);
   assert.ok(links.every((link) => link.iconName.endsWith("Icon")));
-  assert.ok(links.some((link) => link.href === "/dashboard/admin/ai-readiness"));
   assert.ok(links.some((link) => link.href === "/dashboard/documents"));
 
   // Every nav item must render a visually distinct icon. Two links sharing an
@@ -69,6 +71,46 @@ test("canonical navigation keeps route and icon identities unique and complete",
     [],
     `duplicate nav icons: ${duplicates.map(([icon, hrefs]) => `${icon} used by ${hrefs.join(", ")}`).join("; ")}`,
   );
+});
+
+test("no route is advertised as a primary href in one link and also listed as a memberHref of another", () => {
+  const links = flattenDashboardLinks(DASHBOARD_NAV_GROUPS);
+  const primaryHrefs = new Set(links.map((link) => link.href));
+  for (const link of links) {
+    for (const member of link.memberHrefs ?? []) {
+      assert.ok(!primaryHrefs.has(member), `"${member}" is both a primary href and a memberHref of "${link.href}" — one active destination only`);
+    }
+  }
+});
+
+test("consolidated member routes (not path-nested under their group's primary href) still resolve to the one correct sidebar destination", () => {
+  // These pairs are exactly the "combine under one destination" cases from
+  // the app-wide consolidation — none of them share a path prefix with
+  // their group's primary href, so only the memberHrefs mechanism (not
+  // ordinary prefix matching) can attribute them correctly.
+  const cases: Array<[string, string]> = [
+    ["/dashboard/history", "/dashboard/tenders"],
+    ["/dashboard/calendar", "/dashboard/tenders"],
+    ["/dashboard/assets", "/dashboard/company"],
+    ["/dashboard/setup", "/dashboard/company"],
+    ["/dashboard/settings", "/dashboard/company"],
+    ["/dashboard/matching", "/dashboard/analysis"],
+    ["/dashboard/compliance", "/dashboard/analysis"],
+    ["/dashboard/export", "/dashboard/documents"],
+    ["/dashboard/analytics", "/dashboard/activity"],
+    ["/dashboard/admin/ai-readiness", "/dashboard/activity"],
+    ["/dashboard/system", "/dashboard/activity"],
+    ["/dashboard/admin/safety-center", "/dashboard/activity"],
+    ["/dashboard/users", "/dashboard/activity"],
+    ["/dashboard/admin", "/dashboard/activity"],
+  ];
+  for (const [memberRoute, expectedPrimary] of cases) {
+    assert.equal(
+      getActiveDashboardHref(memberRoute, DASHBOARD_NAV_GROUPS),
+      expectedPrimary,
+      `visiting ${memberRoute} must activate the ${expectedPrimary} sidebar destination`,
+    );
+  }
 });
 
 test("role presentation filtering preserves shared groups and hides restricted groups", () => {

@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { PlayIcon, BoltIcon, ClockIcon } from "./icons";
+import { BoltIcon, ClockIcon } from "./icons";
 
 // Renders one engine blocker regardless of which route path produced it.
 // String blockers ARE the message and are shown verbatim; object blockers
@@ -462,15 +462,12 @@ export function EngineActionPanel({
     onSuccess: () => startTransition(() => router.refresh()),
   };
 
-  // Both wrappers delegate to the exported dispatchers, which re-check
-  // canMutate before any network call — conditional rendering hides these
-  // controls for read-only roles, and this guard holds even if a callback
-  // is somehow invoked anyway.
-  async function runEngine(force = false) {
-    if (!canMutate) return;
-    await executeEngineRun({ tenderId, canMutate, force, lifecycleBlockersExist, callbacks });
-  }
-
+  // This wrapper delegates to the exported dispatcher, which re-checks
+  // canMutate before any network call — conditional rendering hides this
+  // control for read-only roles, and this guard holds even if the callback
+  // is somehow invoked anyway. (The synchronous executeEngineRun dispatcher
+  // stays exported for its own direct tests and callers outside this panel;
+  // this panel's two visible actions both go through the async job queue.)
   async function runEngineAsync(force = false, extraParams: Record<string, string> = {}) {
     if (!canMutate) return;
     await executeEngineRunAsync({ tenderId, canMutate, force, extraParams, lifecycleBlockersExist, callbacks });
@@ -496,47 +493,30 @@ export function EngineActionPanel({
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {/* Sync run — only show for small vaults; large vaults should
-              always go async+safe to avoid the 60s Vercel cap */}
-          {canMutate && !isLargeVault && (
+          {/* Exactly two engine actions, always — no vault-size-conditional
+              swapping and no second copy of either action in a banner below.
+              Both go through the async job queue (its own per-chunk function
+              budget escapes the 60s Vercel cap), so Safe Mode is reliably
+              fast and Full AI never dead-ends on large vaults. */}
+          {canMutate && (
             <button
-              onClick={() => runEngine(false)}
+              onClick={() => runEngineAsync(false, { safe: "true", skipAiRematch: "true" })}
               disabled={running || isPending}
               className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              title="Synchronous — bound to 60s Vercel route cap"
+              title="Deterministic matching only — always completes within the function budget"
             >
-              <PlayIcon /> {running || isPending ? "Running…" : "Run Engine"}
+              {running && asyncStatus ? <><ClockIcon /> Running…</> : <><BoltIcon /> Run Safe Mode — Recommended</>}
             </button>
           )}
-          {/* For large vaults, the primary CTA uses safe mode (skips AI
-              rematch) so a run always completes within the sync budget.
-              The full-AI background run stays available alongside it —
-              Safe Mode's own result message says "Re-run in background
-              mode for AI multi-perspective scoring", so hiding the
-              background button for large vaults created a circular dead
-              end (observed live). The async ENGINE_RUN job has its own
-              per-chunk function budget and is exactly that remedy. */}
-          {canMutate && isLargeVault && (
-          <button
-            onClick={() => runEngineAsync(false, { safe: "true", skipAiRematch: "true" })}
-            disabled={running || isPending}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500 bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
-            title="Large vault: Safe Mode (skips AI rematch) — always completes within the function budget"
-          >
-            {running && asyncStatus ? <><ClockIcon /> Running in background…</> : <><BoltIcon /> Run Engine (Safe Mode)</>}
-          </button>
-          )}
           {canMutate && (
-          <button
-            onClick={() => runEngineAsync(false)}
-            disabled={running || isPending}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-            title="Queues an AiJob with full AI evidence matching and watches it in the background — its own per-chunk budget escapes the 60s cap"
-          >
-            {running && asyncStatus
-              ? <><ClockIcon /> Running in background…</>
-              : <><ClockIcon /> Run in background{isLargeVault ? " (full AI)" : ""}</>}
-          </button>
+            <button
+              onClick={() => runEngineAsync(false)}
+              disabled={running || isPending}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+              title="Queues an AiJob with full AI evidence matching and watches it in the background — its own per-chunk budget escapes the 60s cap"
+            >
+              {running && asyncStatus ? <><ClockIcon /> Running…</> : <><ClockIcon /> Run Full AI in Background</>}
+            </button>
           )}
           {!canMutate && (
             <p className="text-xs text-slate-500 italic self-center">Read-only — engine actions require ADMIN or PROPOSAL_MANAGER role</p>
@@ -546,31 +526,12 @@ export function EngineActionPanel({
 
       {canMutate && isLargeVault && !result && !running && (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <p className="font-semibold">Large vault detected — use Safe Mode for reliable matching</p>
+          <p className="font-semibold">Large vault detected — Safe Mode is recommended</p>
           <p className="mt-1">
             Your vault has <strong>{vaultReviewedExperts}</strong> reviewed expert(s) and <strong>{vaultReviewedProjects}</strong> reviewed project(s).
-            Matching this many records can exceed Vercel&apos;s 60-second function limit.
-            Use <strong>Run Safe Mode</strong> (skips AI rematch, uses deterministic scoring) for a reliable first run.
-            You can follow up with a full AI rematch once matches exist.
+            Matching this many records with full AI scoring can take a while — <strong>Run Safe Mode — Recommended</strong> above
+            uses deterministic scoring for a fast, reliable first pass. Follow up with <strong>Run Full AI in Background</strong> once matches exist.
           </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              onClick={() => runEngineAsync(false, { safe: "true", skipAiRematch: "true" })}
-              disabled={running || isPending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-800 disabled:cursor-not-allowed disabled:opacity-60"
-              title="Run Engine in Safe Mode — skips AI rematch, uses deterministic scoring"
-            >
-              <BoltIcon /> Run Safe Mode (recommended)
-            </button>
-            <button
-              onClick={() => runEngineAsync(false)}
-              disabled={running || isPending}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
-              title="Run full Engine with AI rematch (may exceed 60s on large vaults)"
-            >
-              <PlayIcon /> Run full mode anyway
-            </button>
-          </div>
         </div>
       )}
 

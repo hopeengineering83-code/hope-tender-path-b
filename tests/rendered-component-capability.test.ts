@@ -45,15 +45,11 @@ import { canMutateTender } from "../lib/recovery-command-actions";
 const h = React.createElement;
 
 const MUTATION_LABELS = [
-  "Run Engine",
+  "Run Safe Mode",
+  "Run Full AI in Background",
   "Force run once",
-  "Run in background",
-  "Run Engine (Safe Mode)",
-  "Run Safe Mode (recommended)",
-  "Run full mode anyway",
   "Retry background run",
   "Retry from start",
-  "Run Safe Mode",
   "Skip AI Rematch",
 ];
 
@@ -158,13 +154,19 @@ describe("EngineActionPanel — REVIEWER / omitted canMutate render states (real
 });
 
 describe("EngineActionPanel — ADMIN and PROPOSAL_MANAGER retain controls (real render + real dispatch)", () => {
-  it("ADMIN normal state: Run Engine + Run in background visible; clicking Run Engine dispatches the POST", async () => {
+  it("ADMIN normal state: exactly two engine actions visible (no vault-size-conditional duplicate); clicking Safe Mode dispatches the POST", async () => {
     const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1", canMutate: adminCanMutate }));
     const labels = buttonLabels(container);
-    assert.ok(labels.some((l) => l.includes("Run Engine")), "ADMIN must see Run Engine");
-    assert.ok(labels.some((l) => l.includes("Run in background")), "ADMIN must see Run in background");
+    assert.ok(labels.some((l) => l.includes("Run Safe Mode — Recommended")), "ADMIN must see the primary Safe Mode action");
+    assert.ok(labels.some((l) => l.includes("Run Full AI in Background")), "ADMIN must see the secondary background-AI action");
+    // Exactly one button invokes each action — no duplicate rendering of the
+    // same engine action anywhere in this idle (no-result) state.
+    const safeModeButtons = labels.filter((l) => l.includes("Run Safe Mode"));
+    const fullAiButtons = labels.filter((l) => l.includes("Run Full AI in Background"));
+    assert.equal(safeModeButtons.length, 1, `expected exactly 1 Safe Mode button, got: ${JSON.stringify(safeModeButtons)}`);
+    assert.equal(fullAiButtons.length, 1, `expected exactly 1 Full AI background button, got: ${JSON.stringify(fullAiButtons)}`);
 
-    const runButton = findButton(container, "Run Engine");
+    const runButton = findButton(container, "Run Safe Mode — Recommended");
     assert.ok(runButton);
     fireEvent.click(runButton!);
     await waitFor(() => {
@@ -175,7 +177,7 @@ describe("EngineActionPanel — ADMIN and PROPOSAL_MANAGER retain controls (real
     });
   });
 
-  it("PROPOSAL_MANAGER large-vault state: Safe Mode banner and both large-vault buttons visible", () => {
+  it("PROPOSAL_MANAGER large-vault state: informational banner only, no duplicate buttons inside it", () => {
     const { container } = renderWithRouter(h(EngineActionPanel, {
       tenderId: "t1",
       canMutate: pmCanMutate,
@@ -183,19 +185,30 @@ describe("EngineActionPanel — ADMIN and PROPOSAL_MANAGER retain controls (real
       vaultReviewedProjects: 10,
     }));
     assert.ok((container.textContent ?? "").includes("Large vault detected"), "PM must see the Safe Mode banner");
-    assert.ok(findButton(container, "Run Safe Mode (recommended)"), "PM must see Run Safe Mode (recommended)");
-    assert.ok(findButton(container, "Run full mode anyway"), "PM must see Run full mode anyway");
+    // Still exactly one Safe Mode button and one background-AI button overall
+    // — the banner explains the recommendation in text only, it does not
+    // render its own copy of either action.
+    const labels = buttonLabels(container);
+    assert.equal(labels.filter((l) => l.includes("Run Safe Mode")).length, 1, "the large-vault banner must not duplicate the Safe Mode button");
+    assert.equal(labels.filter((l) => l.includes("Run Full AI in Background")).length, 1, "the large-vault banner must not duplicate the background-AI button");
   });
 
-  it("ADMIN failure/retry state: retry buttons visible", () => {
+  it("ADMIN failure/retry state: retry buttons visible alongside (not instead of) the two primary actions", () => {
     const { container } = renderWithRouter(h(EngineActionPanel, {
       tenderId: "t1",
       canMutate: adminCanMutate,
       initialResult: { code: "ASYNC_ENGINE_FAILED", error: "Worker failed." },
     }));
     assert.ok(findButton(container, "Retry from start"), "ADMIN must see Retry from start");
-    assert.ok(findButton(container, "Run Safe Mode"), "ADMIN must see Run Safe Mode");
     assert.ok(findButton(container, "Skip AI Rematch"), "ADMIN must see Skip AI Rematch");
+    // The retry panel's own "Run Safe Mode" (safe:true only, no skipAiRematch)
+    // is a distinct recovery action from the primary "Run Safe Mode —
+    // Recommended" CTA (safe:true AND skipAiRematch:true) — both are
+    // legitimately present here, so exactly two buttons should match the
+    // "Run Safe Mode" substring in this state (unlike the idle state above,
+    // which must have exactly one).
+    const labels = buttonLabels(container);
+    assert.equal(labels.filter((l) => l.includes("Run Safe Mode")).length, 2, `expected the primary CTA + the retry-panel action, got: ${JSON.stringify(labels)}`);
   });
 });
 

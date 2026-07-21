@@ -18,6 +18,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { WarningIcon, CrossIcon, CheckCircleIcon, RefreshIcon, ArrowRightIcon, ShareIcon } from "./icons";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
+import { scoreTone, verdictLabel } from "../lib/ui/tender-release-state-presentation";
 import { BidDecisionForm } from "./bid-decision-form";
 
 type TenderReleaseBlockerSeverity = "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
@@ -49,19 +50,6 @@ type TenderReleaseState = {
   fixtureData: boolean;
   deploymentEnvironment: string;
 };
-
-function scoreTone(score: number): { text: string; bg: string; bar: string } {
-  if (score >= 80) return { text: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", bar: "bg-emerald-500" };
-  if (score >= 50) return { text: "text-amber-700", bg: "bg-amber-50 border-amber-200", bar: "bg-amber-400" };
-  return { text: "text-red-700", bg: "bg-red-50 border-red-200", bar: "bg-red-500" };
-}
-
-function verdictLabel(verdict: TenderReleaseState["verdict"]): { label: string; tone: string } {
-  if (verdict === "BID") return { label: "BID", tone: "bg-emerald-100 text-emerald-700" };
-  if (verdict === "BID_WITH_CONDITIONS") return { label: "BID WITH CONDITIONS", tone: "bg-amber-100 text-amber-700" };
-  if (verdict === "NO_BID") return { label: "NO BID", tone: "bg-red-100 text-red-700" };
-  return { label: "Decision unavailable", tone: "bg-slate-100 text-slate-500" };
-}
 
 function severityBadgeClass(severity: TenderReleaseBlockerSeverity): string {
   if (severity === "CRITICAL") return "bg-red-100 text-red-700";

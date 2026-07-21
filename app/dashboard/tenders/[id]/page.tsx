@@ -215,10 +215,15 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
       </Disclosure>
 
+      {/* Advanced diagnostics — NextActionPanel above is the one authoritative
+          status card (tender status, readiness score, bid verdict, current
+          blocker, next required action). These three panels go deeper
+          (execute controls, full blocker detail, the export-ZIP step
+          checklist) but must not compete with it for primary attention, so
+          this section stays collapsed by default. */}
       <Disclosure
-        title="Detailed readiness and submission controls"
-        description="Canonical release state, recovery actions, and final-submission diagnostics."
-        defaultOpen
+        title="Advanced diagnostics"
+        description="Recovery Command Center, full release-state detail, and Final Submission Control Center — open only if you need deeper diagnostics than the status card above."
       >
         <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
         {/* showNextAction=false: NextActionPanel above already renders the

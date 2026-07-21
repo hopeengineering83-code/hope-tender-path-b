@@ -86,13 +86,15 @@ describe("Spec Test 2 — Generate Docs button renders BoltIcon + text", () => {
 
 // ─── 3. Validate button renders CheckIcon and visible text ───────────────────
 
-// ─── 4. Run Engine button renders PlayIcon/BoltIcon and visible text ─────────
+// ─── 4. Engine actions render distinct icons and visible text ───────────────
 
-describe("Spec Test 4 — Run Engine button renders PlayIcon/BoltIcon + text", () => {
-  it("engine-action-panel.tsx Run Engine button has PlayIcon", () => {
+describe("Spec Test 4 — Engine action buttons render distinct icons + text", () => {
+  it("engine-action-panel.tsx Safe Mode button has BoltIcon and Full AI Background button has ClockIcon", () => {
     const src = readComponent("engine-action-panel.tsx");
-    assert.ok(src.includes("<PlayIcon"), "engine-action-panel Run Engine button must render PlayIcon");
-    assert.ok(/Run Engine/.test(src), "engine-action-panel must have visible 'Run Engine' text");
+    assert.ok(src.includes("<BoltIcon"), "Safe Mode button must render BoltIcon");
+    assert.ok(src.includes("<ClockIcon"), "Full AI Background button must render ClockIcon");
+    assert.ok(/Run Safe Mode — Recommended/.test(src), "engine-action-panel must have visible 'Run Safe Mode — Recommended' text");
+    assert.ok(/Run Full AI in Background/.test(src), "engine-action-panel must have visible 'Run Full AI in Background' text");
   });
 });
 

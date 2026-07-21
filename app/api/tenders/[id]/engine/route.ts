@@ -9,6 +9,7 @@ import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../..
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-jobs";
+import { checkEnginePostconditions } from "../../../../../lib/engine/engine-postconditions";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -160,15 +161,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       analysisMethod?: string;
       evidenceMatchingBlocker?: { code: string; message: string } | null;
     };
-    const isPartial = engineMeta.partial ?? false;
+
+    // ─── Postcondition validation — same check as the async ENGINE_RUN job ──
+    // Previously ONLY the background job handler (lib/ai-job-handlers.ts)
+    // verified real postconditions (zero requirements persisted, zero
+    // evidence rows, zero expert/project matches) after the engine ran; this
+    // synchronous path used a narrower success criterion (only whether the
+    // AI rematch itself failed), so a sync run that produced zero usable
+    // output for any other reason still reported success:true. Both paths
+    // must use the same success criteria: never report success when
+    // required postconditions are missing.
+    const postconditions = await checkEnginePostconditions(id);
+    if (!postconditions.ok) {
+      logger.warn(`[engine route] Postcondition check failed after synchronous run: ${postconditions.blockers.join(", ")}`, { diagnosticId, tenderId: id });
+    }
+    const isPartial = (engineMeta.partial ?? false) || !postconditions.ok;
+    const combinedBlockers = [...(engineMeta.blockers ?? []), ...(postconditions.ok ? [] : postconditions.blockers)];
     return NextResponse.json({
       success: !isPartial,
       ok: !isPartial,
       partial: isPartial,
-      blockers: engineMeta.blockers ?? [],
-      nextAction: engineMeta.nextAction ?? null,
+      blockers: combinedBlockers,
+      nextAction: engineMeta.nextAction ?? (postconditions.ok ? null : "REVIEW_MATCHING_INPUTS"),
       analysisMethod: engineMeta.analysisMethod ?? null,
       evidenceMatchingBlocker: engineMeta.evidenceMatchingBlocker ?? null,
+      postconditionCounts: postconditions.ok ? undefined : postconditions.counts,
       tender: result,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
       diagnosticId,

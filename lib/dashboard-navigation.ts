@@ -27,6 +27,18 @@ export type DashboardNavLink = {
   href: string;
   label: string;
   iconName: DashboardNavIconName;
+  /**
+   * Sibling routes consolidated under this one sidebar destination (see the
+   * app-wide route/panel consolidation) that are NOT nested under `href` as
+   * a path prefix — e.g. "/dashboard/history" under the "Tenders" entry
+   * whose href is "/dashboard/tenders". Members that already share a path
+   * prefix with `href` (like "/dashboard/company/profile" under
+   * "/dashboard/company") don't need to be listed here; prefix matching in
+   * getActiveDashboardHref already covers them. Every member route still
+   * exists exactly where it always did — nothing here changes routing,
+   * only which single sidebar item is shown as active.
+   */
+  memberHrefs?: string[];
 };
 
 export type DashboardNavGroup = {
@@ -56,7 +68,9 @@ export function isDashboardRouteWithin(pathname: string, href: string): boolean 
 /**
  * Returns one authoritative active navigation href.
  *
- * Exact matches win. Otherwise the longest path-segment-safe parent wins.
+ * Exact matches win. Then an exact match against a link's memberHrefs
+ * (consolidated sibling routes that aren't a path-prefix of the link's own
+ * href). Otherwise the longest path-segment-safe parent wins.
  */
 export function getActiveDashboardHref(
   pathname: string,
@@ -67,6 +81,11 @@ export function getActiveDashboardHref(
 
   const exact = links.find((link) => normalizePath(link.href) === current);
   if (exact) return exact.href;
+
+  const memberMatch = links.find((link) =>
+    link.memberHrefs?.some((member) => normalizePath(member) === current),
+  );
+  if (memberMatch) return memberMatch.href;
 
   const parents = links
     .filter((link) => isDashboardRouteWithin(current, link.href))
@@ -81,6 +100,17 @@ export function getActiveDashboardHref(
  * Keep route labels, role visibility, and icon identities together so desktop
  * and mobile navigation cannot drift. Route and API authorization remain
  * server-side security boundaries; this registry controls presentation only.
+ *
+ * Consolidated (app-wide route/panel consolidation) from 23 top-level items
+ * down to 6: related destinations that used to compete for separate sidebar
+ * slots are now one destination each, with the other routes in the group
+ * reachable via that page's cross-navigation tab bar (components/
+ * section-subnav.tsx, components/company-subnav.tsx,
+ * components/dashboard-group-subnav.tsx) instead of the sidebar. No route
+ * was renamed, moved, or removed — every href below and every memberHref
+ * resolves exactly where it always did, so no redirect was needed. Global
+ * Search moved to the header (see app/dashboard/layout.tsx) since it isn't
+ * a workspace destination.
  */
 export const DASHBOARD_NAV_GROUPS: DashboardNavGroup[] = [
   {
@@ -88,46 +118,69 @@ export const DASHBOARD_NAV_GROUPS: DashboardNavGroup[] = [
     roles: null,
     links: [
       { href: "/dashboard", label: "Overview", iconName: "HomeIcon" },
-      { href: "/dashboard/tenders", label: "Active Tenders", iconName: "ListIcon" },
-      { href: "/dashboard/history", label: "Tender History", iconName: "ClockIcon" },
-      { href: "/dashboard/calendar", label: "Deadline Calendar", iconName: "CalendarIcon" },
+      {
+        href: "/dashboard/tenders",
+        label: "Tenders",
+        iconName: "ListIcon",
+        memberHrefs: ["/dashboard/history", "/dashboard/calendar"],
+      },
     ],
   },
   {
     title: "Knowledge",
     roles: ["ADMIN", "PROPOSAL_MANAGER"],
     links: [
-      { href: "/dashboard/company", label: "Knowledge Vault", iconName: "DatabaseIcon" },
-      { href: "/dashboard/company/readiness", label: "Profile Readiness", iconName: "TrendingUpIcon" },
-      { href: "/dashboard/company/plan-b-import", label: "Legacy Data Import", iconName: "UploadIcon" },
-      { href: "/dashboard/company/review-board", label: "Review Board", iconName: "ClipboardCheckIcon" },
-      { href: "/dashboard/company/review", label: "Data Diagnostics", iconName: "CodeIcon" },
-      { href: "/dashboard/assets", label: "Brand Assets", iconName: "ImageIcon" },
-      { href: "/dashboard/setup", label: "Setup Wizard", iconName: "FlagIcon" },
-      { href: "/dashboard/settings", label: "Settings", iconName: "SettingsIcon" },
+      {
+        href: "/dashboard/company",
+        label: "Company Vault",
+        iconName: "DatabaseIcon",
+        memberHrefs: [
+          "/dashboard/company/readiness",
+          "/dashboard/company/plan-b-import",
+          "/dashboard/company/review-board",
+          "/dashboard/company/review",
+          "/dashboard/assets",
+          "/dashboard/setup",
+          "/dashboard/settings",
+        ],
+      },
     ],
   },
   {
     title: "Engine",
     roles: null,
     links: [
-      { href: "/dashboard/analysis", label: "Global Analysis", iconName: "BrainIcon" },
-      { href: "/dashboard/matching", label: "Global Matching", iconName: "PuzzleIcon" },
-      { href: "/dashboard/compliance", label: "Global Compliance", iconName: "ShieldIcon" },
-      { href: "/dashboard/documents", label: "Document Archive", iconName: "DocumentIcon" },
-      { href: "/dashboard/export", label: "Export Hub", iconName: "PackageIcon" },
-      { href: "/dashboard/activity", label: "Activity Logs", iconName: "BellIcon" },
-      { href: "/dashboard/analytics", label: "System Analytics", iconName: "BarChartIcon" },
-      { href: "/dashboard/search", label: "Global Search", iconName: "SearchIcon" },
+      {
+        href: "/dashboard/analysis",
+        label: "Engine",
+        iconName: "BrainIcon",
+        memberHrefs: ["/dashboard/matching", "/dashboard/compliance"],
+      },
+      {
+        href: "/dashboard/documents",
+        label: "Documents & Export",
+        iconName: "DocumentIcon",
+        memberHrefs: ["/dashboard/export"],
+      },
     ],
   },
   {
     title: "Admin",
     roles: ["ADMIN"],
     links: [
-      { href: "/dashboard/users", label: "User Management", iconName: "UsersIcon" },
-      { href: "/dashboard/admin/ai-readiness", label: "AI Readiness", iconName: "SparklesIcon" },
-      { href: "/dashboard/system", label: "System Status", iconName: "GaugeIcon" },
+      {
+        href: "/dashboard/activity",
+        label: "Administration",
+        iconName: "GaugeIcon",
+        memberHrefs: [
+          "/dashboard/analytics",
+          "/dashboard/admin/ai-readiness",
+          "/dashboard/system",
+          "/dashboard/admin/safety-center",
+          "/dashboard/users",
+          "/dashboard/admin",
+        ],
+      },
     ],
   },
 ];
@@ -157,12 +210,32 @@ export function filterDashboardNavGroupsByRole(
  * these as it does to the primary registry, so a route being here doesn't
  * let it accidentally win over a more specific primary nav entry, or lose to
  * a shorter one.
+ *
+ * Also covers every consolidated memberHref above: each keeps its own
+ * specific header title (e.g. "Tender History", not the group's "Tenders")
+ * even though it's no longer its own sidebar item.
  */
 const SUPPLEMENTARY_ROUTE_LABELS: Array<{ route: string; label: string }> = [
   { route: "/dashboard/account", label: "Account" },
   { route: "/dashboard/admin", label: "Admin" },
   { route: "/dashboard/admin/safety-center", label: "System Safety Center" },
   { route: "/dashboard/company/profile", label: "Company Profile Editor" },
+  { route: "/dashboard/history", label: "Tender History" },
+  { route: "/dashboard/calendar", label: "Deadline Calendar" },
+  { route: "/dashboard/company/readiness", label: "Profile Readiness" },
+  { route: "/dashboard/company/plan-b-import", label: "Legacy Data Import" },
+  { route: "/dashboard/company/review-board", label: "Review Board" },
+  { route: "/dashboard/company/review", label: "Data Diagnostics" },
+  { route: "/dashboard/assets", label: "Brand Assets" },
+  { route: "/dashboard/setup", label: "Setup Wizard" },
+  { route: "/dashboard/settings", label: "Settings" },
+  { route: "/dashboard/matching", label: "Global Matching" },
+  { route: "/dashboard/compliance", label: "Global Compliance" },
+  { route: "/dashboard/export", label: "Export Hub" },
+  { route: "/dashboard/analytics", label: "System Analytics" },
+  { route: "/dashboard/admin/ai-readiness", label: "AI Readiness" },
+  { route: "/dashboard/system", label: "System Status" },
+  { route: "/dashboard/users", label: "User Management" },
 ];
 
 /**

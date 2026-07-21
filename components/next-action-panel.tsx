@@ -14,7 +14,10 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
+import { getTenderReleaseState } from "../lib/engine/tender-release-state";
+import { scoreTone, verdictLabel } from "../lib/ui/tender-release-state-presentation";
 import { CheckCircleIcon, WarningIcon, ArrowRightIcon } from "./icons";
+import { StatusBadge } from "./status-badge";
 import { WorkflowStepLinks } from "./workflow-step-links";
 
 // Labels MUST match the server-side stage labels in
@@ -123,7 +126,18 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   if (!tender) return null;
 
-  const decision = await getCanonicalTenderWorkflowDecision(prisma, userId, tenderId);
+  // Fetched alongside the canonical decision (getTenderReleaseState calls the
+  // same getCanonicalTenderWorkflowDecision internally, so this adds one
+  // extra query, not a second competing truth) so this single card can show
+  // tender status + readiness score + verdict together with the next
+  // required action — the four other panels that used to render these
+  // separately (Recovery Command Center, Tender Release State, Final
+  // Submission Control Center) are collapsed into "Advanced diagnostics"
+  // below instead of competing with this card.
+  const [decision, releaseState] = await Promise.all([
+    getCanonicalTenderWorkflowDecision(prisma, userId, tenderId),
+    getTenderReleaseState(prisma, tenderId, userId),
+  ]);
   if (!decision) return null;
 
   const step = stepFromCanonicalAction(decision.nextRequiredAction);
@@ -148,8 +162,37 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
     requirementCount: 0,
   }, tender.metadataOverrides);
 
+  const tone = releaseState?.readinessCalculable && releaseState.readinessScore != null
+    ? scoreTone(releaseState.readinessScore)
+    : { text: "text-slate-500", bg: "bg-slate-50 border-slate-200", bar: "bg-slate-300" };
+  const verdict = verdictLabel(releaseState?.verdict ?? null);
+
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${stepColor(step)}`} aria-labelledby="next-required-action-title">
+      {/* Authoritative status row — tender status, readiness score, and bid
+          verdict together, so this is the one place a user checks for "where
+          does this tender stand" instead of three separate panels below. */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-black/5 pb-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tender status</p>
+          <div className="mt-1"><StatusBadge status={tender.status} /></div>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Readiness score</p>
+          <p className="mt-1">
+            {releaseState?.readinessCalculable && releaseState.readinessScore != null ? (
+              <span className={`text-2xl font-bold ${tone.text}`}>{releaseState.readinessScore}<span className="text-sm font-normal text-slate-500"> / 100</span></span>
+            ) : (
+              <span className="text-sm font-semibold text-slate-500">Not calculated</span>
+            )}
+          </p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Bid verdict</p>
+          <span className={`mt-1 inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-bold ${verdict.tone}`}>{verdict.label}</span>
+        </div>
+      </div>
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Next required action</p>
@@ -165,6 +208,9 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
       </div>
 
+      {/* WorkflowStepLinks renders the current step as the one primary
+          action (highlighted/enabled) with the remaining steps shown as
+          secondary, non-competing context — see components/workflow-step-links.tsx. */}
       <WorkflowStepLinks currentIndex={currentIndex} />
 
       {blockers.length > 0 && (
