@@ -19,6 +19,7 @@ import { getTenderReleaseState } from "../../../../../lib/engine/tender-release-
 import { formatTenderStatus } from "../../../../../lib/tender-workflow";
 import { formatOperationalCode, formatOperationalReason } from "../../../../../lib/operational-labels";
 import { VersionActionsTable } from "./version-actions";
+import { DisclosureAwareLink } from "./disclosure-aware-link";
 import { ArrowRightIcon, CheckIcon, CrossIcon } from "../../../../../components/icons";
 
 export const dynamic = "force-dynamic";
@@ -128,12 +129,12 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
           <>
             <div className="mt-1 text-lg font-semibold">{nextAction.title}</div>
             <div className="mt-1 text-sm opacity-90">{nextAction.rationale}</div>
-            <a
+            <DisclosureAwareLink
               href={nextAction.href}
               className="mt-3 inline-block rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 no-underline"
             >
               Open tender workspace <ArrowRightIcon />
-            </a>
+            </DisclosureAwareLink>
           </>
         ) : (
           <div className="mt-1 text-lg font-semibold">Canonical release state unavailable</div>
@@ -191,9 +192,9 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
       <section id="evaluator" className="mb-6">
         <div className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-900">Evaluator objections</h2>
-          <Link href={`/dashboard/tenders/${id}#evaluator-objections`} className="text-xs text-blue-600 hover:text-blue-800 no-underline">
+          <DisclosureAwareLink href={`/dashboard/tenders/${id}#evaluator-objections`} className="text-xs text-blue-600 hover:text-blue-800 no-underline">
             Manage on tender workspace <ArrowRightIcon />
-          </Link>
+          </DisclosureAwareLink>
         </div>
         {objections.length === 0 ? (
           <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-sm text-slate-500">
@@ -310,9 +311,9 @@ function StatCard({ title, value, caption, highlight, href }: { title: string; v
   const className = `rounded-lg border p-3 ${highlight ? "bg-red-50 border-red-200" : "bg-white border-slate-200"}`;
   if (href) {
     return (
-      <Link href={href} className={`${className} block no-underline hover:border-slate-300`}>
+      <DisclosureAwareLink href={href} className={`${className} block no-underline hover:border-slate-300`}>
         {body}
-      </Link>
+      </DisclosureAwareLink>
     );
   }
   return <div className={className}>{body}</div>;
