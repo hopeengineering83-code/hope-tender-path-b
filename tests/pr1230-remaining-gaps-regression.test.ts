@@ -108,10 +108,16 @@ describe('PR 1230 remaining gap fixes', () => {
     assert.ok(handler.includes('jobType: "AUTO_FINALIZE"'));
     assert.ok(handler.includes('input: { source: "proposal-generation" }'));
     assert.ok(handler.includes('AUTO_FINALIZE: async'));
-    assert.ok(handler.includes('purpose: "export"'));
+    assert.ok(handler.includes('purpose: "generate-missing-plan-files"'));
+    assert.equal(handler.includes('purpose: "export",'), false, 'background auto-finalize must not circularly require export-ready documents before it creates them');
     assert.ok(handler.includes('filterFinalExportCandidateDocuments'));
     assert.ok(handler.includes('official-original and sensitive records remain manual'));
     assert.ok(handler.includes('finalPackageStillGated: true'));
+    assert.ok(handler.includes('markdownToDocxBase64("Technical Proposal", markdown)'));
+    assert.ok(handler.includes('documentType: "TECHNICAL_PROPOSAL"'));
+    assert.ok(handler.includes('format: "DOCX"'));
+    assert.ok(handler.includes('reviewStatus: "PENDING"'));
+    assert.ok(handler.includes('claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"'));
   });
 
   it('AI job list route recognizes ENGINE_RUN status polling filters', () => {

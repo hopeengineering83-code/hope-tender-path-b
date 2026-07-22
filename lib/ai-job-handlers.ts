@@ -18,6 +18,7 @@
 //   COPILOT_DEEP_ANALYSIS   — async tender copilot Q&A (frees the request for follow-up actions)
 //   PROFILE_FACT_EXTRACTION — async pure-regex fact harvest from company/project/tender prose
 
+import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { enqueueJob, recordStep, type JobType } from "./ai-jobs";
 import { verifiedIntegrityDataFromBase64 } from "./engine/persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "./engine/transactional-generation-gate";
@@ -47,6 +48,60 @@ import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
 import { logAction } from "./audit";
 import { buildDraftBuildPlan, computeTenderBuildPlanHash, validateBuildPlanForConfirmation } from "./engine/build-plan";
 import { filterFinalExportCandidateDocuments } from "./engine/document-output-state";
+
+function normalizeDocxLine(value: string): string {
+  return value
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function markdownLineToParagraph(line: string): Paragraph | null {
+  const text = normalizeDocxLine(line);
+  if (!text) return null;
+
+  const heading = text.match(/^(#{1,3})\s+(.+)$/);
+  if (heading) {
+    return new Paragraph({
+      text: normalizeDocxLine(heading[2]),
+      heading: heading[1].length === 1 ? HeadingLevel.HEADING_1 : HeadingLevel.HEADING_2,
+      spacing: { before: 240, after: 120 },
+    });
+  }
+
+  const bullet = text.match(/^[-*•]\s+(.+)$/);
+  if (bullet) {
+    return new Paragraph({
+      children: [new TextRun(normalizeDocxLine(bullet[1]))],
+      bullet: { level: 0 },
+      spacing: { after: 80 },
+    });
+  }
+
+  return new Paragraph({
+    children: [new TextRun(text)],
+    spacing: { after: 120 },
+  });
+}
+
+async function markdownToDocxBase64(title: string, markdown: string): Promise<string> {
+  const body = markdown
+    .split(/\r?\n/)
+    .map(markdownLineToParagraph)
+    .filter((paragraph): paragraph is Paragraph => Boolean(paragraph));
+
+  const doc = new Document({
+    sections: [{
+      properties: {},
+      children: [
+        new Paragraph({ text: title, heading: HeadingLevel.TITLE, spacing: { after: 240 } }),
+        ...body,
+      ],
+    }],
+  });
+  const buffer = await Packer.toBuffer(doc);
+  return buffer.toString("base64");
+}
 
 export interface JobContext {
   jobId: string;
@@ -568,34 +623,35 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       throw new Error("AI_PROPOSAL_ALL_SECTIONS_FALLBACK");
     }
     if (!markdown || markdown.trim().length < 50) {
-    await recordStep(ctx.jobId, {
-      stepName: "proposal.output",
-      message: "AI proposal output was empty or insufficient; no document was persisted.",
-      status: "FAILED",
-    });
-    throw new Error("AI_PROPOSAL_OUTPUT_INSUFFICIENT");
-  }
+      await recordStep(ctx.jobId, {
+        stepName: "proposal.output",
+        message: "AI proposal output was empty or insufficient; no document was persisted.",
+        status: "FAILED",
+      });
+      throw new Error("AI_PROPOSAL_OUTPUT_INSUFFICIENT");
+    }
 
-  const postGenerationReadiness = await assertTenderReadyForGenerationAndExport({
-    prisma,
-    tenderId: ctx.tenderId,
-    userId: ctx.userId,
-    purpose: "background-proposal-generation",
-  });
-  if (!postGenerationReadiness.ok) {
-    await recordStep(ctx.jobId, {
-      stepName: "proposal.post-gate",
-      message: `Readiness changed while AI generation was running: ${postGenerationReadiness.blockerCode}`,
-      status: "FAILED",
+    const postGenerationReadiness = await assertTenderReadyForGenerationAndExport({
+      prisma,
+      tenderId: ctx.tenderId,
+      userId: ctx.userId,
+      purpose: "background-proposal-generation",
     });
-    throw new Error(`PROPOSAL_GENERATION readiness changed (${postGenerationReadiness.blockerCode})`);
-  }
-    const backgroundFileName = `Technical-Proposal-Background-${ctx.jobId}.md`;
-    const backgroundFileContent = Buffer.from(markdown, "utf8").toString("base64");
+    if (!postGenerationReadiness.ok) {
+      await recordStep(ctx.jobId, {
+        stepName: "proposal.post-gate",
+        message: `Readiness changed while AI generation was running: ${postGenerationReadiness.blockerCode}`,
+        status: "FAILED",
+      });
+      throw new Error(`PROPOSAL_GENERATION readiness changed (${postGenerationReadiness.blockerCode})`);
+    }
+
+    const backgroundFileName = `Technical-Proposal-Background-${ctx.jobId}.docx`;
+    const backgroundFileContent = await markdownToDocxBase64("Technical Proposal", markdown);
     const backgroundIntegrity = verifiedIntegrityDataFromBase64({
       fileContent: backgroundFileContent,
       filename: backgroundFileName,
-      claimedMimeType: "text/markdown",
+      claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     });
 
     // Persist into GeneratedDocument so the user can fetch it later via
@@ -609,25 +665,29 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         purpose: "background-proposal-generation",
         write: async (lockedTx) => {
           const doc = await lockedTx.generatedDocument.create({
-      data: {
-        tenderId: ctx.tenderId!,
-        name: `Technical Proposal (background) ${new Date().toISOString().slice(0, 19).replace("T", " ")}`,
-        documentType: "QUICK_DRAFT",
-        format: "MARKDOWN",
-        exactFileName: backgroundFileName,
-        fileContent: backgroundFileContent,
-        ...backgroundIntegrity,
-        generationStatus: "GENERATED",
-        validationStatus: "PENDING",
-        reviewStatus: "NOT_EXPORTABLE",
-      },
-    })
+            data: {
+              tenderId: ctx.tenderId!,
+              name: `Technical Proposal (background) ${new Date().toISOString().slice(0, 19).replace("T", " ")}`,
+              documentType: "TECHNICAL_PROPOSAL",
+              format: "DOCX",
+              exactFileName: backgroundFileName,
+              fileContent: backgroundFileContent,
+              ...backgroundIntegrity,
+              generationStatus: "GENERATED",
+              validationStatus: "PENDING",
+              reviewStatus: "PENDING",
+            },
+          });
           return doc;
         },
       }),
-    );;
+    );
 
-    await recordStep(ctx.jobId, { stepName: "proposal.complete", message: `Saved ${markdown.length} chars to GeneratedDocument ${doc.id}`, status: "SUCCEEDED" });
+    await recordStep(ctx.jobId, {
+      stepName: "proposal.complete",
+      message: `Saved generated DOCX from ${markdown.length} chars to GeneratedDocument ${doc.id}`,
+      status: "SUCCEEDED",
+    });
     const activeFinalizeJob = await prisma.aiJob.findFirst({
       where: { tenderId: ctx.tenderId, userId: ctx.userId, jobType: "AUTO_FINALIZE", status: { in: ["QUEUED", "RUNNING"] } },
       select: { id: true },
@@ -646,21 +706,28 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         : `Auto-finalize queued (${finalizeJob.id}); final package gates remain authoritative.`,
       status: "SUCCEEDED",
     });
-    return { generatedDocumentId: doc.id, markdownChars: markdown.length, sectionsGenerated: sectionFilter ?? "all", autoFinalize: { queued: !activeFinalizeJob, jobId: finalizeJob.id } };
+    return {
+      generatedDocumentId: doc.id,
+      format: "DOCX",
+      markdownChars: markdown.length,
+      sectionsGenerated: sectionFilter ?? "all",
+      autoFinalize: { queued: !activeFinalizeJob, jobId: finalizeJob.id },
+    };
   },
 
   // ─── AUTO_FINALIZE — conservative background finalization ────────────
   // Runs only after generation and only promotes non-sensitive generated
-  // final-export candidates when the central export gate passes. It never
-  // fabricates official originals, brand assets, PDFs, or ZIPs.
+  // final-export candidates when the central generation/finalization gate passes.
+  // It never fabricates official originals, brand assets, PDFs, or ZIPs, and it leaves
+  // final ZIP/PDF/byte-integrity gates authoritative.
   AUTO_FINALIZE: async (ctx) => {
     if (!ctx.tenderId) throw new Error("AUTO_FINALIZE requires tenderId on the job");
-    await recordStep(ctx.jobId, { stepName: "auto-finalize.gate", message: "Checking central export readiness before auto-finalize", status: "RUNNING" });
+    await recordStep(ctx.jobId, { stepName: "auto-finalize.gate", message: "Checking central generation/finalization readiness before auto-finalize", status: "RUNNING" });
     const gate = await assertTenderReadyForGenerationAndExport({
       prisma,
       tenderId: ctx.tenderId,
       userId: ctx.userId,
-      purpose: "export",
+      purpose: "generate-missing-plan-files",
     });
     if (!gate.ok) {
       await recordStep(ctx.jobId, { stepName: "auto-finalize.gate", message: `Blocked by central gate: ${gate.blockerCode} — ${gate.blockerDetail}`, status: "FAILED" });

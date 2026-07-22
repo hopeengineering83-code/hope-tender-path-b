@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 15) — Codex
+
+- **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
+- **Scope:** Audited the latest autonomous generation/auto-finalize updates for contradictions before editing. Fixed two confirmed overlaps: background `PROPOSAL_GENERATION` was saving only an internal Markdown `QUICK_DRAFT` marked `NOT_EXPORTABLE`, so the chained `AUTO_FINALIZE` job had no finalizable proposal document; and background `AUTO_FINALIZE` was using the final export gate before it created export-ready rows, which could circularly require `READY_FOR_EXPORT` documents before finalization. Background proposal generation now persists a real DOCX `TECHNICAL_PROPOSAL` row with byte-integrity metadata and pending review, then queues conservative auto-finalize. The background auto-finalize gate now uses the central generation/finalization readiness purpose, while final ZIP/PDF/byte-integrity gates remain authoritative and no official originals, brand assets, PDFs, or ZIPs are fabricated.
+- **Files changed:** `lib/ai-job-handlers.ts`, `tests/pr1230-remaining-gaps-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts` PASS (14/14); `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/extraction-quality-fallback-regression.test.ts tests/company-knowledge-auto-review.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (27/27); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; `git diff --check` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432. `npm test` was attempted but interrupted after it had already reported existing environment/source-shape failures outside this narrow patch (`RUN_DB_INTEGRATION=true` required for DB integration suites, plus older source-shape expectations around removed ZIP/disabled-button UI and run-next behavior).
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, runtime logs, and real OCR/provider execution still require target services/secrets. Background auto-finalize is intentionally conservative: it finalizes only generated non-sensitive candidates with bytes and does not create official originals, brand assets, PDFs, or final ZIPs.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
+
 ### 2026-07-22 UTC (follow-up 14) — Codex
 
 - **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
