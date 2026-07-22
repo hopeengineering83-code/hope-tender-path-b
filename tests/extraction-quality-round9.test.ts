@@ -5,7 +5,7 @@
  * 1. totalPages defaults to 1 for DOCX/XLSX/PPTX (was null — blocked all non-PDF)
  * 2. Export route re-assesses extraction quality from extractedText (was stale)
  * 3. Dead code deleted (extraction-quality-calc.ts)
- * 4. MAX_EXTRACTED_TEXT_CHARS conflict documented (500K fires before 2M)
+ * 4. The source-driven 2M extraction cap is documented and exact-cap truncation is fail-closed
  * 5. Reimport route surfaces failed files in response body
  */
 
@@ -83,22 +83,25 @@ describe("extraction quality round 9 — dead code deleted", () => {
   });
 });
 
-describe("extraction quality round 9/14 — MAX_EXTRACTED_TEXT_CHARS conflict FIXED (inner-cap detection)", () => {
-  const src = read("lib/upload-security.ts");
+describe("extraction quality round 9/14 — source-driven 2M cap is fail-closed", () => {
+  const extractionSrc = read("lib/extract-text.ts");
+  const uploadSrc = read("lib/upload-security.ts");
 
-  it("documents the 500K vs 2M interaction and the inner-cap detection", () => {
+  it("keeps one 2M extraction limit and detects exact-cap truncation", () => {
     assert.ok(
-      src.includes("fires FIRST") && src.includes("500_000"),
-      "must document that the 500K inner limiter fires before the 2M outer limiter",
-    );
-    // The old "effectively always false" limitation is FIXED: limitExtractedText
-    // now detects text cut at the inner cap and reports truncated=true.
-    assert.ok(
-      src.includes("INNER_EXTRACTION_CHAR_LIMIT"),
-      "limitExtractedText must detect the inner extraction cap",
+      extractionSrc.includes("MAX_EXTRACTED_TEXT_CHARS = 2_000_000"),
+      "extract-text must retain the source-driven 2M cap",
     );
     assert.ok(
-      !src.includes("extractionTruncated flag is therefore effectively always"),
+      uploadSrc.includes("INNER_EXTRACTION_CHAR_LIMIT") && uploadSrc.includes("fires FIRST"),
+      "upload-security must reuse and document the inner extraction cap",
+    );
+    assert.ok(
+      uploadSrc.includes("text.length >= INNER_EXTRACTION_CHAR_LIMIT"),
+      "limitExtractedText must detect text cut at the inner cap",
+    );
+    assert.ok(
+      !uploadSrc.includes("extractionTruncated flag is therefore effectively always"),
       "the stale always-false limitation note must be gone",
     );
   });
@@ -131,7 +134,7 @@ describe("extraction quality round 9 — reimport surfaces failures", () => {
 });
 
 describe("extraction truncation flag — behavioral (round 14)", () => {
-  it("flags text cut at the inner 500K cap as truncated (was silently partial)", async () => {
+  it("flags text cut at the inner cap as truncated (was silently partial)", async () => {
     const { limitExtractedText } = await import("../lib/upload-security");
     const { MAX_EXTRACTED_TEXT_CHARS: INNER } = await import("../lib/extract-text");
     const atCap = "x".repeat(INNER);
