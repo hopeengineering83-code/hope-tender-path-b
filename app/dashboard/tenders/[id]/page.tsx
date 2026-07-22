@@ -398,10 +398,10 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <PricingWorkbookPanel tenderId={tender.id} canMutate={canMutate} />
         <FinalPackageManifestPanel tenderId={tender.id} />
         <ExportReadinessPanel tenderId={tender.id} canMutate={canMutate} />
+        <TenderDownloadActionsPanel tenderId={tender.id} canMutate={canMutate} />
         <TenderSharePanel tenderId={tender.id} canMutate={canMutate} />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
-      <TenderDownloadActionsPanel tenderId={tender.id} canMutate={canMutate} />
     </main>
   );
 }

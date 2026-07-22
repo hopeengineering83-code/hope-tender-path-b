@@ -61,3 +61,33 @@ describe('PR 1230 remaining gap fixes', () => {
     assert.equal(count(exportPanel, 'Advanced Repairs'), 1);
   });
 });
+
+describe('PR 1230 final-package download gate', () => {
+  it('keeps TenderDownloadActionsPanel inside Stage 5 final-package workflow', () => {
+    const src = read('app/dashboard/tenders/[id]/page.tsx');
+    const stage5 = src.indexOf('number={5}');
+    const panel = src.indexOf('<TenderDownloadActionsPanel');
+    const stageClose = src.indexOf('</WorkflowStage>', panel);
+    assert.ok(stage5 >= 0, 'Stage 5 must exist');
+    assert.ok(panel > stage5, 'download panel must be rendered after Stage 5 starts');
+    assert.ok(stageClose > panel, 'download panel must be inside the Stage 5 WorkflowStage');
+  });
+
+  it('does not render direct ungated proposal/requirements/compliance download links', () => {
+    const src = read('components/tender-download-actions-panel.tsx');
+    assert.equal(count(src, 'download?type=proposal'), 0);
+    assert.equal(count(src, 'download?type=requirements'), 0);
+    assert.equal(count(src, 'download?type=compliance'), 0);
+  });
+
+  it('renders no final ZIP href until final-package gates pass', () => {
+    const src = read('components/tender-download-actions-panel.tsx');
+    assert.ok(src.includes('finalPackageGatesPassed(model)'));
+    assert.ok(src.includes('requiredCount > 0'));
+    assert.ok(src.includes('model.export?.zipReady === true'));
+    assert.ok(src.includes('model.export?.manifest?.ready === true'));
+    assert.ok(src.includes('model.export?.requiredPdfMissing !== true'));
+    assert.ok(src.includes('Download blocked — final package gates not passed'));
+    assert.ok(src.includes('href={`/api/tenders/${tenderId}/download?type=zip`}'));
+  });
+});

@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 5) — Codex
+
+- **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
+- **Scope:** Fixed the remaining confirmed final-package gap: moved `TenderDownloadActionsPanel` inside Stage 5, removed ungated proposal/requirements/compliance download links, and made the final ZIP link appear only after the final-package readiness model reports required documents, evidence/blocker counts, PDF requirements, manifest readiness, and ZIP readiness all passing. Added regression coverage for Stage 5 placement and gated/no-href behavior.
+- **Files changed:** `components/tender-download-actions-panel.tsx`, `app/dashboard/tenders/[id]/page.tsx`, `tests/pr1230-remaining-gaps-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (18/18); affected engine/rendered suites PASS (89/89); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target-branch services/secrets.
+- **Next action:** User reviews/cherry-picks PR #1230 helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
 ### 2026-07-22 UTC (follow-up 4) — Codex
 
 - **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
