@@ -5,11 +5,12 @@ import { logger } from "./observability";
 
 import { isExtractionCorrupted } from "./engine/extraction-quality-gate";
 
-// Exported so limitExtractedText (lib/upload-security.ts) can DETECT that
-// this inner limiter fired: normalizeExtractedText slices to exactly this
-// length, so output text at this length means the document's tail was cut
-// and the extraction is partial (extractionTruncated must be true).
-export const MAX_EXTRACTED_TEXT_CHARS = 500_000;
+// Per Pillar 3: increased from 500K to 2M to avoid silently truncating large
+// multi-file tender packages. The Vercel 60s function timeout is the real
+// limit on extraction; this char cap is a safety guard against memory
+// exhaustion, not a data-loss gate. Extraction truncation is still reported
+// honestly via extractionTruncated when this limit is hit.
+export const MAX_EXTRACTED_TEXT_CHARS = 2_000_000;
 const LEGACY_TEXT_LIMIT = 80_000;
 
 export async function extractTextFromBuffer(

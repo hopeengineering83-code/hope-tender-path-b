@@ -1689,9 +1689,11 @@ const ANALYSIS_CHUNK_SOFT_LIMIT = 60_000;
 // straddling the boundary is captured in both chunks; merge dedupes).
 export const ANALYSIS_CHUNK_SIZE = 50_000;
 export const ANALYSIS_CHUNK_OVERLAP = 5_000;
-// Cap to prevent runaway cost on truly enormous PDFs. 6 × 50K = 300K
-// chars covers an extremely long RFP. Anything past 300K is rare.
-const ANALYSIS_MAX_CHUNKS = 6;
+// Per Pillar 3: increased from 6 to 20 chunks to analyze all persisted content
+// instead of silently dropping anything past 300K chars. 20 × 50K = 1M chars
+// covers even the largest multi-file tender packages. The AI provider's token
+// budget is the real limit; these chunks are sent sequentially with overlap.
+const ANALYSIS_MAX_CHUNKS = 20;
 
 export function chunkTenderContent(content: string): string[] {
   if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) return [content];

@@ -7,7 +7,7 @@ import {
   subscribeTenderWorkflowSync,
   openParentDetailsAndScroll,
 } from "@/lib/ui/tender-workflow-sync";
-import { TENDER_WORKFLOW_STAGE_TARGETS } from "@/lib/tender-workflow-stage-targets";
+import { TENDER_WORKFLOW_STAGE_TARGETS } from "@/lib/tender-workflow-stages";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 export interface WorkflowStageInfo {
