@@ -2,8 +2,9 @@
 
 import { useCallback, useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { CheckIcon, WarningIcon, ClockIcon, BoltIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon } from "./icons";
+import { CheckIcon, WarningIcon, BoltIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon } from "./icons";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
+import { DisclosureAnchorLink } from "./disclosure-anchor-link";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -101,7 +102,6 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   const [linkingVault, setLinkingVault] = useState(false);
   const [supersedingOutsidePlan, setSupersedingOutsidePlan] = useState(false);
   const [autoFinalizing, setAutoFinalizing] = useState(false);
-  const [generatingMissing, setGeneratingMissing] = useState(false);
   const [resolvingAdvisory, setResolvingAdvisory] = useState<string | null>(null);
   const [vaultCandidates, setVaultCandidates] = useState<VaultCandidate[]>([]);
   const [selectedVaultOption, setSelectedVaultOption] = useState<Record<string, string>>({});
@@ -109,15 +109,14 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [autoFinalizeRemaining, setAutoFinalizeRemaining] = useState<number | null>(null);
-  const [retryingAnalysis, setRetryingAnalysis] = useState(false);
-  const [providerCooldownWarning, setProviderCooldownWarning] = useState<string | null>(null);
+  const [approvalNote, setApprovalNote] = useState("");
   const [repairingSource, setRepairingSource] = useState(false);
   const [reclassifying, setReclassifying] = useState(false);
   const [deduplicating, setDeduplicating] = useState(false);
   const [repairingAssets, setRepairingAssets] = useState(false);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || generatingMissing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || retryingAnalysis || repairingSource || reclassifying || deduplicating || repairingAssets;
+  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || repairingSource || reclassifying || deduplicating || repairingAssets;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -143,24 +142,6 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   // Subscribe to cross-panel workflow sync so this panel refreshes when
   // other panels (workflow center, recovery center) take actions.
   useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void refresh(); }), [refresh, tenderId]);
-
-  async function generateMissingPlanned() {
-    setGeneratingMissing(true);
-    setError(null);
-    setRepairMessage(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/generate-missing-plan-files`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) throw new Error(data.error ?? `Generate missing files failed (${res.status})`);
-      const total = (data.created ?? 0) + (data.updated ?? 0) + (data.convertedFromPlanned ?? 0);
-      setRepairMessage(`Generated ${total} planned document placeholder(s). Re-checking readiness.`);
-      await refresh();
-    } catch (err) {
-      setError("Generate missing planned files failed. Refresh to retry.");
-    } finally {
-      setGeneratingMissing(false);
-    }
-  }
 
   async function repair() {
     setRepairing(true);
@@ -313,42 +294,17 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
     }
   }
 
-  async function retryAiAnalysis() {
-    setRetryingAnalysis(true);
-    setError(null);
-    setRepairMessage(null);
-    setProviderCooldownWarning(null);
-    try {
-      // /api/tenders/[id]/analyze does not exist; use ai-analyze endpoint instead
-      const res = await fetch(`/api/tenders/${tenderId}/ai-analyze`, { method: "POST" });
-      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; error?: string };
-      if (data.success) {
-        setRepairMessage("AI analysis re-triggered. Re-checking readiness…");
-      } else {
-        setError((data.error as string | undefined) ?? "Failed to retry AI analysis");
-        // Fetch provider health to surface any cooldown context to the user
-        try {
-          const healthRes = await fetch("/api/ai/health");
-          if (healthRes.ok) {
-            const health = (await healthRes.json()) as { warnings?: string[]; providers?: Record<string, { runtime?: { cooldownUntil?: number | null } | null }> };
-            const coolingWarning = (health.warnings ?? []).find((w) => /cooldown/i.test(w));
-            if (coolingWarning) setProviderCooldownWarning(coolingWarning);
-          }
-        } catch {
-          // health fetch failure is non-critical; silently ignore
-        }
-      }
-    } catch {
-      setError("Failed to retry AI analysis");
-    } finally {
-      setRetryingAnalysis(false);
-      await refresh();
-    }
-  }
 
   async function approveRegexFallback() {
+    // An approval note is a real audit record of why a human accepted
+    // regex-fallback output as authoritative — it must reflect this
+    // reviewer's actual justification, not a canned string every approval
+    // shares (that reduces the audit trail to a checkbox, matching the
+    // required-note behavior tender-recovery-command-center.tsx already
+    // enforces for the same APPROVE_FALLBACK_WITH_NOTE action).
+    const note = approvalNote.trim();
+    if (!note) { setError("An approval note is required."); return; }
     try {
-      const note = "Manually approved after reviewing extracted requirements";
       const res = await fetch(`/api/tenders/${tenderId}/approve-analysis`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -357,6 +313,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; error?: string };
       if (data.success) {
         setRepairMessage("Fallback note saved for audit. Re-checking readiness — generation and export remain blocked until full AI analysis succeeds.");
+        setApprovalNote("");
       } else {
         setError((data.error as string | undefined) ?? "Failed to approve fallback analysis");
       }
@@ -471,9 +428,15 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             </span>
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void generateMissingPlanned()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800 disabled:opacity-60" title="Convert PLANNED document rows into draft control records so the export gate can proceed.">
-              <BoltIcon /> {generatingMissing ? "Generating…" : "Generate missing planned docs"}
-            </button>
+            // Links to the one canonical Generate Missing Plan Files control
+            // (submission-plan-reconciliation-panel.tsx's
+            // #submission-plan-reconciliation, which shows the exact missing
+            // count) instead of a second, separate button here that POSTs
+            // the same /generate-missing-plan-files route without that
+            // context.
+            <DisclosureAnchorLink href="#submission-plan-reconciliation" className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800" title="Go to Submission plan reconciliation to generate missing planned docs">
+              <BoltIcon /> Go to Generate missing planned docs
+            </DisclosureAnchorLink>
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && (
             <div className="flex flex-col items-start gap-1">
@@ -723,30 +686,39 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                 <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
                   <p className="mb-2 inline-flex items-center gap-1 text-xs font-semibold text-amber-800"><WarningIcon /> Regex fallback analysis — recovery actions:</p>
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void retryAiAnalysis()}
-                      disabled={busy}
-                      className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
-                      title="Re-run AI Analysis with all available providers"
-                    >
-                      <RefreshIcon /> {retryingAnalysis ? "Retrying…" : "Retry AI Analysis"}
-                    </button>
+                    {/* Links to the one canonical AI Analyze control
+                        (ai-analyze-panel.tsx's #ai-analyze-section, which
+                        uses ?mode=background) instead of re-running analysis
+                        via a second, separate synchronous/SSE-bounded POST
+                        here — that path is explicitly documented in the
+                        route itself as bounded by the Vercel function limit,
+                        the same class of gap fixed earlier in
+                        tender-recovery-command-center.tsx for RUN_ENGINE. */}
+                    <DisclosureAnchorLink href="#ai-analyze-section" className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100" title="Go to AI Analyze to re-run analysis with all available providers">
+                      <RefreshIcon /> Go to Retry AI Analysis
+                    </DisclosureAnchorLink>
                     <button
                       type="button"
                       onClick={() => void approveRegexFallback()}
-                      disabled={busy}
+                      disabled={busy || !approvalNote.trim()}
                       className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
                       title="Manually review and approve the regex-extracted tender requirements. Only use this if the extracted requirements are accurate."
                     >
                       <CheckIcon /> Approve fallback analysis (manual review)
                     </button>
                   </div>
-                  {providerCooldownWarning && (
-                    <p className="mt-2 inline-flex items-center gap-1 text-[10px] text-amber-800 bg-amber-100 rounded px-2 py-1">
-                      <ClockIcon /> {providerCooldownWarning} Wait a moment then retry.
-                    </p>
-                  )}
+                  {/* A real, reviewer-written justification — not a canned
+                      note — is required before approval, matching
+                      tender-recovery-command-center.tsx's required-note
+                      behavior for the same action. */}
+                  <input
+                    type="text"
+                    value={approvalNote}
+                    onChange={(e) => setApprovalNote(e.target.value)}
+                    placeholder="Approval note (required)…"
+                    className="mt-2 w-full max-w-md rounded border border-amber-200 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400"
+                    maxLength={500}
+                  />
                   <p className="mt-1 text-[10px] text-amber-700">
                     Retry AI Analysis re-runs the tender analysis with all available AI providers. Approve fallback only if you have manually verified the extracted requirements are correct.
                   </p>

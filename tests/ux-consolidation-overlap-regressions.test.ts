@@ -104,6 +104,60 @@ test("category A: tender-recovery-command-center.tsx does not run a second, sepa
   assert.equal(runEngineLinks.length, 2, "expected exactly the two known RUN_ENGINE call sites (blocker quick-action + recovery-state Execute) to link to the canonical control");
 });
 
+test("category A: export-readiness-panel.tsx does not run a second AI Analyze via the bounded synchronous route", () => {
+  const src = readSource("components/export-readiness-panel.tsx");
+  // app/api/tenders/[id]/ai-analyze/route.ts explicitly documents its
+  // non-?mode=background path as bounded by the Vercel function limit
+  // ("This is NOT the SSE/synchronous path... those stay for resume/
+  // recovery tooling"). ai-analyze-panel.tsx (the canonical control,
+  // rendered on the same tender-detail page) always calls
+  // ?mode=background. A bare POST to /ai-analyze from a second component
+  // bypasses that async job-queue infrastructure entirely — the same class
+  // of gap as the RUN_ENGINE case above.
+  assert.doesNotMatch(
+    src,
+    /fetch\(`\/api\/tenders\/\$\{tenderId\}\/ai-analyze`/,
+    "must not POST the bare synchronous /ai-analyze route directly — link to the canonical #ai-analyze-section control instead",
+  );
+  assert.match(src, /<DisclosureAnchorLink href="#ai-analyze-section"/, "the retry-analysis affordance must link to ai-analyze-panel.tsx's canonical async control");
+});
+
+test("category A: export-readiness-panel.tsx does not run a second generate-missing-plan-files action", () => {
+  const src = readSource("components/export-readiness-panel.tsx");
+  // submission-plan-reconciliation-panel.tsx's #submission-plan-reconciliation
+  // section (rendered on the same tender-detail page) already owns this
+  // action via generate-missing-plan-files-button.tsx, with the exact
+  // missing-file count for context. A second, separate button here that
+  // POSTs the same /generate-missing-plan-files route is a duplicate
+  // trigger for the same action without that context.
+  assert.doesNotMatch(
+    src,
+    /fetch\(`\/api\/tenders\/\$\{tenderId\}\/generate-missing-plan-files`/,
+    "must not POST /generate-missing-plan-files directly — link to the canonical #submission-plan-reconciliation control instead",
+  );
+  assert.match(src, /<DisclosureAnchorLink href="#submission-plan-reconciliation"/, "the generate-missing-docs affordance must link to submission-plan-reconciliation-panel.tsx's canonical control");
+});
+
+test("category A: export-readiness-panel.tsx requires a real approval note for regex-fallback approval, not a canned one", () => {
+  const src = readSource("components/export-readiness-panel.tsx");
+  // The APPROVE_FALLBACK_WITH_NOTE action records a human's actual audit
+  // justification for accepting regex-fallback output. This panel used to
+  // silently send a hardcoded string ("Manually approved after reviewing
+  // extracted requirements") with zero real review — a governance/audit-
+  // integrity gap distinct from (but discovered alongside) the duplicate-
+  // trigger overlaps above. tender-recovery-command-center.tsx already
+  // requires a real, reviewer-typed note for the same action; this panel
+  // must match that, not offer a one-click bypass of it.
+  assert.doesNotMatch(
+    src,
+    /const note = "Manually approved after reviewing extracted requirements"/,
+    "must not send a hardcoded canned approval note — require a real reviewer-typed one",
+  );
+  assert.match(src, /const note = approvalNote\.trim\(\)/, "must derive the approval note from real user input");
+  assert.match(src, /if \(!note\) \{ setError\("An approval note is required\."\); return; \}/, "must reject an empty/whitespace-only approval note");
+  assert.match(src, /disabled=\{busy \|\| !approvalNote\.trim\(\)\}/, "the approve button must stay disabled until a real note is entered");
+});
+
 // ─── Category B: two visible primary nav items representing the same workspace ───
 
 test("category B: primary sidebar has no two links pointing at routes that serve the same workspace", () => {
