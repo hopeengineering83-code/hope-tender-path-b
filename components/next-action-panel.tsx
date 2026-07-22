@@ -61,7 +61,7 @@ const STEP_TARGETS = [
   '#tender-files',
   '#ai-analyze-section',
   '#requirement-coverage',
-  '#submission-plan',
+  '#submission-plan-reconciliation',
   '#requirement-coverage',
   '#generated-documents',
   '#generated-documents',
@@ -69,10 +69,29 @@ const STEP_TARGETS = [
   '#export-readiness',
 ] as const;
 
+const ACTION_TARGETS: Record<string, string> = {
+  UPLOAD_TENDER: '#tender-files',
+  FIX_EXTRACTION: '#tender-files',
+  RESUME_AI_ANALYZE: '#ai-analyze-section',
+  RUN_AI_ANALYZE: '#ai-analyze-section',
+  EDIT_TENDER_METADATA: '#tender-edit-form',
+  REVIEW_REQUIREMENTS: '#requirement-coverage',
+  BUILD_SUBMISSION_PLAN: '#submission-plan-reconciliation',
+  LINK_VAULT_EVIDENCE: '#requirement-coverage',
+  FINALIZE_REQUIRED_PDF: '#generated-documents',
+  GENERATE_DOCUMENTS: '#generated-documents',
+  FIX_EXPORT_BLOCKERS: '#export-readiness',
+  EXPORT_READY: '#export-readiness',
+};
+
+function targetFromCanonicalAction(action: string): string | null {
+  return ACTION_TARGETS[action] ?? null;
+}
+
 // Map the canonical decision's nextRequiredAction to the panel's step index.
 // This MUST agree with workflow-center's stageStates — both read the same
 // decision object, so they cannot disagree.
-function stepFromCanonicalAction(action: string): WorkflowStep {
+function stepFromCanonicalAction(action: string): WorkflowStep | null {
   switch (action) {
     case 'UPLOAD_TENDER':
       return 'UPLOAD_TENDER';
@@ -81,12 +100,15 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
     case 'RESUME_AI_ANALYZE':
     case 'RUN_AI_ANALYZE':
       return 'RUN_AI_ANALYZE';
+    case 'EDIT_TENDER_METADATA':
+      return 'CONFIRM_REQUIREMENTS';
     case 'REVIEW_REQUIREMENTS':
       return 'CONFIRM_REQUIREMENTS';
     case 'BUILD_SUBMISSION_PLAN':
       return 'BUILD_PLAN';
     case 'LINK_VAULT_EVIDENCE':
       return 'MATCH_EVIDENCE';
+    case 'FINALIZE_REQUIRED_PDF':
     case 'GENERATE_DOCUMENTS':
       return 'GENERATE_DOCUMENTS';
     case 'FIX_EXPORT_BLOCKERS':
@@ -94,11 +116,12 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
     case 'EXPORT_READY':
       return 'EXPORT_ZIP';
     default:
-      return 'UPLOAD_TENDER';
+      return null;
   }
 }
 
-function stepColor(step: WorkflowStep) {
+function stepColor(step: WorkflowStep | null) {
+  if (!step) return 'border-slate-200 bg-slate-50';
   if (step === 'COMPLETE' || step === 'EXPORT_ZIP') return 'border-emerald-200 bg-emerald-50';
   if (
     step === 'RUN_AI_ANALYZE' ||
@@ -113,9 +136,10 @@ function stepColor(step: WorkflowStep) {
   return 'border-amber-200 bg-amber-50';
 }
 
-function stepIcon(step: WorkflowStep) {
+function stepIcon(step: WorkflowStep | null) {
   // SVG icons replace raw Unicode (✓ ⚠ →) for consistent rendering across
   // all browsers and font stacks. Per spec rule 3 & 7.
+  if (!step) return <WarningIcon />;
   if (step === 'COMPLETE' || step === 'EXPORT_ZIP') return <CheckCircleIcon />;
   if (step === 'FIX_EXTRACTION' || step === 'CONFIRM_REQUIREMENTS' || step === 'VALIDATE_DOCUMENTS')
     return <WarningIcon />;
@@ -161,7 +185,8 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
   const label = decision.nextRequiredActionLabel;
   const reason = decision.nextRequiredActionReason;
   const blockers = decision.blockerDetails;
-  const currentIndex = STEP_INDEX[step];
+  const currentIndex = step ? STEP_INDEX[step] : null;
+  const actionTarget = targetFromCanonicalAction(decision.nextRequiredAction);
 
   // Metadata advisory — never a blocker per the unified runtime model, but
   // still surfaced so the user knows a deadline is approaching/passed.
@@ -204,29 +229,41 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
         <div className="text-right">
           <p className="text-xs text-slate-500">
-            Step {Math.min(currentIndex + 1, STEPS.length)} of {STEPS.length}
+            {currentIndex === null
+              ? 'Action mapping needed'
+              : `Step ${Math.min(currentIndex + 1, STEPS.length)} of ${STEPS.length}`}
           </p>
           <p className="text-lg font-bold text-slate-900">
-            {step === 'COMPLETE' ? 'Done' : `${currentIndex + 1}/${STEPS.length}`}
+            {currentIndex === null
+              ? 'No shortcut'
+              : step === 'COMPLETE'
+                ? 'Done'
+                : `${currentIndex + 1}/${STEPS.length}`}
           </p>
         </div>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <a
-          href={STEP_TARGETS[currentIndex] ?? '#tender-files'}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-        >
-          <ArrowRightIcon /> {label}
-        </a>
+        {actionTarget ? (
+          <a
+            href={actionTarget}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            <ArrowRightIcon /> {label}
+          </a>
+        ) : (
+          <p className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-600">
+            No shortcut is available for this action yet. Use the workflow stage guidance below.
+          </p>
+        )}
         <details className="group">
           <summary className="cursor-pointer rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
             View all workflow steps
           </summary>
           <nav className="mt-2 flex flex-wrap gap-1.5" aria-label="Tender workflow steps">
             {STEPS.map((s, i) => {
-              const done = i < currentIndex;
-              const active = i === currentIndex;
+              const done = currentIndex !== null && i < currentIndex;
+              const active = currentIndex !== null && i === currentIndex;
               const baseClass = done
                 ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
                 : active

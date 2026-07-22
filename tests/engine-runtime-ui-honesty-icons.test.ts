@@ -50,7 +50,7 @@ describe("GAP C — Engine route passes deadlineAt to runTenderEngine", () => {
   it("computes a 50s deadline and passes it to runTenderEngine", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
     assert.match(src, /const deadlineAt = Date\.now\(\) \+ 50_000/);
-    assert.match(src, /runTenderEngine\(id, userId, undefined, \{ deadlineAt \}\)/);
+    assert.match(src, /runTenderEngine\(id, userId, undefined, \{ deadlineAt, safe, skipAiRematch \}\)/);
   });
 
   it("runTenderEngine accepts deadlineAt in EngineRunOptions", () => {

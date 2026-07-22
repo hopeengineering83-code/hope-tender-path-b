@@ -13,8 +13,8 @@ describe('PR 1175 residual workflow/action gaps', () => {
     const src = read('components/next-action-panel.tsx');
     assert.equal(count(src, 'View all workflow steps'), 1);
     assert.ok(
-      src.includes('href={STEP_TARGETS[currentIndex]'),
-      'primary next-action link must target only the current step'
+      src.includes('href={actionTarget}'),
+      'primary next-action link must target the canonical action owner'
     );
     assert.ok(src.includes('<details'), 'all workflow steps must be collapsed by default');
     assert.ok(

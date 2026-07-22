@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 4) — Codex
+
+- **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
+- **Scope:** Addressed confirmed PR #1230 review gaps: mapped `NextActionPanel` canonical actions to real owner anchors (`EDIT_TENDER_METADATA` → `#tender-edit-form`, `FINALIZE_REQUIRED_PDF` → `#generated-documents`) with no misleading unknown-action CTA; added real `/api/tenders/[id]/engine?async=true` support that enqueues `ENGINE_RUN`, returns `202 + jobId`, passes `safe` and `skipAiRematch` into the existing job handler, exposes ENGINE_RUN in job listing filters, and adds synchronous postcondition validation parity with the background handler.
+- **Files changed:** `components/next-action-panel.tsx`, `app/api/tenders/[id]/engine/route.ts`, `app/api/ai-jobs/route.ts`, `tests/pr1230-remaining-gaps-regression.test.ts`, `tests/pr1175-residual-gap-regression.test.ts`, `tests/engine-runtime-ui-honesty-icons.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (15/15); affected engine/rendered suites PASS (86/86); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL. Broad `npm test -- --runInBand` was attempted but hit DB-required suites (`RUN_DB_INTEGRATION=true` required) and was interrupted after confirming many pure unit suites were passing. `npm run test:e2e` blocked because the Playwright web server could not start without `SESSION_SECRET`.
+- **Known risks:** No GitHub inline review comments were visible in this environment. Full DB drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target-branch services/secrets.
+- **Next action:** User reviews/cherry-picks PR #1230 helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
 ### 2026-07-22 UTC (follow-up 3) — Codex
 
 - **Branch / PR:** `work` / helper PR metadata refreshed for user incorporation into PR #1175.

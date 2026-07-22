@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
+import { checkEnginePostconditions } from "../../../../../lib/engine/engine-postconditions";
+import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-jobs";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
@@ -15,6 +17,10 @@ export const dynamic = "force-dynamic";
 
 function requestDiagnosticId() {
   return `eng_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function isTrue(value: string | null): boolean {
+  return value === "true" || value === "1" || value === "yes";
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -42,6 +48,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   try {
     await prismaReady;
+
+    const { searchParams } = new URL(req.url);
+    const asyncRun = isTrue(searchParams.get("async"));
+    const safe = isTrue(searchParams.get("safe"));
+    const skipAiRematch = isTrue(searchParams.get("skipAiRematch"));
 
     const { id } = await params;
     const tender = await prisma.tender.findFirst({
@@ -115,8 +126,45 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
     }
 
+    if (asyncRun) {
+      const active = await findActiveEngineRunForTender(id, userId);
+      const jobId = active?.id ?? (await enqueueJob({
+        userId,
+        tenderId: id,
+        jobType: "ENGINE_RUN",
+        input: { safe, skipAiRematch, source: "engine-route" },
+      })).id;
+      return NextResponse.json({
+        success: true,
+        ok: true,
+        async: true,
+        queued: !active,
+        jobId,
+        jobType: "ENGINE_RUN",
+        safe,
+        skipAiRematch,
+        diagnosticId,
+      }, { status: 202 });
+    }
+
     const deadlineAt = Date.now() + 50_000;
-    const result = await runTenderEngine(id, userId, undefined, { deadlineAt });
+    const result = await runTenderEngine(id, userId, undefined, { deadlineAt, safe, skipAiRematch });
+    const postconditions = await checkEnginePostconditions(id);
+    if (!postconditions.ok) {
+      return NextResponse.json({
+        success: false,
+        ok: false,
+        partial: true,
+        code: "ENGINE_COMPLETED_WITH_BLOCKERS",
+        blockers: postconditions.blockers,
+        counts: postconditions.counts,
+        failedStage: "POSTCONDITION_VALIDATE",
+        nextAction: "REVIEW_MATCHING_INPUTS",
+        tender: result,
+        extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
+        diagnosticId,
+      });
+    }
     const engineMeta = result as {
       partial?: boolean;
       blockers?: string[];
