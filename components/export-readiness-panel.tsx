@@ -916,24 +916,20 @@ export function ExportReadinessPanel({
                     <WarningIcon /> Regex fallback analysis — recovery actions:
                   </p>
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      data-canonical-owner="#ai-analyze-section"
-                      disabled={busy}
-                      className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
-                      title="Re-run AI Analysis with all available providers"
+                    <a
+                      href="#ai-analyze-section"
+                      className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                      title="Open the canonical AI Analyze control to retry analysis with all available providers."
                     >
                       <SparklesIcon /> Open AI Analyze
-                    </button>
-                    <button
-                      type="button"
-                      data-canonical-owner="#ai-analyze-section"
-                      disabled={busy}
-                      className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
-                      title="Manually review and approve the regex-extracted tender requirements. Only use this if the extracted requirements are accurate."
+                    </a>
+                    <a
+                      href="#ai-analyze-section"
+                      className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                      title="Open the canonical fallback approval owner; approval requires a real reviewer note and remains audit-only."
                     >
                       <CheckCircleIcon /> Open fallback approval owner
-                    </button>
+                    </a>
                   </div>
                   <p className="mt-1 text-[10px] text-amber-700">
                     Export Readiness links to the canonical AI Analyze owner instead of issuing

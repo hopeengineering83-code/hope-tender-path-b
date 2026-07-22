@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up) — Codex
+
+- **Branch / PR:** `work` / helper PR metadata refreshed for user incorporation into PR #1175.
+- **Scope:** Addressed follow-up review concern in Export Readiness canonical-owner controls: changed inert `data-canonical-owner` buttons to real in-page links to `#ai-analyze-section`, and strengthened the PR1175 regression test to reject the inert pattern.
+- **Files changed:** `components/export-readiness-panel.tsx`, `tests/pr1175-residual-gap-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1175-residual-gap-regression.test.ts tests/action-icons-visibility.test.ts tests/ui-workflow-polish.test.ts` PASS; `npx tsc --noEmit` PASS; `npm run lint` PASS.
+- **Known risks:** No inline review comments were visible in the prompt, so this follow-up fixes the verified canonical-owner issue only. DB/Preview/Playwright/screenshot validation remains blocked by the same environment limitations recorded below.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 and runs target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only.
+
 ### 2026-07-22 UTC — Codex
 
 - **Branch / PR:** `codex/pr1175-gap-fixes` / separate PR metadata prepared for user to incorporate into PR #1175 manually. Starting SHA `820c9cb0bb382f56645b3494fe083ccefdd744fa`; final SHA reported in the final response after commit.

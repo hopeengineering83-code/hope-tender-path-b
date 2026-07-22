@@ -113,7 +113,8 @@ describe('PR 1175 residual workflow/action gaps', () => {
         `Export Readiness must link to canonical owner instead of POSTing ${route}`
       );
     }
-    assert.ok(src.includes('#ai-analyze-section'));
+    assert.ok(src.includes('href="#ai-analyze-section"'));
+    assert.ok(!src.includes('data-canonical-owner="#ai-analyze-section"'));
     assert.ok(src.includes("href: '#generated-documents'"));
   });
 
