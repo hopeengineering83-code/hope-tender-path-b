@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 14) — Codex
+
+- **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
+- **Scope:** Addressed the requested remaining gaps that are code-fixable in this environment. Added a queued `AUTO_FINALIZE` job type and chained background `PROPOSAL_GENERATION` into it without bypassing final-package gates. The auto-finalize job runs the central export readiness gate first, then marks only non-sensitive generated final-export candidates with real stored content as `VALIDATED`/`READY_FOR_EXPORT`; official-original/sensitive/manual records remain manual, and final ZIP/PDF gates remain authoritative. Also added a DOCX XML fallback extractor using `word/document.xml` when Mammoth returns too little text, improving normal Word extraction recovery without fabricating content.
+- **Files changed:** `lib/ai-job-handlers.ts`, `lib/ai-jobs.ts`, `lib/job-type-policy.ts`, `app/api/ai-jobs/route.ts`, `app/api/ai-jobs/run-next/route.ts`, `app/api/jobs/[jobId]/route.ts`, `lib/extract-text.ts`, `tests/pr1230-remaining-gaps-regression.test.ts`, `tests/extraction-quality-fallback-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/extraction-quality-fallback-regression.test.ts tests/company-knowledge-auto-review.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (27/27); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; `git diff --check` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target services/secrets. AUTO_FINALIZE is intentionally conservative and will not finalize internal quick drafts, official originals, missing-content rows, or sensitive legal/financial records. PDF OCR still requires configured OCR/provider support; this pass improved DOCX fallback extraction and preserved existing PDF OCR gates.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
 ### 2026-07-22 UTC (follow-up 13) — Codex
 
 - **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.

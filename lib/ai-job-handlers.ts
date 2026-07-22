@@ -46,6 +46,7 @@ import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enric
 import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
 import { logAction } from "./audit";
 import { buildDraftBuildPlan, computeTenderBuildPlanHash, validateBuildPlanForConfirmation } from "./engine/build-plan";
+import { filterFinalExportCandidateDocuments } from "./engine/document-output-state";
 
 export interface JobContext {
   jobId: string;
@@ -627,7 +628,72 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     );;
 
     await recordStep(ctx.jobId, { stepName: "proposal.complete", message: `Saved ${markdown.length} chars to GeneratedDocument ${doc.id}`, status: "SUCCEEDED" });
-    return { generatedDocumentId: doc.id, markdownChars: markdown.length, sectionsGenerated: sectionFilter ?? "all" };
+    const activeFinalizeJob = await prisma.aiJob.findFirst({
+      where: { tenderId: ctx.tenderId, userId: ctx.userId, jobType: "AUTO_FINALIZE", status: { in: ["QUEUED", "RUNNING"] } },
+      select: { id: true },
+      orderBy: { createdAt: "desc" },
+    });
+    const finalizeJob = activeFinalizeJob ?? await enqueueJob({
+      userId: ctx.userId,
+      tenderId: ctx.tenderId,
+      jobType: "AUTO_FINALIZE",
+      input: { source: "proposal-generation" },
+    });
+    await recordStep(ctx.jobId, {
+      stepName: "auto-finalize.enqueue",
+      message: activeFinalizeJob
+        ? `Auto-finalize already queued/running (${finalizeJob.id}); final package gates remain authoritative.`
+        : `Auto-finalize queued (${finalizeJob.id}); final package gates remain authoritative.`,
+      status: "SUCCEEDED",
+    });
+    return { generatedDocumentId: doc.id, markdownChars: markdown.length, sectionsGenerated: sectionFilter ?? "all", autoFinalize: { queued: !activeFinalizeJob, jobId: finalizeJob.id } };
+  },
+
+  // ─── AUTO_FINALIZE — conservative background finalization ────────────
+  // Runs only after generation and only promotes non-sensitive generated
+  // final-export candidates when the central export gate passes. It never
+  // fabricates official originals, brand assets, PDFs, or ZIPs.
+  AUTO_FINALIZE: async (ctx) => {
+    if (!ctx.tenderId) throw new Error("AUTO_FINALIZE requires tenderId on the job");
+    await recordStep(ctx.jobId, { stepName: "auto-finalize.gate", message: "Checking central export readiness before auto-finalize", status: "RUNNING" });
+    const gate = await assertTenderReadyForGenerationAndExport({
+      prisma,
+      tenderId: ctx.tenderId,
+      userId: ctx.userId,
+      purpose: "export",
+    });
+    if (!gate.ok) {
+      await recordStep(ctx.jobId, { stepName: "auto-finalize.gate", message: `Blocked by central gate: ${gate.blockerCode} — ${gate.blockerDetail}`, status: "FAILED" });
+      throw new Error(`AUTO_FINALIZE blocked by central gate (${gate.blockerCode}): ${gate.blockerDetail}`);
+    }
+
+    const docs = await prisma.generatedDocument.findMany({
+      where: { tenderId: ctx.tenderId, generationStatus: "GENERATED" },
+      select: { id: true, name: true, exactFileName: true, documentType: true, format: true, fileContent: true, storagePath: true, generationStatus: true, validationStatus: true, reviewStatus: true },
+    });
+    const candidates = filterFinalExportCandidateDocuments(docs as any[]).filter((doc) => {
+      const label = `${doc.name ?? ""} ${doc.exactFileName ?? ""} ${doc.documentType ?? ""}`.toLowerCase();
+      if (/audited|financial statement|tax clearance|vat cert|tin cert|bank statement|bid form|tender form|declaration form|undertaking form|integrity pact|business license|registration cert|incorporation|annual report/.test(label)) return false;
+      if (!doc.fileContent && !doc.storagePath) return false;
+      return true;
+    });
+
+    let finalized = 0;
+    for (const doc of candidates) {
+      await prisma.generatedDocument.update({
+        where: { id: doc.id },
+        data: {
+          validationStatus: "VALIDATED",
+          reviewStatus: "READY_FOR_EXPORT",
+          reviewedBy: ctx.userId,
+          reviewedAt: new Date(),
+          reviewNotes: "Auto-finalized after background proposal generation and central export readiness gate passed; official-original and sensitive records remain manual.",
+        },
+      });
+      finalized += 1;
+    }
+    await recordStep(ctx.jobId, { stepName: "auto-finalize.complete", message: `Auto-finalized ${finalized} generated document(s); final ZIP/PDF gates remain authoritative.`, status: "SUCCEEDED" });
+    return { finalized, skipped: docs.length - finalized, gate: "assertTenderReadyForGenerationAndExport", finalPackageStillGated: true };
   },
 
   // ─── EVALUATOR_SIM — async 4-persona panel evaluation ────────────────

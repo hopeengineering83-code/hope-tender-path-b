@@ -50,7 +50,8 @@ export type JobType =
   // extractedText + totalPages + extractionScore + extractionMethod, and runs
   // the candidate pipeline so the canonical resolver can ground the metadata.
   // Input: { tenderFileId: string }.
-  | "EXTRACT_TEXT";
+  | "EXTRACT_TEXT"
+  | "AUTO_FINALIZE";
 
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" | "CANCELED";
 

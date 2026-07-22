@@ -56,7 +56,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ jobId: 
   return NextResponse.json({
     id: job.id,
     tenderId: job.tenderId,
-    type: job.jobType === "AI_ANALYZE" ? "ANALYZE" : job.jobType === "ENGINE_RUN" ? "ENGINE" : "GENERATE",
+    type: job.jobType === "AI_ANALYZE" ? "ANALYZE" : job.jobType === "ENGINE_RUN" ? "ENGINE" : job.jobType === "AUTO_FINALIZE" ? "FINALIZE" : "GENERATE",
     status,
     steps,
     currentStep,

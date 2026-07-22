@@ -1071,6 +1071,26 @@ function parseDocxTableToText(tableHtml: string): string {
   return `[Table: ${tableLines.length} rows]\n${tableLines.join("\n")}`;
 }
 
+
+async function extractDocxXmlFallback(buffer: Buffer): Promise<string> {
+  try {
+    const JSZip = (await import("jszip")).default;
+    const zip = await JSZip.loadAsync(buffer);
+    const docXml = await zip.file("word/document.xml")?.async("string");
+    if (!docXml) return "";
+    const text = docXml
+      .replace(/<w:tab\/>/g, " ")
+      .replace(/<w:br\/>/g, "\n")
+      .replace(/<\/w:p>/g, "\n")
+      .replace(/<\/w:tr>/g, "\n")
+      .replace(/<\/w:tc>/g, " | ")
+      .replace(/<[^>]+>/g, " ");
+    return normalizeExtractedText(decodeHtmlEntities(text));
+  } catch {
+    return "";
+  }
+}
+
 async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
   const ext = fileName.toLowerCase().split(".").pop() ?? "";
   if (ext === "doc") return "[Legacy .doc file detected. Please save as .docx for reliable text extraction.]";
@@ -1169,7 +1189,9 @@ async function extractDocx(buffer: Buffer, fileName: string): Promise<string> {
 
   // Fallback: extract raw text only (no structure)
   const result = await mammoth.extractRawText({ buffer });
-  return normalizeExtractedText(result.value ?? "");
+  const raw = normalizeExtractedText(result.value ?? "");
+  if (raw.length > 20) return raw;
+  return await extractDocxXmlFallback(buffer);
 }
 
 async function extractXlsx(buffer: Buffer, fileName: string): Promise<string> {

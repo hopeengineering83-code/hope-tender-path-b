@@ -94,6 +94,26 @@ describe('PR 1230 remaining gap fixes', () => {
     assert.ok(upload.includes('input: { safe: true, skipAiRematch: true, source: "secure-upload" }'));
   });
 
+
+
+  it('chains proposal generation into gated auto-finalize without bypassing final package gates', () => {
+    const handler = read('lib/ai-job-handlers.ts');
+    const aiJobs = read('lib/ai-jobs.ts');
+    const listRoute = read('app/api/ai-jobs/route.ts');
+    const runNext = read('app/api/ai-jobs/run-next/route.ts');
+
+    assert.ok(aiJobs.includes('| "AUTO_FINALIZE"'));
+    assert.ok(listRoute.includes('"AUTO_FINALIZE"'));
+    assert.ok(runNext.includes('"AUTO_FINALIZE"'));
+    assert.ok(handler.includes('jobType: "AUTO_FINALIZE"'));
+    assert.ok(handler.includes('input: { source: "proposal-generation" }'));
+    assert.ok(handler.includes('AUTO_FINALIZE: async'));
+    assert.ok(handler.includes('purpose: "export"'));
+    assert.ok(handler.includes('filterFinalExportCandidateDocuments'));
+    assert.ok(handler.includes('official-original and sensitive records remain manual'));
+    assert.ok(handler.includes('finalPackageStillGated: true'));
+  });
+
   it('AI job list route recognizes ENGINE_RUN status polling filters', () => {
     const src = read('app/api/ai-jobs/route.ts');
     assert.ok(src.includes('"ENGINE_RUN"'));
