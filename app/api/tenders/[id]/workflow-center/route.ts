@@ -6,6 +6,7 @@ import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-relea
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
 import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
 import { isMutationAction } from "../../../../../lib/recovery-command-actions";
+import { TENDER_WORKFLOW_STAGE_LABELS } from "../../../../../lib/tender-workflow-stages";
 
 // Map the canonical decision's stageStates (READY/BLOCKED/BLOCKED_BY_PRIOR_STEP/
 // WAITING_ON_PRIOR_STEP/COMPLETE/IN_PROGRESS) to the workflow-center status
@@ -81,7 +82,7 @@ export async function GET(
     const stages = [
       {
         stage: 1,
-        label: "Source Files",
+        label: TENDER_WORKFLOW_STAGE_LABELS[1],
         status: stageStatusFromCanonical(ds["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"),
         explanation: "Manage uploaded tender PDFs and DOCX files.",
         actionLabel: "Manage Files",
@@ -90,7 +91,7 @@ export async function GET(
       },
       {
         stage: 2,
-        label: "Extraction Quality",
+        label: TENDER_WORKFLOW_STAGE_LABELS[2],
         status: stageStatusFromCanonical(ds["FIX_EXTRACTION"], hasUnsafePages ? "BLOCKED" : snapshot.extraction.overallOk ? "COMPLETE" : "BLOCKED"),
         explanation: hasUnsafePages
           ? pageLedgerSummary.map(pl => `${pl.fileName}: ${pl.summary}`).join(" | ")
@@ -105,7 +106,7 @@ export async function GET(
       },
       {
         stage: 3,
-        label: "AI Analyze",
+        label: TENDER_WORKFLOW_STAGE_LABELS[3],
         status: stageStatusFromCanonical(ds["RUN_AI_ANALYZE"],
           snapshot.analysis.state === "AI_SUCCEEDED" ? "COMPLETE" :
           snapshot.analysis.state === "RUNNING" ? "IN_PROGRESS" : "BLOCKED"),
@@ -116,7 +117,7 @@ export async function GET(
       },
       {
         stage: 4,
-        label: "Confirm Requirements",
+        label: TENDER_WORKFLOW_STAGE_LABELS[4],
         status: stageStatusFromCanonical(ds["CONFIRM_REQUIREMENTS"],
           snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : "WAITING_ON_PRIOR_STEP"),
         explanation: `${snapshot.requirements.total} requirements recorded (${snapshot.requirements.groundedMandatory} grounded).`,
@@ -126,7 +127,7 @@ export async function GET(
       },
       {
         stage: 5,
-        label: "Tender Details",
+        label: TENDER_WORKFLOW_STAGE_LABELS[5],
         // METADATA IS NO LONGER A HARD BLOCKER — the snapshot's metadata.gateValid
         // is always true per the unified runtime model. Tender Details are
         // advisory; the >80%-valid ratio only distinguishes READY from WARNING.
@@ -138,7 +139,7 @@ export async function GET(
       },
       {
         stage: 6,
-        label: "Verified Submission Plan",
+        label: TENDER_WORKFLOW_STAGE_LABELS[6],
         // Canonical decision drives status — uses gateValid (not the count-based
         // valid flag) so it agrees with the generation gate.
         status: stageStatusFromCanonical(ds["BUILD_SUBMISSION_PLAN"],
@@ -150,7 +151,7 @@ export async function GET(
       },
       {
         stage: 7,
-        label: "Match Evidence",
+        label: TENDER_WORKFLOW_STAGE_LABELS[7],
         // NO LONGER hardcoded PENDING — driven by the canonical decision.
         // When upstream blockers exist, this shows BLOCKED_BY_PRIOR_STEP or
         // WAITING_ON_PRIOR_STEP so the user knows it is gated, not just "pending".
@@ -164,7 +165,7 @@ export async function GET(
       },
       {
         stage: 8,
-        label: "Generate Documents",
+        label: TENDER_WORKFLOW_STAGE_LABELS[8],
         status: stageStatusFromCanonical(ds["GENERATE_DOCUMENTS"],
           snapshot.generationEligible ? "READY" : "BLOCKED"),
         explanation: snapshot.generationBlockers.length > 0 ? snapshot.generationBlockers[0] : "Ready for generation.",
@@ -174,7 +175,7 @@ export async function GET(
       },
       {
         stage: 9,
-        label: "Validate and Approve",
+        label: TENDER_WORKFLOW_STAGE_LABELS[9],
         // NO LONGER hardcoded PENDING — driven by the canonical decision.
         status: stageStatusFromCanonical(ds["VALIDATE_DOCS"], "WAITING_ON_PRIOR_STEP"),
         explanation: decision?.currentBlockingStage && decision.currentBlockingStage !== "EXPORT_ZIP_READY" && decision.currentBlockingStage !== "DOCS_NOT_VALIDATED" && decision.currentBlockingStage !== "DOCS_NOT_APPROVED_EXPORT_READY" && decision.currentBlockingStage !== "AUTHORITY_OR_QUALITY_BLOCKERS"
@@ -186,7 +187,7 @@ export async function GET(
       },
       {
         stage: 10,
-        label: "Export ZIP",
+        label: TENDER_WORKFLOW_STAGE_LABELS[10],
         status: stageStatusFromCanonical(ds["EXPORT_ZIP"],
           snapshot.exportEligible ? "READY" : "BLOCKED"),
         explanation: snapshot.exportBlockers.length > 0 ? snapshot.exportBlockers[0] : "Ready for export.",

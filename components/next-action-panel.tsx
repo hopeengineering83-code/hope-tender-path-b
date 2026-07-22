@@ -19,23 +19,7 @@ import { scoreTone, verdictLabel } from "../lib/ui/tender-release-state-presenta
 import { CheckCircleIcon, WarningIcon, ArrowRightIcon } from "./icons";
 import { StatusBadge } from "./status-badge";
 import { WorkflowStepLinks } from "./workflow-step-links";
-
-// Labels MUST match the server-side stage labels in
-// app/api/tenders/[id]/workflow-center/route.ts and the STEP_LABELS in
-// components/workflow-step-links.tsx. All three must agree so the step
-// counter, step links, and workflow control center show the same stage names.
-const STEPS = [
-  "Source Files",
-  "Extraction Quality",
-  "AI Analyze",
-  "Confirm Requirements",
-  "Tender Details",
-  "Verified Submission Plan",
-  "Match Evidence",
-  "Generate Documents",
-  "Validate and Approve",
-  "Export ZIP",
-] as const;
+import { TENDER_WORKFLOW_STAGE_LABEL_LIST as STEPS } from "../lib/tender-workflow-stages";
 
 type WorkflowStep =
   | "UPLOAD_TENDER"
@@ -64,9 +48,8 @@ const STEP_INDEX: Record<WorkflowStep, number> = {
   COMPLETE: 10,
 };
 
-// STEP_TARGETS was moved to components/workflow-step-links.tsx so both the
-// step counter and the step links share the same source of truth. The labels
-// above (STEPS) must still match STEP_LABELS in workflow-step-links.tsx.
+// STEPS is now imported from the canonical registry in
+// lib/tender-workflow-stages.ts — no duplicated label arrays.
 
 // Map the canonical decision's nextRequiredAction to the panel's step index.
 // This MUST agree with workflow-center's stageStates — both read the same

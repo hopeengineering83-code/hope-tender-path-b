@@ -30,8 +30,12 @@ export type AIKnowledgeExtraction = {
   warnings: string[];
 };
 
-const MAX_CHARS_PER_CHUNK = 12_000;
-const MAX_CHUNKS = 10;
+// Per Pillar 3: increased from 12K/10 to 24K/20 to avoid silently truncating
+// company-document text. The AI provider's token budget is the real limit —
+// these caps are safety guards, not data-loss gates. Company-document text
+// must be searchable and usable, not represented only by hashes.
+const MAX_CHARS_PER_CHUNK = 24_000;
+const MAX_CHUNKS = 20;
 const MIN_CONFIDENCE = 0.55;
 const MIN_EXPERT_CONFIDENCE = 0.65;
 
