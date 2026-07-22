@@ -50,6 +50,16 @@ describe('PR 1175 residual workflow/action gaps', () => {
       1,
       'engine panel should keep one shared running boolean'
     );
+    assert.equal(
+      count(src, "{running || isPending ? 'Running…'"),
+      0,
+      'both engine action buttons must not independently render identical Running labels'
+    );
+    assert.equal(
+      count(src, 'Engine running…'),
+      1,
+      'engine panel must render one shared running affordance while a run is active'
+    );
   });
 
   it('centralizes Safe Mode parameter parity for all safe-mode paths', () => {

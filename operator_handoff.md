@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 6) — Codex
+
+- **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
+- **Scope:** Rechecked the helper branch against the original prompt and fixed one confirmed residual Engine UX gap: while an Engine run is active, the panel no longer renders two disabled buttons with identical `Running…` labels. It now shows one shared `Engine running…` progress affordance, while preserving exactly two normal Engine actions when idle (`Run Safe Mode — Recommended` and `Run Full AI in Background`). Strengthened the PR1175 regression test so the duplicate-running-label shape cannot return.
+- **Files changed:** `components/engine-action-panel.tsx`, `tests/pr1175-residual-gap-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1175-residual-gap-regression.test.ts tests/pr1230-remaining-gaps-regression.test.ts` PASS (18/18); affected rendered/engine suites PASS (71/71); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target-branch services/secrets. `EVALUATION_CRITERIA_NOT_EXTRACTED` vs `EVALUATION_CRITERIA_MISSING` remains the sole documented unresolved product decision because no authoritative repository rule selects one name.
+- **Next action:** User reviews/cherry-picks PR #1230 helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
 ### 2026-07-22 UTC (follow-up 5) — Codex
 
 - **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.

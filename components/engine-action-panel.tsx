@@ -501,24 +501,34 @@ export function EngineActionPanel({
         </div>
         <div className="flex flex-wrap gap-2">
           {canMutate && (
-            <>
+            running || isPending ? (
               <button
-                onClick={() => runEngineAsync(false, canonicalSafeModeParams())}
-                disabled={running || isPending}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
-                title="Recommended safe mode queues a background job with safe=true and skipAiRematch=true."
+                type="button"
+                disabled
+                aria-live="polite"
+                className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 opacity-80"
+                title="One engine run is already queued or running; use the background status below for progress."
               >
-                <BoltIcon /> {running || isPending ? 'Running…' : 'Run Safe Mode — Recommended'}
+                <ClockIcon /> Engine running…
               </button>
-              <button
-                onClick={() => runEngineAsync(false)}
-                disabled={running || isPending}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                title="Queues the full AI engine in the background. Use after Safe Mode if AI rematch is needed."
-              >
-                <PlayIcon /> {running || isPending ? 'Running…' : 'Run Full AI in Background'}
-              </button>
-            </>
+            ) : (
+              <>
+                <button
+                  onClick={() => runEngineAsync(false, canonicalSafeModeParams())}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+                  title="Recommended safe mode queues a background job with safe=true and skipAiRematch=true."
+                >
+                  <BoltIcon /> Run Safe Mode — Recommended
+                </button>
+                <button
+                  onClick={() => runEngineAsync(false)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100"
+                  title="Queues the full AI engine in the background. Use after Safe Mode if AI rematch is needed."
+                >
+                  <PlayIcon /> Run Full AI in Background
+                </button>
+              </>
+            )
           )}
           {!canMutate && (
             <p className="text-xs text-slate-500 italic self-center">
