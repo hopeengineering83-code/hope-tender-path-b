@@ -506,7 +506,7 @@ export function EngineActionPanel({
                 type="button"
                 disabled
                 aria-live="polite"
-                className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 opacity-80"
+                className="inline-flex cursor-not-allowed items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-800 disabled:opacity-60"
                 title="One engine run is already queued or running; use the background status below for progress."
               >
                 <ClockIcon /> Engine running…

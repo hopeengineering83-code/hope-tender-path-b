@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 16) — Codex
+
+- **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
+- **Scope:** Continued from the last commit by fixing concrete full-suite/source-shape gaps that were still visible after the auto-finalize work. Restored visible icon/label affordance for the export-ready Stage 5 navigation link by rendering `DownloadIcon` + `Download Final ZIP` while keeping the link anchored to `#final-package-download-actions` (no duplicate ZIP href). Made the Engine running disabled button use `disabled:opacity-60` so disabled controls retain readable icon/text contrast. Split the run-next long-running break checks so `AI_ANALYZE` remains explicitly one-job-per-invocation while `ENGINE_RUN`, `PROPOSAL_GENERATION`, `EXTRACT_TEXT`, and `AUTO_FINALIZE` also remain one-per-invocation.
+- **Files changed:** `components/export-readiness-panel.tsx`, `components/engine-action-panel.tsx`, `app/api/ai-jobs/run-next/route.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/action-icons-visibility.test.ts tests/workflow-icons-affordance-round2.test.ts tests/durable-ai-analyze-workflow.test.ts tests/extract-text-job.test.ts` PASS (121/121); `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/extraction-quality-fallback-regression.test.ts tests/company-knowledge-auto-review.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (27/27); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; `git diff --check` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` still blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, runtime logs, and real OCR/provider execution still require target services/secrets. Export Readiness still does not emit a direct ZIP download href; Stage 5 remains the final package owner.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
+
 ### 2026-07-22 UTC (follow-up 15) — Codex
 
 - **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.

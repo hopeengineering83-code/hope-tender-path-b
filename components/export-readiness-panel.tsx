@@ -512,7 +512,7 @@ export function ExportReadinessPanel({
       ]
         .filter(Boolean)
         .join(' / ')} ZIP downloads`
-    : 'Open Final Package Downloads';
+    : 'Download Final ZIP';
 
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm" id="export-readiness">
@@ -573,7 +573,15 @@ export function ExportReadinessPanel({
               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400"
               title="Export readiness is clear. Open the Stage 5 final-package panel for the authoritative ZIP gate and download controls."
             >
-              <DownloadIcon /> {readyEnvelopeLabel}
+              {strictTwoEnvelope ? (
+                <>
+                  <DownloadIcon /> {readyEnvelopeLabel}
+                </>
+              ) : (
+                <>
+                  <DownloadIcon /> Download Final ZIP
+                </>
+              )}
             </a>
           )}
           {readiness && !ok && (

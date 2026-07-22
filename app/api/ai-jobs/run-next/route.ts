@@ -172,7 +172,8 @@ export async function POST(req: Request) {
       });
     }
 
-    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE", "AUTO_FINALIZE"].includes(claimed.jobType)) break;
+    if (["AI_ANALYZE"].includes(claimed.jobType)) break;
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "EXTRACT_TEXT", "AUTO_FINALIZE"].includes(claimed.jobType)) break;
   }
 
   if (processedJobs.length === 0) {
