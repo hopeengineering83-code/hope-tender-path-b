@@ -157,25 +157,26 @@ describe("EngineActionPanel — REVIEWER / omitted canMutate render states (real
   });
 });
 
-describe("EngineActionPanel — ADMIN and PROPOSAL_MANAGER retain controls (real render + real dispatch)", () => {
-  it("ADMIN normal state: Run Engine + Run in background visible; clicking Run Engine dispatches the POST", async () => {
+describe("EngineActionPanel — ADMIN and PROPOSAL_MANAGER retain canonical controls (real render + real dispatch)", () => {
+  it("ADMIN normal state: Safe Mode + Full AI background visible; clicking Safe Mode dispatches canonical params", async () => {
     const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1", canMutate: adminCanMutate }));
     const labels = buttonLabels(container);
-    assert.ok(labels.some((l) => l.includes("Run Engine")), "ADMIN must see Run Engine");
-    assert.ok(labels.some((l) => l.includes("Run in background")), "ADMIN must see Run in background");
+    assert.ok(labels.some((l) => l.includes("Run Safe Mode — Recommended")), "ADMIN must see recommended Safe Mode");
+    assert.ok(labels.some((l) => l.includes("Run Full AI in Background")), "ADMIN must see Full AI background");
+    assert.ok(!labels.some((l) => l === "Run Engine"), "ADMIN must not see the legacy sync Run Engine button");
 
-    const runButton = findButton(container, "Run Engine");
+    const runButton = findButton(container, "Run Safe Mode — Recommended");
     assert.ok(runButton);
     fireEvent.click(runButton!);
     await waitFor(() => {
       assert.ok(
-        calls.some((c) => c.method === "POST" && c.url.includes("/api/tenders/t1/engine")),
-        "ADMIN click must dispatch the engine POST",
+        calls.some((c) => c.method === "POST" && c.url.includes("/api/tenders/t1/engine") && c.url.includes("async=true") && c.url.includes("safe=true") && c.url.includes("skipAiRematch=true")),
+        "ADMIN Safe Mode click must dispatch the canonical async safe-mode engine POST",
       );
     });
   });
 
-  it("PROPOSAL_MANAGER large-vault state: Safe Mode banner and both large-vault buttons visible", () => {
+  it("PROPOSAL_MANAGER large-vault state: one Safe Mode banner and the same two canonical buttons", () => {
     const { container } = renderWithRouter(h(EngineActionPanel, {
       tenderId: "t1",
       canMutate: pmCanMutate,
@@ -183,11 +184,12 @@ describe("EngineActionPanel — ADMIN and PROPOSAL_MANAGER retain controls (real
       vaultReviewedProjects: 10,
     }));
     assert.ok((container.textContent ?? "").includes("Large vault detected"), "PM must see the Safe Mode banner");
-    assert.ok(findButton(container, "Run Safe Mode (recommended)"), "PM must see Run Safe Mode (recommended)");
-    assert.ok(findButton(container, "Run full mode anyway"), "PM must see Run full mode anyway");
+    assert.ok(findButton(container, "Run Safe Mode — Recommended"), "PM must see recommended Safe Mode");
+    assert.ok(findButton(container, "Run Full AI in Background"), "PM must see Full AI background");
+    assert.ok(!findButton(container, "Run full mode anyway"), "PM must not see the legacy full-mode duplicate");
   });
 
-  it("ADMIN failure/retry state: retry buttons visible", () => {
+  it("ADMIN failure/retry state: retry buttons keep Safe Mode but no Skip AI Rematch duplicate", () => {
     const { container } = renderWithRouter(h(EngineActionPanel, {
       tenderId: "t1",
       canMutate: adminCanMutate,
@@ -195,7 +197,7 @@ describe("EngineActionPanel — ADMIN and PROPOSAL_MANAGER retain controls (real
     }));
     assert.ok(findButton(container, "Retry from start"), "ADMIN must see Retry from start");
     assert.ok(findButton(container, "Run Safe Mode"), "ADMIN must see Run Safe Mode");
-    assert.ok(findButton(container, "Skip AI Rematch"), "ADMIN must see Skip AI Rematch");
+    assert.ok(!findButton(container, "Skip AI Rematch"), "ADMIN must not see the duplicate Skip AI Rematch button");
   });
 });
 

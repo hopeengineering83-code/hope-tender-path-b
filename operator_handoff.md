@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 2) — Codex
+
+- **Branch / PR:** `work` / helper PR metadata refreshed again for user incorporation into PR #1175.
+- **Scope:** Rechecked the helper changes against the original prompt requirements and found one remaining test-suite contradiction: rendered Engine capability tests still expected the removed legacy `Run Engine`, `Run full mode anyway`, and `Skip AI Rematch` controls. Updated the rendered test to assert the actual prompt contract: one Safe Mode recommended action, one Full AI background action, canonical Safe Mode query params, and no skip-rematch duplicate.
+- **Files changed:** `tests/rendered-component-capability.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/rendered-component-capability.test.ts` PASS; `npx tsx --test tests/pr1175-residual-gap-regression.test.ts tests/action-icons-visibility.test.ts tests/ui-workflow-polish.test.ts tests/rendered-component-capability.test.ts` PASS (86/86); `npx tsc --noEmit` PASS; `npm run lint` PASS.
+- **Known risks:** No inline review comments were visible in the prompt. DB/Preview/Playwright/screenshot/runtime checks still require target-branch services.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 and runs target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only.
+
 ### 2026-07-22 UTC (follow-up) — Codex
 
 - **Branch / PR:** `work` / helper PR metadata refreshed for user incorporation into PR #1175.
