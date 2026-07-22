@@ -265,15 +265,14 @@ test.describe("Tablet and responsive dashboard contracts", () => {
     );
     const advertised = [...new Set(hrefs)];
 
-    // Post-consolidation the primary sidebar advertises only the top-level
-    // destinations (Overview, Tenders, Company Vault, Engine, Documents &
-    // Export, Administration for this ADMIN fixture) — formerly-separate
-    // routes like /dashboard/admin/ai-readiness are now memberHrefs of
-    // Administration, reached via its own sub-nav tab bar
-    // (components/dashboard-group-subnav.tsx), not a literal sidebar link.
+    // Post-consolidation the primary sidebar advertises only 5 top-level
+    // destinations (Tenders [includes Overview], Company Vault, Engine,
+    // Documents & Export, Administration) — formerly-separate routes like
+    // /dashboard/admin/ai-readiness are now memberHrefs of Administration,
+    // reached via its own sub-nav tab bar, not a literal sidebar link.
     expect(advertised).not.toContain("/dashboard/admin");
     expect(advertised).not.toContain("/dashboard/admin/ai-readiness");
-    expect(advertised.length).toBe(6);
+    expect(advertised.length).toBe(5);
 
     for (const href of advertised) {
       const response = await page.goto(href, { waitUntil: "domcontentloaded" });
