@@ -35,6 +35,15 @@ describe("canonical navigation and command-center interlinking", () => {
     assert.ok(link.includes("attempts >= 50"));
   });
 
+  it("shows one primary workflow action and collapses the full shortcut list", () => {
+    const links = read("components/workflow-step-links.tsx");
+    assert.ok(links.includes("View full workflow"));
+    assert.ok(links.includes("<details"));
+    assert.ok(links.includes("Open {currentLabel}"));
+    assert.ok(links.includes('aria-label="Full tender workflow"'));
+    assert.ok(links.includes("const complete = currentIndex >= STEP_LABELS.length"));
+  });
+
   it("removes the dead tender breadcrumb component", () => {
     assert.equal(existsSync(join(process.cwd(), "components/tender-breadcrumb.tsx")), false);
   });
