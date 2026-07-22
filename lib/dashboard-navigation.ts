@@ -117,12 +117,11 @@ export const DASHBOARD_NAV_GROUPS: DashboardNavGroup[] = [
     title: "Workspace",
     roles: null,
     links: [
-      { href: "/dashboard", label: "Overview", iconName: "HomeIcon" },
       {
         href: "/dashboard/tenders",
         label: "Tenders",
         iconName: "ListIcon",
-        memberHrefs: ["/dashboard/history", "/dashboard/calendar"],
+        memberHrefs: ["/dashboard", "/dashboard/history", "/dashboard/calendar"],
       },
     ],
   },
