@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC — Codex
+
+- **Branch / PR:** `codex/pr1175-gap-fixes` / separate PR metadata prepared for user to incorporate into PR #1175 manually. Starting SHA `820c9cb0bb382f56645b3494fe083ccefdd744fa`; final SHA reported in the final response after commit.
+- **Scope:** Residual PR #1175 workflow/action cleanup on mounted checkout: removed duplicate Overview quick-engine links, moved Next Required Action ahead of secondary workflow controls and Stage 1, collapsed workflow step pills, reduced Engine to Safe Mode + Full AI background actions, centralized Safe Mode params, replaced stale Recovery Command Center-below guidance, made Export Readiness show one primary repair plus collapsed advanced repairs, and linked duplicate AI Analyze / missing-plan / fallback-approval owners instead of duplicate POSTs.
+- **Files changed:** `app/dashboard/page.tsx`, `app/dashboard/tenders/[id]/page.tsx`, `components/engine-action-panel.tsx`, `components/export-readiness-panel.tsx`, `components/next-action-panel.tsx`, `tests/pr1175-residual-gap-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** focused PR1175/action-icon/UI source-shape tests PASS; `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; Prisma validate PASS with dummy DATABASE_URL; production build PASS with dummy required env vars. Prisma migrate status / DB drift / DB integration / Playwright could not complete because local PostgreSQL and required runtime env were unavailable. Broad tests were interrupted after environment/pre-fix-noise failures; focused affected suites were rerun and passed after fixes.
+- **Known risks:** Exact PR #1175 branch was not mounted; this branch is an isolated helper PR for manual incorporation. No live preview, runtime logs, real AI background execution, or screenshot audit completed in this environment. `EVALUATION_CRITERIA_NOT_EXTRACTED` vs `EVALUATION_CRITERIA_MISSING` intentionally left unresolved because no authoritative rule was changed. Letterhead/Logo/Header/Footer assets were not fabricated.
+- **Next action:** User cherry-picks/reviews this helper PR into PR #1175, then runs real DB, Preview, AI, Playwright, and screenshot validation on the target branch.
+- **Merge status:** not reviewed — helper branch only, not merge-ready for production.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.

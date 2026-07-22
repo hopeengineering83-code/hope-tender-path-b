@@ -9,8 +9,7 @@ import {
   classifyTenderCurrentnessBatch,
   isCanonicalCurrentnessCritical,
 } from "../../lib/engine/tender-currentness";
-import { BrainIcon, PuzzleIcon, ShieldIcon, DatabaseIcon, PackageIcon, SparklesIcon, AlertCircleIcon, CrossIcon } from "../../components/icons";
-import type { ReactNode } from "react";
+import { PackageIcon, SparklesIcon, AlertCircleIcon, CrossIcon } from "../../components/icons";
 
 export default async function DashboardPage() {
   const userId = await getSession();
@@ -374,25 +373,12 @@ export default async function DashboardPage() {
 
         <div className="space-y-4">
           <div className="rounded-2xl border bg-slate-900 p-6 text-white shadow-lg">
-            <h3 className="text-lg font-bold">Quick Engine Access</h3>
-            <p className="mt-1 text-xs text-slate-400">Jump directly to specialized engine views.</p>
-            <div className="mt-6 space-y-2">
-              {(
-                [
-                  { href: "/dashboard/analysis", label: "Global Analysis", icon: <BrainIcon /> },
-                  { href: "/dashboard/matching", label: "Global Matching", icon: <PuzzleIcon /> },
-                  { href: "/dashboard/compliance", label: "Global Compliance", icon: <ShieldIcon /> },
-                  { href: "/dashboard/company", label: "Knowledge Vault", icon: <DatabaseIcon /> },
-                  { href: "/dashboard/export", label: "Export Hub", icon: <PackageIcon /> },
-                ] as { href: string; label: string; icon: ReactNode }[]
-              ).map((item) => (
-                <Link key={item.href} href={item.href}
-                  className="flex items-center gap-3 rounded-xl bg-slate-800/50 p-3 text-sm hover:bg-slate-800 transition-colors border border-slate-700/50">
-                  <span className="text-lg">{item.icon}</span>
-                  <span className="font-medium">{item.label}</span>
-                </Link>
-              ))}
-            </div>
+            <h3 className="text-lg font-bold">Current Workspace</h3>
+            <p className="mt-1 text-xs text-slate-400">Use the primary navigation for workspaces; resume active tenders from the Live Pipeline.</p>
+            <Link href="/dashboard/tenders"
+              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-slate-900 hover:bg-slate-100">
+              <PackageIcon /> Open Tender Workspace
+            </Link>
           </div>
 
           {recentActivity.length > 0 && (
