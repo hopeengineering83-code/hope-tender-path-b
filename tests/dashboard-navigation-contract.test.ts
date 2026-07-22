@@ -45,12 +45,14 @@ test("unadvertised admin root has no active item", () => {
   assert.equal(getActiveDashboardHref("/dashboard/admin", groups), null);
 });
 
-test("canonical navigation keeps route and icon identities unique and complete (post-consolidation: 6 primary destinations)", () => {
+test("canonical navigation keeps route and icon identities unique and complete (post-consolidation: 5 primary destinations)", () => {
   const links = flattenDashboardLinks(DASHBOARD_NAV_GROUPS);
-  // Consolidated from 23 top-level items down to 6 — Tenders (+2 members),
-  // Company Vault (+7 members), Engine (+2 members), Documents & Export
-  // (+1 member), Administration (+6 members), plus Overview.
-  assert.equal(links.length, 6);
+  // Consolidated from 23 top-level items down to 5 — Tenders (includes
+  // Overview, History, Calendar), Company Vault (+7 members), Engine
+  // (+2 members), Documents & Export (+1 member), Administration
+  // (+6 members). Overview was merged into Tenders per the product-goal
+  // consolidation (maximum five primary navigation destinations).
+  assert.equal(links.length, 5);
   assert.equal(new Set(links.map((link) => link.href)).size, links.length);
   assert.ok(links.every((link) => link.iconName.endsWith("Icon")));
   assert.ok(links.some((link) => link.href === "/dashboard/documents"));

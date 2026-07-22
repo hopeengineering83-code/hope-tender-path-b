@@ -197,10 +197,11 @@ test("category B: primary sidebar has no two links pointing at routes that serve
     assert.ok(!primaryHrefs.has(formerPrimary), `"${formerPrimary}" must not be re-advertised as its own primary sidebar destination — it was consolidated`);
   }
 
-  // And exactly 6 primary destinations total (Overview, Tenders, Company
-  // Vault, Engine, Documents & Export, Administration) — a regression that
-  // silently re-adds a 7th "same workspace, new label" entry must fail here.
-  assert.equal(links.length, 6, "post-consolidation the primary sidebar must show exactly 6 destinations");
+  // And exactly 5 primary destinations total (Tenders [includes Overview],
+  // Company Vault, Engine, Documents & Export, Administration) — a regression
+  // that silently re-adds a 6th "same workspace, new label" entry must fail
+  // here. Overview was merged into Tenders per the product-goal consolidation.
+  assert.equal(links.length, 5, "post-consolidation the primary sidebar must show exactly 5 destinations");
 });
 
 test("category B: every consolidated member route still resolves to exactly one (the correct) primary sidebar destination", () => {
