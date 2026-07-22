@@ -26,8 +26,17 @@ export async function extractTextFromBuffer(
     if (isCsv(mimeType, ext)) return extractCsv(buffer);
     if (isRtf(mimeType, ext)) return extractRtf(buffer);
     if (isText(mimeType, ext)) return buffer.toString("utf8").slice(0, MAX_EXTRACTED_TEXT_CHARS);
-    if (isImage(mimeType, ext)) return `[Image: ${fileName}]`;
-    return "";
+    if (isImage(mimeType, ext)) {
+      // Per Pillar 2: report unsupported/corrupt files honestly. Images
+      // cannot be text-extracted without OCR. Return an honest marker so
+      // downstream extraction-quality gates classify this as a weak
+      // extraction (not an empty one). The user sees "Image needs OCR"
+      // in the extraction quality dashboard instead of a silent placeholder.
+      return `[Image needs OCR: ${fileName}]`;
+    }
+    // Per Pillar 2: report unsupported formats honestly instead of silently
+    // returning an empty string that looks like "extraction succeeded".
+    return `[Unsupported format: ${ext || mimeType || "unknown"}]`;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`[extract-text] ${fileName} (${mimeType}):`, { detail: err });
