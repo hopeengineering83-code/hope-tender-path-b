@@ -781,13 +781,16 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     });
   }
 
-  // ── Evaluation criteria advisory warning ─────────────────────────────────
+  // ── Evaluation criteria advisory (non-blocking) ──────────────────────────
+  // Per Pillar 6: EVALUATION_CRITERIA_MISSING and EVALUATION_CRITERIA_NOT_EXTRACTED
+  // are merged into one non-blocking advisory. Only block if the tender
+  // explicitly contains an unreadable scoring section.
   if (!tender.evaluationMethodology) {
     advisoryWarnings.push({
-      category: "EVALUATION_CRITERIA_MISSING",
-      severity: "MEDIUM" as const,
-      title: "Evaluation criteria/methodology were not extracted from the tender document.",
-      recommendedAction: "Run AI Analyze to extract evaluation criteria, or manually review scoring weights before exporting.",
+      category: "EVALUATION_CRITERIA_ADVISORY",
+      severity: "LOW" as const,
+      title: "Evaluation criteria were not extracted — verify scoring manually before export.",
+      recommendedAction: "Review the tender document for any scoring/evaluation section. If found, run AI Analyze to extract it. This is advisory only and does not block export.",
     });
   }
 

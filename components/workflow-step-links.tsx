@@ -2,47 +2,17 @@
 
 // Client component for the workflow step shortcut links.
 //
-// The parent NextActionPanel is a server component (it reads the canonical
-// workflow decision from the DB). The step links need a client onClick handler
-// to open parent <details>/<WorkflowStage>/<Disclosure> wrappers before
-// scrolling — without this, clicking a step link to a panel hidden inside a
-// closed disclosure silently fails (the anchor exists in the DOM but is not
-// displayed, so the browser cannot scroll to it).
-//
-// This was the root cause of the "icons act independently" interlinking bug:
-// every step link and workflow shortcut button tried to navigate to panels
-// that were invisible inside closed disclosures.
-//
-// STAGE ALIGNMENT: The labels below must match the server-side stage
-// definitions in app/api/tenders/[id]/workflow-center/route.ts (stages
-// 1-10) — TenderWorkflowActionCenter gets its labels directly from that
-// same server response, so this is the one remaining place stage labels are
-// duplicated by hand. The anchor targets are no longer duplicated: both this
-// component and TenderWorkflowActionCenter import the same canonical
-// TENDER_WORKFLOW_STAGE_TARGETS map, using its first (primary) entry here.
+// Labels and targets are imported from the single canonical registry in
+// lib/tender-workflow-stages.ts — no duplicated arrays. The parent
+// NextActionPanel (server component) also imports from the same registry.
 
 import { useCallback } from "react";
 import { openParentDetailsAndScroll } from "@/lib/ui/tender-workflow-sync";
-import { TENDER_WORKFLOW_STAGE_TARGETS } from "@/lib/tender-workflow-stage-targets";
+import {
+  TENDER_WORKFLOW_STAGE_LABEL_LIST as STEP_LABELS,
+  TENDER_WORKFLOW_STAGE_PRIMARY_TARGETS as STEP_TARGETS,
+} from "@/lib/tender-workflow-stages";
 import { CheckCircleIcon, ArrowRightIcon } from "./icons";
-
-const STEP_LABELS = [
-  "Source Files",           // Stage 1
-  "Extraction Quality",     // Stage 2
-  "AI Analyze",             // Stage 3
-  "Confirm Requirements",   // Stage 4
-  "Tender Details",         // Stage 5
-  "Verified Submission Plan", // Stage 6
-  "Match Evidence",         // Stage 7
-  "Generate Documents",     // Stage 8
-  "Validate and Approve",   // Stage 9
-  "Export ZIP",             // Stage 10
-] as const;
-
-// Primary target only (first entry) — if it's absent from the page, the user
-// can still use the Workflow Control Center's stage buttons, which try the
-// same registry's fallback targets too.
-const STEP_TARGETS = STEP_LABELS.map((_, i) => TENDER_WORKFLOW_STAGE_TARGETS[i + 1][0]);
 
 export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
   const handleClick = useCallback((event: React.MouseEvent<HTMLAnchorElement>, selector: string) => {

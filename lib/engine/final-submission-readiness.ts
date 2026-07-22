@@ -611,7 +611,7 @@ export async function getFinalSubmissionReadiness(
   // Donor advisory persistence: honour user-saved resolutions so re-check
   // does not re-surface advisories the user already triaged.
   const resolutions = await loadAdvisoryResolutions(client, opts.tenderId);
-  const advisoryWarnings = applyAdvisoryResolutions(readiness.advisoryWarnings, resolutions);
+  const advisoryWarnings: FinalReadinessAdvisoryWarning[] = applyAdvisoryResolutions(readiness.advisoryWarnings, resolutions);
   const tenderLevelBlockers: FinalReadinessTenderBlocker[] = (readiness.tenderLevelBlockers ?? []).map((b) => ({
     category: b.category,
     severity: b.severity,
@@ -1082,17 +1082,21 @@ export async function getFinalSubmissionReadiness(
   // When evaluationMethodology is empty/null and no evaluation criteria source
   // JSON is stored, the generated proposal cannot mirror the evaluation
   // criteria — a significant proposal-quality risk. Push as MEDIUM advisory
-  // rather than a hard blocker because some tenders genuinely have no criteria.
+  // Per Pillar 6: merged with EVALUATION_CRITERIA_MISSING into one non-blocking
+  // advisory. This is no longer a hard blocker — some tenders genuinely have
+  // no scoring section. Only surface as advisory, not as a tenderLevelBlocker.
   const hasEvalCriteria = Boolean(
     (tender.evaluationMethodology ?? "").trim().length > 20 ||
     tender.evaluationCriteriaSourceJson,
   );
   if (!hasEvalCriteria) {
-    tenderLevelBlockers.push({
-      category: "EVALUATION_CRITERIA_NOT_EXTRACTED",
-      severity: "MEDIUM",
-      title: "Evaluation criteria were not extracted from the tender — the generated proposal cannot mirror the scoring rubric.",
-      recommendedAction: "Re-run AI Analyze or manually enter evaluation criteria weights so the proposal targets the scoring rubric directly.",
+    // Advisory only — do NOT push to tenderLevelBlockers
+    advisoryWarnings.push({
+      category: "EVALUATION_CRITERIA_ADVISORY",
+      code: "EVALUATION_CRITERIA_ADVISORY",
+      severity: "LOW",
+      title: "Evaluation criteria were not extracted — verify scoring manually.",
+      recommendedAction: "Review the tender for any scoring section. If found, re-run AI Analyze. This is advisory only and does not block final submission.",
     });
   }
 

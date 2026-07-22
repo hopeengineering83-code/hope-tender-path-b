@@ -1689,9 +1689,11 @@ const ANALYSIS_CHUNK_SOFT_LIMIT = 60_000;
 // straddling the boundary is captured in both chunks; merge dedupes).
 export const ANALYSIS_CHUNK_SIZE = 50_000;
 export const ANALYSIS_CHUNK_OVERLAP = 5_000;
-// Cap to prevent runaway cost on truly enormous PDFs. 6 × 50K = 300K
-// chars covers an extremely long RFP. Anything past 300K is rare.
-const ANALYSIS_MAX_CHUNKS = 6;
+// Per Pillar 3: increased from 6 to 20 chunks to analyze all persisted content
+// instead of silently dropping anything past 300K chars. 20 × 50K = 1M chars
+// covers even the largest multi-file tender packages. The AI provider's token
+// budget is the real limit; these chunks are sent sequentially with overlap.
+const ANALYSIS_MAX_CHUNKS = 20;
 
 export function chunkTenderContent(content: string): string[] {
   if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) return [content];
@@ -1703,7 +1705,38 @@ export function chunkTenderContent(content: string): string[] {
     if (end === content.length) break;
     start = end - ANALYSIS_CHUNK_OVERLAP;
   }
+  // Per Pillar 3: if content was not fully chunked (hit ANALYSIS_MAX_CHUNKS
+  // before reaching the end), log a warning so downstream gates can detect
+  // incomplete processing. The chunk count is capped to prevent runaway cost,
+  // but this must never silently report complete analysis.
+  if (start < content.length) {
+    logger.warn("[ai] tender content was not fully chunked — ANALYSIS_MAX_CHUNKS limit reached", {
+      contentLength: content.length,
+      chunksCreated: chunks.length,
+      maxChunks: ANALYSIS_MAX_CHUNKS,
+      unprocessedChars: content.length - start,
+    });
+  }
   return chunks;
+}
+
+/**
+ * Check whether the chunked content was fully processed or truncated by the
+ * ANALYSIS_MAX_CHUNKS cap. Returns true when content remains unprocessed.
+ * Downstream gates should use this to add a "content not fully processed"
+ * advisory blocker when true.
+ */
+export function wasContentTruncatedByChunkCap(content: string, chunks: string[]): boolean {
+  if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) return false;
+  if (chunks.length < ANALYSIS_MAX_CHUNKS) return false;
+  // If we hit the max chunks cap, check whether the last chunk ends at the
+  // content boundary. With overlap, the last chunk's end may be past the
+  // content end, so check the first chunk's start + total coverage.
+  const lastChunkEnd = chunks.reduce((sum, chunk, i) => {
+    if (i === 0) return chunk.length;
+    return sum + (chunk.length - ANALYSIS_CHUNK_OVERLAP);
+  }, 0);
+  return lastChunkEnd < content.length;
 }
 
 export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResult {
