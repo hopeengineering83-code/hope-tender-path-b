@@ -4,10 +4,12 @@ import { logger } from "./observability";
  *
  *   REGEX_DRAFT  — pattern-extracted, lowest trust (fallback when AI unavailable)
  *   AI_DRAFT     — Claude-extracted, medium trust (structured but unreviewed)
- *   REVIEWED     — human-verified, full trust (used authoritatively in proposals)
+ *   REVIEWED     — source-grounded, full trust (used authoritatively in proposals)
  *
- * Records are NEVER promoted to REVIEWED automatically. A human must review
- * them in the Knowledge Review dashboard before they can be used in generation.
+ * Regex/weak records are NEVER promoted to REVIEWED automatically. High-confidence
+ * AI records may be auto-reviewed only when they carry a strong source quote from
+ * the correctly categorized uploaded document; otherwise a human must review them
+ * in the Knowledge Review dashboard before they can be used in generation.
  */
 
 import { prisma } from "./prisma";
@@ -36,6 +38,28 @@ function firstMatch(text: string, patterns: RegExp[]): string | null {
 const EXPERT_IMPORT_CATEGORIES = new Set(["EXPERT_CV"]);
 const PROJECT_IMPORT_CATEGORIES = new Set(["PROJECT_REFERENCE", "PROJECT_CONTRACT", "PORTFOLIO"]);
 const SUPPORT_ONLY_CATEGORIES = new Set(["COMPANY_PROFILE", "LEGAL_REGISTRATION", "FINANCIAL_STATEMENT", "MANUAL", "COMPLIANCE_RECORD", "CERTIFICATION", "OTHER"]);
+
+const AUTO_REVIEW_MIN_CONFIDENCE = 0.92;
+const AUTO_REVIEW_MIN_QUOTE_CHARS = 80;
+
+function hasStrongSourceQuote(sourceQuote: string | null | undefined, sourceText: string | null | undefined): boolean {
+  const quote = clean(sourceQuote ?? "");
+  if (quote.length < AUTO_REVIEW_MIN_QUOTE_CHARS) return false;
+  const haystack = (sourceText ?? "").toLowerCase();
+  return haystack.includes(quote.slice(0, AUTO_REVIEW_MIN_QUOTE_CHARS).toLowerCase());
+}
+
+function autoReviewedTrust(confidence: number | null | undefined, sourceQuote: string | null | undefined, sourceText: string | null | undefined): "REVIEWED" | "AI_DRAFT" {
+  return (confidence ?? 0) >= AUTO_REVIEW_MIN_CONFIDENCE && hasStrongSourceQuote(sourceQuote, sourceText)
+    ? "REVIEWED"
+    : "AI_DRAFT";
+}
+
+function reviewNotesForTrust(trustLevel: string, sourceKind: string): string | null {
+  return trustLevel === "REVIEWED"
+    ? `Auto-reviewed: high-confidence AI extraction with a strong source quote from a categorized ${sourceKind} document.`
+    : null;
+}
 
 // ─── domain inference (regex fallback) ───────────────────────────────────────
 
@@ -251,6 +275,7 @@ export type ImportResult = {
 };
 
 export async function importCompanyKnowledgeFromDocuments(companyId: string): Promise<ImportResult> {
+  const company = await prisma.company.findUnique({ where: { id: companyId }, select: { userId: true } });
   const docs = await prisma.companyDocument.findMany({
     where: {
       companyId,
@@ -265,8 +290,8 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
   const useAI = isCompanyKnowledgeAIEnabled();
   let aiFailures = 0;
 
-  type ExpertDraft = RegexExpert & { sourceDocumentId: string; trustLevel: string };
-  type ProjectDraft = RegexProject & { sourceDocumentId: string; trustLevel: string };
+  type ExpertDraft = RegexExpert & { sourceDocumentId: string; trustLevel: string; reviewedAt?: Date | null; reviewedBy?: string | null; reviewNotes?: string | null };
+  type ProjectDraft = RegexProject & { sourceDocumentId: string; trustLevel: string; reviewedAt?: Date | null; reviewedBy?: string | null; reviewNotes?: string | null };
 
   const allExpertDrafts: ExpertDraft[] = [];
   const allProjectDrafts: ProjectDraft[] = [];
@@ -320,6 +345,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
           continue;
         }
 
+        const trustLevel = company?.userId ? autoReviewedTrust(e.confidence, e.sourceQuote, sourceDoc.extractedText) : "AI_DRAFT";
         allExpertDrafts.push({
           fullName: e.fullName,
           title: e.title ?? null,
@@ -330,7 +356,10 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
           profile: `AI-extracted CV record (confidence: ${Math.round((e.confidence ?? 0) * 100)}%). Source evidence: "${e.sourceQuote}"`,
           sourceSnippet: e.sourceQuote,
           sourceDocumentId: sourceDoc.id,
-          trustLevel: "AI_DRAFT",
+          trustLevel,
+          reviewedBy: trustLevel === "REVIEWED" ? company?.userId ?? null : null,
+          reviewedAt: trustLevel === "REVIEWED" ? new Date() : null,
+          reviewNotes: reviewNotesForTrust(trustLevel, "EXPERT_CV"),
         });
       }
 
@@ -345,6 +374,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
           continue;
         }
 
+        const trustLevel = company?.userId ? autoReviewedTrust(p.confidence, p.sourceQuote, sourceDoc.extractedText) : "AI_DRAFT";
         allProjectDrafts.push({
           name: p.name,
           clientName: p.clientName ?? null,
@@ -356,7 +386,10 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
           currency: p.currency ?? null,
           sourceSnippet: p.sourceQuote,
           sourceDocumentId: sourceDoc.id,
-          trustLevel: "AI_DRAFT",
+          trustLevel,
+          reviewedBy: trustLevel === "REVIEWED" ? company?.userId ?? null : null,
+          reviewedAt: trustLevel === "REVIEWED" ? new Date() : null,
+          reviewNotes: reviewNotesForTrust(trustLevel, "PROJECT_REFERENCE"),
         });
       }
 
@@ -427,7 +460,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
   const expertsPayload: {
     companyId: string; fullName: string; title?: string | null; yearsExperience?: number | null;
     disciplines: string; sectors: string; certifications: string; profile: string;
-    trustLevel: string; sourceDocumentId?: string | null;
+    trustLevel: string; sourceDocumentId?: string | null; reviewedBy?: string | null; reviewedAt?: Date | null; reviewNotes?: string | null;
   }[] = [];
   for (const expert of uniqueExperts) {
     const k = key(expert.fullName);
@@ -440,8 +473,11 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
       disciplines: JSON.stringify(expert.disciplines),
       sectors: JSON.stringify(expert.sectors),
       certifications: JSON.stringify(expert.certifications),
-      profile: `[${expert.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${expert.profile}\n\nSource snippet:\n${expert.sourceSnippet}`,
+      profile: `[${expert.trustLevel}${expert.trustLevel === "REVIEWED" ? " — AUTO-REVIEWED SOURCE-GROUNDED" : " — REVIEW REQUIRED before use in proposals"}]\n\n${expert.profile}\n\nSource snippet:\n${expert.sourceSnippet}`,
       trustLevel: expert.trustLevel,
+      reviewedBy: expert.reviewedBy ?? null,
+      reviewedAt: expert.reviewedAt ?? null,
+      reviewNotes: expert.reviewNotes ?? null,
       sourceDocumentId: expert.sourceDocumentId,
     });
     expertKeys.add(k);
@@ -451,7 +487,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
     companyId: string; name: string; clientName?: string | null; country?: string | null;
     sector?: string | null; serviceAreas: string; summary: string;
     contractValue?: number | null; currency?: string | null;
-    trustLevel: string; sourceDocumentId?: string | null;
+    trustLevel: string; sourceDocumentId?: string | null; reviewedBy?: string | null; reviewedAt?: Date | null; reviewNotes?: string | null;
   }[] = [];
   for (const project of uniqueProjects) {
     const k = key(project.name);
@@ -463,10 +499,13 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
       country: project.country,
       sector: project.sector,
       serviceAreas: JSON.stringify(project.serviceAreas),
-      summary: `[${project.trustLevel} — REVIEW REQUIRED before use in proposals]\n\n${project.summary}\n\nSource snippet:\n${project.sourceSnippet}`,
+      summary: `[${project.trustLevel}${project.trustLevel === "REVIEWED" ? " — AUTO-REVIEWED SOURCE-GROUNDED" : " — REVIEW REQUIRED before use in proposals"}]\n\n${project.summary}\n\nSource snippet:\n${project.sourceSnippet}`,
       contractValue: project.contractValue,
       currency: project.currency,
       trustLevel: project.trustLevel,
+      reviewedBy: project.reviewedBy ?? null,
+      reviewedAt: project.reviewedAt ?? null,
+      reviewNotes: project.reviewNotes ?? null,
       sourceDocumentId: project.sourceDocumentId,
     });
     projectKeys.add(k);
