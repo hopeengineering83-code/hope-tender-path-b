@@ -504,6 +504,15 @@ export function ExportReadinessPanel({
   const advisoryCount = readiness?.summary.advisoryWarnings ?? advisoryWarnings.length;
   const strictTwoEnvelope = readiness?.summary.strictTwoEnvelope ?? false;
   const envelopeBreakdown = readiness?.summary.envelopeBreakdown;
+  const readyEnvelopeLabel = strictTwoEnvelope
+    ? `Open ${[
+        (envelopeBreakdown?.TECHNICAL ?? 0) > 0 ? 'Technical' : null,
+        (envelopeBreakdown?.FINANCIAL ?? 0) > 0 ? 'Financial' : null,
+        (envelopeBreakdown?.ADMIN ?? 0) > 0 ? 'Admin' : null,
+      ]
+        .filter(Boolean)
+        .join(' / ')} ZIP downloads`
+    : 'Open Final Package Downloads';
 
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm" id="export-readiness">
@@ -553,49 +562,19 @@ export function ExportReadinessPanel({
           >
             <RefreshIcon /> {loading ? 'Checking…' : readiness ? 'Re-check' : 'Check export gate'}
           </button>
-          {/* Download affordance — ONLY renders a real <a href> when the
-              canonical gate is open. When blocked, render a disabled
-              <button> with NO href so the user cannot accidentally hit
-              the URL. The download route also enforces this server-side. */}
-          {readiness && ok && !strictTwoEnvelope && (
+          {/* Final-package downloads have one canonical owner: the Stage 5
+              TenderDownloadActionsPanel. Export Readiness links there after
+              this gate is clear instead of emitting its own download hrefs,
+              because final-package readiness also checks manifest/PDF/ZIP
+              integrity gates. */}
+          {readiness && ok && (
             <a
-              href={`/api/tenders/${tenderId}/download?type=zip`}
-              download
+              href="#final-package-download-actions"
               className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-400"
-              title="All blockers cleared — download the final submission ZIP."
+              title="Export readiness is clear. Open the Stage 5 final-package panel for the authoritative ZIP gate and download controls."
             >
-              <DownloadIcon /> Download Final ZIP
+              <DownloadIcon /> {readyEnvelopeLabel}
             </a>
-          )}
-          {readiness && ok && strictTwoEnvelope && (
-            <div className="flex flex-wrap gap-1">
-              <a
-                href={`/api/tenders/${tenderId}/download?type=zip&envelope=technical`}
-                download
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-700"
-                title="Two-envelope tender — download the TECHNICAL ZIP only."
-              >
-                <DownloadIcon /> Technical ZIP
-              </a>
-              <a
-                href={`/api/tenders/${tenderId}/download?type=zip&envelope=financial`}
-                download
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800"
-                title="Two-envelope tender — download the FINANCIAL ZIP separately."
-              >
-                <DownloadIcon /> Financial ZIP
-              </a>
-              {(envelopeBreakdown?.ADMIN ?? 0) > 0 && (
-                <a
-                  href={`/api/tenders/${tenderId}/download?type=zip&envelope=admin`}
-                  download
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-600 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700"
-                  title="Two-envelope tender — admin/eligibility ZIP."
-                >
-                  <DownloadIcon /> Admin ZIP
-                </a>
-              )}
-            </div>
           )}
           {readiness && !ok && (
             <button

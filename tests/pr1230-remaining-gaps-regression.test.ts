@@ -80,6 +80,17 @@ describe('PR 1230 final-package download gate', () => {
     assert.equal(count(src, 'download?type=compliance'), 0);
   });
 
+
+  it('keeps final ZIP downloads owned by the Stage 5 final-package panel only', () => {
+    const exportPanel = read('components/export-readiness-panel.tsx');
+    assert.equal(count(exportPanel, 'download?type=zip'), 0);
+    assert.ok(exportPanel.includes('href="#final-package-download-actions"'));
+    const tenderPage = read('app/dashboard/tenders/[id]/page.tsx');
+    assert.ok(tenderPage.includes('<TenderDownloadActionsPanel'));
+    const downloadPanel = read('components/tender-download-actions-panel.tsx');
+    assert.ok(downloadPanel.includes('href={`/api/tenders/${tenderId}/download?type=zip`}'));
+  });
+
   it('renders no final ZIP href until final-package gates pass', () => {
     const src = read('components/tender-download-actions-panel.tsx');
     assert.ok(src.includes('finalPackageGatesPassed(model)'));
