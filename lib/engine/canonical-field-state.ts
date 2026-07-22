@@ -41,6 +41,7 @@ import {
   MIN_CRITICAL_REASON_LENGTH,
 } from "./tender-fact-authority";
 import type { TenderPolicyContext } from "./tender-policy-registry";
+import { INDISPENSABLE_FINAL_DELIVERY_FIELDS } from "./tender-applicability";
 import {
   deriveSourceDrivenTenderDetail,
   isFactRequiredForFinal,
@@ -687,6 +688,12 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     // FINAL: blocked by missing critical field, manual value without
     // sufficient audit, contamination, placeholder, invalid format, or
     // BLOCKED status. Only FINAL_SUBMISSION_CHECK uses this gate.
+    // Per Pillar 5: use applicability-aware blocking. Only block when the
+    // field is genuinely indispensable for final delivery (deadline,
+    // submissionMethod, clientName, title) or when the field has a BLOCKED
+    // status (contamination, placeholder, invalid format). Non-indispensable
+    // critical fields that are simply absent (NOT_STATED) do NOT block.
+    const isIndispensable = INDISPENSABLE_FINAL_DELIVERY_FIELDS.has(fieldKey);
     const exportHardBlockReasons =
       status === "PORTAL_CONTAMINATION" ||
       status === "INTERNAL_PLACEHOLDER" ||
@@ -694,7 +701,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       status === "INVALID_FORMAT" ||
       status === "BLOCKED" ||
       (isCritical && !isManualValuePresent && isBlocked && !isGrounded) ||
-      (isCritical && !effectiveStr?.trim() && !override) || // missing critical, no override
+      (isIndispensable && !effectiveStr?.trim() && !override) || // only indispensable fields block when empty
       (isCritical && isManualValuePresent && !isGrounded && !(auditSufficientForFinal(override, fieldKey, policyCtx)));
 
     const generationEligible = !draftHardBlockReasons && (!isBlocked || (!isCritical && status !== "BLOCKED") || isManualValuePresent);
