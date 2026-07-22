@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 13) — Codex
+
+- **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
+- **Scope:** Advanced the autonomous tender pipeline after source-grounded Build Plan auto-confirmation. When background `ENGINE_RUN` auto-confirms the Build Plan, it now reuses or queues a `PROPOSAL_GENERATION` job with source `engine-auto-confirmed-build-plan`; duplicate queued/running proposal jobs are not created. The existing `PROPOSAL_GENERATION` handler's central `assertTenderReadyForGenerationAndExport` gate remains authoritative before any GeneratedDocument rows can be created.
+- **Files changed:** `lib/ai-job-handlers.ts`, `tests/pr1230-remaining-gaps-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/company-knowledge-auto-review.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (25/25); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; `git diff --check` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target services/secrets. This now chains to proposal generation, but generated-document approval/finalization/export remain separately gated; official-original/manual-upload requirements and brand assets must remain manual where the tender requires originals or user-provided assets.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
 ### 2026-07-22 UTC (follow-up 12) — Codex
 
 - **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.

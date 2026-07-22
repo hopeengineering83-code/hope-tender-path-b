@@ -81,7 +81,11 @@ describe('PR 1230 remaining gap fixes', () => {
     assert.ok(handler.includes('buildPlanDraft: { ok: false'));
     assert.ok(handler.includes('autoConfirmed: true'));
     assert.ok(handler.includes('autoConfirmed: false'));
-    assert.equal(handler.includes('enqueueJob({ userId: ctx.userId, tenderId: ctx.tenderId, jobType: "PROPOSAL_GENERATION"'), false, 'background Engine must not enqueue generation directly');
+    assert.ok(handler.includes('jobType: "PROPOSAL_GENERATION"'));
+    assert.ok(handler.includes('source: "engine-auto-confirmed-build-plan"'));
+    assert.ok(handler.includes('central readiness gate remains authoritative'));
+    assert.ok(handler.includes('proposalGeneration: { queued: !activeProposalJob'));
+    assert.ok(handler.indexOf('proposal.enqueue') > handler.indexOf('Build Plan auto-confirmed from source-grounded Engine output'));
   });
 
   it('uses canonical Safe Mode parameters for upload-triggered automatic Engine runs', () => {

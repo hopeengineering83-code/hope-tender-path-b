@@ -18,7 +18,7 @@
 //   COPILOT_DEEP_ANALYSIS   — async tender copilot Q&A (frees the request for follow-up actions)
 //   PROFILE_FACT_EXTRACTION — async pure-regex fact harvest from company/project/tender prose
 
-import { recordStep, type JobType } from "./ai-jobs";
+import { enqueueJob, recordStep, type JobType } from "./ai-jobs";
 import { verifiedIntegrityDataFromBase64 } from "./engine/persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "./engine/transactional-generation-gate";
 import { isStrictBase64 } from "./engine/generated-file-integrity";
@@ -243,9 +243,33 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
               description: "Build Plan auto-confirmed after background Engine postconditions and source-grounded validation passed.",
               metadata: { tenderId: ctx.tenderId, revision: buildPlanDraft.plan.revision, contentHash },
             }).catch(() => {});
+            const activeProposalJob = await prisma.aiJob.findFirst({
+              where: {
+                tenderId: ctx.tenderId,
+                userId: ctx.userId,
+                jobType: "PROPOSAL_GENERATION",
+                status: { in: ["QUEUED", "RUNNING"] },
+              },
+              select: { id: true },
+              orderBy: { createdAt: "desc" },
+            });
+            const proposalJob = activeProposalJob ?? await enqueueJob({
+              userId: ctx.userId,
+              tenderId: ctx.tenderId,
+              jobType: "PROPOSAL_GENERATION",
+              input: { source: "engine-auto-confirmed-build-plan" },
+            });
+            await recordStep(ctx.jobId, {
+              stepName: "proposal.enqueue",
+              message: activeProposalJob
+                ? `Proposal generation already queued/running (${proposalJob.id}); existing central readiness gate remains authoritative.`
+                : `Proposal generation queued (${proposalJob.id}); central readiness gate remains authoritative.`,
+              status: "SUCCEEDED",
+            });
             return {
               result: result as unknown as Record<string, unknown>,
               buildPlanDraft: { ok: true, status: "CONFIRMED", revision: buildPlanDraft.plan.revision, itemCount: buildPlanDraft.items.length, autoConfirmed: true },
+              proposalGeneration: { queued: !activeProposalJob, jobId: proposalJob.id, gate: "assertTenderReadyForGenerationAndExport" },
             };
           }
           confirmationBlockers.push("Build Plan changed before auto-confirmation; rebuild before confirming.");
