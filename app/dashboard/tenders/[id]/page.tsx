@@ -49,7 +49,6 @@ import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-
 import { TenderReleaseStatePanel } from "../../../../components/tender-release-state-panel";
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
-import { TenderDownloadActionsPanel } from "../../../../components/tender-download-actions-panel";
 import { NextActionPanel } from "../../../../components/next-action-panel";
 import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
 import { ClientEntityWarningBanner } from "../../../../components/corrupted-metadata-banner";
@@ -280,7 +279,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <TenderSharePanel tenderId={tender.id} canMutate={canMutate} />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
-      <TenderDownloadActionsPanel tenderId={tender.id} canMutate={canMutate} />
     </main>
   );
 }

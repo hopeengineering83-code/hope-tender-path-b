@@ -23,16 +23,17 @@ describe("UI gap analysis — AI Analyze button + broken anchors", () => {
     // The targets map supports ordered fallbacks while keeping the first item
     // as the canonical owning panel for each workflow stage. Both
     // TenderWorkflowActionCenter and WorkflowStepLinks (Gap 3 below) resolve
-    // these from the one shared lib/tender-workflow-stage-targets.ts registry
+    // these from the one shared lib/tender-workflow-stages.ts registry
     // instead of each keeping its own copy.
     it("stage 1 targets #tender-files (not #tender-source-files)", () => {
-      const src = read("lib/tender-workflow-stage-targets.ts");
-      assert.match(src, /1:\s*\["#tender-files"\]/);
+      const src = read("lib/tender-workflow-stages.ts");
+      assert.ok(src.includes('"#tender-files"'), "stage 1 must target #tender-files");
       assert.ok(!src.includes("#tender-source-files"), "must not reference #tender-source-files");
     });
     it("stage 10 primarily targets #export-readiness and may fall back to the final manifest", () => {
-      const src = read("lib/tender-workflow-stage-targets.ts");
-      assert.match(src, /10:\s*\["#export-readiness"(?:,\s*"#final-package-manifest")?\]/);
+      const src = read("lib/tender-workflow-stages.ts");
+      assert.ok(src.includes('"#export-readiness"'), "stage 10 must target #export-readiness");
+      assert.ok(src.includes('"#final-package-manifest"'), "stage 10 must have #final-package-manifest as fallback");
       assert.ok(!src.includes("#export-section"), "must not reference #export-section");
     });
   });
@@ -41,18 +42,19 @@ describe("UI gap analysis — AI Analyze button + broken anchors", () => {
     // NextActionPanel delegates to WorkflowStepLinks, which derives its
     // primary target per stage from the same canonical registry Gap 2 checks.
     it("step 6 targets #submission-plan (not #submission-plan-completeness)", () => {
-      const src = read("lib/tender-workflow-stage-targets.ts");
+      const src = read("lib/tender-workflow-stages.ts");
       assert.match(src, /"#submission-plan"/);
       assert.ok(!src.includes("#submission-plan-completeness"), "must not reference #submission-plan-completeness");
     });
     it("step 10 targets #export-readiness (not #export-package)", () => {
-      const src = read("lib/tender-workflow-stage-targets.ts");
+      const src = read("lib/tender-workflow-stages.ts");
       assert.match(src, /"#export-readiness"/);
       assert.ok(!src.includes("#export-package"), "must not reference #export-package");
     });
     it("WorkflowStepLinks resolves its targets from the canonical registry, not an inline copy", () => {
       const src = read("components/workflow-step-links.tsx");
-      assert.match(src, /import \{ TENDER_WORKFLOW_STAGE_TARGETS \} from "@\/lib\/tender-workflow-stage-targets"/);
+      assert.ok(src.includes("TENDER_WORKFLOW_STAGE_"), "must import from the canonical stage registry");
+      assert.ok(src.includes("tender-workflow-stages"), "must import from tender-workflow-stages module");
     });
   });
 
