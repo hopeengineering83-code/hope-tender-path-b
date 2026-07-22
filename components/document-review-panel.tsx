@@ -155,6 +155,11 @@ export function DocumentReviewPanel({
   }, [refresh]);
 
   async function takeAction(action: typeof REVIEW_ACTIONS[number]) {
+    const note = actionNote.trim();
+    if ((action.status === "APPROVED" || action.status === "READY_FOR_EXPORT") && note.length < 10) {
+      setError("Enter a reviewer note of at least 10 characters before approving or marking ready for export.");
+      return;
+    }
     setActionInFlight(action.key);
     setError(null);
     try {
@@ -164,7 +169,7 @@ export function DocumentReviewPanel({
         body: JSON.stringify({
           reviewStatus: action.status,
           reviewAction: action.key,
-          reviewNotes: actionNote.trim() || undefined,
+          reviewNotes: note || undefined,
         }),
       });
       if (!res.ok) {
@@ -251,7 +256,7 @@ export function DocumentReviewPanel({
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <p className="text-xs font-semibold text-slate-700">Take an action</p>
           <textarea
-            placeholder="Optional reviewer note (visible in audit trail)…"
+            placeholder="Reviewer note required for approval / ready-for-export actions…"
             value={actionNote}
             onChange={(e) => setActionNote(e.target.value)}
             rows={2}
@@ -263,7 +268,11 @@ export function DocumentReviewPanel({
               <button
                 key={a.key}
                 type="button"
-                disabled={actionInFlight !== null}
+                disabled={
+                  actionInFlight !== null ||
+                  ((a.status === "APPROVED" || a.status === "READY_FOR_EXPORT") &&
+                    actionNote.trim().length < 10)
+                }
                 onClick={() => takeAction(a)}
                 title={a.description}
                 className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-60 ${a.color}`}

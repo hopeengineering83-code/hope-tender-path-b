@@ -193,7 +193,7 @@ export async function handleSecureUpload(req: Request) {
   let processingJobId: string | null = null;
   if (tenderId && tenderFilesCreated > 0) {
     const active = await findActiveEngineRunForTender(tenderId, actor.id);
-    processingJobId = active?.id ?? (await enqueueJob({ userId: actor.id, tenderId, jobType: "ENGINE_RUN", input: { source: "secure-upload" } })).id;
+    processingJobId = active?.id ?? (await enqueueJob({ userId: actor.id, tenderId, jobType: "ENGINE_RUN", input: { safe: true, skipAiRematch: true, source: "secure-upload" } })).id;
   }
 
   let companyImport: Record<string, unknown> | null = null;

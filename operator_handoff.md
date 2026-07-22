@@ -74,6 +74,116 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 10) — Codex
+
+- **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
+- **Scope:** Fixed a confirmed automation gap in the upload-once/new-tender flow. Tender-file uploads already enqueue a background `ENGINE_RUN`; that automatic upload-triggered path now passes canonical Safe Mode inputs (`safe: true`, `skipAiRematch: true`) so the first automatic engine run uses the same Vercel-safe contract as the recommended manual Safe Mode button. Also removed stale provider-specific wording from company knowledge trust labels (`Claude-extracted` → provider-neutral `AI-extracted`).
+- **Files changed:** `lib/secure-upload-handler.ts`, `lib/company-knowledge-import-safe.ts`, `tests/pr1230-remaining-gaps-regression.test.ts`, `tests/company-knowledge-auto-review.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/company-knowledge-auto-review.test.ts tests/pr1230-remaining-gaps-regression.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (24/24); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; `git diff --check` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target services/secrets. The automatic upload-triggered engine run is now Safe Mode, but full no-manual-help orchestration still needs follow-on work after engine completion (auto-build/confirm only when source-grounded, auto-generate, auto-finalize, and export when gates pass).
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
+### 2026-07-22 UTC (follow-up 9) — Codex
+
+- **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
+- **Scope:** Took a narrow, safety-preserving step toward the upload-once/autonomous proposal goal. High-confidence AI-extracted company expert/project records from correctly categorized uploaded company documents can now auto-review to `REVIEWED` only when the source quote is long enough and present in the source document text, with reviewer/audit metadata attached. Regex/weak imports remain draft/review-required and cannot unlock authoritative proposal use.
+- **Files changed:** `lib/company-knowledge-import-safe.ts`, `tests/company-knowledge-auto-review.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/company-knowledge-auto-review.test.ts tests/pr1230-remaining-gaps-regression.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (23/23); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target services/secrets. This does not make the whole app 100% autonomous; remaining product gaps include weak/OCR source recovery, official-original/manual-upload requirements, Build Plan/final-readiness approvals, full one-click orchestration, and a broader icon/dead-code/design-system audit.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
+### 2026-07-22 UTC (follow-up 8) — Codex
+
+- **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
+- **Scope:** Audited whether uploaded company documents reach AI Analyze and Run Engine, and whether background Engine truthfully handles Vercel Hobby's 60s cap. Confirmed AI Analyze loads company documents only into the analysis content/hash digest boundary, while Run Engine loads company documents and compliance/legal/financial records for compliance evidence. Fixed a confirmed background Engine parity gap by passing the same 50s `deadlineAt` safety budget into the ENGINE_RUN job handler, preventing background workers from claiming they can exceed Vercel Hobby while risking hard-kill mid-rematch. Updated Engine UI copy to stop claiming chunked-worker magic and added regression coverage for company-document access boundaries, background deadline parity, and no misleading timeout copy.
+- **Files changed:** `lib/ai-job-handlers.ts`, `components/engine-action-panel.tsx`, `tests/pr1230-remaining-gaps-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (21/21); affected rendered/engine suites PASS (71/71); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target-branch services/secrets. Broader icon/dead-code/page-count simplification remains too broad to honestly complete without a separate design-system audit; this pass fixed only confirmed duplicated/competing action-owner gaps in the PR scope.
+- **Next action:** User reviews/cherry-picks PR #1230 helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
+### 2026-07-22 UTC (follow-up 7) — Codex
+
+- **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
+- **Scope:** Rechecked remaining final-package ownership gaps and removed Export Readiness' duplicate direct ZIP download hrefs. Export Readiness now links to the Stage 5 `TenderDownloadActionsPanel` (`#final-package-download-actions`) after readiness clears, leaving the final-package panel as the only UI owner that can emit `/download?type=zip` after manifest/PDF/integrity/ZIP gates pass. Added regression coverage so Export Readiness cannot reintroduce direct ZIP download routes.
+- **Files changed:** `components/export-readiness-panel.tsx`, `tests/pr1230-remaining-gaps-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (19/19); affected rendered/engine suites PASS (71/71); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target-branch services/secrets. `EVALUATION_CRITERIA_NOT_EXTRACTED` vs `EVALUATION_CRITERIA_MISSING` remains the sole documented unresolved product decision because no authoritative repository rule selects one name.
+- **Next action:** User reviews/cherry-picks PR #1230 helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
+### 2026-07-22 UTC (follow-up 6) — Codex
+
+- **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
+- **Scope:** Rechecked the helper branch against the original prompt and fixed one confirmed residual Engine UX gap: while an Engine run is active, the panel no longer renders two disabled buttons with identical `Running…` labels. It now shows one shared `Engine running…` progress affordance, while preserving exactly two normal Engine actions when idle (`Run Safe Mode — Recommended` and `Run Full AI in Background`). Strengthened the PR1175 regression test so the duplicate-running-label shape cannot return.
+- **Files changed:** `components/engine-action-panel.tsx`, `tests/pr1175-residual-gap-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1175-residual-gap-regression.test.ts tests/pr1230-remaining-gaps-regression.test.ts` PASS (18/18); affected rendered/engine suites PASS (71/71); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target-branch services/secrets. `EVALUATION_CRITERIA_NOT_EXTRACTED` vs `EVALUATION_CRITERIA_MISSING` remains the sole documented unresolved product decision because no authoritative repository rule selects one name.
+- **Next action:** User reviews/cherry-picks PR #1230 helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
+### 2026-07-22 UTC (follow-up 5) — Codex
+
+- **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
+- **Scope:** Fixed the remaining confirmed final-package gap: moved `TenderDownloadActionsPanel` inside Stage 5, removed ungated proposal/requirements/compliance download links, and made the final ZIP link appear only after the final-package readiness model reports required documents, evidence/blocker counts, PDF requirements, manifest readiness, and ZIP readiness all passing. Added regression coverage for Stage 5 placement and gated/no-href behavior.
+- **Files changed:** `components/tender-download-actions-panel.tsx`, `app/dashboard/tenders/[id]/page.tsx`, `tests/pr1230-remaining-gaps-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (18/18); affected engine/rendered suites PASS (89/89); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target-branch services/secrets.
+- **Next action:** User reviews/cherry-picks PR #1230 helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
+### 2026-07-22 UTC (follow-up 4) — Codex
+
+- **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
+- **Scope:** Addressed confirmed PR #1230 review gaps: mapped `NextActionPanel` canonical actions to real owner anchors (`EDIT_TENDER_METADATA` → `#tender-edit-form`, `FINALIZE_REQUIRED_PDF` → `#generated-documents`) with no misleading unknown-action CTA; added real `/api/tenders/[id]/engine?async=true` support that enqueues `ENGINE_RUN`, returns `202 + jobId`, passes `safe` and `skipAiRematch` into the existing job handler, exposes ENGINE_RUN in job listing filters, and adds synchronous postcondition validation parity with the background handler.
+- **Files changed:** `components/next-action-panel.tsx`, `app/api/tenders/[id]/engine/route.ts`, `app/api/ai-jobs/route.ts`, `tests/pr1230-remaining-gaps-regression.test.ts`, `tests/pr1175-residual-gap-regression.test.ts`, `tests/engine-runtime-ui-honesty-icons.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (15/15); affected engine/rendered suites PASS (86/86); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL. Broad `npm test -- --runInBand` was attempted but hit DB-required suites (`RUN_DB_INTEGRATION=true` required) and was interrupted after confirming many pure unit suites were passing. `npm run test:e2e` blocked because the Playwright web server could not start without `SESSION_SECRET`.
+- **Known risks:** No GitHub inline review comments were visible in this environment. Full DB drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target-branch services/secrets.
+- **Next action:** User reviews/cherry-picks PR #1230 helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
+### 2026-07-22 UTC (follow-up 3) — Codex
+
+- **Branch / PR:** `work` / helper PR metadata refreshed for user incorporation into PR #1175.
+- **Scope:** Rechecked the helper changes end-to-end against the prompt and found one confirmed remaining approval-path gap: advisory resolutions and per-document approval/ready-for-export actions could still be submitted without a genuine reviewer-entered note. Added client-side note requirements, server-side fail-closed validation, and source-shape regression coverage.
+- **Files changed:** `components/export-readiness-panel.tsx`, `app/api/tenders/[id]/advisory-resolutions/route.ts`, `components/document-review-panel.tsx`, `app/api/tenders/[id]/documents/[docId]/route.ts`, `tests/pr1175-residual-gap-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1175-residual-gap-regression.test.ts` PASS; `npx tsx --test tests/pr1175-residual-gap-regression.test.ts tests/action-icons-visibility.test.ts tests/ui-workflow-polish.test.ts tests/rendered-component-capability.test.ts` PASS (87/87); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS; `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL.
+- **Known risks:** No inline review comments were visible in the prompt. DB drift/integration, live Preview AI execution, Playwright browser isolation, exact-head screenshots, `/api/health`, and runtime logs still require target-branch services.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 and runs target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only.
+
+### 2026-07-22 UTC (follow-up 2) — Codex
+
+- **Branch / PR:** `work` / helper PR metadata refreshed again for user incorporation into PR #1175.
+- **Scope:** Rechecked the helper changes against the original prompt requirements and found one remaining test-suite contradiction: rendered Engine capability tests still expected the removed legacy `Run Engine`, `Run full mode anyway`, and `Skip AI Rematch` controls. Updated the rendered test to assert the actual prompt contract: one Safe Mode recommended action, one Full AI background action, canonical Safe Mode query params, and no skip-rematch duplicate.
+- **Files changed:** `tests/rendered-component-capability.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/rendered-component-capability.test.ts` PASS; `npx tsx --test tests/pr1175-residual-gap-regression.test.ts tests/action-icons-visibility.test.ts tests/ui-workflow-polish.test.ts tests/rendered-component-capability.test.ts` PASS (86/86); `npx tsc --noEmit` PASS; `npm run lint` PASS.
+- **Known risks:** No inline review comments were visible in the prompt. DB/Preview/Playwright/screenshot/runtime checks still require target-branch services.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 and runs target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only.
+
+### 2026-07-22 UTC (follow-up) — Codex
+
+- **Branch / PR:** `work` / helper PR metadata refreshed for user incorporation into PR #1175.
+- **Scope:** Addressed follow-up review concern in Export Readiness canonical-owner controls: changed inert `data-canonical-owner` buttons to real in-page links to `#ai-analyze-section`, and strengthened the PR1175 regression test to reject the inert pattern.
+- **Files changed:** `components/export-readiness-panel.tsx`, `tests/pr1175-residual-gap-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1175-residual-gap-regression.test.ts tests/action-icons-visibility.test.ts tests/ui-workflow-polish.test.ts` PASS; `npx tsc --noEmit` PASS; `npm run lint` PASS.
+- **Known risks:** No inline review comments were visible in the prompt, so this follow-up fixes the verified canonical-owner issue only. DB/Preview/Playwright/screenshot validation remains blocked by the same environment limitations recorded below.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 and runs target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only.
+
+### 2026-07-22 UTC — Codex
+
+- **Branch / PR:** `codex/pr1175-gap-fixes` / separate PR metadata prepared for user to incorporate into PR #1175 manually. Starting SHA `820c9cb0bb382f56645b3494fe083ccefdd744fa`; final SHA reported in the final response after commit.
+- **Scope:** Residual PR #1175 workflow/action cleanup on mounted checkout: removed duplicate Overview quick-engine links, moved Next Required Action ahead of secondary workflow controls and Stage 1, collapsed workflow step pills, reduced Engine to Safe Mode + Full AI background actions, centralized Safe Mode params, replaced stale Recovery Command Center-below guidance, made Export Readiness show one primary repair plus collapsed advanced repairs, and linked duplicate AI Analyze / missing-plan / fallback-approval owners instead of duplicate POSTs.
+- **Files changed:** `app/dashboard/page.tsx`, `app/dashboard/tenders/[id]/page.tsx`, `components/engine-action-panel.tsx`, `components/export-readiness-panel.tsx`, `components/next-action-panel.tsx`, `tests/pr1175-residual-gap-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** focused PR1175/action-icon/UI source-shape tests PASS; `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; Prisma validate PASS with dummy DATABASE_URL; production build PASS with dummy required env vars. Prisma migrate status / DB drift / DB integration / Playwright could not complete because local PostgreSQL and required runtime env were unavailable. Broad tests were interrupted after environment/pre-fix-noise failures; focused affected suites were rerun and passed after fixes.
+- **Known risks:** Exact PR #1175 branch was not mounted; this branch is an isolated helper PR for manual incorporation. No live preview, runtime logs, real AI background execution, or screenshot audit completed in this environment. `EVALUATION_CRITERIA_NOT_EXTRACTED` vs `EVALUATION_CRITERIA_MISSING` intentionally left unresolved because no authoritative rule was changed. Letterhead/Logo/Header/Footer assets were not fabricated.
+- **Next action:** User cherry-picks/reviews this helper PR into PR #1175, then runs real DB, Preview, AI, Playwright, and screenshot validation on the target branch.
+- **Merge status:** not reviewed — helper branch only, not merge-ready for production.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.
