@@ -102,27 +102,26 @@ export function getActiveDashboardHref(
  * server-side security boundaries; this registry controls presentation only.
  *
  * Consolidated (app-wide route/panel consolidation) from 23 top-level items
- * down to 6: related destinations that used to compete for separate sidebar
- * slots are now one destination each, with the other routes in the group
- * reachable via that page's cross-navigation tab bar (components/
- * section-subnav.tsx, components/company-subnav.tsx,
- * components/dashboard-group-subnav.tsx) instead of the sidebar. No route
- * was renamed, moved, or removed — every href below and every memberHref
- * resolves exactly where it always did, so no redirect was needed. Global
- * Search moved to the header (see app/dashboard/layout.tsx) since it isn't
- * a workspace destination.
+ * down to 5: Overview is represented by the Tenders workspace, and related
+ * destinations that used to compete for separate sidebar slots are now one
+ * destination each, with the other routes in the group reachable via that
+ * page's cross-navigation tab bar (components/section-subnav.tsx,
+ * components/company-subnav.tsx, components/dashboard-group-subnav.tsx)
+ * instead of the sidebar. No route was renamed, moved, or removed — every href
+ * below and every memberHref resolves exactly where it always did, so no
+ * redirect was needed. Global Search moved to the header (see
+ * app/dashboard/layout.tsx) since it isn't a workspace destination.
  */
 export const DASHBOARD_NAV_GROUPS: DashboardNavGroup[] = [
   {
     title: "Workspace",
     roles: null,
     links: [
-      { href: "/dashboard", label: "Overview", iconName: "HomeIcon" },
       {
         href: "/dashboard/tenders",
         label: "Tenders",
         iconName: "ListIcon",
-        memberHrefs: ["/dashboard/history", "/dashboard/calendar"],
+        memberHrefs: ["/dashboard", "/dashboard/history", "/dashboard/calendar"],
       },
     ],
   },
