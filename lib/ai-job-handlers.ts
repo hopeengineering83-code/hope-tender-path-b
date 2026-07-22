@@ -169,6 +169,12 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       const safeMode = ctx.input?.safe === true;
       const skipAiRematch = ctx.input?.skipAiRematch === true;
       const maxChars = typeof ctx.input?.maxChars === "number" ? ctx.input.maxChars : undefined;
+      // The job worker is a separate invocation, so the enqueue route returns
+      // immediately; however, the worker itself still runs under Vercel Hobby's
+      // 60s function cap. Keep the same 50s engine deadline as the synchronous
+      // route so background ENGINE_RUN exits with persisted partial/blocker
+      // state instead of being hard-killed mid-rematch.
+      const deadlineAt = Date.now() + 50_000;
 
       const result = await runTenderEngine(
         ctx.tenderId,
@@ -177,7 +183,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
           // Fire and forget — don't await inside the engine hot path.
           void recordStep(ctx.jobId, { stepName, message, status: "RUNNING" }).catch(() => {});
         },
-        { safe: safeMode, skipAiRematch, maxChars },
+        { safe: safeMode, skipAiRematch, maxChars, deadlineAt },
       );
       clearInterval(heartbeat);
       const postconditions = await checkEnginePostconditions(ctx.tenderId);

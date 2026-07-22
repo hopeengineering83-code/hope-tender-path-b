@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 8) — Codex
+
+- **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.
+- **Scope:** Audited whether uploaded company documents reach AI Analyze and Run Engine, and whether background Engine truthfully handles Vercel Hobby's 60s cap. Confirmed AI Analyze loads company documents only into the analysis content/hash digest boundary, while Run Engine loads company documents and compliance/legal/financial records for compliance evidence. Fixed a confirmed background Engine parity gap by passing the same 50s `deadlineAt` safety budget into the ENGINE_RUN job handler, preventing background workers from claiming they can exceed Vercel Hobby while risking hard-kill mid-rematch. Updated Engine UI copy to stop claiming chunked-worker magic and added regression coverage for company-document access boundaries, background deadline parity, and no misleading timeout copy.
+- **Files changed:** `lib/ai-job-handlers.ts`, `components/engine-action-panel.tsx`, `tests/pr1230-remaining-gaps-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (21/21); affected rendered/engine suites PASS (71/71); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target-branch services/secrets. Broader icon/dead-code/page-count simplification remains too broad to honestly complete without a separate design-system audit; this pass fixed only confirmed duplicated/competing action-owner gaps in the PR scope.
+- **Next action:** User reviews/cherry-picks PR #1230 helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
 ### 2026-07-22 UTC (follow-up 7) — Codex
 
 - **Branch / PR:** `work` / PR #1230 helper branch kept open and unmerged for user incorporation into PR #1175 later.

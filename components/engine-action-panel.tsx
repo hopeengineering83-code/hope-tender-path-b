@@ -46,8 +46,8 @@ export type EngineResponse = {
 
 export type EngineAsyncStatus = { jobId: string; message: string };
 
-// Async polling — escapes the 60s Vercel Hobby cap by enqueuing an
-// ENGINE_RUN AiJob and watching it from the browser.
+// Async polling — avoids holding the browser request open by enqueuing an
+// ENGINE_RUN AiJob and watching durable job state from the browser.
 const POLL_INTERVAL_MS = 3000;
 // Extended to 10 minutes for large tenders (the prior 5-minute window
 // kept giving up on multi-file analyses while the worker was still
@@ -76,7 +76,7 @@ function actionLabel(action?: string) {
     return "Click 'Run in background' again — this was a temporary network failure.";
   if (action === 'RETRY_AFTER_DATABASE_CHECK') return 'Check database/Vercel runtime, then retry.';
   if (action === 'RETRY_AS_BACKGROUND_JOB')
-    return 'Click "Run in background" — escapes the 60s Vercel function cap.';
+    return 'Click "Run in background" — queues the run outside the browser request and uses the 50s engine safety deadline.';
   if (action === 'OPEN_TENDER_LIST') return 'Return to tender list and reopen this tender.';
   if (action === 'LOGIN_AGAIN') return 'Sign in again, then retry.';
   if (action === 'OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY')
@@ -123,7 +123,7 @@ async function parseEngineResponse(res: Response): Promise<EngineResponse> {
         clean ||
         `Vercel returned ${res.status} ${res.statusText || 'Function Invocation Timeout'} before the route could respond.`,
       nextAction: 'RETRY_AS_BACKGROUND_JOB',
-      hint: 'Click "Run in background" — the async ENGINE_RUN job has its own 60s function budget per chunk and survives chunked sub-jobs. For very large tenders this is the only reliable path on Vercel Hobby.',
+      hint: 'Click "Run in background" — the async ENGINE_RUN job returns a jobId immediately and uses the same 50s safety deadline in the worker, so partial/blocker state can be persisted instead of losing the browser request to a timeout.',
     };
   }
 
@@ -279,8 +279,8 @@ export async function executeEngineRun(options: EngineRunOptions): Promise<void>
   }
 }
 
-// Async mode — enqueue + worker + poll. Escapes the 60s Hobby cap for
-// large tenders where the synchronous engine pipeline would time out.
+// Async mode — enqueue + worker + poll. Avoids browser/request timeout for
+// large tenders and lets the worker persist partial/blocker state before its safety deadline.
 // extraParams allows callers to pass ?safe=true or ?skipAiRematch=true.
 // Exported for the same reason as executeEngineRun: the read-only guard
 // must be provable on the real dispatch path, not a simulation.
@@ -556,7 +556,7 @@ export function EngineActionPanel({
           <p className="mt-1">{asyncStatus.message}</p>
           <p className="mt-2 text-xs text-indigo-600">
             Job ID: <span className="font-mono">{asyncStatus.jobId}</span> · polls every 3s · 10-min
-            poll ceiling (worker continues beyond that)
+            poll ceiling (refresh later for durable job status)
           </p>
         </div>
       )}

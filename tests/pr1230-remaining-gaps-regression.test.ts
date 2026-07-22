@@ -19,6 +19,21 @@ describe('PR 1230 remaining gap fixes', () => {
     assert.equal(count(src, "?? '#tender-files'"), 0, 'unknown actions must not fall back to tender files');
   });
 
+
+  it('documents company-document access boundaries for AI Analyze and Run Engine', () => {
+    const analysisContent = read('lib/engine/tender-analysis-content.ts');
+    const aiAnalyze = read('app/api/tenders/[id]/ai-analyze/route.ts');
+    const engine = read('lib/engine/run-tender-engine.ts');
+    const compliance = read('lib/engine/compliance.ts');
+
+    assert.ok(analysisContent.includes('COMPANY DOCUMENTS AVAILABLE'));
+    assert.ok(analysisContent.includes('[digest:${textDigest}]'));
+    assert.ok(aiAnalyze.includes('include: { documents: { select: { category: true, originalFileName: true, extractedText: true } } }'));
+    assert.ok(engine.includes('documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } }'));
+    assert.ok(engine.includes('documents: company.documents'));
+    assert.ok(compliance.includes('knowledge.documents'));
+  });
+
   it('engine route supports real async ENGINE_RUN queueing with Safe Mode parameters', () => {
     const src = read('app/api/tenders/[id]/engine/route.ts');
     assert.ok(src.includes('enqueueJob'));
@@ -31,11 +46,20 @@ describe('PR 1230 remaining gap fixes', () => {
     assert.ok(src.includes('{ status: 202 }'));
   });
 
+
+  it('does not claim background Engine bypasses Vercel with chunked worker magic', () => {
+    const src = read('components/engine-action-panel.tsx');
+    assert.equal(count(src, 'chunked sub-jobs'), 0);
+    assert.equal(count(src, 'worker continues beyond that'), 0);
+    assert.ok(src.includes('50s safety deadline'));
+  });
+
   it('sync and background engine paths share Safe Mode and postcondition contracts', () => {
     const route = read('app/api/tenders/[id]/engine/route.ts');
     const handler = read('lib/ai-job-handlers.ts');
     assert.ok(route.includes('runTenderEngine(id, userId, undefined, { deadlineAt, safe, skipAiRematch })'));
-    assert.ok(handler.includes('{ safe: safeMode, skipAiRematch, maxChars }'));
+    assert.ok(handler.includes('const deadlineAt = Date.now() + 50_000'));
+    assert.ok(handler.includes('{ safe: safeMode, skipAiRematch, maxChars, deadlineAt }'));
     assert.ok(route.includes('const postconditions = await checkEnginePostconditions(id)'));
     assert.ok(handler.includes('const postconditions = await checkEnginePostconditions(ctx.tenderId)'));
     assert.ok(route.includes('code: "ENGINE_COMPLETED_WITH_BLOCKERS"'));
