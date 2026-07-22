@@ -69,6 +69,18 @@ describe('PR 1230 remaining gap fixes', () => {
   });
 
 
+  it('continues automatic background Engine runs into draft Build Plan only after postconditions pass', () => {
+    const handler = read('lib/ai-job-handlers.ts');
+    const postconditionIndex = handler.indexOf('const postconditions = await checkEnginePostconditions(ctx.tenderId)');
+    const buildPlanIndex = handler.indexOf('const buildPlanDraft = await buildDraftBuildPlan(prisma, ctx.tenderId, ctx.userId)');
+    assert.ok(handler.includes('import { buildDraftBuildPlan } from "./engine/build-plan";'));
+    assert.ok(postconditionIndex >= 0 && buildPlanIndex > postconditionIndex, 'Build Plan draft must run only after Engine postconditions pass');
+    assert.ok(handler.includes('confirmation/generation remain gated'));
+    assert.ok(handler.includes('buildPlanDraft: { ok: false'));
+    assert.equal(handler.includes('validateBuildPlanForConfirmation'), false, 'background Engine must not auto-confirm Build Plan');
+    assert.equal(handler.includes('PROPOSAL_GENERATION'), true, 'test sanity: handler file still contains generation handler but ENGINE_RUN must not enqueue it here');
+  });
+
   it('uses canonical Safe Mode parameters for upload-triggered automatic Engine runs', () => {
     const upload = read('lib/secure-upload-handler.ts');
     assert.ok(upload.includes('jobType: "ENGINE_RUN"'));

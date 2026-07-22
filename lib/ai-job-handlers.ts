@@ -44,6 +44,7 @@ import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extra
 import { inferTenderMetadata } from "./engine/tender-metadata";
 import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
 import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
+import { buildDraftBuildPlan } from "./engine/build-plan";
 
 export interface JobContext {
   jobId: string;
@@ -192,7 +193,29 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         return { code: "ENGINE_COMPLETED_WITH_BLOCKERS", blockers: postconditions.blockers, counts: postconditions.counts, failedStage: "POSTCONDITION_VALIDATE", nextAction: "REVIEW_MATCHING_INPUTS" };
       }
       await recordStep(ctx.jobId, { stepName: "engine.complete", message: "Engine run finished successfully", status: "SUCCEEDED" });
-      return { result: result as unknown as Record<string, unknown> };
+
+      const buildPlanDraft = await buildDraftBuildPlan(prisma, ctx.tenderId, ctx.userId);
+      if (buildPlanDraft.ok) {
+        await recordStep(ctx.jobId, {
+          stepName: "build-plan.draft",
+          message: `Draft Build Plan created with ${buildPlanDraft.items.length} planned file(s); confirmation/generation remain gated.`,
+          status: "SUCCEEDED",
+        });
+        return {
+          result: result as unknown as Record<string, unknown>,
+          buildPlanDraft: { ok: true, status: buildPlanDraft.plan.status, revision: buildPlanDraft.plan.revision, itemCount: buildPlanDraft.items.length },
+        };
+      }
+
+      await recordStep(ctx.jobId, {
+        stepName: "build-plan.draft",
+        message: `Draft Build Plan not created: ${buildPlanDraft.code} — ${buildPlanDraft.message}`,
+        status: "SUCCEEDED",
+      });
+      return {
+        result: result as unknown as Record<string, unknown>,
+        buildPlanDraft: { ok: false, code: buildPlanDraft.code, message: buildPlanDraft.message, status: buildPlanDraft.status },
+      };
     } catch (err) {
       clearInterval(heartbeat);
       await recordStep(ctx.jobId, { stepName: "engine.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });

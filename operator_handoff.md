@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 11) — Codex
+
+- **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
+- **Scope:** Advanced the no-manual-help flow one safe step beyond upload-triggered Safe Mode Engine. After background `ENGINE_RUN` succeeds and postconditions pass, the job now automatically builds a DRAFT Build Plan using the canonical `buildDraftBuildPlan` service. This creates no `GeneratedDocument` rows, does not confirm the plan, and does not enqueue generation; blocked draft-plan preflight is returned in job output for the UI/Next Action instead of bypassing gates.
+- **Files changed:** `lib/ai-job-handlers.ts`, `tests/pr1230-remaining-gaps-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/company-knowledge-auto-review.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (25/25); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; `git diff --check` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target services/secrets. Background Engine now advances to a DRAFT Build Plan only; full autonomous generation/finalization/export still needs a source-grounded auto-confirm + generate + validate + finalize orchestrator that preserves official-original and final ZIP gates.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
 ### 2026-07-22 UTC (follow-up 10) — Codex
 
 - **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
