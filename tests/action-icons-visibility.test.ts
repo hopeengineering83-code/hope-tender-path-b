@@ -183,7 +183,10 @@ describe("Spec Test 8 — Recovery Command Center primary action renders SVG ico
     // Each quick-action button must have an SVG icon, not just text.
     assert.ok(src.includes("<RefreshIcon /> Retry AI Analyze"), "Retry AI Analyze quick-action must have RefreshIcon");
     assert.ok(src.includes("<PlayIcon /> Resume AI Analyze"), "Resume AI Analyze quick-action must have PlayIcon");
-    assert.ok(src.includes("<PlayIcon /> Run Engine"), "Run Engine quick-action must have PlayIcon");
+    // "Run Engine" quick-actions link to the canonical async Run Engine
+    // control (#run-engine-action) instead of triggering a second engine
+    // run — see components/disclosure-anchor-link.tsx.
+    assert.ok(src.includes("<PlayIcon /> Go to Run Engine"), "Run Engine quick-action must have PlayIcon");
     assert.ok(src.includes("<WarningIcon /> Review Matching Inputs"), "Review Matching Inputs quick-action must have WarningIcon");
     assert.ok(src.includes("<CheckIcon /> Link Vault Evidence"), "Link Vault Evidence quick-action must have CheckIcon");
   });

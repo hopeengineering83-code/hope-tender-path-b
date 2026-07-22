@@ -6,6 +6,7 @@ import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActio
 import { subscribeTenderWorkflowSync, emitTenderWorkflowSync, openParentDetailsAndScroll } from "../lib/ui/tender-workflow-sync";
 import { PlayIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
+import { DisclosureAnchorLink } from "./disclosure-anchor-link";
 
 // ─── Types (mirror lib/engine/tender-lifecycle-orchestrator.ts) ───────────────
 
@@ -644,14 +645,26 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <p className="text-sm font-semibold text-amber-900">{actionLabel}</p>
             {canMutate && (
-              <button
-                onClick={() => void executeAction(data.primaryNextAction)}
-                disabled={actioning}
-                title={`Execute: ${actionLabel}`}
-                className="inline-flex items-center gap-1 rounded bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-60"
-              >
-                <PlayIcon /> {actioning ? "Working…" : "Execute"}
-              </button>
+              data.primaryNextAction === "RUN_ENGINE" ? (
+                // Same reasoning as the EVIDENCE_NOT_ASSESSED quick-action
+                // below: RUN_ENGINE's spec (lib/recovery-command-actions.ts)
+                // is a bare synchronous POST /api/tenders/{id}/engine, which
+                // bypasses the async job-queue fix engine-action-panel.tsx
+                // relies on to escape the 60s Vercel cap. Point at that one
+                // canonical control instead of re-running the risky sync path.
+                <DisclosureAnchorLink href="#run-engine-action" className="inline-flex items-center gap-1 rounded bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800" title="Go to Run Engine (Safe Mode)">
+                  <PlayIcon /> Go to Run Engine
+                </DisclosureAnchorLink>
+              ) : (
+                <button
+                  onClick={() => void executeAction(data.primaryNextAction)}
+                  disabled={actioning}
+                  title={`Execute: ${actionLabel}`}
+                  className="inline-flex items-center gap-1 rounded bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-60"
+                >
+                  <PlayIcon /> {actioning ? "Working…" : "Execute"}
+                </button>
+              )
             )}
           </div>
           {canMutate && data.primaryNextAction === "APPROVE_FALLBACK_WITH_NOTE" && (
@@ -694,7 +707,14 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
                 )}
                 {canMutate && b.code === "EVIDENCE_NOT_ASSESSED" && (
                   <div className="mt-1.5">
-                    <button onClick={() => void executeAction("RUN_ENGINE")} disabled={actioning} className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-60" title="Run Engine to create requirement-evidence links"><PlayIcon /> Run Engine</button>
+                    {/* Points at the one canonical Run Engine control
+                        (engine-action-panel.tsx's async, safe-mode-first
+                        buttons) instead of triggering a second, separate
+                        synchronous POST /api/tenders/{id}/engine call here —
+                        that second call path predates the async job-queue
+                        fix and bypassed it entirely, risking the exact 60s
+                        Vercel timeout that fix exists to prevent. */}
+                    <DisclosureAnchorLink href="#run-engine-action" className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700" title="Go to Run Engine (Safe Mode) to create requirement-evidence links"><PlayIcon /> Go to Run Engine</DisclosureAnchorLink>
                   </div>
                 )}
                 {canMutate && b.code === "ENGINE_RAN_NO_MATCHES" && (

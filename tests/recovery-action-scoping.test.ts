@@ -97,7 +97,7 @@ describe("Recovery Command Center — authorization and mutation capability pres
     // Within the isRecoveryState block, the Execute button must be gated by canMutate.
     const bannerStart = recoverySrc.indexOf("Recovery operation available");
     assert.ok(bannerStart > 0, "recovery banner must exist");
-    const bannerBlock = recoverySrc.slice(bannerStart, bannerStart + 1200);
+    const bannerBlock = recoverySrc.slice(bannerStart, bannerStart + 1600);
     assert.match(bannerBlock, /\{canMutate && \(/);
     assert.match(bannerBlock, /onClick=\{\(\) => void executeAction\(data\.primaryNextAction\)\}/);
   });

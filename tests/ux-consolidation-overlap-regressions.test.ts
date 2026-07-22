@@ -79,6 +79,31 @@ test("category A: the retry/failure-state buttons remain distinct actions from t
   assert.match(src, /!result && !running &&/, "the idle large-vault banner must stay gated to the no-result, not-running state");
 });
 
+test("category A: tender-recovery-command-center.tsx does not run a second, separate engine execution — it links to the one canonical control", () => {
+  const src = readSource("components/tender-recovery-command-center.tsx");
+  // RUN_ENGINE's spec in lib/recovery-command-actions.ts is a bare
+  // synchronous POST /api/tenders/{id}/engine — calling it here would bypass
+  // the async job-queue infrastructure engine-action-panel.tsx's two buttons
+  // rely on to escape the 60s Vercel cap, and would be a second/third live
+  // trigger for the same underlying engine action. Both places that could
+  // dispatch RUN_ENGINE (the EVIDENCE_NOT_ASSESSED blocker quick-action, and
+  // the generic recovery-state "Execute" button when primaryNextAction is
+  // RUN_ENGINE) must instead link to the canonical #run-engine-action
+  // control, not call executeAction("RUN_ENGINE").
+  assert.doesNotMatch(src, /executeAction\("RUN_ENGINE"\)/, "must not directly execute RUN_ENGINE from this component — link to the canonical control instead");
+  // The generic recovery-state button still legitimately calls
+  // executeAction(data.primaryNextAction) for every OTHER action — it must
+  // just special-case RUN_ENGINE first so that specific value never reaches
+  // that call.
+  assert.match(
+    src,
+    /data\.primaryNextAction === "RUN_ENGINE" \?[\s\S]{0,800}<DisclosureAnchorLink href="#run-engine-action"/,
+    "the generic recovery Execute button must special-case RUN_ENGINE (render the canonical-control link) before falling back to executeAction(data.primaryNextAction) for other actions",
+  );
+  const runEngineLinks = src.match(/<DisclosureAnchorLink href="#run-engine-action"/g) ?? [];
+  assert.equal(runEngineLinks.length, 2, "expected exactly the two known RUN_ENGINE call sites (blocker quick-action + recovery-state Execute) to link to the canonical control");
+});
+
 // ─── Category B: two visible primary nav items representing the same workspace ───
 
 test("category B: primary sidebar has no two links pointing at routes that serve the same workspace", () => {

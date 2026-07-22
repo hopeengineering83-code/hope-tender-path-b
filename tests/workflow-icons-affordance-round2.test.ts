@@ -55,7 +55,13 @@ describe("Spec Test 2 — Recovery Command Center quick actions", () => {
     const src = read("components/tender-recovery-command-center.tsx");
     assert.ok(src.includes("<RefreshIcon /> Retry AI Analyze"), "Retry AI Analyze must have RefreshIcon");
     assert.ok(src.includes("<PlayIcon /> Resume AI Analyze"), "Resume AI Analyze must have PlayIcon");
-    assert.ok(src.includes("<PlayIcon /> Run Engine"), "Run Engine quick-action must have PlayIcon");
+    // "Run Engine" quick-actions link to the one canonical async Run Engine
+    // control (#run-engine-action in engine-action-panel.tsx) instead of
+    // re-triggering a second, separate synchronous engine POST — see
+    // components/disclosure-anchor-link.tsx and the DisclosureAnchorLink
+    // usages below. Still icon + visible text, not a bare/raw icon.
+    assert.ok(src.includes("<PlayIcon /> Go to Run Engine"), "Run Engine quick-actions must have PlayIcon and link to the canonical control");
+    assert.equal((src.match(/DisclosureAnchorLink href="#run-engine-action"/g) ?? []).length, 2, "both Run Engine quick-actions (blocker row + recovery-state Execute) must link to the canonical control, not trigger a second engine run");
     assert.ok(src.includes("<WarningIcon /> Review Matching Inputs"), "Review Matching Inputs must have WarningIcon");
     assert.ok(src.includes("<CheckIcon /> Link Vault Evidence"), "Link Vault Evidence must have CheckIcon");
   });
