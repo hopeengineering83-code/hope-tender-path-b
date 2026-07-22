@@ -6,15 +6,14 @@ export const MAX_UPLOAD_FILE_BYTES = 10 * 1024 * 1024;
 export const MAX_UPLOAD_FILES = 10;
 export const MAX_UPLOAD_TOTAL_BYTES = 30 * 1024 * 1024;
 // NOTE: This 2M constant is the outer limiter for limitExtractedText(). The
-// inner limiter in lib/extract-text.ts (MAX_EXTRACTED_TEXT_CHARS = 500_000)
+// inner limiter in lib/extract-text.ts (MAX_EXTRACTED_TEXT_CHARS = 2_000_000)
 // fires FIRST during normalizeExtractedText() — so by the time text reaches
-// limitExtractedText(), it's already <= 500K chars and this 2M slice never
-// runs. limitExtractedText therefore ALSO detects the inner cap: output text
-// at exactly the inner limit means normalizeExtractedText cut the document's
-// tail, and the truncated flag must be true so the upload paths can warn
-// that the extraction is partial (CLAUDE.md: "Warning if the document is
-// only partially extracted"). A genuine document landing on exactly 500,000
-// chars is treated as truncated too — the fail-closed direction.
+// limitExtractedText(), it's already <= 2M chars and this 2M slice is a
+// no-op safety guard. limitExtractedText therefore ALSO detects the inner
+// cap: output text at exactly the inner limit means normalizeExtractedText
+// cut the document's tail, and the truncated flag must be true so the upload
+// paths can warn that the extraction is partial. A genuine document landing
+// on exactly 2,000,000 chars is treated as truncated too — fail-closed.
 export const MAX_EXTRACTED_TEXT_CHARS = 2_000_000;
 const MAX_ARCHIVE_ENTRIES = 2_000;
 const MAX_ARCHIVE_EXPANDED_BYTES = 80 * 1024 * 1024;
