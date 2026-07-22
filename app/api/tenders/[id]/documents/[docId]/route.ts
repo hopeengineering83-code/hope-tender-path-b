@@ -125,9 +125,17 @@ export async function PUT(
 
   if (!doc) return NextResponse.json({ error: "Document not found" }, { status: 404 });
 
+  const normalizedReviewNotes = typeof reviewNotes === "string" ? reviewNotes.trim() : "";
   const priorStatus = doc.reviewStatus;
   const newStatus = reviewStatus ?? doc.reviewStatus;
   const action = reviewAction ?? reviewStatus ?? "NOTE_UPDATE";
+
+  if ((newStatus === "APPROVED" || newStatus === "READY_FOR_EXPORT") && normalizedReviewNotes.length < 10) {
+    return NextResponse.json(
+      { error: "A genuine reviewer note of at least 10 characters is required for approval actions.", code: "REVIEWER_NOTE_REQUIRED" },
+      { status: 400 },
+    );
+  }
 
   // Soft-gate: only the READY_FOR_EXPORT transition is constrained by the
   // central generation/export gate. Other review actions (notes-only updates,
@@ -170,7 +178,7 @@ export async function PUT(
       where: { id: docId },
       data: {
         reviewStatus: newStatus,
-        reviewNotes: reviewNotes !== undefined ? reviewNotes : doc.reviewNotes,
+        reviewNotes: reviewNotes !== undefined ? normalizedReviewNotes : doc.reviewNotes,
         reviewedBy: actor.id,
         reviewedAt: new Date(),
       },
@@ -182,7 +190,7 @@ export async function PUT(
           documentId: docId,
           reviewerId: actor.id,
           action,
-          notes: reviewNotes ?? null,
+          notes: reviewNotes !== undefined ? normalizedReviewNotes : null,
           priorStatus,
           newStatus,
         },
@@ -197,7 +205,7 @@ export async function PUT(
     action: "DOCUMENT_REVIEW",
     entityType: "GeneratedDocument",
     entityId: docId,
-    description: `${actor.email} ${action.toLowerCase()} document "${doc.name}" (${priorStatus} → ${newStatus})${reviewNotes ? `: ${reviewNotes.slice(0, 120)}` : ""}`,
+    description: `${actor.email} ${action.toLowerCase()} document "${doc.name}" (${priorStatus} → ${newStatus})${normalizedReviewNotes ? `: ${normalizedReviewNotes.slice(0, 120)}` : ""}`,
     metadata: { tenderId, priorStatus, newStatus, action },
   });
 

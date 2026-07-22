@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 3) — Codex
+
+- **Branch / PR:** `work` / helper PR metadata refreshed for user incorporation into PR #1175.
+- **Scope:** Rechecked the helper changes end-to-end against the prompt and found one confirmed remaining approval-path gap: advisory resolutions and per-document approval/ready-for-export actions could still be submitted without a genuine reviewer-entered note. Added client-side note requirements, server-side fail-closed validation, and source-shape regression coverage.
+- **Files changed:** `components/export-readiness-panel.tsx`, `app/api/tenders/[id]/advisory-resolutions/route.ts`, `components/document-review-panel.tsx`, `app/api/tenders/[id]/documents/[docId]/route.ts`, `tests/pr1175-residual-gap-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1175-residual-gap-regression.test.ts` PASS; `npx tsx --test tests/pr1175-residual-gap-regression.test.ts tests/action-icons-visibility.test.ts tests/ui-workflow-polish.test.ts tests/rendered-component-capability.test.ts` PASS (87/87); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; dummy-env `npm run build` PASS; `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL.
+- **Known risks:** No inline review comments were visible in the prompt. DB drift/integration, live Preview AI execution, Playwright browser isolation, exact-head screenshots, `/api/health`, and runtime logs still require target-branch services.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 and runs target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only.
+
 ### 2026-07-22 UTC (follow-up 2) — Codex
 
 - **Branch / PR:** `work` / helper PR metadata refreshed again for user incorporation into PR #1175.

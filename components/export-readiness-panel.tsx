@@ -138,6 +138,7 @@ export function ExportReadinessPanel({
   const [reclassifying, setReclassifying] = useState(false);
   const [deduplicating, setDeduplicating] = useState(false);
   const [repairingAssets, setRepairingAssets] = useState(false);
+  const [advisoryNotes, setAdvisoryNotes] = useState<Record<string, string>>({});
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const busy =
@@ -202,6 +203,11 @@ export function ExportReadinessPanel({
   }
 
   async function resolveAdvisory(code: string, resolution: string) {
+    const note = (advisoryNotes[code] ?? '').trim();
+    if (note.length < 10) {
+      setError('Enter a reviewer note of at least 10 characters before resolving this advisory.');
+      return;
+    }
     setResolvingAdvisory(code);
     setError(null);
     setRepairMessage(null);
@@ -209,14 +215,15 @@ export function ExportReadinessPanel({
       const res = await fetch(`/api/tenders/${tenderId}/advisory-resolutions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, resolution }),
+        body: JSON.stringify({ code, resolution, note }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error)
         throw new Error(data.error ?? `Advisory resolution failed (${res.status})`);
       setRepairMessage(
-        `Marked advisory ${code} as ${resolution.toLowerCase().replace(/_/g, ' ')}. Re-checking readiness.`
+        `Marked advisory ${code} as ${resolution.toLowerCase().replace(/_/g, ' ')} with reviewer note. Re-checking readiness.`
       );
+      setAdvisoryNotes((prev) => ({ ...prev, [code]: '' }));
       await refresh();
     } catch (err) {
       setError('Advisory resolution failed. Refresh to retry.');
@@ -1036,19 +1043,42 @@ export function ExportReadinessPanel({
                             Suggested: {advisory.recommendedAction}
                           </p>
                         )}
+                        <label className="mt-2 block text-[10px] font-medium text-amber-900">
+                          Reviewer note required before advisory resolution
+                          <textarea
+                            value={advisoryNotes[advisory.category] ?? ''}
+                            onChange={(event) =>
+                              setAdvisoryNotes((prev) => ({
+                                ...prev,
+                                [advisory.category]: event.target.value,
+                              }))
+                            }
+                            rows={2}
+                            maxLength={500}
+                            placeholder="Explain the source-grounded reason this advisory is safe to resolve…"
+                            className="mt-1 w-full rounded-md border border-amber-300 bg-white px-2 py-1 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-amber-200"
+                          />
+                        </label>
                         <div className="mt-2 flex flex-wrap gap-1.5">
-                          {ADVISORY_RESOLUTION_OPTIONS.map((opt) => (
-                            <button
-                              key={opt.value}
-                              type="button"
-                              disabled={busy || resolvingAdvisory === advisory.category}
-                              onClick={() => void resolveAdvisory(advisory.category, opt.value)}
-                              className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[10px] font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
-                              title={`Mark this advisory as ${opt.label} (does not affect blockers).`}
-                            >
-                              {resolvingAdvisory === advisory.category ? '…' : opt.label}
-                            </button>
-                          ))}
+                          {ADVISORY_RESOLUTION_OPTIONS.map((opt) => {
+                            const advisoryNote = (advisoryNotes[advisory.category] ?? '').trim();
+                            return (
+                              <button
+                                key={opt.value}
+                                type="button"
+                                disabled={
+                                  busy ||
+                                  resolvingAdvisory === advisory.category ||
+                                  advisoryNote.length < 10
+                                }
+                                onClick={() => void resolveAdvisory(advisory.category, opt.value)}
+                                className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[10px] font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+                                title="Enter a genuine reviewer note before resolving this advisory."
+                              >
+                                {resolvingAdvisory === advisory.category ? '…' : opt.label}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>

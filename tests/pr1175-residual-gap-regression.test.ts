@@ -118,6 +118,25 @@ describe('PR 1175 residual workflow/action gaps', () => {
     assert.ok(src.includes("href: '#generated-documents'"));
   });
 
+
+  it('requires genuine reviewer notes for every manual approval path', () => {
+    const exportPanel = read('components/export-readiness-panel.tsx');
+    const advisoryRoute = read('app/api/tenders/[id]/advisory-resolutions/route.ts');
+    const reviewPanel = read('components/document-review-panel.tsx');
+    const documentRoute = read('app/api/tenders/[id]/documents/[docId]/route.ts');
+
+    assert.ok(exportPanel.includes('Reviewer note required before advisory resolution'));
+    assert.ok(exportPanel.includes('advisoryNote.length < 10'));
+    assert.ok(exportPanel.includes('JSON.stringify({ code, resolution, note })'));
+    assert.ok(advisoryRoute.includes('REVIEWER_NOTE_REQUIRED'));
+    assert.ok(advisoryRoute.includes('note.length < 10'));
+
+    assert.ok(reviewPanel.includes('Reviewer note required for approval / ready-for-export actions'));
+    assert.ok(reviewPanel.includes('actionNote.trim().length < 10'));
+    assert.ok(documentRoute.includes('REVIEWER_NOTE_REQUIRED'));
+    assert.ok(documentRoute.includes('newStatus === "APPROVED" || newStatus === "READY_FOR_EXPORT"'));
+  });
+
   it('uses distinct semantic icons for unrelated advanced repair actions', () => {
     const src = read('components/export-readiness-panel.tsx');
     for (const icon of [

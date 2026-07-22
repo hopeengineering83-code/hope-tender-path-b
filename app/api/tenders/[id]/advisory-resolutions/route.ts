@@ -95,6 +95,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!VALID_RESOLUTIONS.has(resolution)) {
       return jsonError(`Invalid resolution. Use one of: ${Array.from(VALID_RESOLUTIONS).join(", ")}.`, 400, { code: "INVALID_RESOLUTION" });
     }
+    if (resolution !== "REOPEN" && note.length < 10) {
+      return jsonError("A genuine reviewer note of at least 10 characters is required to resolve an advisory.", 400, { code: "REVIEWER_NOTE_REQUIRED" });
+    }
 
     const title = buildAdvisoryGapTitle(code);
     const resolvedNote = note ? `${resolution} | ${note}` : resolution;
