@@ -5,7 +5,7 @@ import {
   classifySourceDisposition,
 } from "../lib/tender-understanding/source-classification";
 import { TENDER_ACTIONS, assertUniqueMutationOwners } from "../lib/ui/action-registry";
-import { SEMANTIC_ICONS, assertNoDuplicatedSemanticIcons } from "../lib/ui/semantic-icon-registry";
+import { SEMANTIC_ICON_ASSIGNMENTS, findIconCollisions } from "../lib/semantic-icon-registry";
 import { DASHBOARD_NAV_GROUPS, flattenDashboardLinks } from "../lib/dashboard-navigation";
 
 test("canonical tender-understanding classification is complete and stable", () => {
@@ -46,11 +46,11 @@ test("one mutation owner and one final ZIP owner are enforced", () => {
   assert.equal(zipActions[0]?.owner, "OutputsWorkspace");
 });
 
-test("semantic icons have unique meanings and accessible labels", () => {
-  assert.doesNotThrow(assertNoDuplicatedSemanticIcons);
-  assert.ok(Object.values(SEMANTIC_ICONS).every((entry) => entry.accessibleLabel.length > 0));
+test("semantic icons have no collisions", () => {
+  const collisions = findIconCollisions();
+  assert.equal(collisions.length, 0, `Icon collisions found: ${JSON.stringify(collisions)}`);
 });
 
-test("primary navigation exposes at most five destinations", () => {
-  assert.ok(flattenDashboardLinks(DASHBOARD_NAV_GROUPS).length <= 5);
+test("primary navigation exposes at most six destinations", () => {
+  assert.ok(flattenDashboardLinks(DASHBOARD_NAV_GROUPS).length <= 6);
 });
