@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-22 UTC (follow-up 12) — Codex
+
+- **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.
+- **Scope:** Advanced automation one more gated step toward Hope's no-manual-help goal. After background `ENGINE_RUN` succeeds, passes postconditions, and builds a DRAFT Build Plan, the job now reuses canonical Build Plan confirmation validation and hash checks to auto-confirm only that same source-grounded draft. It records the existing `SUBMISSION_PLAN_CONFIRMED` audit action with auto-confirmation details. If validation, hash, or conditional update fails, the draft remains unconfirmed with blockers in job output. The job still does not enqueue generation, finalize PDFs, or export ZIPs.
+- **Files changed:** `lib/ai-job-handlers.ts`, `tests/pr1230-remaining-gaps-regression.test.ts`, `operator_handoff.md`.
+- **Tests run:** `npx tsx --test tests/pr1230-remaining-gaps-regression.test.ts tests/company-knowledge-auto-review.test.ts tests/pr1175-residual-gap-regression.test.ts` PASS (25/25); `npx tsc --noEmit` PASS; `npm run lint` PASS; `npm run audit:release-integrity` PASS; `DATABASE_URL=... npx prisma validate` PASS; `git diff --check` PASS; dummy-env `npm run build` PASS. `DATABASE_URL=... npx prisma migrate status` blocked by unavailable local PostgreSQL at localhost:5432.
+- **Known risks:** Full DB migration/zero-drift/integration, Playwright workflows, exact-head screenshots, live Preview AI execution, `/api/health`, and runtime logs still require target services/secrets. Full autonomous generation/finalization/export still needs a separately gated worker chain after confirmed Build Plan, and official-original/manual-upload requirements must remain manual.
+- **Next action:** User reviews/cherry-picks helper commits into PR #1175 only after target-branch DB/Preview/browser validation.
+- **Merge status:** not reviewed — helper branch only, open and unmerged.
+
 ### 2026-07-22 UTC (follow-up 11) — Codex
 
 - **Branch / PR:** `work` / helper PR for user incorporation into PR #1175 later.

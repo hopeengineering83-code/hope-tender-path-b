@@ -68,17 +68,20 @@ describe('PR 1230 remaining gap fixes', () => {
     assert.ok(handler.includes('failedStage: "POSTCONDITION_VALIDATE"'));
   });
 
-
-  it('continues automatic background Engine runs into draft Build Plan only after postconditions pass', () => {
+  it('continues automatic background Engine runs into source-grounded Build Plan auto-confirmation only after postconditions pass', () => {
     const handler = read('lib/ai-job-handlers.ts');
     const postconditionIndex = handler.indexOf('const postconditions = await checkEnginePostconditions(ctx.tenderId)');
     const buildPlanIndex = handler.indexOf('const buildPlanDraft = await buildDraftBuildPlan(prisma, ctx.tenderId, ctx.userId)');
-    assert.ok(handler.includes('import { buildDraftBuildPlan } from "./engine/build-plan";'));
+    assert.ok(handler.includes('import { buildDraftBuildPlan, computeTenderBuildPlanHash, validateBuildPlanForConfirmation } from "./engine/build-plan";'));
     assert.ok(postconditionIndex >= 0 && buildPlanIndex > postconditionIndex, 'Build Plan draft must run only after Engine postconditions pass');
-    assert.ok(handler.includes('confirmation/generation remain gated'));
+    assert.ok(handler.includes('validating for source-grounded auto-confirmation'));
+    assert.ok(handler.includes('document generation remains separately gated'));
+    assert.ok(handler.includes('SUBMISSION_PLAN_CONFIRMED'));
+    assert.ok(handler.includes('auto-confirmed after background Engine postconditions'));
     assert.ok(handler.includes('buildPlanDraft: { ok: false'));
-    assert.equal(handler.includes('validateBuildPlanForConfirmation'), false, 'background Engine must not auto-confirm Build Plan');
-    assert.equal(handler.includes('PROPOSAL_GENERATION'), true, 'test sanity: handler file still contains generation handler but ENGINE_RUN must not enqueue it here');
+    assert.ok(handler.includes('autoConfirmed: true'));
+    assert.ok(handler.includes('autoConfirmed: false'));
+    assert.equal(handler.includes('enqueueJob({ userId: ctx.userId, tenderId: ctx.tenderId, jobType: "PROPOSAL_GENERATION"'), false, 'background Engine must not enqueue generation directly');
   });
 
   it('uses canonical Safe Mode parameters for upload-triggered automatic Engine runs', () => {

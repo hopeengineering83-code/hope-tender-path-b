@@ -44,7 +44,8 @@ import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extra
 import { inferTenderMetadata } from "./engine/tender-metadata";
 import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
 import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
-import { buildDraftBuildPlan } from "./engine/build-plan";
+import { logAction } from "./audit";
+import { buildDraftBuildPlan, computeTenderBuildPlanHash, validateBuildPlanForConfirmation } from "./engine/build-plan";
 
 export interface JobContext {
   jobId: string;
@@ -198,12 +199,66 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       if (buildPlanDraft.ok) {
         await recordStep(ctx.jobId, {
           stepName: "build-plan.draft",
-          message: `Draft Build Plan created with ${buildPlanDraft.items.length} planned file(s); confirmation/generation remain gated.`,
+          message: `Draft Build Plan created with ${buildPlanDraft.items.length} planned file(s); validating for source-grounded auto-confirmation.`,
+          status: "SUCCEEDED",
+        });
+
+        const validation = await validateBuildPlanForConfirmation(prisma, ctx.tenderId, ctx.userId, buildPlanDraft.items);
+        const contentHash = await computeTenderBuildPlanHash(prisma, ctx.tenderId, ctx.userId, buildPlanDraft.items);
+        const staleBlockers = !contentHash || contentHash !== buildPlanDraft.plan.contentHash
+          ? ["Build Plan hash is stale; rebuild before confirming."]
+          : [];
+        const confirmationBlockers = validation.blockers.concat(staleBlockers);
+        if (validation.ok && staleBlockers.length === 0) {
+          const confirmedAt = new Date();
+          const updateResult = await (prisma as any).buildPlan.updateMany({
+            where: {
+              id: buildPlanDraft.plan.id,
+              tenderId: ctx.tenderId,
+              status: "DRAFT",
+              revision: buildPlanDraft.plan.revision,
+              contentHash: buildPlanDraft.plan.contentHash,
+            },
+            data: {
+              status: "CONFIRMED",
+              confirmedRevision: buildPlanDraft.plan.revision,
+              confirmedContentHash: contentHash,
+              confirmedById: ctx.userId,
+              confirmedBy: ctx.userId,
+              confirmedAt,
+              validationJson: JSON.stringify({ ok: true, blockers: [] }),
+            },
+          });
+          if (updateResult.count === 1) {
+            await recordStep(ctx.jobId, {
+              stepName: "build-plan.confirm",
+              message: "Build Plan auto-confirmed from source-grounded Engine output; document generation remains separately gated.",
+              status: "SUCCEEDED",
+            });
+            void logAction({
+              userId: ctx.userId,
+              action: "SUBMISSION_PLAN_CONFIRMED",
+              entityType: "Tender",
+              entityId: ctx.tenderId,
+              description: "Build Plan auto-confirmed after background Engine postconditions and source-grounded validation passed.",
+              metadata: { tenderId: ctx.tenderId, revision: buildPlanDraft.plan.revision, contentHash },
+            }).catch(() => {});
+            return {
+              result: result as unknown as Record<string, unknown>,
+              buildPlanDraft: { ok: true, status: "CONFIRMED", revision: buildPlanDraft.plan.revision, itemCount: buildPlanDraft.items.length, autoConfirmed: true },
+            };
+          }
+          confirmationBlockers.push("Build Plan changed before auto-confirmation; rebuild before confirming.");
+        }
+
+        await recordStep(ctx.jobId, {
+          stepName: "build-plan.confirm",
+          message: `Build Plan auto-confirmation blocked: ${confirmationBlockers.join("; ")}`,
           status: "SUCCEEDED",
         });
         return {
           result: result as unknown as Record<string, unknown>,
-          buildPlanDraft: { ok: true, status: buildPlanDraft.plan.status, revision: buildPlanDraft.plan.revision, itemCount: buildPlanDraft.items.length },
+          buildPlanDraft: { ok: true, status: buildPlanDraft.plan.status, revision: buildPlanDraft.plan.revision, itemCount: buildPlanDraft.items.length, autoConfirmed: false, confirmationBlockers },
         };
       }
 
