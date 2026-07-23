@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
 import { subscribeTenderWorkflowSync, emitTenderWorkflowSync, openParentDetailsAndScroll } from "../lib/ui/tender-workflow-sync";
-import { PlayIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon } from "./icons";
+import { PlayIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon, ArrowRightIcon } from "./icons";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 import { DisclosureAnchorLink } from "./disclosure-anchor-link";
 
@@ -653,7 +653,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
                 // relies on to escape the 60s Vercel cap. Point at that one
                 // canonical control instead of re-running the risky sync path.
                 <DisclosureAnchorLink href="#run-engine-action" className="inline-flex items-center gap-1 rounded bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800" title="Go to Run Engine (Safe Mode)">
-                  <PlayIcon /> Go to Run Engine
+                  <ArrowRightIcon /> Go to Run Engine
                 </DisclosureAnchorLink>
               ) : (
                 <button
@@ -714,7 +714,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
                         that second call path predates the async job-queue
                         fix and bypassed it entirely, risking the exact 60s
                         Vercel timeout that fix exists to prevent. */}
-                    <DisclosureAnchorLink href="#run-engine-action" className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700" title="Go to Run Engine (Safe Mode) to create requirement-evidence links"><PlayIcon /> Go to Run Engine</DisclosureAnchorLink>
+                    <DisclosureAnchorLink href="#run-engine-action" className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-red-700" title="Go to Run Engine (Safe Mode) to create requirement-evidence links"><ArrowRightIcon /> Go to Run Engine</DisclosureAnchorLink>
                   </div>
                 )}
                 {canMutate && b.code === "ENGINE_RAN_NO_MATCHES" && (

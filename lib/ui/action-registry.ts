@@ -1,9 +1,9 @@
 export const TENDER_ACTIONS = {
   RUN_ENGINE: { anchor: "#run-engine-action", mutation: "POST /api/tenders/:id/engine?async=true", owner: "EngineActionPanel", label: "Run Tender Engine" },
-  REVIEW_SOURCES: { anchor: "#source-review", mutation: null, owner: "TenderUnderstandingPanel", label: "Review source issues" },
+  REVIEW_SOURCES: { anchor: "#requirement-coverage", mutation: null, owner: "TenderUnderstandingPanel", label: "Review source issues" },
   REVIEW_EVIDENCE: { anchor: "#match-evidence", mutation: null, owner: "TenderEngineWorkspace", label: "Review matched evidence" },
-  FINAL_APPROVAL: { anchor: "#final-approval", mutation: "POST /api/tenders/:id/approval", owner: "FinalApprovalPanel", label: "Approve final package" },
-  DOWNLOAD_FINAL_ZIP: { anchor: "#final-package", mutation: "GET /api/tenders/:id/export/zip", owner: "OutputsWorkspace", label: "Download final ZIP" },
+  FINAL_APPROVAL: { anchor: "#authority-review", mutation: "POST /api/tenders/:id/approval", owner: "FinalApprovalPanel", label: "Approve final package" },
+  DOWNLOAD_FINAL_ZIP: { anchor: "#final-package-manifest", mutation: "GET /api/tenders/:id/export/zip", owner: "OutputsWorkspace", label: "Download final ZIP" },
 } as const;
 
 export type TenderActionId = keyof typeof TENDER_ACTIONS;

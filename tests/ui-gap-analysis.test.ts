@@ -53,7 +53,7 @@ describe("UI gap analysis — AI Analyze button + broken anchors", () => {
     });
     it("WorkflowStepLinks resolves its targets from the canonical registry, not an inline copy", () => {
       const src = read("components/workflow-step-links.tsx");
-      assert.ok(src.includes("TENDER_WORKFLOW_STAGE_"), "must import from the canonical stage registry");
+      assert.ok(src.includes("TENDER_WORKFLOW_STAGES"), "must import from the canonical stage registry");
       assert.ok(src.includes("tender-workflow-stages"), "must import from tender-workflow-stages module");
     });
   });

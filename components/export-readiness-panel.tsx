@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { CheckIcon, WarningIcon, BoltIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon } from "./icons";
+import { CheckIcon, WarningIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon, ArrowRightIcon } from "./icons";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 import { DisclosureAnchorLink } from "./disclosure-anchor-link";
 
@@ -435,7 +435,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             // the same /generate-missing-plan-files route without that
             // context.
             <DisclosureAnchorLink href="#submission-plan-reconciliation" className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800" title="Go to Submission plan reconciliation to generate missing planned docs">
-              <BoltIcon /> Go to Generate missing planned docs
+              <ArrowRightIcon /> Go to Generate missing planned docs
             </DisclosureAnchorLink>
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && (
