@@ -52,8 +52,10 @@ describe("Final overlap/dead-code/page consolidation acceptance tests", () => {
       assert.ok(!tenderPage.includes("TenderDownloadActionsPanel"));
     });
 
-    it("keeps all five workflow stages collapsed by default", () => {
-      for (const number of [1, 2, 3, 4, 5]) {
+    it("opens intake only and keeps downstream stages collapsed", () => {
+      const first = tenderPage.match(/<WorkflowStage number=\{1\}[^>]*>/)?.[0] ?? "";
+      assert.match(first, /\sopen(?:=|\s|>)/, "Stage 1 intake may remain visible as the working context");
+      for (const number of [2, 3, 4, 5]) {
         const tag = tenderPage.match(new RegExp(`<WorkflowStage number=\\{${number}\\}[^>]*>`))?.[0] ?? "";
         assert.ok(tag, `Stage ${number} must exist`);
         assert.doesNotMatch(tag, /\sopen(?:=|\s|>)/, `Stage ${number} must stay collapsed until selected`);
