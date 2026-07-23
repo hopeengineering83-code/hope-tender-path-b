@@ -1,19 +1,7 @@
-// Regression coverage for a real gap found during a screenshot audit: four
-// routes had horizontal overflow at the 390x844 mobile viewport (a header
-// row's action buttons pushed off-canvas, tab bars wider than the screen,
-// an unbreakable <code> snippet, and a workflow-step title forcing its row
-// wider than the viewport). None of these routes were covered by the
-// existing OWNED_ROUTES overflow check in
-// tablet-universal-tender-intelligence.spec.ts, so this file closes that
-// coverage gap directly rather than folding dissimilar pages into that
-// generic ADMIN/PROPOSAL_MANAGER-owned-routes list.
-//
-// The tender detail page's overflow depended on the specific stage/badge
-// text a real analyzed tender accumulates, which a freshly-created tender
-// does not reach — so this reuses the deterministic seeded "Primary Owner
-// Fixture" tender (id 11111111-1111-4111-8111-111111111111, created by
-// scripts/seed-e2e-user.mjs and already relied on by
-// e2e/cross-user-isolation.spec.ts) rather than creating a new one.
+// Regression coverage for real horizontal-overflow gaps found during screenshot
+// audits. The tender workspace now has one canonical status/next-action surface
+// followed by five collapsed workflow stages; the removed Workflow Control
+// Center must not be required for this test to exercise the live page.
 import { primaryTest as test, expect, injectSavedSessionIntoContext } from "./auth-helper";
 import type { Page } from "@playwright/test";
 
@@ -40,33 +28,15 @@ async function visitAtMobileWidth(page: Page, route: string) {
 test.describe("Mobile (390x844) overflow gap repair", () => {
   test("tender detail page has no horizontal overflow", async ({ page }) => {
     await visitAtMobileWidth(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
-    // The "Quick workflow control" disclosure now starts open (defaultOpen).
-    // If it's closed, click to open it; if it's already open, skip the click.
-    // Clicking an already-open disclosure would toggle it closed and hide the
-    // heading we're waiting for.
-    const disclosureSummary = page.getByText("Quick workflow control");
-    const disclosure = disclosureSummary.locator("xpath=ancestor::details").first();
-    const isOpen = await disclosure.evaluate((el) => (el as HTMLDetailsElement).open).catch(() => false);
-    if (!isOpen) {
-      await disclosureSummary.click();
-    }
-    // Wait for the real heading: TenderWorkflowActionCenter fetches
-    // /workflow-center client-side and renders an animate-pulse skeleton (no
-    // text) until it resolves — waiting for the real heading stops a slow
-    // response from leaving this measuring the skeleton instead of the
-    // repaired row content.
-    await expect(page.getByRole("heading", { name: "Workflow Control Center" })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Next required action", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("Intake and extraction", { exact: true })).toBeVisible();
+    await expect(page.getByText("Workflow Control Center", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Final Submission Control Center", { exact: true })).toHaveCount(0);
     await expectNoHorizontalScroll(page, `/dashboard/tenders/${SEEDED_PRIMARY_TENDER_ID}`);
   });
 
   test("Knowledge Vault (company) page has no horizontal overflow", async ({ page }) => {
     await visitAtMobileWidth(page, "/dashboard/company");
-    // The page renders "Loading Company Vault…" (role="status", but with no
-    // aria-label/aria-labelledby — a name-filtered getByRole("status", {name})
-    // matches nothing even while it's genuinely showing, making toBeHidden()
-    // pass vacuously) until its client-side fetch resolves, then swaps in the
-    // repaired tab bar. Filter the unnamed status role by its text instead so
-    // this actually waits for the real loader to disappear.
     await expect(page.getByRole("status").filter({ hasText: "Loading Company Vault" })).toBeHidden({ timeout: 15_000 });
     await expectNoHorizontalScroll(page, "/dashboard/company");
   });
@@ -83,14 +53,6 @@ test.describe("Mobile (390x844) overflow gap repair", () => {
 });
 
 test.describe("Mobile (390x844) overflow — long unbreakable submission email in Tender Detail", () => {
-  // Found via a screenshot recheck: the Tender Detail fact grid's value
-  // column (tender-intake-detail-panel.tsx's Detail() helper) is a flex
-  // child with `flex-1` but no `min-w-0`, so a long unbreakable value
-  // (e.g. a submissionEmails address) refuses to shrink below its own
-  // content width and pushes the whole page 29px past the 390px viewport.
-  // `min-w-0` + `break-words` on that div fixes it without touching the
-  // scroll-clipped tables elsewhere on the same page (those already have
-  // their own overflow-x-auto wrapper and are unaffected by this bug).
   let tenderId: string | null = null;
 
   test.beforeAll(async ({ browser }) => {
@@ -139,24 +101,6 @@ test.describe("Mobile (390x844) overflow — long unbreakable submission email i
 });
 
 test.describe("Mobile (390x844) overflow — pathologically long, unbroken tender title", () => {
-  // Found via automated PR review (codex) on a prior revision of this file:
-  // a tender title with no whitespace (e.g. a long procurement identifier —
-  // titles up to 120 chars are permitted at creation) is not wrapped by
-  // `break-words` alone in most of these contexts. Two distinct root causes
-  // were found and fixed:
-  //   1. Several card/table title elements had no `break-words`/`min-w-0` at
-  //      all (export card, matching/documents cards, command-center and
-  //      report headings, analysis/list tables).
-  //   2. The dashboard overview's "Live Pipeline" table sits inside a CSS
-  //      Grid (`grid ... xl:grid-cols-[...]`) with no `grid-template-columns`
-  //      override below the `xl` breakpoint — the browser's default `auto`
-  //      grid track sizes to content, so the long word's min-content width
-  //      propagated all the way up through the grid track itself. No amount
-  //      of fixing the table (table-fixed, overflow-x-auto, break-words) had
-  //      any effect until the grid got an explicit `grid-cols-1` (=
-  //      `minmax(0, 1fr)`) base class. This is the more instructive bug of
-  //      the two — a descendant's `overflow`/`break-words` cannot compensate
-  //      for an ancestor flex/grid item's default `min-width: auto`.
   let tenderId: string | null = null;
 
   test.beforeAll(async ({ browser }) => {
@@ -168,9 +112,6 @@ test.describe("Mobile (390x844) overflow — pathologically long, unbroken tende
     form.append("reference", "RFP-LONGTITLE-REGRESSION-001");
     form.append("file", new Blob(["Long unbroken title overflow regression fixture."], { type: "text/plain" }), "fixture.txt");
     const intake = await page.request.post("/api/tenders/upload-first", { multipart: form });
-    // Fail hard (not test.skip) on a non-201 response — a silent skip here
-    // would let CI go green while exercising none of this file's long-title
-    // regression coverage, masking a real upload-first/auth/DB regression.
     if (intake.status() !== 201) {
       throw new Error(`Long-title fixture creation failed: status=${intake.status()} body=${await intake.text()}`);
     }
@@ -200,13 +141,6 @@ test.describe("Mobile (390x844) overflow — pathologically long, unbroken tende
     test(`${label} has no horizontal overflow with a long unbroken title`, async ({ page }) => {
       await visitAtMobileWidth(page, route);
       if (route === "/dashboard/documents") {
-        // DocumentsPage fetches its tender/document list client-side and
-        // renders a SkeletonTable + "Loading planned and generated
-        // documents…" subtitle until it resolves — wait for the real
-        // (current) subtitle so a slow response can't leave this measuring
-        // the skeleton instead of the repaired card. Text below was
-        // reworded by a donor PR ("and generated" added, ending changed to
-        // "canonical download readiness"); matched to current copy.
         await expect(page.getByText("Review planned and generated submission outputs, validation status, review decisions, and canonical download readiness.")).toBeVisible({ timeout: 15_000 });
       }
       await expectNoHorizontalScroll(page, route);
