@@ -1,5 +1,4 @@
-// Release integration panel truth merge tests.
-// Proves the merged #1040+#1044 integration fixes all screenshot contradictions.
+// Release integration panel truth tests.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -16,106 +15,88 @@ function stripComments(s: string): string {
 describe("Integration — Lifecycle ok=true on HTTP 200", () => {
   it("lifecycle route sets ok:true", () => {
     const src = read("app/api/tenders/[id]/lifecycle/route.ts");
-    assert.ok(src.includes("ok: true"), "must set ok:true");
-    assert.ok(!src.includes('ok: result.finalSubmissionStatus !== "BLOCKED"'), "must NOT set ok from finalSubmissionStatus");
+    assert.ok(src.includes("ok: true"));
+    assert.ok(!src.includes('ok: result.finalSubmissionStatus !== "BLOCKED"'));
   });
 });
 
 describe("Integration — Recovery Command Center does not throw on blocked", () => {
   it("load function only throws on HTTP non-2xx", () => {
     const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(!stripComments(src).includes("!json.ok"), "must NOT check !json.ok");
+    assert.ok(!stripComments(src).includes("!json.ok"));
   });
 });
 
 describe("Integration — Orchestrator stale analysis detection", () => {
   it("analysisStatus type includes stale and partial", () => {
     const src = read("lib/engine/tender-lifecycle-orchestrator.ts");
-    assert.ok(src.includes("stale?: boolean"), "type includes stale");
-    assert.ok(src.includes("partial?: boolean"), "type includes partial");
+    assert.ok(src.includes("stale?: boolean"));
+    assert.ok(src.includes("partial?: boolean"));
   });
 
   it("computes analysisIsStale via hash comparison", () => {
     const src = read("lib/engine/tender-lifecycle-orchestrator.ts");
-    assert.ok(src.includes("analysisIsStale"), "computes analysisIsStale");
-    assert.ok(src.includes("resolveCurrentAnalysisBinding"), "calls resolveCurrentAnalysisBinding");
-    assert.ok(src.includes("stale: analysisIsStale"), "forwards stale");
-    assert.ok(src.includes("partial: analysisPartialNeedsResume"), "forwards partial");
+    assert.ok(src.includes("analysisIsStale"));
+    assert.ok(src.includes("resolveCurrentAnalysisBinding"));
+    assert.ok(src.includes("stale: analysisIsStale"));
+    assert.ok(src.includes("partial: analysisPartialNeedsResume"));
   });
 });
 
 describe("Integration — Recovery Command Center StatusRow stale", () => {
-  it("shows STALE when stale, not green AI check", () => {
+  it("shows STALE when stale, not a green AI check", () => {
     const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(src.includes("data.analysisStatus.stale"), "checks stale flag");
-    assert.ok(src.includes("STALE — re-run required"), "shows stale label");
+    assert.ok(src.includes("data.analysisStatus.stale"));
+    assert.ok(src.includes("STALE — re-run required"));
   });
 });
 
 describe("Integration — Generation Readiness blocked on stale/compliance/PDF", () => {
   it("checks stale analysis and compliance blockers", () => {
     const src = read("components/generation-readiness-panel.tsx");
-    assert.ok(src.includes("hasStaleAnalysis"), "checks stale analysis");
-    assert.ok(src.includes("hasNoComplianceRows"), "checks compliance rows");
-    assert.ok(src.includes("hasPdfRequiredUnavailable"), "checks PDF required");
+    assert.ok(src.includes("hasStaleAnalysis"));
+    assert.ok(src.includes("hasNoComplianceRows"));
+    assert.ok(src.includes("hasPdfRequiredUnavailable"));
   });
 });
 
-// components/bid-control-verdict-panel.tsx and components/tender-health-score-panel.tsx
-// were retired in favor of the canonical Tender Release State
-// (lib/engine/tender-release-state.ts + components/tender-release-state-panel.tsx),
-// which replaced their independent readiness/verdict/score computations with
-// one reconciled, gated payload. The protective property these tests locked
-// — a stale or ungrounded analysis must never present as a confident ready
-// score/verdict — is now enforced at the engine layer via readinessCalculable,
-// which is gated on snapshot.analysis.eligibleForExport (true ONLY when
-// AI_SUCCEEDED AND the content hash still matches, i.e. NOT stale).
 describe("Integration — canonical Tender Release State gates on grounded, non-stale analysis", () => {
-  it("readinessScore/verdict are gated behind extraction + analysis grounding, not independently recomputed", () => {
+  it("gates readinessScore/verdict behind extraction and analysis grounding", () => {
     const src = read("lib/engine/tender-release-state.ts");
-    assert.ok(src.includes("readinessCalculable"), "computes a single grounding gate");
-    assert.ok(src.includes("extractionGrounded = snapshot.extraction.overallOk"), "extraction grounding reads the authoritative snapshot");
-    assert.ok(src.includes("analysisGrounded = snapshot.analysis.eligibleForExport"), "analysis grounding reads eligibleForExport (false when stale)");
-    assert.ok(src.includes("if (readinessCalculable)"), "score/verdict only computed when the grounding gate passes");
+    assert.ok(src.includes("readinessCalculable"));
+    assert.ok(src.includes("extractionGrounded = snapshot.extraction.overallOk"));
+    assert.ok(src.includes("analysisGrounded = snapshot.analysis.eligibleForExport"));
+    assert.ok(src.includes("if (readinessCalculable)"));
   });
 
-  it("blockers are reconciled from the canonical final-submission readiness, not recomputed locally", () => {
+  it("reconciles blockers from canonical final-submission readiness", () => {
     const src = read("lib/engine/tender-release-state.ts");
-    assert.ok(src.includes("getFinalSubmissionReadiness"), "reads the canonical blocker source");
-    assert.ok(src.includes("reconcileBlockers"), "dedupes overlapping blockers from upstream engines");
+    assert.ok(src.includes("getFinalSubmissionReadiness"));
+    assert.ok(src.includes("reconcileBlockers"));
   });
 });
 
-describe("Integration — Dashboard wires TenderReleaseStatePanel", () => {
-  it("dashboard mounts the canonical release-state panel with canMutate", () => {
-    const src = read("app/dashboard/tenders/[id]/page.tsx");
-    assert.ok(src.includes("<TenderReleaseStatePanel"), "mounts TenderReleaseStatePanel");
-    assert.ok(/<TenderReleaseStatePanel[^>]*canMutate=\{canMutate\}/.test(src), "passes canMutate");
+describe("Integration — tender workspace exposes one release-state owner", () => {
+  it("mounts one NextActionPanel and no competing release-state panel", () => {
+    const page = stripComments(read("app/dashboard/tenders/[id]/page.tsx"));
+    assert.equal((page.match(/<NextActionPanel\b/g) ?? []).length, 1);
+    assert.doesNotMatch(page, /<TenderReleaseStatePanel\b/);
+    assert.doesNotMatch(page, /<TenderRecoveryCommandCenter\b/);
+    assert.doesNotMatch(page, /<FinalSubmissionControlCenter\b/);
   });
 
-  it("release-state route resolves the canonical workflow decision server-side, not the page", () => {
+  it("keeps the canonical release-state engine and separate read-only Command Center", () => {
     const releaseState = read("lib/engine/tender-release-state.ts");
-    assert.ok(releaseState.includes("getCanonicalTenderWorkflowDecision"), "engine calls the canonical workflow decision");
+    assert.ok(releaseState.includes("getCanonicalTenderWorkflowDecision"));
     const page = read("app/dashboard/tenders/[id]/page.tsx");
-    assert.ok(!page.includes("getCanonicalTenderWorkflowDecision"), "page no longer re-fetches it directly");
+    assert.ok(!page.includes("getCanonicalTenderWorkflowDecision"));
+    assert.match(page, /Open read-only Command Center/);
   });
 
-  it("suppresses the panel's own next-action banner since NextActionPanel already renders the one canonical next action on this page", () => {
-    // Confirmed via a real Playwright screenshot: with the panel's default
-    // showNextAction=true and the "Detailed readiness and submission
-    // controls" disclosure open by default (owner request 2026-07-20), the
-    // page rendered "Next required action" twice — once from NextActionPanel
-    // at the top, once from TenderReleaseStatePanel further down. Passing
-    // showNextAction={false} here keeps exactly one visible.
-    const page = read("app/dashboard/tenders/[id]/page.tsx");
-    assert.match(page, /<NextActionPanel /);
-    assert.match(page, /<TenderReleaseStatePanel[^>]*showNextAction=\{false\}/);
-  });
-
-  it("TenderReleaseStatePanel only renders its next-action block when showNextAction is not explicitly disabled", () => {
+  it("the retired release-state panel still gates BidDecisionForm if used elsewhere", () => {
     const panel = read("components/tender-release-state-panel.tsx");
-    assert.match(panel, /showNextAction\s*=\s*true/);
-    assert.match(panel, /\{showNextAction && data\.primaryNextAction && \(/);
+    assert.match(panel, /canMutate = false/);
+    assert.match(panel, /\{canMutate && <BidDecisionForm tenderId=\{tenderId\} \/>\}/);
   });
 });
 
@@ -124,12 +105,12 @@ describe("Integration — Duplicate blocker removed", () => {
     const src = read("lib/engine/final-submission-readiness.ts");
     const matches = src.match(/category:\s*"MANDATORY_REQUIREMENTS_NO_SUBMISSION_PLAN"/g);
     assert.ok(matches);
-    assert.equal(matches.length, 1, "exactly ONE push (was 2)");
+    assert.equal(matches.length, 1);
   });
 });
 
 describe("Integration — Final export fail-closed", () => {
-  it("isFinalExportCandidateDocument excludes SUPERSEDED", async () => {
+  it("excludes SUPERSEDED", async () => {
     const { isFinalExportCandidateDocument } = await import("../lib/engine/document-output-state");
     assert.equal(isFinalExportCandidateDocument({
       generationStatus: "SUPERSEDED", validationStatus: "VALIDATED",
@@ -138,7 +119,7 @@ describe("Integration — Final export fail-closed", () => {
     } as any), false);
   });
 
-  it("isFinalExportCandidateDocument excludes PLANNED", async () => {
+  it("excludes PLANNED", async () => {
     const { isFinalExportCandidateDocument } = await import("../lib/engine/document-output-state");
     assert.equal(isFinalExportCandidateDocument({
       generationStatus: "PLANNED", validationStatus: "PENDING",
@@ -148,18 +129,18 @@ describe("Integration — Final export fail-closed", () => {
   });
 });
 
-describe("Integration — No 'metadata' wording", () => {
-  it("lifecycle route has no user-facing 'metadata'", () => {
+describe("Integration — No user-facing metadata wording", () => {
+  it("lifecycle route has no user-facing metadata", () => {
     const src = stripComments(read("app/api/tenders/[id]/lifecycle/route.ts"));
     assert.ok(!/>\s*[Mm]etadata[\s<]/.test(src));
   });
 });
 
 describe("Integration — Provider fallback order", () => {
-  it("all 10 providers present", () => {
+  it("all 10 providers are present", () => {
     const src = read("lib/ai-provider-catalog.cjs");
-    for (const p of ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]) {
-      assert.ok(src.includes(p));
+    for (const provider of ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]) {
+      assert.ok(src.includes(provider));
     }
   });
 });
