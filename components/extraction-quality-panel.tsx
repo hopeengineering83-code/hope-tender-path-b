@@ -101,7 +101,24 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
       },
     },
   }).catch(() => null);
-  if (!tender || tender.files.length === 0) return null;
+  if (!tender) return null;
+  if (tender.files.length === 0) {
+    return (
+      <section id="extraction-quality-detail" className="mb-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Extraction quality</p>
+        <h2 className="mt-1 text-lg font-bold text-slate-900">No tender source files uploaded</h2>
+        <p className="mt-1 max-w-2xl text-sm text-slate-600">
+          Extraction quality can be calculated after at least one tender source document is uploaded. Page coverage, OCR, weak pages, and failed pages will appear here automatically.
+        </p>
+        <DisclosureAnchorLink
+          href="#tender-files"
+          className="mt-3 inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-800 hover:bg-slate-100"
+        >
+          Go to source files <ArrowRightIcon />
+        </DisclosureAnchorLink>
+      </section>
+    );
+  }
 
   const fileIds = tender.files.map((f) => f.id);
   type SampleRow = { id: string; extractedTextSample: string; extractedCharacterCount: number };
