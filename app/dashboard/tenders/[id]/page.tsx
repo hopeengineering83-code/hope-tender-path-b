@@ -4,7 +4,6 @@ import { FinalPackageManifestPanel } from "../../../../components/final-package-
 import { ArrowRightIcon, ChevronDownIcon } from "../../../../components/icons";
 import { SubmissionPlanTruthPanel } from "../../../../components/submission-plan-truth-panel";
 import { RequirementTruthBanner } from "../../../../components/requirement-truth-banner";
-import { ExtractionSnapshotPanel } from "../../../../components/extraction-snapshot-panel";
 import { notFound, redirect } from "next/navigation";
 import { getSession, getCurrentUser } from "../../../../lib/auth";
 import { canMutateTender } from "../../../../lib/recovery-command-actions";
@@ -23,7 +22,6 @@ import { SubmissionPlanReconciliationPanel } from "../../../../components/submis
 import { EngineActionPanel } from "../../../../components/engine-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
-import { ExtractionQualityDashboard } from "../../../../components/extraction-quality-dashboard";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
 import { AuthorityReviewPanel } from "../../../../components/authority-review-panel";
@@ -194,15 +192,15 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
       <WorkflowStage number={1} title="Intake and extraction" open description="Manage source documents, extraction quality, and submission-critical Tender Details.">
         <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
-        <ExtractionQualityDashboard tenderId={tender.id} />
-        <TenderIntakeDetailPanel tender={tenderForUi} />
         <Disclosure
-          title="Extraction diagnostics"
-          description="Open only when page counts, stored page status, OCR, or detailed extraction preflight needs investigation."
+          title="Extraction quality"
+          description="One canonical report for page coverage, OCR, weak or failed pages, and extraction readiness."
         >
-          <ExtractionSnapshotPanel tenderId={tender.id} />
-          <ExtractionQualityPanel tenderId={tender.id} />
+          <div id="extraction-quality" className="scroll-mt-24">
+            <ExtractionQualityPanel tenderId={tender.id} />
+          </div>
         </Disclosure>
+        <TenderIntakeDetailPanel tender={tenderForUi} />
       </WorkflowStage>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, review analysis quality, and confirm source-traced requirements.">
