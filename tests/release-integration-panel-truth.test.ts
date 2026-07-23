@@ -93,10 +93,8 @@ describe("Integration — tender workspace exposes one release-state owner", () 
     assert.match(page, /Open read-only Command Center/);
   });
 
-  it("the retired release-state panel still gates BidDecisionForm if used elsewhere", () => {
-    const panel = read("components/tender-release-state-panel.tsx");
-    assert.match(panel, /canMutate = false/);
-    assert.match(panel, /\{canMutate && <BidDecisionForm tenderId=\{tenderId\} \/>\}/);
+  it.skip("the retired release-state panel still gates BidDecisionForm if used elsewhere", () => {
+    // Skipped: component was deleted as dead code.
   });
 });
 

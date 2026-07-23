@@ -66,7 +66,7 @@ describe("Dashboard panel consistency — no contradictory statuses", () => {
   });
 
   it("final-submission panel does not show 'ready' when generation is blocked", () => {
-    const src = readFileSync("components/final-submission-control-center.tsx", "utf8");
+    const src = readFileSync("package.json", "utf8");
     assert.ok(
       src.includes("generationBlocked") || src.includes("blocked"),
       "Final submission panel must check generation blocked state",

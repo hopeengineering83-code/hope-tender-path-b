@@ -58,8 +58,7 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
     // authoritative source this overlay cross-checks against — it has no
     // independent local verdict to compare, so it does not mount this overlay.
     for (const panel of [
-      "components/final-submission-control-center.tsx",
-      // Recovery Command Center and Workflow Control Center each compute
+            // Recovery Command Center and Workflow Control Center each compute
       // their verdict via their own separate orchestrator (respectively
       // tender-lifecycle-orchestrator.ts's computeTenderLifecycle, and
       // getCanonicalTenderWorkflowDecision) rather than the shared release
@@ -104,19 +103,13 @@ describe("snapshot-consistency overlay (additive honest-UI)", () => {
     );
   });
 
-  it("does NOT remove the panels' own readiness fetches (overlay is additive, not a replacement)", () => {
-    const finalCenter = read("components/final-submission-control-center.tsx");
-    assert.ok(
-      finalCenter.includes("/export-readiness"),
-      "final-submission-control-center must KEEP its own export-readiness fetch (overlay is additive)",
-    );
+  it.skip("does NOT remove the panels' own readiness fetches (overlay is additive, not a replacement)", () => {
+    // Skipped: component was deleted as dead code.
   });
 
-  it("final-submission-control-center compares its own export verdict to the snapshot", () => {
-    const finalCenter = read("components/final-submission-control-center.tsx");
-    assert.ok(
-      finalCenter.includes("localEligible={exportReadiness"),
-      "final-submission-control-center must pass its local export verdict so a disagreement is surfaced",
-    );
+  it.skip("final-submission-control-center compares its own export verdict to the snapshot", () => {
+    // Skipped: component was deleted as dead code.
   });
+
 });
+
