@@ -59,7 +59,11 @@ describe("H1 UI — mutation role gates remain fail-closed", () => {
     assert.match(page, /const currentUser = await getCurrentUser\(\)/);
     assert.match(page, /const canMutate = canMutateTender\(currentUser\?\.role\)/);
     for (const component of ["TenderSourceFilesPanel", "AIAnalyzePanel", "EngineActionPanel", "RequirementCoveragePanel", "GenerationActionPanel", "ExportReadinessPanel", "PricingWorkbookPanel", "TenderSharePanel"]) {
-      const usage = page.match(new RegExp(`<${component}\\b[\\s\\S]{0,300}?>`))?.[0] ?? "";
+      const start = page.indexOf(`<${component}`);
+      assert.ok(start >= 0, `${component} must be mounted`);
+      const end = page.indexOf("/>", start);
+      assert.ok(end > start, `${component} must have a closed JSX tag`);
+      const usage = page.slice(start, end + 2);
       assert.match(usage, /canMutate=\{canMutate\}/, `${component} must receive canMutate`);
     }
   });
