@@ -18,17 +18,11 @@ type WorkflowCenterPayload = {
 /**
  * Requirement warning plus the page-level workflow synchronization sentinel.
  *
- * Every control center on the tender page reads a different bounded endpoint,
- * but all of them ultimately depend on the workflow-center's canonical
- * snapshot and decision. This component polls that contract and refreshes the
- * server-rendered tender workspace when canonical business state changes, so
- * source, analysis, matching, generation, review, readiness and final-package
- * panels cannot remain on different revisions after an action completes.
- *
- * App Router refresh is deliberately used instead of a full browser reload: it
- * updates Server Components while preserving unrelated browser and client
- * state. A visible refresh control is still offered while a form is being
- * edited, so no background synchronization can overwrite unsaved input.
+ * The workspace reads several bounded endpoints, but they ultimately depend on
+ * the workflow-center's canonical snapshot and decision. This component polls
+ * that contract and refreshes server-rendered panels when canonical business
+ * state changes, so source, analysis, matching, generation, review and package
+ * views do not remain on different revisions after an action completes.
  */
 export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
   const router = useRouter();
@@ -36,7 +30,7 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
   const [refreshAvailable, setRefreshAvailable] = useState(false);
   const baselineFingerprint = useRef<string | null>(null);
 
-  const refreshAllCenters = useCallback(() => {
+  const refreshWorkspace = useCallback(() => {
     if (isUserEditingDocument()) {
       setRefreshAvailable(true);
       return;
@@ -70,17 +64,14 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
         fingerprint: nextFingerprint,
       });
 
-      // Do not interrupt a durable analysis or another visibly in-progress
-      // workflow. The next terminal-state poll will produce another fingerprint
-      // and refresh the complete workspace then.
-      if (!workflowHasInProgressStage(json)) refreshAllCenters();
+      if (!workflowHasInProgressStage(json)) refreshWorkspace();
     } catch (error) {
       clientLogger.error(
         "workflow truth synchronization failed",
         error instanceof Error ? { message: error.message } : { error: String(error) },
       );
     }
-  }, [refreshAllCenters, tenderId]);
+  }, [refreshWorkspace, tenderId]);
 
   useEffect(() => {
     void loadCanonicalWorkflow();
@@ -102,7 +93,7 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
           <div>
             <h3 className="text-sm font-bold text-blue-900">Workflow state updated</h3>
             <p className="mt-0.5 text-xs text-blue-700">
-              Another tender panel completed an action. Refresh all control centers after saving any text currently being edited.
+              A tender action completed. Save any text currently being edited, then refresh the workspace to show one consistent revision.
             </p>
           </div>
           <button
@@ -110,7 +101,7 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
             onClick={applyDeferredRefresh}
             className="rounded-lg bg-blue-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-800"
           >
-            Refresh all centers
+            Refresh workspace
           </button>
         </div>
       </div>
@@ -124,15 +115,15 @@ export function RequirementTruthBanner({ tenderId }: { tenderId: string }) {
       <div className="flex items-center gap-3">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-red-600 text-sm font-bold text-white">!</span>
         <div className="flex-1">
-          <h3 className="text-sm font-bold text-red-900">Requirements unknown</h3>
-          <p className="mt-0.5 text-xs text-red-700">Relevant tender pages were detected (Evaluation/Submission), but no structured requirements have been saved yet. Downstream generation and export are blocked.</p>
+          <h3 className="text-sm font-bold text-red-900">Requirements need structuring</h3>
+          <p className="mt-0.5 text-xs text-red-700">Relevant tender pages were detected, but structured requirements have not been saved. Confirm the source-traced requirements before matching, generation, or export.</p>
         </div>
         <button
           type="button"
           onClick={() => router.refresh()}
           className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
         >
-          Refresh workflow truth
+          Refresh status
         </button>
       </div>
     </div>
