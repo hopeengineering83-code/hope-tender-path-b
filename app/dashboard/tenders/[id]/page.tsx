@@ -13,15 +13,10 @@ import { isAIEnabled } from "../../../../lib/ai";
 import { getTenderGenerationReadinessStrict } from "../../../../lib/tender-generation-readiness-strict";
 import { getCanonicalTenderReadiness } from "../../../../lib/canonical-tender-readiness";
 import { TenderIntakeDetailPanel } from "./tender-intake-detail-panel";
-// ClientSubmissionDetailsPanel is intentionally NOT imported here — it was a
-// duplicate of TenderIntakeDetailPanel in the normal Stage 1 workflow.
-// It may still be used under Final Submission Check or admin diagnostics,
-// but it must not appear in the normal draft workflow.
 import { TenderAICopilotPanel } from "../../../../components/tender-ai-copilot-panel";
 import { ExportReadinessPanel } from "../../../../components/export-readiness-panel";
 import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objections-panel";
 import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-panel";
-import { ProposalEvidenceReadinessPanel } from "../../../../components/proposal-evidence-readiness-panel";
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 import { GenerationActionPanel } from "../../../../components/generation-action-panel";
 import { SubmissionPlanReconciliationPanel } from "../../../../components/submission-plan-reconciliation-panel";
@@ -35,9 +30,6 @@ import { AuthorityReviewPanel } from "../../../../components/authority-review-pa
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
 import { AIAnalyzePanel } from "../../../../components/ai-analyze-panel";
-// ClientSubmissionDetailsPanel removed from normal workflow — was a duplicate
-// of TenderIntakeDetailPanel. Kept available for Final Submission Check /
-// admin diagnostics via its component file.
 import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
 import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
 import { AICopilotSuggestionsPanel } from "../../../../components/ai-copilot-suggestions-panel";
@@ -200,17 +192,21 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
 
-      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical Tender Details.">
+      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents, extraction quality, and submission-critical Tender Details.">
         <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
         <ExtractionQualityDashboard tenderId={tender.id} />
-        <ExtractionSnapshotPanel tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
-        <ExtractionQualityPanel tenderId={tender.id} />
+        <Disclosure
+          title="Extraction diagnostics"
+          description="Open only when page counts, stored page status, OCR, or detailed extraction preflight needs investigation."
+        >
+          <ExtractionSnapshotPanel tenderId={tender.id} />
+          <ExtractionQualityPanel tenderId={tender.id} />
+        </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
+      <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, review analysis quality, and confirm source-traced requirements.">
         <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} canMutate={canMutate} />
-        <AIHealthPanel />
         <EngineActionPanel
           tenderId={tender.id}
           vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}
@@ -219,29 +215,39 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           canMutate={canMutate}
         />
         <AnalysisQualityPanel tenderId={tender.id} />
-        <AIAnalyzeRecoveryPanel tenderId={tender.id} />
         <RequirementCoveragePanel tenderId={tender.id} canMutate={canMutate} />
-        <AICopilotSuggestionsPanel tenderId={tender.id} />
-        {ai && <TenderChatPanelWrapper tenderId={tender.id} canMutate={canMutate} />}
-        {ai && <TenderAICopilotPanel tenderId={tender.id} canMutate={canMutate} />}
+        <Disclosure
+          title="AI diagnostics and assistance"
+          description="Provider health, recovery tools, suggestions, chat, and Copilot are secondary aids—not separate workflow authorities."
+        >
+          <AIHealthPanel />
+          <AIAnalyzeRecoveryPanel tenderId={tender.id} />
+          <AICopilotSuggestionsPanel tenderId={tender.id} />
+          {ai && <TenderChatPanelWrapper tenderId={tender.id} canMutate={canMutate} />}
+          {ai && <TenderAICopilotPanel tenderId={tender.id} canMutate={canMutate} />}
+        </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={3} title="Evidence and matching" description="Verify reviewed experts, projects, requirement coverage, and compliance evidence.">
+      <WorkflowStage number={3} title="Evidence and matching" description="Create and review tender-specific expert, project, and compliance evidence links.">
         <MatchingQualityPanel tenderId={tender.id} />
-        <ProposalEvidenceReadinessPanel tenderId={tender.id} />
         <EvidenceCoveragePanel tenderId={tender.id} />
         <VaultEvidenceSearchPanel tenderId={tender.id} />
         <ComplianceHeatmapPanel tenderId={tender.id} />
       </WorkflowStage>
 
       <WorkflowStage number={4} title="Generation and review" description="Confirm the submission plan, generate through the canonical gate, and complete document review.">
-        <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
         <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} canMutate={canMutate} />
         <SubmissionPlanTruthPanel tenderId={tender.id} />
-        <SubmissionPlanReconciliationPanel tenderId={tender.id} />
         <AuthorityReviewPanel tenderId={tender.id} />
         <DocumentValidatorPanel tenderId={tender.id} />
-        <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />
+        <Disclosure
+          title="Generation and review diagnostics"
+          description="Detailed readiness, reconciliation, and evaluator simulation remain available without competing with the generation action."
+        >
+          <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
+          <SubmissionPlanReconciliationPanel tenderId={tender.id} />
+          <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />
+        </Disclosure>
       </WorkflowStage>
 
       <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
@@ -249,7 +255,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <FinalPackageManifestPanel tenderId={tender.id} />
         <ExportReadinessPanel tenderId={tender.id} canMutate={canMutate} />
         <TenderSharePanel tenderId={tender.id} canMutate={canMutate} />
-        <AuditTrailPanel tenderId={tender.id} />
+        <Disclosure
+          title="Submission audit trail"
+          description="Open the historical activity record only when an audit or handoff review requires it."
+        >
+          <AuditTrailPanel tenderId={tender.id} />
+        </Disclosure>
       </WorkflowStage>
 
       <Disclosure
