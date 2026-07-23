@@ -27,6 +27,7 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
   const complete = currentIndex >= STEP_LABELS.length;
   const safeIndex = complete ? STEP_LABELS.length - 1 : Math.max(0, currentIndex);
   const currentStage = TENDER_WORKFLOW_STAGES[safeIndex];
+  const currentLabel = currentStage.label;
 
   return (
     <div className="mt-4 space-y-3">
@@ -39,9 +40,9 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
           href={currentStage.targets[0]}
           onClick={(event) => handleClick(event, currentStage.targets)}
           className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          title={`Go to ${currentStage.label}`}
+          title={`Go to ${currentLabel}`}
         >
-          <ArrowRightIcon /> Open {currentStage.label}
+          <ArrowRightIcon /> Open {currentLabel}
         </a>
       )}
 
