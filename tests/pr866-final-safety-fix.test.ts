@@ -43,7 +43,8 @@ describe("PR #866 final safety — fallback wording", () => {
       "components/ai-analyze-recovery-panel.tsx",
       "components/ai-analyze-panel.tsx",
       "components/generation-readiness-panel.tsx",
-            "components/analysis-quality-panel.tsx",
+      "components/final-submission-control-center.tsx",
+      "components/analysis-quality-panel.tsx",
     ];
     for (const f of files) {
       const src = read(f);

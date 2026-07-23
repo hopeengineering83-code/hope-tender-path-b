@@ -7,6 +7,7 @@ import {
   looksLikeMetadataPlaceholder,
   DOCUMENT_PLACEHOLDER_PATTERNS,
 } from "../lib/engine/tender-metadata-completeness";
+import { suggestOutsidePlanResolution } from "../components/submission-plan-completeness-panel";
 
 // ── Placeholder detection ────────────────────────────────────────────────────
 
@@ -76,3 +77,32 @@ describe("DOCUMENT_PLACEHOLDER_PATTERNS superset", () => {
 
 // ── Outside-plan suggestions ─────────────────────────────────────────────────
 
+describe("suggestOutsidePlanResolution", () => {
+  it("recommends ADMIN for cover letter", () => {
+    const suggestion = suggestOutsidePlanResolution("Cover Letter.docx");
+    assert.ok(suggestion.includes("ADMIN") || suggestion.toLowerCase().includes("admin"), `Got: ${suggestion}`);
+  });
+
+  it("recommends TECHNICAL for CV", () => {
+    const suggestion = suggestOutsidePlanResolution("CV - Lead Engineer.pdf");
+    assert.ok(suggestion.includes("TECHNICAL") || suggestion.toLowerCase().includes("technical"), `Got: ${suggestion}`);
+  });
+
+  it("recommends FINANCIAL for financial proposal", () => {
+    const suggestion = suggestOutsidePlanResolution("Financial Proposal.xlsx");
+    assert.ok(suggestion.includes("FINANCIAL") || suggestion.toLowerCase().includes("financial"), `Got: ${suggestion}`);
+  });
+
+  it("recommends exclude for internal draft", () => {
+    const suggestion = suggestOutsidePlanResolution("internal_draft_wip.docx");
+    assert.ok(
+      suggestion.toLowerCase().includes("control") || suggestion.toLowerCase().includes("internal") || suggestion.toLowerCase().includes("exclude"),
+      `Got: ${suggestion}`
+    );
+  });
+
+  it("provides generic guidance for unknown document type", () => {
+    const suggestion = suggestOutsidePlanResolution("random_file_xyz.pdf");
+    assert.ok(suggestion.length > 10, "Should provide some guidance");
+  });
+});

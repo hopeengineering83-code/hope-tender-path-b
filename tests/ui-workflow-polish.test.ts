@@ -35,7 +35,8 @@ describe("UI metadata removal — no visible metadata text", () => {
   const componentFiles = [
     "components/generation-action-panel.tsx",
     "components/extraction-quality-panel.tsx",
-        "components/audit-trail-panel.tsx",
+    "components/tender-release-state-panel.tsx",
+    "components/audit-trail-panel.tsx",
     "components/tender-recovery-command-center.tsx",
     "components/corrupted-metadata-banner.tsx",
     "components/metadata-completion-panel.tsx",
@@ -43,9 +44,11 @@ describe("UI metadata removal — no visible metadata text", () => {
     "components/analysis-quality-panel.tsx",
     "components/engine-action-panel.tsx",
     "components/next-action-panel.tsx",
-        "components/clean-corrupted-metadata-button.tsx",
+    "components/tender-controls-panel.tsx",
+    "components/clean-corrupted-metadata-button.tsx",
     "components/generation-readiness-panel.tsx",
-      ];
+    "components/submission-plan-completeness-panel.tsx",
+  ];
 
   // User-facing metadata phrases that must NOT appear in rendered text.
   // We check the source for these as string literals in JSX text content,
@@ -175,8 +178,14 @@ describe("Prisma error redaction — no raw Prisma text in UI", () => {
     );
   });
 
-  it.skip("tender-release-state-panel uses safe error message", () => {
-    // Skipped: component was deleted as dead code.
+  it("tender-release-state-panel uses safe error message", () => {
+    const src = read("components/tender-release-state-panel.tsx");
+    assert.ok(src.includes("catch"), "must catch errors");
+    // Must not expose raw error details
+    assert.ok(
+      !src.includes("error.message"),
+      "must not render raw error.message",
+    );
   });
 });
 
@@ -279,11 +288,24 @@ describe("Component renames — new tender-facts names", () => {
 // ─── 12. Loading states use skeletons ───────────────────────────────────────
 
 describe("Loading states — skeleton states", () => {
-  it.skip("tender-release-state-panel uses skeleton loading (not vague text)", () => {
-    // Skipped: component was deleted as dead code.
+  it("tender-release-state-panel uses skeleton loading (not vague text)", () => {
+    const src = read("components/tender-release-state-panel.tsx");
+    assert.ok(
+      src.includes("animate-pulse"),
+      "must use skeleton (animate-pulse) loading state",
+    );
+    // Must NOT use the old vague "Panel is loading" text
+    assert.ok(
+      !src.includes("Panel is loading"),
+      "must not use vague 'Panel is loading' text",
+    );
   });
 
-  it.skip("tender-release-state-panel has scoped retry button on error", () => {
-    // Skipped: component was deleted as dead code.
+  it("tender-release-state-panel has scoped retry button on error", () => {
+    const src = read("components/tender-release-state-panel.tsx");
+    assert.ok(
+      src.includes("Retry"),
+      "must have a scoped Retry button on error",
+    );
   });
 });

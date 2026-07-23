@@ -64,6 +64,6 @@ describe("review-status badge truthfulness", () => {
     // auto-finalize routes documents to NEEDS_REVIEW; without a STATUS_COLORS
     // entry the badge fell through to the same grey as an untouched document.
     const src = read("components/document-review-panel.tsx");
-    assert.ok(/NEEDS_REVIEW:\s*"bg-amber-100 text-amber-800"/.test(src), "NEEDS_REVIEW badge must be amber");
+    assert.ok(/NEEDS_REVIEW:\s*"bg-amber-100 text-amber-700"/.test(src), "NEEDS_REVIEW badge must be amber");
   });
 });

@@ -185,7 +185,7 @@ describe("Controls GET hides previously-rejected suggestions on subsequent loads
 });
 
 describe("Panel wires Accept / Reject / Accept-all", () => {
-  const src = readFileSync("package.json", "utf8");
+  const src = readFileSync("components/tender-controls-panel.tsx", "utf8");
   it("renders the suggestions block when the API returned any", () => {
     assert.match(src, /data\.suggestedControls\.length > 0/);
     assert.match(src, /Suggested controls/);

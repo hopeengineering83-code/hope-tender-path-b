@@ -80,12 +80,82 @@ describe("F5 — evaluator-objections-panel gates mutation buttons on canMutate"
     assert.match(src, /canMutate = false }: \{ tenderId: string; canMutate\?: boolean \}/);
   });
 
-  it.skip("gates the resolve/waive buttons behind canMutate", () => {
-    // Skipped: component was deleted as dead code.
+  it("gates the resolve/waive buttons behind canMutate", () => {
+    const src = read("components/evaluator-objections-panel.tsx");
+    assert.match(src, /\{isOpen && canMutate && \(/);
   });
 
-  it.skip("does NOT contain raw ℹ in the Toggle rationale button", () => {
-    // Skipped: component was deleted as dead code.
+  it("shows a read-only notice when !canMutate", () => {
+    const src = read("components/evaluator-objections-panel.tsx");
+    assert.match(src, /\{isOpen && !canMutate && \(/);
+    assert.match(src, /Read-only: resolving or waiving objections requires ADMIN or PROPOSAL_MANAGER/);
+  });
+
+  it("page.tsx passes canMutate to EvaluatorObjectionsPanel", () => {
+    const src = read("app/dashboard/tenders/[id]/page.tsx");
+    assert.match(src, /<EvaluatorObjectionsPanel tenderId=\{tender\.id\} canMutate=\{canMutate\} \/>/);
+  });
+});
+
+// ─── F6: submission-plan-reconciliation-panel role gate ──────────────────────
+
+describe("F6 — submission-plan-reconciliation-panel gates mutation buttons on canMutate", () => {
+  it("uses getCurrentUser (not getSession) + canMutateTender", () => {
+    const src = read("components/submission-plan-reconciliation-panel.tsx");
+    assert.match(src, /import \{ getCurrentUser \} from "\.\.\/lib\/auth"/);
+    assert.match(src, /import \{ canMutateTender \} from "\.\.\/lib\/recovery-command-actions"/);
+    assert.match(src, /const user = await getCurrentUser\(\)/);
+    assert.match(src, /const canMutate = canMutateTender\(user\.role\)/);
+    assert.doesNotMatch(src, /import \{ getSession \} from "\.\.\/lib\/auth"/);
+  });
+
+  it("gates BuildSubmissionPlanButton behind canMutate", () => {
+    const src = read("components/submission-plan-reconciliation-panel.tsx");
+    assert.match(src, /\{canMutate && <BuildSubmissionPlanButton/);
+  });
+
+  it("gates GenerateMissingPlanFilesButton behind canMutate", () => {
+    const src = read("components/submission-plan-reconciliation-panel.tsx");
+    assert.match(src, /missing\.length > 0 && canMutate && <GenerateMissingPlanFilesButton/);
+  });
+
+  it("gates ReconcileStaleFilesButton behind canMutate", () => {
+    const src = read("components/submission-plan-reconciliation-panel.tsx");
+    assert.match(src, /\{canMutate && <ReconcileStaleFilesButton/);
+  });
+});
+
+// ─── F7: raw ℹ replaced with InfoIcon in tender-recovery-command-center ──────
+
+describe("F7 — tender-recovery-command-center replaces raw ℹ with InfoIcon", () => {
+  it("imports InfoIcon from icons", () => {
+    const src = read("components/tender-recovery-command-center.tsx");
+    assert.match(src, /import \{[^}]* InfoIcon[^}]*\} from "\.\/icons"/);
+  });
+
+  it("does NOT contain raw ℹ in advisory warnings JSX", () => {
+    const src = read("components/tender-recovery-command-center.tsx");
+    // Strip comments so the check only applies to real code.
+    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
+    assert.doesNotMatch(codeOnly, />ℹ/);
+    assert.match(codeOnly, /<InfoIcon className="inline h-3 w-3" \/>/);
+  });
+});
+
+// ─── F8: raw ℹ replaced with InfoIcon in score-breakdown-panel ────────────────
+
+describe("F8 — score-breakdown-panel replaces raw ℹ with InfoIcon", () => {
+  it("imports InfoIcon from icons", () => {
+    const src = read("components/score-breakdown-panel.tsx");
+    assert.match(src, /import \{[^}]* InfoIcon[^}]*\} from "\.\/icons"/);
+  });
+
+  it("does NOT contain raw ℹ in the Toggle rationale button", () => {
+    const src = read("components/score-breakdown-panel.tsx");
+    // Strip comments so the check only applies to real code.
+    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
+    assert.doesNotMatch(codeOnly, /aria-label="Toggle rationale"[\s\S]*?ℹ/);
+    assert.match(codeOnly, /<InfoIcon className="inline h-3 w-3" \/>/);
   });
 });
 
@@ -97,4 +167,8 @@ describe("F7/F8 — test guard catches ℹ", () => {
     assert.match(src, /RAW_UNICODE_PATTERN = \/\[.*ℹ.*ⓘ.*\]\//);
   });
 
+  it("score-breakdown-panel is in WORKFLOW_COMPONENTS", () => {
+    const src = read("tests/workflow-icons-affordance-round2.test.ts");
+    assert.match(src, /"score-breakdown-panel\.tsx"/);
+  });
 });

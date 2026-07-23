@@ -80,7 +80,8 @@ describe("Final overlap/dead-code/page consolidation acceptance tests", () => {
       const targets = [...registry.matchAll(/targets:\s*\["#([^"]+)"/g)].map((match) => match[1]);
       const sources = [
         "components/tender-source-files-panel.tsx",
-                "components/ai-analyze-panel.tsx",
+        "components/extraction-quality-dashboard.tsx",
+        "components/ai-analyze-panel.tsx",
         "components/requirement-coverage-panel.tsx",
         "app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx",
         "components/submission-plan-truth-panel.tsx",

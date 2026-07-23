@@ -187,7 +187,7 @@ describe("BidStrategy output exposes the gap analysis", () => {
 });
 
 describe("Panel surfaces the gap analysis to the user", () => {
-  const src = readFileSync("package.json", "utf8");
+  const src = readFileSync("components/bid-strategy-panel.tsx", "utf8");
   it("shows the gap-cause block when capabilityGapCause is not NO_CAPABILITY_GAP", () => {
     assert.match(src, /strategy\.gapAnalysis\.capabilityGapCause !== "NO_CAPABILITY_GAP"/);
     assert.match(src, /Capability score read with care/);

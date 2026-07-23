@@ -21,7 +21,7 @@ describe("post-1162 knowledge review-board readiness truth", () => {
     assert.match(presentationSource, /export function getReviewBoardReadinessPresentation/);
     assert.match(presentationSource, /label: "Review required"/);
     assert.match(presentationSource, /summary\.warnings\.length > 0/);
-    assert.match(presentationSource, /textClass: "text-amber-800"/);
+    assert.match(presentationSource, /textClass: "text-amber-700"/);
     assert.doesNotMatch(source, /summary\?\.readyForFinalGeneration \? "text-green-700" : "text-red-700"/);
   });
 

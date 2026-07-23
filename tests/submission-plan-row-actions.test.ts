@@ -56,7 +56,7 @@ describe("row actions exclude the document from the final package", () => {
 });
 
 describe("Submission Plan Completeness panel renders row actions", () => {
-  const source = readFileSync("package.json", "utf8");
+  const source = readFileSync("components/submission-plan-completeness-panel.tsx", "utf8");
 
   it("renders reclassify + outside-plan recovery buttons", () => {
     assert.match(source, /Reclassify to plan/);

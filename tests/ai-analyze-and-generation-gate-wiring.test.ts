@@ -155,7 +155,7 @@ describe("corrupted extraction blocks pipeline before stale-score bypasses", () 
 
 describe("bid strategy unavailable on unsafe extraction/analysis", () => {
   const source = readFileSync("app/api/tenders/[id]/bid-strategy/route.ts", "utf8");
-  const panelSource = readFileSync("package.json", "utf8");
+  const panelSource = readFileSync("components/bid-strategy-panel.tsx", "utf8");
 
   it("returns an unavailable blocker instead of computing strategy for unsafe analysis", () => {
     assert.match(source, /BID_STRATEGY_UNAVAILABLE_ANALYSIS_UNRELIABLE/);
@@ -173,7 +173,7 @@ describe("bid strategy unavailable on unsafe extraction/analysis", () => {
     assert.ok(blockerIndex < computeIndex, "bid-strategy unsafe gate must run before score computation");
   });
 
-  it.skip("panel renders the server blocker list — bid-strategy-panel.tsx was deleted", () => {
+  it("panel renders the server blocker list in the unavailable state", () => {
     assert.match(panelSource, /unavailableBlockers/);
     assert.match(panelSource, /errBody\.blockers/);
     assert.match(panelSource, /Bid Strategy unavailable/);
@@ -199,7 +199,7 @@ describe("command center avoids stale workflow progress contradiction", () => {
 
 describe("bid strategy unavailable on unsafe extraction/analysis", () => {
   const source = readFileSync("app/api/tenders/[id]/bid-strategy/route.ts", "utf8");
-  const panelSource = readFileSync("package.json", "utf8");
+  const panelSource = readFileSync("components/bid-strategy-panel.tsx", "utf8");
 
   it("returns an unavailable blocker instead of computing strategy for unsafe analysis", () => {
     assert.match(source, /BID_STRATEGY_UNAVAILABLE_ANALYSIS_UNRELIABLE/);
@@ -217,7 +217,7 @@ describe("bid strategy unavailable on unsafe extraction/analysis", () => {
     assert.ok(blockerIndex < computeIndex, "bid-strategy unsafe gate must run before score computation");
   });
 
-  it.skip("panel renders the server blocker list — bid-strategy-panel.tsx was deleted", () => {
+  it("panel renders the server blocker list in the unavailable state", () => {
     assert.match(panelSource, /unavailableBlockers/);
     assert.match(panelSource, /errBody\.blockers/);
     assert.match(panelSource, /Bid Strategy unavailable/);

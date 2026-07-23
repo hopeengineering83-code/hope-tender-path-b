@@ -6,7 +6,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
 describe("EmptyState component", () => {
-  const src = readFileSync("package.json", "utf8");
+  const src = readFileSync("components/empty-state.tsx", "utf8");
 
   it("exports EmptyState component", () => {
     assert.ok(src.includes("export function EmptyState"), "Must export EmptyState");

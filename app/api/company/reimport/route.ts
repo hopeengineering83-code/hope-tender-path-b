@@ -6,6 +6,7 @@ import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-kno
 import { runCompanyKnowledgeSafetyImport } from "../../../../lib/company-knowledge-safety-import";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
+import { inspectOfficeContainerBytes } from "../../../../lib/office-container-integrity";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { getStorageAdapter } from "../../../../lib/storage";
 import { cleanupSupportDocImportedRecords } from "../../../../lib/company-support-doc-cleanup";
@@ -43,16 +44,6 @@ export async function POST(req: Request) {
     const docs = await prisma.companyDocument.findMany({
       where: {
         companyId: company.id,
-        // SECURITY (round-2 audit GAP-R2C-4): EXCLUDE PENDING_DELETE documents.
-        // A document marked PENDING_DELETE has been logically deleted by the
-        // user but the storage file deletion may not have completed yet (502
-        // retryable, tombstoned row with fileContent still set). If we
-        // re-extract and re-import such a document, we RE-CREATE the draft
-        // experts/projects that the deletion had already destroyed — silently
-        // undoing the user's deletion.
-        //
-        // The documents list route (app/api/company/documents/route.ts:36)
-        // already filters this marker. The reimport route was missing it.
         NOT: { metadata: { contains: COMPANY_DOCUMENT_PENDING_DELETE_MARKER } },
         OR: [{ fileContent: { not: null } }, { storagePath: { not: "" } }],
       },
@@ -78,8 +69,17 @@ export async function POST(req: Request) {
               fileContent: null,
               fileName: doc.originalFileName,
             });
-        const extractedText = await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
-        const fileType = getFileTypeLabel(doc.mimeType, doc.originalFileName);
+
+        const inspection = inspectOfficeContainerBytes(buffer, doc.originalFileName, doc.mimeType);
+        const extractedText = inspection.kind === "json"
+          ? inspection.text
+          : inspection.kind === "invalid"
+            ? `[Extraction failed for ${doc.originalFileName}: ${inspection.reason}]`
+            : await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
+
+        const fileType = inspection.kind === "json"
+          ? "JSON record"
+          : getFileTypeLabel(doc.mimeType, doc.originalFileName);
         const meaningful = isMeaningfulExtraction(extractedText);
         let metadata: Record<string, unknown> = {};
         try {
@@ -93,10 +93,11 @@ export async function POST(req: Request) {
           data: {
             extractedText: extractedText || null,
             aiExtractionStatus: meaningful ? "PENDING" : "FAILED",
-            aiExtractionError: meaningful ? null : "No text extracted from document",
+            aiExtractionError: meaningful ? null : inspection.kind === "invalid" ? inspection.reason : "No text extracted from document",
             metadata: JSON.stringify({
               ...metadata,
               fileType,
+              byteInspection: inspection.kind,
               reExtractedAt: new Date().toISOString(),
               extracted: meaningful,
               extractedChars: meaningful ? extractedText.length : 0,
@@ -104,7 +105,8 @@ export async function POST(req: Request) {
             }),
           },
         });
-        reextracted += 1;
+        if (meaningful) reextracted += 1;
+        else failedFiles.push({ name: doc.originalFileName, error: "Processing failed" });
       } catch (error) {
         logger.error("company reimport extraction failed", {
           requestId,
@@ -115,9 +117,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // Do not delete existing records before the import succeeds. The primary
-    // and safety import complete first; one atomic cleanup then removes only
-    // records derived from support-only documents.
     const primary = await importCompanyKnowledgeFromDocuments(company.id);
     const aiRanSuccessfully = primary.aiUsed && primary.aiFailures === 0;
     const emptyResult = {

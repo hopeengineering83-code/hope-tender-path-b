@@ -68,8 +68,10 @@ describe("H1 UI — mutation role gates remain fail-closed", () => {
     }
   });
 
-  it.skip("retired release-state form remains gated if used on another route", () => {
-    // Skipped: component was deleted as dead code.
+  it("retired release-state form remains gated if used on another route", () => {
+    const panel = read("components/tender-release-state-panel.tsx");
+    assert.match(panel, /canMutate = false/);
+    assert.match(panel, /\{canMutate && <BidDecisionForm tenderId=\{tenderId\} \/>\}/);
   });
 });
 

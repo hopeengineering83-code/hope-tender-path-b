@@ -44,11 +44,16 @@ describe("release-state route error handling", () => {
 });
 
 describe("TenderReleaseStatePanel error handling", () => {
-  it.skip("never renders raw error text in JSX", () => {
-    // Skipped: component was deleted as dead code.
+  it("never renders raw error text in JSX", () => {
+    const src = read("components/tender-release-state-panel.tsx");
+    assert.ok(!src.includes("{error}"), "must not render the raw error state value in JSX");
+    assert.ok(!src.includes("{error.message}"), "must not render error.message in JSX");
+    assert.ok(!src.includes("{String(error)}"), "must not render String(error) in JSX");
   });
 
-  it.skip("shows a safe, fixed fallback message with a retry action", () => {
-    // Skipped: component was deleted as dead code.
+  it("shows a safe, fixed fallback message with a retry action", () => {
+    const src = read("components/tender-release-state-panel.tsx");
+    assert.ok(src.includes("Tender release state unavailable"), "must render a fixed safe fallback message");
+    assert.ok(src.includes("Retry"), "must offer a retry action");
   });
 });

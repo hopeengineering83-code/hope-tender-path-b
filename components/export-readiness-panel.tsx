@@ -72,7 +72,7 @@ type RepairResult = {
 
 const SEVERITY_BADGE: Record<Severity, string> = {
   HIGH: "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-800",
+  MEDIUM: "bg-amber-100 text-amber-700",
   LOW: "bg-slate-100 text-slate-600",
 };
 
@@ -626,7 +626,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                   {readiness.summary.documentBlockers} document blocker(s) · {readiness.summary.tenderLevelBlockers} tender blocker(s) · {advisoryCount} advisory warning(s)
                 </p>
                 {strictTwoEnvelope && (
-                  <p className="mt-1 text-[11px] font-medium text-amber-800">
+                  <p className="mt-1 text-[11px] font-medium text-amber-700">
                     Strict two-envelope tender — download separate technical and financial ZIPs.
                   </p>
                 )}
@@ -719,7 +719,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                     className="mt-2 w-full max-w-md rounded border border-amber-200 bg-white px-2 py-1 text-xs text-slate-700 placeholder:text-slate-400"
                     maxLength={500}
                   />
-                  <p className="mt-1 text-[10px] text-amber-800">
+                  <p className="mt-1 text-[10px] text-amber-700">
                     Retry AI Analysis re-runs the tender analysis with all available AI providers. Approve fallback only if you have manually verified the extracted requirements are correct.
                   </p>
                 </div>
@@ -762,7 +762,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
 
           {advisoryWarnings.length > 0 && (
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Advisory warnings (do not block export)</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Advisory warnings (do not block export)</p>
               <p className="mt-0.5 text-[10px] text-slate-500">
                 Missing donor safeguard artefacts are advisory by default and become blockers only when the tender/ToR explicitly requires them as submission deliverables.
               </p>
@@ -770,7 +770,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                 {advisoryWarnings.map((advisory, i) => (
                   <li key={`${advisory.category}-${i}`} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs">
                     <div className="flex items-start gap-2">
-                      <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">ADVISORY</span>
+                      <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">ADVISORY</span>
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-slate-900">{advisory.title}</p>
                         <p className="mt-0.5 text-slate-600">{advisory.category}</p>

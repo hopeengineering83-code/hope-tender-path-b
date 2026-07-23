@@ -225,7 +225,7 @@ describe("Controls route passes weakMatchReport into the derivation", () => {
 });
 
 describe("Panel SuggestionCode union includes the I codes", () => {
-  const src = readFileSync("package.json", "utf8");
+  const src = readFileSync("components/tender-controls-panel.tsx", "utf8");
   for (const code of ["WEAK_EXPERT_COVERAGE", "WEAK_PROJECT_COVERAGE", "JV_MITIGATION_NEEDED_EXPERTS", "JV_MITIGATION_NEEDED_PROJECTS"]) {
     it(`SuggestionCode union accepts ${code}`, () => {
       assert.match(src, new RegExp(`"${code}"`));
