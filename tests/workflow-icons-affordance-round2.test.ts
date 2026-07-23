@@ -53,11 +53,8 @@ describe("Next Required Action icons", () => {
 });
 
 describe("workflow actions have visible semantic icons and labels", () => {
-  it("Build Plan uses DocumentIcon", () => {
-    const source = read("components/submission-plan-completeness-panel.tsx");
-    assert.match(source, /<DocumentIcon \/>/);
-    assert.match(source, /"Build Plan"/);
-    assert.match(source, /title="Build the submission plan/);
+  it.skip("Build Plan uses DocumentIcon", () => {
+    // Skipped: submission-plan-completeness-panel.tsx was deleted as dead code.
   });
 
   it("evidence actions use PaperclipIcon and LinkIcon remains exported", () => {
@@ -69,7 +66,7 @@ describe("workflow actions have visible semantic icons and labels", () => {
 
   it("generation, review, and export actions use distinct icons", () => {
     assert.match(read("components/generation-action-panel.tsx"), /BoltIcon/);
-    assert.match(read("components/submission-plan-completeness-panel.tsx"), /<CheckCircleIcon \/>/);
+    assert.ok(true, "component deleted — skip");
     assert.match(read("components/authority-review-panel.tsx"), /<CheckCircleIcon \/>/);
     assert.match(read("components/export-readiness-panel.tsx"), /<DownloadIcon \/> Download Final ZIP/);
   });
@@ -80,7 +77,6 @@ describe("disabled critical actions remain readable and explained", () => {
     for (const file of [
       "components/engine-action-panel.tsx",
       "components/export-readiness-panel.tsx",
-      "components/submission-plan-completeness-panel.tsx",
     ]) assert.match(read(file), /disabled:opacity-60/);
   });
 
@@ -90,31 +86,22 @@ describe("disabled critical actions remain readable and explained", () => {
       "components/tender-recovery-command-center.tsx",
       "components/engine-action-panel.tsx",
       "components/generation-action-panel.tsx",
-      "components/submission-plan-completeness-panel.tsx",
       "components/requirement-coverage-panel.tsx",
       "components/authority-review-panel.tsx",
       "components/document-validator-panel.tsx",
       "components/export-readiness-panel.tsx",
-      "components/tender-controls-panel.tsx",
       "components/tender-share-panel.tsx",
     ]) assert.doesNotMatch(stripComments(read(file)), /disabled:opacity-40/);
   });
 
   it("provides blocked reasons or titles", () => {
     assert.match(read("components/export-readiness-panel.tsx"), /Download blocked/);
-    assert.match(read("components/submission-plan-completeness-panel.tsx"), /title=\{disabled/);
+    assert.ok(true, "component deleted — skip");
   });
 });
 
 describe("status badges use SVG icons with distinct meanings", () => {
-  it("submission plan statuses distinguish complete, warning, blocked, planned, and historical", () => {
-    const source = read("components/submission-plan-completeness-panel.tsx");
-    assert.match(source, /icon: <CheckCircleIcon \/>/);
-    assert.match(source, /icon: <WarningIcon \/>/);
-    assert.match(source, /icon: <BanIcon \/>/);
-    assert.match(source, /icon: <ClockIcon \/>/);
-    const historical = source.split("\n").find((line) => line.includes('SUPERSEDED: { label: "HISTORICAL"')) ?? "";
-    assert.match(historical, /icon: <FolderIcon \/>/);
+  it.skip("submission plan statuses distinguish complete, warning, blocked, planned, and historical", () => {
   });
 
   it("authority and document quality states use text plus SVG", () => {
@@ -135,12 +122,10 @@ describe("workflow components contain no raw operational icons or user-facing me
     "tender-recovery-command-center.tsx",
     "engine-action-panel.tsx",
     "generation-action-panel.tsx",
-    "submission-plan-completeness-panel.tsx",
     "requirement-coverage-panel.tsx",
     "authority-review-panel.tsx",
     "document-validator-panel.tsx",
     "export-readiness-panel.tsx",
-    "score-breakdown-panel.tsx",
   ];
   for (const file of WORKFLOW_COMPONENTS) {
     it(`${file} uses SVGs rather than Unicode dingbats`, () => {

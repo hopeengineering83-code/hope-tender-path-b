@@ -40,7 +40,7 @@ export function getReviewBoardReadinessPresentation(
   if (summary.warnings.length > 0) {
     return {
       label: "Review required",
-      textClass: "text-amber-700",
+      textClass: "text-amber-800",
       detail: `${summary.warnings.length} readiness warning${summary.warnings.length === 1 ? "" : "s"} · ${summary.pendingReview} pending review`,
     };
   }

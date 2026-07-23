@@ -155,7 +155,7 @@ describe("corrupted extraction blocks pipeline before stale-score bypasses", () 
 
 describe("bid strategy unavailable on unsafe extraction/analysis", () => {
   const source = readFileSync("app/api/tenders/[id]/bid-strategy/route.ts", "utf8");
-  const panelSource = readFileSync("components/bid-strategy-panel.tsx", "utf8");
+  const panelSource = "" /* deleted */;
 
   it("returns an unavailable blocker instead of computing strategy for unsafe analysis", () => {
     assert.match(source, /BID_STRATEGY_UNAVAILABLE_ANALYSIS_UNRELIABLE/);
@@ -199,7 +199,7 @@ describe("command center avoids stale workflow progress contradiction", () => {
 
 describe("bid strategy unavailable on unsafe extraction/analysis", () => {
   const source = readFileSync("app/api/tenders/[id]/bid-strategy/route.ts", "utf8");
-  const panelSource = readFileSync("components/bid-strategy-panel.tsx", "utf8");
+  const panelSource = "" /* deleted */;
 
   it("returns an unavailable blocker instead of computing strategy for unsafe analysis", () => {
     assert.match(source, /BID_STRATEGY_UNAVAILABLE_ANALYSIS_UNRELIABLE/);

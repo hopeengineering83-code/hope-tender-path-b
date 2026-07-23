@@ -178,14 +178,8 @@ describe("Prisma error redaction — no raw Prisma text in UI", () => {
     );
   });
 
-  it("tender-release-state-panel uses safe error message", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(src.includes("catch"), "must catch errors");
-    // Must not expose raw error details
-    assert.ok(
-      !src.includes("error.message"),
-      "must not render raw error.message",
-    );
+  it.skip("tender-release-state-panel uses safe error message", () => {
+    // Skipped: component was deleted as dead code.
   });
 });
 
@@ -288,24 +282,11 @@ describe("Component renames — new tender-facts names", () => {
 // ─── 12. Loading states use skeletons ───────────────────────────────────────
 
 describe("Loading states — skeleton states", () => {
-  it("tender-release-state-panel uses skeleton loading (not vague text)", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(
-      src.includes("animate-pulse"),
-      "must use skeleton (animate-pulse) loading state",
-    );
-    // Must NOT use the old vague "Panel is loading" text
-    assert.ok(
-      !src.includes("Panel is loading"),
-      "must not use vague 'Panel is loading' text",
-    );
+  it.skip("tender-release-state-panel uses skeleton loading (not vague text)", () => {
+    // Skipped: component was deleted as dead code.
   });
 
-  it("tender-release-state-panel has scoped retry button on error", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(
-      src.includes("Retry"),
-      "must have a scoped Retry button on error",
-    );
+  it.skip("tender-release-state-panel has scoped retry button on error", () => {
+    // Skipped: component was deleted as dead code.
   });
 });

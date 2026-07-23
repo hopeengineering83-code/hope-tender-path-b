@@ -166,20 +166,16 @@ describe("GAP D — UI (engine-action-panel) consumes partial/blockers", () => {
 // ─── GAP G: No raw Unicode in audit-trail-list.tsx ───────────────────────────
 
 describe("GAP G — No raw Unicode in audit-trail-list.tsx", () => {
-  it("imports ChevronDownIcon from icons", () => {
-    const src = read("components/audit-trail-list.tsx");
-    assert.match(src, /import \{ ChevronDownIcon \} from "\.\/icons"/);
+  it.skip("imports ChevronDownIcon from icons", () => {
+    // Skipped: component was deleted as dead code.
   });
 
-  it("does NOT contain raw Unicode ▲ or ▼", () => {
-    const src = read("components/audit-trail-list.tsx");
-    assert.ok(!src.includes("▲"), "must not contain raw Unicode ▲");
-    assert.ok(!src.includes("▼"), "must not contain raw Unicode ▼");
+  it.skip("does NOT contain raw Unicode ▲ or ▼", () => {
+    // Skipped: component was deleted as dead code.
   });
 
-  it("uses ChevronDownIcon with rotate-180 for expanded state", () => {
-    const src = read("components/audit-trail-list.tsx");
-    assert.match(src, /ChevronDownIcon className=\{showAll \? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"\}/);
+  it.skip("uses ChevronDownIcon with rotate-180 for expanded state", () => {
+    // Skipped: component was deleted as dead code.
   });
 });
 

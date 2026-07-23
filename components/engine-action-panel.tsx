@@ -551,7 +551,7 @@ export function EngineActionPanel({
             <button
               type="button"
               onClick={() => { setResult(null); void runEngineAsync(); }}
-              className="mt-3 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50"
+              className="mt-3 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-50"
             >
               Retry background run
             </button>
@@ -576,7 +576,7 @@ export function EngineActionPanel({
               <button
                 type="button"
                 onClick={() => runEngineAsync(false, { skipAiRematch: "true" })}
-                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-100"
+                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100"
               >
                 Skip AI Rematch
               </button>

@@ -79,10 +79,7 @@ describe("/api/version endpoint contract", () => {
 // ── 2. CollapsiblePanel component contract ───────────────────────────────────
 
 describe("CollapsiblePanel component contract", () => {
-  it("CollapsiblePanel module exports a function", async () => {
-    const mod = await import("../components/collapsible-panel.js");
-    assert.strictEqual(typeof mod.CollapsiblePanel, "function", "CollapsiblePanel must be exported");
-  });
+  // CollapsiblePanel test removed — component was dead code and has been deleted.
 
   it("BuildVersionBadge module exports a function", async () => {
     const mod = await import("../components/build-version-badge.js");

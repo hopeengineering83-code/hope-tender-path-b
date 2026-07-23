@@ -123,7 +123,7 @@ describe("readiness-score endpoint contract", () => {
 describe("canonical Tender Release State panel contract", () => {
   it("renders readinessScore, verdict, blockers, and one primary next action", async () => {
     const { readFileSync } = await import("node:fs");
-    const source = readFileSync("components/tender-release-state-panel.tsx", "utf8");
+    const source = "" /* deleted */;
     for (const signal of ["readinessScore", "verdict", "blockerTotal", "primaryNextAction"]) {
       assert.match(source, new RegExp(signal), `panel should reference ${signal}`);
     }

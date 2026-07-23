@@ -22,7 +22,7 @@ function MetricCard({
   const pct = denominator > 0 ? Math.round((numerator / denominator) * 100) : 0;
   const isGood = pct >= 80;
   const isMid = pct >= 50 && pct < 80;
-  const colour = isGood ? "text-emerald-700" : isMid ? "text-amber-700" : "text-red-600";
+  const colour = isGood ? "text-emerald-700" : isMid ? "text-amber-800" : "text-red-600";
   return (
     <div
       className="rounded-xl bg-slate-50 border border-slate-100 p-3"
