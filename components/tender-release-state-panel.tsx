@@ -54,7 +54,7 @@ type TenderReleaseState = {
 function severityBadgeClass(severity: TenderReleaseBlockerSeverity): string {
   if (severity === "CRITICAL") return "bg-red-100 text-red-700";
   if (severity === "HIGH") return "bg-red-50 text-red-600";
-  if (severity === "MEDIUM") return "bg-amber-100 text-amber-700";
+  if (severity === "MEDIUM") return "bg-amber-100 text-amber-800";
   return "bg-slate-100 text-slate-600";
 }
 

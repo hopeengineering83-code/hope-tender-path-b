@@ -521,7 +521,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
                         )}
                       </div>
                     </div>
-                    <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs italic text-amber-700">
+                    <span className="inline-flex rounded-full bg-amber-100 px-2 py-0.5 text-xs italic text-amber-800">
                       {fact.status === "rejected_invalid" ? "Invalid" : "Missing"}
                     </span>
                   </div>
@@ -562,7 +562,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
         ) : (
           <div>
             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Evaluation methodology</div>
-            <p className="inline-flex rounded-full bg-amber-50 px-2 py-1 text-xs italic text-amber-700">Not extracted — re-extract from PDF or add manually.</p>
+            <p className="inline-flex rounded-full bg-amber-50 px-2 py-1 text-xs italic text-amber-800">Not extracted — re-extract from PDF or add manually.</p>
           </div>
         )}
         {tender.intakeSummary && <ProseBlock label="Intake summary" value={tender.intakeSummary} />}
@@ -577,7 +577,7 @@ function Detail({ label, value, highlight }: { label: string; value: string | nu
   return (
     <div className="flex items-start gap-3 border-b border-slate-100 pb-2">
       <div className="w-44 shrink-0 text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`min-w-0 flex-1 break-words text-sm ${empty ? "text-amber-700" : highlight ? "font-semibold text-amber-700" : "text-slate-800"}`}>
+      <div className={`min-w-0 flex-1 break-words text-sm ${empty ? "text-amber-800" : highlight ? "font-semibold text-amber-800" : "text-slate-800"}`}>
         {empty ? <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs italic">{MISSING_NOTE}</span> : value}
       </div>
     </div>

@@ -12,7 +12,7 @@ describe("legacy amber contrast guard", () => {
   });
 
   it("maps residual amber-700 utilities to the WCAG-oriented amber-800 foreground", () => {
-    assert.match(guard, /\.text-amber-700/);
+    assert.match(guard, /\.text-amber-800/);
     assert.match(guard, /#92400e/);
     assert.match(guard, /!important/);
   });

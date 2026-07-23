@@ -20,7 +20,7 @@ function docStatusLabel(status?: string | null) {
 
 const ENVELOPE_BADGE: Record<SubmissionEnvelope, string> = {
   TECHNICAL: "bg-blue-100 text-blue-700",
-  FINANCIAL: "bg-amber-100 text-amber-700",
+  FINANCIAL: "bg-amber-100 text-amber-800",
   ADMIN:     "bg-slate-100 text-slate-600",
 };
 
@@ -62,7 +62,7 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
         {tender.generatedDocuments.length > 0 && (
           <div className="mt-4 rounded-xl border border-amber-200 bg-white p-3 text-sm">
             <p className="font-semibold text-amber-900">{tender.generatedDocuments.length} existing document(s) are NOT part of a confirmed plan</p>
-            <p className="mt-1 text-xs text-amber-700">These rows are preserved for audit but excluded from final-export counts until they match a current confirmed Build Plan.</p>
+            <p className="mt-1 text-xs text-amber-800">These rows are preserved for audit but excluded from final-export counts until they match a current confirmed Build Plan.</p>
           </div>
         )}
         <div className="mt-4 flex flex-wrap gap-2 text-xs">

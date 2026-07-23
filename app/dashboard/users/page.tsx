@@ -18,7 +18,7 @@ type Role = (typeof ROLES)[number];
 const ROLE_COLORS: Record<Role, string> = {
   ADMIN: "bg-red-100 text-red-700",
   PROPOSAL_MANAGER: "bg-blue-100 text-blue-700",
-  REVIEWER: "bg-amber-100 text-amber-700",
+  REVIEWER: "bg-amber-100 text-amber-800",
   VIEWER: "bg-slate-100 text-slate-600",
 };
 
@@ -286,7 +286,7 @@ export default function UsersPage() {
         <ul className="space-y-1">
           <li><span className="font-medium text-red-700">ADMIN</span> — full access, including user administration.</li>
           <li><span className="font-medium text-blue-700">PROPOSAL MANAGER</span> — manages tenders, analysis, generation, and export.</li>
-          <li><span className="font-medium text-amber-700">REVIEWER</span> — reviews documents and adds comments.</li>
+          <li><span className="font-medium text-amber-800">REVIEWER</span> — reviews documents and adds comments.</li>
           <li><span className="font-medium text-slate-700">VIEWER</span> — read-only access.</li>
         </ul>
       </div>

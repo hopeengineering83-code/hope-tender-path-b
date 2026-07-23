@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { BoltIcon, ClockIcon, ChevronDownIcon } from "./icons";
+import { BoltIcon, ClockIcon, ChevronDownIcon, ArrowRightIcon } from "./icons";
 import { formatOperationalCode, formatOperationalReason } from "../lib/operational-labels";
 
 type ExtractionBlocker = {
@@ -453,6 +454,26 @@ export function EngineActionPanel({
           {result.hint && <p className="mt-1"><strong>Guidance:</strong> {formatOperationalReason(result.hint)}</p>}
           {result.detail && <p className="mt-1"><strong>Detail:</strong> {formatOperationalReason(result.detail)}</p>}
 
+          {/* Direct link to Company Vault when the engine says to review matching inputs.
+              This connects the Run Engine to the Company Vault so the user can navigate
+              directly to the review page instead of hunting for it in the sidebar. */}
+          {(result.nextAction === "REVIEW_MATCHING_INPUTS" || result.code === "ENGINE_COMPLETED_WITH_BLOCKERS") && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link
+                href="/dashboard/company/review"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-slate-800"
+              >
+                Review Company Vault <ArrowRightIcon />
+              </Link>
+              <Link
+                href="/dashboard/company/review-board"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50"
+              >
+                Open Review Board
+              </Link>
+            </div>
+          )}
+
           {technicalDetails.length > 0 && (
             <details className="mt-3 rounded-lg border border-current/10 bg-white/70 p-3 text-xs">
               <summary className="cursor-pointer font-semibold">Technical diagnostics</summary>
@@ -508,7 +529,7 @@ export function EngineActionPanel({
             <button
               type="button"
               onClick={() => { setResult(null); void runEngineAsync(); }}
-              className="mt-3 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50"
+              className="mt-3 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-50"
             >
               Retry background run
             </button>
@@ -533,7 +554,7 @@ export function EngineActionPanel({
               <button
                 type="button"
                 onClick={() => runEngineAsync(false, { skipAiRematch: "true" })}
-                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-100"
+                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100"
               >
                 Skip AI Rematch
               </button>

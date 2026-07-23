@@ -638,8 +638,8 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
           canonical next action. */}
       {isRecoveryState && (
         <div className="border-b border-gray-100 bg-amber-50 px-5 py-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-amber-700">Recovery operation available</p>
-          <p className="mt-0.5 text-xs text-amber-700">
+          <p className="text-xs font-medium uppercase tracking-wide text-amber-800">Recovery operation available</p>
+          <p className="mt-0.5 text-xs text-amber-800">
             This repairs an inconsistent or stalled workflow state — it does not replace the tender&apos;s canonical next action shown above.
           </p>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -736,7 +736,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
       {/* Blocked Actions */}
       {data.blockedActions.length > 0 && (
         <div className="border-b border-gray-100 px-5 py-3">
-          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700">
+          <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-800">
             Blocked Actions ({data.blockedActions.length})
           </p>
           <ul className="space-y-1">
@@ -800,7 +800,7 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
           {/* Warnings */}
           {data.warnings.length > 0 && (
             <div className="px-5 py-3">
-              <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-700">
+              <p className="mb-1.5 text-xs font-medium uppercase tracking-wide text-amber-800">
                 Warnings ({data.warnings.length})
               </p>
               <ul className="space-y-1">
