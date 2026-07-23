@@ -198,13 +198,13 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
     <section id="ai-analyze-section" className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">AI analysis action</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">Step 1 · AI analysis</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">
             {analyzing ? "AI Analysis in progress" : "Run AI Analysis"}
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Extract requirements, client details, and evaluation criteria. Analysis runs as a durable
-            background job so it survives function timeouts.
+            Extract requirements, client details, and evaluation criteria from tender documents.
+            Run this first, then use the Engine below to create evidence matches.
           </p>
         </div>
         <div className="flex items-center gap-3">

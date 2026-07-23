@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { BoltIcon, ClockIcon, ChevronDownIcon } from "./icons";
+import { BoltIcon, ClockIcon, ChevronDownIcon, ArrowRightIcon } from "./icons";
 import { formatOperationalCode, formatOperationalReason } from "../lib/operational-labels";
 
 type ExtractionBlocker = {
@@ -426,10 +427,10 @@ export function EngineActionPanel({
     <section id="run-engine-action" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Engine</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 2 · Engine</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Create tender-specific evidence matches</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Safe Mode is the recommended deterministic first pass. Use Full AI only as an optional semantic refinement after match rows exist.
+            Run Safe Mode after AI Analysis to create expert and project matches from your Company Vault. Use Full AI only as an optional refinement after match rows exist.
           </p>
         </div>
         <div className="flex flex-col items-start gap-2 lg:items-end">
@@ -495,6 +496,26 @@ export function EngineActionPanel({
           {action && <p className="mt-2"><strong>Next action:</strong> {action}</p>}
           {result.hint && <p className="mt-1"><strong>Guidance:</strong> {formatOperationalReason(result.hint)}</p>}
           {result.detail && <p className="mt-1"><strong>Summary:</strong> {formatOperationalReason(result.detail)}</p>}
+
+          {/* Direct link to Company Vault when the engine says to review matching inputs.
+              This connects the Run Engine to the Company Vault so the user can navigate
+              directly to the review page instead of hunting for it in the sidebar. */}
+          {(result.nextAction === "REVIEW_MATCHING_INPUTS" || result.code === "ENGINE_COMPLETED_WITH_BLOCKERS") && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Link
+                href="/dashboard/company/review"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-slate-800"
+              >
+                Review Company Vault <ArrowRightIcon />
+              </Link>
+              <Link
+                href="/dashboard/company/review-board"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50"
+              >
+                Open Review Board
+              </Link>
+            </div>
+          )}
 
           {technicalDetails.length > 0 && (
             <details className="mt-3 rounded-lg border border-current/10 bg-white/70 p-3 text-xs">
