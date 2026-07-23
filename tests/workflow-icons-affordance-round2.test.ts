@@ -130,20 +130,21 @@ describe("status badges use SVG icons with distinct meanings", () => {
 });
 
 describe("workflow components contain no raw operational icons or user-facing metadata label", () => {
-  const files = [
-    "components/next-action-panel.tsx",
-    "components/tender-recovery-command-center.tsx",
-    "components/engine-action-panel.tsx",
-    "components/generation-action-panel.tsx",
-    "components/submission-plan-completeness-panel.tsx",
-    "components/requirement-coverage-panel.tsx",
-    "components/authority-review-panel.tsx",
-    "components/document-validator-panel.tsx",
-    "components/export-readiness-panel.tsx",
+  const WORKFLOW_COMPONENTS = [
+    "next-action-panel.tsx",
+    "tender-recovery-command-center.tsx",
+    "engine-action-panel.tsx",
+    "generation-action-panel.tsx",
+    "submission-plan-completeness-panel.tsx",
+    "requirement-coverage-panel.tsx",
+    "authority-review-panel.tsx",
+    "document-validator-panel.tsx",
+    "export-readiness-panel.tsx",
+    "score-breakdown-panel.tsx",
   ];
-  for (const file of files) {
+  for (const file of WORKFLOW_COMPONENTS) {
     it(`${file} uses SVGs rather than Unicode dingbats`, () => {
-      assert.doesNotMatch(stripComments(read(file)), RAW_UNICODE_PATTERN);
+      assert.doesNotMatch(stripComments(read(`components/${file}`)), RAW_UNICODE_PATTERN);
     });
   }
   it("does not expose metadata as user-facing recovery wording", () => {
