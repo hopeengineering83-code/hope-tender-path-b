@@ -16,7 +16,25 @@ type ExtractionBlocker = {
 };
 
 export function describeEngineBlocker(blocker: ExtractionBlocker | string): string {
-  if (typeof blocker === "string") return formatOperationalReason(blocker);
+  if (typeof blocker === "string") {
+    const code = blocker.trim().toUpperCase();
+    if (code === "ENGINE_RAN_ZERO_EXPERT_MATCHES") {
+      return "No eligible expert match rows were produced from source-verified Company Vault records.";
+    }
+    if (code === "ENGINE_RAN_ZERO_PROJECT_MATCHES") {
+      return "No eligible project match rows were produced from source-verified Company Vault records.";
+    }
+    if (code === "NO_SELECTED_SOURCE_VERIFIED_EXPERTS_AFTER_ENGINE" || code === "NO_SELECTED_REVIEWED_EXPERTS_AFTER_ENGINE") {
+      return "Expert candidates exist, but none selected by the Engine has verified source provenance.";
+    }
+    if (code === "NO_SELECTED_SOURCE_VERIFIED_PROJECTS_AFTER_ENGINE" || code === "NO_SELECTED_REVIEWED_PROJECTS_AFTER_ENGINE") {
+      return "Project candidates exist, but none selected by the Engine has verified source provenance.";
+    }
+    if (code === "ENGINE_RAN_ZERO_EVIDENCE_ROWS") {
+      return "The Engine produced no Company Vault evidence links for the extracted requirements.";
+    }
+    return formatOperationalReason(blocker);
+  }
   const name = blocker.fileName?.trim();
   const severity = blocker.quality?.severity?.trim();
   if (!name && !severity) {
@@ -69,15 +87,37 @@ function actionLabel(action?: string) {
   if (action === "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY") return "Review Extraction, Analysis, and Matching Quality.";
   if (action === "REFRESH_TO_CHECK_STATUS") return "Check status again or refresh the workspace.";
   if (action === "RUN_ENGINE_SAFE_MODE") return "Run Safe Mode for a deterministic first pass.";
-  if (action === "REVIEW_MATCHING_INPUTS") return "Review the tender requirements and vault classifications, then rerun Safe Mode.";
+  if (action === "REVIEW_MATCHING_INPUTS") return "Review Company Vault source documents and tender requirements, verify eligible expert/project records, then rerun Safe Mode.";
   return null;
 }
 
 function humanBlockerSummary(blockers: string[] | undefined): string {
   if (!Array.isArray(blockers) || blockers.length === 0) {
-    return "Evidence matching needs review before the workflow can continue.";
+    return "The Engine finished its processing pass, but no usable evidence outcome was confirmed.";
   }
-  return blockers.map((blocker) => formatOperationalReason(blocker)).join("; ");
+
+  const codes = new Set(blockers.map((blocker) => blocker.trim().toUpperCase()));
+  const expertBlocked = codes.has("ENGINE_RAN_ZERO_EXPERT_MATCHES")
+    || codes.has("NO_SELECTED_SOURCE_VERIFIED_EXPERTS_AFTER_ENGINE")
+    || codes.has("NO_SELECTED_REVIEWED_EXPERTS_AFTER_ENGINE");
+  const projectBlocked = codes.has("ENGINE_RAN_ZERO_PROJECT_MATCHES")
+    || codes.has("NO_SELECTED_SOURCE_VERIFIED_PROJECTS_AFTER_ENGINE")
+    || codes.has("NO_SELECTED_REVIEWED_PROJECTS_AFTER_ENGINE");
+  const evidenceBlocked = codes.has("ENGINE_RAN_ZERO_EVIDENCE_ROWS");
+
+  if (expertBlocked && projectBlocked) {
+    return "The Engine ran, but it could not confirm eligible source-verified expert or project evidence for this tender.";
+  }
+  if (expertBlocked) {
+    return "The Engine ran, but it could not confirm eligible source-verified expert evidence for this tender.";
+  }
+  if (projectBlocked) {
+    return "The Engine ran, but it could not confirm eligible source-verified project evidence for this tender.";
+  }
+  if (evidenceBlocked) {
+    return "The Engine extracted requirements, but no Company Vault evidence links were confirmed.";
+  }
+  return "The Engine finished its processing pass, but evidence matching still requires review.";
 }
 
 async function parseEngineResponse(res: Response): Promise<EngineResponse> {
@@ -170,7 +210,7 @@ export async function executeEngineRun(options: EngineRunOptions): Promise<void>
       callbacks.setResult({
         ...data,
         success: false,
-        error: "Engine processing completed, but evidence matching still needs review.",
+        error: "Engine run completed, but matching is blocked.",
         detail: humanBlockerSummary(rawBlockers),
         code: data.evidenceMatchingBlocker?.code ?? "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED",
         nextAction: data.nextAction ?? "REVIEW_MATCHING_INPUTS",
@@ -281,7 +321,7 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
           success: false,
           async: true,
           jobId,
-          error: "Background engine processing completed, but evidence matching still needs review.",
+          error: "Background Engine run completed, but matching is blocked.",
           detail: humanBlockerSummary(rawBlockers),
           code: engineResult?.evidenceMatchingBlocker?.code ?? engineResult?.code ?? "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED",
           nextAction: engineResult?.nextAction ?? "REVIEW_MATCHING_INPUTS",
@@ -378,6 +418,9 @@ export function EngineActionPanel({
     result?.failedStage ? `Stage: ${result.failedStage}` : null,
     result?.jobId ? `Job: ${result.jobId}` : null,
   ].filter(Boolean);
+  const visibleBlockers = Array.isArray(result?.blockers)
+    ? [...new Set(result.blockers.map((blocker) => describeEngineBlocker(blocker)))]
+    : [];
 
   return (
     <section id="run-engine-action" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -425,9 +468,9 @@ export function EngineActionPanel({
 
       {canMutate && isLargeVault && !result && !running && (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <p className="font-semibold">Large reviewed vault — start with Safe Mode</p>
+          <p className="font-semibold">Large source-verified vault — start with Safe Mode</p>
           <p className="mt-1">
-            The vault contains <strong>{vaultReviewedExperts}</strong> reviewed expert(s) and <strong>{vaultReviewedProjects}</strong> reviewed project(s). Safe Mode creates the reliable first-pass match rows before optional AI refinement.
+            The vault contains <strong>{vaultReviewedExperts}</strong> source-verified expert(s) and <strong>{vaultReviewedProjects}</strong> source-verified project(s). Safe Mode creates the reliable first-pass match rows before optional AI refinement.
           </p>
         </div>
       )}
@@ -451,7 +494,7 @@ export function EngineActionPanel({
           </div>
           {action && <p className="mt-2"><strong>Next action:</strong> {action}</p>}
           {result.hint && <p className="mt-1"><strong>Guidance:</strong> {formatOperationalReason(result.hint)}</p>}
-          {result.detail && <p className="mt-1"><strong>Detail:</strong> {formatOperationalReason(result.detail)}</p>}
+          {result.detail && <p className="mt-1"><strong>Summary:</strong> {formatOperationalReason(result.detail)}</p>}
 
           {technicalDetails.length > 0 && (
             <details className="mt-3 rounded-lg border border-current/10 bg-white/70 p-3 text-xs">
@@ -544,12 +587,12 @@ export function EngineActionPanel({
             <p className="mt-3 text-xs text-slate-500 italic">Read-only — retry actions require ADMIN or PROPOSAL_MANAGER role</p>
           )}
 
-          {Array.isArray(result.blockers) && result.blockers.length > 0 && (
+          {visibleBlockers.length > 0 && (
             <div className="mt-3 rounded-lg bg-white p-3">
-              <p className="font-semibold">Follow-up items</p>
+              <p className="font-semibold">Blocking evidence gaps</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
-                {result.blockers.slice(0, 5).map((blocker, index) => (
-                  <li key={index}>{describeEngineBlocker(blocker)}</li>
+                {visibleBlockers.slice(0, 5).map((blocker) => (
+                  <li key={blocker}>{blocker}</li>
                 ))}
               </ul>
             </div>
