@@ -17,6 +17,7 @@ describe("canonical tender workspace", () => {
     assert.doesNotMatch(page, /TenderRecoveryCommandCenter/);
     assert.doesNotMatch(page, /TenderReleaseStatePanel/);
     assert.doesNotMatch(page, /FinalSubmissionControlCenter/);
+    assert.doesNotMatch(page, /ProposalEvidenceReadinessPanel/);
   });
 
   it("renders each authoritative mutation or export action once", async () => {
@@ -38,6 +39,14 @@ describe("canonical tender workspace", () => {
     assert.match(page, /Evidence and matching/);
     assert.match(page, /Generation and review/);
     assert.match(page, /Final package and submission/);
+  });
+
+  it("keeps secondary tools collapsed instead of presenting competing authorities", async () => {
+    const page = await readFile(PAGE_PATH, "utf8");
+    assert.match(page, /title="Extraction diagnostics"/);
+    assert.match(page, /title="AI diagnostics and assistance"/);
+    assert.match(page, /title="Generation and review diagnostics"/);
+    assert.match(page, /title="Submission audit trail"/);
   });
 
   it("keeps diagnostics separate and read-only", async () => {
