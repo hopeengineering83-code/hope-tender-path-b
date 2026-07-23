@@ -65,6 +65,20 @@ function isUsableReviewedRecord(record: ReadinessExpert | ReadinessProject): boo
   return record.durableReview ?? record.trustLevel === "REVIEWED";
 }
 
+function hasRuntimeReviewAuthorityShape(record: unknown): boolean {
+  // VAULT_REVIEW_CONSUMER_SELECT always includes sourceDocumentId, even when
+  // its value is null. Its presence therefore distinguishes a real Prisma
+  // authority record from a deliberately minimal pure/unit client record.
+  // Runtime records always use the durable provenance validator; only callers
+  // that omit the authority shape entirely retain the documented trust-level
+  // fallback used by assessCompanyIngestionReadiness.
+  return Boolean(
+    record &&
+      typeof record === "object" &&
+      Object.prototype.hasOwnProperty.call(record, "sourceDocumentId"),
+  );
+}
+
 export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnapshot, opts: IngestionReadinessOptions = {}): CompanyIngestionReadiness {
   const requireReviewedExperts = opts.requireReviewedExperts !== false;
   const requireReviewedProjects = opts.requireReviewedProjects !== false;
@@ -146,11 +160,11 @@ export async function getCompanyIngestionReadiness(companyId: string, opts: Inge
 
   const experts: ReadinessExpert[] = expertRecords.map((record) => ({
     trustLevel: record.trustLevel,
-    durableReview: isDurablyReviewed(record),
+    durableReview: hasRuntimeReviewAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
   }));
   const projects: ReadinessProject[] = projectRecords.map((record) => ({
     trustLevel: record.trustLevel,
-    durableReview: isDurablyReviewed(record),
+    durableReview: hasRuntimeReviewAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
   }));
 
   const hasUsefulTextFn = (text: string | null | undefined): boolean => hasUsefulText(text);

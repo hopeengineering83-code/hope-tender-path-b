@@ -86,7 +86,7 @@ describe("EngineActionPanel — read-only render states", () => {
       vaultReviewedProjects: 10,
     }));
     assertNoMutationControls(buttonLabels(container), "large-vault state");
-    assert.ok(!(container.textContent ?? "").includes("Large reviewed vault"));
+    assert.ok(!(container.textContent ?? "").includes("Large source-verified vault"));
   });
 
   it("REVIEWER extraction-blocked state has no force action", () => {
@@ -155,7 +155,7 @@ describe("EngineActionPanel — mutating roles", () => {
       vaultReviewedExperts: 40,
       vaultReviewedProjects: 10,
     }));
-    assert.ok((container.textContent ?? "").includes("Large reviewed vault"));
+    assert.ok((container.textContent ?? "").includes("Large source-verified vault"));
     const labels = buttonLabels(container);
     assert.equal(labels.filter((label) => label.includes("Run Safe Mode")).length, 1);
     assert.equal(labels.filter((label) => label.includes("Run Full AI in Background")).length, 1);

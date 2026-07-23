@@ -65,6 +65,6 @@ describe("Engine action panel — async SUCCEEDED branch surfaces partial result
     const partialSlice = src.slice(isPartialPos, successResultPos);
     assert.match(partialSlice, /success: false/);
     assert.match(partialSlice, /blockers: Array\.isArray\(rawBlockers\) \? rawBlockers : undefined/);
-    assert.match(partialSlice, /evidence matching still needs review/i);
+    assert.match(partialSlice, /matching is blocked/i);
   });
 });

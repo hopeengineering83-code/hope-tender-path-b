@@ -43,7 +43,7 @@ describe("canonical tender workspace", () => {
 
   it("keeps secondary tools collapsed instead of presenting competing authorities", async () => {
     const page = await readFile(PAGE_PATH, "utf8");
-    assert.match(page, /title="Extraction diagnostics"/);
+    assert.match(page, /title="Extraction quality"/);
     assert.match(page, /title="AI diagnostics and assistance"/);
     assert.match(page, /title="Generation and review diagnostics"/);
     assert.match(page, /title="Submission audit trail"/);

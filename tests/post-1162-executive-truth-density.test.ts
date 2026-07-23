@@ -20,7 +20,7 @@ describe("post-1162 tender workspace density", () => {
   });
 
   it("collapses secondary diagnostics inside the owning workflow stage", () => {
-    assert.match(workspace, /title="Extraction diagnostics"/);
+    assert.match(workspace, /title="Extraction quality"/);
     assert.match(workspace, /title="AI diagnostics and assistance"/);
     assert.match(workspace, /title="Generation and review diagnostics"/);
     assert.match(workspace, /title="Submission audit trail"/);
