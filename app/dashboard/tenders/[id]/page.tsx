@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
-import { ChevronDownIcon } from "../../../../components/icons";
+import { ArrowRightIcon, ChevronDownIcon } from "../../../../components/icons";
 import { SubmissionPlanTruthPanel } from "../../../../components/submission-plan-truth-panel";
 import { RequirementTruthBanner } from "../../../../components/requirement-truth-banner";
-import { TenderWorkflowActionCenter } from "../../../../components/tender-workflow-action-center";
 import { ExtractionSnapshotPanel } from "../../../../components/extraction-snapshot-panel";
 import { notFound, redirect } from "next/navigation";
 import { getSession, getCurrentUser } from "../../../../lib/auth";
@@ -45,12 +45,9 @@ import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-sear
 import { TenderSharePanel } from "../../../../components/tender-share-panel";
 import { AuditTrailPanel } from "../../../../components/audit-trail-panel";
 import { TenderChatPanelWrapper } from "../../../../components/tender-chat-panel-wrapper";
-import TenderRecoveryCommandCenter from "../../../../components/tender-recovery-command-center";
-import { TenderReleaseStatePanel } from "../../../../components/tender-release-state-panel";
 import RequirementCoveragePanel from "../../../../components/requirement-coverage-panel";
 import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
 import { NextActionPanel } from "../../../../components/next-action-panel";
-import { FinalSubmissionControlCenter } from "../../../../components/final-submission-control-center";
 import { ClientEntityWarningBanner } from "../../../../components/corrupted-metadata-banner";
 import { prisma as prismaClient } from "../../../../lib/prisma";
 
@@ -93,7 +90,11 @@ function WorkflowStage({
   open?: boolean;
 }) {
   return (
-    <details open={open} className="group rounded-2xl border border-slate-200 bg-slate-50 shadow-sm">
+    <details
+      id={`workflow-stage-${number}`}
+      open={open}
+      className="group scroll-mt-24 rounded-2xl border border-slate-200 bg-slate-50 shadow-sm"
+    >
       <summary className="flex cursor-pointer list-none items-start gap-3 px-5 py-4 marker:content-none">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">{number}</span>
         <span className="min-w-0 flex-1">
@@ -196,45 +197,16 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         clientContactName: tender.clientContactName,
       }} canMutate={canMutate} />
 
-      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical Tender Details." open>
+      <RequirementTruthBanner tenderId={tender.id} />
+      <NextActionPanel tenderId={tender.id} />
+
+      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents and confirm submission-critical Tender Details.">
         <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
         <ExtractionQualityDashboard tenderId={tender.id} />
         <ExtractionSnapshotPanel tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
         <ExtractionQualityPanel tenderId={tender.id} />
       </WorkflowStage>
-
-      <RequirementTruthBanner tenderId={tender.id} />
-      <NextActionPanel tenderId={tender.id} />
-
-      <Disclosure
-        title="Quick workflow control"
-        description="Compact overview of workflow steps and shortcuts. Use the Next Required Action above first."
-      >
-        <TenderWorkflowActionCenter tenderId={tender.id} canMutate={canMutate} />
-      </Disclosure>
-
-      {/* Advanced diagnostics — NextActionPanel above is the one authoritative
-          status card (tender status, readiness score, bid verdict, current
-          blocker, next required action). These three panels go deeper
-          (execute controls, full blocker detail, the export-ZIP step
-          checklist) but must not compete with it for primary attention, so
-          this section stays collapsed by default. */}
-      <Disclosure
-        title="Advanced diagnostics"
-        description="Recovery Command Center, full release-state detail, and Final Submission Control Center — open only if you need deeper diagnostics than the status card above."
-      >
-        <TenderRecoveryCommandCenter tenderId={tender.id} canMutate={canMutate} />
-        {/* showNextAction=false: NextActionPanel above already renders the
-            one canonical next action for this page — this panel must not
-            repeat it. */}
-        <TenderReleaseStatePanel tenderId={tender.id} canMutate={canMutate} showNextAction={false} />
-        <FinalSubmissionControlCenter tenderId={tender.id} generationReadiness={generationReadiness} />
-      </Disclosure>
-
-      <nav aria-label="Tender workflow stages" className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-        Continue with Next Required Action above, then work through Stage 2 to Stage 5. The optional overview and diagnostic sections remain collapsed until needed.
-      </nav>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, inspect AI health, and repair incomplete analysis.">
         <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} canMutate={canMutate} />
@@ -279,6 +251,23 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <TenderSharePanel tenderId={tender.id} canMutate={canMutate} />
         <AuditTrailPanel tenderId={tender.id} />
       </WorkflowStage>
+
+      <Disclosure
+        title="Diagnostics and audit"
+        description="Open the separate read-only Command Center only when you need full blocker, export, pricing, version, objection, or background-job detail."
+      >
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm text-slate-700">
+            The Command Center reads the same canonical release state as the status card above. It does not add a second next action, mutation owner, readiness score, or final-ZIP decision to this workspace.
+          </p>
+          <Link
+            href={`/dashboard/tenders/${tender.id}/command-center`}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-slate-800"
+          >
+            Open read-only Command Center <ArrowRightIcon />
+          </Link>
+        </div>
+      </Disclosure>
     </main>
   );
 }
