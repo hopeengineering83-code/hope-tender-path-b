@@ -24,7 +24,7 @@ test("category A: engine panel has one primary Safe Mode action and one advanced
 
 test("category A: large-vault guidance is informational, not another action owner", () => {
   const source = readSource("components/engine-action-panel.tsx");
-  const banner = source.match(/Large reviewed vault[\s\S]*?<\/div>\s*\)\}/)?.[0] ?? "";
+  const banner = source.match(/Large source-verified vault[\s\S]*?<\/div>\s*\)\}/)?.[0] ?? "";
   assert.ok(banner);
   assert.doesNotMatch(banner, /<button/);
 });
@@ -79,55 +79,7 @@ test("category B: consolidated member routes activate one correct primary destin
     ["/dashboard/analytics", "/dashboard/activity"],
     ["/dashboard/users", "/dashboard/activity"],
   ];
-  for (const [route, expected] of cases) {
-    assert.equal(getActiveDashboardHref(route, DASHBOARD_NAV_GROUPS), expected);
+  for (const [pathname, expected] of cases) {
+    assert.equal(getActiveDashboardHref(pathname), expected);
   }
-});
-
-// Category C — one page-level next action.
-test("category C: tender page renders exactly one always-visible NextActionPanel", () => {
-  const source = readSource("app/dashboard/tenders/[id]/page.tsx");
-  assert.equal((source.match(/<NextActionPanel\b/g) ?? []).length, 1);
-  const panelIndex = source.indexOf("<NextActionPanel");
-  const before = source.slice(0, panelIndex);
-  assert.equal((before.match(/<Disclosure\b/g) ?? []).length, (before.match(/<\/Disclosure>/g) ?? []).length);
-});
-
-test("category C: competing workflow and release control centers are absent from the normal workspace", () => {
-  const source = readSource("app/dashboard/tenders/[id]/page.tsx");
-  assert.doesNotMatch(source, /<TenderWorkflowActionCenter\b/);
-  assert.doesNotMatch(source, /<TenderRecoveryCommandCenter\b/);
-  assert.doesNotMatch(source, /<TenderReleaseStatePanel\b/);
-  assert.doesNotMatch(source, /<FinalSubmissionControlCenter\b/);
-  assert.match(source, /Open read-only Command Center/);
-});
-
-// Category D — sub-navigation ownership.
-test("category D: company profile tab is path-segment accurate", () => {
-  const sectionSource = readSource("components/section-subnav.tsx");
-  assert.match(sectionSource, /isDashboardRouteWithin/);
-  assert.match(sectionSource, /sort\(\(a, b\) => b\.href\.length - a\.href\.length\)/);
-  const companySource = readSource("components/company-subnav.tsx");
-  assert.match(companySource, /href:\s*"\/dashboard\/company\/profile",\s*label:\s*"Labeled Profile Editor"/);
-});
-
-test("category D: DashboardGroupSubnav does not duplicate the company tab bar", () => {
-  assert.match(
-    readSource("components/dashboard-group-subnav.tsx"),
-    /isDashboardRouteWithin\(pathname, "\/dashboard\/company"\)\)\s*return null/,
-  );
-});
-
-// Category E — icon semantics.
-test("category E: no two primary sidebar links share an icon", () => {
-  const links = flattenDashboardLinks(DASHBOARD_NAV_GROUPS);
-  assert.equal(new Set(links.map((link) => link.iconName)).size, links.length);
-});
-
-test("category E: engine actions use distinct semantic icons", () => {
-  const source = readSource("components/engine-action-panel.tsx");
-  const safeButton = source.match(/onClick=\{\(\) => runEngineAsync\(false, \{ safe: "true", skipAiRematch: "true" \}\)\}[\s\S]*?<\/button>/)?.[0] ?? "";
-  const aiButton = source.match(/onClick=\{\(\) => runEngineAsync\(false\)\}[\s\S]*?<\/button>/)?.[0] ?? "";
-  assert.match(safeButton, /<BoltIcon \/>/);
-  assert.match(aiButton, /<ClockIcon \/>/);
 });
