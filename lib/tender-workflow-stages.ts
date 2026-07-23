@@ -12,46 +12,46 @@
  * showed different labels for the same stage. This file eliminates that risk
  * by providing one importable definition.
  *
- * The server-side route (workflow-center/route.ts) should import
- * TENDER_WORKFLOW_STAGES to build its stage array so the labels in the API
- * response always match the labels in the UI.
+ * Each stage lists a specific owning panel first and a stable five-stage
+ * workspace disclosure last. Shortcut clients try every selector in order,
+ * so conditional or temporarily absent panels still open the correct workflow
+ * section instead of doing nothing.
  */
 
 export interface TenderWorkflowStage {
   stage: number;
   label: string;
-  /** Primary anchor target (first) + fallbacks. The workflow action center
-   * tries each in order; step links use only the primary. */
+  /** Primary anchor target (first) + resilient fallbacks. */
   targets: string[];
 }
 
 export const TENDER_WORKFLOW_STAGES: TenderWorkflowStage[] = [
-  { stage: 1, label: "Source Files", targets: ["#tender-files"] },
-  { stage: 2, label: "Extraction Quality", targets: ["#extraction-quality", "#tender-files"] },
-  { stage: 3, label: "AI Analyze", targets: ["#ai-analyze-section"] },
-  { stage: 4, label: "Confirm Requirements", targets: ["#requirement-coverage", "#ai-analyze-section"] },
-  { stage: 5, label: "Tender Details", targets: ["#tender-edit-form"] },
-  { stage: 6, label: "Verified Submission Plan", targets: ["#submission-plan", "#submission-plan-reconciliation"] },
-  { stage: 7, label: "Match Evidence", targets: ["#match-evidence", "#requirement-coverage"] },
-  { stage: 8, label: "Generate Documents", targets: ["#generated-documents", "#submission-plan"] },
-  { stage: 9, label: "Validate and Approve", targets: ["#authority-review", "#generated-documents"] },
-  { stage: 10, label: "Export ZIP", targets: ["#export-readiness", "#final-package-manifest"] },
+  { stage: 1, label: "Source Files", targets: ["#tender-files", "#workflow-stage-1"] },
+  { stage: 2, label: "Extraction Quality", targets: ["#extraction-quality", "#tender-files", "#workflow-stage-1"] },
+  { stage: 3, label: "AI Analyze", targets: ["#ai-analyze-section", "#run-engine-action", "#workflow-stage-2"] },
+  { stage: 4, label: "Confirm Requirements", targets: ["#requirement-coverage", "#ai-analyze-section", "#workflow-stage-2"] },
+  { stage: 5, label: "Tender Details", targets: ["#tender-edit-form", "#workflow-stage-1"] },
+  { stage: 6, label: "Verified Submission Plan", targets: ["#submission-plan", "#submission-plan-reconciliation", "#workflow-stage-4"] },
+  { stage: 7, label: "Match Evidence", targets: ["#match-evidence", "#matching-quality", "#workflow-stage-3"] },
+  { stage: 8, label: "Generate Documents", targets: ["#generated-documents", "#submission-plan", "#workflow-stage-4"] },
+  { stage: 9, label: "Validate and Approve", targets: ["#authority-review", "#generated-documents", "#workflow-stage-4"] },
+  { stage: 10, label: "Export ZIP", targets: ["#export-readiness", "#final-package-manifest", "#workflow-stage-5"] },
 ];
 
 /** Stage number → label map (for quick lookup). */
 export const TENDER_WORKFLOW_STAGE_LABELS: Record<number, string> = Object.fromEntries(
-  TENDER_WORKFLOW_STAGES.map((s) => [s.stage, s.label]),
+  TENDER_WORKFLOW_STAGES.map((stage) => [stage.stage, stage.label]),
 );
 
 /** Stage number → targets array map (backward-compat with existing imports). */
 export const TENDER_WORKFLOW_STAGE_TARGETS: Record<number, string[]> = Object.fromEntries(
-  TENDER_WORKFLOW_STAGES.map((s) => [s.stage, s.targets]),
+  TENDER_WORKFLOW_STAGES.map((stage) => [stage.stage, stage.targets]),
 );
 
 /** Ordered label list (for step-link components that iterate by index). */
-export const TENDER_WORKFLOW_STAGE_LABEL_LIST: string[] = TENDER_WORKFLOW_STAGES.map((s) => s.label);
+export const TENDER_WORKFLOW_STAGE_LABEL_LIST: string[] = TENDER_WORKFLOW_STAGES.map((stage) => stage.label);
 
 /** Primary target for each stage (first entry in targets). */
 export const TENDER_WORKFLOW_STAGE_PRIMARY_TARGETS: string[] = TENDER_WORKFLOW_STAGES.map(
-  (s) => s.targets[0],
+  (stage) => stage.targets[0],
 );
