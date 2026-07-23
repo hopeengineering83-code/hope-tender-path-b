@@ -7,7 +7,7 @@
 // with the canonical Next Required Action or make the tender page unnecessarily
 // long. Every link opens closed workflow disclosures before scrolling.
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { openParentDetailsAndScroll } from "@/lib/ui/tender-workflow-sync";
 import { TENDER_WORKFLOW_STAGES } from "@/lib/tender-workflow-stages";
 import { CheckCircleIcon, ArrowRightIcon, ChevronDownIcon } from "./icons";
@@ -15,6 +15,14 @@ import { CheckCircleIcon, ArrowRightIcon, ChevronDownIcon } from "./icons";
 const STEP_LABELS = TENDER_WORKFLOW_STAGES.map((stage) => stage.label);
 
 export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
+  // A server-rendered href can be activated before React hydrates this client
+  // component. Native hash navigation cannot open closed <details> ancestors,
+  // leaving the destination attached but hidden. Keep anchors non-interactive
+  // until hydration guarantees that the canonical open-and-scroll handler owns
+  // every click.
+  const [interactive, setInteractive] = useState(false);
+  useEffect(() => setInteractive(true), []);
+
   const handleClick = useCallback((event: React.MouseEvent<HTMLAnchorElement>, selectors: string[]) => {
     event.preventDefault();
     const element = selectors
@@ -37,10 +45,11 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
         </p>
       ) : (
         <a
-          href={currentStage.targets[0]}
-          onClick={(event) => handleClick(event, currentStage.targets)}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          title={`Go to ${currentLabel}`}
+          href={interactive ? currentStage.targets[0] : undefined}
+          onClick={interactive ? (event) => handleClick(event, currentStage.targets) : undefined}
+          aria-disabled={!interactive}
+          className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold text-white ${interactive ? "bg-slate-900 hover:bg-slate-800" : "cursor-wait bg-slate-500"}`}
+          title={interactive ? `Go to ${currentLabel}` : "Preparing workflow navigation"}
         >
           <ArrowRightIcon /> Open {currentLabel}
         </a>
@@ -53,7 +62,7 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
             <ChevronDownIcon />
           </span>
         </summary>
-        <nav className="flex flex-wrap gap-1.5 border-t border-slate-200 p-3" aria-label="Full tender workflow">
+        <nav className="flex flex-wrap gap-1.5 border-t border-slate-200 p-3" aria-label="Full tender workflow" aria-busy={!interactive}>
           {TENDER_WORKFLOW_STAGES.map((stage, index) => {
             const done = index < currentIndex;
             const active = index === currentIndex;
@@ -66,11 +75,12 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
             return (
               <a
                 key={stage.stage}
-                href={stage.targets[0]}
-                onClick={(event) => handleClick(event, stage.targets)}
+                href={interactive ? stage.targets[0] : undefined}
+                onClick={interactive ? (event) => handleClick(event, stage.targets) : undefined}
                 aria-current={active ? "step" : undefined}
-                className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${baseClass}`}
-                title={`Go to ${stage.label}`}
+                aria-disabled={!interactive}
+                className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${interactive ? baseClass : "cursor-wait bg-slate-100 text-slate-400"}`}
+                title={interactive ? `Go to ${stage.label}` : "Preparing workflow navigation"}
               >
                 <span aria-hidden="true" className="inline-flex items-center">
                   {done ? <CheckCircleIcon className="mr-0.5" /> : active ? <ArrowRightIcon className="mr-0.5" /> : null}
