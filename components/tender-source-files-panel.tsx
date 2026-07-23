@@ -46,8 +46,18 @@ function formatBytes(bytes: number): string {
 
 function extractionLabel(file: TenderSourceFile): string {
   if ((file.failedPages ?? 0) > 0) return `${file.failedPages} failed page(s)`;
-  if (file.extractionScore != null) return `${Math.round(file.extractionScore)}% extraction`;
-  if (file.totalPages != null && file.extractedPages != null) return `${file.extractedPages}/${file.totalPages} pages`;
+
+  const hasCoverage = file.totalPages != null
+    && file.totalPages > 0
+    && file.extractedPages != null;
+  const quality = file.extractionScore != null ? Math.round(file.extractionScore) : null;
+
+  if (hasCoverage) {
+    const coverage = Math.round((file.extractedPages! / file.totalPages!) * 100);
+    const coverageLabel = `${file.extractedPages}/${file.totalPages} pages (${coverage}%)`;
+    return quality != null ? `${coverageLabel} · quality ${quality}/100` : coverageLabel;
+  }
+  if (quality != null) return `Quality ${quality}/100`;
   return "Extraction pending";
 }
 
@@ -256,7 +266,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
               <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-2 font-semibold">File</th>
                 <th className="px-3 py-2 font-semibold">Classification</th>
-                <th className="px-3 py-2 font-semibold">Extraction</th>
+                <th className="px-3 py-2 font-semibold">Coverage / quality</th>
                 <th className="px-3 py-2 font-semibold">Size</th>
                 <th className="px-3 py-2 text-right font-semibold">Actions</th>
               </tr>
