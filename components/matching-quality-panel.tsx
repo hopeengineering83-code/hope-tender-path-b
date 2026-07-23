@@ -9,7 +9,7 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
   if (!userId) return null;
 
   await prismaReady;
-  const [company, tender] = await Promise.all([
+  const [company, tender, latestCompletedEngineJob] = await Promise.all([
     ensureCompanyForUser(prisma, userId),
     prisma.tender.findFirst({
       where: { id: tenderId, userId },
@@ -19,15 +19,19 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
         projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
       },
     }),
+    prisma.aiJob.findFirst({
+      where: {
+        tenderId,
+        userId,
+        jobType: "ENGINE_RUN",
+        status: { in: ["SUCCEEDED", "PARTIAL_SUCCESS"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, status: true },
+    }),
   ]);
   if (!tender) return null;
 
-  // Gap 5 — pass vault counts so this panel returns state=VAULT_AWAITS_ENGINE
-  // (softer score, with the "engine hasn't run yet" message) when the company
-  // vault has reviewed evidence ready but engine hasn't been run on this
-  // tender. Without these counts the panel hard-deducted -35-35 → 30/100
-  // POOR while the Bid Control Verdict (which DID pass vault counts via
-  // getTenderGenerationReadiness) showed 64/100 WARNING.
   const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
   const quality = assessMatchingQuality({
     requirements: tender.requirements,
@@ -37,8 +41,19 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
     vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
   });
 
+  const engineRanWithoutMatches = Boolean(latestCompletedEngineJob) &&
+    quality.state === "VAULT_AWAITS_ENGINE" &&
+    quality.expertMatches === 0 &&
+    quality.projectMatches === 0;
+
   type PanelStyle = { color: "green" | "amber" | "red"; title: string };
   const panelStyle: PanelStyle = (() => {
+    if (engineRanWithoutMatches) {
+      return {
+        color: "amber",
+        title: "Engine ran but produced no usable tender-specific matches",
+      };
+    }
     switch (quality.state) {
       case "MATCHES_REVIEWED":
         return { color: "green", title: "Matches appear usable" };
@@ -68,10 +83,19 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
       ? "text-amber-700"
       : "text-red-700";
 
+  const displayedWarnings = engineRanWithoutMatches
+    ? [
+        `A completed engine job exists, but it created no expert or project match rows from ${quality.vaultReviewedExperts} reviewed expert(s) and ${quality.vaultReviewedProjects} reviewed project(s) in the vault.`,
+      ]
+    : quality.warnings;
+  const displayedRecommendations = engineRanWithoutMatches
+    ? [
+        "Review the extracted expert/project requirements and vault classifications, then rerun Safe Mode for deterministic matching.",
+        "Use Full AI in Background only after deterministic match rows exist or when the tender terminology needs semantic refinement.",
+      ]
+    : quality.recommendations;
+
   return (
-    // `#match-evidence` is the canonical Stage-7 workflow shortcut target.
-    // Keep the historical `#matching-quality` id on the inner section because
-    // other readiness panels and the command-center page still link to it.
     <div id="match-evidence" className="scroll-mt-24">
       <section id="matching-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionCls}`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -90,17 +114,17 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
           <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Selected projects</p><p className="text-xl font-bold text-slate-900">{quality.selectedProjects}</p></div>
         </div>
 
-        {quality.warnings.length > 0 && (
+        {displayedWarnings.length > 0 && (
           <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-slate-700">
-            {quality.warnings.slice(0, 5).map((warning) => <li key={warning}>{warning}</li>)}
+            {displayedWarnings.slice(0, 5).map((warning) => <li key={warning}>{warning}</li>)}
           </ul>
         )}
 
-        {quality.recommendations.length > 0 && panelStyle.color !== "green" && (
+        {displayedRecommendations.length > 0 && panelStyle.color !== "green" && (
           <div className="mt-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
             <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended actions</p>
             <ul className="list-disc space-y-1 pl-4 text-sm text-slate-700">
-              {quality.recommendations.slice(0, 4).map((rec) => <li key={rec}>{rec}</li>)}
+              {displayedRecommendations.slice(0, 4).map((recommendation) => <li key={recommendation}>{recommendation}</li>)}
             </ul>
           </div>
         )}
