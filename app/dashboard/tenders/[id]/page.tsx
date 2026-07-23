@@ -192,7 +192,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
 
-      <WorkflowStage number={1} title="Intake and extraction" open description="Manage source documents, extraction quality, and submission-critical Tender Details.">
+      <WorkflowStage number={1} title="Intake and extraction" description="Manage source documents, extraction quality, and submission-critical Tender Details.">
         <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
         <ExtractionQualityDashboard tenderId={tender.id} />
         <TenderIntakeDetailPanel tender={tenderForUi} />
