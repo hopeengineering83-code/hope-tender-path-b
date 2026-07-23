@@ -55,7 +55,7 @@ export async function GET(
         }
       : null;
 
-    const stageStates = decision?.stageStates ?? {};
+    const ds = decision?.stageStates ?? {};
     const analysisExplanation = snapshot.analysis.state === "AI_SUCCEEDED"
       ? "AI analysis completed and is ready for requirement review."
       : snapshot.analysis.state === "RUNNING"
@@ -69,7 +69,7 @@ export async function GET(
       {
         stage: 1,
         label: TENDER_WORKFLOW_STAGE_LABELS[1],
-        status: stageStatusFromCanonical(stageStates["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"),
+        status: stageStatusFromCanonical(ds["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"),
         explanation: "Manage uploaded tender PDFs and DOCX files.",
         actionLabel: "Manage Files",
         actionName: "UPLOAD_TENDER_DOCUMENT",
@@ -78,7 +78,7 @@ export async function GET(
       {
         stage: 2,
         label: TENDER_WORKFLOW_STAGE_LABELS[2],
-        status: stageStatusFromCanonical(stageStates["FIX_EXTRACTION"], hasUnsafePages ? "BLOCKED" : snapshot.extraction.overallOk ? "COMPLETE" : "BLOCKED"),
+        status: stageStatusFromCanonical(ds["FIX_EXTRACTION"], hasUnsafePages ? "BLOCKED" : snapshot.extraction.overallOk ? "COMPLETE" : "BLOCKED"),
         explanation: hasUnsafePages
           ? pageLedgerSummary.map((pageLedger) => `${pageLedger.fileName}: ${pageLedger.summary}`).join(" | ")
           : "Verify text density and page coverage.",
@@ -94,7 +94,7 @@ export async function GET(
         stage: 3,
         label: TENDER_WORKFLOW_STAGE_LABELS[3],
         status: stageStatusFromCanonical(
-          stageStates["RUN_AI_ANALYZE"],
+          ds["RUN_AI_ANALYZE"],
           snapshot.analysis.state === "AI_SUCCEEDED"
             ? "COMPLETE"
             : snapshot.analysis.state === "RUNNING"
@@ -110,7 +110,7 @@ export async function GET(
         stage: 4,
         label: TENDER_WORKFLOW_STAGE_LABELS[4],
         status: stageStatusFromCanonical(
-          stageStates["CONFIRM_REQUIREMENTS"],
+          ds["CONFIRM_REQUIREMENTS"],
           snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : "WAITING_ON_PRIOR_STEP",
         ),
         explanation: requirementExplanation,
@@ -131,7 +131,7 @@ export async function GET(
         stage: 6,
         label: TENDER_WORKFLOW_STAGE_LABELS[6],
         status: stageStatusFromCanonical(
-          stageStates["BUILD_SUBMISSION_PLAN"],
+          ds["BUILD_SUBMISSION_PLAN"],
           snapshot.buildPlan.gateValid ? "COMPLETE" : "BLOCKED",
         ),
         explanation: snapshot.buildPlan.gateBlocker ?? snapshot.buildPlan.blocker ?? "Build plan pending.",
@@ -142,7 +142,7 @@ export async function GET(
       {
         stage: 7,
         label: TENDER_WORKFLOW_STAGE_LABELS[7],
-        status: stageStatusFromCanonical(stageStates["MATCH_EVIDENCE"], "WAITING_ON_PRIOR_STEP"),
+        status: stageStatusFromCanonical(ds["MATCH_EVIDENCE"], "WAITING_ON_PRIOR_STEP"),
         explanation: decision?.currentBlockingStage && decision.currentBlockingStage !== "EXPORT_ZIP_READY" && decision.currentBlockingStage !== "MANDATORY_NO_COMPLIANCE_ROWS" && decision.currentBlockingStage !== "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
           : "Link reviewed experts and project experience to source-traced requirements.",
@@ -154,7 +154,7 @@ export async function GET(
         stage: 8,
         label: TENDER_WORKFLOW_STAGE_LABELS[8],
         status: stageStatusFromCanonical(
-          stageStates["GENERATE_DOCUMENTS"],
+          ds["GENERATE_DOCUMENTS"],
           snapshot.generationEligible ? "READY" : "BLOCKED",
         ),
         explanation: snapshot.generationBlockers.length > 0 ? snapshot.generationBlockers[0] : "Ready for generation.",
@@ -165,7 +165,7 @@ export async function GET(
       {
         stage: 9,
         label: TENDER_WORKFLOW_STAGE_LABELS[9],
-        status: stageStatusFromCanonical(stageStates["VALIDATE_DOCS"], "WAITING_ON_PRIOR_STEP"),
+        status: stageStatusFromCanonical(ds["VALIDATE_DOCS"], "WAITING_ON_PRIOR_STEP"),
         explanation: decision?.currentBlockingStage && decision.currentBlockingStage !== "EXPORT_ZIP_READY" && decision.currentBlockingStage !== "DOCS_NOT_VALIDATED" && decision.currentBlockingStage !== "DOCS_NOT_APPROVED_EXPORT_READY" && decision.currentBlockingStage !== "AUTHORITY_OR_QUALITY_BLOCKERS"
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
           : "Review and approve generated documents.",
@@ -177,7 +177,7 @@ export async function GET(
         stage: 10,
         label: TENDER_WORKFLOW_STAGE_LABELS[10],
         status: stageStatusFromCanonical(
-          stageStates["EXPORT_ZIP"],
+          ds["EXPORT_ZIP"],
           snapshot.exportEligible ? "READY" : "BLOCKED",
         ),
         explanation: snapshot.exportBlockers.length > 0 ? snapshot.exportBlockers[0] : "Ready for export.",
