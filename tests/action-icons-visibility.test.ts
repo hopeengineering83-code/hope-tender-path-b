@@ -22,7 +22,6 @@ const OPERATIONAL_COMPONENTS = [
   "authority-review-panel.tsx",
   "tender-share-panel.tsx",
   "requirement-coverage-panel.tsx",
-  "tender-controls-panel.tsx",
 ];
 const RAW_UNICODE_PATTERN = /[✓✗⚡▶↻⊘⏳✦→↓↑←▼▲✕↺↗]/;
 

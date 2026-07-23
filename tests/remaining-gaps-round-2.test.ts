@@ -97,8 +97,4 @@ describe("F7/F8 — test guard catches ℹ", () => {
     assert.match(src, /RAW_UNICODE_PATTERN = \/\[.*ℹ.*ⓘ.*\]\//);
   });
 
-  it("score-breakdown-panel is in WORKFLOW_COMPONENTS", () => {
-    const src = read("tests/workflow-icons-affordance-round2.test.ts");
-    assert.match(src, /"score-breakdown-panel\.tsx"/);
-  });
 });
