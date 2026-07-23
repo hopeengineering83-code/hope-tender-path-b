@@ -2,13 +2,10 @@ import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
-import { assessMatchingQuality } from "../lib/matching-quality";
-import { ensureCompanyForUser } from "../lib/company-workspace";
-import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
 import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
 import { inferSector } from "../lib/engine/proposal-intelligence";
 import { getEffectiveTenderFacts } from "../lib/engine/effective-tender-facts";
-import { statusToSeverity, severityBadgeClasses, severityBgClass, severityBorderClass, severityTextClass, scoreToSeverity } from "../lib/ui-tokens";
+import { statusToSeverity, severityBgClass, severityBorderClass, severityTextClass, scoreToSeverity } from "../lib/ui-tokens";
 
 function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
   if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
@@ -31,17 +28,12 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   if (!userId) return null;
 
   await prismaReady;
-  const [company, tender] = await Promise.all([
-    ensureCompanyForUser(prisma, userId),
-    prisma.tender.findFirst({
-      where: { id: tenderId, userId },
-      include: {
-        requirements: { orderBy: { createdAt: "asc" } },
-        expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
-        projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
-      },
-    }),
-  ]);
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    include: {
+      requirements: { orderBy: { createdAt: "asc" } },
+    },
+  });
   if (!tender) return null;
 
   const rawMetrics = await prisma.$queryRaw<Array<{ extractedChars: number; totalPageCount: number }>>`
@@ -53,23 +45,14 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   `.catch(() => [{ extractedChars: 0, totalPageCount: 0 }]);
   const [{ extractedChars, totalPageCount }] = rawMetrics.length > 0 ? rawMetrics : [{ extractedChars: 0, totalPageCount: 0 }];
 
-  const companyReadiness = await getCompanyIngestionReadiness(company.id, {}, prisma);
-  const matchingQuality = assessMatchingQuality({
-    requirements: tender.requirements,
-    expertMatches: tender.expertMatches,
-    projectMatches: tender.projectMatches,
-    vaultReviewedExperts: companyReadiness.totals.reviewedExperts,
-    vaultReviewedProjects: companyReadiness.totals.reviewedProjects,
-  });
-
   const rawSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
-
-  // ── Effective tender facts — use parser/ledger facts, not raw scalars ──
-  // This fixes the contradiction where Tender Detail shows a parsed deadline
-  // but Analysis Quality says "deadline missing" because tender.deadline is null.
-  // The effective facts combine ledger → parser → scalar fallback.
   const effectiveFacts = await getEffectiveTenderFacts(prisma, tenderId, userId).catch(() => null);
 
+  // Analysis Quality is authoritative only for extraction, requirements,
+  // Tender Details, submission instructions, and source grounding. Evidence
+  // matching is intentionally excluded here; Stage 3 Matching Quality owns it.
+  // This prevents two different matching scores and recommendations from being
+  // shown on the same tender workspace.
   const quality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
     analysisSummary: tender.analysisSummary,
@@ -81,10 +64,8 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     referenceNumber: effectiveFacts?.referenceNumber ?? tender.reference,
     country: effectiveFacts?.country ?? tender.country,
     clientContactName: tender.clientContactName,
-    matchingScore: matchingQuality.score,
     extractedTextLength: extractedChars,
     totalPageCount,
-    // Use effective deadline/method/emails/address from parser/ledger when available
     deadline: effectiveFacts?.deadlineIso ?? effectiveFacts?.deadlineDisplay ?? tender.deadline,
     submissionMethod: effectiveFacts?.submissionMethod && effectiveFacts.submissionMethod !== "Unknown"
       ? effectiveFacts.submissionMethod
@@ -95,8 +76,6 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
       : tender.submissionEmails,
     analysisExtractionStatus: tender.analysisExtractionStatus,
     analysisSource: rawSource,
-    selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length,
-    selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length,
   });
 
   const analysisSource = analysisSourceSummary(rawSource);
@@ -117,6 +96,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   const sectionSev = ready ? "good" as const : fallbackOnly ? "warning" as const : "poor" as const;
   const sectionClass = `${severityBorderClass(sectionSev)} ${severityBgClass(sectionSev)}`;
   const headerTone = severityTextClass(sectionSev);
+  const analysisSubScores = Object.entries(quality.subScores).filter(([key]) => key !== "matchingReadiness") as [string, number][];
 
   return (
     <section id="analysis-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionClass}`}>
@@ -124,13 +104,14 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         <div>
           <p className={`text-xs font-semibold uppercase tracking-wide ${headerTone}`}>Analysis quality</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">{ready ? "Tender analysis appears usable" : "Tender analysis needs review"}</h2>
-          <p className="mt-1 text-sm text-slate-600">Checks whether extracted requirements include mandatory criteria, scoring methodology, submission rules, file naming/order, source references, and whether analysis used AI or fallback rules.</p>
+          <p className="mt-1 text-sm text-slate-600">Checks extraction, structured requirements, submission rules, Tender Details, exact file instructions, and source grounding.</p>
+          <p className="mt-1 text-xs text-slate-500">Evidence matching is evaluated separately in Stage 3; this panel does not publish a competing matching score.</p>
         </div>
       </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-xl bg-white p-3">
-          <p className="text-xs text-slate-500">Score</p>
+          <p className="text-xs text-slate-500">Analysis score</p>
           <p className="text-xl font-bold text-slate-900">{quality.score}/100</p>
           <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${severityClass[quality.severity] ?? "bg-slate-100 text-slate-600"}`}>{fallbackOnly && quality.severity === "GOOD" ? "REVIEW" : quality.severity}</span>
           {quality.isRegexFallback && <p className="mt-0.5 text-[10px] text-amber-700 leading-tight">Score capped — regex fallback</p>}
@@ -141,14 +122,13 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Extracted text</p><p className="text-xl font-bold text-slate-900">{extractedChars.toLocaleString()}</p></div>
       </div>
 
-      <div className="mt-3 grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
-        {(Object.entries(quality.subScores) as [string, number][]).map(([key, val]) => {
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        {analysisSubScores.map(([key, val]) => {
           const label: Record<string, string> = {
             extractionQuality: "Extraction",
             requirementExtraction: "Requirements",
             metadataQuality: "Tender Details",
             submissionPlanQuality: "Submission",
-            matchingReadiness: "Matching",
             sourceGrounding: "Grounding",
           };
           const color = severityTextClass(fallbackOnly ? "warning" : scoreToSeverity(val, { good: 70, warn: 40 }));
@@ -205,8 +185,11 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
 
       {quality.metadataIssues.length > 0 && (
         <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-xs font-semibold text-amber-800 mb-1">Tender Details issues ({quality.metadataIssues.length})</p>
-          <ul className="list-disc space-y-0.5 pl-4 text-xs text-amber-700">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-amber-800">Tender Details issues ({quality.metadataIssues.length})</p>
+            <Link href={`/dashboard/tenders/${tenderId}#tender-edit-form`} className="text-xs font-semibold text-amber-800 underline">Review Tender Details</Link>
+          </div>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-amber-700">
             {quality.metadataIssues.map((issue) => <li key={issue}>{issue}</li>)}
           </ul>
         </div>
