@@ -25,8 +25,9 @@ describe("latest preview — extraction truth has one meaning", () => {
 describe("latest preview — Engine outcome is canonical and provenance-aware", () => {
   it("runtime reviewed-vault counts use durable source provenance", () => {
     const source = read("lib/company-ingestion-readiness.ts");
-    assert.match(source, /isDurablyReviewed/);
-    assert.match(source, /durableReview: isDurablyReviewed\(record\)/);
+    assert.match(source, /function hasRuntimeReviewAuthorityShape/);
+    assert.match(source, /Object\.prototype\.hasOwnProperty\.call\(record, "sourceDocumentId"\)/);
+    assert.match(source, /durableReview: hasRuntimeReviewAuthorityShape\(record\) \? isDurablyReviewed\(record\) : undefined/);
     assert.match(source, /source-verified reviewed experts/);
     assert.match(source, /source-verified reviewed projects/);
   });
