@@ -5,28 +5,28 @@
 // The current step is the one visible primary action. The complete ten-step
 // workflow remains available inside a closed disclosure so it does not compete
 // with the canonical Next Required Action or make the tender page unnecessarily
-// long. Every link still opens closed workflow disclosures before scrolling.
+// long. Every link opens closed workflow disclosures before scrolling.
 
 import { useCallback } from "react";
 import { openParentDetailsAndScroll } from "@/lib/ui/tender-workflow-sync";
-import {
-  TENDER_WORKFLOW_STAGE_LABEL_LIST as STEP_LABELS,
-  TENDER_WORKFLOW_STAGE_PRIMARY_TARGETS as STEP_TARGETS,
-} from "@/lib/tender-workflow-stages";
+import { TENDER_WORKFLOW_STAGES } from "@/lib/tender-workflow-stages";
 import { CheckCircleIcon, ArrowRightIcon, ChevronDownIcon } from "./icons";
 
+const STEP_LABELS = TENDER_WORKFLOW_STAGES.map((stage) => stage.label);
+
 export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
-  const handleClick = useCallback((event: React.MouseEvent<HTMLAnchorElement>, selector: string) => {
+  const handleClick = useCallback((event: React.MouseEvent<HTMLAnchorElement>, selectors: string[]) => {
     event.preventDefault();
-    const element = document.querySelector(selector);
+    const element = selectors
+      .map((selector) => document.querySelector(selector))
+      .find((candidate): candidate is Element => candidate !== null);
     if (!element) return;
     openParentDetailsAndScroll(element);
   }, []);
 
   const complete = currentIndex >= STEP_LABELS.length;
   const safeIndex = complete ? STEP_LABELS.length - 1 : Math.max(0, currentIndex);
-  const currentLabel = STEP_LABELS[safeIndex];
-  const currentTarget = STEP_TARGETS[safeIndex];
+  const currentStage = TENDER_WORKFLOW_STAGES[safeIndex];
 
   return (
     <div className="mt-4 space-y-3">
@@ -36,12 +36,12 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
         </p>
       ) : (
         <a
-          href={currentTarget}
-          onClick={(event) => handleClick(event, currentTarget)}
+          href={currentStage.targets[0]}
+          onClick={(event) => handleClick(event, currentStage.targets)}
           className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
-          title={`Go to ${currentLabel}`}
+          title={`Go to ${currentStage.label}`}
         >
-          <ArrowRightIcon /> Open {currentLabel}
+          <ArrowRightIcon /> Open {currentStage.label}
         </a>
       )}
 
@@ -53,7 +53,7 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
           </span>
         </summary>
         <nav className="flex flex-wrap gap-1.5 border-t border-slate-200 p-3" aria-label="Full tender workflow">
-          {STEP_LABELS.map((label, index) => {
+          {TENDER_WORKFLOW_STAGES.map((stage, index) => {
             const done = index < currentIndex;
             const active = index === currentIndex;
             const baseClass = done
@@ -64,17 +64,17 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
 
             return (
               <a
-                key={label}
-                href={STEP_TARGETS[index]}
-                onClick={(event) => handleClick(event, STEP_TARGETS[index])}
+                key={stage.stage}
+                href={stage.targets[0]}
+                onClick={(event) => handleClick(event, stage.targets)}
                 aria-current={active ? "step" : undefined}
                 className={`rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors ${baseClass}`}
-                title={`Go to ${label}`}
+                title={`Go to ${stage.label}`}
               >
                 <span aria-hidden="true" className="inline-flex items-center">
                   {done ? <CheckCircleIcon className="mr-0.5" /> : active ? <ArrowRightIcon className="mr-0.5" /> : null}
                 </span>
-                {label}
+                {stage.label}
               </a>
             );
           })}
