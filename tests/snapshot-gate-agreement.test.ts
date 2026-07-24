@@ -86,6 +86,9 @@ describe("Snapshot ↔ Gate decision-function parity", () => {
         title: "Valid tender title",
         reference: null,
         clientName: "Valid Client",
+        procuringEntityName: null,
+        clientContactName: null,
+        clientContactEmail: null,
         deadline: new Date("2027-01-01T00:00:00Z"),
         currency: "ETB",
         country: "Ethiopia",
@@ -102,21 +105,28 @@ describe("Snapshot ↔ Gate decision-function parity", () => {
     assert.equal(canonical.hasExportBlocker, true);
 
     const gate = evaluateGenerationReadiness({
-      activeFiles: [],
+      purpose: "export",
+      tenderExistsAndOwned: true,
+      activeFileCount: 1,
+      extractionFiles: [{ fileId: "file-1", corrupted: false, weak: false, hasOverride: false }],
       analysisState: "AI_SUCCEEDED",
-      canonicalAnalysisJobId: "job-1",
-      contentHashMatch: true,
-      metadataHasGenerationBlocker: canonical.hasGenerationBlocker,
-      metadataHasExportBlocker: canonical.hasExportBlocker,
-      mandatoryRequirements: [],
+      canonicalJobId: "job-1",
+      latestJobHash: "hash-1",
+      currentContentHash: "hash-1",
+      fallbackApprovalBound: false,
+      currentHashChunks: [{ status: "SUCCEEDED", totalChunks: 1 }],
+      requirementCount: 0,
+      requirements: [],
+      criticalMetadataOk: !canonical.hasExportBlocker,
+      recordedBuildPlanState: "VALID",
+      exportReadyDocumentCount: 1,
       hasCurrentConfirmedBuildPlan: true,
       confirmedBuildPlanItemsValid: true,
-      generationEligibleVaultEvidence: true,
-      finalHumanReviewedVaultEvidence: false,
-      generatedDocuments: [],
-      finalExportAllowed: false,
+      confirmedBuildPlanItemBlockers: [],
+      confirmedPlanDocumentsOk: true,
+      confirmedPlanDocumentBlockers: [],
     });
     assert.equal(gate.ok, false);
-    assert.ok(gate.blockers.some((blocker) => blocker.code === "TENDER_FACTS_INVALID"));
+    assert.equal(gate.blockerCode, "TENDER_FACTS_INVALID");
   });
 });
