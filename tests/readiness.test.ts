@@ -164,6 +164,6 @@ test("tender generation readiness blocks when only unreviewed selected evidence 
   }), "user-1", "tender-1");
   assert.ok(readiness);
   assert.equal(readiness.ready, false);
-  assert.ok(readiness.blockers.some((blocker) => blocker.code === "NO_REVIEWED_EXPERT_MATCH"));
-  assert.ok(readiness.blockers.some((blocker) => blocker.code === "NO_REVIEWED_PROJECT_MATCH"));
+  assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_EXPERTS_UNREVIEWED"));
+  assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_PROJECTS_UNREVIEWED"));
 });
