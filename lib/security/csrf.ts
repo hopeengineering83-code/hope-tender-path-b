@@ -17,6 +17,13 @@ export type CsrfPolicyInput = {
   csrfStrictDev?: string | null;
 };
 
+export type RoutedOriginInput = {
+  requestUrlOrigin: string;
+  host?: string | null;
+  forwardedHost?: string | null;
+  forwardedProto?: string | null;
+};
+
 function flag(value?: string | null): boolean {
   return ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
 }
@@ -25,6 +32,49 @@ function normalizeMode(value?: string | null): "off" | "origin" {
   const mode = (value ?? "").trim().toLowerCase();
   if (mode === "off") return "off";
   return "origin";
+}
+
+function firstForwardedValue(value?: string | null): string | null {
+  const first = value?.split(",", 1)[0]?.trim();
+  return first || null;
+}
+
+/**
+ * Derive the origin that the request actually reached.
+ *
+ * NextRequest.nextUrl may normalize a loopback or reverse-proxy hostname
+ * differently from the browser-visible Host header (for example localhost vs
+ * 127.0.0.1). CSRF must compare against the routed host/protocol, not that
+ * normalized internal URL. The client-supplied Origin is never used to build
+ * this value.
+ */
+export function deriveRoutedRequestOrigin(input: RoutedOriginInput): string {
+  const fallback = (() => {
+    try {
+      return new URL(input.requestUrlOrigin).origin;
+    } catch {
+      return input.requestUrlOrigin;
+    }
+  })();
+
+  const routedHost = firstForwardedValue(input.forwardedHost) ?? firstForwardedValue(input.host);
+  if (!routedHost || /[\\/\s\u0000-\u001f\u007f]/.test(routedHost)) return fallback;
+
+  const fallbackProtocol = (() => {
+    try {
+      return new URL(fallback).protocol.slice(0, -1).toLowerCase();
+    } catch {
+      return "https";
+    }
+  })();
+  const routedProtocol = (firstForwardedValue(input.forwardedProto) ?? fallbackProtocol).toLowerCase();
+  if (routedProtocol !== "http" && routedProtocol !== "https") return fallback;
+
+  try {
+    return new URL(`${routedProtocol}://${routedHost}`).origin;
+  } catch {
+    return fallback;
+  }
 }
 
 export function shouldEnforceCsrf(input: Pick<CsrfPolicyInput, "method" | "pathname" | "nodeEnv" | "csrfMode" | "csrfStrictDev">): boolean {
