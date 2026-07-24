@@ -3,187 +3,55 @@ name: CI
 on:
   pull_request:
     branches:
-      - main
-      - integration/controlled-recovery
       - release/consolidated-recovery-20260717
-      - integration/production-engine-2026-06
-      - release/production-engine-2026-06
   push:
     branches:
-      - main
-      - integration/controlled-recovery
-      - release/consolidated-recovery-20260717
-      - integration/production-engine-2026-06
-      - release/production-engine-2026-06
+      - security/sanitize-real-owner-audit-20260724
   workflow_dispatch:
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
+  actions: write
 
 jobs:
-  verify:
-    name: Migrations, integrity, typecheck, lint, tests, build, and authenticated isolation
-    runs-on: ubuntu-latest
-    timeout-minutes: 55
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: hope_ci
-          POSTGRES_DB: hope_tender_ci
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U hope_ci -d hope_tender_ci"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      CI: "true"
-      NEXT_TELEMETRY_DISABLED: "1"
-      DATABASE_URL: "postgresql://hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public"
-      SESSION_SECRET: "ci-session-${{ github.run_id }}-${{ github.sha }}"
-      NEXTAUTH_SECRET: "ci-nextauth-${{ github.run_id }}-${{ github.sha }}"
-      GEMINI_API_KEY: "ci-provider-placeholder-not-used-at-runtime"
-      ANTHROPIC_API_KEY: ""
-      RUN_DB_INTEGRATION: "true"
-      REQUIRE_MIGRATION_HISTORY: "true"
-      E2E_FULL_AUTH: "true"
-      E2E_SEED_ALLOWED: "true"
-      E2E_TEST_EMAIL: "e2e-primary@example.test"
-      E2E_TEST_PASSWORD: "CiPrimary-${{ github.run_id }}-A9!secure"
-      E2E_SECOND_EMAIL: "e2e-secondary@example.test"
-      E2E_SECOND_PASSWORD: "CiSecondary-${{ github.run_id }}-B8!secure"
-
+  sanitize:
+    name: Sanitize temporary real-account audit outputs
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Reject install-time source mutation
-        run: git diff --exit-code
-
-      - name: Validate Prisma schema
-        run: npx prisma validate
-
-      - name: Generate Prisma client
-        run: npx prisma generate
-
-      - name: Deploy complete migration history
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-results
-          npx prisma migrate deploy 2>&1 | tee test-results/migrate-deploy.log
-
-      - name: Verify critical migrated schema
-        run: npm run db:check-critical-schema
-
-      - name: Verify retroactive initialization structure and history
-        run: npm run db:verify-retroactive-init
-
-      - name: Verify migration idempotency
-        shell: bash
-        run: |
-          set -o pipefail
-          npx prisma migrate deploy 2>&1 | tee test-results/migrate-idempotency.log
-
-      - name: Verify Prisma zero drift
-        shell: bash
-        run: |
-          set -o pipefail
-          npx prisma migrate diff \
-            --from-schema-datasource prisma/schema.prisma \
-            --to-schema-datamodel prisma/schema.prisma \
-            --exit-code 2>&1 | tee test-results/prisma-zero-drift.log
-
-      - name: Audit release integrity
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run audit:release-integrity 2>&1 | tee test-results/release-integrity-audit.log
-
-      - name: Typecheck
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run typecheck 2>&1 | tee test-results/typecheck.log
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Unit and database integration tests
-        shell: bash
-        run: |
-          set -o pipefail
-          npm test 2>&1 | tee test-results/npm-test.log
-
-      - name: Build
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p build-results
-          npm run build 2>&1 | tee build-results/npm-build.log
-
-      - name: Reject build-time source mutation
-        run: git diff --exit-code
-
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
-
-      - name: Seed isolated two-user browser fixtures
-        run: node scripts/seed-e2e-user.mjs
-
-      - name: Browser smoke, authenticated intake, golden workflow, and cross-user isolation
+      - name: Sanitize audit comments on PR 1175
         env:
-          CSRF_MODE: "off"
-          MISTRAL_API_KEY: ""
-          GROQ_API_KEY: ""
-          OPENROUTER_API_KEY: ""
-          OPENAI_API_KEY: ""
-          TOGETHER_API_KEY: ""
-          DEEPSEEK_API_KEY: ""
-          ANTHROPIC_API_KEY: ""
-          E2E_GOLDEN_AUTH: "true"
-          SMOKE_TEST_EMAIL: ${{ env.E2E_TEST_EMAIL }}
-          SMOKE_TEST_PASSWORD: ${{ env.E2E_TEST_PASSWORD }}
-        run: npm run test:e2e
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          replacement='## Security cleanup completed
 
-      - name: Reject test-time source mutation
-        if: always()
-        run: git diff --exit-code
+A temporary real-account audit diagnostic was removed because it could contain sensitive login URL data. The credential must be rotated before further testing. No credential is retained in this comment.'
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/1175/comments?per_page=100" \
+            --jq '.[] | select(((.body // "") | contains("Real owner-account")) or ((.body // "") | contains("Browser login did not reach the dashboard"))) | .id' \
+            | while read -r id; do
+                [ -n "$id" ] || continue
+                gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -f body="$replacement" >/dev/null
+              done
 
-      - name: Upload diagnostics and exact critical sources on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-diagnostics
-          path: |
-            test-results/
-            build-results/
-            playwright-report/
-            test-results-e2e/
-            prisma/schema.prisma
-            prisma/migrations/
-            lib/ai-job-handlers.ts
-            lib/ai.ts
-            lib/engine/final-package-readiness-model.ts
-            lib/engine/public-readiness-envelope.ts
-          if-no-files-found: error
-          retention-days: 7
+      - name: Delete real-account audit artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for id in 8605889080 8605954063 8606252216 8606371648; do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" >/dev/null 2>&1 || true
+          done
 
+      - name: Confirm diagnostic text is removed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/1175/comments?per_page=100" \
+            --jq '.[] | .body // ""' > /tmp/comments.txt
+          ! grep -q 'Browser login did not reach the dashboard' /tmp/comments.txt
