@@ -276,7 +276,13 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                   </button>
                   {isOpen && (
                     <div className="border-t border-slate-100 overflow-hidden">
-                      <table className="w-full text-sm">
+                      {/* overflow-x-auto so the evidence table scrolls
+                          horizontally on narrow viewports (mobile / tablet)
+                          instead of pushing the page width past the viewport
+                          — fixed the 131px mobile overflow on
+                          /dashboard/compliance found by the live audit. */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
                         <thead className="bg-slate-50 text-left text-xs text-slate-500">
                           <tr>
                             <th className="px-5 py-3 font-medium">Evidence Type</th>
@@ -296,6 +302,7 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -304,7 +311,11 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
           ) : (
             // Fallback: show flat table when tenders have no complianceMatrix but allMatrix has data
             <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
-              <table className="w-full text-sm">
+              {/* overflow-x-auto so the fallback evidence table scrolls
+                  horizontally on narrow viewports — same fix as the
+                  per-tender matrix table above. */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-left text-xs text-slate-500">
                   <tr>
                     <th className="px-5 py-3 font-medium">Tender</th>
@@ -326,6 +337,7 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </div>

@@ -104,8 +104,9 @@ function PaginationControls(props: {
           type="button"
           onClick={() => props.onPage(props.page - 1)}
           disabled={props.page <= 1}
-          className="rounded-lg border px-3 py-1.5 disabled:opacity-50"
+          className="rounded-lg border px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label="Previous page"
+          title={props.page <= 1 ? "You are on the first page." : "Go to the previous page."}
         >
           Previous
         </button>
@@ -113,8 +114,9 @@ function PaginationControls(props: {
           type="button"
           onClick={() => props.onPage(props.page + 1)}
           disabled={props.page >= props.totalPages}
-          className="rounded-lg border px-3 py-1.5 disabled:opacity-50"
+          className="rounded-lg border px-3 py-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label="Next page"
+          title={props.page >= props.totalPages ? "You are on the last page." : "Go to the next page."}
         >
           Next
         </button>
@@ -307,9 +309,22 @@ export default function KnowledgeReviewPage() {
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><h2 className="text-lg font-semibold text-slate-900">Experts</h2><p className="text-xs text-slate-500">Bounded summaries; details collapsed by default.</p></div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
-            <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* When eligibleExperts is empty, the disabled controls are
+                silently frozen — the user has no idea WHY they can't act.
+                The inline hint explains the state and points to the
+                recovery action (upload source files or run Vault Repair),
+                eliminating the frozen/silent pattern found by the live
+                audit on /dashboard/company/review. */}
+            {eligibleExperts.length === 0 && (
+              <span className="text-[11px] font-medium text-amber-700">
+                {expertItems.length === 0
+                  ? "No expert drafts yet — upload Expert CV / Portfolio sources in the Company Vault, then run Vault Repair."
+                  : "All visible experts are already reviewed or blocked by missing source evidence."}
+              </span>
+            )}
+            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed" title={eligibleExperts.length === 0 ? "No eligible experts on this page to select." : "Select every eligible expert on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed" title={selectedExperts.size === 0 ? "Select at least one expert to review." : "Review the selected experts with durable source evidence."}>
               {batchingExperts ? "Reviewing…" : `Review selected (${selectedExperts.size})`}
             </button>
           </div>
@@ -353,9 +368,18 @@ export default function KnowledgeReviewPage() {
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><h2 className="text-lg font-semibold text-slate-900">Projects</h2><p className="text-xs text-slate-500">Bounded summaries; details collapsed by default.</p></div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
-            <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Same frozen/silent hint as the Experts section above —
+                explains why the controls are disabled and what to do. */}
+            {eligibleProjects.length === 0 && (
+              <span className="text-[11px] font-medium text-amber-700">
+                {projectItems.length === 0
+                  ? "No project drafts yet — upload Project Reference / Contract / Portfolio sources in the Company Vault, then run Vault Repair."
+                  : "All visible projects are already reviewed or blocked by missing source evidence."}
+              </span>
+            )}
+            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed" title={eligibleProjects.length === 0 ? "No eligible projects on this page to select." : "Select every eligible project on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed" title={selectedProjects.size === 0 ? "Select at least one project to review." : "Review the selected projects with durable source evidence."}>
               {batchingProjects ? "Reviewing…" : `Review selected (${selectedProjects.size})`}
             </button>
           </div>
