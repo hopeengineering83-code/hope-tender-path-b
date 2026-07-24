@@ -1,0 +1,125 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import JSZip from "jszip";
+import { Document, Packer, Paragraph, TextRun } from "docx";
+import { PDFDocument, StandardFonts } from "pdf-lib";
+import { finalizeApprovedDocumentsZip } from "../lib/engine/workflow/zip-finalizer";
+import { inspectActualFileBytes } from "../lib/engine/persisted-byte-integrity";
+import { computeFileHash } from "../lib/engine/generated-file-integrity";
+
+async function buildInspectableDocx(): Promise<Buffer> {
+  const document = new Document({
+    sections: [{
+      children: [
+        new Paragraph({
+          children: [new TextRun({ text: "Tender Technical Proposal — binary inspection", bold: true })],
+        }),
+        new Paragraph("This document is generated as a valid Office Open XML package."),
+      ],
+    }],
+  });
+  return Buffer.from(await Packer.toBuffer(document));
+}
+
+async function buildInspectablePdf(): Promise<Buffer> {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([595, 842]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  page.drawText("Tender Technical Proposal — PDF binary inspection", {
+    x: 48,
+    y: 790,
+    size: 14,
+    font,
+  });
+  page.drawText("This PDF is structurally opened and inspected before ZIP acceptance.", {
+    x: 48,
+    y: 760,
+    size: 10,
+    font,
+  });
+  return Buffer.from(await pdf.save());
+}
+
+function readyDocument(args: {
+  id: string;
+  filename: string;
+  format: "DOCX" | "PDF";
+  bytes: Buffer;
+  order: number;
+}) {
+  const claimedMimeType = args.format === "PDF"
+    ? "application/pdf"
+    : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  const integrity = inspectActualFileBytes({
+    bytes: args.bytes,
+    filename: args.filename,
+    claimedMimeType,
+  });
+  assert.equal(integrity.integrityStatus, "VERIFIED");
+
+  return {
+    id: args.id,
+    name: args.filename,
+    exactFileName: args.filename,
+    exactOrder: args.order,
+    documentType: "TECHNICAL_PROPOSAL",
+    format: args.format,
+    generationStatus: "GENERATED",
+    validationStatus: "VALIDATED",
+    reviewStatus: "READY_FOR_EXPORT",
+    fileContent: args.bytes.toString("base64"),
+    storagePath: null,
+    ...integrity,
+  } as any;
+}
+
+describe("generated Word/PDF/ZIP binary inspection", () => {
+  it("opens valid Word and PDF files, then verifies every final ZIP entry and manifest digest", async () => {
+    const docxBytes = await buildInspectableDocx();
+    const pdfBytes = await buildInspectablePdf();
+
+    // Open and inspect the actual DOCX package, not only its PK signature.
+    const officePackage = await JSZip.loadAsync(docxBytes);
+    assert.ok(officePackage.file("[Content_Types].xml"));
+    assert.ok(officePackage.file("word/document.xml"));
+    const documentXml = await officePackage.file("word/document.xml")!.async("string");
+    assert.match(documentXml, /Tender Technical Proposal/);
+    assert.match(documentXml, /Office Open XML package/);
+
+    // Open and inspect the actual PDF object graph.
+    const openedPdf = await PDFDocument.load(pdfBytes, { updateMetadata: false });
+    assert.equal(openedPdf.getPageCount(), 1);
+    const [page] = openedPdf.getPages();
+    assert.ok(page.getWidth() > 500 && page.getHeight() > 800);
+
+    const documents = [
+      readyDocument({ id: "docx-1", filename: "Technical-Proposal.docx", format: "DOCX", bytes: docxBytes, order: 1 }),
+      readyDocument({ id: "pdf-1", filename: "Technical-Proposal.pdf", format: "PDF", bytes: pdfBytes, order: 2 }),
+    ];
+    const finalized = await finalizeApprovedDocumentsZip(documents);
+    assert.equal(finalized.ok, true, JSON.stringify(finalized));
+    assert.deepEqual(finalized.fileList, ["Technical-Proposal.docx", "Technical-Proposal.pdf"]);
+    assert.equal(finalized.manifest?.length, 2);
+
+    const reopenedZip = await JSZip.loadAsync(finalized.buffer!);
+    const actualNames = Object.keys(reopenedZip.files).filter((name) => !reopenedZip.files[name].dir).sort();
+    assert.deepEqual(actualNames, [...finalized.fileList!].sort());
+
+    const sourceBytes = new Map([
+      ["Technical-Proposal.docx", docxBytes],
+      ["Technical-Proposal.pdf", pdfBytes],
+    ]);
+    for (const item of finalized.manifest ?? []) {
+      const expected = sourceBytes.get(item.filename);
+      assert.ok(expected, `manifest contains unexpected file ${item.filename}`);
+      const entry = reopenedZip.file(item.filename);
+      assert.ok(entry, `ZIP entry ${item.filename} must exist`);
+      const actual = await entry!.async("nodebuffer");
+      assert.deepEqual(actual, expected);
+      assert.equal(item.byteSize, actual.length);
+      assert.equal(item.sha256, computeFileHash(actual));
+      assert.equal(item.valid, true);
+      assert.equal(item.required, true);
+    }
+  });
+});
