@@ -14,16 +14,16 @@ import {
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
   return JSON.stringify(
-    String(value || "").split(",").map((v) => v.trim()).filter(Boolean)
+    String(value || "").split(",").map((item) => item.trim()).filter(Boolean),
   );
 }
 
-function safeParseArr(v: unknown): string[] {
-  try { return JSON.parse(v as string) as string[]; } catch { return []; }
+function safeParseArr(value: unknown): string[] {
+  try { return JSON.parse(value as string) as string[]; } catch { return []; }
 }
 
-function normalizeProject(p: Record<string, unknown>) {
-  return { ...p, serviceAreas: safeParseArr(p.serviceAreas) };
+function normalizeProject(project: Record<string, unknown>) {
+  return { ...project, serviceAreas: safeParseArr(project.serviceAreas) };
 }
 
 export async function GET(
@@ -32,7 +32,7 @@ export async function GET(
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady;
 
   const { id } = await params;
@@ -49,11 +49,9 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  // Company knowledge mutations require ADMIN or PROPOSAL_MANAGER — REVIEWER
-  // and VIEWER are read-only roles (per lib/security/rbac.ts COMPANY_KNOWLEDGE_MGMT).
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady;
 
   const { id } = await params;
@@ -66,6 +64,7 @@ export async function PUT(
   try {
     const body = await req.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+
     const nextValues = {
       name: String(body.name ?? existing.name),
       clientName: body.clientName !== undefined ? (String(body.clientName) || null) : existing.clientName,
@@ -78,50 +77,61 @@ export async function PUT(
         : existing.contractValue,
       currency: body.currency !== undefined ? (String(body.currency) || null) : existing.currency,
     };
-    // A REVIEWED record whose reviewed-evidence fields change is no longer
-    // the record that was reviewed: its stored provenance hashes describe the
-    // old content, so the review must be invalidated (demoted to draft) or
-    // matching/generation would keep consuming stale evidence as reviewed.
-    // Non-evidence fields (summary) edit freely.
-    const reviewInvalidated =
-      existing.trustLevel === "REVIEWED" &&
+
+    const hasDurableTrust = existing.trustLevel === "REVIEWED" || existing.trustLevel === "SOURCE_VERIFIED";
+    const provenanceInvalidated = hasDurableTrust &&
       !reviewEvidenceEquals(projectReviewFields(existing), projectReviewFields(nextValues));
+
     const updated = await prisma.project.update({
       where: { id },
       data: {
         ...nextValues,
-        ...(reviewInvalidated ? { trustLevel: "AI_DRAFT" } : {}),
+        ...(provenanceInvalidated
+          ? {
+              trustLevel: "AI_DRAFT",
+              reviewedBy: null,
+              reviewedAt: null,
+              reviewNotes: null,
+            }
+          : {}),
         updatedAt: new Date(),
       },
     });
-    if (reviewInvalidated) {
+
+    if (provenanceInvalidated) {
+      const invalidatedTrust = existing.trustLevel === "REVIEWED" ? "human review" : "machine source verification";
       await logAction({
         userId: actor.id,
-        action: "PROJECT_REVIEW",
+        action: "PROJECT_TRUST_INVALIDATED",
         entityType: "Project",
         entityId: id,
-        description: `Project "${existing.name}" review invalidated — reviewed evidence fields were edited; record demoted to draft pending re-review`,
-        metadata: { projectId: id, action: "review-invalidated-by-edit" },
+        description: "Project durable trust invalidated because bound evidence fields changed.",
+        metadata: {
+          recordRef: publicVaultIdentifier(id),
+          invalidatedTrust,
+          previousTrustLevel: existing.trustLevel,
+          nextTrustLevel: "AI_DRAFT",
+        },
       });
     }
+
     return NextResponse.json(normalizeProject(updated as unknown as Record<string, unknown>));
   } catch (error) {
-    logger.error("Request failed", { detail: error });
+    logger.error("project update failed", {
+      projectId: id,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
     return NextResponse.json({ error: "Failed to update project" }, { status: 500 });
   }
 }
 
-/**
- * PATCH — review a project record.
- * Body: { action: "approve" | "reject", notes?: string }
- */
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   const requestId = extractRequestId(req);
   await prismaReady;
@@ -156,6 +166,7 @@ export async function PATCH(
           contentSha256: true,
           contentByteLength: true,
           integrityStatus: true,
+          metadata: true,
         },
       },
     },
@@ -189,13 +200,21 @@ export async function PATCH(
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.project.updateMany({
         where: { id, companyId: company.id, deletedAt: null },
-        data: {
-          trustLevel: isApprove ? "REVIEWED" : "AI_DRAFT",
-          reviewedBy: actor.id,
-          reviewedAt,
-          reviewNotes: durableProvenance?.serialized ?? (body.notes?.trim() || null),
-          updatedAt: new Date(),
-        },
+        data: isApprove
+          ? {
+              trustLevel: "REVIEWED",
+              reviewedBy: actor.id,
+              reviewedAt,
+              reviewNotes: durableProvenance!.serialized,
+              updatedAt: new Date(),
+            }
+          : {
+              trustLevel: "AI_DRAFT",
+              reviewedBy: null,
+              reviewedAt: null,
+              reviewNotes: body.notes?.trim() || null,
+              updatedAt: new Date(),
+            },
       });
       if (result.count !== 1) throw new Error("CONCURRENT_UPDATE");
 
@@ -206,13 +225,13 @@ export async function PATCH(
           entityType: "Project",
           entityId: id,
           description: isApprove
-            ? "Project record reviewed with durable source evidence."
-            : "Project record returned to draft review state.",
+            ? "Project record was human-reviewed with durable source evidence."
+            : "Project record was returned to draft review state.",
           metadata: JSON.stringify({
             requestId,
             recordRef: publicVaultIdentifier(id),
             action: body.action,
-            reviewedAt: reviewedAt.toISOString(),
+            ...(isApprove ? { reviewerId: actor.id, reviewedAt: reviewedAt.toISOString() } : {}),
             ...(durableProvenance ? {
               sourceContentHash: durableProvenance.sourceContentHash,
               sourceByteLength: durableProvenance.sourceByteLength,
@@ -230,18 +249,21 @@ export async function PATCH(
     if (error instanceof Error && error.message === "CONCURRENT_UPDATE") {
       return NextResponse.json({ error: "Project changed during review. Retry.", code: "CONCURRENT_UPDATE", requestId }, { status: 409 });
     }
-    logger.error("project review failed", { requestId, errorClass: error instanceof Error ? error.constructor.name : "UnknownError" });
+    logger.error("project review failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
     return NextResponse.json({ error: "Project review failed. Retry with the request ID.", code: "PROJECT_REVIEW_FAILED", requestId }, { status: 500 });
   }
 }
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
   const { id } = await params;
@@ -258,8 +280,8 @@ export async function DELETE(
     action: "PROJECT_DELETE",
     entityType: "Project",
     entityId: id,
-    description: `Project "${existing.name}" soft-deleted`,
-    metadata: { projectId: id, name: existing.name, companyId: company.id },
+    description: "Project record soft-deleted.",
+    metadata: { recordRef: publicVaultIdentifier(id), companyId: company.id },
   });
 
   return NextResponse.json({ success: true });
