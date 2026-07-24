@@ -3,19 +3,27 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildReleaseSnapshotEligibility } from "../lib/engine/release-snapshot-eligibility";
 
+const clear = {
+  extractionBlocker: null,
+  analysisBlocker: null,
+  metadataGenerationBlocker: null,
+  metadataFinalBlocker: null,
+  requirementsBlocker: null,
+  buildPlanGateBlocker: null,
+  matchingVaultBlocker: null,
+  finalApprovalVaultBlocker: null,
+  mandatoryRequirementCount: 0,
+  evidenceCoveragePercent: 0,
+  allMandatoryGrounded: true,
+} as const;
+
 describe("release snapshot eligibility", () => {
-  it("keeps source-verification/human-review blocker out of draft generation but inside final output gates", () => {
+  it("allows source-verified draft work but blocks final output without durable human review", () => {
     const result = buildReleaseSnapshotEligibility({
-      extractionBlocker: null,
-      analysisBlocker: null,
-      metadataGenerationBlocker: null,
-      metadataFinalBlocker: null,
-      requirementsBlocker: null,
-      buildPlanGateBlocker: null,
-      vaultBlocker: "Final approval requires durable human review.",
+      ...clear,
+      finalApprovalVaultBlocker: "Final approval requires durable human review.",
       mandatoryRequirementCount: 1,
       evidenceCoveragePercent: 100,
-      allMandatoryGrounded: true,
     });
 
     assert.equal(result.generationEligible, true);
@@ -26,15 +34,27 @@ describe("release snapshot eligibility", () => {
     assert.ok(result.finalZipBlockers.includes("Final approval requires durable human review."));
   });
 
+  it("blocks every downstream tier when matching has no durable human or source-verified evidence", () => {
+    const result = buildReleaseSnapshotEligibility({
+      ...clear,
+      matchingVaultBlocker: "No source-verified or human-reviewed evidence is selected.",
+    });
+    assert.equal(result.generationEligible, false);
+    assert.equal(result.exportEligible, false);
+    assert.equal(result.finalZipEligible, false);
+    assert.deepEqual(result.generationBlockers, ["No source-verified or human-reviewed evidence is selected."]);
+    assert.deepEqual(result.exportBlockers, result.generationBlockers);
+    assert.deepEqual(result.finalZipBlockers, result.generationBlockers);
+  });
+
   it("blocks generation on extraction, analysis, required metadata, requirements, and Build Plan gates", () => {
     const result = buildReleaseSnapshotEligibility({
+      ...clear,
       extractionBlocker: "Extraction failed",
       analysisBlocker: "AI analysis incomplete",
       metadataGenerationBlocker: "Deadline missing",
-      metadataFinalBlocker: null,
       requirementsBlocker: "Mandatory requirement ungrounded",
       buildPlanGateBlocker: "Build Plan not confirmed",
-      vaultBlocker: null,
       mandatoryRequirementCount: 2,
       evidenceCoveragePercent: 100,
       allMandatoryGrounded: false,
@@ -53,37 +73,17 @@ describe("release snapshot eligibility", () => {
 
   it("requires evidence coverage for export", () => {
     const result = buildReleaseSnapshotEligibility({
-      extractionBlocker: null,
-      analysisBlocker: null,
-      metadataGenerationBlocker: null,
-      metadataFinalBlocker: null,
-      requirementsBlocker: null,
-      buildPlanGateBlocker: null,
-      vaultBlocker: null,
+      ...clear,
       mandatoryRequirementCount: 2,
       evidenceCoveragePercent: 25,
-      allMandatoryGrounded: true,
     });
-
     assert.equal(result.generationEligible, true);
     assert.equal(result.exportEligible, false);
     assert.ok(result.exportBlockers.some((blocker) => blocker.includes("Evidence coverage is 25%")));
   });
 
   it("does not invent evidence blockers when a tender has no mandatory requirements", () => {
-    const result = buildReleaseSnapshotEligibility({
-      extractionBlocker: null,
-      analysisBlocker: null,
-      metadataGenerationBlocker: null,
-      metadataFinalBlocker: null,
-      requirementsBlocker: null,
-      buildPlanGateBlocker: null,
-      vaultBlocker: null,
-      mandatoryRequirementCount: 0,
-      evidenceCoveragePercent: 0,
-      allMandatoryGrounded: true,
-    });
-
+    const result = buildReleaseSnapshotEligibility(clear);
     assert.equal(result.generationEligible, true);
     assert.equal(result.exportEligible, true);
     assert.equal(result.finalZipEligible, true);
@@ -106,7 +106,8 @@ describe("release snapshot durable Vault trust consumption", () => {
     assert.match(source, /isDurablyReviewed\(expert\) \|\| isDurablySourceVerified\(expert\)/);
     assert.match(source, /generationEligibleProjects = selectedProjects\.filter/);
     assert.match(source, /matchingVaultBlockers/);
-    assert.match(source, /source-verified or human-reviewed evidence/);
+    assert.match(source, /source-verified or human-reviewed expert evidence/);
+    assert.match(source, /matchingVaultBlocker,/);
   });
 
   it("requires durable human review for final approval and export", () => {
@@ -114,7 +115,7 @@ describe("release snapshot durable Vault trust consumption", () => {
     assert.match(source, /reviewedProjects = selectedProjects\.filter\(isDurablyReviewed\)/);
     assert.match(source, /finalApprovalVaultBlockers/);
     assert.match(source, /Final approval requires at least one selected expert with current durable human review/);
-    assert.match(source, /vaultBlocker:\s*finalApprovalVaultBlocker/);
+    assert.match(source, /finalApprovalVaultBlocker,/);
     assert.doesNotMatch(source, /filter\(\(expert\) => expert\.trustLevel === "REVIEWED"\)/);
     assert.doesNotMatch(source, /filter\(\(project\) => project\.trustLevel === "REVIEWED"\)/);
   });
