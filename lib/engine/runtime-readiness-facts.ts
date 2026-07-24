@@ -456,9 +456,12 @@ async function buildBuildPlanState(
     // comment. Surface the failure so readiness-fact degradation is observable
     // (e.g. a derived-plan computation failure could silently let "export
     // ready" pass when it shouldn't).
+    //
+    // Note: `tender` is declared with `const tender = ...` inside the try block
+    // above, so it is out of scope here. Use the in-scope `tenderId` parameter.
     logger.warn("[runtime-readiness-facts] derived plan computation failed — using safe fallback", {
       detail: e,
-      tenderId: tender?.id ?? null,
+      tenderId,
     });
   }
 
