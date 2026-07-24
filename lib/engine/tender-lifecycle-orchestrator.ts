@@ -21,6 +21,7 @@
 //   → EXPORT_READINESS_BLOCKED → EXPORT_READY → ZIP_READY
 
 import type { PrismaClient } from "@prisma/client";
+import { logger } from "../observability";
 import { getCurrentConfirmedBuildPlan } from "./build-plan";
 import { assessExtractionQuality } from "../extraction-quality";
 import {
@@ -525,8 +526,14 @@ export async function computeTenderLifecycle(
       if (latestSucceeded && binding.contentHash && latestSucceeded.analysisInputHash !== binding.contentHash) {
         analysisIsStale = true;
       }
-    } catch {
-      // Best-effort — if hash computation fails, don't flag as stale
+    } catch (e) {
+      // Best-effort — if hash computation fails, don't flag as stale — but
+      // surface the failure so silent stale-detection bypass is observable.
+      // Previously bare `catch {}`; a failure here could let a stale
+      // analysis pass the freshness gate.
+      logger.warn("[tender-lifecycle-orchestrator] analysis hash comparison failed — not flagging as stale", {
+        detail: e,
+      });
     }
   }
 

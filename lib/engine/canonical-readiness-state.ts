@@ -16,7 +16,7 @@
 
 import { createElement, type ReactNode } from "react";
 import type { TenderReadinessState } from "../tender-readiness-state";
-import { CheckIcon, WarningIcon, CrossIcon, RefreshIcon, AlertCircleIcon, CircleIcon } from "../../components/icons";
+import { CheckIcon, WarningIcon, CrossIcon, RefreshIcon, AlertCircleIcon, CircleIcon, DashIcon } from "../../components/icons";
 
 export type CanonicalModuleStatus =
   | "READY"
@@ -83,7 +83,7 @@ export const CANONICAL_STATUS_CONFIG: Record<CanonicalModuleStatus, CanonicalSta
   // which is exactly the kind of icon contradiction this resolver exists to
   // prevent.
   RUNNING: { label: "Running", icon: createElement(RefreshIcon, { className: "animate-spin" }), textClass: "text-blue-700", bgClass: "bg-blue-50", borderClass: "border-blue-200" },
-  NOT_APPLICABLE: { label: "N/A", icon: "—", textClass: "text-slate-400", bgClass: "bg-slate-50", borderClass: "border-slate-100" },
+  NOT_APPLICABLE: { label: "N/A", icon: createElement(DashIcon), textClass: "text-slate-400", bgClass: "bg-slate-50", borderClass: "border-slate-100" },
 };
 
 export type ComputeCanonicalStatesInput = TenderReadinessState & {

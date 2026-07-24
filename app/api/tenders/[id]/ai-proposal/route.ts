@@ -686,8 +686,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             },
           }),
         );;
-      } catch {
-        // Non-blocking — draft already returned to UI
+      } catch (e) {
+        // Non-blocking — draft already returned to UI — but log a warn so
+        // side-effect persistence failures (e.g. AiJob state update didn't
+        // land) are visible to operators. Previously bare `catch {}`.
+        logger.warn("[ai-proposal] quick-draft persistence side-effect failed — draft already returned to UI", {
+          detail: e,
+          tenderId,
+        });
       }
       } // end else (central gate passed)
     }

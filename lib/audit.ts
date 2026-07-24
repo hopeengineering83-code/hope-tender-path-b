@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { logger } from "./observability";
 
 export type AuditAction =
   | "LOGIN" | "LOGOUT"
@@ -96,7 +97,16 @@ export async function logAction(opts: {
         metadata: JSON.stringify(meta),
       },
     });
-  } catch {
-    // Never let audit logging crash the main flow
+  } catch (e) {
+    // Never let audit logging crash the main flow — but surface the failure so
+    // operators can detect audit-trail gaps (which may indicate DB outages or,
+    // worse, evidence-tampering detection gaps). Previously this was a bare
+    // `catch {}` and audit failures were invisible.
+    logger.warn("[audit] write failed — audit trail gap possible", {
+      detail: e,
+      action: opts.action,
+      entityType: opts.entityType ?? null,
+      entityId: opts.entityId ?? null,
+    });
   }
 }
