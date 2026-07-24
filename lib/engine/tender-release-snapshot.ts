@@ -233,7 +233,7 @@ export async function getTenderReleaseSnapshot(
   });
   if (!tender) return null;
 
-  const activeFiles = tender.files.filter((file) => file.deletionStatus === "ACTIVE");
+  const activeFiles = tender.files.filter((f) => f.deletionStatus === "ACTIVE");
   const fileQualities = activeFiles.map((file) => {
     const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
     const score = Math.min(file.extractionScore ?? quality.score, quality.score);
@@ -246,7 +246,7 @@ export async function getTenderReleaseSnapshot(
   });
 
   const weakFileIds = fileQualities.filter((item) => item.weak).map((item) => item.file.id);
-  const overriddenWeakFileIds = weakFileIds.length > 0
+  const overrideFileIds = weakFileIds.length > 0
     ? new Set(
         (await prisma.extractionQualityOverride.findMany({
           where: { tenderId, tenderFileId: { in: weakFileIds }, status: "ACTIVE" },
@@ -261,7 +261,7 @@ export async function getTenderReleaseSnapshot(
     fileName: item.file.originalFileName,
     corrupted: item.corrupted,
     weak: item.weak,
-    hasOverride: item.weak && overriddenWeakFileIds.has(item.file.id),
+    hasOverride: item.weak && overrideFileIds.has(item.file.id),
     score: item.score,
   }));
 
@@ -284,9 +284,10 @@ export async function getTenderReleaseSnapshot(
   const pageLedgers = activeFiles.map((file) =>
     buildPageLedger(file.totalPages, file.pageStatusJson, file.extractionScore),
   );
-  const unsafePageLedger = pageLedgers.find((ledger) => !ledger.isSafeForAnalysis);
-  if (!extractionBlocker && unsafePageLedger) {
-    extractionBlocker = unsafePageLedger.summary || "Extraction page coverage is incomplete.";
+  const hasUnsafePageLedger = pageLedgers.some((ledger) => !ledger.isSafeForAnalysis);
+  if (!extractionBlocker && hasUnsafePageLedger) {
+    const unsafeSummary = pageLedgers.find((ledger) => !ledger.isSafeForAnalysis)?.summary;
+    extractionBlocker = unsafeSummary || "Extraction page coverage is incomplete.";
   }
 
   const extraction: SnapshotExtractionState = {
@@ -357,7 +358,7 @@ export async function getTenderReleaseSnapshot(
     blocker: analysisBlocker,
   };
 
-  const activeTenderFileIds = new Set(activeFiles.map((file) => file.id));
+  const activeTenderFileIds = new Set(activeFiles.map((f) => f.id));
   const metadataResult = resolveCanonicalFieldState({
     tender: {
       id: tender.id,
@@ -375,27 +376,27 @@ export async function getTenderReleaseSnapshot(
       clientContactName: tender.clientContactName,
       clientContactEmail: tender.clientContactEmail,
       metadataContaminated: tender.metadataContaminated ?? false,
-      clientNameSourcePage: tender.clientNameSourcePage,
-      clientNameSourceQuote: tender.clientNameSourceQuote,
-      clientNameSourceFileId: tender.clientNameSourceFileId,
-      submissionMethodSourcePage: tender.submissionMethodSourcePage,
-      submissionMethodSourceQuote: tender.submissionMethodSourceQuote,
-      submissionMethodSourceFileId: tender.submissionMethodSourceFileId,
-      submissionAddressSourcePage: tender.submissionAddressSourcePage,
-      submissionAddressSourceQuote: tender.submissionAddressSourceQuote,
-      submissionAddressSourceFileId: tender.submissionAddressSourceFileId,
-      submissionEmailSourcePage: tender.submissionEmailSourcePage,
-      submissionEmailSourceQuote: tender.submissionEmailSourceQuote,
-      submissionEmailSourceFileId: tender.submissionEmailSourceFileId,
-      titleSourcePage: tender.titleSourcePage,
-      titleSourceQuote: tender.titleSourceQuote,
-      titleSourceFileId: tender.titleSourceFileId,
-      deadlineSourcePage: tender.deadlineSourcePage,
-      deadlineSourceQuote: tender.deadlineSourceQuote,
-      deadlineSourceFileId: tender.deadlineSourceFileId,
-      referenceSourcePage: tender.referenceSourcePage,
-      referenceSourceQuote: tender.referenceSourceQuote,
-      referenceSourceFileId: tender.referenceSourceFileId,
+      clientNameSourcePage: tender.clientNameSourcePage ?? null,
+      clientNameSourceQuote: tender.clientNameSourceQuote ?? null,
+      clientNameSourceFileId: tender.clientNameSourceFileId ?? null,
+      submissionMethodSourcePage: tender.submissionMethodSourcePage ?? null,
+      submissionMethodSourceQuote: tender.submissionMethodSourceQuote ?? null,
+      submissionMethodSourceFileId: tender.submissionMethodSourceFileId ?? null,
+      submissionAddressSourcePage: tender.submissionAddressSourcePage ?? null,
+      submissionAddressSourceQuote: tender.submissionAddressSourceQuote ?? null,
+      submissionAddressSourceFileId: tender.submissionAddressSourceFileId ?? null,
+      submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
+      submissionEmailSourceQuote: tender.submissionEmailSourceQuote ?? null,
+      submissionEmailSourceFileId: tender.submissionEmailSourceFileId ?? null,
+      titleSourcePage: tender.titleSourcePage ?? null,
+      titleSourceQuote: tender.titleSourceQuote ?? null,
+      titleSourceFileId: tender.titleSourceFileId ?? null,
+      deadlineSourcePage: tender.deadlineSourcePage ?? null,
+      deadlineSourceQuote: tender.deadlineSourceQuote ?? null,
+      deadlineSourceFileId: tender.deadlineSourceFileId ?? null,
+      referenceSourcePage: tender.referenceSourcePage ?? null,
+      referenceSourceQuote: tender.referenceSourceQuote ?? null,
+      referenceSourceFileId: tender.referenceSourceFileId ?? null,
       contactDetailsSourceJson: tender.contactDetailsSourceJson,
       evaluationMethodology: tender.evaluationMethodology,
       legalClientName: tender.legalClientName,
@@ -491,9 +492,9 @@ export async function getTenderReleaseSnapshot(
       requirement.sourcePageNumber > sourceFile.totalPages
     ) return false;
 
-    const sourceText = normalizeEvidenceText(sourceFile.extractedText);
+    const fileText = normalizeEvidenceText(sourceFile.extractedText);
     const normalizedQuote = normalizeEvidenceText(quote);
-    return sourceText.length > 0 && sourceText.includes(normalizedQuote);
+    return fileText.length > 0 && fileText.includes(normalizedQuote);
   }).length;
 
   const requirementsBlocker =
@@ -655,29 +656,12 @@ export async function getTenderReleaseSnapshot(
     buildPlanGateBlocker: buildPlan.gateValid
       ? null
       : buildPlan.gateBlocker ?? "A current confirmed Build Plan is required.",
-    vaultBlocker: finalApprovalVaultBlocker,
+    matchingVaultBlocker,
+    finalApprovalVaultBlocker,
     mandatoryRequirementCount: mandatory.length,
     evidenceCoveragePercent: evidence.coveragePercent,
     allMandatoryGrounded: requirements.allMandatoryGrounded,
   });
-
-  /*
-   * Matching authority is a workflow blocker before generation. The pure
-   * eligibility helper intentionally keeps final human-review blockers out of
-   * draft generation; therefore add only the matching/source-verification
-   * blocker here.
-   */
-  const generationBlockers = matchingVaultBlocker
-    ? Array.from(new Set([...eligibility.generationBlockers, matchingVaultBlocker]))
-    : eligibility.generationBlockers;
-  const exportBlockers = Array.from(new Set([
-    ...eligibility.exportBlockers,
-    ...generationBlockers,
-  ]));
-  const finalZipBlockers = Array.from(new Set([
-    ...eligibility.finalZipBlockers,
-    ...generationBlockers,
-  ]));
 
   const revisionInput = JSON.stringify({
     currentContentHash,
@@ -703,6 +687,8 @@ export async function getTenderReleaseSnapshot(
     generationEligibleProjects: generationEligibleProjects.length,
     reviewedExperts: reviewedExperts.length,
     reviewedProjects: reviewedProjects.length,
+    matchingVaultBlocker,
+    finalApprovalVaultBlocker,
   });
   const snapshotRevision = createHash("sha256")
     .update(revisionInput)
@@ -720,12 +706,12 @@ export async function getTenderReleaseSnapshot(
     evidence,
     buildPlan,
     vault,
-    generationEligible: generationBlockers.length === 0,
-    exportEligible: exportBlockers.length === 0,
-    finalZipEligible: finalZipBlockers.length === 0,
-    generationBlockers,
-    exportBlockers,
-    finalZipBlockers,
+    generationEligible: eligibility.generationEligible,
+    exportEligible: eligibility.exportEligible,
+    finalZipEligible: eligibility.finalZipEligible,
+    generationBlockers: eligibility.generationBlockers,
+    exportBlockers: eligibility.exportBlockers,
+    finalZipBlockers: eligibility.finalZipBlockers,
     pageLedgers,
     tenderClassification,
   };
