@@ -5,6 +5,22 @@ import Link from "next/link";
 
 const DB_RETRY_COUNTDOWN_S = 8;
 
+const PUBLIC_LOGIN_ERRORS: Record<string, string> = {
+  INVALID_CREDENTIALS: "The email or password is incorrect.",
+  MISSING_CREDENTIALS: "Enter both email and password.",
+  INVALID_LOGIN_REQUEST: "The sign-in request was invalid. Please try again.",
+  AUTH_SERVICE_UNAVAILABLE: "Authentication is temporarily unavailable. Please try again shortly.",
+  LOGIN_RATE_LIMITED: "Too many sign-in attempts. Wait briefly, then try again.",
+};
+
+function publicLoginMessage(code: string | undefined, status: number): string {
+  if (code && PUBLIC_LOGIN_ERRORS[code]) return PUBLIC_LOGIN_ERRORS[code];
+  if (status === 503) return PUBLIC_LOGIN_ERRORS.AUTH_SERVICE_UNAVAILABLE;
+  if (status === 429) return PUBLIC_LOGIN_ERRORS.LOGIN_RATE_LIMITED;
+  if (status === 401) return PUBLIC_LOGIN_ERRORS.INVALID_CREDENTIALS;
+  return "Sign-in failed. Please try again.";
+}
+
 export function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -15,19 +31,17 @@ export function LoginForm() {
   const [retryCountdown, setRetryCountdown] = useState(0);
   const submitRef = useRef<(() => void) | null>(null);
 
-  // Auto-retry countdown when DB wakeup is in progress.
   useEffect(() => {
     if (!isDbError || retryCountdown <= 0) return;
-    const t = setTimeout(() => {
+    const timer = setTimeout(() => {
       if (retryCountdown === 1) {
-        // Countdown reached zero — fire the retry.
         setRetryCountdown(0);
         submitRef.current?.();
       } else {
-        setRetryCountdown((c) => c - 1);
+        setRetryCountdown((current) => current - 1);
       }
     }, 1000);
-    return () => clearTimeout(t);
+    return () => clearTimeout(timer);
   }, [isDbError, retryCountdown]);
 
   async function doLogin() {
@@ -37,47 +51,57 @@ export function LoginForm() {
     setRetryCountdown(0);
 
     try {
-      const res = await fetch("/api/auth/login", {
+      const response = await fetch("/api/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
         body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
       });
 
-      const data = await res.json().catch(() => null) as { error?: string; detail?: string } | null;
+      const data = await response.json().catch(() => null) as { code?: string } | null;
 
-      if (res.ok) {
-        window.location.href = "/dashboard";
+      if (response.ok) {
+        window.location.replace("/dashboard");
         return;
       }
 
-      if (res.status === 503) {
+      if (response.status === 503) {
         setIsDbError(true);
-        setError("Database is waking up — retrying automatically in a moment.");
+        setError(publicLoginMessage(data?.code, response.status));
         setRetryCountdown(DB_RETRY_COUNTDOWN_S);
         return;
       }
 
-      const detail = data?.detail ? ` — ${data.detail}` : "";
-      setError(`${data?.error || "Login failed"}${detail}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed. Check your connection and try again.");
+      setError(publicLoginMessage(data?.code, response.status));
+    } catch {
+      setError("Sign-in failed. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
   }
 
-  // Keep submitRef in sync so the countdown closure can call the latest doLogin.
   submitRef.current = doLogin;
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     void doLogin();
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5">
+    <form
+      action="/api/auth/login"
+      method="post"
+      acceptCharset="UTF-8"
+      onSubmit={handleSubmit}
+      className="space-y-5"
+      data-auth-form="safe-post"
+    >
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-5 text-red-700">
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-5 text-red-700" role="alert">
           <p>{error}</p>
           {isDbError && retryCountdown > 0 && (
             <p className="mt-1 text-xs text-red-600">
@@ -103,8 +127,10 @@ export function LoginForm() {
           required
           className="w-full rounded-xl border px-4 py-3 outline-none"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          onChange={(event) => setEmail(event.target.value)}
           autoComplete="email"
+          autoCapitalize="none"
+          spellCheck={false}
         />
       </div>
 
@@ -118,12 +144,12 @@ export function LoginForm() {
             required
             className="w-full rounded-xl border px-4 py-3 pr-12 outline-none"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(event) => setPassword(event.target.value)}
             autoComplete="current-password"
           />
           <button
             type="button"
-            onClick={() => setShowPassword((s) => !s)}
+            onClick={() => setShowPassword((visible) => !visible)}
             className="absolute inset-y-0 right-0 flex items-center px-3 text-xs font-medium text-slate-600 hover:text-slate-900"
             aria-label={showPassword ? "Hide password" : "Show password"}
             tabIndex={-1}
