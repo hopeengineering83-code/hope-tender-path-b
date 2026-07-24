@@ -146,9 +146,16 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
       {subTab==="gaps" && (
         <>
           <div className="flex flex-wrap gap-2">
-            <select value={filterTender} onChange={e=>setFilterTender(e.target.value)} className="rounded-lg border px-3 py-1.5 text-xs bg-white">
+            {/* max-w-full + min-w-0 so the select shrinks to fit its flex
+                container on mobile instead of expanding to the width of the
+                longest tender title (which caused the 131px mobile overflow
+                on /dashboard/compliance found by the live audit). The
+                option text is truncated with max-w-[60ch] so long titles
+                don't force the dropdown list itself to be wider than the
+                viewport. */}
+            <select value={filterTender} onChange={e=>setFilterTender(e.target.value)} className="max-w-full min-w-0 rounded-lg border px-3 py-1.5 text-xs bg-white">
               <option value="all">All tenders</option>
-              {tenders.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}
+              {tenders.map(t=><option key={t.id} value={t.id} className="max-w-[60ch] truncate">{t.title}</option>)}
             </select>
             <select value={filterSeverity} onChange={e=>setFilterSeverity(e.target.value)} className="rounded-lg border px-3 py-1.5 text-xs bg-white">
               <option value="all">All severities</option>

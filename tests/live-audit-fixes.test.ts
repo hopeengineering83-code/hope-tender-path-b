@@ -47,6 +47,25 @@ describe("live audit fix — /dashboard/compliance mobile horizontal overflow", 
       `Found ${tableCount} <table> elements but only ${wrapperCount} overflow-x-auto wrappers — every table must be wrapped to prevent mobile overflow`,
     );
   });
+
+  it("constrains the tender-filter <select> width on mobile (max-w-full + min-w-0)", () => {
+    // The live audit found the actual overflow source was a <select> with
+    // long tender titles expanding to 505px on a 390px mobile viewport.
+    // The fix: max-w-full + min-w-0 on the select so flexbox can shrink it,
+    // and max-w-[60ch] + truncate on the <option> so the dropdown list
+    // doesn't expand beyond the viewport either.
+    // The <select> spans multiple lines, so use a multiline match.
+    const selectMatch = source.match(/<select[^>]*filterTender[\s\S]*?<\/select>/);
+    assert.ok(selectMatch, "Could not find the tender filter <select>");
+    assert.match(selectMatch[0], /max-w-full/);
+    assert.match(selectMatch[0], /min-w-0/);
+    // Options should have max-w and truncate
+    const optionMatch = source.match(/<option[^>]*>\{t\.title\}<\/option>/);
+    if (optionMatch) {
+      assert.match(optionMatch[0], /max-w-\[/);
+      assert.match(optionMatch[0], /truncate/);
+    }
+  });
 });
 
 describe("live audit fix — /dashboard/company/review frozen/silent disabled controls", () => {
