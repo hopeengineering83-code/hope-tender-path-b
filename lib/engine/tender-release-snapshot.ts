@@ -1,26 +1,15 @@
 /**
  * Unified server-side release snapshot.
  *
- * ONE revisioned payload consumed by ALL metadata/readiness panels.
- * No panel may independently classify title, deadline, submission method,
- * criticality, placeholders, or evidence — they must read from this snapshot
- * or its exact server-derived sub-payload.
- *
- * Architecture:
- *   getTenderReleaseSnapshot(prisma, tenderId, userId)
- *     ├─ resolveCanonicalFieldState()   → metadata field states (single truth)
- *     ├─ resolveTenderAnalysisState()   → analysis state machine
- *     ├─ assessExtractionQuality()      → per-file extraction state
- *     ├─ requirement grounding          → per-requirement source proof
- *     ├─ evidence coverage              → compliance-matrix coverage
- *     ├─ build plan                     → submission plan state
- *     └─ vault matches                  → selected/reviewed match state
- *
- * All fields that appear in the snapshot are authoritative. A panel that
- * derives its own version of any snapshot field introduces contradictions.
+ * This is the authoritative workflow/readiness payload. It deliberately keeps
+ * machine/source verification separate from genuine human review:
+ * - SOURCE_VERIFIED may support matching and draft generation.
+ * - REVIEWED satisfies final approval only when its current durable provenance
+ *   still matches the owned source bytes, extraction revision, fields, and spans.
  */
 
 import type { PrismaClient } from "@prisma/client";
+import { createHash } from "node:crypto";
 import { resolveCanonicalFieldState, type CanonicalFieldStateResult } from "./canonical-field-state";
 import { resolveTenderAnalysisState, type AnalysisState } from "./analysis-state-resolver";
 import { assessExtractionQuality } from "../extraction-quality";
@@ -28,43 +17,11 @@ import { isGroundedEvidence } from "./evidence-grounding";
 import { buildPageLedger, type PageLedger } from "./page-ledger";
 import { classifyTender, type TenderClassification } from "./tender-classification";
 import { buildReleaseSnapshotEligibility } from "./release-snapshot-eligibility";
-import { createHash } from "node:crypto";
-
-// Local type stubs for Prisma query result shapes — avoids implicit `any` when
-// @prisma/client types are not yet generated in the current environment.
-type _FileRow = {
-  id: string;
-  originalFileName: string;
-  extractedText: string | null;
-  extractionScore: number | null;
-  deletionStatus: string | null;
-  // totalPages is required to mirror the gate's sourcePage <= totalPages check.
-  totalPages: number | null;
-  // pageStatusJson + extractionScore are required for the page ledger.
-  pageStatusJson?: string | null;
-};
-type _OverrideRow = {
-  field: string;
-  fieldState: string;
-  overrideValue: string | null;
-  reason: string | null;
-  overriddenBy: string | null;
-  createdAt: Date;
-};
-type _ComplianceRow = { supportLevel: string | null };
-type _ReqRow = {
-  id: string;
-  priority: string | null;
-  requirementType: string | null;
-  sourceTenderFileId: string | null;
-  sourcePageNumber: number | null;
-  sourceExactQuote: string | null;
-  complianceMatrixRows: _ComplianceRow[];
-};
-type _ExpertMatchRow = { expert?: { trustLevel: string | null } | null };
-type _ProjectMatchRow = { project?: { trustLevel: string | null } | null };
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import {
+  isDurablyReviewed,
+  isDurablySourceVerified,
+  VAULT_REVIEW_CONSUMER_SELECT,
+} from "../vault-review-provenance";
 
 export type SnapshotExtractionFile = {
   fileId: string;
@@ -79,7 +36,6 @@ export type SnapshotExtractionState = {
   activeFileCount: number;
   files: SnapshotExtractionFile[];
   overallOk: boolean;
-  /** First blocker found, or null when extraction is clean. */
   blocker: string | null;
 };
 
@@ -89,7 +45,6 @@ export type SnapshotAnalysisState = {
   latestJobHash: string | null;
   currentContentHash: string;
   contentHashMatch: boolean;
-  /** True ONLY when state === "AI_SUCCEEDED" AND canonicalJobId is set AND hashes match. */
   eligibleForExport: boolean;
   blocker: string | null;
 };
@@ -97,7 +52,6 @@ export type SnapshotAnalysisState = {
 export type SnapshotRequirementsState = {
   total: number;
   mandatory: number;
-  /** Mandatory requirements with an active source file + page ≥ 1 + meaningful quote. */
   groundedMandatory: number;
   allMandatoryGrounded: boolean;
   blocker: string | null;
@@ -111,105 +65,65 @@ export type SnapshotEvidenceState = {
 
 export type SnapshotBuildPlanState = {
   documentCount: number;
-  /**
-   * Count-based validity: ≥1 non-SUPERSEDED GeneratedDocument exists.
-   * Retained for backward-compatible UI display (workflow-center stage 6).
-   * Does NOT agree with the generation gate — see `gateValid`.
-   */
   valid: boolean;
   blocker: string | null;
-  /**
-   * Gate-aligned strict validity. Mirrors generation-readiness-gate.ts:
-   * persisted BuildPlan row exists, contentHash matches the canonical hash,
-   * status=CONFIRMED, confirmedRevision/confirmedContentHash match, critical
-   * metadata evidence valid, items valid at runtime. Computed via the SAME
-   * helpers the gate uses (computeTenderBuildPlanHash + getCurrentConfirmedBuildPlan
-   * + validateBuildPlanItemsAtRuntime) so it can never disagree with the gate.
-   */
   gateValid: boolean;
-  /** First strict-check failure reason, or null when gateValid=true. */
   gateBlocker: string | null;
 };
 
 export type SnapshotVaultState = {
   expertRequirementExists: boolean;
   projectRequirementExists: boolean;
+  /** Backward-compatible names; these are current durable HUMAN review counts. */
   selectedReviewedExpertCount: number;
   selectedReviewedProjectCount: number;
   matchingBlocked: boolean;
   blocker: string | null;
 };
 
-/**
- * Metadata state with gate-aligned strict validity. Extends the canonical
- * resolver's result with a second-layer strict check (validateCriticalMetadataEvidenceForBuildPlan)
- * that mirrors generation-readiness-gate.ts. The existing hasGenerationBlocker
- * (resolver-only) is retained for backward-compatible UI display; gateValid +
- * gateBlocker expose the gate-aligned view so consumers that need gate-parity
- * can read them instead.
- */
 export type SnapshotMetadataState = CanonicalFieldStateResult & {
-  /**
-   * Gate-aligned strict validity. Mirrors generation-readiness-gate.ts:
-   * resolver's hasGenerationBlocker is false AND
-   * validateCriticalMetadataEvidenceForBuildPlan returns ok (quote containment
-   * + page <= totalPages + override/effective-value aware). Computed via the
-   * SAME pure helper the gate uses so it can never disagree with the gate.
-   */
   gateValid: boolean;
-  /** First strict-check failure reason, or null when gateValid=true. */
   gateBlocker: string | null;
 };
 
 export type TenderReleaseSnapshot = {
-  // ─── Identity ────────────────────────────────────────────────────────────
   tenderId: string;
-  /**
-   * Stable revision token: SHA-256 of all input values used to build this
-   * snapshot. When the token changes between renders, the UI knows data changed.
-   */
   snapshotRevision: string;
   generatedAt: string;
-
-  // ─── Sub-states (consumed by panels independently) ─────────────────────
   extraction: SnapshotExtractionState;
   analysis: SnapshotAnalysisState;
-  /** Authoritative metadata field states — consumed by ALL panels. */
   metadata: SnapshotMetadataState;
   requirements: SnapshotRequirementsState;
   evidence: SnapshotEvidenceState;
   buildPlan: SnapshotBuildPlanState;
   vault: SnapshotVaultState;
-
-  // ─── Aggregated eligibility ──────────────────────────────────────────────
   generationEligible: boolean;
   exportEligible: boolean;
   finalZipEligible: boolean;
-
   generationBlockers: string[];
   exportBlockers: string[];
   finalZipBlockers: string[];
-
-  // ─── Universal Tender Intelligence ──────────────────────────────────────
-  /** Per-file page ledger (totalPages denominator, missing pages visible). */
   pageLedgers: PageLedger[];
-  /** Universal tender classification (type, procurement, services). */
   tenderClassification: TenderClassification;
 };
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const WEAK_EXTRACTION_SCORE_THRESHOLD = 70;
 const MIN_MEANINGFUL_QUOTE_CHARS = 10;
+const STRONG_SUPPORT = new Set(["FULL", "SUBSTANTIAL", "COMPLIANT", "STRONG"]);
 
-// ─── Main resolver ────────────────────────────────────────────────────────────
+function normalizeEvidenceText(value: string | null | undefined): string {
+  return (value ?? "").toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim();
+}
+
+function firstBlocker(values: string[]): string | null {
+  return values.length > 0 ? values[0] : null;
+}
 
 export async function getTenderReleaseSnapshot(
   prisma: PrismaClient,
   tenderId: string,
   userId: string,
 ): Promise<TenderReleaseSnapshot | null> {
-  // Single comprehensive query — avoids N+1 round trips.
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     select: {
@@ -248,23 +162,13 @@ export async function getTenderReleaseSnapshot(
       deadlineSourcePage: true,
       deadlineSourceQuote: true,
       deadlineSourceFileId: true,
-      // Reference number source evidence — dedicated columns read first by the
-      // canonical resolver's getSourceEvidence for fieldKey="reference".
-      // Without these, the reference field can only reach EXTRACTED_AND_GROUNDED
-      // via the contactDetailsSourceJson fallback, which diverges from the
-      // strict BuildPlan validator that reads the dedicated columns.
       referenceSourcePage: true,
       referenceSourceQuote: true,
       referenceSourceFileId: true,
-      // Email-subject source evidence — read by validateCriticalMetadataEvidenceForBuildPlan
-      // via the dedicated-column path (mirrors the gate, which include's all Tender columns).
-      // Without these, the snapshot's metadata.gateValid could disagree with the gate when
-      // the subject evidence is in these columns rather than contactDetailsSourceJson.
       submissionEmailSubjectSourcePage: true,
       submissionEmailSubjectSourceQuote: true,
       submissionEmailSubjectSourceFileId: true,
       contactDetailsSourceJson: true,
-      // Extended panel fields
       legalClientName: true,
       donorAgency: true,
       implementingAgency: true,
@@ -285,10 +189,7 @@ export async function getTenderReleaseSnapshot(
           extractedText: true,
           extractionScore: true,
           deletionStatus: true,
-          // totalPages is required to mirror the gate's sourcePage <= totalPages
-          // check in the requirements grounding filter.
           totalPages: true,
-          // pageStatusJson is required for the page ledger (missing pages, coverage).
           pageStatusJson: true,
         },
       },
@@ -300,7 +201,6 @@ export async function getTenderReleaseSnapshot(
           reason: true,
           overriddenBy: true,
           createdAt: true,
-          // Authority model columns (additive — populated by the metadata-override route)
           confirmationBasis: true,
           authorityClass: true,
           confirmedAt: true,
@@ -314,9 +214,7 @@ export async function getTenderReleaseSnapshot(
           sourceTenderFileId: true,
           sourcePageNumber: true,
           sourceExactQuote: true,
-          complianceMatrixRows: {
-            select: { supportLevel: true },
-          },
+          complianceMatrixRows: { select: { supportLevel: true } },
         },
       },
       generatedDocuments: {
@@ -325,60 +223,72 @@ export async function getTenderReleaseSnapshot(
       },
       expertMatches: {
         where: { isSelected: true },
-        include: { expert: { select: { trustLevel: true } } },
+        include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } },
       },
       projectMatches: {
         where: { isSelected: true },
-        include: { project: { select: { trustLevel: true } } },
+        include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } },
       },
     },
   });
   if (!tender) return null;
 
-  // Extraction overrides require a separate query. Batch the lookup for all
-  // weak files into ONE query instead of N per-file count queries (was N+1).
-  const activeFiles = (tender.files as _FileRow[]).filter((f) => f.deletionStatus === "ACTIVE");
-
-  // Pre-compute quality for all files to identify weak ones.
-  const fileQualities = activeFiles.map((f) => {
-    const quality = assessExtractionQuality(f.extractedText, f.originalFileName);
-    const score = Math.min(f.extractionScore ?? quality.score, quality.score);
-    const corrupted = quality.corrupted;
-    const weak = !corrupted && score < WEAK_EXTRACTION_SCORE_THRESHOLD;
-    return { f, quality, score, corrupted, weak };
+  const activeFiles = tender.files.filter((file) => file.deletionStatus === "ACTIVE");
+  const fileQualities = activeFiles.map((file) => {
+    const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
+    const score = Math.min(file.extractionScore ?? quality.score, quality.score);
+    return {
+      file,
+      score,
+      corrupted: quality.corrupted,
+      weak: !quality.corrupted && score < WEAK_EXTRACTION_SCORE_THRESHOLD,
+    };
   });
 
-  // Batch query: get ALL active overrides for weak files in one shot.
-  const weakFileIds = fileQualities.filter((fq) => fq.weak).map((fq) => fq.f.id);
-  const overrideFileIds = weakFileIds.length > 0
+  const weakFileIds = fileQualities.filter((item) => item.weak).map((item) => item.file.id);
+  const overriddenWeakFileIds = weakFileIds.length > 0
     ? new Set(
         (await prisma.extractionQualityOverride.findMany({
           where: { tenderId, tenderFileId: { in: weakFileIds }, status: "ACTIVE" },
           select: { tenderFileId: true },
           distinct: ["tenderFileId"],
-        })).map((o) => o.tenderFileId),
+        })).map((row) => row.tenderFileId),
       )
     : new Set<string>();
 
-  const extractionFiles: SnapshotExtractionFile[] = fileQualities.map(({ f, score, corrupted, weak }) => ({
-    fileId: f.id,
-    fileName: f.originalFileName,
-    corrupted,
-    weak,
-    hasOverride: weak ? overrideFileIds.has(f.id) : false,
-    score,
+  const extractionFiles: SnapshotExtractionFile[] = fileQualities.map((item) => ({
+    fileId: item.file.id,
+    fileName: item.file.originalFileName,
+    corrupted: item.corrupted,
+    weak: item.weak,
+    hasOverride: item.weak && overriddenWeakFileIds.has(item.file.id),
+    score: item.score,
   }));
 
-  // Build extraction state.
   let extractionBlocker: string | null = null;
-  if (activeFiles.length < 1) {
+  if (activeFiles.length === 0) {
     extractionBlocker = "No active tender file exists. Upload and extract the tender document first.";
   } else {
-    for (const f of extractionFiles) {
-      if (f.corrupted) { extractionBlocker = "At least one tender file has corrupted extraction."; break; }
-      if (f.weak && !f.hasOverride) { extractionBlocker = "At least one tender file has weak extraction without a human override."; break; }
+    for (const file of extractionFiles) {
+      if (file.corrupted) {
+        extractionBlocker = "At least one tender file has corrupted extraction.";
+        break;
+      }
+      if (file.weak && !file.hasOverride) {
+        extractionBlocker = "At least one tender file has weak extraction without a human override.";
+        break;
+      }
     }
   }
+
+  const pageLedgers = activeFiles.map((file) =>
+    buildPageLedger(file.totalPages, file.pageStatusJson, file.extractionScore),
+  );
+  const unsafePageLedger = pageLedgers.find((ledger) => !ledger.isSafeForAnalysis);
+  if (!extractionBlocker && unsafePageLedger) {
+    extractionBlocker = unsafePageLedger.summary || "Extraction page coverage is incomplete.";
+  }
+
   const extraction: SnapshotExtractionState = {
     activeFileCount: activeFiles.length,
     files: extractionFiles,
@@ -386,51 +296,46 @@ export async function getTenderReleaseSnapshot(
     blocker: extractionBlocker,
   };
 
-  // ─── Page Ledger — authoritative page coverage from totalPages ──────────
-  // A 7-page PDF with 4 processed pages shows 4/7 (57%), NOT 4/4 (100%).
-  // Missing pages are surfaced. AI analysis is blocked when pages are missing.
-  const pageLedgers: PageLedger[] = activeFiles.map((f) =>
-    buildPageLedger(f.totalPages ?? null, (f as _FileRow).pageStatusJson ?? null, f.extractionScore ?? null),
-  );
-  const hasUnsafePageLedger = pageLedgers.some((pl) => !pl.isSafeForAnalysis);
-  if (hasUnsafePageLedger && !extractionBlocker) {
-    const unsafeSummary = pageLedgers.find((pl) => !pl.isSafeForAnalysis)?.summary;
-    extractionBlocker = unsafeSummary ?? "Extraction page coverage is incomplete.";
-    extraction.overallOk = false;
-    extraction.blocker = extractionBlocker;
-  }
-
-  // ─── Tender Classification — universal type + procurement + services ────
-  const combinedText = activeFiles.map((f) => f.extractedText ?? "").join("\n\n").slice(0, 50_000);
+  const combinedText = activeFiles
+    .map((file) => file.extractedText ?? "")
+    .join("\n\n")
+    .slice(0, 50_000);
   const tenderClassification = classifyTender(combinedText);
 
-  // Analysis state — canonical state machine.
   const analysisDetail = await resolveTenderAnalysisState(prisma, tenderId, userId);
-
-  // Content hash — same computation as the generation gate.
   const { buildTenderAnalysisContent, computeAnalysisContentHash } = await import("./tender-analysis-content");
   const company = await prisma.company.findUnique({
     where: { userId },
-    select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
+    select: {
+      documents: {
+        select: { originalFileName: true, category: true, extractedText: true },
+      },
+    },
   });
   const currentContentHash = computeAnalysisContentHash(
     buildTenderAnalysisContent(
-      { title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: activeFiles },
+      {
+        title: tender.title,
+        description: tender.description,
+        intakeSummary: tender.intakeSummary,
+        files: activeFiles,
+      },
       company ?? undefined,
     ),
   );
 
   const latestJob = await prisma.aiJob.findFirst({
-    where: { tenderId, jobType: "AI_ANALYZE", tender: { userId } },
+    where: { tenderId, userId, jobType: "AI_ANALYZE" },
     orderBy: { createdAt: "desc" },
     select: { analysisInputHash: true },
   });
   const latestJobHash = latestJob?.analysisInputHash ?? null;
-  const contentHashMatch = !!(latestJobHash && latestJobHash === currentContentHash);
+  const contentHashMatch = Boolean(latestJobHash && latestJobHash === currentContentHash);
   const analysisEligible =
     analysisDetail.state === "AI_SUCCEEDED" &&
-    !!analysisDetail.canonicalJobId &&
+    Boolean(analysisDetail.canonicalJobId) &&
     contentHashMatch;
+
   let analysisBlocker: string | null = null;
   if (analysisDetail.state === "HUMAN_APPROVED_FALLBACK") {
     analysisBlocker = "Analysis used a regex fallback which cannot authorize generation or export. Re-run AI Analyze.";
@@ -441,6 +346,7 @@ export async function getTenderReleaseSnapshot(
   } else if (!contentHashMatch) {
     analysisBlocker = "Tender content changed since the last analysis. Re-run AI Analyze.";
   }
+
   const analysis: SnapshotAnalysisState = {
     state: analysisDetail.state,
     canonicalJobId: analysisDetail.canonicalJobId,
@@ -451,7 +357,7 @@ export async function getTenderReleaseSnapshot(
     blocker: analysisBlocker,
   };
 
-  // Metadata field states — canonical, single truth for all panels.
+  const activeTenderFileIds = new Set(activeFiles.map((file) => file.id));
   const metadataResult = resolveCanonicalFieldState({
     tender: {
       id: tender.id,
@@ -471,31 +377,26 @@ export async function getTenderReleaseSnapshot(
       metadataContaminated: tender.metadataContaminated ?? false,
       clientNameSourcePage: tender.clientNameSourcePage,
       clientNameSourceQuote: tender.clientNameSourceQuote,
-      clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
+      clientNameSourceFileId: tender.clientNameSourceFileId,
       submissionMethodSourcePage: tender.submissionMethodSourcePage,
       submissionMethodSourceQuote: tender.submissionMethodSourceQuote,
-      submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
+      submissionMethodSourceFileId: tender.submissionMethodSourceFileId,
       submissionAddressSourcePage: tender.submissionAddressSourcePage,
       submissionAddressSourceQuote: tender.submissionAddressSourceQuote,
-      submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
+      submissionAddressSourceFileId: tender.submissionAddressSourceFileId,
       submissionEmailSourcePage: tender.submissionEmailSourcePage,
-      submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
-      submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
-      titleSourcePage: (tender as any).titleSourcePage ?? null,
-      titleSourceQuote: (tender as any).titleSourceQuote ?? null,
-      titleSourceFileId: (tender as any).titleSourceFileId ?? null,
-      deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
-      deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
-      deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
-      // Forward reference source-evidence columns to the resolver so the
-      // dedicated-column path in getSourceEvidence is taken (not just the
-      // contactDetailsSourceJson fallback). Matches the strict BuildPlan
-      // validator's view of the reference field.
-      referenceSourcePage: (tender as any).referenceSourcePage ?? null,
-      referenceSourceQuote: (tender as any).referenceSourceQuote ?? null,
-      referenceSourceFileId: (tender as any).referenceSourceFileId ?? null,
+      submissionEmailSourceQuote: tender.submissionEmailSourceQuote,
+      submissionEmailSourceFileId: tender.submissionEmailSourceFileId,
+      titleSourcePage: tender.titleSourcePage,
+      titleSourceQuote: tender.titleSourceQuote,
+      titleSourceFileId: tender.titleSourceFileId,
+      deadlineSourcePage: tender.deadlineSourcePage,
+      deadlineSourceQuote: tender.deadlineSourceQuote,
+      deadlineSourceFileId: tender.deadlineSourceFileId,
+      referenceSourcePage: tender.referenceSourcePage,
+      referenceSourceQuote: tender.referenceSourceQuote,
+      referenceSourceFileId: tender.referenceSourceFileId,
       contactDetailsSourceJson: tender.contactDetailsSourceJson,
-      // Extended panel fields
       evaluationMethodology: tender.evaluationMethodology,
       legalClientName: tender.legalClientName,
       donorAgency: tender.donorAgency,
@@ -510,32 +411,27 @@ export async function getTenderReleaseSnapshot(
       preBidMeetingDate: tender.preBidMeetingDate?.toISOString() ?? null,
       preBidMeetingLocation: tender.preBidMeetingLocation,
     },
-    overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
-      field: o.field,
-      fieldState: o.fieldState,
-      overrideValue: o.overrideValue,
-      reason: o.reason,
-      overriddenBy: o.overriddenBy,
-      createdAt: o.createdAt,
-      confirmationBasis: o.confirmationBasis,
-      authorityClass: o.authorityClass,
-      confirmedAt: o.confirmedAt,
+    overrides: tender.metadataOverrides.map((override) => ({
+      field: override.field,
+      fieldState: override.fieldState,
+      overrideValue: override.overrideValue,
+      reason: override.reason,
+      overriddenBy: override.overriddenBy,
+      createdAt: override.createdAt,
+      confirmationBasis: override.confirmationBasis,
+      authorityClass: override.authorityClass,
+      confirmedAt: override.confirmedAt,
     })),
     hasExtractedRequirements: tender.requirements.length > 0,
     submissionMethodContext: tender.submissionMethod ?? undefined,
-    // Same canonical active-file grounding rule as the gates so the release
-    // snapshot's metadata states match generation/export exactly.
-    activeTenderFileIds: new Set(activeFiles.map((f) => f.id)),
-    // Full active-file rows enable the STRONGEST shared grounding check
-    // (quote containment + page <= totalPages) — the same evidence rules the
-    // gate-aligned strict metadata check below applies via the validator.
-    activeFiles: activeFiles.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: f.totalPages })),
+    activeTenderFileIds,
+    activeFiles: activeFiles.map((file) => ({
+      id: file.id,
+      extractedText: file.extractedText,
+      totalPages: file.totalPages,
+    })),
   });
 
-  // FINAL TENDER-FACTS CHECK — mirrors generation-readiness-gate.ts.
-  // Draft generation uses metadataResult.hasGenerationBlocker only. Final export
-  // and Final ZIP additionally require hasExportBlocker=false and the same
-  // final-mode source/audit validator used by the authoritative gate.
   let metadataGateValid = !metadataResult.hasExportBlocker;
   let metadataGateBlocker: string | null = metadataResult.hasExportBlocker
     ? "One or more final Tender Facts are missing, invalid, or lack sufficient audit authority."
@@ -543,24 +439,24 @@ export async function getTenderReleaseSnapshot(
   if (metadataGateValid) {
     try {
       const { validateCriticalMetadataEvidenceForBuildPlan } = await import("./build-plan");
-      const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(
-        tender as any,
-        activeFiles,
-        ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
-          field: o.field,
-          fieldState: o.fieldState,
-          overrideValue: o.overrideValue,
-          reason: o.reason,
-          confirmationBasis: o.confirmationBasis,
-          authorityClass: o.authorityClass,
-          confirmedAt: o.confirmedAt,
-        })),
+      const validation = validateCriticalMetadataEvidenceForBuildPlan(
+        tender as never,
+        activeFiles as never,
+        tender.metadataOverrides.map((override) => ({
+          field: override.field,
+          fieldState: override.fieldState,
+          overrideValue: override.overrideValue,
+          reason: override.reason,
+          confirmationBasis: override.confirmationBasis,
+          authorityClass: override.authorityClass,
+          confirmedAt: override.confirmedAt,
+        })) as never,
         "final",
       );
-      if (!metaValidation.ok) {
+      if (!validation.ok) {
         metadataGateValid = false;
-        metadataGateBlocker = metaValidation.blockers[0]
-          ?? "Final Tender Facts are not source-grounded or audit-authorized.";
+        metadataGateBlocker =
+          validation.blockers[0] ?? "Final Tender Facts are not source-grounded or audit-authorized.";
       }
     } catch {
       metadataGateValid = false;
@@ -573,72 +469,51 @@ export async function getTenderReleaseSnapshot(
     gateBlocker: metadataGateBlocker,
   };
 
-  // Requirements grounding — mirrors generation-readiness-gate.ts (page <= totalPages
-  // + normalized quote containment in the source file's extractedText). Keeps the
-  // release snapshot's requirements.allMandatoryGrounded in lock-step with the gate
-  // so the UI never shows a requirement as grounded when the gate would block on it.
-  const allReqs = tender.requirements as _ReqRow[];
-  const mandatory = allReqs.filter((r) => (r.priority ?? "").toUpperCase() === "MANDATORY");
-  const activeFileIds = new Set(activeFiles.map((f) => f.id));
-  // O(1) lookup of extractedText + totalPages per requirement's source file.
-  const activeFileById = new Map(activeFiles.map((f) => [f.id, f]));
-  const groundedMandatory = mandatory.filter((r) => {
-    const quote = (r.sourceExactQuote ?? "").trim();
+  const mandatory = tender.requirements.filter(
+    (requirement) => (requirement.priority ?? "").toUpperCase() === "MANDATORY",
+  );
+  const activeFileById = new Map(activeFiles.map((file) => [file.id, file]));
+  const groundedMandatory = mandatory.filter((requirement) => {
+    const quote = (requirement.sourceExactQuote ?? "").trim();
     if (
-      !r.sourceTenderFileId ||
-      !activeFileIds.has(r.sourceTenderFileId) ||
-      !isGroundedEvidence(r.sourcePageNumber, quote) ||
+      !requirement.sourceTenderFileId ||
+      !activeTenderFileIds.has(requirement.sourceTenderFileId) ||
+      !isGroundedEvidence(requirement.sourcePageNumber, quote) ||
       quote.length < MIN_MEANINGFUL_QUOTE_CHARS
-    ) {
-      return false;
-    }
-    const file = activeFileById.get(r.sourceTenderFileId);
-    if (!file) return false;
-    // ENFORCE sourcePage <= totalPages when totalPages exists — fabricated page
-    // references must be blocked (mirrors the gate).
+    ) return false;
+
+    const sourceFile = activeFileById.get(requirement.sourceTenderFileId);
+    if (!sourceFile) return false;
     if (
-      typeof r.sourcePageNumber === "number" &&
-      typeof file.totalPages === "number" &&
-      file.totalPages > 0 &&
-      r.sourcePageNumber > file.totalPages
-    ) {
-      return false;
-    }
-    // QUOTE CONTAINMENT: the normalized quote must appear in the file's
-    // extracted text (mirrors the gate). Foreign / guessed / unsupported
-    // evidence is rejected.
-    const fileText = (file.extractedText ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-    const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
-    if (fileText.length === 0 || !fileText.includes(normalizedQuote)) {
-      return false;
-    }
-    return true;
+      typeof requirement.sourcePageNumber === "number" &&
+      typeof sourceFile.totalPages === "number" &&
+      sourceFile.totalPages > 0 &&
+      requirement.sourcePageNumber > sourceFile.totalPages
+    ) return false;
+
+    const sourceText = normalizeEvidenceText(sourceFile.extractedText);
+    const normalizedQuote = normalizeEvidenceText(quote);
+    return sourceText.length > 0 && sourceText.includes(normalizedQuote);
   }).length;
 
-  const requirementsBlocker: string | null =
-    allReqs.length < 1
+  const requirementsBlocker =
+    tender.requirements.length === 0
       ? "No requirements have been extracted."
       : groundedMandatory < mandatory.length
         ? `${mandatory.length - groundedMandatory} mandatory requirement(s) are missing active source evidence.`
         : null;
-
   const requirements: SnapshotRequirementsState = {
-    total: allReqs.length,
+    total: tender.requirements.length,
     mandatory: mandatory.length,
     groundedMandatory,
-    // allMandatoryGrounded is vacuously true when there are no mandatory
-    // requirements — a tender with only OPTIONAL/SCORED requirements is not
-    // blocked on source grounding. The previous `&& mandatory.length > 0`
-    // guard made this false, which blocked the entire workflow via
-    // canonical-workflow-decision.ts priority 7 REQUIREMENTS_NOT_SOURCE_GROUNDED.
     allMandatoryGrounded: mandatory.length === 0 || groundedMandatory === mandatory.length,
     blocker: requirementsBlocker,
   };
 
-  // Evidence coverage (compliance-matrix rows with STRONG support).
-  const STRONG_SUPPORT = new Set(["FULL", "SUBSTANTIAL", "COMPLIANT", "STRONG"]);
-  const covered = mandatory.filter((r) =>
-    r.complianceMatrixRows.some((row) => STRONG_SUPPORT.has((row.supportLevel ?? "").toUpperCase())),
+  const covered = mandatory.filter((requirement) =>
+    requirement.complianceMatrixRows.some((row) =>
+      STRONG_SUPPORT.has((row.supportLevel ?? "").toUpperCase()),
+    ),
   ).length;
   const evidence: SnapshotEvidenceState = {
     total: mandatory.length,
@@ -646,15 +521,10 @@ export async function getTenderReleaseSnapshot(
     coveragePercent: mandatory.length === 0 ? 0 : Math.round((covered / mandatory.length) * 100),
   };
 
-  // Build plan / submission plan.
   const buildPlanCount = tender.generatedDocuments.length;
-
-  // GATE-ALIGNED STRICT CHECK — mirrors generation-readiness-gate.ts lines 647-702.
-  // Uses the SAME shared helpers so the snapshot's gateValid can never disagree
-  // with the gate's hasCurrentConfirmedBuildPlan + confirmedBuildPlanItemsValid.
-  // Fail-closed: any thrown error or missing step leaves gateValid=false.
-  let gateValid = false;
-  let gateBlocker: string | null = "No submission plan / generated documents exist. Build the plan first.";
+  let buildPlanGateValid = false;
+  let buildPlanGateBlocker: string | null =
+    "No submission plan / generated documents exist. Build the plan first.";
   try {
     const buildPlanModule: typeof import("./build-plan") = await import("./build-plan");
     const recordedBuildPlan = await prisma.buildPlan.findUnique({
@@ -669,27 +539,24 @@ export async function getTenderReleaseSnapshot(
       },
     });
     if (!recordedBuildPlan) {
-      gateBlocker = "No Build Plan exists. Build and confirm the plan first.";
+      buildPlanGateBlocker = "No Build Plan exists. Build and confirm the plan first.";
     } else {
       const persistedItems = recordedBuildPlan.itemsJson
-        ? (JSON.parse(recordedBuildPlan.itemsJson) as any[])
+        ? (JSON.parse(recordedBuildPlan.itemsJson) as unknown[])
         : [];
       const currentPlanHash = await buildPlanModule.computeTenderBuildPlanHash(
         prisma,
         tenderId,
         userId,
-        persistedItems as any,
+        persistedItems as never,
       );
       if (recordedBuildPlan.contentHash !== currentPlanHash) {
-        gateBlocker = "Build Plan is stale — tender data changed since the plan was built. Rebuild and re-confirm.";
+        buildPlanGateBlocker =
+          "Build Plan is stale — tender data changed since the plan was built. Rebuild and re-confirm.";
       } else {
-        const confirmed = await buildPlanModule.getCurrentConfirmedBuildPlan(
-          prisma,
-          tenderId,
-          userId,
-        );
+        const confirmed = await buildPlanModule.getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
         if (!confirmed.ok) {
-          gateBlocker = confirmed.blocker;
+          buildPlanGateBlocker = confirmed.blocker;
         } else {
           const itemValidation = await buildPlanModule.validateBuildPlanItemsAtRuntime(
             prisma,
@@ -698,57 +565,83 @@ export async function getTenderReleaseSnapshot(
             confirmed.items,
           );
           if (!itemValidation.ok) {
-            gateBlocker = itemValidation.blockers[0] ?? "Build Plan items are invalid.";
+            buildPlanGateBlocker = itemValidation.blockers[0] ?? "Build Plan items are invalid.";
           } else {
-            gateValid = true;
-            gateBlocker = null;
+            buildPlanGateValid = true;
+            buildPlanGateBlocker = null;
           }
         }
       }
     }
   } catch {
-    // Fail closed — never let a thrown error read as gateValid=true.
-    gateValid = false;
-    gateBlocker = "Build Plan gate check failed (internal error).";
+    buildPlanGateValid = false;
+    buildPlanGateBlocker = "Build Plan gate check failed (internal error).";
   }
 
   const buildPlan: SnapshotBuildPlanState = {
     documentCount: buildPlanCount,
-    // Count-based validity — retained for backward-compatible UI display.
     valid: buildPlanCount > 0,
-    blocker: buildPlanCount < 1 ? "No submission plan / generated documents exist. Build the plan first." : null,
-    gateValid,
-    gateBlocker,
+    blocker:
+      buildPlanCount > 0
+        ? null
+        : "No submission plan / generated documents exist. Build the plan first.",
+    gateValid: buildPlanGateValid,
+    gateBlocker: buildPlanGateBlocker,
   };
 
-  // Vault matches.
-  const expertReqExists = allReqs.some((r) => r.requirementType === "EXPERT");
-  const projectReqExists = allReqs.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
-  const selectedReviewedExperts = (tender.expertMatches as _ExpertMatchRow[]).filter(
-    (m) => m.expert?.trustLevel === "REVIEWED",
-  ).length;
-  const selectedReviewedProjects = (tender.projectMatches as _ProjectMatchRow[]).filter(
-    (m) => m.project?.trustLevel === "REVIEWED",
-  ).length;
-  const vaultBlocked =
-    (expertReqExists && selectedReviewedExperts === 0) ||
-    (projectReqExists && selectedReviewedProjects === 0);
+  const expertRequirementExists = tender.requirements.some(
+    (requirement) => requirement.requirementType === "EXPERT",
+  );
+  const projectRequirementExists = tender.requirements.some(
+    (requirement) => requirement.requirementType === "PROJECT_EXPERIENCE",
+  );
+  const selectedExperts = tender.expertMatches.map((match) => match.expert);
+  const selectedProjects = tender.projectMatches.map((match) => match.project);
+
+  const generationEligibleExperts = selectedExperts.filter(
+    (expert) => isDurablyReviewed(expert) || isDurablySourceVerified(expert),
+  );
+  const generationEligibleProjects = selectedProjects.filter(
+    (project) => isDurablyReviewed(project) || isDurablySourceVerified(project),
+  );
+  const reviewedExperts = selectedExperts.filter(isDurablyReviewed);
+  const reviewedProjects = selectedProjects.filter(isDurablyReviewed);
+
+  const matchingVaultBlockers: string[] = [];
+  if (expertRequirementExists && generationEligibleExperts.length === 0) {
+    matchingVaultBlockers.push(
+      "Tender requires expert evidence but no selected source-verified or human-reviewed expert evidence is available.",
+    );
+  }
+  if (projectRequirementExists && generationEligibleProjects.length === 0) {
+    matchingVaultBlockers.push(
+      "Tender requires project evidence but no selected source-verified or human-reviewed project evidence is available.",
+    );
+  }
+
+  const finalApprovalVaultBlockers: string[] = [];
+  if (expertRequirementExists && reviewedExperts.length === 0) {
+    finalApprovalVaultBlockers.push(
+      "Final approval requires at least one selected expert with current durable human review.",
+    );
+  }
+  if (projectRequirementExists && reviewedProjects.length === 0) {
+    finalApprovalVaultBlockers.push(
+      "Final approval requires at least one selected project with current durable human review.",
+    );
+  }
+
+  const matchingVaultBlocker = firstBlocker(matchingVaultBlockers);
+  const finalApprovalVaultBlocker = firstBlocker(finalApprovalVaultBlockers);
   const vault: SnapshotVaultState = {
-    expertRequirementExists: expertReqExists,
-    projectRequirementExists: projectReqExists,
-    selectedReviewedExpertCount: selectedReviewedExperts,
-    selectedReviewedProjectCount: selectedReviewedProjects,
-    matchingBlocked: vaultBlocked,
-    blocker: vaultBlocked
-      ? "Tender requires expert/project evidence but no selected reviewed Vault matches exist."
-      : null,
+    expertRequirementExists,
+    projectRequirementExists,
+    selectedReviewedExpertCount: reviewedExperts.length,
+    selectedReviewedProjectCount: reviewedProjects.length,
+    matchingBlocked: matchingVaultBlockers.length > 0,
+    blocker: matchingVaultBlocker,
   };
 
-  // Aggregate generation/export/ZIP eligibility through one pure decision
-  // helper. Draft generation receives only the resolver's generation blocker;
-  // final output additionally receives the strict final Tender Facts blocker.
-  // The strict confirmed Build Plan result is authoritative — document count is
-  // display-only and must never unlock generation.
   const eligibility = buildReleaseSnapshotEligibility({
     extractionBlocker: extraction.blocker,
     analysisBlocker: analysis.blocker,
@@ -762,43 +655,59 @@ export async function getTenderReleaseSnapshot(
     buildPlanGateBlocker: buildPlan.gateValid
       ? null
       : buildPlan.gateBlocker ?? "A current confirmed Build Plan is required.",
-    vaultBlocker: vault.blocker,
+    vaultBlocker: finalApprovalVaultBlocker,
     mandatoryRequirementCount: mandatory.length,
     evidenceCoveragePercent: evidence.coveragePercent,
     allMandatoryGrounded: requirements.allMandatoryGrounded,
   });
-  const {
-    generationBlockers,
-    exportBlockers,
-    finalZipBlockers,
-    generationEligible,
-    exportEligible,
-    finalZipEligible,
-  } = eligibility;
 
-  // Snapshot revision: stable hash of all inputs used to build this snapshot.
+  /*
+   * Matching authority is a workflow blocker before generation. The pure
+   * eligibility helper intentionally keeps final human-review blockers out of
+   * draft generation; therefore add only the matching/source-verification
+   * blocker here.
+   */
+  const generationBlockers = matchingVaultBlocker
+    ? Array.from(new Set([...eligibility.generationBlockers, matchingVaultBlocker]))
+    : eligibility.generationBlockers;
+  const exportBlockers = Array.from(new Set([
+    ...eligibility.exportBlockers,
+    ...generationBlockers,
+  ]));
+  const finalZipBlockers = Array.from(new Set([
+    ...eligibility.finalZipBlockers,
+    ...generationBlockers,
+  ]));
+
   const revisionInput = JSON.stringify({
     currentContentHash,
-    metadataContaminated: tender.metadataContaminated,
     analysisState: analysisDetail.state,
     analysisJobId: analysisDetail.canonicalJobId,
-    requirementCount: allReqs.length,
-    overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
-      field: o.field,
-      fieldState: o.fieldState,
-      overrideValue: o.overrideValue,
-      reason: o.reason,
-      confirmationBasis: o.confirmationBasis,
-      authorityClass: o.authorityClass,
-      confirmedAt: o.confirmedAt?.toISOString?.() ?? o.confirmedAt ?? null,
+    metadataContaminated: tender.metadataContaminated,
+    metadataOverrides: tender.metadataOverrides.map((override) => ({
+      field: override.field,
+      fieldState: override.fieldState,
+      overrideValue: override.overrideValue,
+      reason: override.reason,
+      confirmationBasis: override.confirmationBasis,
+      authorityClass: override.authorityClass,
+      confirmedAt: override.confirmedAt?.toISOString() ?? null,
     })),
+    requirementCount: tender.requirements.length,
     metadataGateValid: metadata.gateValid,
     metadataGateBlocker: metadata.gateBlocker,
     buildPlanGateValid: buildPlan.gateValid,
     buildPlanGateBlocker: buildPlan.gateBlocker,
     documentCount: buildPlanCount,
+    generationEligibleExperts: generationEligibleExperts.length,
+    generationEligibleProjects: generationEligibleProjects.length,
+    reviewedExperts: reviewedExperts.length,
+    reviewedProjects: reviewedProjects.length,
   });
-  const snapshotRevision = createHash("sha256").update(revisionInput).digest("hex").slice(0, 16);
+  const snapshotRevision = createHash("sha256")
+    .update(revisionInput)
+    .digest("hex")
+    .slice(0, 16);
 
   return {
     tenderId,
@@ -811,15 +720,13 @@ export async function getTenderReleaseSnapshot(
     evidence,
     buildPlan,
     vault,
-    generationEligible,
-    exportEligible,
-    finalZipEligible,
+    generationEligible: generationBlockers.length === 0,
+    exportEligible: exportBlockers.length === 0,
+    finalZipEligible: finalZipBlockers.length === 0,
     generationBlockers,
     exportBlockers,
     finalZipBlockers,
-    // Page ledger — per-file page coverage (totalPages denominator, missing pages visible)
     pageLedgers,
-    // Tender classification — universal type, procurement structure, company services
     tenderClassification,
   };
 }
