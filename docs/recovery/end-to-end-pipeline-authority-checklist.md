@@ -1,0 +1,8 @@
+- [ ] Remove duplicate client-side AI Analyze trigger
+- [ ] Add explicit server-side analysis completion barrier before Engine
+- [ ] Restrict expert/project authority to dedicated original source categories
+- [ ] Keep content detection advisory only
+- [ ] Preserve partial/fallback blocks on Build Plan, generation, GeneratedDocument, approval, and ZIP
+- [ ] Route Action Center to canonical mutation owners
+- [ ] Add end-to-end regression coverage
+- [ ] Run full exact-head CI and screenshot audit
