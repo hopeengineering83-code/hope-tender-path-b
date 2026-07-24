@@ -66,6 +66,14 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      - name: Mask isolated authentication fixtures
+        shell: bash
+        run: |
+          echo "::add-mask::$E2E_TEST_EMAIL"
+          echo "::add-mask::$E2E_TEST_PASSWORD"
+          echo "::add-mask::$E2E_SECOND_EMAIL"
+          echo "::add-mask::$E2E_SECOND_PASSWORD"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -151,7 +159,8 @@ jobs:
 
       - name: Browser smoke, authenticated intake, golden workflow, and cross-user isolation
         env:
-          CSRF_MODE: "off"
+          CSRF_MODE: "origin"
+          CSRF_STRICT_DEV: "true"
           MISTRAL_API_KEY: ""
           GROQ_API_KEY: ""
           OPENROUTER_API_KEY: ""
@@ -168,16 +177,30 @@ jobs:
         if: always()
         run: git diff --exit-code
 
-      - name: Upload diagnostics and exact critical sources on failure
+      - name: Upload credential-free exact-head acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exact-head-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            acceptance-evidence/
+            build-results/npm-build.log
+            test-results/release-integrity-audit.log
+            test-results/migrate-deploy.log
+            test-results/migrate-idempotency.log
+            test-results/prisma-zero-drift.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload non-browser diagnostics and exact critical sources on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: ci-diagnostics
           path: |
             test-results/
+            acceptance-evidence/
             build-results/
-            playwright-report/
-            test-results-e2e/
             prisma/schema.prisma
             prisma/migrations/
             lib/ai-job-handlers.ts
@@ -186,4 +209,3 @@ jobs:
             lib/engine/public-readiness-envelope.ts
           if-no-files-found: error
           retention-days: 7
-

@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
-import { completeJob, enqueueJob, failJob, findActiveEngineRunForTender } from "../../../../lib/ai-jobs";
+import { completeJob, failJob } from "../../../../lib/ai-jobs";
+import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
@@ -61,6 +62,9 @@ export async function POST(req: Request) {
     retryScheduled?: boolean;
     nextJobId?: string;
     nextJobType?: string;
+    continuationReason?: string;
+    continuationReused?: boolean;
+    analysisRevision?: string;
   };
   const processedJobs: WorkerJobResult[] = [];
 
@@ -121,31 +125,20 @@ export async function POST(req: Request) {
 
         let nextJobId: string | undefined;
         let nextJobType: string | undefined;
-        const autoContinue = claimed.input?.autoContinue === true;
-        if (
-          claimed.jobType === "AI_ANALYZE" &&
-          result.terminalStatus === "SUCCEEDED" &&
-          autoContinue &&
-          claimed.tenderId
-        ) {
-          const activeEngine = await findActiveEngineRunForTender(claimed.tenderId, claimed.userId);
-          if (activeEngine) {
-            nextJobId = activeEngine.id;
+        let continuationReason: string | undefined;
+        let continuationReused: boolean | undefined;
+        let analysisRevision: string | undefined;
+
+        if (claimed.jobType === "AI_ANALYZE") {
+          const continuation = await continueSuccessfulAnalysis(claimed.id);
+          if (continuation.queued) {
+            nextJobId = continuation.jobId;
+            nextJobType = "ENGINE_RUN";
+            continuationReused = continuation.reused;
+            analysisRevision = continuation.analysisRevision;
           } else {
-            nextJobId = (await enqueueJob({
-              userId: claimed.userId,
-              tenderId: claimed.tenderId,
-              jobType: "ENGINE_RUN",
-              input: {
-                source: "canonical-ai-analyze-success",
-                safe: true,
-                skipAiRematch: true,
-                autoContinue: true,
-                parentJobId: claimed.id,
-              },
-            })).id;
+            continuationReason = continuation.reason;
           }
-          nextJobType = "ENGINE_RUN";
         }
 
         processedJobs.push({
@@ -159,6 +152,9 @@ export async function POST(req: Request) {
           retryScheduled: claimed.jobType === "AI_ANALYZE" && (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED"),
           nextJobId,
           nextJobType,
+          continuationReason,
+          continuationReused,
+          analysisRevision,
         });
       } else {
         await completeJob(claimed.id, result);
@@ -226,6 +222,9 @@ export async function POST(req: Request) {
     retryScheduled: Boolean(worst.retryScheduled),
     nextJobId: worst.nextJobId ?? null,
     nextJobType: worst.nextJobType ?? null,
+    continuationReason: worst.continuationReason ?? null,
+    continuationReused: worst.continuationReused ?? null,
+    analysisRevision: worst.analysisRevision ?? null,
     workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus.",
   });
 }

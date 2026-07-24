@@ -21,6 +21,7 @@ describe("pipeline authority non-negotiables", () => {
     const source = read("app/api/tenders/[id]/workflow-center/route.ts");
     assert.doesNotMatch(source, /actionUrl\s*:/);
     assert.doesNotMatch(source, /actionMethod\s*:/);
+    assert.match(source, /actionKind: "navigation" as const/);
   });
 
   it("partial analysis remains terminally non-successful", () => {
@@ -30,10 +31,13 @@ describe("pipeline authority non-negotiables", () => {
     assert.match(source, /if \(exec\.completedChunks > 0\) return "PARTIAL_SUCCESS"/);
   });
 
-  it("Company Vault summary documents remain non-authoritative for expert and project proof", () => {
-    const source = read("app/dashboard/company/review/page.tsx");
-    assert.match(source, /support summaries cannot prove individual CV or project claims/i);
-    assert.match(source, /Expert CV/);
-    assert.match(source, /Project Reference/);
+  it("mixed documents prove only exact bound claims; dedicated sources remain strongest", () => {
+    const review = read("app/dashboard/company/review/page.tsx");
+    const ingestion = read("lib/company-vault-ingestion.ts");
+    assert.match(review, /Exact claims in dedicated or mixed documents may become SOURCE_VERIFIED/);
+    assert.match(review, /Dedicated CV, project-reference, contract, and portfolio files remain the strongest authority/);
+    assert.match(ingestion, /findSourceDocument/);
+    assert.match(ingestion, /source quote did not bind to one owned document/);
+    assert.doesNotMatch(ingestion, /trustLevel:\s*"REVIEWED"/);
   });
 });

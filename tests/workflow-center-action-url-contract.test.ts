@@ -13,7 +13,7 @@ function readRouteSource(): string {
 describe("workflow-center canonical ownership contract", () => {
   const source = readRouteSource();
 
-  it("does not expose direct mutation URLs", () => {
+  it("does not expose direct mutation URLs or HTTP methods", () => {
     assert.doesNotMatch(source, /actionUrl\s*:/);
     assert.doesNotMatch(source, /actionMethod\s*:/);
   });
@@ -27,13 +27,19 @@ describe("workflow-center canonical ownership contract", () => {
     assert.doesNotMatch(source, /download-final-zip/);
   });
 
-  it("classifies every action through the shared mutation registry", () => {
-    assert.match(source, /actionKind:\s*isMutationAction\(actionName\)/);
+  it("projects every action from the shared action registry", () => {
+    assert.match(source, /getTenderAction\(actionId\)/);
+    assert.match(source, /actionKind: "navigation" as const/);
+    assert.match(source, /actionTarget: action\.anchor/);
+    assert.match(source, /mutation: action\.mutation/);
+    assert.match(source, /mutationOwner: action\.owner/);
+    assert.match(source, /iconName: action\.iconName/);
   });
 
-  it("documents that Action Center is informational and navigation-only", () => {
-    assert.match(source, /Action Center is informational\/navigation only/);
-    assert.match(source, /canonical panels/);
-    assert.match(source, /integrity, and ZIP gates/);
+  it("keeps Action Center informational and navigation-only by construction", () => {
+    assert.match(source, /const stage = \(/);
+    assert.match(source, /actionAvailability: action\.availability/);
+    assert.match(source, /actionKind: "navigation" as const/);
+    assert.doesNotMatch(source, /fetch\(|axios\.|prisma\.[a-zA-Z]+\.(?:create|update|delete|upsert)\(/);
   });
 });

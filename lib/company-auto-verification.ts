@@ -1,28 +1,108 @@
-import { prisma } from "./prisma";
-import { buildReviewProvenance } from "./vault-review-provenance";
+import { prisma, prismaReady } from "./prisma";
+import {
+  buildSourceVerificationProvenance,
+  expertReviewFields,
+  projectReviewFields,
+  publicVaultIdentifier,
+} from "./vault-review-provenance";
 
-const EXPERT_SOURCE_CATEGORIES = new Set(["EXPERT_CV"]);
-const PROJECT_SOURCE_CATEGORIES = new Set(["PROJECT_REFERENCE", "PROJECT_CONTRACT", "PORTFOLIO"]);
-const SYSTEM_REVIEWER = "SYSTEM_AUTO_VERIFIED";
-
-function presentFields(fields: Array<{ field: string; value: string | number | null | undefined }>) {
-  return fields.filter((item) => item.value !== null && item.value !== undefined && String(item.value).trim().length > 0);
-}
-
-export async function autoVerifyCompanyKnowledge(companyId: string): Promise<{
+export type AutoVerificationResult = {
   expertsVerified: number;
   projectsVerified: number;
   expertsBlocked: number;
   projectsBlocked: number;
-}> {
+};
+
+const MACHINE_ELIGIBLE_TRUST = ["REGEX_DRAFT", "AI_DRAFT", "SOURCE_VERIFIED"];
+
+function verificationMethod(trustLevel: string | null | undefined): "AI" | "DETERMINISTIC" | "HYBRID" {
+  if (trustLevel === "AI_DRAFT") return "AI";
+  if (trustLevel === "REGEX_DRAFT") return "DETERMINISTIC";
+  return "HYBRID";
+}
+
+export async function autoVerifyCompanyKnowledge(companyId: string): Promise<AutoVerificationResult> {
+  await prismaReady;
+
+  const company = await prisma.company.findUnique({
+    where: { id: companyId },
+    select: { id: true, userId: true },
+  });
+  if (!company) {
+    return { expertsVerified: 0, projectsVerified: 0, expertsBlocked: 0, projectsBlocked: 0 };
+  }
+
   const [experts, projects] = await Promise.all([
     prisma.expert.findMany({
-      where: { companyId, trustLevel: "AI_DRAFT", sourceDocumentId: { not: null } },
-      include: { sourceDocument: true },
+      where: {
+        companyId,
+        deletedAt: null,
+        sourceDocumentId: { not: null },
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
+      select: {
+        id: true,
+        companyId: true,
+        trustLevel: true,
+        reviewedBy: true,
+        fullName: true,
+        title: true,
+        yearsExperience: true,
+        disciplines: true,
+        sectors: true,
+        certifications: true,
+        sourceDocumentId: true,
+        sourceDocument: {
+          select: {
+            id: true,
+            companyId: true,
+            extractedText: true,
+            contentSha256: true,
+            contentByteLength: true,
+            integrityStatus: true,
+            metadata: true,
+          },
+        },
+      },
     }),
     prisma.project.findMany({
-      where: { companyId, trustLevel: "AI_DRAFT", sourceDocumentId: { not: null } },
-      include: { sourceDocument: true },
+      where: {
+        companyId,
+        deletedAt: null,
+        sourceDocumentId: { not: null },
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
+      select: {
+        id: true,
+        companyId: true,
+        trustLevel: true,
+        reviewedBy: true,
+        name: true,
+        clientName: true,
+        country: true,
+        sector: true,
+        serviceAreas: true,
+        contractValue: true,
+        currency: true,
+        sourceDocumentId: true,
+        sourceDocument: {
+          select: {
+            id: true,
+            companyId: true,
+            extractedText: true,
+            contentSha256: true,
+            contentByteLength: true,
+            integrityStatus: true,
+            metadata: true,
+          },
+        },
+      },
     }),
   ]);
 
@@ -32,74 +112,115 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<{
   let projectsBlocked = 0;
 
   for (const expert of experts) {
-    const source = expert.sourceDocument;
-    if (!source || source.companyId !== companyId || !EXPERT_SOURCE_CATEGORIES.has(source.category)) {
-      expertsBlocked += 1;
-      continue;
-    }
-    const reviewedAt = new Date();
-    const provenance = buildReviewProvenance({
+    const source = expert.sourceDocument?.companyId === companyId ? expert.sourceDocument : null;
+    const provenance = buildSourceVerificationProvenance({
       recordType: "EXPERT",
       sourceDocument: source,
-      reviewerId: SYSTEM_REVIEWER,
-      reviewedAt,
-      fields: presentFields([
-        { field: "fullName", value: expert.fullName },
-        { field: "title", value: expert.title },
-        { field: "yearsExperience", value: expert.yearsExperience },
-      ]),
+      fields: expertReviewFields(expert),
+      verificationMethod: verificationMethod(expert.trustLevel),
     });
     if (!provenance.ok) {
       expertsBlocked += 1;
       continue;
     }
-    await prisma.expert.update({
-      where: { id: expert.id },
+
+    const updated = await prisma.expert.updateMany({
+      where: {
+        id: expert.id,
+        companyId,
+        deletedAt: null,
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
       data: {
-        trustLevel: "REVIEWED",
-        reviewedBy: SYSTEM_REVIEWER,
-        reviewedAt,
+        trustLevel: "SOURCE_VERIFIED",
+        reviewedBy: null,
+        reviewedAt: null,
         reviewNotes: provenance.serialized,
+        updatedAt: new Date(),
       },
     });
+    if (updated.count !== 1) continue;
     expertsVerified += 1;
+
+    await prisma.auditLog.create({
+      data: {
+        userId: company.userId,
+        action: "EXPERT_SOURCE_VERIFIED",
+        entityType: "Expert",
+        entityId: expert.id,
+        description: "Expert evidence was machine-verified against owned source bytes and exact fields.",
+        metadata: JSON.stringify({
+          recordRef: publicVaultIdentifier(expert.id),
+          trustLevel: "SOURCE_VERIFIED",
+          verificationMethod: verificationMethod(expert.trustLevel),
+          sourceContentHash: provenance.sourceContentHash,
+          sourceByteLength: provenance.sourceByteLength,
+          sourceTextHash: provenance.sourceTextHash,
+          sourceExtractionRevision: provenance.sourceExtractionRevision,
+          evidenceFields: provenance.evidenceFields,
+          verifiedAt: provenance.verifiedAt,
+        }),
+      },
+    });
   }
 
   for (const project of projects) {
-    const source = project.sourceDocument;
-    if (!source || source.companyId !== companyId || !PROJECT_SOURCE_CATEGORIES.has(source.category)) {
-      projectsBlocked += 1;
-      continue;
-    }
-    const reviewedAt = new Date();
-    const provenance = buildReviewProvenance({
+    const source = project.sourceDocument?.companyId === companyId ? project.sourceDocument : null;
+    const provenance = buildSourceVerificationProvenance({
       recordType: "PROJECT",
       sourceDocument: source,
-      reviewerId: SYSTEM_REVIEWER,
-      reviewedAt,
-      fields: presentFields([
-        { field: "name", value: project.name },
-        { field: "clientName", value: project.clientName },
-        { field: "country", value: project.country },
-        { field: "sector", value: project.sector },
-        { field: "contractValue", value: project.contractValue },
-        { field: "currency", value: project.currency },
-      ]),
+      fields: projectReviewFields(project),
+      verificationMethod: verificationMethod(project.trustLevel),
     });
     if (!provenance.ok) {
       projectsBlocked += 1;
       continue;
     }
-    await prisma.project.update({
-      where: { id: project.id },
+
+    const updated = await prisma.project.updateMany({
+      where: {
+        id: project.id,
+        companyId,
+        deletedAt: null,
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
       data: {
-        trustLevel: "REVIEWED",
-        reviewedBy: SYSTEM_REVIEWER,
-        reviewedAt,
+        trustLevel: "SOURCE_VERIFIED",
+        reviewedBy: null,
+        reviewedAt: null,
         reviewNotes: provenance.serialized,
+        updatedAt: new Date(),
       },
     });
+    if (updated.count !== 1) continue;
     projectsVerified += 1;
+
+    await prisma.auditLog.create({
+      data: {
+        userId: company.userId,
+        action: "PROJECT_SOURCE_VERIFIED",
+        entityType: "Project",
+        entityId: project.id,
+        description: "Project evidence was machine-verified against owned source bytes and exact fields.",
+        metadata: JSON.stringify({
+          recordRef: publicVaultIdentifier(project.id),
+          trustLevel: "SOURCE_VERIFIED",
+          verificationMethod: verificationMethod(project.trustLevel),
+          sourceContentHash: provenance.sourceContentHash,
+          sourceByteLength: provenance.sourceByteLength,
+          sourceTextHash: provenance.sourceTextHash,
+          sourceExtractionRevision: provenance.sourceExtractionRevision,
+          evidenceFields: provenance.evidenceFields,
+          verifiedAt: provenance.verifiedAt,
+        }),
+      },
+    });
   }
 
   return { expertsVerified, projectsVerified, expertsBlocked, projectsBlocked };

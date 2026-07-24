@@ -3,7 +3,13 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-type ReviewTrust = "REVIEWED" | "AI_DRAFT" | "REGEX_DRAFT" | "PROVENANCE_REQUIRED";
+type ReviewTrust =
+  | "REVIEWED"
+  | "SOURCE_VERIFIED"
+  | "AI_DRAFT"
+  | "REGEX_DRAFT"
+  | "PROVENANCE_REQUIRED"
+  | "SOURCE_VERIFICATION_REQUIRED";
 type Gap = { severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; title: string; detail: string };
 type ReviewRecord = {
   id: string;
@@ -58,8 +64,11 @@ type ReimportResult = {
   docsFailed?: number;
   expertsCreated?: number;
   projectsCreated?: number;
+  expertsUpdated?: number;
+  projectsUpdated?: number;
+  expertsSourceVerified?: number;
+  projectsSourceVerified?: number;
   error?: string;
-  code?: string;
   requestId?: string;
 };
 type BatchResult = {
@@ -77,17 +86,32 @@ function severityClass(severity: Gap["severity"]) {
 }
 
 function trustBadge(value: ReviewTrust) {
-  if (value === "REVIEWED") return { label: "Provenance verified", cls: "bg-green-100 text-green-700" };
-  if (value === "PROVENANCE_REQUIRED") return { label: "Blocked — provenance required", cls: "bg-red-100 text-red-700" };
+  if (value === "REVIEWED") return { label: "Human reviewed", cls: "bg-green-100 text-green-700" };
+  if (value === "SOURCE_VERIFIED") return { label: "Source verified", cls: "bg-blue-100 text-blue-700" };
+  if (value === "PROVENANCE_REQUIRED") return { label: "Human review invalidated", cls: "bg-red-100 text-red-700" };
+  if (value === "SOURCE_VERIFICATION_REQUIRED") return { label: "Source verification invalidated", cls: "bg-red-100 text-red-700" };
   if (value === "AI_DRAFT") return { label: "AI draft", cls: "bg-amber-100 text-amber-800" };
-  return { label: "Draft", cls: "bg-slate-100 text-slate-700" };
+  return { label: "Deterministic draft", cls: "bg-slate-100 text-slate-700" };
 }
 
 function sourceRole(doc: Diagnostics["documents"][number]): string {
-  if (doc.isExpertSource && doc.isProjectSource) return "Expert and project source";
-  if (doc.isExpertSource) return "Expert source";
-  if (doc.isProjectSource) return "Project source";
-  return "Tender support evidence";
+  if (doc.isExpertSource && doc.isProjectSource) return "Mixed expert and project evidence";
+  if (doc.isExpertSource) return "Expert evidence source";
+  if (doc.isProjectSource) return "Project evidence source";
+  return "Company support evidence";
+}
+
+function evidenceStatus(record: ReviewRecord): string {
+  if (record.trustLevel === "REVIEWED") {
+    return "A real reviewer identity, review timestamp, current source bytes, extraction revision, exact fields, and source spans are bound together.";
+  }
+  if (record.trustLevel === "SOURCE_VERIFIED") {
+    return "The current owned source bytes, extraction revision, exact fields, and source spans were machine-verified. This may support matching and draft generation, but it is not human review and cannot satisfy final approval.";
+  }
+  if (record.canReview) {
+    return "Owned source text supports the displayed fields. Human review can approve the record for final-package eligibility.";
+  }
+  return `Blocked until evidence is available${record.missingEvidenceFields.length ? ` for: ${record.missingEvidenceFields.join(", ")}` : ""}.`;
 }
 
 function PaginationControls(props: {
@@ -123,7 +147,7 @@ function PaginationControls(props: {
   );
 }
 
-export default function KnowledgeReviewPage() {
+export default function ReviewInboxPage() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [expertPage, setExpertPage] = useState(1);
   const [projectPage, setProjectPage] = useState(1);
@@ -164,7 +188,7 @@ export default function KnowledgeReviewPage() {
   const eligibleExperts = expertItems.filter((record) => record.canReview && record.trustLevel !== "REVIEWED");
   const eligibleProjects = projectItems.filter((record) => record.canReview && record.trustLevel !== "REVIEWED");
 
-  async function runRepair() {
+  async function reprocessSources() {
     setRepairing(true);
     setError("");
     setMessage("");
@@ -172,12 +196,18 @@ export default function KnowledgeReviewPage() {
       const response = await fetch("/api/company/reimport", { method: "POST" });
       const data = await response.json().catch(() => ({})) as ReimportResult;
       if (!response.ok) {
-        throw new Error(data.error || `Company Vault repair failed${data.requestId ? ` (request ${data.requestId})` : ""}`);
+        throw new Error(data.error || `Company Vault reprocessing failed${data.requestId ? ` (request ${data.requestId})` : ""}`);
       }
       await load();
-      setMessage(`Vault repair completed. ${data.docsReextracted ?? 0} document(s) re-extracted; ${data.expertsCreated ?? 0} expert and ${data.projectsCreated ?? 0} project draft(s) rebuilt.${(data.docsFailed ?? 0) > 0 ? ` ${data.docsFailed} document(s) still need attention.` : ""}`);
+      setMessage(
+        `Sources reprocessed. ${data.docsReextracted ?? 0} document(s) re-extracted; ` +
+        `${data.expertsCreated ?? 0} expert and ${data.projectsCreated ?? 0} project record(s) created; ` +
+        `${data.expertsUpdated ?? 0} expert and ${data.projectsUpdated ?? 0} project record(s) updated; ` +
+        `${data.expertsSourceVerified ?? 0} expert and ${data.projectsSourceVerified ?? 0} project record(s) source-verified.` +
+        ((data.docsFailed ?? 0) > 0 ? ` ${data.docsFailed} document(s) still need attention.` : ""),
+      );
     } catch (repairError) {
-      setError(repairError instanceof Error ? repairError.message : "Company Vault repair failed");
+      setError(repairError instanceof Error ? repairError.message : "Company Vault reprocessing failed");
     } finally {
       setRepairing(false);
     }
@@ -208,7 +238,7 @@ export default function KnowledgeReviewPage() {
 
       const blocked = data.rejected?.length ?? 0;
       if (data.updated > 0) {
-        setMessage(`${data.updated} ${kind} reviewed with durable source evidence.${blocked ? ` ${blocked} blocked for missing or unowned evidence.` : ""}`);
+        setMessage(`${data.updated} ${kind} human-reviewed with durable source evidence.${blocked ? ` ${blocked} blocked for missing or unowned evidence.` : ""}`);
       } else {
         const missing = (data.rejected ?? []).flatMap((item) => item.missingEvidenceFields ?? []).slice(0, 4);
         setError(`No ${kind} were reviewed. Durable source evidence is required${missing.length ? ` for: ${missing.join(", ")}` : ""}.`);
@@ -222,7 +252,7 @@ export default function KnowledgeReviewPage() {
   }
 
   if (loading && !diagnostics) {
-    return <div className="py-16 text-center text-sm text-slate-400">Loading privacy-safe diagnostics…</div>;
+    return <div className="py-16 text-center text-sm text-slate-400">Loading Review Inbox…</div>;
   }
 
   const totals = diagnostics?.totals;
@@ -234,18 +264,18 @@ export default function KnowledgeReviewPage() {
     <div className="space-y-6 sm:space-y-8">
       <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Company Knowledge Review</p>
-          <h1 className="mt-1 text-2xl font-bold text-slate-900">Privacy-safe evidence review</h1>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Company Vault</p>
+          <h1 className="mt-1 text-2xl font-bold text-slate-900">Review Inbox</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-500">
-            Only bounded summaries reach this page. A reviewed record requires owned source text, field evidence, reviewer identity, and timestamp.
+            Uncertain evidence is preserved here. Source verification is automatic and machine-owned; REVIEWED is created only by a real authenticated reviewer.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => void load()} className="rounded-lg border px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
-          <button type="button" onClick={() => void runRepair()} disabled={repairing} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
-            {repairing ? "Repairing Vault…" : "Repair Vault Sources"}
+          <button type="button" onClick={() => void reprocessSources()} disabled={repairing} className="rounded-lg border border-slate-900 px-4 py-2 text-sm text-slate-900 hover:bg-slate-50 disabled:opacity-60">
+            {repairing ? "Reprocessing…" : "Reprocess sources"}
           </button>
-          <Link href="/dashboard/company" className="rounded-lg border px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Back to Vault</Link>
+          <Link href="/dashboard/company" className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800">Back to Vault</Link>
         </div>
       </header>
 
@@ -253,30 +283,30 @@ export default function KnowledgeReviewPage() {
       {message && <div role="status" className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">{message}</div>}
 
       <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
-        <p className="font-semibold">Evidence rule</p>
-        <p className="mt-1">Support documents remain tender evidence, but they cannot make expert or project records usable. Records without durable provenance remain blocked.</p>
+        <p className="font-semibold">Trust rule</p>
+        <p className="mt-1">Exact claims in dedicated or mixed documents may become SOURCE_VERIFIED and support matching or draft generation. Final approval and final-package export still require genuine human REVIEWED evidence.</p>
       </div>
 
       {totals && totals.documents > 0 && totals.expertSourceDocuments === 0 && totals.projectSourceDocuments === 0 && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-          <p className="font-semibold">Original expert and project source files are missing</p>
-          <p className="mt-1">The existing support summaries cannot prove individual CV or project claims. Upload original files under <strong>Expert CV</strong>, <strong>Project Reference</strong>, <strong>Project Contract</strong>, or <strong>Portfolio</strong>, then run Vault Repair again.</p>
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          <p className="font-semibold">No dedicated CV or project-reference sources are available</p>
+          <p className="mt-1">Exact claims from mixed documents remain eligible for source verification. Dedicated CV, project-reference, contract, and portfolio files remain the strongest authority and should be uploaded when available.</p>
           <Link href="/dashboard/company" className="mt-3 inline-flex rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white no-underline hover:bg-slate-800">
-            Upload source files in Company Vault
+            Upload stronger source files
           </Link>
         </div>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Documents</p><p className="mt-1 text-3xl font-bold text-blue-600">{totals?.documents ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.extractedDocuments ?? 0} extracted</p></div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Experts</p><p className="mt-1 text-3xl font-bold text-purple-600">{totals?.currentExperts ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.reviewedExperts ?? 0} provenance verified</p></div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Projects</p><p className="mt-1 text-3xl font-bold text-green-600">{totals?.currentProjects ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.reviewedProjects ?? 0} provenance verified</p></div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Sources</p><p className="mt-2 text-sm text-slate-700">{sourceStatus}</p><p className="mt-1 text-xs text-slate-400">{totals?.aiEnabled ? "AI extraction enabled" : "AI extraction unavailable"}</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Experts</p><p className="mt-1 text-3xl font-bold text-purple-600">{totals?.currentExperts ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.reviewedExperts ?? 0} human reviewed</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Projects</p><p className="mt-1 text-3xl font-bold text-green-600">{totals?.currentProjects ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.reviewedProjects ?? 0} human reviewed</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Sources</p><p className="mt-2 text-sm text-slate-700">{sourceStatus}</p><p className="mt-1 text-xs text-slate-400">{totals?.aiEnabled ? "AI extraction enabled" : "Deterministic extraction active"}</p></div>
       </div>
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
         <div className="flex items-center justify-between gap-3">
-          <div><h2 className="text-lg font-semibold text-slate-900">Gap analysis</h2><p className="text-xs text-slate-400">Policy: {diagnostics?.importVersion ?? "unknown"}</p></div>
+          <div><h2 className="text-lg font-semibold text-slate-900">Actionable evidence gaps</h2><p className="text-xs text-slate-400">Policy: {diagnostics?.importVersion ?? "unknown"}</p></div>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">{diagnostics?.gaps.length ?? 0} gaps</span>
         </div>
         <div className="mt-4 space-y-3">
@@ -290,8 +320,8 @@ export default function KnowledgeReviewPage() {
       </section>
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
-        <h2 className="text-lg font-semibold text-slate-900">Source document diagnostics</h2>
-        <p className="mt-1 text-xs text-slate-500">File names and storage identifiers are intentionally hidden.</p>
+        <h2 className="text-lg font-semibold text-slate-900">Source diagnostics</h2>
+        <p className="mt-1 text-xs text-slate-500">Only bounded, privacy-safe source labels are displayed.</p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           {(diagnostics?.documents ?? []).map((doc) => (
             <article key={doc.id} className="rounded-xl border p-4">
@@ -306,11 +336,11 @@ export default function KnowledgeReviewPage() {
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-lg font-semibold text-slate-900">Experts</h2><p className="text-xs text-slate-500">Bounded summaries; details collapsed by default.</p></div>
+          <div><h2 className="text-lg font-semibold text-slate-900">Experts</h2><p className="text-xs text-slate-500">Source-verified records may be selected for genuine human review.</p></div>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
             <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
-              {batchingExperts ? "Reviewing…" : `Review selected (${selectedExperts.size})`}
+              {batchingExperts ? "Reviewing…" : `Human-review selected (${selectedExperts.size})`}
             </button>
           </div>
         </div>
@@ -334,13 +364,7 @@ export default function KnowledgeReviewPage() {
                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">{expert.tags.map((tag, index) => <span key={`${tag}-${index}`} className="rounded-full bg-slate-100 px-2 py-1">{tag}</span>)}</div>
                 <details className="mt-3 text-xs text-slate-600">
                   <summary className="cursor-pointer font-medium">Evidence status</summary>
-                  <p className="mt-2">
-                    {expert.trustLevel === "REVIEWED"
-                      ? "Durable source evidence and reviewer audit are recorded."
-                      : expert.canReview
-                        ? "Owned source text supports the required displayed fields."
-                        : `Blocked until evidence is available${expert.missingEvidenceFields.length ? ` for: ${expert.missingEvidenceFields.join(", ")}` : ""}.`}
-                  </p>
+                  <p className="mt-2">{evidenceStatus(expert)}</p>
                 </details>
               </article>
             );
@@ -352,11 +376,11 @@ export default function KnowledgeReviewPage() {
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-lg font-semibold text-slate-900">Projects</h2><p className="text-xs text-slate-500">Bounded summaries; details collapsed by default.</p></div>
+          <div><h2 className="text-lg font-semibold text-slate-900">Projects</h2><p className="text-xs text-slate-500">Source-verified records may be selected for genuine human review.</p></div>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
             <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
-              {batchingProjects ? "Reviewing…" : `Review selected (${selectedProjects.size})`}
+              {batchingProjects ? "Reviewing…" : `Human-review selected (${selectedProjects.size})`}
             </button>
           </div>
         </div>
@@ -380,13 +404,7 @@ export default function KnowledgeReviewPage() {
                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">{project.tags.map((tag, index) => <span key={`${tag}-${index}`} className="rounded-full bg-slate-100 px-2 py-1">{tag}</span>)}</div>
                 <details className="mt-3 text-xs text-slate-600">
                   <summary className="cursor-pointer font-medium">Evidence status</summary>
-                  <p className="mt-2">
-                    {project.trustLevel === "REVIEWED"
-                      ? "Durable source evidence and reviewer audit are recorded."
-                      : project.canReview
-                        ? "Owned source text supports the required displayed fields."
-                        : `Blocked until evidence is available${project.missingEvidenceFields.length ? ` for: ${project.missingEvidenceFields.join(", ")}` : ""}.`}
-                  </p>
+                  <p className="mt-2">{evidenceStatus(project)}</p>
                 </details>
               </article>
             );

@@ -14,20 +14,20 @@ import {
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
   return JSON.stringify(
-    String(value || "").split(",").map((v) => v.trim()).filter(Boolean)
+    String(value || "").split(",").map((item) => item.trim()).filter(Boolean),
   );
 }
 
-function safeParseArr(v: unknown): string[] {
-  try { return JSON.parse(v as string) as string[]; } catch { return []; }
+function safeParseArr(value: unknown): string[] {
+  try { return JSON.parse(value as string) as string[]; } catch { return []; }
 }
 
-function normalizeExpert(e: Record<string, unknown>) {
+function normalizeExpert(expert: Record<string, unknown>) {
   return {
-    ...e,
-    disciplines: safeParseArr(e.disciplines),
-    sectors: safeParseArr(e.sectors),
-    certifications: safeParseArr(e.certifications),
+    ...expert,
+    disciplines: safeParseArr(expert.disciplines),
+    sectors: safeParseArr(expert.sectors),
+    certifications: safeParseArr(expert.certifications),
   };
 }
 
@@ -37,7 +37,7 @@ export async function GET(
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady;
 
   const { id } = await params;
@@ -54,11 +54,9 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  // Company knowledge mutations require ADMIN or PROPOSAL_MANAGER — REVIEWER
-  // and VIEWER are read-only roles (per lib/security/rbac.ts COMPANY_KNOWLEDGE_MGMT).
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady;
 
   const { id } = await params;
@@ -71,6 +69,7 @@ export async function PUT(
   try {
     const body = await req.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+
     const nextValues = {
       fullName: String(body.fullName ?? existing.fullName),
       title: body.title !== undefined ? (String(body.title) || null) : existing.title,
@@ -85,51 +84,61 @@ export async function PUT(
       profile: body.profile !== undefined ? (String(body.profile) || null) : existing.profile,
       isActive: body.isActive !== undefined ? Boolean(body.isActive) : existing.isActive,
     };
-    // A REVIEWED record whose reviewed-evidence fields change is no longer
-    // the record that was reviewed: its stored provenance hashes describe the
-    // old content, so the review must be invalidated (demoted to draft) or
-    // matching/generation would keep consuming stale evidence as reviewed.
-    // Non-evidence fields (email, phone, profile, isActive) edit freely.
-    const reviewInvalidated =
-      existing.trustLevel === "REVIEWED" &&
+
+    const hasDurableTrust = existing.trustLevel === "REVIEWED" || existing.trustLevel === "SOURCE_VERIFIED";
+    const provenanceInvalidated = hasDurableTrust &&
       !reviewEvidenceEquals(expertReviewFields(existing), expertReviewFields(nextValues));
+
     const updated = await prisma.expert.update({
       where: { id },
       data: {
         ...nextValues,
-        ...(reviewInvalidated ? { trustLevel: "AI_DRAFT" } : {}),
+        ...(provenanceInvalidated
+          ? {
+              trustLevel: "AI_DRAFT",
+              reviewedBy: null,
+              reviewedAt: null,
+              reviewNotes: null,
+            }
+          : {}),
         updatedAt: new Date(),
       },
     });
-    if (reviewInvalidated) {
+
+    if (provenanceInvalidated) {
+      const invalidatedTrust = existing.trustLevel === "REVIEWED" ? "human review" : "machine source verification";
       await logAction({
         userId: actor.id,
-        action: "EXPERT_REVIEW",
+        action: "EXPERT_TRUST_INVALIDATED",
         entityType: "Expert",
         entityId: id,
-        description: `Expert "${existing.fullName}" review invalidated — reviewed evidence fields were edited; record demoted to draft pending re-review`,
-        metadata: { expertId: id, action: "review-invalidated-by-edit" },
+        description: `Expert durable trust invalidated because bound evidence fields changed.`,
+        metadata: {
+          recordRef: publicVaultIdentifier(id),
+          invalidatedTrust,
+          previousTrustLevel: existing.trustLevel,
+          nextTrustLevel: "AI_DRAFT",
+        },
       });
     }
+
     return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
   } catch (error) {
-    logger.error("Request failed", { detail: error });
+    logger.error("expert update failed", {
+      expertId: id,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
     return NextResponse.json({ error: "Failed to update expert" }, { status: 500 });
   }
 }
 
-/**
- * PATCH — review an expert record.
- * Body: { action: "approve" | "reject", notes?: string }
- * Sets trustLevel to REVIEWED (approve) or back to the previous draft level (reject).
- */
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   const requestId = extractRequestId(req);
   await prismaReady;
@@ -163,6 +172,7 @@ export async function PATCH(
           contentSha256: true,
           contentByteLength: true,
           integrityStatus: true,
+          metadata: true,
         },
       },
     },
@@ -196,13 +206,21 @@ export async function PATCH(
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.expert.updateMany({
         where: { id, companyId: company.id, deletedAt: null },
-        data: {
-          trustLevel: isApprove ? "REVIEWED" : "AI_DRAFT",
-          reviewedBy: actor.id,
-          reviewedAt,
-          reviewNotes: durableProvenance?.serialized ?? (body.notes?.trim() || null),
-          updatedAt: new Date(),
-        },
+        data: isApprove
+          ? {
+              trustLevel: "REVIEWED",
+              reviewedBy: actor.id,
+              reviewedAt,
+              reviewNotes: durableProvenance!.serialized,
+              updatedAt: new Date(),
+            }
+          : {
+              trustLevel: "AI_DRAFT",
+              reviewedBy: null,
+              reviewedAt: null,
+              reviewNotes: body.notes?.trim() || null,
+              updatedAt: new Date(),
+            },
       });
       if (result.count !== 1) throw new Error("CONCURRENT_UPDATE");
 
@@ -213,13 +231,13 @@ export async function PATCH(
           entityType: "Expert",
           entityId: id,
           description: isApprove
-            ? "Expert record reviewed with durable source evidence."
-            : "Expert record returned to draft review state.",
+            ? "Expert record was human-reviewed with durable source evidence."
+            : "Expert record was returned to draft review state.",
           metadata: JSON.stringify({
             requestId,
             recordRef: publicVaultIdentifier(id),
             action: body.action,
-            reviewedAt: reviewedAt.toISOString(),
+            ...(isApprove ? { reviewerId: actor.id, reviewedAt: reviewedAt.toISOString() } : {}),
             ...(durableProvenance ? {
               sourceContentHash: durableProvenance.sourceContentHash,
               sourceByteLength: durableProvenance.sourceByteLength,
@@ -237,18 +255,21 @@ export async function PATCH(
     if (error instanceof Error && error.message === "CONCURRENT_UPDATE") {
       return NextResponse.json({ error: "Expert changed during review. Retry.", code: "CONCURRENT_UPDATE", requestId }, { status: 409 });
     }
-    logger.error("expert review failed", { requestId, errorClass: error instanceof Error ? error.constructor.name : "UnknownError" });
+    logger.error("expert review failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
     return NextResponse.json({ error: "Expert review failed. Retry with the request ID.", code: "EXPERT_REVIEW_FAILED", requestId }, { status: 500 });
   }
 }
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
   const { id } = await params;
@@ -265,8 +286,8 @@ export async function DELETE(
     action: "EXPERT_DELETE",
     entityType: "Expert",
     entityId: id,
-    description: `Expert "${existing.fullName}" soft-deleted`,
-    metadata: { expertId: id, fullName: existing.fullName, companyId: company.id },
+    description: "Expert record soft-deleted.",
+    metadata: { recordRef: publicVaultIdentifier(id), companyId: company.id },
   });
 
   return NextResponse.json({ success: true });

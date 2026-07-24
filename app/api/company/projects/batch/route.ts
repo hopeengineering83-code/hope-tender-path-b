@@ -69,7 +69,15 @@ export async function PATCH(req: Request) {
       currency: true,
       sourceDocumentId: true,
       sourceDocument: {
-        select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
+        select: {
+          id: true,
+          companyId: true,
+          extractedText: true,
+          contentSha256: true,
+          contentByteLength: true,
+          integrityStatus: true,
+          metadata: true,
+        },
       },
     },
   });
@@ -115,11 +123,7 @@ export async function PATCH(req: Request) {
       const completed: string[] = [];
       for (const candidate of candidates) {
         const updated = await tx.project.updateMany({
-          where: {
-            id: candidate.id,
-            companyId: company.id,
-            deletedAt: null,
-          },
+          where: { id: candidate.id, companyId: company.id, deletedAt: null },
           data: {
             trustLevel: "REVIEWED",
             reviewedBy: actor.id,
@@ -138,10 +142,11 @@ export async function PATCH(req: Request) {
             action: "PROJECT_REVIEW",
             entityType: "Project",
             entityId: candidate.id,
-            description: "Project record reviewed with durable source evidence.",
+            description: "Project record was human-reviewed with durable source evidence.",
             metadata: JSON.stringify({
               requestId,
               recordRef: publicVaultIdentifier(candidate.id),
+              reviewerId: actor.id,
               sourceContentHash: candidate.sourceContentHash,
               sourceByteLength: candidate.sourceByteLength,
               sourceTextHash: candidate.sourceTextHash,
@@ -155,14 +160,13 @@ export async function PATCH(req: Request) {
       return completed;
     });
 
-    const response = {
+    return NextResponse.json({
       success: rejected.length === 0,
       updated: updatedIds.length,
       accepted: updatedIds.map((id) => ({ id, status: "REVIEWED" as const })),
       rejected,
       requestId,
-    };
-    return NextResponse.json(response, { status: updatedIds.length > 0 ? 200 : 422 });
+    }, { status: updatedIds.length > 0 ? 200 : 422 });
   } catch (error) {
     logger.error("project batch review failed", {
       requestId,

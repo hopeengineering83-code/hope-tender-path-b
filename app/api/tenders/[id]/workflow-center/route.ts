@@ -5,8 +5,8 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
 import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
-import { isMutationAction } from "../../../../../lib/recovery-command-actions";
 import { TENDER_WORKFLOW_STAGE_LABELS } from "../../../../../lib/tender-workflow-stages";
+import { getTenderAction, type TenderActionId } from "../../../../../lib/ui/action-registry";
 
 function stageStatusFromCanonical(canonicalState: string | undefined, fallback: string): string {
   return canonicalState || fallback;
@@ -51,46 +51,58 @@ export async function GET(
       : null;
 
     const analysisExplanation = snapshot.analysis.state === "AI_SUCCEEDED"
-      ? "AI analysis completed and is ready for requirement review."
+      ? "AI analysis completed and the canonical successful revision is ready for requirement review."
       : snapshot.analysis.state === "RUNNING"
-        ? "AI analysis is running."
-        : snapshot.analysis.blocker ?? "AI analysis must be run or repaired.";
+        ? "AI analysis is running automatically."
+        : snapshot.analysis.blocker ?? "Automatic analysis is blocked and a recovery action is available.";
 
     const requirementExplanation = snapshot.requirements.mandatory > 0
       ? `${snapshot.requirements.total} requirements recorded; ${snapshot.requirements.groundedMandatory}/${snapshot.requirements.mandatory} mandatory requirements are source-traced.`
       : `${snapshot.requirements.total} requirements recorded; no mandatory requirements are currently identified.`;
 
+    const evidenceRecoveryRequired = decision?.currentBlockingStage === "MANDATORY_NO_COMPLIANCE_ROWS" ||
+      decision?.currentBlockingStage === "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE";
+
     const stage = (
       number: number,
       status: string,
       explanation: string,
-      actionLabel: string,
-      actionName: string,
+      actionId: TenderActionId,
       extra: Record<string, unknown> = {},
-    ) => ({
-      stage: number,
-      label: TENDER_WORKFLOW_STAGE_LABELS[number as keyof typeof TENDER_WORKFLOW_STAGE_LABELS],
-      status,
-      explanation,
-      actionLabel,
-      actionName,
-      actionKind: isMutationAction(actionName) ? "mutation" as const : "readonly" as const,
-      // Action Center is informational/navigation only. Mutations remain owned
-      // by canonical panels, which enforce role, readiness, evidence, Build
-      // Plan, generation, validation, approval, integrity, and ZIP gates.
-      ...extra,
-    });
+    ) => {
+      const action = getTenderAction(actionId);
+      return {
+        stage: number,
+        label: TENDER_WORKFLOW_STAGE_LABELS[number as keyof typeof TENDER_WORKFLOW_STAGE_LABELS],
+        status,
+        explanation,
+        actionId,
+        actionLabel: action.label,
+        actionName: actionId,
+        actionKind: "navigation" as const,
+        actionTarget: action.anchor,
+        actionAvailability: action.availability,
+        mutation: action.mutation,
+        mutationOwner: action.owner,
+        iconName: action.iconName,
+        ...extra,
+      };
+    };
 
     const stages = [
-      stage(1, stageStatusFromCanonical(ds["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"), "Manage uploaded tender PDFs and DOCX files.", "Manage Files", "UPLOAD_TENDER_DOCUMENT"),
+      stage(
+        1,
+        stageStatusFromCanonical(ds["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"),
+        "Upload the tender package once. The server owns all automatic continuation after upload.",
+        "UPLOAD_TENDER_FILES",
+      ),
       stage(
         2,
         stageStatusFromCanonical(ds["FIX_EXTRACTION"], hasUnsafePages ? "BLOCKED" : snapshot.extraction.overallOk ? "COMPLETE" : "BLOCKED"),
         hasUnsafePages
           ? pageLedgerSummary.map((item) => `${item.fileName}: ${item.summary}`).join(" | ")
-          : "Verify text density and page coverage.",
-        "Repair Extraction",
-        "REPAIR_EXTRACTION",
+          : "Text density and page coverage are verified automatically.",
+        "REEXTRACT_SOURCE",
         {
           blocker: hasUnsafePages
             ? pageLedgerSummary.filter((item) => !item.isSafeForAnalysis).map((item) => item.summary).join(" | ")
@@ -105,32 +117,54 @@ export async function GET(
           snapshot.analysis.state === "AI_SUCCEEDED" ? "COMPLETE" : snapshot.analysis.state === "RUNNING" ? "IN_PROGRESS" : "BLOCKED",
         ),
         analysisExplanation,
-        decision?.partialAnalysis ? "Resume AI Analyze" : "Run AI Analyze",
-        decision?.partialAnalysis ? "RESUME_AI_ANALYZE" : "RUN_AI_ANALYZE",
+        "AI_ANALYZE",
       ),
-      stage(4, stageStatusFromCanonical(ds["CONFIRM_REQUIREMENTS"], snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : "WAITING_ON_PRIOR_STEP"), requirementExplanation, "Review Requirements", "REVIEW_MATCHES"),
-      stage(5, snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING", `Tender Details: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`, "Edit Tender Details", "EDIT_TENDER_METADATA"),
-      stage(6, stageStatusFromCanonical(ds["BUILD_SUBMISSION_PLAN"], snapshot.buildPlan.gateValid ? "COMPLETE" : "BLOCKED"), snapshot.buildPlan.gateBlocker ?? snapshot.buildPlan.blocker ?? "Build plan pending.", "Build Plan", "BUILD_SUBMISSION_PLAN"),
+      stage(
+        4,
+        stageStatusFromCanonical(ds["CONFIRM_REQUIREMENTS"], snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : "WAITING_ON_PRIOR_STEP"),
+        requirementExplanation,
+        "REVIEW_SOURCES",
+      ),
+      stage(
+        5,
+        snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING",
+        `Tender Details: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`,
+        "OPEN_TENDER_SETTINGS",
+      ),
+      stage(
+        6,
+        stageStatusFromCanonical(ds["BUILD_SUBMISSION_PLAN"], snapshot.buildPlan.gateValid ? "COMPLETE" : "BLOCKED"),
+        snapshot.buildPlan.gateBlocker ?? snapshot.buildPlan.blocker ?? "Submission plan pending.",
+        "BUILD_SUBMISSION_PLAN",
+      ),
       stage(
         7,
         stageStatusFromCanonical(ds["MATCH_EVIDENCE"], "WAITING_ON_PRIOR_STEP"),
         decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "MANDATORY_NO_COMPLIANCE_ROWS", "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
-          : "Link reviewed experts and project experience to source-traced requirements.",
-        "Match Evidence",
-        "LINK_VAULT_EVIDENCE",
+          : "Review automatically matched source-verified or human-reviewed company evidence.",
+        evidenceRecoveryRequired ? "MATCH_EVIDENCE" : "REVIEW_EVIDENCE",
       ),
-      stage(8, stageStatusFromCanonical(ds["GENERATE_DOCUMENTS"], snapshot.generationEligible ? "READY" : "BLOCKED"), snapshot.generationBlockers[0] ?? "Ready for generation.", "Generate", "GENERATE_REQUIRED_DOCUMENTS"),
+      stage(
+        8,
+        stageStatusFromCanonical(ds["GENERATE_DOCUMENTS"], snapshot.generationEligible ? "READY" : "BLOCKED"),
+        snapshot.generationBlockers[0] ?? "Ready to generate only tender-required documents.",
+        "GENERATE_REQUIRED_DOCUMENTS",
+      ),
       stage(
         9,
         stageStatusFromCanonical(ds["VALIDATE_DOCS"], "WAITING_ON_PRIOR_STEP"),
         decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "DOCS_NOT_VALIDATED", "DOCS_NOT_APPROVED_EXPORT_READY", "AUTHORITY_OR_QUALITY_BLOCKERS"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
-          : "Review and approve generated documents.",
-        "Review Documents",
-        "VALIDATE_DOCS",
+          : "Validate generated documents and complete genuine final approval.",
+        "FINAL_APPROVAL",
       ),
-      stage(10, stageStatusFromCanonical(ds["EXPORT_ZIP"], snapshot.exportEligible ? "READY" : "BLOCKED"), snapshot.exportBlockers[0] ?? "Ready for export.", "Export", "DOWNLOAD_FINAL_ZIP"),
+      stage(
+        10,
+        stageStatusFromCanonical(ds["EXPORT_ZIP"], snapshot.exportEligible ? "READY" : "BLOCKED"),
+        snapshot.exportBlockers[0] ?? "Ready for byte-verified final ZIP export.",
+        "DOWNLOAD_FINAL_ZIP",
+      ),
     ];
 
     return NextResponse.json({
@@ -143,7 +177,9 @@ export async function GET(
       pageLedgers: pageLedgerSummary,
     });
   } catch (error) {
-    logger.error("[workflow-center]", { detail: error });
+    logger.error("[workflow-center]", {
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

@@ -1,11 +1,17 @@
 import Link from "next/link";
 import { LoginForm } from "../../components/login-form";
-import { LoginRecoveryNote } from "../../components/login-recovery-note";
+import {
+  isLoginPublicErrorCode,
+  LoginRecoveryNote,
+} from "../../components/login-recovery-note";
 
-export default async function LoginPage({ searchParams }: { searchParams?: Promise<{ error?: string; detail?: string; recovered?: string }> }) {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ error?: string; recovered?: string }>;
+}) {
   const params = await searchParams;
-  const error = params?.error ?? null;
-  const detail = params?.detail ?? null;
+  const errorCode = isLoginPublicErrorCode(params?.error) ? params.error : null;
   const recovered = params?.recovered === "1";
 
   return (
@@ -18,7 +24,7 @@ export default async function LoginPage({ searchParams }: { searchParams?: Promi
           <h1 className="text-2xl font-bold text-slate-900">Hope Tender</h1>
           <p className="mt-1 text-sm text-slate-500">Hope Urban Planning Architectural and Engineering Consultancy</p>
         </div>
-        {(error || recovered) && <LoginRecoveryNote error={error} detail={detail} />}
+        <LoginRecoveryNote errorCode={errorCode} recovered={recovered} />
         <div className="rounded-2xl border bg-white p-8 shadow-sm space-y-5">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Sign in to your workspace</h2>

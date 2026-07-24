@@ -4,9 +4,10 @@ import test from "node:test";
 
 const engine = readFileSync("components/engine-action-panel.tsx", "utf8");
 const review = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
-const importer = readFileSync("lib/company-knowledge-import-safe.ts", "utf8");
+const ingestion = readFileSync("lib/company-vault-ingestion.ts", "utf8");
+const verification = readFileSync("lib/company-auto-verification.ts", "utf8");
 
-test("blocked Engine can repair Company Vault and retry Safe Mode automatically", () => {
+test("blocked Engine exposes an explicit Vault recovery action without becoming the normal workflow owner", () => {
   assert.match(engine, /async function repairVaultAndRetry\(\)/);
   assert.match(engine, /fetch\("\/api\/company\/reimport", \{ method: "POST" \}\)/);
   assert.match(engine, /Repair Vault & Retry Safe Mode/);
@@ -14,14 +15,17 @@ test("blocked Engine can repair Company Vault and retry Safe Mode automatically"
   assert.match(engine, /href="\/dashboard\/company"/);
 });
 
-test("Knowledge Review repairs source extraction before rebuilding records", () => {
+test("Review Inbox reprocesses stored source bytes before rebuilding records", () => {
   assert.match(review, /fetch\("\/api\/company\/reimport", \{ method: "POST" \}\)/);
-  assert.match(review, /Repair Vault Sources/);
-  assert.match(review, /Upload source files in Company Vault/);
+  assert.match(review, /Reprocess sources/);
+  assert.match(review, /Upload stronger source files/);
   assert.doesNotMatch(review, /fetch\("\/api\/company\/knowledge\/repair", \{ method: "POST" \}\)/);
 });
 
-test("automatic repair does not auto-promote records to REVIEWED", () => {
-  assert.match(importer, /Records are NEVER promoted to REVIEWED automatically/);
-  assert.match(importer, /A human must review/);
+test("automatic repair produces SOURCE_VERIFIED, never fabricated human REVIEWED", () => {
+  assert.match(ingestion, /autoVerifyCompanyKnowledge\(companyId\)/);
+  assert.match(verification, /trustLevel: "SOURCE_VERIFIED"/);
+  assert.match(verification, /reviewedBy: null/);
+  assert.match(verification, /reviewedAt: null/);
+  assert.doesNotMatch(verification, /data:\s*\{[^}]*trustLevel: "REVIEWED"/s);
 });

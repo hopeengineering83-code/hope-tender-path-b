@@ -23,13 +23,15 @@ describe("latest preview — extraction truth has one meaning", () => {
 });
 
 describe("latest preview — Engine outcome is canonical and provenance-aware", () => {
-  it("runtime reviewed-vault counts use durable source provenance", () => {
+  it("runtime Vault counts distinguish generation-eligible, human-reviewed, and source-verified evidence", () => {
     const source = read("lib/company-ingestion-readiness.ts");
-    assert.match(source, /function hasRuntimeReviewAuthorityShape/);
+    assert.match(source, /function hasRuntimeAuthorityShape/);
     assert.match(source, /Object\.prototype\.hasOwnProperty\.call\(record, "sourceDocumentId"\)/);
-    assert.match(source, /durableReview: hasRuntimeReviewAuthorityShape\(record\) \? isDurablyReviewed\(record\) : undefined/);
-    assert.match(source, /source-verified reviewed experts/);
-    assert.match(source, /source-verified reviewed projects/);
+    assert.match(source, /durableGenerationEligibility: hasRuntimeAuthorityShape\(record\) \? canUseVaultRecord\(record, "GENERATION"\) : undefined/);
+    assert.match(source, /durableHumanReview: hasRuntimeAuthorityShape\(record\) \? isDurablyReviewed\(record\) : undefined/);
+    assert.match(source, /durableSourceVerification: hasRuntimeAuthorityShape\(record\) \? isDurablySourceVerified\(record\) : undefined/);
+    assert.match(source, /No source-verified or human-reviewed experts are available/);
+    assert.match(source, /No source-verified or human-reviewed projects are available/);
   });
 
   it("postconditions do not emit both zero-row and no-selection blockers for the same evidence class", () => {
