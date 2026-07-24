@@ -158,6 +158,7 @@ jobs:
         run: node scripts/seed-e2e-user.mjs
 
       - name: Browser smoke, authenticated intake, golden workflow, and cross-user isolation
+        shell: bash
         env:
           CSRF_MODE: "origin"
           CSRF_STRICT_DEV: "true"
@@ -171,7 +172,9 @@ jobs:
           E2E_GOLDEN_AUTH: "true"
           SMOKE_TEST_EMAIL: ${{ env.E2E_TEST_EMAIL }}
           SMOKE_TEST_PASSWORD: ${{ env.E2E_TEST_PASSWORD }}
-        run: npm run test:e2e
+        run: |
+          set -o pipefail
+          npm run test:e2e 2>&1 | tee test-results/playwright.log
 
       - name: Reject test-time source mutation
         if: always()
@@ -199,6 +202,7 @@ jobs:
           name: ci-diagnostics
           path: |
             test-results/
+            playwright-report/
             acceptance-evidence/
             build-results/
             prisma/schema.prisma
