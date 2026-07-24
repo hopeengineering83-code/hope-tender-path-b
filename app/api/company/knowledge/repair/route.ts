@@ -2,7 +2,7 @@ import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { importCompanyKnowledgeFromDocuments } from "../../../../../lib/company-knowledge-import-safe";
+import { ingestCompanyVault } from "../../../../../lib/company-vault-ingestion";
 import { logAction } from "../../../../../lib/audit";
 import { isCompanyKnowledgeAIEnabled } from "../../../../../lib/company-knowledge-ai";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
@@ -12,6 +12,7 @@ import {
   effectiveReviewTrustLevel,
   expertReviewFields,
   isDurablyReviewed,
+  isDurablySourceVerified,
   parseStoredStringList,
   projectReviewFields,
   publicVaultIdentifier,
@@ -40,16 +41,18 @@ function usableText(text: string | null | undefined) {
 
 function isExpertSource(fileName: string, category: string, text: string | null | undefined) {
   if (!usableText(text)) return false;
-  const label = `${fileName} ${category}`.toLowerCase();
-  if (/project|portfolio|contract|reference/.test(label) && !/cv|expert|staff|personnel|resume/.test(label)) return false;
-  return /cv|expert|staff|resume|personnel|curriculum/.test(label) || /name\s+of\s+(expert|key\s+staff|personnel)|curriculum\s+vitae|proposed\s+position/i.test(text ?? "");
+  const sample = `${fileName} ${category}\n${text ?? ""}`;
+  return category === "EXPERT_CV" ||
+    /cv|expert|staff|resume|personnel|curriculum/i.test(fileName) ||
+    /name\s+of\s+(expert|key\s+staff|personnel)|curriculum\s+vitae|proposed\s+position|professional\s+experience/i.test(sample);
 }
 
 function isProjectSource(fileName: string, category: string, text: string | null | undefined) {
   if (!usableText(text)) return false;
-  const label = `${fileName} ${category}`.toLowerCase();
-  if (/cv|expert|staff|resume|personnel/.test(label) && !/project|portfolio|contract|reference/.test(label)) return false;
-  return /project|portfolio|reference|contract|experience/.test(label) || /project\s+name|client\s+name|selected\s+projects?|assignment\s+name|name\s+of\s+assignment/i.test(text ?? "");
+  const sample = `${fileName} ${category}\n${text ?? ""}`;
+  return ["PROJECT_REFERENCE", "PROJECT_CONTRACT", "PORTFOLIO"].includes(category) ||
+    /project|portfolio|reference|contract|experience/i.test(fileName) ||
+    /project\s+name|client\s+name|selected\s+projects?|assignment\s+name|name\s+of\s+assignment|scope\s+of\s+services|contract\s+value/i.test(sample);
 }
 
 function expectedExpertCount(text: string | null | undefined) {
@@ -62,8 +65,8 @@ function expectedProjectCount(text: string | null | undefined) {
   return direct ? Number(direct) : null;
 }
 
-function requestedPage(searchParams: URLSearchParams, key: string): number {
-  const parsed = Number.parseInt(searchParams.get(key) ?? "1", 10);
+function requestedPage(searchParams: URLSearchParams, name: string): number {
+  const parsed = Number.parseInt(searchParams.get(name) ?? "1", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
@@ -120,7 +123,15 @@ async function buildDiagnostics(
         reviewNotes: true,
         sourceDocumentId: true,
         sourceDocument: {
-          select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
+          select: {
+            id: true,
+            companyId: true,
+            extractedText: true,
+            contentSha256: true,
+            contentByteLength: true,
+            integrityStatus: true,
+            metadata: true,
+          },
         },
       },
       orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
@@ -145,7 +156,15 @@ async function buildDiagnostics(
         reviewNotes: true,
         sourceDocumentId: true,
         sourceDocument: {
-          select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
+          select: {
+            id: true,
+            companyId: true,
+            extractedText: true,
+            contentSha256: true,
+            contentByteLength: true,
+            integrityStatus: true,
+            metadata: true,
+          },
         },
       },
       orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
@@ -183,28 +202,36 @@ async function buildDiagnostics(
   const extractedDocuments = documentDiagnostics.filter((document) => document.status === "EXTRACTED").length;
   const documentsWithUsableText = docs.filter((document) => usableText(document.extractedText)).length;
   const unverifiedDocuments = documentDiagnostics.filter((document) => document.status === "UNVERIFIED").length;
+
   const reviewedExperts = expertReviewStates.filter(isDurablyReviewed).length;
+  const sourceVerifiedExperts = expertReviewStates.filter(isDurablySourceVerified).length;
   const unsupportedReviewedExperts = expertReviewStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
+  const unsupportedSourceVerifiedExperts = expertReviewStates.filter((record) => record.trustLevel === "SOURCE_VERIFIED" && !isDurablySourceVerified(record)).length;
   const aiDraftExperts = expertStates.filter((expert) => expert.trustLevel === "AI_DRAFT").length;
   const regexDraftExperts = expertStates.filter((expert) => !expert.trustLevel || expert.trustLevel === "REGEX_DRAFT").length;
+
   const reviewedProjects = projectReviewStates.filter(isDurablyReviewed).length;
+  const sourceVerifiedProjects = projectReviewStates.filter(isDurablySourceVerified).length;
   const unsupportedReviewedProjects = projectReviewStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
+  const unsupportedSourceVerifiedProjects = projectReviewStates.filter((record) => record.trustLevel === "SOURCE_VERIFIED" && !isDurablySourceVerified(record)).length;
   const aiDraftProjects = projectStates.filter((project) => project.trustLevel === "AI_DRAFT").length;
   const regexDraftProjects = projectStates.filter((project) => !project.trustLevel || project.trustLevel === "REGEX_DRAFT").length;
+
   const expectedExperts = docs.map((document) => expectedExpertCount(document.extractedText)).find((count) => count && count > 0) ?? null;
   const expectedProjects = docs.map((document) => expectedProjectCount(document.extractedText)).find((count) => count && count > 0) ?? null;
 
   const gaps: Gap[] = [];
   if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No company documents uploaded", detail: "Upload company evidence, CVs, and project references." });
   if (docs.length > 0 && documentsWithUsableText === 0) gaps.push({ severity: "CRITICAL", title: "No usable extracted text", detail: "Documents exist, but none contain usable extracted text." });
-  if (unverifiedDocuments > 0) gaps.push({ severity: "CRITICAL", title: "Source byte integrity is unverified", detail: `${unverifiedDocuments} document(s) cannot support reviewed evidence until their stored bytes have a verified SHA-256 digest.` });
-  if (!isCompanyKnowledgeAIEnabled()) gaps.push({ severity: "CRITICAL", title: "AI extraction is not enabled", detail: "Configure an approved AI provider before automated extraction." });
-  if (unsupportedReviewedExperts > 0) gaps.push({ severity: "CRITICAL", title: "Expert reviews lack durable provenance", detail: `${unsupportedReviewedExperts} expert record(s) are blocked until source evidence and reviewer audit are recorded.` });
-  if (unsupportedReviewedProjects > 0) gaps.push({ severity: "CRITICAL", title: "Project reviews lack durable provenance", detail: `${unsupportedReviewedProjects} project record(s) are blocked until source evidence and reviewer audit are recorded.` });
-  if (expertSourceDocuments === 0) gaps.push({ severity: "HIGH", title: "No expert source documents detected", detail: "Expert records cannot become usable without an owned CV/staff source document and field evidence." });
-  if (projectSourceDocuments === 0) gaps.push({ severity: "HIGH", title: "No project source documents detected", detail: "Project records cannot become usable without an owned project-reference source document and field evidence." });
-  if (expertStates.length > 0 && reviewedExperts === 0) gaps.push({ severity: "HIGH", title: "No provenance-verified experts", detail: `${expertStates.length} expert record(s) exist, but none has a valid durable review.` });
-  if (projectStates.length > 0 && reviewedProjects === 0) gaps.push({ severity: "HIGH", title: "No provenance-verified projects", detail: `${projectStates.length} project record(s) exist, but none has a valid durable review.` });
+  if (unverifiedDocuments > 0) gaps.push({ severity: "CRITICAL", title: "Source byte integrity is unverified", detail: `${unverifiedDocuments} document(s) cannot support evidence until their stored bytes have a verified SHA-256 digest.` });
+  if (unsupportedReviewedExperts > 0) gaps.push({ severity: "CRITICAL", title: "Expert human reviews are stale", detail: `${unsupportedReviewedExperts} expert record(s) are blocked until current source evidence is human-reviewed again.` });
+  if (unsupportedReviewedProjects > 0) gaps.push({ severity: "CRITICAL", title: "Project human reviews are stale", detail: `${unsupportedReviewedProjects} project record(s) are blocked until current source evidence is human-reviewed again.` });
+  if (unsupportedSourceVerifiedExperts > 0) gaps.push({ severity: "HIGH", title: "Expert source verification is stale", detail: `${unsupportedSourceVerifiedExperts} expert record(s) changed source bytes, extraction revision, source span, or bound fields and require automatic re-verification.` });
+  if (unsupportedSourceVerifiedProjects > 0) gaps.push({ severity: "HIGH", title: "Project source verification is stale", detail: `${unsupportedSourceVerifiedProjects} project record(s) changed source bytes, extraction revision, source span, or bound fields and require automatic re-verification.` });
+  if (expertSourceDocuments === 0 && expertStates.length > 0) gaps.push({ severity: "HIGH", title: "No expert evidence source detected", detail: "Upload a CV or mixed document containing the exact expert claim." });
+  if (projectSourceDocuments === 0 && projectStates.length > 0) gaps.push({ severity: "HIGH", title: "No project evidence source detected", detail: "Upload a project reference or mixed document containing the exact project claim." });
+  if (expertStates.length > 0 && reviewedExperts === 0) gaps.push({ severity: "MEDIUM", title: "Experts await human review", detail: `${sourceVerifiedExperts} source-verified and ${expertStates.length - sourceVerifiedExperts} draft/stale expert record(s) exist. Final-package eligibility requires genuine human review.` });
+  if (projectStates.length > 0 && reviewedProjects === 0) gaps.push({ severity: "MEDIUM", title: "Projects await human review", detail: `${sourceVerifiedProjects} source-verified and ${projectStates.length - sourceVerifiedProjects} draft/stale project record(s) exist. Final-package eligibility requires genuine human review.` });
   if (expectedExperts && expertStates.length < expectedExperts) gaps.push({ severity: "MEDIUM", title: "Fewer experts than expected", detail: `Expected about ${expectedExperts} experts, but ${expertStates.length} records exist.` });
   if (expectedProjects && projectStates.length < expectedProjects) gaps.push({ severity: "MEDIUM", title: "Fewer projects than expected", detail: `Expected about ${expectedProjects} projects, but ${projectStates.length} records exist.` });
 
@@ -238,8 +265,8 @@ async function buildDiagnostics(
   });
 
   return {
-    importVersion: "knowledge-import-v-provenance-1",
-    fingerprint: `${docs.length}:${extractedDocuments}:${expertStates.length}:${projectStates.length}`,
+    importVersion: "company-vault-ingestion-v2-source-verification",
+    fingerprint: `${docs.length}:${extractedDocuments}:${expertStates.length}:${projectStates.length}:${sourceVerifiedExperts}:${sourceVerifiedProjects}`,
     documents: documentDiagnostics,
     totals: {
       documents: docs.length,
@@ -256,8 +283,12 @@ async function buildDiagnostics(
       expectedProjects,
       reviewedExperts,
       reviewedProjects,
+      sourceVerifiedExperts,
+      sourceVerifiedProjects,
       unsupportedReviewedExperts,
       unsupportedReviewedProjects,
+      unsupportedSourceVerifiedExperts,
+      unsupportedSourceVerifiedProjects,
       aiDraftExperts,
       aiDraftProjects,
       regexDraftExperts,
@@ -313,23 +344,26 @@ export async function POST(req: Request) {
     const company = await getCompany(actor.id);
     if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-    const result = await importCompanyKnowledgeFromDocuments(company.id);
+    const result = await ingestCompanyVault(company.id);
     const diagnostics = await buildDiagnostics(company.id);
 
     void logAction({
       userId: actor.id,
-      action: "COMPANY_KNOWLEDGE_REPAIR",
+      action: "COMPANY_KNOWLEDGE_REPROCESS",
       entityType: "Company",
       entityId: company.id,
-      description: "Company knowledge repair completed.",
+      description: "Company Vault sources were reprocessed through the canonical ingestion and source-verification path.",
       metadata: {
         expertsCreated: result.expertsCreated,
         projectsCreated: result.projectsCreated,
-        aiUsed: Boolean(result.aiUsed),
+        expertsUpdated: result.expertsUpdated,
+        projectsUpdated: result.projectsUpdated,
+        aiUsed: result.aiUsed,
+        sourceVerification: result.sourceVerification,
       },
       requestId,
     }).catch((error) => {
-      logger.warn("company knowledge repair audit persistence failed", {
+      logger.warn("company knowledge reprocessing audit persistence failed", {
         requestId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
       });
@@ -337,14 +371,14 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ result: { ...result, diagnostics }, requestId });
   } catch (error) {
-    logger.error("company knowledge repair failed", {
+    logger.error("company knowledge reprocessing failed", {
       requestId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     return NextResponse.json(
       {
-        error: "Company knowledge repair failed. Retry or contact support with the request ID.",
-        code: "COMPANY_KNOWLEDGE_REPAIR_FAILED",
+        error: "Company knowledge reprocessing failed. Retry or contact support with the request ID.",
+        code: "COMPANY_KNOWLEDGE_REPROCESS_FAILED",
         requestId,
       },
       { status: 500 },
