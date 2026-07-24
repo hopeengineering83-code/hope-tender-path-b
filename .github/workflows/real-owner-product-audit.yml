@@ -19,8 +19,8 @@ jobs:
     timeout-minutes: 50
     env:
       AUDIT_BASE_URL: https://hope-tender-path-9cs3akkgn-hopeengineering83-codes-projects.vercel.app
-      REAL_APP_EMAIL: ${{ secrets.REAL_APP_EMAIL || secrets.APP_LOGIN_EMAIL || secrets.OWNER_EMAIL || secrets.ADMIN_EMAIL || secrets.E2E_REAL_EMAIL || secrets.E2E_TEST_EMAIL || secrets.SMOKE_TEST_EMAIL || secrets.TEST_EMAIL || secrets.LOGIN_EMAIL || secrets.EMAIL }}
-      REAL_APP_PASSWORD: ${{ secrets.REAL_APP_PASSWORD || secrets.APP_LOGIN_PASSWORD || secrets.OWNER_PASSWORD || secrets.ADMIN_PASSWORD || secrets.E2E_REAL_PASSWORD || secrets.E2E_TEST_PASSWORD || secrets.SMOKE_TEST_PASSWORD || secrets.TEST_PASSWORD || secrets.LOGIN_PASSWORD || secrets.PASSWORD }}
+      REAL_APP_EMAIL: ${{ secrets.SCREENSHOT_TEST_EMAIL || secrets.REAL_APP_EMAIL || secrets.APP_LOGIN_EMAIL || secrets.OWNER_EMAIL || secrets.ADMIN_EMAIL || secrets.E2E_REAL_EMAIL || secrets.E2E_TEST_EMAIL || secrets.SMOKE_TEST_EMAIL || secrets.TEST_EMAIL || secrets.LOGIN_EMAIL || secrets.EMAIL }}
+      REAL_APP_PASSWORD: ${{ secrets.SCREENSHOT_TEST_PASSWORD || secrets.REAL_APP_PASSWORD || secrets.APP_LOGIN_PASSWORD || secrets.OWNER_PASSWORD || secrets.ADMIN_PASSWORD || secrets.E2E_REAL_PASSWORD || secrets.E2E_TEST_PASSWORD || secrets.SMOKE_TEST_PASSWORD || secrets.TEST_PASSWORD || secrets.LOGIN_PASSWORD || secrets.PASSWORD }}
       VERCEL_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET || secrets.VERCEL_PROTECTION_BYPASS_SECRET || secrets.VERCEL_BYPASS_SECRET }}
       NEXT_TELEMETRY_DISABLED: "1"
 
@@ -33,7 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${REAL_APP_EMAIL:-}" ] || [ -z "${REAL_APP_PASSWORD:-}" ]; then
-            echo "::error::No recognized real-account email/password secret pair is available to this workflow. Configure REAL_APP_EMAIL and REAL_APP_PASSWORD, or map the existing secret names into this workflow."
+            echo "::error::The repository login secrets were not available to this workflow. Expected SCREENSHOT_TEST_EMAIL and SCREENSHOT_TEST_PASSWORD."
             exit 2
           fi
           echo "Credential inputs are present and remain masked."
