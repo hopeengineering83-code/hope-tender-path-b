@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: real-owner-product-audit
@@ -28,16 +30,6 @@ jobs:
       - name: Checkout exact audit branch
         uses: actions/checkout@v4
 
-      - name: Confirm credentials are available without exposing them
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -z "${REAL_APP_EMAIL:-}" ] || [ -z "${REAL_APP_PASSWORD:-}" ]; then
-            echo "::error::The repository login secrets were not available to this workflow. Expected SCREENSHOT_TEST_EMAIL and SCREENSHOT_TEST_PASSWORD."
-            exit 2
-          fi
-          echo "Credential inputs are present and remain masked."
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -51,7 +43,17 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Audit real owner account on latest PR 1175 preview
-        run: node scripts/audit-real-owner-app.mjs
+        id: audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p real-app-audit
+          if [ -z "${REAL_APP_EMAIL:-}" ] || [ -z "${REAL_APP_PASSWORD:-}" ]; then
+            echo "The repository login secrets were unavailable. Expected SCREENSHOT_TEST_EMAIL and SCREENSHOT_TEST_PASSWORD." | tee real-app-audit/run-error.txt
+            exit 2
+          fi
+          node scripts/audit-real-owner-app.mjs 2>&1 | tee real-app-audit/run.log
 
       - name: Upload full real-account audit package
         if: always()
@@ -61,3 +63,36 @@ jobs:
           path: real-app-audit/
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Post non-secret audit summary to PR 1175
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f real-app-audit/audit-summary.md ]; then
+            {
+              echo "## Real owner-account audit — ${GITHUB_SHA}"
+              echo
+              echo "Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo
+              cat real-app-audit/audit-summary.md
+            } > /tmp/audit-comment.md
+          else
+            {
+              echo "## Real owner-account audit could not complete — ${GITHUB_SHA}"
+              echo
+              echo "Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+              echo
+              echo "Outcome: ${AUDIT_OUTCOME}"
+              echo
+              if [ -f real-app-audit/run-error.txt ]; then cat real-app-audit/run-error.txt; else echo "See the workflow log and uploaded audit artifact for the non-secret failure reason."; fi
+            } > /tmp/audit-comment.md
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/issues/1175/comments" -f body="$(cat /tmp/audit-comment.md)"
+
+      - name: Fail job when audit failed
+        if: steps.audit.outcome != 'success'
+        run: exit 1
