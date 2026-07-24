@@ -47,7 +47,7 @@ jobs:
         run: npm ci
 
       - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Use the real browser login flow
         shell: bash
