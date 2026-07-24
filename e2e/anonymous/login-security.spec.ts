@@ -1,6 +1,12 @@
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
+// Credentials must never be retained in Playwright traces, videos, or failure
+// screenshots. These worker-scoped settings apply to every test in this file;
+// context-specific settings such as JavaScript enablement remain inside the
+// relevant describe group.
+test.use({ trace: "off", video: "off", screenshot: "off" });
+
 function testCredentials(prefix: string) {
   const token = randomUUID().replace(/-/g, "");
   return {
@@ -14,12 +20,7 @@ function assertSecretAbsent(value: string, secrets: string[]) {
 }
 
 test.describe("login security before hydration", () => {
-  test.use({
-    javaScriptEnabled: false,
-    trace: "off",
-    video: "off",
-    screenshot: "off",
-  });
+  test.use({ javaScriptEnabled: false });
 
   test("native form submits by POST without credential-bearing URL or history", async ({ page }) => {
     const credentials = testCredentials("native");
@@ -58,8 +59,6 @@ test.describe("login security before hydration", () => {
 });
 
 test.describe("hydrated login security", () => {
-  test.use({ trace: "off", video: "off", screenshot: "off" });
-
   test("normal login uses the real POST endpoint and replaces the login location", async ({ page }) => {
     const email = process.env.E2E_TEST_EMAIL;
     const password = process.env.E2E_TEST_PASSWORD;
