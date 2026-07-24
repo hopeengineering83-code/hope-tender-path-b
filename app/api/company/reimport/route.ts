@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
+import { autoVerifyCompanyKnowledge } from "../../../../lib/company-auto-verification";
 import { runCompanyKnowledgeSafetyImport } from "../../../../lib/company-knowledge-safety-import";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
@@ -129,6 +130,9 @@ export async function POST(req: Request) {
     const safety = aiRanSuccessfully
       ? emptyResult
       : await runCompanyKnowledgeSafetyImport(prisma, company.id);
+    const autoVerification = aiRanSuccessfully
+      ? await autoVerifyCompanyKnowledge(company.id)
+      : { expertsVerified: 0, projectsVerified: 0, expertsBlocked: 0, projectsBlocked: 0 };
     const supportCleanup = await cleanupSupportDocImportedRecords(company.id);
 
     const result = {
@@ -139,9 +143,13 @@ export async function POST(req: Request) {
       docsProcessed: primary.docsProcessed,
       expertsCreated: primary.expertsCreated + safety.expertsCreated,
       projectsCreated: primary.projectsCreated + safety.projectsCreated,
+      expertsAutoVerified: autoVerification.expertsVerified,
+      projectsAutoVerified: autoVerification.projectsVerified,
+      autoVerificationBlocked: autoVerification.expertsBlocked + autoVerification.projectsBlocked,
       supportCleanup,
       primaryImport: primary,
       safetyImport: safety,
+      autoVerification,
     };
 
     void logAction({
@@ -149,12 +157,15 @@ export async function POST(req: Request) {
       action: "COMPANY_KNOWLEDGE_REPAIR",
       entityType: "Company",
       entityId: company.id,
-      description: `Company knowledge reimport completed: ${result.expertsCreated} experts and ${result.projectsCreated} projects created; ${supportCleanup.expertsDeleted} support-derived experts and ${supportCleanup.projectsDeleted} support-derived projects removed.`,
+      description: `Company knowledge reimport completed automatically: ${result.expertsCreated} experts and ${result.projectsCreated} projects created; ${result.expertsAutoVerified} experts and ${result.projectsAutoVerified} projects source-verified; ${supportCleanup.expertsDeleted} support-derived experts and ${supportCleanup.projectsDeleted} support-derived projects removed.`,
       metadata: {
         docsReextracted: result.docsReextracted,
         docsFailed: result.docsFailed,
         expertsCreated: result.expertsCreated,
         projectsCreated: result.projectsCreated,
+        expertsAutoVerified: result.expertsAutoVerified,
+        projectsAutoVerified: result.projectsAutoVerified,
+        autoVerificationBlocked: result.autoVerificationBlocked,
         supportCleanup,
       },
       requestId,
