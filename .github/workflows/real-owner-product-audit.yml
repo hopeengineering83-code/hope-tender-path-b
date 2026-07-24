@@ -1,6 +1,13 @@
 name: Real owner-account product audit
 
 on:
+  pull_request:
+    branches:
+      - release/consolidated-recovery-20260717
+    paths:
+      - scripts/audit-real-owner-app.mjs
+      - .github/workflows/real-owner-product-audit.yml
+      - .real-owner-audit-trigger
   push:
     branches:
       - audit/real-owner-product-workflow-20260724
@@ -12,7 +19,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: real-owner-product-audit
+  group: real-owner-product-audit-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
