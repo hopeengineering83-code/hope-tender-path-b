@@ -183,7 +183,7 @@ jobs:
         with:
           name: exact-head-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
-            test-results/acceptance-evidence/
+            acceptance-evidence/
             build-results/npm-build.log
             test-results/release-integrity-audit.log
             test-results/migrate-deploy.log
@@ -199,6 +199,7 @@ jobs:
           name: ci-diagnostics
           path: |
             test-results/
+            acceptance-evidence/
             build-results/
             prisma/schema.prisma
             prisma/migrations/
