@@ -5,6 +5,7 @@ export type ReleaseSnapshotEligibilityInput = {
   metadataFinalBlocker: string | null;
   requirementsBlocker: string | null;
   buildPlanGateBlocker: string | null;
+  /** Human-review blocker for final output. Matching/draft generation has its own source-verification policy. */
   vaultBlocker: string | null;
   mandatoryRequirementCount: number;
   evidenceCoveragePercent: number;
@@ -27,10 +28,11 @@ function compactUnique(values: Array<string | null | undefined>): string[] {
 /**
  * Pure release-snapshot eligibility resolver.
  *
- * Draft generation and final output deliberately have different Tender Facts
- * authority rules. Drafts may proceed with a sufficiently safe manual value;
- * export and Final ZIP additionally require source grounding or sufficient
- * final audit. Every downstream list inherits every upstream blocker.
+ * Draft generation and final output deliberately have different trust rules.
+ * Source-verified evidence may support matching and draft generation when the
+ * matching policy accepts it. Final export and Final ZIP additionally require
+ * genuine human review; therefore the Vault human-review blocker belongs only
+ * to final-output blocker lists.
  */
 export function buildReleaseSnapshotEligibility(
   input: ReleaseSnapshotEligibilityInput,
@@ -41,7 +43,6 @@ export function buildReleaseSnapshotEligibility(
     input.metadataGenerationBlocker,
     input.requirementsBlocker,
     input.buildPlanGateBlocker,
-    input.vaultBlocker,
   ]);
 
   const evidenceBlocker =
@@ -52,6 +53,7 @@ export function buildReleaseSnapshotEligibility(
   const exportBlockers = compactUnique([
     ...generationBlockers,
     input.metadataFinalBlocker,
+    input.vaultBlocker,
     evidenceBlocker,
   ]);
 
