@@ -3,30 +3,34 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const repairRoute = fs.readFileSync("app/api/company/knowledge/repair/route.ts", "utf8");
+const ingestion = fs.readFileSync("lib/company-vault-ingestion.ts", "utf8");
 const aiExtractor = fs.readFileSync("lib/company-knowledge-ai.ts", "utf8");
 const diagnosticsRoute = fs.readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
 
-describe("company knowledge repair safety copy and diagnostics", () => {
+describe("company knowledge repair safety and diagnostics", () => {
   it("derives provider availability from the shared company-knowledge AI authority", () => {
-    assert.ok(!/GEMINI_API_KEY is required/.test(repairRoute));
+    assert.doesNotMatch(repairRoute, /GEMINI_API_KEY is required/);
     assert.match(repairRoute, /isCompanyKnowledgeAIEnabled\(\)/);
-    assert.match(repairRoute, /AI extraction is not enabled/);
-    assert.match(repairRoute, /approved AI provider/);
+    assert.match(ingestion, /const aiUsed = isCompanyKnowledgeAIEnabled\(\)/);
+    assert.match(ingestion, /deterministic ingestion completed/);
   });
 
-  it("keeps missing source documents fail-closed under durable provenance authority", () => {
-    assert.match(repairRoute, /severity: "HIGH", title: "No expert source documents detected"/);
-    assert.match(repairRoute, /severity: "HIGH", title: "No project source documents detected"/);
-    assert.match(repairRoute, /Expert records cannot become usable without an owned CV\/staff source document and field evidence/);
-    assert.match(repairRoute, /Project records cannot become usable without an owned project-reference source document and field evidence/);
+  it("keeps missing source evidence actionable and fail-closed", () => {
+    assert.match(repairRoute, /severity: "HIGH", title: "No expert evidence source detected"/);
+    assert.match(repairRoute, /severity: "HIGH", title: "No project evidence source detected"/);
+    assert.match(repairRoute, /Upload a CV or mixed document containing the exact expert claim/);
+    assert.match(repairRoute, /Upload a project reference or mixed document containing the exact project claim/);
     assert.doesNotMatch(repairRoute, /dedicated source docs optional/);
   });
 
-  it("blocks unverified bytes and reviews without durable provenance", () => {
+  it("blocks unverified bytes and stale human or machine provenance", () => {
     assert.match(repairRoute, /Source byte integrity is unverified/);
-    assert.match(repairRoute, /Expert reviews lack durable provenance/);
-    assert.match(repairRoute, /Project reviews lack durable provenance/);
+    assert.match(repairRoute, /Expert human reviews are stale/);
+    assert.match(repairRoute, /Project human reviews are stale/);
+    assert.match(repairRoute, /Expert source verification is stale/);
+    assert.match(repairRoute, /Project source verification is stale/);
     assert.match(repairRoute, /isDurablyReviewed/);
+    assert.match(repairRoute, /isDurablySourceVerified/);
     assert.match(repairRoute, /sourceByteIntegrityIsVerified/);
   });
 
