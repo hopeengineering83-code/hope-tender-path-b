@@ -17,7 +17,11 @@ describe("Recovery Command Center affordances", () => {
   const source = read("components/tender-recovery-command-center.tsx");
 
   it("shows an icon and text for its generic recovery mutation", () => {
-    assert.match(source, /<PlayIcon \/>/);
+    // BoltIcon is now canonical for the generic "Execute" dispatch on the
+    // recovery-command-center surface (see lib/ui/workflow-action-icons.ts).
+    // PlayIcon is reserved for "Resume AI Analyze" — the two verbs must not
+    // share an icon or users cannot tell the buttons apart at a glance.
+    assert.match(source, /<BoltIcon \/>/);
     assert.match(source, /"Execute"/);
   });
 
@@ -36,6 +40,17 @@ describe("Recovery Command Center affordances", () => {
     assert.match(source, /<PlayIcon \/> Resume AI Analyze/);
     assert.match(source, /<WarningIcon \/> Review Matching Inputs/);
     assert.match(source, /<CheckIcon \/> Link Vault Evidence/);
+  });
+
+  it("does not use PlayIcon for the generic Execute button (collision with Resume)", () => {
+    // The "Execute" button must NOT use PlayIcon — that icon is reserved
+    // for "Resume AI Analyze" on the same surface. Two competing primary
+    // buttons on the same surface with the same icon is a collision.
+    const executeButtonMatch = source.match(/<BoltIcon \/>\s*\{actioning \? "Working…" : "Execute"\}/);
+    assert.ok(executeButtonMatch, "Execute button must use BoltIcon, not PlayIcon");
+    // Sanity: PlayIcon should only appear for Resume AI Analyze.
+    const playIconUsages = (source.match(/<PlayIcon \/>/g) ?? []).length;
+    assert.equal(playIconUsages, 1, "PlayIcon must appear exactly once (for Resume AI Analyze)");
   });
 });
 
@@ -68,7 +83,10 @@ describe("workflow actions have visible semantic icons and labels", () => {
   });
 
   it("generation, review, and export actions use distinct icons", () => {
-    assert.match(read("components/generation-action-panel.tsx"), /BoltIcon/);
+    // Generate Docs uses DocumentGenerateIcon (not BoltIcon — that's reserved
+    // for engine "Run Safe Mode" on the engine-action surface).
+    assert.match(read("components/generation-action-panel.tsx"), /DocumentGenerateIcon/);
+    assert.doesNotMatch(read("components/generation-action-panel.tsx"), /BoltIcon/);
     assert.match(read("components/submission-plan-completeness-panel.tsx"), /<CheckCircleIcon \/>/);
     assert.match(read("components/authority-review-panel.tsx"), /<CheckCircleIcon \/>/);
     assert.match(read("components/export-readiness-panel.tsx"), /<DownloadIcon \/> Download Final ZIP/);

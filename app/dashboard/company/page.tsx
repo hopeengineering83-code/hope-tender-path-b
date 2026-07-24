@@ -30,6 +30,22 @@ type Company = {
   experts?: Expert[]; projects?: Project[];
 };
 type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; error?: string; category: string };
+
+/**
+ * Pipeline status surfaced after a company-document upload completes.
+ *
+ * The secure-upload handler already runs `importCompanyKnowledgeFromDocuments`
+ * synchronously when `companyDoc=true` — the vault re-ingest is DONE by the
+ * time the response returns. The previous UI did not show this, so users
+ * navigated to the Review Board and clicked "Repair" manually. This badge
+ * makes the auto-pipeline visible.
+ */
+type VaultPipelineStatus = {
+  phase: "ingested" | "failed";
+  message: string;
+  /** ISO timestamp so the badge can fade after a few seconds if desired. */
+  at: number;
+};
 type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean; hasPrivateStorage?: boolean | null; hasInlineFileContent?: boolean | null };
 
 const REQUIRED_ASSET_TYPES = ["LOGO", "LETTERHEAD", "SIGNATURE", "STAMP"];
@@ -88,6 +104,9 @@ export default function CompanyPage() {
   const [error, setError] = useState("");
   const [docCategory, setDocCategory] = useState("AUTO_DETECT");
   const [uploadQueue, setUploadQueue] = useState<UploadItem[]>([]);
+  /** Vault pipeline status — shown as a live badge after a successful
+   * company-document upload. Null when no upload has happened recently. */
+  const [vaultPipeline, setVaultPipeline] = useState<VaultPipelineStatus | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [searchDoc, setSearchDoc] = useState("");
   const [filterCat, setFilterCat] = useState("ALL");
@@ -293,13 +312,43 @@ export default function CompanyPage() {
       fd.append("category", docCategory==="AUTO_DETECT" ? "AUTO" : docCategory);
       try {
         const res = await fetch("/api/upload", { method:"POST", body:fd });
-        const data = await res.json() as { success?: boolean; results?: Array<{ error?: string }> };
+        const data = await res.json() as {
+          success?: boolean;
+          results?: Array<{ error?: string }>;
+          /** Vault re-ingest result — present when companyDoc=true. The
+           * secure-upload handler runs `importCompanyKnowledgeFromDocuments`
+           * synchronously, so this is the pipeline result, not a job ID. */
+          companyImport?: { status?: string; aiUsed?: boolean; aiFailures?: number; error?: string } | null;
+        };
         const firstErr = data.results?.[0] && "error" in data.results[0] ? data.results[0].error : undefined;
         if (!res.ok || firstErr) {
           setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:firstErr??"Upload failed" } : x));
         } else {
           setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"done" } : x));
           await loadDocs();
+          // Surface the auto-pipeline result. The vault re-ingest already
+          // happened server-side; this badge tells the user their newly
+          // uploaded document is already in the review queue — they do
+          // NOT need to navigate to the Review Board and click "Repair".
+          if (data.companyImport && data.companyImport.status !== "FAILED") {
+            const aiUsed = data.companyImport.aiUsed === true;
+            const aiFailures = data.companyImport.aiFailures ?? 0;
+            setVaultPipeline({
+              phase: "ingested",
+              message: aiUsed && aiFailures === 0
+                ? "Document ingested. AI extraction complete — review drafts in the Review Board."
+                : aiFailures > 0
+                  ? `Document ingested. AI extraction had ${aiFailures} failure(s) — safety import ran as fallback. Review drafts in the Review Board.`
+                  : "Document ingested. Regex-based drafts created — review and promote in the Review Board.",
+              at: Date.now(),
+            });
+          } else if (data.companyImport && data.companyImport.status === "FAILED") {
+            setVaultPipeline({
+              phase: "failed",
+              message: "Document stored, but vault re-ingest failed. Open the Review Board to repair manually.",
+              at: Date.now(),
+            });
+          }
         }
       } catch {
         setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:"Network interruption — please retry" } : x));
@@ -710,6 +759,27 @@ export default function CompanyPage() {
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+          {vaultPipeline && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                vaultPipeline.phase === "ingested"
+                  ? "border-blue-200 bg-blue-50 text-blue-800"
+                  : "border-amber-200 bg-amber-50 text-amber-800"
+              }`}
+            >
+              <span
+                aria-hidden="true"
+                className={`mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full ${
+                  vaultPipeline.phase === "ingested"
+                    ? "animate-pulse bg-blue-600"
+                    : "bg-amber-600"
+                }`}
+              />
+              <span className="leading-5">{vaultPipeline.message}</span>
             </div>
           )}
           {docs.length>0 && (

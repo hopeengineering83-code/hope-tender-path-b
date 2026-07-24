@@ -6,7 +6,7 @@ import { useState, useTransition } from "react";
 import { parseRepairMetadataResponse, buildRepairMessage } from "../lib/engine/repair-metadata-contract";
 import { GenerationProgressPanel } from "./generation-progress-panel";
 import { CanonicalStatusBadge } from "./canonical-status-badge";
-import { BoltIcon, RefreshIcon, WarningIcon, CheckCircleIcon, BanIcon } from "./icons";
+import { DocumentGenerateIcon, RefreshIcon, WarningIcon, CheckCircleIcon, BanIcon } from "./icons";
 import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 
@@ -68,7 +68,7 @@ export function GenerationActionButton({ canonicalGenerationState, fullProposalR
         : "inline-flex items-center gap-1.5 cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-600"}
       title={blocked ? blockedReason ?? "Generation blocked — resolve the blockers listed below." : "Generate proposal documents."}
     >
-      {fullProposalReady ? <BoltIcon /> : <BanIcon />} {busy ? "Generating…" : canonicalGenerationState === "RUNNING" ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
+      {fullProposalReady ? <DocumentGenerateIcon /> : <BanIcon />} {busy ? "Generating…" : canonicalGenerationState === "RUNNING" ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
     </button>
   );
 }

@@ -82,6 +82,14 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ kind: "error" | "success"; text: string } | null>(null);
+  /**
+   * Pipeline status advertised after a successful upload. The secure-upload
+   * handler returns a `processingJobId` when extraction is queued — we show
+   * it as a visible "Pipeline running" badge so the user knows the backend
+   * is working, instead of the previous silent "Run Engine to refresh"
+   * instruction that required a separate click.
+   */
+  const [pipelineStatus, setPipelineStatus] = useState<{ jobId: string | null; phase: "queued" | "extracting" | "done" } | null>(null);
   const packageIntake = searchParams.get("packageIntake") === "1";
   const packageFailed = safePackageFailureCount(searchParams.get("packageFailed"));
   const [showPackageNotice, setShowPackageNotice] = useState(packageIntake);
@@ -101,6 +109,10 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
     setMessage(null);
     let uploaded = 0;
     const errors: string[] = [];
+    /** Local mirror of pipelineStatus — avoids stale-closure issues inside
+     * the memoized callback. Set state for the badge AND this local for the
+     * success message in one go. */
+    let lastJobId: string | null = null;
 
     for (const file of incoming) {
       try {
@@ -110,7 +122,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
         if (classification) body.append("classification", classification);
 
         const response = await fetch("/api/upload", { method: "POST", body });
-        const payload = await response.json().catch(() => ({})) as { results?: UploadResult[]; error?: string };
+        const payload = await response.json().catch(() => ({})) as { results?: UploadResult[]; error?: string; processingJobId?: string | null };
         const result = payload.results?.[0];
         if (!response.ok || !result?.fileRecord) {
           errors.push(`${file.name}: ${result?.error ?? payload.error ?? "Upload failed"}`);
@@ -119,6 +131,17 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
 
         setFiles((current) => [result.fileRecord!, ...current.filter((item) => item.id !== result.fileRecord!.id)]);
         uploaded += 1;
+
+        // Surface the backend extraction job so the user sees the pipeline
+        // is running, instead of the previous silent "Run Engine" instruction.
+        // The secure-upload handler always returns a processingJobId for
+        // tender file uploads — null means the file was stored without
+        // extraction (e.g. unsupported format), in which case we do not
+        // advertise a pipeline phase.
+        if (payload.processingJobId) {
+          lastJobId = payload.processingJobId;
+          setPipelineStatus({ jobId: payload.processingJobId, phase: "queued" });
+        }
       } catch {
         errors.push(`${file.name}: network error`);
       }
@@ -128,7 +151,16 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
     if (errors.length > 0) {
       setMessage({ kind: "error", text: errors.join(" · ") });
     } else {
-      setMessage({ kind: "success", text: `${uploaded} file(s) uploaded. Run Engine to refresh extraction, analysis, and matching.` });
+      // The success message no longer tells the user to click "Run Engine" —
+      // the pipeline is already running (extraction is queued via the
+      // processingJobId returned by /api/upload). The user can watch the
+      // pipeline badge or navigate to the Engine panel to see live progress.
+      setMessage({
+        kind: "success",
+        text: lastJobId
+          ? `${uploaded} file(s) uploaded. Extraction pipeline is running — see the badge below or open the Engine panel for live progress.`
+          : `${uploaded} file(s) uploaded. Extraction will appear shortly — refresh if the badge does not update.`,
+      });
     }
     router.refresh();
   }, [classification, router, tenderId, uploading]);
@@ -255,6 +287,23 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
         <p role={message.kind === "error" ? "alert" : "status"} className={`mt-3 rounded-lg px-3 py-2 text-sm ${message.kind === "error" ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
           {message.text}
         </p>
+      )}
+
+      {pipelineStatus && pipelineStatus.jobId && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800"
+        >
+          <span
+            aria-hidden="true"
+            className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-blue-600"
+          />
+          <span className="font-semibold">Pipeline running</span>
+          <span className="text-blue-700">
+            Extraction is queued{pipelineStatus.jobId ? ` (job ${pipelineStatus.jobId.slice(0, 8)})` : ""}. The badge clears automatically when extraction completes — no action required.
+          </span>
+        </div>
       )}
 
       <div className="mt-4 overflow-x-auto">

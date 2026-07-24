@@ -36,12 +36,18 @@ describe("operational components use SVG icons", () => {
   it("generation and engine actions retain distinct icons and visible labels", () => {
     const generation = readComponent("generation-action-panel.tsx");
     const engine = readComponent("engine-action-panel.tsx");
-    assert.match(generation, /BoltIcon/);
+    // Generate Docs now uses DocumentGenerateIcon (the icon literally named
+    // for this action) so it no longer competes with the engine's BoltIcon.
+    // BoltIcon stays canonical for "Run Safe Mode" on the engine-action surface.
+    assert.match(generation, /DocumentGenerateIcon/);
     assert.match(generation, /Generate Docs/);
     assert.match(engine, /<BoltIcon/);
     assert.match(engine, /Run Safe Mode — Recommended/);
     assert.match(engine, /<ClockIcon/);
     assert.match(engine, /Run Full AI in Background/);
+    // Generation must NOT use BoltIcon — that icon is reserved for engine
+    // actions on the engine-action surface.
+    assert.doesNotMatch(generation, /BoltIcon/);
   });
 
   it("final ZIP uses DownloadIcon and visible text", () => {
@@ -62,7 +68,9 @@ describe("Recovery Command Center diagnostic icons", () => {
   const source = readComponent("tender-recovery-command-center.tsx");
 
   it("keeps its generic Execute recovery action visibly identified", () => {
-    assert.match(source, /<PlayIcon \/> \{actioning \? "Working…" : "Execute"\}/);
+    // BoltIcon is now canonical for "Execute" on the recovery-command-center
+    // surface — PlayIcon collided with "Resume AI Analyze" on the same surface.
+    assert.match(source, /<BoltIcon \/> \{actioning \? "Working…" : "Execute"\}/);
   });
 
   it("does not own final ZIP download", () => {

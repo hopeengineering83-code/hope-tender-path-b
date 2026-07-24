@@ -8,6 +8,22 @@ import {
   openParentDetailsAndScroll,
 } from "@/lib/ui/tender-workflow-sync";
 import { TENDER_WORKFLOW_STAGE_TARGETS } from "@/lib/tender-workflow-stages";
+import {
+  coarseStatusToLiveState,
+  getWorkflowLiveStateSpec,
+  type WorkflowLiveState,
+} from "@/lib/ui/workflow-live-state";
+import {
+  AlertCircleIcon,
+  CheckCircleIcon,
+  ClockIcon,
+  DocumentGenerateIcon,
+  LinkIcon,
+  RefreshIcon,
+  SparklesIcon,
+  WarningIcon,
+  ClipboardCheckIcon,
+} from "./icons";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 
 export interface WorkflowStageInfo {
@@ -158,7 +174,7 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <h3 className="min-w-0 break-words font-semibold text-slate-900">{stage.label}</h3>
-                    <StatusBadge status={stage.status} />
+                    <StatusBadge status={stage.status} stage={stage.stage} />
                   </div>
                   <p className="mt-0.5 text-sm text-slate-600">{stage.explanation}</p>
                   {stage.blocker && <p className="mt-1 text-xs font-medium text-red-600">Blocker: {stage.blocker}</p>}
@@ -185,23 +201,42 @@ export function TenderWorkflowActionCenter({ tenderId, canMutate = false }: { te
   );
 }
 
-function StatusBadge({ status }: { status: WorkflowStageInfo["status"] }) {
-  switch (status) {
-    case "COMPLETE":
-      return <span className="inline-flex items-center gap-1 rounded-full border border-emerald-600 bg-emerald-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white">Complete</span>;
-    case "READY":
-      return <span className="inline-flex items-center gap-1 rounded-full border border-emerald-100 bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">Ready</span>;
-    case "IN_PROGRESS":
-      return <span className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-[10px] font-bold uppercase text-blue-700">In Progress</span>;
-    case "WARNING":
-      return <span className="inline-flex items-center gap-1 rounded-full border border-amber-100 bg-amber-50 px-2 py-0.5 text-[10px] font-bold uppercase text-amber-700">Attention</span>;
-    case "BLOCKED":
-      return <span className="inline-flex items-center gap-1 rounded-full border border-red-100 bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase text-red-700">Blocked</span>;
-    case "BLOCKED_BY_PRIOR_STEP":
-      return <span className="inline-flex items-center gap-1 rounded-full border border-red-100 bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase text-red-500">Blocked by prior step</span>;
-    case "WAITING_ON_PRIOR_STEP":
-      return <span className="inline-flex items-center gap-1 rounded-full border border-slate-100 bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-500">Waiting</span>;
-    default:
-      return <span className="inline-flex items-center gap-1 rounded-full border border-slate-100 bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-500">Pending</span>;
-  }
+function StatusBadge({ status, stage }: { status: WorkflowStageInfo["status"]; stage: number }) {
+  // Upgrade the coarse API status to a precise live state. The coarse
+  // statuses (PENDING / IN_PROGRESS / READY / BLOCKED / etc.) are kept for
+  // backward compatibility with the API contract, but the UI now shows
+  // precise states (queued / extracting / analyzing / matching / generating /
+  // validating / blocked_with_reason / awaiting_approval / ready /
+  // failed_with_recovery) so the user can answer "what is happening RIGHT
+  // NOW?" at a glance.
+  const liveState: WorkflowLiveState = coarseStatusToLiveState(status, stage);
+  const spec = getWorkflowLiveStateSpec(liveState);
+  const Icon = LIVE_STATE_ICON_COMPONENTS[spec.iconName] ?? ClockIcon;
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${spec.badgeClassName}`}
+      title={spec.description}
+    >
+      <Icon className="h-3 w-3" />
+      {spec.label}
+    </span>
+  );
 }
+
+/**
+ * Maps icon component names from `lib/ui/workflow-live-state.ts` to the
+ * actual React components. Kept private to this file because the registry
+ * is the source of truth for the names; this map only translates names →
+ * components for rendering.
+ */
+const LIVE_STATE_ICON_COMPONENTS: Record<string, React.ComponentType<{ className?: string }>> = {
+  ClockIcon,
+  RefreshIcon,
+  SparklesIcon,
+  LinkIcon,
+  DocumentGenerateIcon,
+  ClipboardCheckIcon,
+  AlertCircleIcon,
+  CheckCircleIcon,
+  WarningIcon,
+};

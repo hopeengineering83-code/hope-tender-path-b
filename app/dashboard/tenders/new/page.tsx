@@ -9,6 +9,10 @@ import {
   partitionTenderUploadPackage,
   validateTenderPackageSelection,
 } from "../../../../lib/tender-upload-package";
+import {
+  triggerTenderUploadAutoPipeline,
+  type AutoPipelineResult,
+} from "../../../../lib/ui/auto-pipeline";
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Infrastructure", "Urban Planning", "Environmental", "Feasibility Study", "NGO/Donor-Funded", "Other"];
 const CURRENCIES = ["USD", "EUR", "GBP", "ZAR", "AUD", "CAD", "AED", "SAR", "KWD", "EGP", "ETB", "NGN"];
@@ -23,6 +27,14 @@ type UploadFirstPayload = {
   error?: string;
   errors?: string[];
   tenderId?: string;
+  /** Server advertises whether the engine was skipped (it always is for
+   * upload-first — extraction runs but AI Analyze does not). The client
+   * uses this to auto-fire the next pipeline step. */
+  engineSkipped?: boolean;
+  /** Server advertises the next pipeline action. The client auto-fires it
+   * when it is "RUN_AI_ANALYZE" — the user no longer has to click the AI
+   * Analyze button manually after upload. */
+  nextAction?: string;
 };
 
 type AdditionalUploadPayload = {
@@ -42,6 +54,12 @@ export default function NewTenderPage() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  /**
+   * Auto-pipeline status shown to the user after upload-first succeeds.
+   * Replaces the previous "Open the tender and run AI Analyze" silent skip
+   * with a visible "Pipeline auto-started" badge.
+   */
+  const [autoPipeline, setAutoPipeline] = useState<AutoPipelineResult | null>(null);
   const [error, setError] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -137,8 +155,16 @@ export default function NewTenderPage() {
           packageIntake: "1",
           packageFailed: String(failed),
         });
+        // Auto-fire the next pipeline step (AI Analyze) so the user does
+        // not have to find and click the AI Analyze button manually after
+        // upload. The auto-pipeline module handles the workflow-sync event
+        // so the Action Center on the tender detail page refreshes to
+        // show "Queued" → "Analyzing" instead of "Ready".
+        setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
+        setAutoPipeline(await triggerTenderUploadAutoPipeline(data));
         router.push(`/dashboard/tenders/${data.tenderId}?${query.toString()}`);
       } else {
+        setAutoPipeline(await triggerTenderUploadAutoPipeline(data));
         router.push(`/dashboard/tenders/${data.tenderId}`);
       }
     } catch {

@@ -634,3 +634,19 @@ export function CoinIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Wrench — Repair / fix action. Distinct from RefreshIcon (which means
+ * "retry the same operation"): Wrench means "fix the underlying input then
+ * retry". Used by Extraction Quality "Repair Extraction" and any future
+ * repair affordance, so "repair" never has to compete with "retry" for the
+ * circular-arrow icon.
+ */
+export function WrenchIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-.4-.4-2.1 2.4-2.4z" />
+    </svg>
+  );
+}

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { getRecoveryCommandActionSpec, recoveryCommandLabel, renderRecoveryActionPath, isMutationAction } from "../lib/recovery-command-actions";
 import { subscribeTenderWorkflowSync, emitTenderWorkflowSync, openParentDetailsAndScroll } from "../lib/ui/tender-workflow-sync";
-import { PlayIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon, ArrowRightIcon } from "./icons";
+import { PlayIcon, BoltIcon, RefreshIcon, ChevronDownIcon, CheckIcon, CrossIcon, BanIcon, WarningIcon, InfoIcon, ArrowRightIcon } from "./icons";
 import { SnapshotConsistencyBadge } from "./snapshot-consistency-badge";
 import { DisclosureAnchorLink } from "./disclosure-anchor-link";
 
@@ -662,7 +662,13 @@ export default function TenderRecoveryCommandCenter({ tenderId, canMutate = fals
                   title={`Execute: ${actionLabel}`}
                   className="inline-flex items-center gap-1 rounded bg-amber-700 px-3 py-1 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-60"
                 >
-                  <PlayIcon /> {actioning ? "Working…" : "Execute"}
+                  {/* BoltIcon = generic "Execute" dispatch (the verb is
+                      "execute" on the recovery-command-center surface, per
+                      lib/ui/workflow-action-icons.ts). PlayIcon is reserved
+                      for "Resume" on the same surface — the two verbs must
+                      not share an icon or users cannot tell the buttons
+                      apart at a glance. */}
+                  <BoltIcon /> {actioning ? "Working…" : "Execute"}
                 </button>
               )
             )}

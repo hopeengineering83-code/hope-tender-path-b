@@ -74,6 +74,10 @@ export async function GET(
         actionLabel: "Manage Files",
         actionName: "UPLOAD_TENDER_DOCUMENT",
         actionKind: isMutationAction("UPLOAD_TENDER_DOCUMENT") ? "mutation" as const : "readonly" as const,
+        // Stage 1 is a scroll action — the user must pick files in the
+        // upload panel, so we cannot fire the mutation from the Action
+        // Center directly. actionUrl stays undefined; the Action Center
+        // scrolls to the panel.
       },
       {
         stage: 2,
@@ -88,6 +92,8 @@ export async function GET(
         actionLabel: "Repair Extraction",
         actionName: "REPAIR_EXTRACTION",
         actionKind: isMutationAction("REPAIR_EXTRACTION") ? "mutation" as const : "readonly" as const,
+        // Repair Extraction requires per-file choices (which file to
+        // re-extract) — scroll, not direct mutation.
         pageLedgers: pageLedgerSummary,
       },
       {
@@ -105,6 +111,11 @@ export async function GET(
         actionLabel: decision?.partialAnalysis ? "Resume AI Analyze" : "Run AI Analyze",
         actionName: decision?.partialAnalysis ? "RESUME_AI_ANALYZE" : "RUN_AI_ANALYZE",
         actionKind: isMutationAction(decision?.partialAnalysis ? "RESUME_AI_ANALYZE" : "RUN_AI_ANALYZE") ? "mutation" as const : "readonly" as const,
+        // AI Analyze has no per-file choices — fire the mutation directly
+        // from the Action Center so the user doesn't have to scroll and
+        // find the button.
+        actionUrl: `/api/tenders/${tenderId}/ai-analyze?mode=background`,
+        actionMethod: "POST" as const,
       },
       {
         stage: 4,
@@ -117,6 +128,8 @@ export async function GET(
         actionLabel: "Review Requirements",
         actionName: "REVIEW_MATCHES",
         actionKind: isMutationAction("REVIEW_MATCHES") ? "mutation" as const : "readonly" as const,
+        // Review Requirements is a navigation action — scroll to the
+        // requirement-coverage panel.
       },
       {
         stage: 5,
@@ -126,6 +139,7 @@ export async function GET(
         actionLabel: "Edit Tender Details",
         actionName: "EDIT_TENDER_METADATA",
         actionKind: isMutationAction("EDIT_TENDER_METADATA") ? "mutation" as const : "readonly" as const,
+        // Editing tender details is a form interaction — scroll to the form.
       },
       {
         stage: 6,
@@ -138,6 +152,10 @@ export async function GET(
         actionLabel: "Build Plan",
         actionName: "BUILD_SUBMISSION_PLAN",
         actionKind: isMutationAction("BUILD_SUBMISSION_PLAN") ? "mutation" as const : "readonly" as const,
+        // Build Plan is a deterministic server-side mutation with no
+        // user-choosable parameters — fire directly from the Action Center.
+        actionUrl: `/api/tenders/${tenderId}/submission-plan/build`,
+        actionMethod: "POST" as const,
       },
       {
         stage: 7,
@@ -149,6 +167,10 @@ export async function GET(
         actionLabel: "Match Evidence",
         actionName: "LINK_VAULT_EVIDENCE",
         actionKind: isMutationAction("LINK_VAULT_EVIDENCE") ? "mutation" as const : "readonly" as const,
+        // Link Vault Evidence is an automatic server-side mutation that
+        // links reviewed experts/projects to requirements — fire directly.
+        actionUrl: `/api/tenders/${tenderId}/link-vault-evidence-auto`,
+        actionMethod: "POST" as const,
       },
       {
         stage: 8,
@@ -161,6 +183,10 @@ export async function GET(
         actionLabel: "Generate",
         actionName: "GENERATE_REQUIRED_DOCUMENTS",
         actionKind: isMutationAction("GENERATE_REQUIRED_DOCUMENTS") ? "mutation" as const : "readonly" as const,
+        // Generate Missing Plan Files is a deterministic server-side
+        // mutation — fire directly from the Action Center.
+        actionUrl: `/api/tenders/${tenderId}/generate-missing-plan-files`,
+        actionMethod: "POST" as const,
       },
       {
         stage: 9,
@@ -172,6 +198,10 @@ export async function GET(
         actionLabel: "Review Documents",
         actionName: "VALIDATE_DOCS",
         actionKind: isMutationAction("VALIDATE_DOCS") ? "mutation" as const : "readonly" as const,
+        // Validate Docs is a deterministic server-side mutation — fire
+        // directly from the Action Center.
+        actionUrl: `/api/tenders/${tenderId}/validate`,
+        actionMethod: "POST" as const,
       },
       {
         stage: 10,
@@ -184,6 +214,10 @@ export async function GET(
         actionLabel: "Export",
         actionName: "DOWNLOAD_FINAL_ZIP",
         actionKind: isMutationAction("DOWNLOAD_FINAL_ZIP") ? "mutation" as const : "readonly" as const,
+        // Download Final ZIP is a GET (download) — the Action Center
+        // scrolls to the export panel because the download button there
+        // carries the byte-integrity verification UI. A direct GET from
+        // the Action Center would skip the verification panel.
       },
     ];
 
