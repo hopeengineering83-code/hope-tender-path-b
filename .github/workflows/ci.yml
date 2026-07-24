@@ -174,7 +174,8 @@ jobs:
           SMOKE_TEST_PASSWORD: ${{ env.E2E_TEST_PASSWORD }}
         run: |
           set -o pipefail
-          npm run test:e2e 2>&1 | tee test-results/playwright.log
+          mkdir -p browser-results
+          npm run test:e2e 2>&1 | tee browser-results/playwright.log
 
       - name: Reject test-time source mutation
         if: always()
@@ -202,6 +203,7 @@ jobs:
           name: ci-diagnostics
           path: |
             test-results/
+            browser-results/
             playwright-report/
             acceptance-evidence/
             build-results/
