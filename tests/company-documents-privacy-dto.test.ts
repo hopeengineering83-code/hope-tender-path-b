@@ -18,8 +18,6 @@ const documentDetailRoute = readFileSync("app/api/company/documents/[id]/route.t
 const assetDetailRoute = readFileSync("app/api/company/assets/[id]/route.ts", "utf8");
 
 describe("company documents public DTO privacy", () => {
-
-
   it("uses bounded fail-safe pagination and deterministic ordering for vault list DTOs", () => {
     for (const source of [route, expertsRoute, projectsRoute]) {
       assert.match(source, /const DEFAULT_PAGE_SIZE = 50/);
@@ -34,7 +32,6 @@ describe("company documents public DTO privacy", () => {
     assert.match(projectsRoute, /orderBy: \[\{ trustLevel: "asc" \}, \{ createdAt: "desc" \}, \{ id: "desc" \}\]/);
   });
 
-
   it("restricts raw expert and project detail DTOs to company knowledge managers", () => {
     for (const source of [expertDetailRoute, projectDetailRoute]) {
       assert.match(source, /try \{ actor = await requireRole\("ADMIN", "PROPOSAL_MANAGER"\); \}/);
@@ -44,7 +41,6 @@ describe("company documents public DTO privacy", () => {
       assert.match(source, /deletedAt: null/);
     }
   });
-
 
   it("restricts financial record list DTOs to company knowledge managers", () => {
     assert.match(financialRecordsRoute, /try \{ actor = await requireRole\("ADMIN", "PROPOSAL_MANAGER"\); \}/);
@@ -63,7 +59,6 @@ describe("company documents public DTO privacy", () => {
     assert.match(financialRecordsRoute, /hasMore: page \* limit < total/);
     assert.match(page, /fetch\("\/api\/company\/financial-records\?limit=50"\)/);
   });
-
 
   it("paginates compliance and legal record list DTOs with deterministic ordering", () => {
     for (const source of [complianceRecordsRoute, legalRecordsRoute]) {
@@ -91,32 +86,19 @@ describe("company documents public DTO privacy", () => {
     assert.doesNotMatch(projectsRoute, /select: \{[^}]*summary: true/);
   });
 
-
-  it("Knowledge Review Board uses bounded list DTOs and avoids raw source text", () => {
-    assert.doesNotMatch(reviewBoardPage, /fetch\("\/api\/company"/);
-    assert.match(reviewBoardPage, /fetch\("\/api\/company\/review-summary"/);
-    assert.match(reviewBoardPage, /fetch\("\/api\/company\/experts\?limit=50"/);
-    assert.match(reviewBoardPage, /fetch\("\/api\/company\/projects\?limit=50"/);
-    assert.match(reviewBoardPage, /type Paginated<T> = \{ items\?: T\[\] \} \| T\[\]/);
-    assert.match(reviewBoardPage, /function reviewEvidenceHint\(kind: "expert" \| "project"\)/);
-    assert.doesNotMatch(reviewBoardPage, /profile\?: string \| null/);
-    assert.doesNotMatch(reviewBoardPage, /summary\?: string \| null/);
-    assert.doesNotMatch(reviewBoardPage, /snippet\(/);
+  it("redirects the legacy Review Board to the single privacy-safe Review Inbox", () => {
+    assert.match(reviewBoardPage, /redirect\("\/dashboard\/company\/review"\)/);
+    assert.doesNotMatch(reviewBoardPage, /fetch\(/);
+    assert.match(reviewBoardPage, /single Company Vault review authority/);
   });
 
-  it("Company Review uses bounded server-paginated diagnostics instead of the full company graph", () => {
-    // The retained #1175 Company Review page is deliberately stronger than
-    // the donor snapshot this assertion was written against: instead of four
-    // client-side ?limit=50 list fetches it consumes ONE privacy-safe,
-    // server-paginated diagnostics endpoint (/api/company/knowledge/repair)
-    // whose DTOs are bounded, redacted, and paged server-side
-    // (RECORD_PAGE_SIZE skip/take). Assert that design's equivalent
-    // properties rather than the donor client shape.
+  it("Company Review uses one bounded server-paginated diagnostics endpoint", () => {
     assert.doesNotMatch(reviewPage, /fetch\("\/api\/company"[,)]/);
     assert.match(reviewPage, /fetch\(`\/api\/company\/knowledge\/repair\?\$\{params\}`/);
     assert.match(reviewPage, /expertPage: String\(expertPage\)/);
     assert.match(reviewPage, /projectPage: String\(projectPage\)/);
-    assert.match(reviewPage, /Only bounded summaries reach this page\./);
+    assert.match(reviewPage, /Only bounded, privacy-safe source labels are displayed\./);
+    assert.doesNotMatch(reviewPage, /originalFileName|storagePath|extractedText/);
   });
 
   it("keeps storage paths server-side while exposing only storage booleans", () => {
@@ -136,14 +118,12 @@ describe("company documents public DTO privacy", () => {
     assert.match(page, /fetch\("\/api\/company\/documents\?limit=50"\)/);
   });
 
-
-
   it("uses opaque document download names and public audit descriptions", () => {
     assert.match(documentDetailRoute, /function safeDocumentDownloadName\(id: string, originalFileName: string\): string/);
     assert.match(documentDetailRoute, /return `company-document-\$\{id\.slice\(0, 8\)\}\$\{extension\}`/);
     assert.match(documentDetailRoute, /const safeFileName = safeDocumentDownloadName\(doc\.id, doc\.originalFileName\)/);
     assert.doesNotMatch(documentDetailRoute, /filename="\$\{doc\.originalFileName\}"/);
-    assert.match(documentDetailRoute, /description: "Re-extracted company document"/);
+    assert.match(documentDetailRoute, /description: "Re-extracted and byte-verified a company source document\."/);
     assert.doesNotMatch(documentDetailRoute, /description: `Re-extracted "\$\{doc\.originalFileName\}"`/);
   });
 
@@ -158,7 +138,6 @@ describe("company documents public DTO privacy", () => {
     assert.match(assetsRoute, /hasMore: page \* limit < total/);
     assert.match(page, /fetch\("\/api\/company\/assets\?limit=50"\)/);
   });
-
 
   it("uses opaque asset download names while preserving direct-byte tenant checks", () => {
     assert.match(assetDetailRoute, /function safeAssetDownloadName\(id: string, originalFileName: string\): string/);
