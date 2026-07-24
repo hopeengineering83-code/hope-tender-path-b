@@ -1,16 +1,3 @@
-// Immutable reviewed evidence — edit-time enforcement.
-//
-// isDurablyReviewed() already DETECTS a REVIEWED record whose evidence
-// fields drifted from the stored provenance hashes, but nothing ENFORCED
-// anything at edit time: the expert/project PUT handlers rewrote the
-// substantive fields while leaving trustLevel = "REVIEWED", so the record
-// kept presenting as reviewed (and kept passing the structural matching
-// eligibility check) with provenance describing content that no longer
-// exists. These tests lock the edit-time demotion contract: editing a
-// reviewed-evidence field on a REVIEWED record demotes it to draft,
-// while non-evidence fields (email, phone, profile, summary, isActive)
-// stay freely editable without invalidating the review.
-
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
@@ -22,100 +9,81 @@ import {
 
 describe("reviewEvidenceEquals", () => {
   const baseExpert = {
-    fullName: "Alemu Bekele",
-    title: "Senior Hydrologist",
+    fullName: "Example Expert",
+    title: "Senior Engineer",
     yearsExperience: 12,
-    disciplines: JSON.stringify(["Hydrology", "Water Supply"]),
+    disciplines: JSON.stringify(["Engineering", "Water Supply"]),
     sectors: JSON.stringify(["Public"]),
     certifications: JSON.stringify(["PE"]),
   };
 
-  it("identical field sets are equal", () => {
-    assert.equal(
-      reviewEvidenceEquals(expertReviewFields(baseExpert), expertReviewFields({ ...baseExpert })),
-      true,
-    );
+  it("treats identical normalized field sets as equal", () => {
+    assert.equal(reviewEvidenceEquals(expertReviewFields(baseExpert), expertReviewFields({ ...baseExpert })), true);
+    const reformatted = { ...baseExpert, fullName: "  example   expert ", title: "SENIOR ENGINEER" };
+    assert.equal(reviewEvidenceEquals(expertReviewFields(baseExpert), expertReviewFields(reformatted)), true);
   });
 
-  it("whitespace and case differences do not invalidate (matches verifier normalization)", () => {
-    const reformatted = { ...baseExpert, fullName: "  alemu   bekele ", title: "SENIOR HYDROLOGIST" };
-    assert.equal(
-      reviewEvidenceEquals(expertReviewFields(baseExpert), expertReviewFields(reformatted)),
-      true,
-    );
+  it("detects changed scalar or list evidence", () => {
+    assert.equal(reviewEvidenceEquals(
+      expertReviewFields(baseExpert),
+      expertReviewFields({ ...baseExpert, yearsExperience: 3 }),
+    ), false);
+    assert.equal(reviewEvidenceEquals(
+      expertReviewFields(baseExpert),
+      expertReviewFields({ ...baseExpert, disciplines: JSON.stringify(["Engineering"]) }),
+    ), false);
   });
 
-  it("a changed evidence value is detected", () => {
-    const edited = { ...baseExpert, yearsExperience: 3 };
-    assert.equal(
-      reviewEvidenceEquals(expertReviewFields(baseExpert), expertReviewFields(edited)),
-      false,
-    );
-  });
-
-  it("an added or removed list entry is detected", () => {
-    const edited = { ...baseExpert, disciplines: JSON.stringify(["Hydrology"]) };
-    assert.equal(
-      reviewEvidenceEquals(expertReviewFields(baseExpert), expertReviewFields(edited)),
-      false,
-    );
-  });
-
-  it("project evidence changes are detected the same way", () => {
-    const baseProject = {
-      name: "Adama Water Supply Phase II",
-      clientName: "Ministry of Water",
-      country: "Ethiopia",
+  it("detects project evidence changes through the same helper", () => {
+    const project = {
+      name: "Project Alpha",
+      clientName: "Client One",
+      country: "Country",
       sector: "Water",
       serviceAreas: JSON.stringify(["Design Review"]),
       contractValue: 1200000,
       currency: "ETB",
     };
-    assert.equal(
-      reviewEvidenceEquals(projectReviewFields(baseProject), projectReviewFields({ ...baseProject })),
-      true,
-    );
-    assert.equal(
-      reviewEvidenceEquals(
-        projectReviewFields(baseProject),
-        projectReviewFields({ ...baseProject, contractValue: 9900000 }),
-      ),
-      false,
-    );
+    assert.equal(reviewEvidenceEquals(projectReviewFields(project), projectReviewFields({ ...project })), true);
+    assert.equal(reviewEvidenceEquals(
+      projectReviewFields(project),
+      projectReviewFields({ ...project, contractValue: 9900000 }),
+    ), false);
   });
 
-  it("non-evidence expert fields are not part of the hashed evidence set", () => {
-    // email/phone/profile are intentionally absent from expertReviewFields —
-    // editing them must never demote a reviewed record.
-    const fields = expertReviewFields(baseExpert).map((f) => f.field);
+  it("excludes non-evidence presentation/contact fields", () => {
+    const expertFields = expertReviewFields(baseExpert).map((field) => field.field);
     for (const excluded of ["email", "phone", "profile", "isActive"]) {
-      assert.ok(!fields.some((f) => f.startsWith(excluded)), `${excluded} must not be review evidence`);
+      assert.ok(!expertFields.some((field) => field.startsWith(excluded)));
     }
-  });
-
-  it("non-evidence project fields are not part of the hashed evidence set", () => {
-    const fields = projectReviewFields({ name: "X", summary: "long text" } as never).map((f) => f.field);
-    assert.ok(!fields.some((f) => f.startsWith("summary")), "summary must not be review evidence");
+    const projectFields = projectReviewFields({ name: "X", summary: "long text" } as never).map((field) => field.field);
+    assert.ok(!projectFields.some((field) => field.startsWith("summary")));
   });
 });
 
-describe("edit endpoints demote REVIEWED records when evidence fields change", () => {
+describe("edit endpoints invalidate durable trust when bound evidence fields change", () => {
   const expertRoute = readFileSync("app/api/company/experts/[id]/route.ts", "utf8");
   const projectRoute = readFileSync("app/api/company/projects/[id]/route.ts", "utf8");
 
-  for (const [name, src, fieldsFn] of [
-    ["experts", expertRoute, "expertReviewFields"],
-    ["projects", projectRoute, "projectReviewFields"],
+  for (const [name, source, fieldsFn, auditAction] of [
+    ["experts", expertRoute, "expertReviewFields", "EXPERT_TRUST_INVALIDATED"],
+    ["projects", projectRoute, "projectReviewFields", "PROJECT_TRUST_INVALIDATED"],
   ] as const) {
-    it(`${name} PUT computes review invalidation from the shared evidence comparison`, () => {
-      assert.match(src, /reviewEvidenceEquals/);
-      assert.match(src, new RegExp(`${fieldsFn}\\(existing\\), ${fieldsFn}\\(nextValues\\)`));
-      assert.match(src, /existing\.trustLevel === "REVIEWED"/);
+    it(`${name} PUT computes invalidation from the shared complete evidence fields`, () => {
+      assert.match(source, /reviewEvidenceEquals/);
+      assert.match(source, new RegExp(`${fieldsFn}\\(existing\\), ${fieldsFn}\\(nextValues\\)`));
+      assert.match(source, /existing\.trustLevel === "REVIEWED" \|\| existing\.trustLevel === "SOURCE_VERIFIED"/);
     });
 
-    it(`${name} PUT demotes to draft and audits the invalidation`, () => {
-      assert.match(src, /reviewInvalidated \? \{ trustLevel: "AI_DRAFT" \} : \{\}/);
-      assert.match(src, /review invalidated — reviewed evidence fields were edited/);
+    it(`${name} PUT clears all provenance and audits the previous trust purpose`, () => {
+      assert.match(source, /provenanceInvalidated/);
+      assert.match(source, /trustLevel: "AI_DRAFT"/);
+      assert.match(source, /reviewedBy: null/);
+      assert.match(source, /reviewedAt: null/);
+      assert.match(source, /reviewNotes: null/);
+      assert.match(source, new RegExp(`action: "${auditAction}"`));
+      assert.match(source, /previousTrustLevel: existing\.trustLevel/);
+      assert.match(source, /nextTrustLevel: "AI_DRAFT"/);
     });
   }
 });
