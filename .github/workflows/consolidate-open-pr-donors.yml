@@ -1,0 +1,250 @@
+name: Consolidate open PR donors
+
+on:
+  pull_request:
+    branches:
+      - release/consolidated-recovery-20260717
+    paths:
+      - .github/workflows/consolidate-open-pr-donors.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: consolidate-open-pr-donors-20260724
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    if: github.head_ref == 'consolidate/open-pr-donors-20260724'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout reconciliation branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Fetch exact donor heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git fetch origin \
+            +refs/pull/1249/head:refs/remotes/origin/pr-1249 \
+            +refs/pull/1251/head:refs/remotes/origin/pr-1251
+
+      - name: Reconcile donor changes against the current release architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > /tmp/applied-groups.txt
+          : > /tmp/skipped-groups.txt
+
+          # PR #1249: the compliance page did not change in the principal
+          # recovery, so take the two live-audited responsive fixes exactly.
+          git show origin/pr-1249:app/dashboard/compliance/compliance-dashboard.tsx \
+            > app/dashboard/compliance/compliance-dashboard.tsx
+          echo "PR #1249 — compliance mobile overflow fixes" >> /tmp/applied-groups.txt
+
+          # PR #1249's Review page predates the SOURCE_VERIFIED Review Inbox.
+          # Apply only its proven disabled-control affordances to the newer page.
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/dashboard/company/review/page.tsx")
+          source = path.read_text()
+
+          replacements = [
+              (
+                  'className="rounded-lg border px-3 py-1.5 disabled:opacity-50"\n          aria-label="Previous page"',
+                  'className="rounded-lg border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"\n          aria-label="Previous page"\n          title={props.page <= 1 ? "You are on the first page." : "Go to the previous page."}',
+              ),
+              (
+                  'className="rounded-lg border px-3 py-1.5 disabled:opacity-50"\n          aria-label="Next page"',
+                  'className="rounded-lg border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"\n          aria-label="Next page"\n          title={props.page >= props.totalPages ? "You are on the last page." : "Go to the next page."}',
+              ),
+              (
+                  '''          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+              {batchingExperts ? "Reviewing…" : `Human-review selected (${selectedExperts.size})`}
+            </button>
+          </div>''',
+                  '''          <div className="flex flex-wrap items-center gap-2">
+            {eligibleExperts.length === 0 && (
+              <span className="text-[11px] font-medium text-amber-800">
+                {expertItems.length === 0
+                  ? "No expert records are available. Upload Company Vault sources; ingestion and source verification run automatically."
+                  : "No experts on this page are eligible for human review. Open Evidence status for the exact source blocker."}
+              </span>
+            )}
+            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleExperts.length === 0 ? "No source-verified experts on this page are eligible for human review." : "Select every eligible expert on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-50" title={selectedExperts.size === 0 ? "Select at least one source-verified expert." : "Human-review the selected experts against their durable source evidence."}>
+              {batchingExperts ? "Reviewing…" : `Human-review selected (${selectedExperts.size})`}
+            </button>
+          </div>''',
+              ),
+              (
+                  '''          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+              {batchingProjects ? "Reviewing…" : `Human-review selected (${selectedProjects.size})`}
+            </button>
+          </div>''',
+                  '''          <div className="flex flex-wrap items-center gap-2">
+            {eligibleProjects.length === 0 && (
+              <span className="text-[11px] font-medium text-amber-800">
+                {projectItems.length === 0
+                  ? "No project records are available. Upload Company Vault sources; ingestion and source verification run automatically."
+                  : "No projects on this page are eligible for human review. Open Evidence status for the exact source blocker."}
+              </span>
+            )}
+            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleProjects.length === 0 ? "No source-verified projects on this page are eligible for human review." : "Select every eligible project on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-50" title={selectedProjects.size === 0 ? "Select at least one source-verified project." : "Human-review the selected projects against their durable source evidence."}>
+              {batchingProjects ? "Reviewing…" : `Human-review selected (${selectedProjects.size})`}
+            </button>
+          </div>''',
+              ),
+          ]
+
+          for old, new in replacements:
+              count = source.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one current Review Inbox pattern, found {count}")
+              source = source.replace(old, new)
+
+          path.write_text(source)
+          PY
+          echo "PR #1249 — Review Inbox disabled-control explanations adapted to SOURCE_VERIFIED" >> /tmp/applied-groups.txt
+
+          # PR #1251: apply only safe, focused changes that still apply cleanly
+          # to the current release. Stale audit reports and broad deferred claims
+          # are intentionally excluded.
+          apply_group() {
+            local label="$1"
+            shift
+            local patch="/tmp/$(echo "$label" | tr ' /' '__').patch"
+            git diff --binary origin/main origin/pr-1251 -- "$@" > "$patch"
+            if [ ! -s "$patch" ]; then
+              echo "$label — no donor delta" >> /tmp/skipped-groups.txt
+              return 0
+            fi
+            if git apply --check "$patch"; then
+              git apply --index "$patch"
+              echo "$label" >> /tmp/applied-groups.txt
+            else
+              echo "$label — current architecture diverged; manual review required" >> /tmp/skipped-groups.txt
+            fi
+          }
+
+          apply_group "PR #1251 — production-safe password-reset base URL" \
+            app/api/auth/forgot-password/route.ts
+          apply_group "PR #1251 — canonical SVG dash icon" \
+            components/icons.tsx lib/engine/canonical-readiness-state.ts
+          apply_group "PR #1251 — authentication observability" lib/auth.ts
+          apply_group "PR #1251 — audit persistence observability" lib/audit.ts
+          apply_group "PR #1251 — notification observability" lib/notifications.ts
+          apply_group "PR #1251 — AI usage observability" lib/ai-usage-tracker.ts
+          apply_group "PR #1251 — analysis-state observability" lib/engine/analysis-state-resolver.ts
+          apply_group "PR #1251 — runtime-readiness observability" lib/engine/runtime-readiness-facts.ts
+          apply_group "PR #1251 — lifecycle observability" lib/engine/tender-lifecycle-orchestrator.ts
+          apply_group "PR #1251 — deep-reasoning status observability" app/api/system/deep-reasoning-status/route.ts
+          apply_group "PR #1251 — AI proposal side-effect observability" app/api/tenders/[id]/ai-proposal/route.ts
+          apply_group "PR #1251 — remove unused TenderBreadcrumb prop" components/tender-breadcrumb.tsx
+
+          # Binary PWA assets are genuinely missing and have no architectural
+          # conflict. Copy their exact bytes from the donor.
+          mkdir -p public
+          git show origin/pr-1251:public/icon-192.png > public/icon-192.png
+          git show origin/pr-1251:public/icon-512.png > public/icon-512.png
+          git add public/icon-192.png public/icon-512.png
+          echo "PR #1251 — missing PWA/Electron icon assets" >> /tmp/applied-groups.txt
+
+          cat > tests/open-pr-donor-reconciliation.test.ts <<'TS'
+          import { describe, it } from "node:test";
+          import { strict as assert } from "node:assert";
+          import { readFileSync } from "node:fs";
+
+          const read = (path: string) => readFileSync(path, "utf8");
+
+          describe("open-PR donor UI reconciliation", () => {
+            it("keeps Review Inbox blockers explanatory and actionable", () => {
+              const source = read("app/dashboard/company/review/page.tsx");
+              assert.match(source, /No experts on this page are eligible for human review/);
+              assert.match(source, /No projects on this page are eligible for human review/);
+              assert.match(source, /No source-verified experts on this page are eligible/);
+              assert.match(source, /No source-verified projects on this page are eligible/);
+              assert.match(source, /disabled:cursor-not-allowed/);
+            });
+
+            it("prevents compliance controls and tables from widening mobile pages", () => {
+              const source = read("app/dashboard/compliance/compliance-dashboard.tsx");
+              assert.match(source, /max-w-full min-w-0 rounded-lg border/);
+              assert.match(source, /max-w-\[60ch\] truncate/);
+              const tables = (source.match(/<table/g) ?? []).length;
+              const wrappers = (source.match(/overflow-x-auto/g) ?? []).length;
+              assert.ok(wrappers >= tables, `Expected at least ${tables} overflow wrappers, got ${wrappers}`);
+            });
+          });
+
+          describe("open-PR donor asset and icon reconciliation", () => {
+            it("provides valid PNG signatures for both required PWA icons", () => {
+              for (const path of ["public/icon-192.png", "public/icon-512.png"]) {
+                const bytes = readFileSync(path);
+                assert.deepEqual([...bytes.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+              }
+            });
+          });
+          TS
+
+          mkdir -p docs/recovery
+          {
+            echo "# Open PR donor reconciliation — 2026-07-24"
+            echo
+            echo "Base: \`5259726455b3d26ed82b4e8b13543c536126af12\`"
+            echo
+            echo "## Applied"
+            sed 's/^/- /' /tmp/applied-groups.txt
+            echo
+            echo "## Not applied automatically"
+            if [ -s /tmp/skipped-groups.txt ]; then sed 's/^/- /' /tmp/skipped-groups.txt; else echo "- None"; fi
+            echo
+            echo "## Rejected donor"
+            echo "- PR #1244 was not merged: its concurrent AI_ANALYZE/ENGINE_RUN queueing, setupCompletedAt cache misuse, and broad category promotion are superseded by PR #1248's atomic server orchestration and claim-level SOURCE_VERIFIED model."
+          } > docs/recovery/open-pr-donor-reconciliation-20260724.md
+
+          rm .github/workflows/consolidate-open-pr-donors.yml
+          git add -A
+
+      - name: Validate reconciled product diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npx prisma generate
+          npm run typecheck
+          npm run lint
+          node --import tsx --test tests/open-pr-donor-reconciliation.test.ts
+          git diff --check
+
+      - name: Commit and push normal product changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            echo "No unique donor changes remained after reconciliation."
+            exit 0
+          fi
+          git config user.name "PR 1175 Consolidation"
+          git config user.email "consolidation@hope-tender.local"
+          git commit -m "fix: reconcile remaining open PR donors end to end"
+          git push origin HEAD:consolidate/open-pr-donors-20260724
