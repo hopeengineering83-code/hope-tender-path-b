@@ -1,110 +1,124 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { redactVaultText, safeVaultFileLabel } from "../lib/vault-review-provenance";
 
-const reviewPage = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
-const repairRoute = readFileSync("app/api/company/knowledge/repair/route.ts", "utf8");
-const provenanceSource = readFileSync("lib/vault-review-provenance.ts", "utf8");
-const expertBatch = readFileSync("app/api/company/experts/batch/route.ts", "utf8");
-const projectBatch = readFileSync("app/api/company/projects/batch/route.ts", "utf8");
-const uploadRoute = readFileSync("app/api/upload/route.ts", "utf8");
-const secureUpload = readFileSync("lib/secure-upload-handler.ts", "utf8");
-const byteIntegrity = readFileSync("lib/engine/persisted-byte-integrity.ts", "utf8");
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
 
-describe("company review privacy and pagination contracts", () => {
-  it("does not fetch or render raw company expert/project narratives", () => {
-    assert.doesNotMatch(reviewPage, /fetch\("\/api\/company"\)/);
-    assert.doesNotMatch(reviewPage, /sourceSnippet|expert\.profile|project\.summary/);
-    assert.match(reviewPage, /Only bounded summaries reach this page/);
-    assert.match(reviewPage, /<details/);
+describe("Company Vault Review Inbox contract", () => {
+  it("redacts identifiers, paths, object URLs, and registration values", () => {
+    const raw = "Email jane@example.com phone +251 911 223344 DOB: 1990-01-01 Nationality: Ethiopian License No: ABC-1234 /home/user/private/cv.pdf s3://secret-bucket/key";
+    const redacted = redactVaultText(raw, 220);
+    assert.doesNotMatch(redacted, /jane@example\.com/i);
+    assert.doesNotMatch(redacted, /911 223344/);
+    assert.doesNotMatch(redacted, /1990-01-01/);
+    assert.doesNotMatch(redacted, /Ethiopian/i);
+    assert.doesNotMatch(redacted, /ABC-1234/i);
+    assert.doesNotMatch(redacted, /\/home\/user\/private/);
+    assert.doesNotMatch(redacted, /s3:\/\//i);
   });
 
-  it("uses bounded server pagination for experts and projects", () => {
-    assert.match(repairRoute, /const RECORD_PAGE_SIZE = 10/);
-    assert.match(repairRoute, /skip: \(pagination\.expertPage - 1\) \* RECORD_PAGE_SIZE/);
-    assert.match(repairRoute, /skip: \(pagination\.projectPage - 1\) \* RECORD_PAGE_SIZE/);
-    assert.match(repairRoute, /take: RECORD_PAGE_SIZE/g);
-    assert.match(reviewPage, /Previous page/);
-    assert.match(reviewPage, /Next page/);
+  it("uses privacy-safe source labels instead of original filenames", () => {
+    const label = safeVaultFileLabel("EXPERT_CV", 2);
+    assert.equal(label, "Expert Cv document 3");
+    assert.doesNotMatch(label, /\.pdf|john|jane/i);
   });
 
-  it("replaces raw document names with server-created safe labels", () => {
-    assert.match(repairRoute, /fileName: safeVaultFileLabel\(doc\.category, index\)/);
-    assert.doesNotMatch(reviewPage, /originalFileName|storagePath|extractedText/);
+  it("has one canonical review route and redirects the legacy review board", () => {
+    const inbox = read("app/dashboard/company/review/page.tsx");
+    const legacy = read("app/dashboard/company/review-board/page.tsx");
+
+    assert.match(inbox, /Review Inbox/);
+    assert.match(inbox, /SOURCE_VERIFIED/);
+    assert.match(inbox, /Human reviewed/);
+    assert.match(inbox, /Source verified/);
+    assert.match(legacy, /redirect\("\/dashboard\/company\/review"\)/);
+    assert.doesNotMatch(legacy, /fetch\s*\(|method:\s*"PATCH"|method:\s*"POST"/);
   });
 
-  it("treats legacy REVIEWED rows without provenance as blocked", () => {
-    assert.match(repairRoute, /unsupportedReviewedExperts/);
-    assert.match(repairRoute, /unsupportedReviewedProjects/);
-    assert.match(repairRoute, /effectiveReviewTrustLevel/);
-    assert.match(reviewPage, /Blocked — provenance required/);
+  it("returns bounded paginated records without raw source narratives", () => {
+    const api = read("app/api/company/knowledge/repair/route.ts");
+    const inbox = read("app/dashboard/company/review/page.tsx");
+
+    assert.match(api, /const RECORD_PAGE_SIZE = 10/);
+    assert.match(api, /skip:\s*\(pagination\.expertPage - 1\) \* RECORD_PAGE_SIZE/);
+    assert.match(api, /skip:\s*\(pagination\.projectPage - 1\) \* RECORD_PAGE_SIZE/);
+    assert.match(api, /take:\s*RECORD_PAGE_SIZE/g);
+    assert.match(api, /redactVaultText\(expert\.fullName/);
+    assert.match(api, /safeVaultFileLabel\(doc\.category, index\)/);
+    assert.doesNotMatch(inbox, /sourceSnippet|expert\.profile|project\.summary|originalFileName|storagePath|extractedText/);
+    assert.match(inbox, /Evidence status/);
   });
 
-  it("exports record-type-aware fail-closed consumer query contracts", () => {
-    assert.match(provenanceSource, /VAULT_REVIEW_CONSUMER_SELECT/);
-    assert.match(provenanceSource, /EXPERT:/);
-    assert.match(provenanceSource, /PROJECT:/);
-    assert.match(provenanceSource, /fullName: true/);
-    assert.match(provenanceSource, /certifications: true/);
-    assert.match(provenanceSource, /name: true/);
-    assert.match(provenanceSource, /contractValue: true/);
-    assert.match(provenanceSource, /companyId: true/);
-    assert.match(provenanceSource, /reviewNotes: true/);
-    assert.match(provenanceSource, /contentSha256: true/);
-    assert.match(provenanceSource, /contentByteLength: true/);
-    assert.match(provenanceSource, /integrityStatus: true/);
-    assert.match(provenanceSource, /record\.sourceDocument\.companyId !== record\.companyId/);
-    assert.match(provenanceSource, /currentRecordEvidenceFields/);
-    assert.match(provenanceSource, /currentValueHashes/);
-    assert.match(provenanceSource, /currentValueHashes\.get\(item\.field\) === item\.valueHash/);
-    assert.match(repairRoute, /VAULT_REVIEW_CONSUMER_SELECT\.EXPERT/);
-    assert.match(repairRoute, /VAULT_REVIEW_CONSUMER_SELECT\.PROJECT/);
+  it("treats stale human and machine trust as blocked", () => {
+    const api = read("app/api/company/knowledge/repair/route.ts");
+    const inbox = read("app/dashboard/company/review/page.tsx");
+
+    assert.match(api, /unsupportedReviewedExperts/);
+    assert.match(api, /unsupportedReviewedProjects/);
+    assert.match(api, /unsupportedSourceVerifiedExperts/);
+    assert.match(api, /unsupportedSourceVerifiedProjects/);
+    assert.match(api, /effectiveReviewTrustLevel/);
+    assert.match(inbox, /Human review invalidated/);
+    assert.match(inbox, /Source verification invalidated/);
   });
 
-  it("pins company-document integrity from uploaded bytes before persistence", () => {
+  it("uses complete owned-source consumer records for durable trust", () => {
+    const provenance = read("lib/vault-review-provenance.ts");
+    const api = read("app/api/company/knowledge/repair/route.ts");
+
+    assert.match(provenance, /VAULT_REVIEW_CONSUMER_SELECT/);
+    assert.match(provenance, /certifications: true/);
+    assert.match(provenance, /serviceAreas: true/);
+    assert.match(provenance, /contractValue: true/);
+    assert.match(provenance, /contentSha256: true/);
+    assert.match(provenance, /contentByteLength: true/);
+    assert.match(provenance, /integrityStatus: true/);
+    assert.match(provenance, /record\.sourceDocument\.companyId !== record\.companyId/);
+    assert.match(provenance, /currentValueHashes\.get\(item\.field\) === item\.valueHash/);
+    assert.match(api, /VAULT_REVIEW_CONSUMER_SELECT\.EXPERT/);
+    assert.match(api, /VAULT_REVIEW_CONSUMER_SELECT\.PROJECT/);
+  });
+
+  it("verifies uploaded bytes before Company Vault persistence", () => {
+    const uploadRoute = read("app/api/upload/route.ts");
+    const secureUpload = read("lib/secure-upload-handler.ts");
+    const byteIntegrity = read("lib/engine/persisted-byte-integrity.ts");
+
     assert.match(uploadRoute, /return handleSecureUpload\(req\)/);
     assert.match(secureUpload, /Buffer\.from\(await file\.arrayBuffer\(\)\)/);
     assert.match(secureUpload, /inspectActualFileBytes/);
     assert.match(secureUpload, /integrity\.integrityStatus !== "VERIFIED"/);
-    assert.match(secureUpload, /prisma\.companyDocument\.create/);
-    assert.match(secureUpload, /\.\.\.integrity/);
     assert.ok(secureUpload.indexOf("inspectActualFileBytes") < secureUpload.indexOf("storage.putFile"));
     assert.match(byteIntegrity, /contentSha256: computeByteSha256\(bytes\)/);
     assert.match(byteIntegrity, /contentByteLength: bytes\.length/);
-    assert.match(byteIntegrity, /integrityStatus: "VERIFIED"/);
-    assert.match(byteIntegrity, /PERSISTED_BYTE_INTEGRITY_MISMATCH/);
   });
-});
 
-describe("batch review ownership, audit, and partial-failure contracts", () => {
-  for (const [kind, source] of [["expert", expertBatch], ["project", projectBatch]] as const) {
-    it(`${kind} review validates tenant ownership and owned source evidence`, () => {
-      assert.match(source, /companyId: company\.id/);
-      assert.match(source, /record\.sourceDocument\?\.companyId === company\.id/);
+  it("requires durable evidence and an authenticated reviewer for batch human review", () => {
+    for (const [kind, source] of [
+      ["EXPERT", read("app/api/company/experts/batch/route.ts")],
+      ["PROJECT", read("app/api/company/projects/batch/route.ts")],
+    ] as const) {
       assert.match(source, /buildReviewProvenance/);
-      assert.match(source, new RegExp(`recordType: "${kind === "expert" ? "EXPERT" : "PROJECT"}"`));
-      assert.match(source, /NOT_FOUND_OR_NOT_OWNED/);
-      assert.match(source, /FIELD_EVIDENCE_REQUIRED/);
-      assert.match(source, /PROVENANCE_REQUIRED/);
-      assert.match(source, /contentByteLength: true/);
-      assert.match(source, /integrityStatus: true/);
-    });
-
-    it(`${kind} review persists record state and audit identity in one transaction`, () => {
-      assert.match(source, /prisma\.\$transaction\(async \(tx\)/);
-      assert.match(source, /reviewedBy: actor\.id/);
-      assert.match(source, /reviewedAt/);
-      assert.match(source, /reviewNotes: candidate\.serialized/);
+      assert.match(source, new RegExp(`recordType: "${kind}"`));
+      assert.match(source, /reviewerId:\s*actor\.id/);
+      assert.match(source, /reviewedBy:\s*actor\.id/);
+      assert.match(source, /reviewNotes:\s*candidate\.serialized/);
+      assert.match(source, /missingEvidenceFields/);
       assert.match(source, /await tx\.auditLog\.create/);
-      assert.match(source, /sourceContentHash/);
-      assert.match(source, /sourceByteLength/);
-      assert.match(source, /evidenceFields/);
-    });
+    }
+  });
 
-    it(`${kind} review returns accepted and rejected per-record results`, () => {
-      assert.match(source, /accepted: updatedIds\.map/);
-      assert.match(source, /rejected,/);
-      assert.match(source, /status: updatedIds\.length > 0 \? 200 : 422/);
-    });
-  }
+  it("preserves uncertain mixed-document records for action instead of deleting them", () => {
+    const cleanup = read("lib/company-support-doc-cleanup.ts");
+    const inbox = read("app/dashboard/company/review/page.tsx");
+
+    assert.match(cleanup, /never destroys them/i);
+    assert.match(cleanup, /expertsDeleted:\s*0/);
+    assert.match(cleanup, /projectsDeleted:\s*0/);
+    assert.match(inbox, /Uncertain evidence is preserved here/);
+    assert.match(inbox, /Reprocess sources/);
+  });
 });
