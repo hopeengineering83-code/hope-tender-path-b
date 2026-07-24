@@ -49,21 +49,21 @@ jobs:
           : > /tmp/applied-groups.txt
           : > /tmp/skipped-groups.txt
 
-          # PR #1249: the compliance page did not change in the principal
-          # recovery, so take the two live-audited responsive fixes exactly.
+          # PR #1249: exact live-audited compliance responsive fixes.
           git show origin/pr-1249:app/dashboard/compliance/compliance-dashboard.tsx \
             > app/dashboard/compliance/compliance-dashboard.tsx
           echo "PR #1249 — compliance mobile overflow fixes" >> /tmp/applied-groups.txt
 
-          # PR #1249's Review page predates the SOURCE_VERIFIED Review Inbox.
-          # Apply only its proven disabled-control affordances to the newer page.
+          # Adapt PR #1249's disabled-control affordances to the newer
+          # SOURCE_VERIFIED Review Inbox using semantic matching.
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("app/dashboard/company/review/page.tsx")
           source = path.read_text()
 
-          replacements = [
+          simple_replacements = [
               (
                   'className="rounded-lg border px-3 py-1.5 disabled:opacity-50"\n          aria-label="Previous page"',
                   'className="rounded-lg border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"\n          aria-label="Previous page"\n          title={props.page <= 1 ? "You are on the first page." : "Go to the previous page."}',
@@ -72,14 +72,19 @@ jobs:
                   'className="rounded-lg border px-3 py-1.5 disabled:opacity-50"\n          aria-label="Next page"',
                   'className="rounded-lg border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"\n          aria-label="Next page"\n          title={props.page >= props.totalPages ? "You are on the last page." : "Go to the next page."}',
               ),
-              (
-                  '''          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
-            <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
-              {batchingExperts ? "Reviewing…" : `Human-review selected (${selectedExperts.size})`}
-            </button>
-          </div>''',
-                  '''          <div className="flex flex-wrap items-center gap-2">
+          ]
+          for old, new in simple_replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f"Expected one pagination pattern, found {source.count(old)}")
+              source = source.replace(old, new)
+
+          expert_pattern = re.compile(
+              r'          <div className="flex flex-wrap gap-2">\s*'
+              r'<button type="button" onClick=\{\(\) => setSelectedExperts[\s\S]*?'
+              r'<button type="button" onClick=\{\(\) => void submitBatch\("experts"\)\}[\s\S]*?'
+              r'          </div>'
+          )
+          expert_replacement = '''          <div className="flex flex-wrap items-center gap-2">
             {eligibleExperts.length === 0 && (
               <span className="text-[11px] font-medium text-amber-800">
                 {expertItems.length === 0
@@ -91,16 +96,18 @@ jobs:
             <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-50" title={selectedExperts.size === 0 ? "Select at least one source-verified expert." : "Human-review the selected experts against their durable source evidence."}>
               {batchingExperts ? "Reviewing…" : `Human-review selected (${selectedExperts.size})`}
             </button>
-          </div>''',
-              ),
-              (
-                  '''          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
-            <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
-              {batchingProjects ? "Reviewing…" : `Human-review selected (${selectedProjects.size})`}
-            </button>
-          </div>''',
-                  '''          <div className="flex flex-wrap items-center gap-2">
+          </div>'''
+          source, count = expert_pattern.subn(expert_replacement, source, count=1)
+          if count != 1:
+              raise SystemExit(f"Expected one expert action block, found {count}")
+
+          project_pattern = re.compile(
+              r'          <div className="flex flex-wrap gap-2">\s*'
+              r'<button type="button" onClick=\{\(\) => setSelectedProjects[\s\S]*?'
+              r'<button type="button" onClick=\{\(\) => void submitBatch\("projects"\)\}[\s\S]*?'
+              r'          </div>'
+          )
+          project_replacement = '''          <div className="flex flex-wrap items-center gap-2">
             {eligibleProjects.length === 0 && (
               <span className="text-[11px] font-medium text-amber-800">
                 {projectItems.length === 0
@@ -112,23 +119,15 @@ jobs:
             <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-50" title={selectedProjects.size === 0 ? "Select at least one source-verified project." : "Human-review the selected projects against their durable source evidence."}>
               {batchingProjects ? "Reviewing…" : `Human-review selected (${selectedProjects.size})`}
             </button>
-          </div>''',
-              ),
-          ]
-
-          for old, new in replacements:
-              count = source.count(old)
-              if count != 1:
-                  raise SystemExit(f"Expected exactly one current Review Inbox pattern, found {count}")
-              source = source.replace(old, new)
+          </div>'''
+          source, count = project_pattern.subn(project_replacement, source, count=1)
+          if count != 1:
+              raise SystemExit(f"Expected one project action block, found {count}")
 
           path.write_text(source)
           PY
           echo "PR #1249 — Review Inbox disabled-control explanations adapted to SOURCE_VERIFIED" >> /tmp/applied-groups.txt
 
-          # PR #1251: apply only safe, focused changes that still apply cleanly
-          # to the current release. Stale audit reports and broad deferred claims
-          # are intentionally excluded.
           apply_group() {
             local label="$1"
             shift
@@ -140,32 +139,82 @@ jobs:
             fi
             if git apply --check "$patch"; then
               git apply --index "$patch"
+              chmod 644 "$@" 2>/dev/null || true
+              git add "$@"
               echo "$label" >> /tmp/applied-groups.txt
             else
               echo "$label — current architecture diverged; manual review required" >> /tmp/skipped-groups.txt
             fi
           }
 
-          apply_group "PR #1251 — production-safe password-reset base URL" \
-            app/api/auth/forgot-password/route.ts
-          apply_group "PR #1251 — canonical SVG dash icon" \
-            components/icons.tsx lib/engine/canonical-readiness-state.ts
+          # PR #1251: apply only focused deltas that remain clean against the
+          # principal recovery. Audit-report prose and deferred claims are excluded.
+          apply_group "PR #1251 — production-safe password-reset base URL" app/api/auth/forgot-password/route.ts
+          apply_group "PR #1251 — canonical SVG dash icon component" components/icons.tsx
           apply_group "PR #1251 — authentication observability" lib/auth.ts
           apply_group "PR #1251 — audit persistence observability" lib/audit.ts
           apply_group "PR #1251 — notification observability" lib/notifications.ts
           apply_group "PR #1251 — AI usage observability" lib/ai-usage-tracker.ts
-          apply_group "PR #1251 — analysis-state observability" lib/engine/analysis-state-resolver.ts
           apply_group "PR #1251 — runtime-readiness observability" lib/engine/runtime-readiness-facts.ts
           apply_group "PR #1251 — lifecycle observability" lib/engine/tender-lifecycle-orchestrator.ts
           apply_group "PR #1251 — deep-reasoning status observability" app/api/system/deep-reasoning-status/route.ts
-          apply_group "PR #1251 — AI proposal side-effect observability" app/api/tenders/[id]/ai-proposal/route.ts
-          apply_group "PR #1251 — remove unused TenderBreadcrumb prop" components/tender-breadcrumb.tsx
+          apply_group "PR #1251 — AI proposal side-effect observability" 'app/api/tenders/[id]/ai-proposal/route.ts'
 
-          # Binary PWA assets are genuinely missing and have no architectural
-          # conflict. Copy their exact bytes from the donor.
+          # Current canonical readiness has stronger surrounding logic than the
+          # donor. Apply only the raw-Unicode-to-SVG correction.
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("lib/engine/canonical-readiness-state.ts")
+          source = path.read_text()
+          old_import = 'import { CheckIcon, WarningIcon, CrossIcon, RefreshIcon, AlertCircleIcon, CircleIcon } from "../../components/icons";'
+          new_import = 'import { CheckIcon, WarningIcon, CrossIcon, RefreshIcon, AlertCircleIcon, CircleIcon, DashIcon } from "../../components/icons";'
+          if source.count(old_import) != 1:
+              raise SystemExit("Canonical readiness icon import changed unexpectedly")
+          source = source.replace(old_import, new_import)
+          old_na = 'NOT_APPLICABLE: { label: "N/A", icon: "—", textClass: "text-slate-400", bgClass: "bg-slate-50", borderClass: "border-slate-100" },'
+          new_na = 'NOT_APPLICABLE: { label: "N/A", icon: createElement(DashIcon), textClass: "text-slate-400", bgClass: "bg-slate-50", borderClass: "border-slate-100" },'
+          if source.count(old_na) != 1:
+              raise SystemExit("Canonical NOT_APPLICABLE configuration changed unexpectedly")
+          path.write_text(source.replace(old_na, new_na))
+          PY
+          echo "PR #1251 — canonical NOT_APPLICABLE SVG consumer" >> /tmp/applied-groups.txt
+
+          # The donor's analysis resolver patch conflicted only because the
+          # current file has additional security imports. Add the same warning
+          # without replacing the stronger current architecture.
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("lib/engine/analysis-state-resolver.ts")
+          source = path.read_text()
+          if 'import { logger } from "@/lib/observability";' not in source:
+              anchor = 'import { redactSecrets } from "../sanitize-error";'
+              if source.count(anchor) != 1:
+                  raise SystemExit("Analysis resolver import anchor changed unexpectedly")
+              source = source.replace(anchor, anchor + '\nimport { logger } from "@/lib/observability";')
+          old = '''      } catch {
+        // Malformed JSON — skip
+      }'''
+          new = '''      } catch (error) {
+        logger.warn("[analysis-state-resolver] malformed staged JSON — skipping", {
+          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        });
+      }'''
+          if source.count(old) != 1:
+              raise SystemExit("Analysis resolver malformed-JSON catch changed unexpectedly")
+          path.write_text(source.replace(old, new))
+          PY
+          echo "PR #1251 — analysis-state malformed-payload observability" >> /tmp/applied-groups.txt
+
+          # The donor breadcrumb file no longer exists in the consolidated app;
+          # there is no runtime code to import.
+          echo "PR #1251 — TenderBreadcrumb prop cleanup — superseded because the component no longer exists" >> /tmp/skipped-groups.txt
+
           mkdir -p public
           git show origin/pr-1251:public/icon-192.png > public/icon-192.png
           git show origin/pr-1251:public/icon-512.png > public/icon-512.png
+          chmod 644 public/icon-192.png public/icon-512.png
           git add public/icon-192.png public/icon-512.png
           echo "PR #1251 — missing PWA/Electron icon assets" >> /tmp/applied-groups.txt
 
@@ -194,9 +243,15 @@ jobs:
               const wrappers = (source.match(/overflow-x-auto/g) ?? []).length;
               assert.ok(wrappers >= tables, `Expected at least ${tables} overflow wrappers, got ${wrappers}`);
             });
+
+            it("uses an SVG component for NOT_APPLICABLE", () => {
+              const source = read("lib/engine/canonical-readiness-state.ts");
+              assert.match(source, /NOT_APPLICABLE:[\s\S]*createElement\(DashIcon\)/);
+              assert.doesNotMatch(source, /NOT_APPLICABLE:[^\n]*icon:\s*"—"/);
+            });
           });
 
-          describe("open-PR donor asset and icon reconciliation", () => {
+          describe("open-PR donor asset reconciliation", () => {
             it("provides valid PNG signatures for both required PWA icons", () => {
               for (const path of ["public/icon-192.png", "public/icon-512.png"]) {
                 const bytes = readFileSync(path);
@@ -219,10 +274,10 @@ jobs:
             if [ -s /tmp/skipped-groups.txt ]; then sed 's/^/- /' /tmp/skipped-groups.txt; else echo "- None"; fi
             echo
             echo "## Rejected donor"
-            echo "- PR #1244 was not merged: its concurrent AI_ANALYZE/ENGINE_RUN queueing, setupCompletedAt cache misuse, and broad category promotion are superseded by PR #1248's atomic server orchestration and claim-level SOURCE_VERIFIED model."
+            echo "- PR #1244 was not merged: concurrent AI_ANALYZE/ENGINE_RUN queueing, setupCompletedAt cache misuse, and broad category promotion are superseded by PR #1248's atomic server orchestration and claim-level SOURCE_VERIFIED model."
           } > docs/recovery/open-pr-donor-reconciliation-20260724.md
 
-          rm .github/workflows/consolidate-open-pr-donors.yml
+          rm -f .github/workflows/consolidate-open-pr-donors.yml .github/workflows/diagnose-open-pr-donors.yml
           git add -A
 
       - name: Validate reconciled product diff
