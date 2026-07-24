@@ -49,6 +49,46 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Use the real browser login flow
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/audit-real-owner-app.mjs')
+          text = p.read_text()
+          start = text.index('const api = await request.newContext')
+          end = text.index('const seedRoutes = [')
+          replacement = r'''const browser = await chromium.launch({ headless: true });
+          const loginContext = await browser.newContext({ extraHTTPHeaders, ignoreHTTPSErrors: false });
+          const loginPage = await loginContext.newPage();
+          const loginResponse = await loginPage.goto(`${baseURL}/login`, { waitUntil: "domcontentloaded", timeout: 45_000 });
+          if (loginResponse && loginResponse.status() >= 400) {
+            throw new Error(`Login page failed with HTTP ${loginResponse.status()}`);
+          }
+          const emailInput = loginPage.locator('input[type="email"], input[name="email"]').first();
+          const passwordInput = loginPage.locator('input[type="password"], input[name="password"]').first();
+          const submit = loginPage.locator('button[type="submit"], input[type="submit"]').first();
+          await emailInput.waitFor({ state: "visible", timeout: 20_000 });
+          await emailInput.fill(email);
+          await passwordInput.fill(password);
+          await submit.click();
+          await loginPage.waitForURL((url) => url.pathname.startsWith('/dashboard'), { timeout: 45_000 }).catch(() => null);
+          if (!new URL(loginPage.url()).pathname.startsWith('/dashboard')) {
+            const visibleError = await loginPage.locator('[role="alert"], .text-red-600, .text-red-700').first().innerText().catch(() => 'No visible login error');
+            throw new Error(`Browser login did not reach the dashboard: ${String(visibleError).slice(0, 240)}`);
+          }
+          const storageState = await loginContext.storageState();
+          await loginContext.close();
+          const context = await browser.newContext({
+            storageState,
+            extraHTTPHeaders,
+            ignoreHTTPSErrors: false,
+          });
+
+          '''
+          p.write_text(text[:start] + replacement + text[end:])
+          PY
+
       - name: Audit real owner account on public application
         id: audit
         shell: bash
