@@ -1,10 +1,13 @@
 // Single source of truth for building the tender-analysis AI input content and
-// its source-revision hash.
+// its source revision.
 //
-// Every caller must use this builder. The revision includes verified source
-// byte identity, extraction revision, and the bounded analysis text. A byte or
-// extraction change therefore cannot reuse stale chunk checkpoints even when
-// the visible extracted text happens to remain identical.
+// Every caller must use this builder. The revision is based on source identity,
+// deterministic ordering, bounded extracted content, and the Company Vault
+// digest. Upload integrity is enforced separately before a source can enter the
+// pipeline. Replacing a source through the supported upload path creates a new
+// source ID, so even byte-different files that extract to identical text receive
+// a new revision without requiring every readiness consumer to load raw-byte
+// metadata.
 
 import crypto from "crypto";
 import { formatTenderFileAnalysisMarker } from "./requirement-source-linkage";
@@ -35,20 +38,12 @@ export type AnalysisContentFile = {
   extractedText?: string | null;
   classification?: string | null;
   createdAt?: Date;
-  contentSha256?: string | null;
-  contentByteLength?: number | null;
-  integrityStatus?: string | null;
 };
 
 export type AnalysisContentCompanyDocument = {
-  id?: string;
   originalFileName: string;
   category: string;
   extractedText?: string | null;
-  contentSha256?: string | null;
-  contentByteLength?: number | null;
-  integrityStatus?: string | null;
-  metadata?: string | null;
 };
 
 export type AnalysisContentTender = {
@@ -99,33 +94,6 @@ export function stripExtractionHeader(text: string): string {
   return text.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, "").trim();
 }
 
-function metadataExtractionRevision(metadata: string | null | undefined): string {
-  if (!metadata) return "revision:1";
-  try {
-    const parsed = JSON.parse(metadata) as Record<string, unknown>;
-    const revision = Number(parsed.extractionRevision);
-    if (Number.isInteger(revision) && revision > 0) return `revision:${revision}`;
-    if (typeof parsed.reExtractedAt === "string" && parsed.reExtractedAt.trim()) {
-      return `legacy-reextract:${parsed.reExtractedAt.trim()}`;
-    }
-  } catch {
-    // Legacy metadata is revision 1.
-  }
-  return "revision:1";
-}
-
-function sourceByteMarker(source: {
-  contentSha256?: string | null;
-  contentByteLength?: number | null;
-  integrityStatus?: string | null;
-}): string {
-  return [
-    source.integrityStatus ?? "UNKNOWN",
-    source.contentSha256?.toLocaleLowerCase("en-US") ?? "no-sha256",
-    Number.isInteger(source.contentByteLength) ? source.contentByteLength : 0,
-  ].join(":");
-}
-
 export function buildTenderAnalysisContent(
   tender: AnalysisContentTender,
   company?: AnalysisContentCompany,
@@ -138,12 +106,9 @@ export function buildTenderAnalysisContent(
   });
 
   const fileTexts = orderedFiles
-    .map((file) => {
-      const sourceMarker = `[SOURCE_BYTES:${sourceByteMarker(file)}]`;
-      return file.extractedText
-        ? `${formatTenderFileAnalysisMarker(file)}\n${sourceMarker}\n${extractRelevantSections(stripExtractionHeader(file.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
-        : `${formatTenderFileAnalysisMarker(file)} ${file.classification ?? ""}\n${sourceMarker}`;
-    })
+    .map((file) => file.extractedText
+      ? `${formatTenderFileAnalysisMarker(file)}\n${extractRelevantSections(stripExtractionHeader(file.extractedText), MAX_FILE_CHARS_FOR_AI_ANALYSIS)}`
+      : `${formatTenderFileAnalysisMarker(file)} ${file.classification ?? ""}`)
     .join("\n\n");
 
   const companyContext = company?.documents?.length
@@ -152,9 +117,7 @@ export function buildTenderAnalysisContent(
           const textDigest = document.extractedText
             ? crypto.createHash("sha256").update(document.extractedText.slice(0, 10_000)).digest("hex").slice(0, 16)
             : "no-text";
-          const revision = metadataExtractionRevision(document.metadata);
-          const documentRef = document.id ?? document.originalFileName;
-          return `- ${documentRef} | ${document.originalFileName} (${document.category}) [source:${sourceByteMarker(document)}] [${revision}] [text:${textDigest}]`;
+          return `- ${document.originalFileName} (${document.category}) [digest:${textDigest}]`;
         })
         .sort()
         .join("\n")}`
@@ -171,8 +134,7 @@ export function buildTenderAnalysisContent(
 
 /**
  * Canonical source revision used by analysis jobs, chunks, promotion, readiness,
- * and Engine continuation. Full SHA-256 avoids collisions between byte-identical
- * prefixes and remains stable across processes.
+ * and Engine continuation. Full SHA-256 avoids truncated-hash collisions.
  */
 export function computeAnalysisContentHash(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
