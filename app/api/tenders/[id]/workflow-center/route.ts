@@ -8,12 +8,8 @@ import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/ca
 import { isMutationAction } from "../../../../../lib/recovery-command-actions";
 import { TENDER_WORKFLOW_STAGE_LABELS } from "../../../../../lib/tender-workflow-stages";
 
-function stageStatusFromCanonical(
-  canonicalState: string | undefined,
-  fallback: string,
-): string {
-  if (!canonicalState) return fallback;
-  return canonicalState;
+function stageStatusFromCanonical(canonicalState: string | undefined, fallback: string): string {
+  return canonicalState || fallback;
 }
 
 export async function GET(
@@ -33,15 +29,14 @@ export async function GET(
       getCanonicalTenderWorkflowDecision(prisma, actor.id, tenderId),
     ]);
 
-    if (!snapshot) {
-      return NextResponse.json({ error: "Tender not found" }, { status: 404 });
-    }
+    if (!snapshot) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-    const pageLedgerSummary = (snapshot.pageLedgers ?? []).map((pageLedger, index) => {
-      const fileName = snapshot.extraction.files[index]?.fileName ?? `File ${index + 1}`;
-      return { fileName, ...pageLedger };
-    });
+    const pageLedgerSummary = (snapshot.pageLedgers ?? []).map((pageLedger, index) => ({
+      fileName: snapshot.extraction.files[index]?.fileName ?? `File ${index + 1}`,
+      ...pageLedger,
+    }));
     const hasUnsafePages = (snapshot.pageLedgers ?? []).some((pageLedger) => !pageLedger.isSafeForAnalysis);
+    const ds = decision?.stageStates ?? {};
 
     const classification = snapshot.tenderClassification;
     const classificationSummary = classification
@@ -55,170 +50,87 @@ export async function GET(
         }
       : null;
 
-    const ds = decision?.stageStates ?? {};
     const analysisExplanation = snapshot.analysis.state === "AI_SUCCEEDED"
       ? "AI analysis completed and is ready for requirement review."
       : snapshot.analysis.state === "RUNNING"
         ? "AI analysis is running."
         : snapshot.analysis.blocker ?? "AI analysis must be run or repaired.";
+
     const requirementExplanation = snapshot.requirements.mandatory > 0
       ? `${snapshot.requirements.total} requirements recorded; ${snapshot.requirements.groundedMandatory}/${snapshot.requirements.mandatory} mandatory requirements are source-traced.`
       : `${snapshot.requirements.total} requirements recorded; no mandatory requirements are currently identified.`;
 
+    const stage = (
+      number: number,
+      status: string,
+      explanation: string,
+      actionLabel: string,
+      actionName: string,
+      extra: Record<string, unknown> = {},
+    ) => ({
+      stage: number,
+      label: TENDER_WORKFLOW_STAGE_LABELS[number as keyof typeof TENDER_WORKFLOW_STAGE_LABELS],
+      status,
+      explanation,
+      actionLabel,
+      actionName,
+      actionKind: isMutationAction(actionName) ? "mutation" as const : "readonly" as const,
+      // Action Center is informational/navigation only. Mutations remain owned
+      // by canonical panels, which enforce role, readiness, evidence, Build
+      // Plan, generation, validation, approval, integrity, and ZIP gates.
+      ...extra,
+    });
+
     const stages = [
-      {
-        stage: 1,
-        label: TENDER_WORKFLOW_STAGE_LABELS[1],
-        status: stageStatusFromCanonical(ds["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"),
-        explanation: "Manage uploaded tender PDFs and DOCX files.",
-        actionLabel: "Manage Files",
-        actionName: "UPLOAD_TENDER_DOCUMENT",
-        actionKind: isMutationAction("UPLOAD_TENDER_DOCUMENT") ? "mutation" as const : "readonly" as const,
-        // Stage 1 is a scroll action — the user must pick files in the
-        // upload panel, so we cannot fire the mutation from the Action
-        // Center directly. actionUrl stays undefined; the Action Center
-        // scrolls to the panel.
-      },
-      {
-        stage: 2,
-        label: TENDER_WORKFLOW_STAGE_LABELS[2],
-        status: stageStatusFromCanonical(ds["FIX_EXTRACTION"], hasUnsafePages ? "BLOCKED" : snapshot.extraction.overallOk ? "COMPLETE" : "BLOCKED"),
-        explanation: hasUnsafePages
-          ? pageLedgerSummary.map((pageLedger) => `${pageLedger.fileName}: ${pageLedger.summary}`).join(" | ")
+      stage(1, stageStatusFromCanonical(ds["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"), "Manage uploaded tender PDFs and DOCX files.", "Manage Files", "UPLOAD_TENDER_DOCUMENT"),
+      stage(
+        2,
+        stageStatusFromCanonical(ds["FIX_EXTRACTION"], hasUnsafePages ? "BLOCKED" : snapshot.extraction.overallOk ? "COMPLETE" : "BLOCKED"),
+        hasUnsafePages
+          ? pageLedgerSummary.map((item) => `${item.fileName}: ${item.summary}`).join(" | ")
           : "Verify text density and page coverage.",
-        blocker: hasUnsafePages
-          ? pageLedgerSummary.filter((pageLedger) => !pageLedger.isSafeForAnalysis).map((pageLedger) => pageLedger.summary).join(" | ")
-          : !snapshot.extraction.overallOk ? (snapshot.extraction.blocker ?? "Extraction inconsistent or weak.") : undefined,
-        actionLabel: "Repair Extraction",
-        actionName: "REPAIR_EXTRACTION",
-        actionKind: isMutationAction("REPAIR_EXTRACTION") ? "mutation" as const : "readonly" as const,
-        // Repair Extraction requires per-file choices (which file to
-        // re-extract) — scroll, not direct mutation.
-        pageLedgers: pageLedgerSummary,
-      },
-      {
-        stage: 3,
-        label: TENDER_WORKFLOW_STAGE_LABELS[3],
-        status: stageStatusFromCanonical(
+        "Repair Extraction",
+        "REPAIR_EXTRACTION",
+        {
+          blocker: hasUnsafePages
+            ? pageLedgerSummary.filter((item) => !item.isSafeForAnalysis).map((item) => item.summary).join(" | ")
+            : !snapshot.extraction.overallOk ? snapshot.extraction.blocker ?? "Extraction inconsistent or weak." : undefined,
+          pageLedgers: pageLedgerSummary,
+        },
+      ),
+      stage(
+        3,
+        stageStatusFromCanonical(
           ds["RUN_AI_ANALYZE"],
-          snapshot.analysis.state === "AI_SUCCEEDED"
-            ? "COMPLETE"
-            : snapshot.analysis.state === "RUNNING"
-              ? "IN_PROGRESS"
-              : "BLOCKED",
+          snapshot.analysis.state === "AI_SUCCEEDED" ? "COMPLETE" : snapshot.analysis.state === "RUNNING" ? "IN_PROGRESS" : "BLOCKED",
         ),
-        explanation: analysisExplanation,
-        actionLabel: decision?.partialAnalysis ? "Resume AI Analyze" : "Run AI Analyze",
-        actionName: decision?.partialAnalysis ? "RESUME_AI_ANALYZE" : "RUN_AI_ANALYZE",
-        actionKind: isMutationAction(decision?.partialAnalysis ? "RESUME_AI_ANALYZE" : "RUN_AI_ANALYZE") ? "mutation" as const : "readonly" as const,
-        // AI Analyze has no per-file choices — fire the mutation directly
-        // from the Action Center so the user doesn't have to scroll and
-        // find the button.
-        actionUrl: `/api/tenders/${tenderId}/ai-analyze?mode=background`,
-        actionMethod: "POST" as const,
-      },
-      {
-        stage: 4,
-        label: TENDER_WORKFLOW_STAGE_LABELS[4],
-        status: stageStatusFromCanonical(
-          ds["CONFIRM_REQUIREMENTS"],
-          snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : "WAITING_ON_PRIOR_STEP",
-        ),
-        explanation: requirementExplanation,
-        actionLabel: "Review Requirements",
-        actionName: "REVIEW_MATCHES",
-        actionKind: isMutationAction("REVIEW_MATCHES") ? "mutation" as const : "readonly" as const,
-        // Review Requirements is a navigation action — scroll to the
-        // requirement-coverage panel.
-      },
-      {
-        stage: 5,
-        label: TENDER_WORKFLOW_STAGE_LABELS[5],
-        status: snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING",
-        explanation: `Tender Details: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`,
-        actionLabel: "Edit Tender Details",
-        actionName: "EDIT_TENDER_METADATA",
-        actionKind: isMutationAction("EDIT_TENDER_METADATA") ? "mutation" as const : "readonly" as const,
-        // Editing tender details is a form interaction — scroll to the form.
-      },
-      {
-        stage: 6,
-        label: TENDER_WORKFLOW_STAGE_LABELS[6],
-        status: stageStatusFromCanonical(
-          ds["BUILD_SUBMISSION_PLAN"],
-          snapshot.buildPlan.gateValid ? "COMPLETE" : "BLOCKED",
-        ),
-        explanation: snapshot.buildPlan.gateBlocker ?? snapshot.buildPlan.blocker ?? "Build plan pending.",
-        actionLabel: "Build Plan",
-        actionName: "BUILD_SUBMISSION_PLAN",
-        actionKind: isMutationAction("BUILD_SUBMISSION_PLAN") ? "mutation" as const : "readonly" as const,
-        // Build Plan is a deterministic server-side mutation with no
-        // user-choosable parameters — fire directly from the Action Center.
-        actionUrl: `/api/tenders/${tenderId}/submission-plan/build`,
-        actionMethod: "POST" as const,
-      },
-      {
-        stage: 7,
-        label: TENDER_WORKFLOW_STAGE_LABELS[7],
-        status: stageStatusFromCanonical(ds["MATCH_EVIDENCE"], "WAITING_ON_PRIOR_STEP"),
-        explanation: decision?.currentBlockingStage && decision.currentBlockingStage !== "EXPORT_ZIP_READY" && decision.currentBlockingStage !== "MANDATORY_NO_COMPLIANCE_ROWS" && decision.currentBlockingStage !== "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"
+        analysisExplanation,
+        decision?.partialAnalysis ? "Resume AI Analyze" : "Run AI Analyze",
+        decision?.partialAnalysis ? "RESUME_AI_ANALYZE" : "RUN_AI_ANALYZE",
+      ),
+      stage(4, stageStatusFromCanonical(ds["CONFIRM_REQUIREMENTS"], snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : "WAITING_ON_PRIOR_STEP"), requirementExplanation, "Review Requirements", "REVIEW_MATCHES"),
+      stage(5, snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING", `Tender Details: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`, "Edit Tender Details", "EDIT_TENDER_METADATA"),
+      stage(6, stageStatusFromCanonical(ds["BUILD_SUBMISSION_PLAN"], snapshot.buildPlan.gateValid ? "COMPLETE" : "BLOCKED"), snapshot.buildPlan.gateBlocker ?? snapshot.buildPlan.blocker ?? "Build plan pending.", "Build Plan", "BUILD_SUBMISSION_PLAN"),
+      stage(
+        7,
+        stageStatusFromCanonical(ds["MATCH_EVIDENCE"], "WAITING_ON_PRIOR_STEP"),
+        decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "MANDATORY_NO_COMPLIANCE_ROWS", "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
           : "Link reviewed experts and project experience to source-traced requirements.",
-        actionLabel: "Match Evidence",
-        actionName: "LINK_VAULT_EVIDENCE",
-        actionKind: isMutationAction("LINK_VAULT_EVIDENCE") ? "mutation" as const : "readonly" as const,
-        // Link Vault Evidence is an automatic server-side mutation that
-        // links reviewed experts/projects to requirements — fire directly.
-        actionUrl: `/api/tenders/${tenderId}/link-vault-evidence-auto`,
-        actionMethod: "POST" as const,
-      },
-      {
-        stage: 8,
-        label: TENDER_WORKFLOW_STAGE_LABELS[8],
-        status: stageStatusFromCanonical(
-          ds["GENERATE_DOCUMENTS"],
-          snapshot.generationEligible ? "READY" : "BLOCKED",
-        ),
-        explanation: snapshot.generationBlockers.length > 0 ? snapshot.generationBlockers[0] : "Ready for generation.",
-        actionLabel: "Generate",
-        actionName: "GENERATE_REQUIRED_DOCUMENTS",
-        actionKind: isMutationAction("GENERATE_REQUIRED_DOCUMENTS") ? "mutation" as const : "readonly" as const,
-        // Generate Missing Plan Files is a deterministic server-side
-        // mutation — fire directly from the Action Center.
-        actionUrl: `/api/tenders/${tenderId}/generate-missing-plan-files`,
-        actionMethod: "POST" as const,
-      },
-      {
-        stage: 9,
-        label: TENDER_WORKFLOW_STAGE_LABELS[9],
-        status: stageStatusFromCanonical(ds["VALIDATE_DOCS"], "WAITING_ON_PRIOR_STEP"),
-        explanation: decision?.currentBlockingStage && decision.currentBlockingStage !== "EXPORT_ZIP_READY" && decision.currentBlockingStage !== "DOCS_NOT_VALIDATED" && decision.currentBlockingStage !== "DOCS_NOT_APPROVED_EXPORT_READY" && decision.currentBlockingStage !== "AUTHORITY_OR_QUALITY_BLOCKERS"
+        "Match Evidence",
+        "LINK_VAULT_EVIDENCE",
+      ),
+      stage(8, stageStatusFromCanonical(ds["GENERATE_DOCUMENTS"], snapshot.generationEligible ? "READY" : "BLOCKED"), snapshot.generationBlockers[0] ?? "Ready for generation.", "Generate", "GENERATE_REQUIRED_DOCUMENTS"),
+      stage(
+        9,
+        stageStatusFromCanonical(ds["VALIDATE_DOCS"], "WAITING_ON_PRIOR_STEP"),
+        decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "DOCS_NOT_VALIDATED", "DOCS_NOT_APPROVED_EXPORT_READY", "AUTHORITY_OR_QUALITY_BLOCKERS"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
           : "Review and approve generated documents.",
-        actionLabel: "Review Documents",
-        actionName: "VALIDATE_DOCS",
-        actionKind: isMutationAction("VALIDATE_DOCS") ? "mutation" as const : "readonly" as const,
-        // Validate Docs is a deterministic server-side mutation — fire
-        // directly from the Action Center.
-        actionUrl: `/api/tenders/${tenderId}/validate`,
-        actionMethod: "POST" as const,
-      },
-      {
-        stage: 10,
-        label: TENDER_WORKFLOW_STAGE_LABELS[10],
-        status: stageStatusFromCanonical(
-          ds["EXPORT_ZIP"],
-          snapshot.exportEligible ? "READY" : "BLOCKED",
-        ),
-        explanation: snapshot.exportBlockers.length > 0 ? snapshot.exportBlockers[0] : "Ready for export.",
-        actionLabel: "Export",
-        actionName: "DOWNLOAD_FINAL_ZIP",
-        actionKind: isMutationAction("DOWNLOAD_FINAL_ZIP") ? "mutation" as const : "readonly" as const,
-        // Download Final ZIP is a GET (download) — the Action Center
-        // scrolls to the export panel because the download button there
-        // carries the byte-integrity verification UI. A direct GET from
-        // the Action Center would skip the verification panel.
-      },
+        "Review Documents",
+        "VALIDATE_DOCS",
+      ),
+      stage(10, stageStatusFromCanonical(ds["EXPORT_ZIP"], snapshot.exportEligible ? "READY" : "BLOCKED"), snapshot.exportBlockers[0] ?? "Ready for export.", "Export", "DOWNLOAD_FINAL_ZIP"),
     ];
 
     return NextResponse.json({
