@@ -1,0 +1,90 @@
+name: Diagnose open PR donor reconciliation
+
+on:
+  pull_request:
+    branches:
+      - release/consolidated-recovery-20260717
+    paths:
+      - .github/workflows/diagnose-open-pr-donors.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'consolidate/open-pr-donors-20260724'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Fetch donors
+        run: |
+          git fetch origin main
+          git fetch origin +refs/pull/1249/head:refs/remotes/origin/pr-1249 +refs/pull/1251/head:refs/remotes/origin/pr-1251
+      - name: Diagnose exact reconciliation inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '=== donor files ==='
+            git cat-file -e origin/pr-1249:app/dashboard/compliance/compliance-dashboard.tsx && echo '1249 compliance: present'
+            git cat-file -e origin/pr-1251:public/icon-192.png && echo '1251 icon-192: present'
+            git cat-file -e origin/pr-1251:public/icon-512.png && echo '1251 icon-512: present'
+            echo '=== Review Inbox replacement counts ==='
+            python - <<'PY'
+          from pathlib import Path
+          source = Path('app/dashboard/company/review/page.tsx').read_text()
+          patterns = {
+              'previous': 'className="rounded-lg border px-3 py-1.5 disabled:opacity-50"\n          aria-label="Previous page"',
+              'next': 'className="rounded-lg border px-3 py-1.5 disabled:opacity-50"\n          aria-label="Next page"',
+              'experts': '''          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+              {batchingExperts ? "Reviewing…" : `Human-review selected (${selectedExperts.size})`}
+            </button>
+          </div>''',
+              'projects': '''          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+              {batchingProjects ? "Reviewing…" : `Human-review selected (${selectedProjects.size})`}
+            </button>
+          </div>''',
+          }
+          for name, pattern in patterns.items():
+              print(f'{name}: {source.count(pattern)}')
+          PY
+            echo '=== cleanly applicable PR 1251 groups ==='
+            for path in \
+              app/api/auth/forgot-password/route.ts \
+              components/icons.tsx \
+              lib/engine/canonical-readiness-state.ts \
+              lib/auth.ts \
+              lib/audit.ts \
+              lib/notifications.ts \
+              lib/ai-usage-tracker.ts \
+              lib/engine/analysis-state-resolver.ts \
+              lib/engine/runtime-readiness-facts.ts \
+              lib/engine/tender-lifecycle-orchestrator.ts \
+              app/api/system/deep-reasoning-status/route.ts \
+              'app/api/tenders/[id]/ai-proposal/route.ts' \
+              components/tender-breadcrumb.tsx; do
+              patch=/tmp/$(echo "$path" | tr '/[]' '___').patch
+              git diff --binary origin/main origin/pr-1251 -- "$path" > "$patch"
+              if [ ! -s "$patch" ]; then
+                echo "$path: no delta"
+              elif git apply --check "$patch"; then
+                echo "$path: clean"
+              else
+                echo "$path: conflict"
+              fi
+            done
+          } 2>&1 | tee /tmp/donor-diagnosis.log
+      - name: Upload diagnosis
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: donor-reconciliation-diagnosis-${{ github.sha }}
+          path: /tmp/donor-diagnosis.log
+          if-no-files-found: error
