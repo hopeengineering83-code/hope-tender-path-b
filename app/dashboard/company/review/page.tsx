@@ -128,8 +128,9 @@ function PaginationControls(props: {
           type="button"
           onClick={() => props.onPage(props.page - 1)}
           disabled={props.page <= 1}
-          className="rounded-lg border px-3 py-1.5 disabled:opacity-50"
+          className="rounded-lg border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="Previous page"
+          title={props.page <= 1 ? "You are on the first page." : "Go to the previous page."}
         >
           Previous
         </button>
@@ -137,8 +138,9 @@ function PaginationControls(props: {
           type="button"
           onClick={() => props.onPage(props.page + 1)}
           disabled={props.page >= props.totalPages}
-          className="rounded-lg border px-3 py-1.5 disabled:opacity-50"
+          className="rounded-lg border px-3 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="Next page"
+          title={props.page >= props.totalPages ? "You are on the last page." : "Go to the next page."}
         >
           Next
         </button>
@@ -337,9 +339,16 @@ export default function ReviewInboxPage() {
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><h2 className="text-lg font-semibold text-slate-900">Experts</h2><p className="text-xs text-slate-500">Source-verified records may be selected for genuine human review.</p></div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
-            <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+          <div className="flex flex-wrap items-center gap-2">
+            {eligibleExperts.length === 0 && (
+              <span className="text-[11px] font-medium text-amber-800">
+                {expertItems.length === 0
+                  ? "No expert records are available. Upload Company Vault sources; ingestion and source verification run automatically."
+                  : "No experts on this page are eligible for human review. Open Evidence status for the exact source blocker."}
+              </span>
+            )}
+            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleExperts.length === 0 ? "No source-verified experts on this page are eligible for human review." : "Select every eligible expert on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-50" title={selectedExperts.size === 0 ? "Select at least one source-verified expert." : "Human-review the selected experts against their durable source evidence."}>
               {batchingExperts ? "Reviewing…" : `Human-review selected (${selectedExperts.size})`}
             </button>
           </div>
@@ -377,9 +386,16 @@ export default function ReviewInboxPage() {
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><h2 className="text-lg font-semibold text-slate-900">Projects</h2><p className="text-xs text-slate-500">Source-verified records may be selected for genuine human review.</p></div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50">Select eligible on page</button>
-            <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:opacity-50">
+          <div className="flex flex-wrap items-center gap-2">
+            {eligibleProjects.length === 0 && (
+              <span className="text-[11px] font-medium text-amber-800">
+                {projectItems.length === 0
+                  ? "No project records are available. Upload Company Vault sources; ingestion and source verification run automatically."
+                  : "No projects on this page are eligible for human review. Open Evidence status for the exact source blocker."}
+              </span>
+            )}
+            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleProjects.length === 0 ? "No source-verified projects on this page are eligible for human review." : "Select every eligible project on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-50" title={selectedProjects.size === 0 ? "Select at least one source-verified project." : "Human-review the selected projects against their durable source evidence."}>
               {batchingProjects ? "Reviewing…" : `Human-review selected (${selectedProjects.size})`}
             </button>
           </div>

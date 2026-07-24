@@ -37,6 +37,7 @@
 // facts are checked.
 
 import type { PrismaClient } from "@prisma/client";
+import { logger } from "../observability";
 import { getEffectiveTenderFacts, type EffectiveTenderFactsResult } from "./effective-tender-facts";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 
@@ -450,8 +451,18 @@ async function buildBuildPlanState(
       const plan = buildSubmissionPlan(tender as any);
       derivedPlanExists = plan.files.length > 0;
     }
-  } catch {
-    // Safe fallback
+  } catch (e) {
+    // Safe fallback — previously bare `catch {}` with just a "Safe fallback"
+    // comment. Surface the failure so readiness-fact degradation is observable
+    // (e.g. a derived-plan computation failure could silently let "export
+    // ready" pass when it shouldn't).
+    //
+    // Note: `tender` is declared with `const tender = ...` inside the try block
+    // above, so it is out of scope here. Use the in-scope `tenderId` parameter.
+    logger.warn("[runtime-readiness-facts] derived plan computation failed — using safe fallback", {
+      detail: e,
+      tenderId,
+    });
   }
 
   return {

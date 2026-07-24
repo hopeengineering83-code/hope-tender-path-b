@@ -18,6 +18,7 @@
 import { prisma } from "@/lib/prisma";
 import type { PrismaClient } from "@prisma/client";
 import { redactSecrets } from "../sanitize-error";
+import { logger } from "@/lib/observability";
 
 export const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
 
@@ -394,8 +395,10 @@ export async function resolveTenderAnalysisState(
             break;
           }
         }
-      } catch {
-        // Malformed JSON — skip
+      } catch (error) {
+        logger.warn("[analysis-state-resolver] malformed staged JSON — skipping", {
+          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        });
       }
     }
   }

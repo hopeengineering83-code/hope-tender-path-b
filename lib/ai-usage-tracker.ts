@@ -1,4 +1,5 @@
 import { prisma, prismaReady } from "./prisma";
+import { logger } from "./observability";
 
 export interface UsageRecordInput {
   userId: string;
@@ -32,8 +33,16 @@ export async function recordAiUsage(input: UsageRecordInput): Promise<void> {
         failureCategory: input.failureCategory ?? null,
       },
     });
-  } catch {
-    // Usage tracking is best-effort — never block the AI call path.
+  } catch (e) {
+    // Usage tracking is best-effort — never block the AI call path — but
+    // surface failures so AI cost/usage tracking gaps are visible to
+    // operators. Previously bare `catch {}` — gaps were invisible.
+    logger.warn("[ai-usage-tracker] recordAiUsage failed", {
+      detail: e,
+      provider: input.provider,
+      useCase: input.useCase,
+      success: input.success,
+    });
   }
 }
 

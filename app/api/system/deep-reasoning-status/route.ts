@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "../../../../lib/auth";
+import { logger } from "../../../../lib/observability";
 import { isDeepReasoningEnabled, isToolUseGenerationEnabled } from "../../../../lib/engine/feature-flags";
 import { isAIEnabled, isClaudeEnabled, isOpenAIEnabled } from "../../../../lib/ai";
 import { getComprehensionCache } from "../../../../lib/engine/comprehension-cache";
@@ -145,7 +146,11 @@ export async function GET() {
             stuckForMs: j.startedAt ? Date.now() - j.startedAt.getTime() : null,
           })),
         };
-      } catch {
+      } catch (e) {
+        // Stuck-job query failed — return degraded data but log the underlying
+        // DB error so operators can detect ai-jobs DB outages. Previously
+        // bare `catch {}` with a string error field only — no log signal.
+        logger.error("[deep-reasoning-status] stuck-job query failed", { detail: e });
         return { count: 0, stuckAfterMs: AI_JOB_STUCK_AFTER_MS, sample: [], error: "stuck-job query failed" };
       }
     })(),
