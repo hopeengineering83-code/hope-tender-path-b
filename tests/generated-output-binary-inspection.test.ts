@@ -1,11 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import JSZip from "jszip";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { finalizeApprovedDocumentsZip } from "../lib/engine/workflow/zip-finalizer";
 import { inspectActualFileBytes } from "../lib/engine/persisted-byte-integrity";
 import { computeFileHash } from "../lib/engine/generated-file-integrity";
+
+const EVIDENCE_DIRECTORY = resolve("test-results/acceptance-evidence/generated-files");
 
 async function buildInspectableDocx(): Promise<Buffer> {
   const document = new Document({
@@ -121,5 +125,23 @@ describe("generated Word/PDF/ZIP binary inspection", () => {
       assert.equal(item.valid, true);
       assert.equal(item.required, true);
     }
+
+    // Retain only synthetic, credential-free evidence for exact-head inspection.
+    await mkdir(EVIDENCE_DIRECTORY, { recursive: true });
+    await Promise.all([
+      writeFile(resolve(EVIDENCE_DIRECTORY, "Technical-Proposal.docx"), docxBytes),
+      writeFile(resolve(EVIDENCE_DIRECTORY, "Technical-Proposal.pdf"), pdfBytes),
+      writeFile(resolve(EVIDENCE_DIRECTORY, "Final-Submission-Package.zip"), finalized.buffer!),
+      writeFile(
+        resolve(EVIDENCE_DIRECTORY, "manifest.json"),
+        JSON.stringify({
+          inspectedAt: new Date().toISOString(),
+          files: finalized.manifest,
+          zipSha256: computeFileHash(finalized.buffer!),
+          zipByteSize: finalized.buffer!.length,
+        }, null, 2),
+        "utf8",
+      ),
+    ]);
   });
 });
