@@ -18,7 +18,7 @@ function assertForwardedWithNullFallback(src: string, col: string, label: string
   const escaped = col.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   assert.match(
     src,
-    new RegExp(`${escaped}:\\s*(?:\\(tender as any\\)\\.)?${escaped}\\s*\\?\\?\\s*null`),
+    new RegExp(`${escaped}:\\s*(?:(?:\\(tender as any\\)|tender)\\.)${escaped}\\s*\\?\\?\\s*null`),
     `${label} must forward ${col} with ?? null fallback`,
   );
 }
