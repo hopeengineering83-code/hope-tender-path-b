@@ -160,7 +160,18 @@ export async function handleSecureUpload(req: Request) {
             ...integrity,
             category,
             extractedText: extracted.text || null,
-            metadata: JSON.stringify({ category, autoDetected: !providedCategory || providedCategory === "AUTO", storageProvider: stored.provider, ...extraction }),
+            metadata: JSON.stringify({
+              category,
+              autoDetected: !providedCategory || providedCategory === "AUTO",
+              storageProvider: stored.provider,
+              extractionRevision: 1,
+              extractionScore: quality.score,
+              pageStatus: perPage.pages,
+              totalPages: perPage.totalDetectedPages,
+              failedPages: perPage.failedPages,
+              ocrPages: perPage.ocrPages,
+              ...extraction,
+            }),
           },
           select: { id: true, companyId: true, fileName: true, originalFileName: true, mimeType: true, size: true, category: true, integrityStatus: true, contentSha256: true, contentByteLength: true, detectedFormat: true, createdAt: true },
         });
@@ -172,7 +183,7 @@ export async function handleSecureUpload(req: Request) {
           entityType: "CompanyDocument",
           entityId: record.id,
           description: `Uploaded validated ${fileType} company document`,
-          metadata: { companyId: company.id, fileName, category, storageProvider: stored.provider, ...extraction },
+          metadata: { companyId: company.id, fileName, category, storageProvider: stored.provider, extractionRevision: 1, ...extraction },
           requestId,
         });
       }
@@ -213,10 +224,8 @@ export async function handleSecureUpload(req: Request) {
       const safety = aiSucceeded
         ? { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 }
         : await runCompanyKnowledgeSafetyImport(prisma, company.id);
-      const autoVerification = aiSucceeded
-        ? await autoVerifyCompanyKnowledge(company.id)
-        : { expertsVerified: 0, projectsVerified: 0, expertsBlocked: 0, projectsBlocked: 0 };
-      companyImport = { ...primary, safetyImport: safety, autoVerification } as unknown as Record<string, unknown>;
+      const sourceVerification = await autoVerifyCompanyKnowledge(company.id);
+      companyImport = { ...primary, safetyImport: safety, sourceVerification } as unknown as Record<string, unknown>;
     } catch (error) {
       logger.error(`[secure-upload] requestId=${requestId} company import failed: ${sanitizeError(error)}`);
       companyImport = { status: "FAILED", error: "Company knowledge import failed", requestId };
