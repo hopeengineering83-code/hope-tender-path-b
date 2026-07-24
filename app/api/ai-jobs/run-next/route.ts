@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
-import { completeJob, failJob } from "../../../../lib/ai-jobs";
+import { completeJob, enqueueJob, failJob, findActiveEngineRunForTender } from "../../../../lib/ai-jobs";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
@@ -59,20 +59,13 @@ export async function POST(req: Request) {
     retryable?: boolean;
     correlationId?: string;
     retryScheduled?: boolean;
+    nextJobId?: string;
+    nextJobType?: string;
   };
   const processedJobs: WorkerJobResult[] = [];
 
-  // Provider-aware retry backstop. When an automated caller (Vercel cron or the
-  // worker secret) drives the queue, first re-arm any AI_ANALYZE jobs that
-  // stopped short and are now due — but only when a provider is eligible and
-  // the tender content is unchanged. This lets the EXISTING daily run-next cron
-  // resume stalled analyses with no extra cron entry (Vercel Hobby caps crons
-  // at two). UI-triggered calls (session auth) skip this so a user only ever
-  // drives their own job. Best-effort — never block the claim loop.
   if (isAutomatedCaller) {
     try {
-      // Restore DB-backed provider cooldowns before retry eligibility checks;
-      // otherwise a cold-start worker can re-arm jobs using empty in-memory health.
       const healthRestore = await restoreHealthFromDbBounded(2_000);
       if (healthRestore.warning) logger.error(`[run-next] Provider health restore warning before retry re-arm: ${healthRestore.warning}`);
       const due = await findJobsDueForRetry(10);
@@ -117,17 +110,6 @@ export async function POST(req: Request) {
         input: claimed.input,
       });
       if (isTerminalHandlerResult(result)) {
-        // The handler already drove the job to its terminal state (e.g.
-        // AI_ANALYZE: SUCCEEDED only after canonical promotion, otherwise
-        // PARTIAL_SUCCESS/FAILED). Respect it — calling completeJob() here
-        // would corrupt a partial/failed analysis into SUCCEEDED and falsely
-        // unlock generation/export. The handler owns output persistence.
-        //
-        // When an AI_ANALYZE run stops short, record durable retry state so the
-        // provider-aware scheduler (cron /api/cron/ai-analyze-retry) can re-arm
-        // it once a provider is eligible again — resuming from the last
-        // completed chunk. Best-effort: a bookkeeping failure must not break
-        // the worker loop. SUCCEEDED needs no retry.
         if (
           claimed.jobType === "AI_ANALYZE" &&
           (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED")
@@ -136,6 +118,36 @@ export async function POST(req: Request) {
             logger.error(`[run-next] Retry-state persistence failed for job ${claimed.id}: ${err instanceof Error ? err.message : String(err)}. Job remains ${result.terminalStatus}; generation blocked.`);
           });
         }
+
+        let nextJobId: string | undefined;
+        let nextJobType: string | undefined;
+        const autoContinue = claimed.input?.autoContinue === true;
+        if (
+          claimed.jobType === "AI_ANALYZE" &&
+          result.terminalStatus === "SUCCEEDED" &&
+          autoContinue &&
+          claimed.tenderId
+        ) {
+          const activeEngine = await findActiveEngineRunForTender(claimed.tenderId, claimed.userId);
+          if (activeEngine) {
+            nextJobId = activeEngine.id;
+          } else {
+            nextJobId = (await enqueueJob({
+              userId: claimed.userId,
+              tenderId: claimed.tenderId,
+              jobType: "ENGINE_RUN",
+              input: {
+                source: "canonical-ai-analyze-success",
+                safe: true,
+                skipAiRematch: true,
+                autoContinue: true,
+                parentJobId: claimed.id,
+              },
+            })).id;
+          }
+          nextJobType = "ENGINE_RUN";
+        }
+
         processedJobs.push({
           jobId: claimed.id,
           jobType: claimed.jobType,
@@ -145,6 +157,8 @@ export async function POST(req: Request) {
           retryable: result.terminalStatus === "FAILED" ? Boolean(result.retryable) : undefined,
           correlationId: result.correlationId,
           retryScheduled: claimed.jobType === "AI_ANALYZE" && (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED"),
+          nextJobId,
+          nextJobType,
         });
       } else {
         await completeJob(claimed.id, result);
@@ -188,15 +202,15 @@ export async function POST(req: Request) {
   }
 
   const statusPriority: Record<string, number> = {
-    "FAILED": 4,
-    "PARTIAL_SUCCESS": 3,
-    "SUPERSEDED": 2,
-    "SUCCEEDED": 1,
+    FAILED: 4,
+    PARTIAL_SUCCESS: 3,
+    SUPERSEDED: 2,
+    SUCCEEDED: 1,
   };
-  const worst = processedJobs.reduce((worstSoFar, j) => {
-    const pri = statusPriority[j.terminalStatus ?? ""] ?? 0;
-    const worstPri = statusPriority[worstSoFar.terminalStatus ?? ""] ?? 0;
-    return pri > worstPri ? j : worstSoFar;
+  const worst = processedJobs.reduce((worstSoFar, job) => {
+    const priority = statusPriority[job.terminalStatus ?? ""] ?? 0;
+    const worstPriority = statusPriority[worstSoFar.terminalStatus ?? ""] ?? 0;
+    return priority > worstPriority ? job : worstSoFar;
   });
 
   return NextResponse.json({
@@ -210,6 +224,8 @@ export async function POST(req: Request) {
     retryable: Boolean(worst.retryable),
     correlationId: worst.correlationId ?? null,
     retryScheduled: Boolean(worst.retryScheduled),
+    nextJobId: worst.nextJobId ?? null,
+    nextJobType: worst.nextJobType ?? null,
     workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus.",
   });
 }
