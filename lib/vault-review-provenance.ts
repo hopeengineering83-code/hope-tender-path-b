@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 
 export const REVIEW_PROVENANCE_PREFIX = "vault-review-provenance:v2:";
+export const SOURCE_VERIFICATION_PROVENANCE_PREFIX = "vault-source-verification:v1:";
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
-const MAX_REVIEW_FIELDS = 32;
+const MAX_REVIEW_FIELDS = 40;
 
 export type ReviewEvidenceField = {
   field: string;
@@ -16,6 +17,7 @@ export type ReviewSourceDocument = {
   contentSha256?: string | null;
   contentByteLength?: number | null;
   integrityStatus?: string | null;
+  metadata?: string | null;
 };
 
 const VAULT_REVIEW_AUTHORITY_SELECT = {
@@ -33,6 +35,7 @@ const VAULT_REVIEW_AUTHORITY_SELECT = {
       contentSha256: true,
       contentByteLength: true,
       integrityStatus: true,
+      metadata: true,
     },
   },
 } as const;
@@ -93,13 +96,14 @@ export type VaultReviewConsumerRecord =
   | VaultProjectReviewConsumerRecord;
 
 export type ReviewRecordState = VaultReviewConsumerRecord;
-
 export type ReviewRecordType = "EXPERT" | "PROJECT";
 
 export type DurableReviewEvidence = {
   field: string;
   valueHash: string;
   quoteHash: string;
+  quote: string;
+  page: number | null;
   start: number;
   end: number;
 };
@@ -110,6 +114,7 @@ export type ReviewEvidenceAssessment =
       sourceContentHash: string;
       sourceByteLength: number;
       sourceTextHash: string;
+      sourceExtractionRevision: string;
       evidence: DurableReviewEvidence[];
     }
   | {
@@ -131,8 +136,22 @@ type StoredReviewProvenance = {
   sourceContentHash: string;
   sourceByteLength: number;
   sourceTextHash: string;
+  sourceExtractionRevision?: string;
   reviewerId: string;
   reviewedAt: string;
+  evidence: DurableReviewEvidence[];
+};
+
+type StoredSourceVerificationProvenance = {
+  version: 1;
+  recordType: ReviewRecordType;
+  sourceDocumentId: string;
+  sourceContentHash: string;
+  sourceByteLength: number;
+  sourceTextHash: string;
+  sourceExtractionRevision: string;
+  verificationMethod: "AI" | "DETERMINISTIC" | "HYBRID";
+  verifiedAt: string;
   evidence: DurableReviewEvidence[];
 };
 
@@ -173,6 +192,33 @@ function sourceTextIsUsable(value: string | null | undefined): value is string {
   return typeof value === "string" && value.trim().length >= 100;
 }
 
+function sourceExtractionRevision(sourceDocument: Pick<ReviewSourceDocument, "metadata">): string {
+  if (sourceDocument.metadata) {
+    try {
+      const metadata = JSON.parse(sourceDocument.metadata) as Record<string, unknown>;
+      const numeric = Number(metadata.extractionRevision);
+      if (Number.isInteger(numeric) && numeric > 0) return `revision:${numeric}`;
+      if (typeof metadata.reExtractedAt === "string" && metadata.reExtractedAt.trim()) {
+        return `legacy-reextract:${metadata.reExtractedAt.trim()}`;
+      }
+    } catch {
+      // Legacy metadata is treated as the first extraction revision.
+    }
+  }
+  return "revision:1";
+}
+
+function sourcePageAtOffset(text: string, offset: number): number | null {
+  const pagePattern = /\[Page\s+(\d+)\]/gi;
+  let page: number | null = null;
+  for (const match of text.matchAll(pagePattern)) {
+    if ((match.index ?? 0) > offset) break;
+    const parsed = Number(match[1]);
+    if (Number.isInteger(parsed) && parsed > 0) page = parsed;
+  }
+  return page;
+}
+
 export function sourceByteIntegrityIsVerified(
   sourceDocument: Pick<ReviewSourceDocument, "contentSha256" | "contentByteLength" | "integrityStatus">,
 ): boolean {
@@ -200,8 +246,8 @@ function collectEvidence(
   if (!sourceByteIntegrityIsVerified(sourceDocument)) {
     return { ok: false, code: "PROVENANCE_REQUIRED", missingFields: [] };
   }
-  const normalizedFields = normalizedEvidenceFields(fields);
 
+  const normalizedFields = normalizedEvidenceFields(fields);
   const missingFields: string[] = [];
   const evidence: DurableReviewEvidence[] = [];
 
@@ -218,6 +264,8 @@ function collectEvidence(
       field: item.field,
       valueHash: evidenceValueHash(item.value),
       quoteHash: sha256(quote),
+      quote,
+      page: sourcePageAtOffset(text, match.index),
       start,
       end,
     });
@@ -231,12 +279,12 @@ function collectEvidence(
     };
   }
 
-  const sourceTextHash = sha256(text);
   return {
     ok: true,
     sourceContentHash: persistedHash,
     sourceByteLength: persistedByteLength!,
-    sourceTextHash,
+    sourceTextHash: sha256(text),
+    sourceExtractionRevision: sourceExtractionRevision(sourceDocument),
     evidence,
   };
 }
@@ -281,6 +329,7 @@ export function buildReviewProvenance(input: {
     sourceContentHash: assessment.sourceContentHash,
     sourceByteLength: assessment.sourceByteLength,
     sourceTextHash: assessment.sourceTextHash,
+    sourceExtractionRevision: assessment.sourceExtractionRevision,
     reviewerId: input.reviewerId,
     reviewedAt: input.reviewedAt.toISOString(),
     evidence: assessment.evidence,
@@ -296,7 +345,68 @@ export function buildReviewProvenance(input: {
   };
 }
 
-function parseStoredProvenance(reviewNotes: string | null | undefined): StoredReviewProvenance | null {
+export function buildSourceVerificationProvenance(input: {
+  recordType: ReviewRecordType;
+  sourceDocument: ReviewSourceDocument | null | undefined;
+  fields: ReviewEvidenceField[];
+  verificationMethod: StoredSourceVerificationProvenance["verificationMethod"];
+  verifiedAt?: Date;
+}):
+  | {
+      ok: true;
+      serialized: string;
+      sourceContentHash: string;
+      sourceByteLength: number;
+      sourceTextHash: string;
+      sourceExtractionRevision: string;
+      verifiedAt: string;
+      evidenceFields: string[];
+    }
+  | {
+      ok: false;
+      code: ReviewEvidenceFailure["code"];
+      missingFields: string[];
+    } {
+  const assessment = assessReviewEvidence(input.sourceDocument, input.fields);
+  if (!assessment.ok) return assessment;
+
+  const verifiedAt = (input.verifiedAt ?? new Date()).toISOString();
+  const provenance: StoredSourceVerificationProvenance = {
+    version: 1,
+    recordType: input.recordType,
+    sourceDocumentId: input.sourceDocument!.id,
+    sourceContentHash: assessment.sourceContentHash,
+    sourceByteLength: assessment.sourceByteLength,
+    sourceTextHash: assessment.sourceTextHash,
+    sourceExtractionRevision: assessment.sourceExtractionRevision,
+    verificationMethod: input.verificationMethod,
+    verifiedAt,
+    evidence: assessment.evidence,
+  };
+
+  return {
+    ok: true,
+    serialized: SOURCE_VERIFICATION_PROVENANCE_PREFIX + JSON.stringify(provenance),
+    sourceContentHash: assessment.sourceContentHash,
+    sourceByteLength: assessment.sourceByteLength,
+    sourceTextHash: assessment.sourceTextHash,
+    sourceExtractionRevision: assessment.sourceExtractionRevision,
+    verifiedAt,
+    evidenceFields: assessment.evidence.map((item) => item.field),
+  };
+}
+
+function evidenceItemIsValid(item: Partial<DurableReviewEvidence>): boolean {
+  return typeof item.field === "string" && item.field.trim().length > 0 &&
+    HASH_PATTERN.test(item.valueHash ?? "") &&
+    HASH_PATTERN.test(item.quoteHash ?? "") &&
+    (typeof item.quote === "string" || item.quote === undefined) &&
+    (item.page === null || item.page === undefined || (Number.isInteger(item.page) && (item.page ?? 0) > 0)) &&
+    Number.isInteger(item.start) && Number.isInteger(item.end) &&
+    (item.start ?? -1) >= 0 && (item.end ?? 0) > (item.start ?? -1);
+}
+
+function parseStoredReviewProvenance(reviewNotes: string | null | undefined): StoredReviewProvenance | null {
   if (!reviewNotes?.startsWith(REVIEW_PROVENANCE_PREFIX)) return null;
   try {
     const parsed = JSON.parse(reviewNotes.slice(REVIEW_PROVENANCE_PREFIX.length)) as Partial<StoredReviewProvenance>;
@@ -313,23 +423,43 @@ function parseStoredProvenance(reviewNotes: string | null | undefined): StoredRe
       !Array.isArray(parsed.evidence) ||
       parsed.evidence.length === 0 ||
       parsed.evidence.length > MAX_REVIEW_FIELDS
-    ) {
-      return null;
-    }
-    const evidenceValid = parsed.evidence.every((item) =>
-      item &&
-      typeof item.field === "string" &&
-      item.field.trim().length > 0 &&
-      HASH_PATTERN.test(item.valueHash) &&
-      HASH_PATTERN.test(item.quoteHash) &&
-      Number.isInteger(item.start) &&
-      Number.isInteger(item.end) &&
-      item.start >= 0 &&
-      item.end > item.start,
-    );
-    const evidenceFields = parsed.evidence.map((item) => item.field);
-    const fieldsAreUnique = new Set(evidenceFields).size === evidenceFields.length;
-    return evidenceValid && fieldsAreUnique ? parsed as StoredReviewProvenance : null;
+    ) return null;
+
+    const evidenceValid = parsed.evidence.every((item) => evidenceItemIsValid(item));
+    const fields = parsed.evidence.map((item) => item.field);
+    return evidenceValid && new Set(fields).size === fields.length
+      ? parsed as StoredReviewProvenance
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredSourceVerification(reviewNotes: string | null | undefined): StoredSourceVerificationProvenance | null {
+  if (!reviewNotes?.startsWith(SOURCE_VERIFICATION_PROVENANCE_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(reviewNotes.slice(SOURCE_VERIFICATION_PROVENANCE_PREFIX.length)) as Partial<StoredSourceVerificationProvenance>;
+    if (
+      parsed.version !== 1 ||
+      (parsed.recordType !== "EXPERT" && parsed.recordType !== "PROJECT") ||
+      typeof parsed.sourceDocumentId !== "string" ||
+      !HASH_PATTERN.test(parsed.sourceContentHash ?? "") ||
+      !Number.isInteger(parsed.sourceByteLength) ||
+      (parsed.sourceByteLength ?? 0) <= 0 ||
+      !HASH_PATTERN.test(parsed.sourceTextHash ?? "") ||
+      typeof parsed.sourceExtractionRevision !== "string" ||
+      !["AI", "DETERMINISTIC", "HYBRID"].includes(parsed.verificationMethod ?? "") ||
+      typeof parsed.verifiedAt !== "string" ||
+      !Array.isArray(parsed.evidence) ||
+      parsed.evidence.length === 0 ||
+      parsed.evidence.length > MAX_REVIEW_FIELDS
+    ) return null;
+
+    const evidenceValid = parsed.evidence.every((item) => evidenceItemIsValid(item));
+    const fields = parsed.evidence.map((item) => item.field);
+    return evidenceValid && new Set(fields).size === fields.length
+      ? parsed as StoredSourceVerificationProvenance
+      : null;
   } catch {
     return null;
   }
@@ -365,10 +495,10 @@ function currentRecordEvidenceFields(
   }));
 }
 
-export function isDurablyReviewed(record: ReviewRecordState): boolean {
-  if (record.trustLevel !== "REVIEWED") return false;
-  const provenance = parseStoredProvenance(record.reviewNotes);
-  if (!provenance) return false;
+function provenanceMatchesCurrentRecord(
+  record: ReviewRecordState,
+  provenance: Pick<StoredReviewProvenance, "recordType" | "sourceDocumentId" | "sourceContentHash" | "sourceByteLength" | "sourceTextHash" | "sourceExtractionRevision" | "evidence">,
+): boolean {
   if (
     !record.sourceDocumentId ||
     provenance.sourceDocumentId !== record.sourceDocumentId ||
@@ -376,24 +506,15 @@ export function isDurablyReviewed(record: ReviewRecordState): boolean {
     record.sourceDocument.id !== record.sourceDocumentId ||
     record.sourceDocument.companyId !== record.companyId ||
     !sourceTextIsUsable(record.sourceDocument.extractedText) ||
-    !sourceByteIntegrityIsVerified(record.sourceDocument) ||
-    !record.reviewedBy ||
-    provenance.reviewerId !== record.reviewedBy ||
-    !record.reviewedAt
-  ) {
-    return false;
-  }
+    !sourceByteIntegrityIsVerified(record.sourceDocument)
+  ) return false;
 
-  const currentTextHash = sha256(record.sourceDocument.extractedText);
-  const currentPersistedHash = record.sourceDocument.contentSha256?.toLowerCase() ?? "";
-  const currentByteLength = record.sourceDocument.contentByteLength;
   if (
-    currentPersistedHash !== provenance.sourceContentHash ||
-    currentByteLength !== provenance.sourceByteLength ||
-    currentTextHash !== provenance.sourceTextHash
-  ) {
-    return false;
-  }
+    record.sourceDocument.contentSha256?.toLowerCase() !== provenance.sourceContentHash ||
+    record.sourceDocument.contentByteLength !== provenance.sourceByteLength ||
+    sha256(record.sourceDocument.extractedText) !== provenance.sourceTextHash ||
+    (provenance.sourceExtractionRevision && sourceExtractionRevision(record.sourceDocument) !== provenance.sourceExtractionRevision)
+  ) return false;
 
   const currentFields = currentRecordEvidenceFields(record, provenance.recordType);
   if (!currentFields || currentFields.length !== provenance.evidence.length) return false;
@@ -403,15 +524,23 @@ export function isDurablyReviewed(record: ReviewRecordState): boolean {
   if (
     currentValueHashes.size !== currentFields.length ||
     !provenance.evidence.every((item) => currentValueHashes.get(item.field) === item.valueHash)
-  ) {
-    return false;
-  }
+  ) return false;
 
-  const evidenceMatchesCurrentText = provenance.evidence.every((item) =>
-    item.end <= record.sourceDocument!.extractedText!.length &&
-    sha256(normalizedQuote(record.sourceDocument!.extractedText!.slice(item.start, item.end))) === item.quoteHash
-  );
-  if (!evidenceMatchesCurrentText) return false;
+  return provenance.evidence.every((item) => {
+    if (item.end > record.sourceDocument!.extractedText!.length) return false;
+    const currentQuote = normalizedQuote(record.sourceDocument!.extractedText!.slice(item.start, item.end));
+    return sha256(currentQuote) === item.quoteHash &&
+      (!item.quote || currentQuote === item.quote) &&
+      (item.page == null || sourcePageAtOffset(record.sourceDocument!.extractedText!, item.start) === item.page);
+  });
+}
+
+export function isDurablyReviewed(record: ReviewRecordState): boolean {
+  if (record.trustLevel !== "REVIEWED") return false;
+  const provenance = parseStoredReviewProvenance(record.reviewNotes);
+  if (!provenance || !record.reviewedBy || !record.reviewedAt) return false;
+  if (provenance.reviewerId !== record.reviewedBy) return false;
+  if (!provenanceMatchesCurrentRecord(record, provenance)) return false;
 
   const persistedReviewTime = new Date(record.reviewedAt).getTime();
   const provenanceReviewTime = new Date(provenance.reviewedAt).getTime();
@@ -420,27 +549,32 @@ export function isDurablyReviewed(record: ReviewRecordState): boolean {
     persistedReviewTime === provenanceReviewTime;
 }
 
+export function isDurablySourceVerified(record: ReviewRecordState): boolean {
+  if (record.trustLevel !== "SOURCE_VERIFIED") return false;
+  if (record.reviewedBy || record.reviewedAt) return false;
+  const provenance = parseStoredSourceVerification(record.reviewNotes);
+  if (!provenance) return false;
+  return provenanceMatchesCurrentRecord(record, provenance);
+}
+
 export function effectiveReviewTrustLevel(
   record: ReviewRecordState,
-): "REVIEWED" | "AI_DRAFT" | "REGEX_DRAFT" | "PROVENANCE_REQUIRED" {
+): "REVIEWED" | "SOURCE_VERIFIED" | "AI_DRAFT" | "REGEX_DRAFT" | "PROVENANCE_REQUIRED" | "SOURCE_VERIFICATION_REQUIRED" {
   if (record.trustLevel === "REVIEWED") {
     return isDurablyReviewed(record) ? "REVIEWED" : "PROVENANCE_REQUIRED";
+  }
+  if (record.trustLevel === "SOURCE_VERIFIED") {
+    return isDurablySourceVerified(record) ? "SOURCE_VERIFIED" : "SOURCE_VERIFICATION_REQUIRED";
   }
   return record.trustLevel === "AI_DRAFT" ? "AI_DRAFT" : "REGEX_DRAFT";
 }
 
-/**
- * Single consumption gate for vault records: every purpose (matching,
- * generation, export) requires full durable review — trust level, stored
- * provenance, verified source bytes, and current field values all bound
- * together. The purpose parameter documents the call site; all purposes
- * currently share the same fail-closed rule.
- */
 export function canUseVaultRecord(
   record: ReviewRecordState,
-  _purpose: "MATCHING" | "GENERATION" | "EXPORT",
+  purpose: "MATCHING" | "GENERATION" | "EXPORT",
 ): boolean {
-  return isDurablyReviewed(record);
+  if (purpose === "EXPORT") return isDurablyReviewed(record);
+  return isDurablyReviewed(record) || isDurablySourceVerified(record);
 }
 
 export function parseStoredStringList(value: unknown): string[] {
@@ -496,17 +630,6 @@ export function publicVaultIdentifier(value: string): string {
   return sha256(value).slice(0, 16);
 }
 
-/**
- * True when two review-evidence field sets carry identical evidence values
- * under the same normalization and hashing isDurablyReviewed() verifies.
- *
- * Edit endpoints use this to decide whether a change to a REVIEWED record
- * touches the reviewed evidence itself: when it does, the record must be
- * demoted back to a draft trust level, because the stored provenance no
- * longer describes the record's current content and every downstream
- * consumer (matching, generation, export) would otherwise keep treating
- * stale evidence as reviewed.
- */
 export function reviewEvidenceEquals(a: ReviewEvidenceField[], b: ReviewEvidenceField[]): boolean {
   const left = normalizedEvidenceFields(a);
   const right = normalizedEvidenceFields(b);
