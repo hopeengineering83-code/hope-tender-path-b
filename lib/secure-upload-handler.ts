@@ -7,6 +7,7 @@ import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extra
 import { logAction } from "./audit";
 import { ensureCompanyForUser } from "./company-workspace";
 import { importCompanyKnowledgeFromDocuments } from "./company-knowledge-import-safe";
+import { autoVerifyCompanyKnowledge } from "./company-auto-verification";
 import { runCompanyKnowledgeSafetyImport } from "./company-knowledge-safety-import";
 import { rateLimitPersistent, UPLOAD_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
@@ -186,9 +187,6 @@ export async function handleSecureUpload(req: Request) {
 
   let processingJobId: string | null = null;
   if (tenderId && tenderFilesCreated > 0) {
-    // Server owns orchestration. Queue exactly one AI_ANALYZE job and do not
-    // queue ENGINE_RUN concurrently. Canonical analysis must reach SUCCEEDED
-    // before the Engine can be run from its gated panel.
     const activeAnalyze = await prisma.aiJob.findFirst({
       where: {
         tenderId,
@@ -203,7 +201,7 @@ export async function handleSecureUpload(req: Request) {
       userId: actor.id,
       tenderId,
       jobType: "AI_ANALYZE",
-      input: { source: "secure-upload", force: false },
+      input: { source: "secure-upload", force: false, autoContinue: true },
     })).id;
   }
 
@@ -215,7 +213,10 @@ export async function handleSecureUpload(req: Request) {
       const safety = aiSucceeded
         ? { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 }
         : await runCompanyKnowledgeSafetyImport(prisma, company.id);
-      companyImport = { ...primary, safetyImport: safety } as unknown as Record<string, unknown>;
+      const autoVerification = aiSucceeded
+        ? await autoVerifyCompanyKnowledge(company.id)
+        : { expertsVerified: 0, projectsVerified: 0, expertsBlocked: 0, projectsBlocked: 0 };
+      companyImport = { ...primary, safetyImport: safety, autoVerification } as unknown as Record<string, unknown>;
     } catch (error) {
       logger.error(`[secure-upload] requestId=${requestId} company import failed: ${sanitizeError(error)}`);
       companyImport = { status: "FAILED", error: "Company knowledge import failed", requestId };
