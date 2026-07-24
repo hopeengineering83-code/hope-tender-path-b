@@ -2,21 +2,32 @@ import { logger } from "../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { importCompanyKnowledgeFromDocuments } from "../../../../lib/company-knowledge-import-safe";
-import { autoVerifyCompanyKnowledge } from "../../../../lib/company-auto-verification";
-import { runCompanyKnowledgeSafetyImport } from "../../../../lib/company-knowledge-safety-import";
+import { ingestCompanyVault } from "../../../../lib/company-vault-ingestion";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../lib/extract-text";
+import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../lib/extraction-quality";
 import { inspectOfficeContainerBytes } from "../../../../lib/office-container-integrity";
+import { inspectActualFileBytes } from "../../../../lib/engine/persisted-byte-integrity";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { getStorageAdapter } from "../../../../lib/storage";
 import { cleanupSupportDocImportedRecords } from "../../../../lib/company-support-doc-cleanup";
 import { extractRequestId } from "../../../../lib/request-id";
 import { logAction } from "../../../../lib/audit";
 import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "../../../../lib/company-document-durable-deletion";
+import { limitExtractedText } from "../../../../lib/upload-security";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
+
+function parseMetadata(value: string | null | undefined): Record<string, unknown> {
+  try { return JSON.parse(value || "{}") as Record<string, unknown>; }
+  catch { return {}; }
+}
+
+function nextExtractionRevision(metadata: Record<string, unknown>): number {
+  const current = Number(metadata.extractionRevision);
+  return Number.isInteger(current) && current > 0 ? current + 1 : 2;
+}
 
 export async function POST(req: Request) {
   let actor;
@@ -59,9 +70,11 @@ export async function POST(req: Request) {
     });
 
     let reextracted = 0;
-    const failedFiles: Array<{ name: string; error: string }> = [];
+    const failedFiles: Array<{ name: string; error: string; code?: string }> = [];
     for (const doc of docs) {
       if (!doc.fileContent && !doc.storagePath) continue;
+      const metadata = parseMetadata(doc.metadata);
+      const extractionRevision = nextExtractionRevision(metadata);
       try {
         const buffer = doc.fileContent
           ? Buffer.from(doc.fileContent, "base64")
@@ -71,43 +84,85 @@ export async function POST(req: Request) {
               fileName: doc.originalFileName,
             });
 
-        const inspection = inspectOfficeContainerBytes(buffer, doc.originalFileName, doc.mimeType);
-        const extractedText = inspection.kind === "json"
+        const integrity = inspectActualFileBytes({
+          bytes: buffer,
+          filename: doc.originalFileName,
+          claimedMimeType: doc.mimeType,
+        });
+        if (integrity.integrityStatus !== "VERIFIED") {
+          await prisma.companyDocument.update({
+            where: { id: doc.id },
+            data: {
+              ...integrity,
+              extractedText: null,
+              aiExtractionStatus: "FAILED",
+              aiExtractionError: "Source byte integrity verification failed.",
+              metadata: JSON.stringify({
+                ...metadata,
+                extractionRevision,
+                reExtractedAt: new Date().toISOString(),
+                extracted: false,
+                extractionStatus: "INTEGRITY_FAILED",
+                integrityFailureCode: integrity.integrityFailureCode,
+              }),
+            },
+          });
+          failedFiles.push({
+            name: doc.originalFileName,
+            error: "Byte integrity verification failed",
+            code: integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED",
+          });
+          continue;
+        }
+
+        const inspection = inspectOfficeContainerBytes(buffer, doc.originalFileName, integrity.contentMimeType ?? doc.mimeType);
+        const rawText = inspection.kind === "json"
           ? inspection.text
           : inspection.kind === "invalid"
-            ? `[Extraction failed for ${doc.originalFileName}: ${inspection.reason}]`
-            : await extractTextFromBuffer(buffer, doc.mimeType, doc.originalFileName);
-
+            ? ""
+            : await extractTextFromBuffer(buffer, integrity.contentMimeType ?? doc.mimeType, doc.originalFileName);
+        const extracted = limitExtractedText(rawText);
+        const extractedText = extracted.text;
         const fileType = inspection.kind === "json"
           ? "JSON record"
-          : getFileTypeLabel(doc.mimeType, doc.originalFileName);
+          : getFileTypeLabel(integrity.contentMimeType ?? doc.mimeType, doc.originalFileName);
         const meaningful = isMeaningfulExtraction(extractedText);
-        let metadata: Record<string, unknown> = {};
-        try {
-          metadata = JSON.parse(doc.metadata || "{}") as Record<string, unknown>;
-        } catch {
-          metadata = {};
-        }
+        const quality = assessExtractionQuality(extractedText, doc.originalFileName);
+        const perPage = assessExtractionQualityPerPage(extractedText);
 
         await prisma.companyDocument.update({
           where: { id: doc.id },
           data: {
+            ...integrity,
+            mimeType: integrity.contentMimeType ?? doc.mimeType,
+            size: buffer.byteLength,
             extractedText: extractedText || null,
             aiExtractionStatus: meaningful ? "PENDING" : "FAILED",
-            aiExtractionError: meaningful ? null : inspection.kind === "invalid" ? inspection.reason : "No text extracted from document",
+            aiExtractedAt: null,
+            aiExtractionError: meaningful
+              ? null
+              : inspection.kind === "invalid"
+                ? inspection.reason
+                : "No meaningful text extracted from document",
             metadata: JSON.stringify({
               ...metadata,
               fileType,
               byteInspection: inspection.kind,
+              extractionRevision,
               reExtractedAt: new Date().toISOString(),
               extracted: meaningful,
               extractedChars: meaningful ? extractedText.length : 0,
-              extractionStatus: meaningful ? "EXTRACTED" : extractedText ? "WARNING" : "EMPTY",
+              extractionStatus: meaningful ? (extracted.truncated ? "TRUNCATED" : "EXTRACTED") : "EMPTY",
+              extractionScore: quality.score,
+              pageStatus: perPage.pages,
+              totalPages: perPage.totalDetectedPages,
+              failedPages: perPage.failedPages,
+              ocrPages: perPage.ocrPages,
             }),
           },
         });
         if (meaningful) reextracted += 1;
-        else failedFiles.push({ name: doc.originalFileName, error: "Processing failed" });
+        else failedFiles.push({ name: doc.originalFileName, error: "No meaningful text extracted" });
       } catch (error) {
         logger.error("company reimport extraction failed", {
           requestId,
@@ -118,38 +173,25 @@ export async function POST(req: Request) {
       }
     }
 
-    const primary = await importCompanyKnowledgeFromDocuments(company.id);
-    const aiRanSuccessfully = primary.aiUsed && primary.aiFailures === 0;
-    const emptyResult = {
-      docsScanned: 0,
-      expertsCreated: 0,
-      projectsCreated: 0,
-      expertNamesDetected: 0,
-      projectNamesDetected: 0,
-    };
-    const safety = aiRanSuccessfully
-      ? emptyResult
-      : await runCompanyKnowledgeSafetyImport(prisma, company.id);
-    const autoVerification = aiRanSuccessfully
-      ? await autoVerifyCompanyKnowledge(company.id)
-      : { expertsVerified: 0, projectsVerified: 0, expertsBlocked: 0, projectsBlocked: 0 };
-    const supportCleanup = await cleanupSupportDocImportedRecords(company.id);
+    const ingestion = await ingestCompanyVault(company.id);
+    const supportAudit = await cleanupSupportDocImportedRecords(company.id);
+    const sourceVerification = ingestion.sourceVerification;
 
     const result = {
       success: true,
       docsReextracted: reextracted,
       docsFailed: failedFiles.length,
       failedFiles,
-      docsProcessed: primary.docsProcessed,
-      expertsCreated: primary.expertsCreated + safety.expertsCreated,
-      projectsCreated: primary.projectsCreated + safety.projectsCreated,
-      expertsAutoVerified: autoVerification.expertsVerified,
-      projectsAutoVerified: autoVerification.projectsVerified,
-      autoVerificationBlocked: autoVerification.expertsBlocked + autoVerification.projectsBlocked,
-      supportCleanup,
-      primaryImport: primary,
-      safetyImport: safety,
-      autoVerification,
+      docsProcessed: ingestion.docsProcessed,
+      expertsCreated: ingestion.expertsCreated,
+      projectsCreated: ingestion.projectsCreated,
+      expertsUpdated: ingestion.expertsUpdated,
+      projectsUpdated: ingestion.projectsUpdated,
+      expertsSourceVerified: sourceVerification.expertsVerified,
+      projectsSourceVerified: sourceVerification.projectsVerified,
+      sourceVerificationBlocked: sourceVerification.expertsBlocked + sourceVerification.projectsBlocked,
+      supportAudit,
+      ingestion,
     };
 
     void logAction({
@@ -157,16 +199,18 @@ export async function POST(req: Request) {
       action: "COMPANY_KNOWLEDGE_REPAIR",
       entityType: "Company",
       entityId: company.id,
-      description: `Company knowledge reimport completed automatically: ${result.expertsCreated} experts and ${result.projectsCreated} projects created; ${result.expertsAutoVerified} experts and ${result.projectsAutoVerified} projects source-verified; ${supportCleanup.expertsDeleted} support-derived experts and ${supportCleanup.projectsDeleted} support-derived projects removed.`,
+      description: `Company Vault reimport completed: ${result.expertsCreated} experts and ${result.projectsCreated} projects created; ${result.expertsSourceVerified} experts and ${result.projectsSourceVerified} projects machine source-verified; uncertain mixed-document records were preserved for review.`,
       metadata: {
         docsReextracted: result.docsReextracted,
         docsFailed: result.docsFailed,
         expertsCreated: result.expertsCreated,
         projectsCreated: result.projectsCreated,
-        expertsAutoVerified: result.expertsAutoVerified,
-        projectsAutoVerified: result.projectsAutoVerified,
-        autoVerificationBlocked: result.autoVerificationBlocked,
-        supportCleanup,
+        expertsUpdated: result.expertsUpdated,
+        projectsUpdated: result.projectsUpdated,
+        expertsSourceVerified: result.expertsSourceVerified,
+        projectsSourceVerified: result.projectsSourceVerified,
+        sourceVerificationBlocked: result.sourceVerificationBlocked,
+        supportAudit,
       },
       requestId,
     }).catch((error) => {
