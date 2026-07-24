@@ -5,8 +5,10 @@ export type ReleaseSnapshotEligibilityInput = {
   metadataFinalBlocker: string | null;
   requirementsBlocker: string | null;
   buildPlanGateBlocker: string | null;
-  /** Human-review blocker for final output. Matching/draft generation has its own source-verification policy. */
-  vaultBlocker: string | null;
+  /** Matching/draft blocker: neither current SOURCE_VERIFIED nor human REVIEWED evidence is selected. */
+  matchingVaultBlocker: string | null;
+  /** Final-output blocker: selected evidence lacks current durable human review. */
+  finalApprovalVaultBlocker: string | null;
   mandatoryRequirementCount: number;
   evidenceCoveragePercent: number;
   allMandatoryGrounded: boolean;
@@ -26,13 +28,9 @@ function compactUnique(values: Array<string | null | undefined>): string[] {
 }
 
 /**
- * Pure release-snapshot eligibility resolver.
- *
- * Draft generation and final output deliberately have different trust rules.
- * Source-verified evidence may support matching and draft generation when the
- * matching policy accepts it. Final export and Final ZIP additionally require
- * genuine human review; therefore the Vault human-review blocker belongs only
- * to final-output blocker lists.
+ * Pure release-snapshot eligibility resolver and the sole tier-inheritance
+ * owner. Source-verified evidence may satisfy matching and draft generation;
+ * final export and Final ZIP additionally require genuine current human review.
  */
 export function buildReleaseSnapshotEligibility(
   input: ReleaseSnapshotEligibilityInput,
@@ -43,6 +41,7 @@ export function buildReleaseSnapshotEligibility(
     input.metadataGenerationBlocker,
     input.requirementsBlocker,
     input.buildPlanGateBlocker,
+    input.matchingVaultBlocker,
   ]);
 
   const evidenceBlocker =
@@ -53,7 +52,7 @@ export function buildReleaseSnapshotEligibility(
   const exportBlockers = compactUnique([
     ...generationBlockers,
     input.metadataFinalBlocker,
-    input.vaultBlocker,
+    input.finalApprovalVaultBlocker,
     evidenceBlocker,
   ]);
 
