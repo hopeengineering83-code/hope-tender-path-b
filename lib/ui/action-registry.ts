@@ -33,7 +33,6 @@ export type TenderActionDefinition = {
   verb: WorkflowActionVerb;
   surface: WorkflowActionSurface;
   iconName: string;
-  /** Normal actions are part of the canonical workflow. Recovery actions appear only with an active blocker. */
   availability: "NORMAL" | "RECOVERY" | "NAVIGATION";
 };
 
@@ -115,7 +114,7 @@ export const TENDER_ACTIONS = {
     label: "Build submission plan",
     verb: "plan",
     surface: "submission-plan",
-    iconName: "ListChecksIcon",
+    iconName: "ListIcon",
     availability: "NORMAL",
   },
   GENERATE_REQUIRED_DOCUMENTS: {
