@@ -11,7 +11,7 @@ import { runCompanyKnowledgeSafetyImport } from "./company-knowledge-safety-impo
 import { rateLimitPersistent, UPLOAD_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter } from "./storage";
-import { enqueueJob, findActiveEngineRunForTender } from "./ai-jobs";
+import { enqueueJob } from "./ai-jobs";
 import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
 import { sanitizeError } from "./sanitize-error";
 import { inspectActualFileBytes } from "./engine/persisted-byte-integrity";
@@ -79,11 +79,7 @@ export async function handleSecureUpload(req: Request) {
 
       const fileName = validation.safeFileName;
       const mimeType = validation.normalizedMime;
-      const integrity = inspectActualFileBytes({
-        bytes: buffer,
-        filename: fileName,
-        claimedMimeType: mimeType,
-      });
+      const integrity = inspectActualFileBytes({ bytes: buffer, filename: fileName, claimedMimeType: mimeType });
       if (integrity.integrityStatus !== "VERIFIED") {
         results.push({
           success: false,
@@ -93,11 +89,10 @@ export async function handleSecureUpload(req: Request) {
         });
         continue;
       }
+
       const extracted = limitExtractedText(await extractTextFromBuffer(buffer, mimeType, fileName));
       const fileType = getFileTypeLabel(mimeType, fileName);
       const extraction = extractionMetadata(fileType, extracted.text, extracted.truncated);
-      // Persist page-level extraction diagnostics so the Extraction Quality
-      // dashboard reads stored truth instead of recomputing on every render.
       const quality = assessExtractionQuality(extracted.text, fileName);
       const perPage = assessExtractionQualityPerPage(extracted.text);
 
@@ -107,7 +102,6 @@ export async function handleSecureUpload(req: Request) {
         companyId: company.id,
         tenderId: tenderId ?? undefined,
       });
-
       if (!stored) throw new Error("STORAGE_WRITE_DID_NOT_RETURN_A_RECORD");
 
       if (tenderId) {
@@ -121,17 +115,17 @@ export async function handleSecureUpload(req: Request) {
               size: buffer.byteLength,
               storagePath: stored!.storagePath,
               fileContent: stored!.fileContent ?? null,
-            ...integrity,
-            classification,
-            extractedText: extracted.text || null,
-            totalPages: perPage.totalDetectedPages,
-            extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
-            ocrPages: perPage.ocrPages.length,
-            failedPages: perPage.failedPages.length,
-            extractionScore: quality.score,
-            pageStatusJson: JSON.stringify(perPage.pages),
-          },
-          select: { id: true, tenderId: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, integrityStatus: true, contentSha256: true, contentByteLength: true, detectedFormat: true, createdAt: true },
+              ...integrity,
+              classification,
+              extractedText: extracted.text || null,
+              totalPages: perPage.totalDetectedPages,
+              extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
+              ocrPages: perPage.ocrPages.length,
+              failedPages: perPage.failedPages.length,
+              extractionScore: quality.score,
+              pageStatusJson: JSON.stringify(perPage.pages),
+            },
+            select: { id: true, tenderId: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, integrityStatus: true, contentSha256: true, contentByteLength: true, detectedFormat: true, createdAt: true },
           });
           await invalidateTenderForSourceRevision(tx, tenderId, "SOURCE_FILE_ADDED");
           return created;
@@ -183,7 +177,7 @@ export async function handleSecureUpload(req: Request) {
       }
     } catch (error) {
       if (stored) {
-        await storage.deleteFile({ storagePath: stored!.storagePath, fileContent: stored.fileContent, fileName: file.name }).catch(() => {});
+        await storage.deleteFile({ storagePath: stored.storagePath, fileContent: stored.fileContent, fileName: file.name }).catch(() => {});
       }
       logger.error(`[secure-upload] requestId=${requestId} file=${file.name}: ${sanitizeError(error)}`);
       results.push({ success: false, fileName: file.name, error: "Upload processing failed. Use the request ID when contacting support.", requestId });
@@ -192,8 +186,25 @@ export async function handleSecureUpload(req: Request) {
 
   let processingJobId: string | null = null;
   if (tenderId && tenderFilesCreated > 0) {
-    const active = await findActiveEngineRunForTender(tenderId, actor.id);
-    processingJobId = active?.id ?? (await enqueueJob({ userId: actor.id, tenderId, jobType: "ENGINE_RUN", input: { source: "secure-upload" } })).id;
+    // Server owns orchestration. Queue exactly one AI_ANALYZE job and do not
+    // queue ENGINE_RUN concurrently. Canonical analysis must reach SUCCEEDED
+    // before the Engine can be run from its gated panel.
+    const activeAnalyze = await prisma.aiJob.findFirst({
+      where: {
+        tenderId,
+        userId: actor.id,
+        jobType: "AI_ANALYZE",
+        status: { in: ["QUEUED", "RUNNING"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    processingJobId = activeAnalyze?.id ?? (await enqueueJob({
+      userId: actor.id,
+      tenderId,
+      jobType: "AI_ANALYZE",
+      input: { source: "secure-upload", force: false },
+    })).id;
   }
 
   let companyImport: Record<string, unknown> | null = null;
@@ -214,7 +225,16 @@ export async function handleSecureUpload(req: Request) {
   const uploaded = results.filter((item) => item.success === true).length;
   const errors = results.length - uploaded;
   return NextResponse.json(
-    { success: uploaded > 0, uploaded, errors, results, processingJobId, companyImport },
+    {
+      success: uploaded > 0,
+      uploaded,
+      errors,
+      results,
+      processingJobId,
+      pipelineStage: processingJobId ? "AI_ANALYZE_QUEUED" : null,
+      engineQueued: false,
+      companyImport,
+    },
     { status: errors > 0 && uploaded === 0 ? 422 : tenderId ? 202 : 200 },
   );
 }
