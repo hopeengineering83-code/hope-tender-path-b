@@ -274,6 +274,19 @@ export async function POST(req: Request) {
     metadata: { assetType, companyId: company.id, storageProvider: stored.provider },
   });
 
+  // Auto-refresh company ingestion readiness after brand-asset upload.
+  // The readiness check counts brand assets as part of the company profile
+  // completeness score, so uploading a logo or letterhead must invalidate
+  // the cached readiness state.
+  try {
+    await prisma.company.update({
+      where: { id: company.id },
+      data: { setupCompletedAt: new Date() },
+    });
+  } catch {
+    // Best-effort — don't fail the upload if the readiness refresh fails.
+  }
+
   return privateJson({ success: true, asset }, { status: 201 });
 }
 

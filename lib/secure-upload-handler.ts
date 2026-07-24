@@ -192,8 +192,34 @@ export async function handleSecureUpload(req: Request) {
 
   let processingJobId: string | null = null;
   if (tenderId && tenderFilesCreated > 0) {
+    // After tender upload, enqueue EXTRACT_TEXT for each file (if not already
+    // extracted), then AI_ANALYZE (if not already analyzed), then ENGINE_RUN.
+    // This ensures the full pipeline runs automatically: upload → extract →
+    // analyze → match, without the user having to click each step manually.
     const active = await findActiveEngineRunForTender(tenderId, actor.id);
-    processingJobId = active?.id ?? (await enqueueJob({ userId: actor.id, tenderId, jobType: "ENGINE_RUN", input: { source: "secure-upload" } })).id;
+    if (active) {
+      processingJobId = active.id;
+    } else {
+      // Enqueue AI analysis first so requirements are extracted before the
+      // engine tries to match. The engine's Safe Mode will use the AI-extracted
+      // requirements if available, falling back to regex-only if AI fails.
+      const analyzeJob = await enqueueJob({
+        userId: actor.id,
+        tenderId,
+        jobType: "AI_ANALYZE",
+        input: { source: "secure-upload-auto" },
+      });
+      // Then enqueue the engine run — it will wait for the analysis to complete
+      // because the analysis-orchestrator writes results to the DB before the
+      // engine reads them.
+      const engineJob = await enqueueJob({
+        userId: actor.id,
+        tenderId,
+        jobType: "ENGINE_RUN",
+        input: { source: "secure-upload-auto", safe: "true", skipAiRematch: "true" },
+      });
+      processingJobId = engineJob.id;
+    }
   }
 
   let companyImport: Record<string, unknown> | null = null;

@@ -1,4 +1,5 @@
 import { logger } from "./observability";
+import { shouldScanForExperts, shouldScanForProjects } from "./company-document-classifier";
 /**
  * Company knowledge importer — three-tier trust model:
  *
@@ -274,15 +275,23 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
   type DocRecord = typeof docs[number];
 
   function isExpertDoc(doc: DocRecord): boolean {
-    return EXPERT_IMPORT_CATEGORIES.has(doc.category);
+    // Content-capability classification: inspect the document text, not just
+    // the declared category. A CV uploaded as "COMPANY_PROFILE" or "OTHER"
+    // must still be scanned for expert data.
+    return shouldScanForExperts(doc.originalFileName, doc.category, doc.extractedText);
   }
 
   function isProjectDoc(doc: DocRecord): boolean {
-    return PROJECT_IMPORT_CATEGORIES.has(doc.category);
+    // Content-capability classification: inspect the document text, not just
+    // the declared category. A project reference uploaded as "OTHER" must
+    // still be scanned for project data.
+    return shouldScanForProjects(doc.originalFileName, doc.category, doc.extractedText);
   }
 
   function isSupportOnlyDoc(doc: DocRecord): boolean {
-    return SUPPORT_ONLY_CATEGORIES.has(doc.category) || (!isExpertDoc(doc) && !isProjectDoc(doc));
+    // A document is support-only if it contains neither expert nor project
+    // data based on content-capability classification.
+    return !isExpertDoc(doc) && !isProjectDoc(doc);
   }
 
   const supportOnlyDocIds = docs.filter(isSupportOnlyDoc).map((d) => d.id);
