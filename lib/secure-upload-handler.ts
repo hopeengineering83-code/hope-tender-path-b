@@ -6,9 +6,7 @@ import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMean
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
 import { logAction } from "./audit";
 import { ensureCompanyForUser } from "./company-workspace";
-import { importCompanyKnowledgeFromDocuments } from "./company-knowledge-import-safe";
-import { autoVerifyCompanyKnowledge } from "./company-auto-verification";
-import { runCompanyKnowledgeSafetyImport } from "./company-knowledge-safety-import";
+import { ingestCompanyVault } from "./company-vault-ingestion";
 import { rateLimitPersistent, UPLOAD_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter } from "./storage";
@@ -219,13 +217,7 @@ export async function handleSecureUpload(req: Request) {
   let companyImport: Record<string, unknown> | null = null;
   if (!tenderId && companyFilesCreated > 0) {
     try {
-      const primary = await importCompanyKnowledgeFromDocuments(company.id);
-      const aiSucceeded = primary.aiUsed && primary.aiFailures === 0;
-      const safety = aiSucceeded
-        ? { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 }
-        : await runCompanyKnowledgeSafetyImport(prisma, company.id);
-      const sourceVerification = await autoVerifyCompanyKnowledge(company.id);
-      companyImport = { ...primary, safetyImport: safety, sourceVerification } as unknown as Record<string, unknown>;
+      companyImport = await ingestCompanyVault(company.id) as unknown as Record<string, unknown>;
     } catch (error) {
       logger.error(`[secure-upload] requestId=${requestId} company import failed: ${sanitizeError(error)}`);
       companyImport = { status: "FAILED", error: "Company knowledge import failed", requestId };
