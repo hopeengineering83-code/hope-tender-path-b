@@ -53,10 +53,14 @@ type Diagnostics = {
     projects: RecordPage<ProjectRecord>;
   };
 };
-type RepairResult = {
-  expertsCreated: number;
-  projectsCreated: number;
-  diagnostics: Diagnostics;
+type ReimportResult = {
+  docsReextracted?: number;
+  docsFailed?: number;
+  expertsCreated?: number;
+  projectsCreated?: number;
+  error?: string;
+  code?: string;
+  requestId?: string;
 };
 type BatchResult = {
   updated: number;
@@ -165,13 +169,15 @@ export default function KnowledgeReviewPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/company/knowledge/repair", { method: "POST" });
-      if (!response.ok) throw new Error("Knowledge repair failed");
-      const data = await response.json() as { result: RepairResult };
+      const response = await fetch("/api/company/reimport", { method: "POST" });
+      const data = await response.json().catch(() => ({})) as ReimportResult;
+      if (!response.ok) {
+        throw new Error(data.error || `Company Vault repair failed${data.requestId ? ` (request ${data.requestId})` : ""}`);
+      }
       await load();
-      setMessage(`Repair completed. ${data.result.expertsCreated} expert and ${data.result.projectsCreated} project draft(s) created.`);
+      setMessage(`Vault repair completed. ${data.docsReextracted ?? 0} document(s) re-extracted; ${data.expertsCreated ?? 0} expert and ${data.projectsCreated ?? 0} project draft(s) rebuilt.${(data.docsFailed ?? 0) > 0 ? ` ${data.docsFailed} document(s) still need attention.` : ""}`);
     } catch (repairError) {
-      setError(repairError instanceof Error ? repairError.message : "Knowledge repair failed");
+      setError(repairError instanceof Error ? repairError.message : "Company Vault repair failed");
     } finally {
       setRepairing(false);
     }
@@ -237,7 +243,7 @@ export default function KnowledgeReviewPage() {
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={() => void load()} className="rounded-lg border px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Refresh</button>
           <button type="button" onClick={() => void runRepair()} disabled={repairing} className="rounded-lg bg-black px-4 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
-            {repairing ? "Repairing…" : "Run Knowledge Repair"}
+            {repairing ? "Repairing Vault…" : "Repair Vault Sources"}
           </button>
           <Link href="/dashboard/company" className="rounded-lg border px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Back to Vault</Link>
         </div>
@@ -250,6 +256,16 @@ export default function KnowledgeReviewPage() {
         <p className="font-semibold">Evidence rule</p>
         <p className="mt-1">Support documents remain tender evidence, but they cannot make expert or project records usable. Records without durable provenance remain blocked.</p>
       </div>
+
+      {totals && totals.documents > 0 && totals.expertSourceDocuments === 0 && totals.projectSourceDocuments === 0 && (
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          <p className="font-semibold">Original expert and project source files are missing</p>
+          <p className="mt-1">The existing support summaries cannot prove individual CV or project claims. Upload original files under <strong>Expert CV</strong>, <strong>Project Reference</strong>, <strong>Project Contract</strong>, or <strong>Portfolio</strong>, then run Vault Repair again.</p>
+          <Link href="/dashboard/company" className="mt-3 inline-flex rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white no-underline hover:bg-slate-800">
+            Upload source files in Company Vault
+          </Link>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Documents</p><p className="mt-1 text-3xl font-bold text-blue-600">{totals?.documents ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.extractedDocuments ?? 0} extracted</p></div>

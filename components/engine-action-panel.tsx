@@ -72,6 +72,17 @@ export type EngineResponse = {
 
 export type EngineAsyncStatus = { jobId: string; message: string };
 
+type CompanyVaultRepairResponse = {
+  success?: boolean;
+  docsReextracted?: number;
+  docsFailed?: number;
+  expertsCreated?: number;
+  projectsCreated?: number;
+  error?: string;
+  code?: string;
+  requestId?: string;
+};
+
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_DURATION_MS = 10 * 60 * 1000;
 const LARGE_VAULT_THRESHOLD = 30;
@@ -88,7 +99,7 @@ function actionLabel(action?: string) {
   if (action === "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY") return "Review Extraction, Analysis, and Matching Quality.";
   if (action === "REFRESH_TO_CHECK_STATUS") return "Check status again or refresh the workspace.";
   if (action === "RUN_ENGINE_SAFE_MODE") return "Run Safe Mode for a deterministic first pass.";
-  if (action === "REVIEW_MATCHING_INPUTS") return "Review Company Vault source documents and tender requirements, verify eligible expert/project records, then rerun Safe Mode.";
+  if (action === "REVIEW_MATCHING_INPUTS") return "Repair and re-extract Company Vault sources automatically, then review only records that still require human approval.";
   return null;
 }
 
@@ -397,6 +408,7 @@ export function EngineActionPanel({
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<EngineResponse | null>(initialResult);
   const [asyncStatus, setAsyncStatus] = useState<EngineAsyncStatus | null>(initialAsyncStatus);
+  const [repairingVault, setRepairingVault] = useState(false);
   const isLargeVault = (vaultReviewedExperts + vaultReviewedProjects) > LARGE_VAULT_THRESHOLD;
 
   const callbacks: EngineRunCallbacks = {
@@ -409,6 +421,57 @@ export function EngineActionPanel({
   async function runEngineAsync(force = false, extraParams: Record<string, string> = {}) {
     if (!canMutate) return;
     await executeEngineRunAsync({ tenderId, canMutate, force, extraParams, lifecycleBlockersExist, callbacks });
+  }
+
+  async function repairVaultAndRetry() {
+    if (!canMutate || running || repairingVault || isPending) return;
+    setRepairingVault(true);
+    setResult({
+      success: false,
+      error: "Repairing Company Vault source files before retrying Safe Mode…",
+      code: "COMPANY_VAULT_REPAIR_RUNNING",
+      detail: "The system is re-extracting stored source bytes and rebuilding provenance-backed expert and project drafts.",
+    });
+
+    try {
+      const response = await fetch("/api/company/reimport", { method: "POST" });
+      const data = await response.json().catch(() => ({})) as CompanyVaultRepairResponse;
+      if (!response.ok) {
+        setResult({
+          success: false,
+          error: data.error ?? "Company Vault repair failed before the Engine could retry.",
+          code: data.code ?? "COMPANY_VAULT_REPAIR_FAILED",
+          diagnosticId: data.requestId,
+          nextAction: "REVIEW_MATCHING_INPUTS",
+          detail: "The Engine did not bypass evidence controls. Open Company Vault and confirm that original Expert CV and Project Reference files are uploaded under the correct categories.",
+        });
+        return;
+      }
+
+      setResult({
+        success: true,
+        error: `Company Vault repaired: ${data.docsReextracted ?? 0} document(s) re-extracted, ${data.expertsCreated ?? 0} expert draft(s), and ${data.projectsCreated ?? 0} project draft(s). Retrying Safe Mode…`,
+        code: "COMPANY_VAULT_REPAIRED",
+      });
+      startTransition(() => router.refresh());
+      await executeEngineRunAsync({
+        tenderId,
+        canMutate,
+        force: false,
+        extraParams: { safe: "true", skipAiRematch: "true" },
+        lifecycleBlockersExist,
+        callbacks,
+      });
+    } catch (error) {
+      setResult({
+        success: false,
+        error: error instanceof Error ? `Company Vault repair failed: ${error.message}` : "Company Vault repair failed because of a network or runtime error.",
+        code: "COMPANY_VAULT_REPAIR_FAILED",
+        nextAction: "REVIEW_MATCHING_INPUTS",
+      });
+    } finally {
+      setRepairingVault(false);
+    }
   }
 
   const ok = result?.success === true;
@@ -437,7 +500,7 @@ export function EngineActionPanel({
           {canMutate && (
             <button
               onClick={() => runEngineAsync(false, { safe: "true", skipAiRematch: "true" })}
-              disabled={running || isPending}
+              disabled={running || repairingVault || isPending}
               className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
               title="Deterministic matching first pass"
             >
@@ -452,7 +515,7 @@ export function EngineActionPanel({
               <div className="border-t border-indigo-200 p-2">
                 <button
                   onClick={() => runEngineAsync(false)}
-                  disabled={running || isPending}
+                  disabled={running || repairingVault || isPending}
                   className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
                   title="Queue full AI evidence matching in the background"
                 >
@@ -497,22 +560,29 @@ export function EngineActionPanel({
           {result.hint && <p className="mt-1"><strong>Guidance:</strong> {formatOperationalReason(result.hint)}</p>}
           {result.detail && <p className="mt-1"><strong>Summary:</strong> {formatOperationalReason(result.detail)}</p>}
 
-          {/* Direct link to Company Vault when the engine says to review matching inputs.
-              This connects the Run Engine to the Company Vault so the user can navigate
-              directly to the review page instead of hunting for it in the sidebar. */}
           {(result.nextAction === "REVIEW_MATCHING_INPUTS" || result.code === "ENGINE_COMPLETED_WITH_BLOCKERS") && (
             <div className="mt-3 flex flex-wrap gap-2">
+              {canMutate && (
+                <button
+                  type="button"
+                  onClick={() => void repairVaultAndRetry()}
+                  disabled={running || repairingVault || isPending}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {repairingVault ? <><ClockIcon /> Repairing Vault…</> : <><BoltIcon /> Repair Vault & Retry Safe Mode</>}
+                </button>
+              )}
               <Link
-                href="/dashboard/company/review"
-                className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-slate-800"
-              >
-                Review Company Vault <ArrowRightIcon />
-              </Link>
-              <Link
-                href="/dashboard/company/review-board"
+                href="/dashboard/company"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50"
               >
-                Open Review Board
+                Open Company Vault <ArrowRightIcon />
+              </Link>
+              <Link
+                href="/dashboard/company/review"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50"
+              >
+                Review eligible evidence
               </Link>
             </div>
           )}
