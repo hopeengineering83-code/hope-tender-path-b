@@ -1,0 +1,63 @@
+name: Real owner-account product audit
+
+on:
+  push:
+    branches:
+      - audit/real-owner-product-workflow-20260724
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-owner-product-audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    env:
+      AUDIT_BASE_URL: https://hope-tender-path-9cs3akkgn-hopeengineering83-codes-projects.vercel.app
+      REAL_APP_EMAIL: ${{ secrets.REAL_APP_EMAIL || secrets.APP_LOGIN_EMAIL || secrets.OWNER_EMAIL || secrets.ADMIN_EMAIL || secrets.E2E_REAL_EMAIL || secrets.E2E_TEST_EMAIL || secrets.SMOKE_TEST_EMAIL || secrets.TEST_EMAIL || secrets.LOGIN_EMAIL || secrets.EMAIL }}
+      REAL_APP_PASSWORD: ${{ secrets.REAL_APP_PASSWORD || secrets.APP_LOGIN_PASSWORD || secrets.OWNER_PASSWORD || secrets.ADMIN_PASSWORD || secrets.E2E_REAL_PASSWORD || secrets.E2E_TEST_PASSWORD || secrets.SMOKE_TEST_PASSWORD || secrets.TEST_PASSWORD || secrets.LOGIN_PASSWORD || secrets.PASSWORD }}
+      VERCEL_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET || secrets.VERCEL_PROTECTION_BYPASS_SECRET || secrets.VERCEL_BYPASS_SECRET }}
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - name: Checkout exact audit branch
+        uses: actions/checkout@v4
+
+      - name: Confirm credentials are available without exposing them
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${REAL_APP_EMAIL:-}" ] || [ -z "${REAL_APP_PASSWORD:-}" ]; then
+            echo "::error::No recognized real-account email/password secret pair is available to this workflow. Configure REAL_APP_EMAIL and REAL_APP_PASSWORD, or map the existing secret names into this workflow."
+            exit 2
+          fi
+          echo "Credential inputs are present and remain masked."
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Audit real owner account on latest PR 1175 preview
+        run: node scripts/audit-real-owner-app.mjs
+
+      - name: Upload full real-account audit package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-owner-product-audit-${{ github.sha }}
+          path: real-app-audit/
+          if-no-files-found: warn
+          retention-days: 7
