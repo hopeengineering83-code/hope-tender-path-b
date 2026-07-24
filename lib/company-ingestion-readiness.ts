@@ -1,6 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma";
-import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "./vault-review-provenance";
+import {
+  canUseVaultRecord,
+  isDurablyReviewed,
+  isDurablySourceVerified,
+  VAULT_REVIEW_CONSUMER_SELECT,
+} from "./vault-review-provenance";
 
 function hasUsefulText(text: string | null | undefined): boolean {
   return (text ?? "").replace(/\s+/g, " ").trim().length >= 80;
@@ -19,8 +24,14 @@ function maxKnown(values: Array<number | null>): number | null {
 }
 
 type ReadinessDoc = { extractedText: string | null; aiExtractionStatus?: string | null; aiExtractionError?: string | null };
-type ReadinessExpert = { trustLevel: string | null; durableReview?: boolean };
-type ReadinessProject = { trustLevel: string | null; durableReview?: boolean };
+type ReadinessRecord = {
+  trustLevel: string | null;
+  durableGenerationEligibility?: boolean;
+  durableHumanReview?: boolean;
+  durableSourceVerification?: boolean;
+};
+type ReadinessExpert = ReadinessRecord;
+type ReadinessProject = ReadinessRecord;
 
 export type IngestionReadinessSnapshot = {
   docs: ReadinessDoc[];
@@ -30,7 +41,9 @@ export type IngestionReadinessSnapshot = {
 
 export type IngestionReadinessOptions = {
   requireDocuments?: boolean;
+  /** Backward-compatible name: requires durable evidence eligible for matching/draft generation. */
   requireReviewedExperts?: boolean;
+  /** Backward-compatible name: requires durable evidence eligible for matching/draft generation. */
   requireReviewedProjects?: boolean;
 };
 
@@ -47,6 +60,10 @@ export type CompanyIngestionReadiness = {
     projects: number;
     reviewedExperts: number;
     reviewedProjects: number;
+    sourceVerifiedExperts: number;
+    sourceVerifiedProjects: number;
+    humanReviewedExperts: number;
+    humanReviewedProjects: number;
     legalRecords: number;
     financialRecords: number;
     complianceRecords: number;
@@ -57,21 +74,22 @@ export type CompanyIngestionReadiness = {
   };
 };
 
-function isUsableReviewedRecord(record: ReadinessExpert | ReadinessProject): boolean {
-  // Pure/unit callers may provide only trustLevel. Runtime DB callers also
-  // provide durableReview, which is authoritative and prevents the UI from
-  // advertising legacy REVIEWED rows that Engine must reject for missing
-  // source-document provenance or byte integrity.
-  return record.durableReview ?? record.trustLevel === "REVIEWED";
+function isGenerationEligibleRecord(record: ReadinessRecord): boolean {
+  if (typeof record.durableGenerationEligibility === "boolean") {
+    return record.durableGenerationEligibility;
+  }
+  return record.trustLevel === "REVIEWED" || record.trustLevel === "SOURCE_VERIFIED";
 }
 
-function hasRuntimeReviewAuthorityShape(record: unknown): boolean {
-  // VAULT_REVIEW_CONSUMER_SELECT always includes sourceDocumentId, even when
-  // its value is null. Its presence therefore distinguishes a real Prisma
-  // authority record from a deliberately minimal pure/unit client record.
-  // Runtime records always use the durable provenance validator; only callers
-  // that omit the authority shape entirely retain the documented trust-level
-  // fallback used by assessCompanyIngestionReadiness.
+function isHumanReviewedRecord(record: ReadinessRecord): boolean {
+  return record.durableHumanReview ?? record.trustLevel === "REVIEWED";
+}
+
+function isSourceVerifiedRecord(record: ReadinessRecord): boolean {
+  return record.durableSourceVerification ?? record.trustLevel === "SOURCE_VERIFIED";
+}
+
+function hasRuntimeAuthorityShape(record: unknown): boolean {
   return Boolean(
     record &&
       typeof record === "object" &&
@@ -79,12 +97,19 @@ function hasRuntimeReviewAuthorityShape(record: unknown): boolean {
   );
 }
 
-export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnapshot, opts: IngestionReadinessOptions = {}): CompanyIngestionReadiness {
-  const requireReviewedExperts = opts.requireReviewedExperts !== false;
-  const requireReviewedProjects = opts.requireReviewedProjects !== false;
+export function assessCompanyIngestionReadiness(
+  snapshot: IngestionReadinessSnapshot,
+  opts: IngestionReadinessOptions = {},
+): CompanyIngestionReadiness {
+  const requireEligibleExperts = opts.requireReviewedExperts !== false;
+  const requireEligibleProjects = opts.requireReviewedProjects !== false;
 
-  const reviewedExperts = snapshot.experts.filter(isUsableReviewedRecord).length;
-  const reviewedProjects = snapshot.projects.filter(isUsableReviewedRecord).length;
+  const eligibleExperts = snapshot.experts.filter(isGenerationEligibleRecord).length;
+  const eligibleProjects = snapshot.projects.filter(isGenerationEligibleRecord).length;
+  const sourceVerifiedExperts = snapshot.experts.filter(isSourceVerifiedRecord).length;
+  const sourceVerifiedProjects = snapshot.projects.filter(isSourceVerifiedRecord).length;
+  const humanReviewedExperts = snapshot.experts.filter(isHumanReviewedRecord).length;
+  const humanReviewedProjects = snapshot.projects.filter(isHumanReviewedRecord).length;
   const usefulDocuments = snapshot.docs.filter((doc) => hasUsefulText(doc.extractedText)).length;
   const pendingDocuments = snapshot.docs.filter((doc) => doc.aiExtractionStatus === "PENDING" || doc.aiExtractionStatus === "EXTRACTING").length;
   const failedDocuments = snapshot.docs.filter((doc) => doc.aiExtractionStatus === "FAILED" || Boolean(doc.aiExtractionError)).length;
@@ -97,16 +122,23 @@ export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnap
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (snapshot.docs.length > 0 && usefulDocuments === 0 && reviewedExperts === 0 && reviewedProjects === 0) blockers.push("Company documents are uploaded but no usable extracted knowledge or source-verified reviewed expert/project records are available yet.");
-  if (pendingDocuments > 0 && usefulDocuments === 0 && reviewedExperts === 0 && reviewedProjects === 0) blockers.push("Company knowledge extraction is still pending. Re-import/review the company documents before generation.");
-  if (requireReviewedExperts && reviewedExperts === 0) blockers.push("No source-verified reviewed experts are available.");
-  if (requireReviewedProjects && reviewedProjects === 0) blockers.push("No source-verified reviewed projects are available.");
+  if (opts.requireDocuments && snapshot.docs.length === 0) blockers.push("No Company Vault source documents are available.");
+  if (snapshot.docs.length > 0 && usefulDocuments === 0 && eligibleExperts === 0 && eligibleProjects === 0) {
+    blockers.push("Company documents are uploaded but no usable extracted knowledge or durably source-backed expert/project records are available yet.");
+  }
+  if (pendingDocuments > 0 && usefulDocuments === 0 && eligibleExperts === 0 && eligibleProjects === 0) {
+    blockers.push("Company knowledge extraction is still pending. Reprocess the company documents before matching or generation.");
+  }
+  if (requireEligibleExperts && eligibleExperts === 0) blockers.push("No source-verified or human-reviewed experts are available.");
+  if (requireEligibleProjects && eligibleProjects === 0) blockers.push("No source-verified or human-reviewed projects are available.");
 
-  if (reviewedExperts === 0) warnings.push("No source-verified reviewed experts are available. Expert-required tenders remain blocked until at least one relevant CV record is reviewed against a verified source document.");
-  if (reviewedProjects === 0) warnings.push("No source-verified reviewed projects are available. Project-experience tenders remain blocked until at least one relevant project record is reviewed against a verified source document.");
-  if (failedDocuments > 0) warnings.push(`${failedDocuments} company document(s) have failed extraction status and should be re-imported or replaced.`);
-  if (missingExperts > 0) warnings.push(`Expert completeness gap: ${missingExperts} expected expert record(s) are not present in the knowledge vault.`);
-  if (missingProjects > 0) warnings.push(`Project completeness gap: ${missingProjects} expected project record(s) are not present in the knowledge vault.`);
+  if (eligibleExperts === 0) warnings.push("No durable expert evidence is available. Expert-required tenders remain blocked until a relevant CV claim is source-verified or human-reviewed.");
+  if (eligibleProjects === 0) warnings.push("No durable project evidence is available. Project-experience tenders remain blocked until a relevant project claim is source-verified or human-reviewed.");
+  if (sourceVerifiedExperts > 0 && humanReviewedExperts === 0) warnings.push(`${sourceVerifiedExperts} expert record(s) may support matching and draft generation but still require human review for final export.`);
+  if (sourceVerifiedProjects > 0 && humanReviewedProjects === 0) warnings.push(`${sourceVerifiedProjects} project record(s) may support matching and draft generation but still require human review for final export.`);
+  if (failedDocuments > 0) warnings.push(`${failedDocuments} company document(s) have failed extraction status and should be reprocessed or replaced.`);
+  if (missingExperts > 0) warnings.push(`Expert completeness gap: ${missingExperts} expected expert record(s) are not present in the Company Vault.`);
+  if (missingProjects > 0) warnings.push(`Project completeness gap: ${missingProjects} expected project record(s) are not present in the Company Vault.`);
 
   return {
     ingestionReady: blockers.length === 0,
@@ -119,8 +151,12 @@ export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnap
       failedDocuments,
       experts: snapshot.experts.length,
       projects: snapshot.projects.length,
-      reviewedExperts,
-      reviewedProjects,
+      reviewedExperts: eligibleExperts,
+      reviewedProjects: eligibleProjects,
+      sourceVerifiedExperts,
+      sourceVerifiedProjects,
+      humanReviewedExperts,
+      humanReviewedProjects,
       legalRecords: 0,
       financialRecords: 0,
       complianceRecords: 0,
@@ -132,7 +168,11 @@ export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnap
   };
 }
 
-export async function getCompanyIngestionReadiness(companyId: string, opts: IngestionReadinessOptions = {}, client: PrismaClient = prisma): Promise<CompanyIngestionReadiness> {
+export async function getCompanyIngestionReadiness(
+  companyId: string,
+  opts: IngestionReadinessOptions = {},
+  client: PrismaClient = prisma,
+): Promise<CompanyIngestionReadiness> {
   const [company, docs, expertRecords, projectRecords, legalRecords, financialRecords, complianceRecords] = await Promise.all([
     client.company.findUnique({
       where: { id: companyId },
@@ -160,44 +200,44 @@ export async function getCompanyIngestionReadiness(companyId: string, opts: Inge
 
   const experts: ReadinessExpert[] = expertRecords.map((record) => ({
     trustLevel: record.trustLevel,
-    durableReview: hasRuntimeReviewAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
+    durableGenerationEligibility: hasRuntimeAuthorityShape(record) ? canUseVaultRecord(record, "GENERATION") : undefined,
+    durableHumanReview: hasRuntimeAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
+    durableSourceVerification: hasRuntimeAuthorityShape(record) ? isDurablySourceVerified(record) : undefined,
   }));
   const projects: ReadinessProject[] = projectRecords.map((record) => ({
     trustLevel: record.trustLevel,
-    durableReview: hasRuntimeReviewAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
+    durableGenerationEligibility: hasRuntimeAuthorityShape(record) ? canUseVaultRecord(record, "GENERATION") : undefined,
+    durableHumanReview: hasRuntimeAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
+    durableSourceVerification: hasRuntimeAuthorityShape(record) ? isDurablySourceVerified(record) : undefined,
   }));
 
-  const hasUsefulTextFn = (text: string | null | undefined): boolean => hasUsefulText(text);
   const hasCompanyProfile = Boolean(
     company && (
-      hasUsefulTextFn(company.profileSummary)
-      || hasUsefulTextFn(company.description)
-      || (company.legalName ?? "").trim().length > 0
-      || (company.licenseGrade ?? "").trim().length > 0
-      || (company.serviceLines ?? "[]") !== "[]"
-      || (company.sectors ?? "[]") !== "[]"
-      || company.setupCompletedAt
+      hasUsefulText(company.profileSummary) ||
+      hasUsefulText(company.description) ||
+      (company.legalName ?? "").trim().length > 0 ||
+      (company.licenseGrade ?? "").trim().length > 0 ||
+      (company.serviceLines ?? "[]") !== "[]" ||
+      (company.sectors ?? "[]") !== "[]" ||
+      company.setupCompletedAt
     ),
   );
   const hasAnyKnowledgeSource = Boolean(
-    hasCompanyProfile
-    || docs.filter((doc) => hasUsefulTextFn(doc.extractedText)).length > 0
-    || experts.some(isUsableReviewedRecord)
-    || projects.some(isUsableReviewedRecord)
-    || legalRecords > 0
-    || financialRecords > 0
-    || complianceRecords > 0
+    hasCompanyProfile ||
+    docs.some((doc) => hasUsefulText(doc.extractedText)) ||
+    experts.some(isGenerationEligibleRecord) ||
+    projects.some(isGenerationEligibleRecord) ||
+    legalRecords > 0 ||
+    financialRecords > 0 ||
+    complianceRecords > 0
   );
 
   const result = assessCompanyIngestionReadiness({ docs, experts, projects }, opts);
-
-  // Augment blockers from the full DB query that snapshot-based assess cannot see
   const extraBlockers: string[] = [];
   if (!company) extraBlockers.push("Company profile has not been created.");
-  if (!hasAnyKnowledgeSource) extraBlockers.push("No usable company knowledge source exists. Upload/review the company profile, CVs, project references, legal records, or financial records before generation.");
+  if (!hasAnyKnowledgeSource) extraBlockers.push("No usable Company Vault source exists. Upload the company profile, CVs, project references, legal records, or financial records before matching or generation.");
 
   const mergedBlockers = [...extraBlockers, ...result.blockers];
-
   return {
     ...result,
     ingestionReady: mergedBlockers.length === 0,
