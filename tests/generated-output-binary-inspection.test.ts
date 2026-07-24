@@ -9,7 +9,7 @@ import { finalizeApprovedDocumentsZip } from "../lib/engine/workflow/zip-finaliz
 import { inspectActualFileBytes } from "../lib/engine/persisted-byte-integrity";
 import { computeFileHash } from "../lib/engine/generated-file-integrity";
 
-const EVIDENCE_DIRECTORY = resolve("test-results/acceptance-evidence/generated-files");
+const EVIDENCE_DIRECTORY = resolve("acceptance-evidence/generated-files");
 
 async function buildInspectableDocx(): Promise<Buffer> {
   const document = new Document({
@@ -82,7 +82,6 @@ describe("generated Word/PDF/ZIP binary inspection", () => {
     const docxBytes = await buildInspectableDocx();
     const pdfBytes = await buildInspectablePdf();
 
-    // Open and inspect the actual DOCX package, not only its PK signature.
     const officePackage = await JSZip.loadAsync(docxBytes);
     assert.ok(officePackage.file("[Content_Types].xml"));
     assert.ok(officePackage.file("word/document.xml"));
@@ -90,7 +89,6 @@ describe("generated Word/PDF/ZIP binary inspection", () => {
     assert.match(documentXml, /Tender Technical Proposal/);
     assert.match(documentXml, /Office Open XML package/);
 
-    // Open and inspect the actual PDF object graph.
     const openedPdf = await PDFDocument.load(pdfBytes, { updateMetadata: false });
     assert.equal(openedPdf.getPageCount(), 1);
     const [page] = openedPdf.getPages();
@@ -126,7 +124,6 @@ describe("generated Word/PDF/ZIP binary inspection", () => {
       assert.equal(item.required, true);
     }
 
-    // Retain only synthetic, credential-free evidence for exact-head inspection.
     await mkdir(EVIDENCE_DIRECTORY, { recursive: true });
     await Promise.all([
       writeFile(resolve(EVIDENCE_DIRECTORY, "Technical-Proposal.docx"), docxBytes),
