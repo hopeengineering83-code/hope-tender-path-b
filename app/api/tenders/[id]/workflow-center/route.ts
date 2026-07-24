@@ -60,6 +60,9 @@ export async function GET(
       ? `${snapshot.requirements.total} requirements recorded; ${snapshot.requirements.groundedMandatory}/${snapshot.requirements.mandatory} mandatory requirements are source-traced.`
       : `${snapshot.requirements.total} requirements recorded; no mandatory requirements are currently identified.`;
 
+    const evidenceRecoveryRequired = decision?.currentBlockingStage === "MANDATORY_NO_COMPLIANCE_ROWS" ||
+      decision?.currentBlockingStage === "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE";
+
     const stage = (
       number: number,
       status: string,
@@ -82,9 +85,6 @@ export async function GET(
         mutation: action.mutation,
         mutationOwner: action.owner,
         iconName: action.iconName,
-        // Workflow Center never executes mutations. It navigates to the one
-        // canonical owner, which applies role, readiness, evidence, Build Plan,
-        // generation, validation, approval, integrity, and ZIP gates.
         ...extra,
       };
     };
@@ -143,7 +143,7 @@ export async function GET(
         decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "MANDATORY_NO_COMPLIANCE_ROWS", "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
           : "Review automatically matched source-verified or human-reviewed company evidence.",
-        decision?.currentBlockingStage === "MATCHING_FAILED" ? "MATCH_EVIDENCE" : "REVIEW_EVIDENCE",
+        evidenceRecoveryRequired ? "MATCH_EVIDENCE" : "REVIEW_EVIDENCE",
       ),
       stage(
         8,
