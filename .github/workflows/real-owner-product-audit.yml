@@ -1,13 +1,9 @@
-name: Real owner-account product audit
+name: Sanitize real-account audit outputs
 
 on:
   pull_request:
     branches:
       - release/consolidated-recovery-20260717
-    paths:
-      - scripts/audit-real-owner-app.mjs
-      - .github/workflows/real-owner-product-audit.yml
-      - .real-owner-audit-trigger
   push:
     branches:
       - audit/real-owner-product-workflow-20260724
@@ -17,131 +13,49 @@ permissions:
   contents: read
   issues: write
   pull-requests: write
+  actions: write
 
 concurrency:
-  group: real-owner-product-audit-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: sanitize-real-owner-audit
+  cancel-in-progress: false
 
 jobs:
-  audit:
+  sanitize:
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
-    env:
-      AUDIT_BASE_URL: https://hope-tender-path-9cs3akkgn-hopeengineering83-codes-projects.vercel.app
-      REAL_APP_EMAIL: ${{ secrets.SCREENSHOT_TEST_EMAIL || secrets.REAL_APP_EMAIL || secrets.APP_LOGIN_EMAIL || secrets.OWNER_EMAIL || secrets.ADMIN_EMAIL || secrets.E2E_REAL_EMAIL || secrets.E2E_TEST_EMAIL || secrets.SMOKE_TEST_EMAIL || secrets.TEST_EMAIL || secrets.LOGIN_EMAIL || secrets.EMAIL }}
-      REAL_APP_PASSWORD: ${{ secrets.SCREENSHOT_TEST_PASSWORD || secrets.REAL_APP_PASSWORD || secrets.APP_LOGIN_PASSWORD || secrets.OWNER_PASSWORD || secrets.ADMIN_PASSWORD || secrets.E2E_REAL_PASSWORD || secrets.E2E_TEST_PASSWORD || secrets.SMOKE_TEST_PASSWORD || secrets.TEST_PASSWORD || secrets.LOGIN_PASSWORD || secrets.PASSWORD }}
-      VERCEL_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET || secrets.VERCEL_PROTECTION_BYPASS_SECRET || secrets.VERCEL_BYPASS_SECRET }}
-      NEXT_TELEMETRY_DISABLED: "1"
-
     steps:
-      - name: Checkout exact audit branch
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install locked dependencies
-        run: npm ci
-
-      - name: Install Chromium
-        run: npx playwright install chromium
-
-      - name: Use the real browser login flow
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('scripts/audit-real-owner-app.mjs')
-          text = p.read_text()
-          start = text.index('const api = await request.newContext')
-          end = text.index('const seedRoutes = [')
-          replacement = r'''const browser = await chromium.launch({ headless: true });
-          const loginContext = await browser.newContext({ extraHTTPHeaders, ignoreHTTPSErrors: false });
-          const loginPage = await loginContext.newPage();
-          const loginResponse = await loginPage.goto(`${baseURL}/login`, { waitUntil: "domcontentloaded", timeout: 45_000 });
-          if (loginResponse && loginResponse.status() >= 400) {
-            await loginPage.screenshot({ path: path.join(outputDir, "login-http-error.png"), fullPage: true }).catch(() => null);
-            throw new Error(`Login page failed with HTTP ${loginResponse.status()}`);
-          }
-          const emailInput = loginPage.locator('input[type="email"], input[name="email"]').first();
-          const passwordInput = loginPage.locator('input[type="password"], input[name="password"]').first();
-          const submit = loginPage.locator('button[type="submit"], input[type="submit"]').first();
-          await emailInput.waitFor({ state: "visible", timeout: 20_000 });
-          await emailInput.fill(email);
-          await passwordInput.fill(password);
-          const loginResponses = [];
-          loginPage.on("response", (response) => {
-            if (response.url().includes("/api/auth/login")) loginResponses.push({ status: response.status(), url: response.url() });
-          });
-          await submit.click();
-          await loginPage.waitForTimeout(2500);
-          await loginPage.waitForURL((url) => url.pathname.startsWith('/dashboard'), { timeout: 45_000 }).catch(() => null);
-          if (!new URL(loginPage.url()).pathname.startsWith('/dashboard')) {
-            await loginPage.screenshot({ path: path.join(outputDir, "login-failure.png"), fullPage: true }).catch(() => null);
-            const visibleError = await loginPage.locator('[role="alert"], .text-red-600, .text-red-700').first().innerText().catch(() => 'No visible login error');
-            throw new Error(`Browser login did not reach the dashboard; auth responses=${JSON.stringify(loginResponses)}; visible=${String(visibleError).slice(0, 240)}; final=${loginPage.url()}`);
-          }
-          const storageState = await loginContext.storageState();
-          await loginContext.close();
-          const context = await browser.newContext({
-            storageState,
-            extraHTTPHeaders,
-            ignoreHTTPSErrors: false,
-          });
-
-          '''
-          p.write_text(text[:start] + replacement + text[end:])
-          PY
-
-      - name: Audit real owner account on exact PR 1175 preview
-        id: audit
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p real-app-audit
-          if [ -z "${REAL_APP_EMAIL:-}" ] || [ -z "${REAL_APP_PASSWORD:-}" ]; then
-            echo "The repository login secrets were unavailable. Expected SCREENSHOT_TEST_EMAIL and SCREENSHOT_TEST_PASSWORD." | tee real-app-audit/run-error.txt
-            exit 2
-          fi
-          node scripts/audit-real-owner-app.mjs 2>&1 | tee real-app-audit/run.log
-
-      - name: Upload full real-account audit package
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: real-owner-product-audit-${{ github.sha }}
-          path: real-app-audit/
-          if-no-files-found: warn
-          retention-days: 7
-
-      - name: Post non-secret audit summary to PR 1175
-        if: always()
+      - name: Sanitize audit comments on PR 1175
         env:
           GH_TOKEN: ${{ github.token }}
-          AUDIT_OUTCOME: ${{ steps.audit.outcome }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ -f real-app-audit/audit-summary.md ]; then
-            {
-              echo "## Real owner-account PR #1175 preview audit — ${GITHUB_SHA}"
-              echo
-              echo "Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-              echo
-              cat real-app-audit/audit-summary.md
-            } > /tmp/audit-comment.md
-          else
-            {
-              echo "## Real owner-account PR #1175 preview audit could not complete — ${GITHUB_SHA}"
-              echo
-              echo "Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-              echo
-              echo "Outcome: ${AUDIT_OUTCOME}"
-              echo
-              if [ -f real-app-audit/run-error.txt ]; then cat real-app-audit/run-error.txt; elif [ -f real-app-audit/run.log ]; then tail -n 30 real-app-audit/run.log; else echo "See the workflow log for the non-secret failure reason."; fi
-            } > /tmp/audit-comment.md
-          fi
-          gh api "repos/${GITHUB_REPOSITORY}/issues/1175/comments" -f body="$(cat /tmp/audit-comment.md)"
+          replacement='## Security cleanup completed
+
+A temporary real-account audit diagnostic was removed because it could contain sensitive login URL data. The credential must be rotated before further testing. No credential is retained in this comment.'
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/1175/comments?per_page=100" \
+            --jq '.[] | select((.body // "") | contains("Real owner-account")) | .id' \
+            | while read -r id; do
+                [ -n "$id" ] || continue
+                gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${id}" -f body="$replacement" >/dev/null
+              done
+
+      - name: Delete real-account audit artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for id in 8605889080 8605954063 8606252216 8606371648; do
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}" >/dev/null 2>&1 || true
+          done
+
+      - name: Confirm no matching diagnostic comment remains
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          count=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/1175/comments?per_page=100" \
+            --jq '[.[] | select((.body // "") | contains("Browser login did not reach the dashboard"))] | length' \
+            | awk '{s+=$1} END {print s+0}')
+          test "$count" -eq 0
