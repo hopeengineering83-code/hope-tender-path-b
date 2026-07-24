@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     env:
-      AUDIT_BASE_URL: https://hope-tender-path-9cs3akkgn-hopeengineering83-codes-projects.vercel.app
+      AUDIT_BASE_URL: https://hope-tender-path-b.vercel.app
       REAL_APP_EMAIL: ${{ secrets.SCREENSHOT_TEST_EMAIL || secrets.REAL_APP_EMAIL || secrets.APP_LOGIN_EMAIL || secrets.OWNER_EMAIL || secrets.ADMIN_EMAIL || secrets.E2E_REAL_EMAIL || secrets.E2E_TEST_EMAIL || secrets.SMOKE_TEST_EMAIL || secrets.TEST_EMAIL || secrets.LOGIN_EMAIL || secrets.EMAIL }}
       REAL_APP_PASSWORD: ${{ secrets.SCREENSHOT_TEST_PASSWORD || secrets.REAL_APP_PASSWORD || secrets.APP_LOGIN_PASSWORD || secrets.OWNER_PASSWORD || secrets.ADMIN_PASSWORD || secrets.E2E_REAL_PASSWORD || secrets.E2E_TEST_PASSWORD || secrets.SMOKE_TEST_PASSWORD || secrets.TEST_PASSWORD || secrets.LOGIN_PASSWORD || secrets.PASSWORD }}
       VERCEL_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET || secrets.VERCEL_PROTECTION_BYPASS_SECRET || secrets.VERCEL_BYPASS_SECRET }}
@@ -49,9 +49,8 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Audit real owner account on latest PR 1175 preview
+      - name: Audit real owner account on public application
         id: audit
-        continue-on-error: true
         shell: bash
         run: |
           set -o pipefail
@@ -81,7 +80,7 @@ jobs:
           set -euo pipefail
           if [ -f real-app-audit/audit-summary.md ]; then
             {
-              echo "## Real owner-account audit — ${GITHUB_SHA}"
+              echo "## Real owner-account production audit — ${GITHUB_SHA}"
               echo
               echo "Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo
@@ -89,17 +88,13 @@ jobs:
             } > /tmp/audit-comment.md
           else
             {
-              echo "## Real owner-account audit could not complete — ${GITHUB_SHA}"
+              echo "## Real owner-account production audit could not complete — ${GITHUB_SHA}"
               echo
               echo "Workflow: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
               echo
               echo "Outcome: ${AUDIT_OUTCOME}"
               echo
-              if [ -f real-app-audit/run-error.txt ]; then cat real-app-audit/run-error.txt; else echo "See the workflow log and uploaded audit artifact for the non-secret failure reason."; fi
+              if [ -f real-app-audit/run-error.txt ]; then cat real-app-audit/run-error.txt; elif [ -f real-app-audit/run.log ]; then tail -n 20 real-app-audit/run.log; else echo "See the workflow log for the non-secret failure reason."; fi
             } > /tmp/audit-comment.md
           fi
           gh api "repos/${GITHUB_REPOSITORY}/issues/1175/comments" -f body="$(cat /tmp/audit-comment.md)"
-
-      - name: Fail job when audit failed
-        if: steps.audit.outcome != 'success'
-        run: exit 1
