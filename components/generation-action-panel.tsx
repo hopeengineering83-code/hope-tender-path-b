@@ -6,6 +6,7 @@ import { useState, useTransition } from "react";
 import { parseRepairMetadataResponse, buildRepairMessage } from "../lib/engine/repair-metadata-contract";
 import { GenerationProgressPanel } from "./generation-progress-panel";
 import { CanonicalStatusBadge } from "./canonical-status-badge";
+import { BlockerActionLink } from "./blocker-action-link";
 import { DocumentGenerateIcon, RefreshIcon, WarningIcon, CheckCircleIcon, BanIcon } from "./icons";
 import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
@@ -272,21 +273,57 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
         {!fullProposalReady && fullProposalBlockers.length > 0 && (
           <div className="mt-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Full proposal blocked because:</p>
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-800">
-              {fullProposalBlockers.slice(0, 6).map((item, index) => <li key={`fp-${item.code}-${index}`}>{item.message}</li>)}
+            <ul className="mt-2 space-y-1.5 text-sm text-red-800">
+              {fullProposalBlockers.slice(0, 6).map((item, index) => (
+                <li key={`fp-${item.code}-${index}`} className="flex flex-wrap items-start gap-1">
+                  <span className="before:content-['•'] before:mr-1.5 before:text-red-400">{item.message}</span>
+                  {item.nextAction && (
+                    <BlockerActionLink
+                      tenderId={tenderId}
+                      actionCode={item.nextAction}
+                      canMutate={canMutate}
+                      onDone={() => router.refresh()}
+                    />
+                  )}
+                </li>
+              ))}
             </ul>
           </div>
         )}
 
         {fullProposalReady && !supportReady && blockers.length > 0 && (
-          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-red-800">
-            {blockers.slice(0, 4).map((item, index) => <li key={`b-${item.code}-${index}`}>{item.message}</li>)}
+          <ul className="mt-3 space-y-1.5 text-sm text-red-800">
+            {blockers.slice(0, 4).map((item, index) => (
+              <li key={`b-${item.code}-${index}`} className="flex flex-wrap items-start gap-1">
+                <span className="before:content-['•'] before:mr-1.5 before:text-red-400">{item.message}</span>
+                {item.nextAction && (
+                  <BlockerActionLink
+                    tenderId={tenderId}
+                    actionCode={item.nextAction}
+                    canMutate={canMutate}
+                    onDone={() => router.refresh()}
+                  />
+                )}
+              </li>
+            ))}
           </ul>
         )}
 
         {(fullProposalReady || supportReady) && warnings.length > 0 && (
-          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-emerald-800">
-            {warnings.slice(0, 3).map((item, index) => <li key={`w-${item.code}-${index}`}>{item.message}</li>)}
+          <ul className="mt-3 space-y-1.5 text-sm text-emerald-800">
+            {warnings.slice(0, 3).map((item, index) => (
+              <li key={`w-${item.code}-${index}`} className="flex flex-wrap items-start gap-1">
+                <span className="before:content-['•'] before:mr-1.5 before:text-emerald-400">{item.message}</span>
+                {item.nextAction && (
+                  <BlockerActionLink
+                    tenderId={tenderId}
+                    actionCode={item.nextAction}
+                    canMutate={canMutate}
+                    onDone={() => router.refresh()}
+                  />
+                )}
+              </li>
+            ))}
           </ul>
         )}
 
