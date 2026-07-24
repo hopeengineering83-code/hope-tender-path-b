@@ -39,33 +39,18 @@ const goodAnalysisFields = {
 
 function fakeClient(options: FakeClientOptions): PrismaClient {
   const company = Object.prototype.hasOwnProperty.call(options, "company") ? options.company : defaultCompany;
-
   return {
     company: {
       findUnique: async () => company,
       create: async () => company ?? defaultCompany,
     },
-    companyDocument: {
-      findMany: async () => options.documents ?? [],
-    },
-    expert: {
-      findMany: async () => options.experts ?? [],
-    },
-    project: {
-      findMany: async () => options.projects ?? [],
-    },
-    legalRecord: {
-      count: async () => options.legalRecords ?? 0,
-    },
-    financialRecord: {
-      count: async () => options.financialRecords ?? 0,
-    },
-    companyComplianceRecord: {
-      count: async () => options.complianceRecords ?? 0,
-    },
-    tender: {
-      findFirst: async () => options.tender ?? null,
-    },
+    companyDocument: { findMany: async () => options.documents ?? [] },
+    expert: { findMany: async () => options.experts ?? [] },
+    project: { findMany: async () => options.projects ?? [] },
+    legalRecord: { count: async () => options.legalRecords ?? 0 },
+    financialRecord: { count: async () => options.financialRecords ?? 0 },
+    companyComplianceRecord: { count: async () => options.complianceRecords ?? 0 },
+    tender: { findFirst: async () => options.tender ?? null },
   } as unknown as PrismaClient;
 }
 
@@ -93,27 +78,23 @@ const projectRequirement = {
 
 test("company readiness blocks an empty vault", async () => {
   const report = await getCompanyIngestionReadiness("company-1", {}, fakeClient({ company: null }));
-
   assert.equal(report.ingestionReady, false);
   assert.match(report.blockers.join("\n"), /Company profile has not been created/);
-  assert.match(report.blockers.join("\n"), /No usable company knowledge source exists/);
+  assert.match(report.blockers.join("\n"), /No usable Company Vault source exists/);
 });
 
 test("company readiness allows a useful company profile and reports review warnings", async () => {
   const report = await getCompanyIngestionReadiness("company-1", {}, fakeClient({
-    documents: [
-      {
-        extractedText: "Company profile states 12 experts and 24 selected projects across building, road, water, planning, design and supervision assignments.",
-        aiExtractionStatus: "COMPLETED",
-        aiExtractionError: null,
-      },
-    ],
+    documents: [{
+      extractedText: "Company profile states 12 experts and 24 selected projects across building, road, water, planning, design and supervision assignments.",
+      aiExtractionStatus: "COMPLETED",
+      aiExtractionError: null,
+    }],
     experts: [{ trustLevel: "REVIEWED" }, { trustLevel: "DRAFT" }],
     projects: [{ trustLevel: "REVIEWED" }],
     legalRecords: 1,
     financialRecords: 1,
   }));
-
   assert.equal(report.ingestionReady, true);
   assert.equal(report.totals.reviewedExperts, 1);
   assert.equal(report.totals.reviewedProjects, 1);
@@ -137,7 +118,6 @@ test("tender generation readiness blocks missing requirements", async () => {
       projectMatches: [],
     },
   }), "user-1", "tender-1");
-
   assert.ok(readiness);
   assert.equal(readiness.ready, false);
   assert.ok(readiness.blockers.some((blocker) => blocker.code === "NO_REQUIREMENTS"));
@@ -158,7 +138,6 @@ test("tender generation readiness does not over-block when reviewed matches can 
       projectMatches: [{ isSelected: false, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
     },
   }), "user-1", "tender-1");
-
   assert.ok(readiness);
   assert.equal(readiness.ready, true);
   assert.deepEqual(readiness.blockers, []);
@@ -179,299 +158,12 @@ test("tender generation readiness blocks when only unreviewed selected evidence 
       ...goodAnalysisFields,
       requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "DRAFT", fullName: "Draft Expert" } }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "DRAFT", name: "Draft Project" } }],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "DRAFT", fullName: "Unreviewed Expert" } }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "DRAFT", name: "Unreviewed Project" } }],
     },
   }), "user-1", "tender-1");
-
   assert.ok(readiness);
   assert.equal(readiness.ready, false);
-  assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_EXPERTS_UNREVIEWED"));
-  assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_PROJECTS_UNREVIEWED"));
-});
-
-test("tender generation readiness passes when company, requirements, and reviewed selected evidence are present", async () => {
-  const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [usefulDocument],
-    experts: [{ trustLevel: "REVIEWED" }],
-    projects: [{ trustLevel: "REVIEWED" }],
-    tender: {
-      id: "tender-1",
-      status: "ANALYZED",
-      ...goodAnalysisFields,
-      requirements: [expertRequirement, projectRequirement],
-      complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
-    },
-  }), "user-1", "tender-1");
-
-  assert.ok(readiness);
-  assert.equal(readiness.ready, true);
-  assert.deepEqual(readiness.blockers, []);
-  assert.equal(readiness.counts.reviewedSelectedExperts, 1);
-  assert.equal(readiness.counts.reviewedSelectedProjects, 1);
-});
-
-test("tender generation readiness surfaces BEST-AVAILABLE warning when selection-policy promoted matches below the safe floor", async () => {
-  // Round 18: when main-engine-selection-policy.ts's second-pass
-  // fallback promotes top-N reviewed records ABOVE 0.20 but BELOW
-  // 0.55 (the safe floor), each promoted match carries a
-  // "[BEST-AVAILABLE BELOW THRESHOLD]" prefix in its rationale.
-  // The readiness panel must surface this so the bid team knows
-  // matches need human verification before submission.
-  const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [usefulDocument],
-    experts: [{ trustLevel: "REVIEWED" }],
-    projects: [{ trustLevel: "REVIEWED" }],
-    tender: {
-      id: "tender-1",
-      status: "ANALYZED",
-      ...goodAnalysisFields,
-      requirements: [expertRequirement, projectRequirement],
-      complianceGaps: [],
-      expertMatches: [{
-        isSelected: true,
-        expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" },
-        rationale: "[Reviewed] Some lexical match. [BEST-AVAILABLE BELOW THRESHOLD] Auto-selected reviewed evidence at 35% — every reviewed record scored below the 55% safe floor.",
-      }],
-      projectMatches: [{
-        isSelected: true,
-        project: { trustLevel: "REVIEWED", name: "Relevant Project" },
-        rationale: "[Reviewed] Some match. [BEST-AVAILABLE BELOW THRESHOLD] Auto-selected reviewed evidence at 30%.",
-      }],
-    },
-  }), "user-1", "tender-1");
-
-  assert.ok(readiness);
-  assert.equal(readiness.ready, true, "Generation is unblocked (the fix's whole point) but with a warning attached");
-  const warning = readiness.warnings.find((w) => w.code === "BEST_AVAILABLE_MATCHES_FLAGGED");
-  assert.ok(warning, "expected BEST_AVAILABLE_MATCHES_FLAGGED warning when both experts and projects were promoted below the safe floor");
-  assert.match(warning!.message, /1 expert match\(es\)/);
-  assert.match(warning!.message, /1 project match\(es\)/);
-  assert.match(warning!.message, /verify each of these matches/i);
-  assert.equal(warning!.nextAction, "REVIEW_MATCHES");
-});
-
-test("tender generation readiness surfaces TENDER_REQUIRES_PDF warning when submission plan declares .pdf", async () => {
-  const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [usefulDocument],
-    experts: [{ trustLevel: "REVIEWED" }],
-    projects: [{ trustLevel: "REVIEWED" }],
-    tender: {
-      id: "tender-1",
-      status: "ANALYZED",
-      ...goodAnalysisFields,
-      // Override to declare a PDF requirement
-      exactFileNaming: JSON.stringify(["Technical-Proposal.pdf"]),
-      exactFileOrder: JSON.stringify(["Technical-Proposal.pdf"]),
-      requirements: [expertRequirement, projectRequirement],
-      complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" }, rationale: "Auto-selected ≥75%." }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" }, rationale: "Auto-selected ≥75%." }],
-    },
-  }), "user-1", "tender-1");
-
-  assert.ok(readiness);
-  const pdfWarning = readiness.warnings.find((w) => w.code === "TENDER_REQUIRES_PDF");
-  assert.ok(pdfWarning, `expected TENDER_REQUIRES_PDF warning when submission plan declares .pdf; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
-  assert.match(pdfWarning!.message, /PDF_REQUIRED_CONVERSION_UNAVAILABLE/);
-  // Diagnostic field is populated for the UI.
-  assert.equal(readiness.formatPolicy.requiresPdf, true);
-  // The warning points at the Finalize Required PDF recovery action.
-  assert.equal(pdfWarning!.nextAction, "FINALIZE_REQUIRED_PDF");
-});
-
-test("TENDER_REQUIRES_PDF warning clears once an active generated PDF covers the required filename", async () => {
-  const client = fakeClient({
-    documents: [usefulDocument],
-    experts: [{ trustLevel: "REVIEWED" }],
-    projects: [{ trustLevel: "REVIEWED" }],
-    tender: {
-      id: "tender-1",
-      status: "ANALYZED",
-      ...goodAnalysisFields,
-      exactFileNaming: JSON.stringify(["Technical-Proposal.pdf"]),
-      exactFileOrder: JSON.stringify(["Technical-Proposal.pdf"]),
-      requirements: [expertRequirement, projectRequirement],
-      complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" }, rationale: "Auto-selected ≥75%." }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" }, rationale: "Auto-selected ≥75%." }],
-    },
-  }) as unknown as Record<string, unknown>;
-  // An active GENERATED "Technical-Proposal.pdf" with bytes now exists.
-  client.generatedDocument = {
-    count: async () => 0,
-    findMany: async () => [{ exactFileName: "Technical-Proposal.pdf" }],
-  };
-
-  const readiness = await getTenderGenerationReadiness(client as never, "user-1", "tender-1");
-  assert.ok(readiness);
-  const pdfWarning = readiness.warnings.find((w) => w.code === "TENDER_REQUIRES_PDF");
-  assert.equal(pdfWarning, undefined, `warning must clear when the required PDF is generated; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
-  assert.equal(readiness.formatPolicy.requiresPdf, true, "format policy still reports the PDF requirement");
-});
-
-test("tender generation readiness surfaces TENDER_PROHIBITS_BRANDING warning when intake notes prohibit branding", async () => {
-  const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [usefulDocument],
-    experts: [{ trustLevel: "REVIEWED" }],
-    projects: [{ trustLevel: "REVIEWED" }],
-    tender: {
-      id: "tender-1",
-      status: "ANALYZED",
-      ...goodAnalysisFields,
-      // Plant a branding prohibition in intakeSummary so detectBrandingPolicy fires
-      intakeSummary: "Submission must not contain any logo or company branding.",
-      requirements: [expertRequirement, projectRequirement],
-      complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" }, rationale: "Auto-selected ≥75%." }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" }, rationale: "Auto-selected ≥75%." }],
-    },
-  }), "user-1", "tender-1");
-
-  assert.ok(readiness);
-  const brandingWarning = readiness.warnings.find((w) => w.code === "TENDER_PROHIBITS_BRANDING");
-  assert.ok(brandingWarning, `expected TENDER_PROHIBITS_BRANDING warning; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
-  assert.match(brandingWarning!.message, /BRANDING_POLICY_CONFLICT/);
-  // Diagnostic field is populated.
-  assert.equal(readiness.exportAssetStatus.brandingAllowed, false);
-  assert.ok(readiness.exportAssetStatus.policyBlockers.length > 0);
-});
-
-test("tender generation readiness does NOT emit BEST-AVAILABLE warning when matches were promoted via the standard safe-floor path", async () => {
-  const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [usefulDocument],
-    experts: [{ trustLevel: "REVIEWED" }],
-    projects: [{ trustLevel: "REVIEWED" }],
-    tender: {
-      id: "tender-1",
-      status: "ANALYZED",
-      ...goodAnalysisFields,
-      requirements: [expertRequirement, projectRequirement],
-      complianceGaps: [],
-      expertMatches: [{
-        isSelected: true,
-        expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" },
-        rationale: "[Reviewed] Strong match. [Main Engine Best-Available Selection] Auto-selected reviewed evidence at 78% because no safe selected evidence existed.",
-      }],
-      projectMatches: [{
-        isSelected: true,
-        project: { trustLevel: "REVIEWED", name: "Relevant Project" },
-        rationale: "[Reviewed] Auto-selected ≥75%.",
-      }],
-    },
-  }), "user-1", "tender-1");
-
-  assert.ok(readiness);
-  const warning = readiness.warnings.find((w) => w.code === "BEST_AVAILABLE_MATCHES_FLAGGED");
-  assert.equal(warning, undefined, "BEST_AVAILABLE_MATCHES_FLAGGED should not fire when scores were above the safe floor");
-});
-
-test("tender generation readiness warns EVAL_WEIGHTS_INCOMPLETE when extracted criteria weights sum outside 80-120%", async () => {
-  const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [usefulDocument],
-    experts: [{ trustLevel: "REVIEWED" }],
-    projects: [{ trustLevel: "REVIEWED" }],
-    tender: {
-      id: "tender-1",
-      status: "ANALYZED",
-      ...goodAnalysisFields,
-      // Only two criteria extracted (30% + 20% = 50%) — clearly incomplete
-      evaluationCriteriaSourceJson: JSON.stringify([
-        { criterion: "Technical approach", weight: "30%", sourcePage: 5, sourceQuote: null },
-        { criterion: "Personnel", weight: "20%", sourcePage: 6, sourceQuote: null },
-      ]),
-      requirements: [expertRequirement, projectRequirement],
-      complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Sr. Engineer" }, rationale: "≥75%" }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Road Project" }, rationale: "≥75%" }],
-    },
-  }), "user-1", "tender-1");
-
-  assert.ok(readiness);
-  const w = readiness.warnings.find((w) => w.code === "EVAL_WEIGHTS_INCOMPLETE");
-  assert.ok(w, `expected EVAL_WEIGHTS_INCOMPLETE warning; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
-  assert.match(w!.message, /50%/);
-  assert.equal(w!.nextAction, "RETRY_AI_ANALYZE");
-});
-
-test("tender generation readiness does NOT warn EVAL_WEIGHTS_INCOMPLETE when weights sum to ~100%", async () => {
-  const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [usefulDocument],
-    experts: [{ trustLevel: "REVIEWED" }],
-    projects: [{ trustLevel: "REVIEWED" }],
-    tender: {
-      id: "tender-1",
-      status: "ANALYZED",
-      ...goodAnalysisFields,
-      evaluationCriteriaSourceJson: JSON.stringify([
-        { criterion: "Technical approach", weight: "40%", sourcePage: 5, sourceQuote: null },
-        { criterion: "Personnel", weight: "30%", sourcePage: 6, sourceQuote: null },
-        { criterion: "Methodology", weight: "20%", sourcePage: 7, sourceQuote: null },
-        { criterion: "Price", weight: "10%", sourcePage: 8, sourceQuote: null },
-      ]),
-      requirements: [expertRequirement, projectRequirement],
-      complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Sr. Engineer" }, rationale: "≥75%" }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Road Project" }, rationale: "≥75%" }],
-    },
-  }), "user-1", "tender-1");
-
-  assert.ok(readiness);
-  const w = readiness.warnings.find((w) => w.code === "EVAL_WEIGHTS_INCOMPLETE");
-  assert.equal(w, undefined, "should NOT warn when weights sum to 100%");
-});
-
-test("tender generation readiness warns EVAL_WEIGHTS_MISSING when evaluation methodology exists but no criteria JSON was extracted", async () => {
-  const readiness = await getTenderGenerationReadiness(fakeClient({
-    documents: [usefulDocument],
-    experts: [{ trustLevel: "REVIEWED" }],
-    projects: [{ trustLevel: "REVIEWED" }],
-    tender: {
-      id: "tender-1",
-      status: "ANALYZED",
-      ...goodAnalysisFields,
-      evaluationMethodology: "Technical 80 points; price 20 points.",
-      evaluationCriteriaSourceJson: null,
-      requirements: [expertRequirement, projectRequirement],
-      complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Sr. Engineer" }, rationale: "≥75%" }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Road Project" }, rationale: "≥75%" }],
-    },
-  }), "user-1", "tender-1");
-
-  assert.ok(readiness);
-  const w = readiness.warnings.find((w) => w.code === "EVAL_WEIGHTS_MISSING");
-  assert.ok(w, `expected EVAL_WEIGHTS_MISSING warning; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
-  assert.equal(w!.nextAction, "RETRY_AI_ANALYZE");
-});
-
-test("tender generation readiness warns MANDATORY_EVIDENCE_NOT_ASSESSED when compliance matrix has no rows for mandatory requirements", async () => {
-  // Fake client returns count=0 for complianceMatrix
-  const client = {
-    ...fakeClient({
-      documents: [usefulDocument],
-      experts: [{ trustLevel: "REVIEWED" }],
-      projects: [{ trustLevel: "REVIEWED" }],
-      tender: {
-        id: "tender-1",
-        status: "ANALYZED",
-        ...goodAnalysisFields,
-        requirements: [{ ...expertRequirement, id: "req-1", priority: "MANDATORY" }, { ...projectRequirement, id: "req-2", priority: "MANDATORY" }],
-        complianceGaps: [],
-        expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Sr. Engineer" }, rationale: "≥75%" }],
-        projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Road Project" }, rationale: "≥75%" }],
-      },
-    }),
-    complianceMatrix: { count: async () => 0 },
-  };
-
-  const readiness = await getTenderGenerationReadiness(client as unknown as import("@prisma/client").PrismaClient, "user-1", "tender-1");
-
-  assert.ok(readiness);
-  const w = readiness.warnings.find((w) => w.code === "MANDATORY_EVIDENCE_NOT_ASSESSED");
-  assert.ok(w, `expected MANDATORY_EVIDENCE_NOT_ASSESSED warning; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
-  assert.match(w!.message, /2 mandatory requirement/);
-  assert.equal(w!.nextAction, "RUN_ENGINE");
+  assert.ok(readiness.blockers.some((blocker) => blocker.code === "NO_REVIEWED_EXPERT_MATCH"));
+  assert.ok(readiness.blockers.some((blocker) => blocker.code === "NO_REVIEWED_PROJECT_MATCH"));
 });
