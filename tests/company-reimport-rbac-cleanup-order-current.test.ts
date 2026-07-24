@@ -15,42 +15,33 @@ describe("company reimport safety", () => {
     assert.doesNotMatch(route, /"REVIEWER"|"VIEWER"/);
   });
 
-  it("defers destructive cleanup until primary and safety imports complete", () => {
+  it("re-extracts verified bytes, then invokes the single canonical ingestion owner", () => {
     const postStart = route.indexOf("export async function POST");
-    const primaryPos = route.indexOf("importCompanyKnowledgeFromDocuments(company.id)", postStart);
-    const safetyPos = route.indexOf("runCompanyKnowledgeSafetyImport(prisma, company.id)", postStart);
-    const cleanupPos = route.indexOf("cleanupSupportDocImportedRecords(company.id)", postStart);
+    const integrityPos = route.indexOf("inspectActualFileBytes", postStart);
+    const ingestPos = route.indexOf("ingestCompanyVault(company.id)", postStart);
+    const auditPos = route.indexOf("cleanupSupportDocImportedRecords(company.id)", postStart);
     assert.ok(postStart >= 0);
-    assert.ok(primaryPos > postStart);
-    assert.ok(safetyPos > primaryPos);
-    assert.ok(cleanupPos > safetyPos);
-    const postRegion = route.slice(postStart);
-    assert.equal(postRegion.match(/cleanupSupportDocImportedRecords\(company\.id\)/g)?.length, 1);
-    assert.doesNotMatch(route.slice(postStart, primaryPos), /cleanupSupportDocImportedRecords\(company\.id\)/);
+    assert.ok(integrityPos > postStart);
+    assert.ok(ingestPos > integrityPos);
+    assert.ok(auditPos > ingestPos);
+    assert.equal(route.slice(postStart).match(/ingestCompanyVault\(company\.id\)/g)?.length, 1);
   });
 
-  it("makes support-derived deletion one transaction", () => {
-    assert.match(cleanup, /return prisma\.\$transaction\(async \(tx\) =>/);
-    assert.match(cleanup, /tx\.companyDocument\.findMany/);
-    assert.match(cleanup, /tx\.expert\.deleteMany/);
-    assert.match(cleanup, /tx\.project\.deleteMany/);
-    assert.doesNotMatch(cleanup, /prisma\.(?:expert|project)\.deleteMany/);
+  it("treats mixed/support document handling as a non-destructive audit", () => {
+    assert.match(cleanup, /uncertain claim must remain available to the Review Inbox/);
+    assert.match(cleanup, /prisma\.expert\.count/);
+    assert.match(cleanup, /prisma\.project\.count/);
+    assert.match(cleanup, /expertsPreservedForReview/);
+    assert.match(cleanup, /projectsPreservedForReview/);
+    assert.match(cleanup, /expertsDeleted: 0/);
+    assert.match(cleanup, /projectsDeleted: 0/);
+    assert.doesNotMatch(cleanup, /deleteMany|\.delete\(/);
   });
 
-  it("keeps every cleanup query company-scoped", () => {
+  it("keeps every support-evidence audit query company-scoped", () => {
     const scopes = cleanup.match(/companyId/g) ?? [];
     assert.ok(scopes.length >= 4, `expected repeated company scoping, found ${scopes.length}`);
-    // Each deleteMany WHERE must include both companyId and sourceDocumentId.
-    const expertDeleteMatches = cleanup.match(/tx\.expert\.deleteMany\([\s\S]*?\}\)/g) ?? [];
-    for (const m of expertDeleteMatches) {
-      assert.match(m, /companyId/, "expert deleteMany must be company-scoped");
-      assert.match(m, /sourceDocumentId:/, "expert deleteMany must use sourceDocumentId");
-    }
-    const projectDeleteMatches = cleanup.match(/tx\.project\.deleteMany\([\s\S]*?\}\)/g) ?? [];
-    for (const m of projectDeleteMatches) {
-      assert.match(m, /companyId/, "project deleteMany must be company-scoped");
-      assert.match(m, /sourceDocumentId:/, "project deleteMany must use sourceDocumentId");
-    }
+    assert.match(cleanup, /companyId,\s*sourceDocumentId: \{ in: supportDocIds \}/s);
   });
 
   it("uses persistent throttling and stable correlated runtime errors", () => {
