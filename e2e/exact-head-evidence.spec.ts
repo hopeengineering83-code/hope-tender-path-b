@@ -5,7 +5,7 @@ import { primaryTest as test, expect } from "./auth-helper";
 import type { Page } from "@playwright/test";
 
 const SEEDED_TENDER_ID = "11111111-1111-4111-8111-111111111111";
-const EVIDENCE_DIRECTORY = resolve("test-results/acceptance-evidence/screenshots");
+const EVIDENCE_DIRECTORY = resolve("acceptance-evidence/screenshots");
 
 type RuntimeEvidence = {
   consoleErrors: string[];
@@ -36,6 +36,15 @@ function monitorRuntime(page: Page): RuntimeEvidence {
     }
   });
   return evidence;
+}
+
+function snapshotRuntime(evidence: RuntimeEvidence): RuntimeEvidence {
+  return {
+    consoleErrors: [...evidence.consoleErrors],
+    pageErrors: [...evidence.pageErrors],
+    failedRequests: [...evidence.failedRequests],
+    serverErrors: [...evidence.serverErrors],
+  };
 }
 
 test("exact-head desktop, tablet, and mobile screenshot audit is free of overflow and runtime errors", async ({ page }) => {
@@ -85,7 +94,7 @@ test("exact-head desktop, tablet, and mobile screenshot audit is free of overflo
       title: await page.title(),
       dimensions,
       screenshot: `${item.name}.png`,
-      runtime,
+      runtime: snapshotRuntime(runtime),
     });
   }
 
