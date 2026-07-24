@@ -6,7 +6,6 @@ import Link from "next/link";
 
 interface TenderBreadcrumbProps {
   tenderTitle?: string;
-  tenderId?: string;
 }
 
 export function TenderBreadcrumb({ tenderTitle }: TenderBreadcrumbProps) {

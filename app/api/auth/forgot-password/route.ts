@@ -19,6 +19,18 @@ function baseUrl(): string {
   if (configured) return configured.replace(/\/$/, "");
   const vercelUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
   if (vercelUrl) return `https://${vercelUrl.replace(/^https?:\/\//, "").replace(/\/$/, "")}`;
+  // SECURITY / OPS: previously this returned "http://localhost:3000" unconditionally.
+  // In self-hosted production (Docker, bare-metal, Electron desktop) where the
+  // Vercel env vars are absent, password-reset emails would contain a
+  // `localhost:3000` link — broken for end users AND a security smell (reset
+  // link points at an attacker-controllable local host on shared machines).
+  // Fail-loud in production; keep the dev convenience fallback for `next dev`.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "APP_URL (or NEXTAUTH_URL) must be set in production so password-reset emails link to the real site. " +
+      "Refusing to send a reset email with a localhost URL."
+    );
+  }
   return "http://localhost:3000";
 }
 

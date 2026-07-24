@@ -115,7 +115,21 @@ export async function getSession(): Promise<string | null> {
       return null;
     }
     return session.userId;
-  } catch {
+  } catch (e) {
+    // SECURITY / OBSERVABILITY: previously this catch was bare (`catch {}`),
+    // silently returning `null` on DB errors. That made every DB outage look
+    // like "user logged out" — operators had no signal to detect a session-DB
+    // outage through this path. Compare with `deleteCookieSession` (lines 72-77)
+    // which already logs at error level for the same class of failure.
+    //
+    // We still return null (fail-closed for auth — a DB we can't read cannot
+    // confirm the session is valid), but now we surface the failure so
+    // monitoring can catch it.
+    logger.error(
+      `[auth] getSession DB failure — treating as logged out. ` +
+      `Token hash (first 16 chars): ${hashToken(token).slice(0, 16)}...`,
+      { detail: e }
+    );
     return null;
   }
 }

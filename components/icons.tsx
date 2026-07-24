@@ -212,6 +212,18 @@ export function CheckCircleIcon(props: IconProps) {
   );
 }
 
+/** Horizontal dash — explicitly not applicable / no value.
+ *  Used by the canonical readiness model for the NOT_APPLICABLE module state
+ *  so every state uses an inline SVG icon (no Unicode glyph dependency). */
+export function DashIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M6 12h12" />
+    </svg>
+  );
+}
+
 /** Circle alert — warning / partial. */
 export function AlertCircleIcon(props: IconProps) {
   return (

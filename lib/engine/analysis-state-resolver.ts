@@ -17,6 +17,7 @@
 
 import { prisma } from "@/lib/prisma";
 import type { PrismaClient } from "@prisma/client";
+import { logger } from "@/lib/observability";
 
 export const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
 
@@ -393,8 +394,14 @@ export async function resolveTenderAnalysisState(
             break;
           }
         }
-      } catch {
-        // Malformed JSON — skip
+      } catch (e) {
+        // Malformed JSON in staged payload — skip — but log a warn so
+        // operators can detect analysis-corruption patterns (a series of
+        // these in a row suggests a provider returning bad output, not
+        // a one-off serialization glitch).
+        logger.warn("[analysis-state-resolver] malformed staged JSON — skipping", {
+          detail: e,
+        });
       }
     }
   }
