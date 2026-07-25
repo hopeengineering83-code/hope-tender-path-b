@@ -34,10 +34,17 @@ test("category A: retry controls remain failure-state-only", () => {
   assert.match(source, /result\.code === "ASYNC_ENGINE_FAILED" \|\| result\.code === "ASYNC_ENGINE_TIMEOUT"/);
 });
 
-test("category A: Recovery Command Center links to the canonical engine control", () => {
-  const source = readSource("components/tender-recovery-command-center.tsx");
+test("category A: generation readiness panel links to the canonical engine control", () => {
+  // components/tender-recovery-command-center.tsx (this test's original
+  // subject) was deleted as unrendered dead code (nothing imports or renders
+  // it). components/generation-readiness-panel.tsx is the live, rendered
+  // panel that resolves RUN_ENGINE / RUN_ENGINE_OR_APPROVE_ANALYSIS /
+  // RETRY_AI_ANALYZE next-actions today — it navigates to the one canonical
+  // engine control's anchor rather than dispatching a second, separate
+  // engine-run action itself.
+  const source = readSource("components/generation-readiness-panel.tsx");
   assert.doesNotMatch(source, /executeAction\("RUN_ENGINE"\)/);
-  assert.match(source, /<DisclosureAnchorLink href="#run-engine-action"/);
+  assert.match(source, /#run-engine-action/);
 });
 
 test("category A: export readiness does not duplicate AI Analyze or missing-plan mutations", () => {

@@ -319,15 +319,19 @@ describe("No user-facing 'metadata' wording in engine runtime path", () => {
     }
   });
 
-  it("Recovery Command Center partial-engine message does not use 'metadata'", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    // The new partial-engine message added by Blocker 3 fix must not say
-    // 'metadata'. Slice the partial branch and check it.
-    const partialIdx = src.indexOf("if (json.partial === true || json.success === false)");
-    const followUpIdx = src.indexOf("engineFollowUpMessage(refreshed)");
-    assert.ok(partialIdx > -1, "partial check must exist");
-    assert.ok(followUpIdx > -1, "engineFollowUpMessage call must exist");
-    const partialBranch = src.slice(partialIdx, followUpIdx);
-    assert.ok(!/metadata/i.test(partialBranch), "partial-engine message must not say 'metadata'");
+  it("Engine action panel's partial-engine message does not use 'metadata'", () => {
+    // components/tender-recovery-command-center.tsx (this check's original
+    // subject, via its engineFollowUpMessage helper) was deleted as
+    // unrendered dead code (nothing imports or renders it).
+    // components/engine-action-panel.tsx is the live, rendered panel that
+    // owns the equivalent partial-engine-result messaging today, via its
+    // humanBlockerSummary() helper.
+    const src = read("components/engine-action-panel.tsx");
+    const startIdx = src.indexOf("function humanBlockerSummary");
+    const endIdx = src.indexOf("function parseEngineResponse");
+    assert.ok(startIdx > -1, "humanBlockerSummary must exist");
+    assert.ok(endIdx > startIdx, "parseEngineResponse must follow humanBlockerSummary");
+    const summaryFn = src.slice(startIdx, endIdx);
+    assert.ok(!/metadata/i.test(summaryFn), "partial-engine message must not say 'metadata'");
   });
 });

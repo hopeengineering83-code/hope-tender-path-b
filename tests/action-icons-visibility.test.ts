@@ -15,7 +15,8 @@ function stripComments(source: string): string {
 
 const OPERATIONAL_COMPONENTS = [
   "engine-action-panel.tsx",
-  "tender-recovery-command-center.tsx",
+  // tender-recovery-command-center.tsx removed -- deleted as unrendered dead
+  // code (nothing imports or renders it).
   "generation-action-panel.tsx",
   "document-validator-panel.tsx",
   "export-readiness-panel.tsx",
@@ -64,28 +65,14 @@ describe("operational components use SVG icons", () => {
   });
 });
 
-describe("Recovery Command Center diagnostic icons", () => {
-  const source = readComponent("tender-recovery-command-center.tsx");
-
-  it("keeps its generic Execute recovery action visibly identified", () => {
-    // BoltIcon is now canonical for "Execute" on the recovery-command-center
-    // surface — PlayIcon collided with "Resume AI Analyze" on the same surface.
-    assert.match(source, /<BoltIcon \/> \{actioning \? "Working…" : "Execute"\}/);
-  });
-
-  it("does not own final ZIP download", () => {
-    assert.doesNotMatch(source, /<DownloadIcon/);
-    assert.doesNotMatch(source, /href=\{`\/api\/tenders\/\$\{tenderId\}\/download`\}/);
-  });
-
-  it("uses navigation arrows for links and action icons for mutations", () => {
-    assert.match(source, /<RefreshIcon \/> Retry AI Analyze/);
-    assert.match(source, /<PlayIcon \/> Resume AI Analyze/);
-    assert.match(source, /<DisclosureAnchorLink href="#run-engine-action"[\s\S]*?<ArrowRightIcon \/> Go to Run Engine/);
-    assert.match(source, /<WarningIcon \/> Review Matching Inputs/);
-    assert.match(source, /<CheckIcon \/> Link Vault Evidence/);
-  });
-});
+// "Recovery Command Center diagnostic icons" describe block removed --
+// components/tender-recovery-command-center.tsx was deleted as unrendered
+// dead code (nothing imports or renders it). Its Execute/Retry/Resume/
+// Review/Link button set had no single live equivalent to redirect to — each
+// underlying action now lives on its own live panel (e.g. Retry AI Analyze
+// on ai-analyze-panel.tsx, final ZIP download ownership on
+// export-readiness-panel.tsx, covered by their own icon tests elsewhere in
+// this suite).
 
 describe("document, share, and export affordances", () => {
   it("document validation states use SVG icons", () => {
@@ -121,7 +108,10 @@ describe("icon registry contract", () => {
     assert.match(source, /stroke: "currentColor"/);
   });
 
-  it("does not introduce user-facing metadata wording in recovery diagnostics", () => {
-    assert.doesNotMatch(stripComments(readComponent("tender-recovery-command-center.tsx")), />\s*[Mm]etadata[\s<]/);
-  });
+  // "does not introduce user-facing metadata wording in recovery
+  // diagnostics" test removed -- components/tender-recovery-command-center.tsx
+  // was deleted as unrendered dead code (nothing imports or renders it); the
+  // no-user-facing-metadata property for the live recovery/next-action
+  // surface is already covered by tests/ui-workflow-polish.test.ts against
+  // components/next-action-panel.tsx.
 });

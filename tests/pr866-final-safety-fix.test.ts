@@ -6,25 +6,10 @@ const read = (p: string) => readFileSync(p, "utf8");
 
 describe("PR #866 final safety — fallback wording", () => {
 
-  it("tender-recovery-command-center.tsx does NOT contain 'generation unblocked'", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(!/generation unblocked/i.test(src), "must NOT contain 'generation unblocked'");
-  });
-
-  it("tender-recovery-command-center.tsx does NOT contain 'fallback analysis approved'", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(!/fallback analysis approved/i.test(src), "must NOT contain 'fallback analysis approved'");
-  });
-
-  it("tender-recovery-command-center.tsx does NOT contain 'approve below'", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(!/approve below/i.test(src), "must NOT contain 'approve below'");
-  });
-
-  it("tender-recovery-command-center.tsx fallback approval says generation/export remain blocked", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.match(src, /Fallback note saved for audit\. Generation and export remain blocked until full AI analysis succeeds\./);
-  });
+  // The four tender-recovery-command-center.tsx checks that used to live here
+  // are removed -- that file was deleted as unrendered dead code (nothing
+  // imports or renders it). export-readiness-panel.tsx below is the live,
+  // rendered panel that owns this same fallback-approval contract.
 
   it("export-readiness-panel.tsx does NOT say 'Regex fallback analysis approved'", () => {
     const src = read("components/export-readiness-panel.tsx");

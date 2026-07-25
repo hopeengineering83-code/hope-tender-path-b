@@ -162,9 +162,19 @@ describe("Recovery Command Center — action registry coverage", () => {
 });
 
 describe("Recovery Command Center — no 404-causing navigation", () => {
-  it("component source does not contain a navigation to /dashboard/vault", async () => {
+  // components/tender-recovery-command-center.tsx was deleted as unrendered
+  // dead code (nothing imports or renders it). components/blocker-action-link.tsx
+  // is the live, rendered dispatcher for recovery actions today (wired into
+  // components/generation-action-panel.tsx). It never hardcodes a path —
+  // every action fully delegates to renderRecoveryActionPath(spec.path, ...)
+  // from the registry above, so the "no /dashboard/vault" guard is enforced
+  // structurally by the "every navigation action points at a known existing
+  // page" tests in this same file rather than by a literal string check.
+  // We still keep a lightweight defense-in-depth check on the live file.
+
+  it("live dispatcher source does not contain a hardcoded navigation to /dashboard/vault", async () => {
     const src = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
+      resolve(process.cwd(), "components/blocker-action-link.tsx"),
       "utf8",
     );
     assert.ok(
@@ -173,31 +183,13 @@ describe("Recovery Command Center — no 404-causing navigation", () => {
     );
   });
 
-  it("LINK_VAULT_EVIDENCE handler calls the API route, not window.location", async () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
-      "utf8",
-    );
-    // The component dispatches via the auto-link route; the spec in
-    // recovery-command-actions.ts points at link-vault-evidence-auto.
-    // We only verify it doesn't use window.location to navigate away —
-    // the specific API path is captured in the action spec, not inline code.
-    assert.ok(
-      !src.includes("/dashboard/vault"),
-      "LINK_VAULT_EVIDENCE must not navigate to /dashboard/vault (page does not exist)",
-    );
-  });
-
-  it("component has an else fallback for unknown actions", async () => {
-    const src = readFileSync(
-      resolve(process.cwd(), "components/tender-recovery-command-center.tsx"),
-      "utf8",
-    );
-    assert.ok(
-      src.includes("Action not available yet"),
-      "unknown actions must show 'Action not available yet' fallback message",
-    );
-  });
+  // "component has an else fallback for unknown actions" test removed --
+  // blocker-action-link.tsx's behavior for an unknown action code is
+  // architecturally different from the deleted component: it returns null
+  // (renders nothing) rather than showing an "Action not available yet"
+  // message. That is a deliberate simplification (an unrenderable action
+  // silently disappears instead of showing a dead-end message), not a
+  // regression, so there is nothing equivalent to redirect this assertion to.
 });
 
 // ─── 1b. nextAction coverage — every API error code resolves in the registry ──

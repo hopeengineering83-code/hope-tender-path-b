@@ -130,11 +130,13 @@ describe("Gaps M-S — No raw Unicode in remaining components", () => {
     assert.ok(!codeOnly.includes("⚠"), "must not contain ⚠");
   });
 
-  it("snapshot-consistency-badge.tsx has no raw Unicode", () => {
-    const src = read("components/snapshot-consistency-badge.tsx");
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/"[^"]*"/g, '""');
-    assert.ok(!codeOnly.includes("⚠"), "must not contain ⚠");
-  });
+  // "snapshot-consistency-badge.tsx has no raw Unicode" test removed --
+  // components/snapshot-consistency-badge.tsx was deleted as unrendered dead
+  // code. Its only consumers were components/final-submission-control-center.tsx,
+  // components/tender-workflow-action-center.tsx, and
+  // components/tender-recovery-command-center.tsx, all three of which were
+  // themselves already deleted as unrendered dead code earlier in this same
+  // cleanup, leaving it with zero remaining consumers.
 
   it("ai-copilot-suggestions-panel.tsx has no emoji icons", () => {
     const src = read("components/ai-copilot-suggestions-panel.tsx");

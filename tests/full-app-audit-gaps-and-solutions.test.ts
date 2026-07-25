@@ -82,19 +82,13 @@ describe("M3 UI — dead EXTRACTION_NOT_READY branch removed", () => {
   });
 });
 
-describe("M4 UI — dead OCR provider state removed", () => {
-  it("does not maintain a duplicate OCR provider selector", () => {
-    const source = stripComments(read("components/tender-recovery-command-center.tsx"));
-    assert.doesNotMatch(source, /const \[ocrProvider, setOcrProvider\] = useState/);
-    assert.doesNotMatch(source, /isReExtract && ocrProvider !== "auto"/);
-  });
-});
-
-describe("L9 UI — dead MISSING substring removed", () => {
-  it("does not use state.includes('MISSING')", () => {
-    assert.doesNotMatch(read("components/tender-recovery-command-center.tsx"), /state\.includes\("MISSING"\)/);
-  });
-});
+// "M4 UI — dead OCR provider state removed" and "L9 UI — dead MISSING
+// substring removed" describe blocks removed --
+// components/tender-recovery-command-center.tsx was deleted in full as
+// unrendered dead code (nothing imports or renders it), so both formerly-dead
+// branches these blocks proved were removed no longer exist anywhere to
+// regress. No other component ever had a duplicate OCR provider selector or
+// a state.includes("MISSING") check, so there is nothing to redirect to.
 
 describe("H3 API — db-integrity does not leak connection errors", () => {
   it("returns a fixed safe message and logs only server-side detail", () => {

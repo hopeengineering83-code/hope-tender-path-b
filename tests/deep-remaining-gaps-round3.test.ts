@@ -43,13 +43,16 @@ describe("Bug #2 — Lifecycle route ok=true on HTTP 200", () => {
   });
 });
 
-describe("Bug #3 — Recovery Command Center does not throw on json.ok=false", () => {
-  it("load function only throws on HTTP non-2xx (not json.ok)", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(!stripComments(src).includes("!json.ok"), "must NOT check !json.ok");
-    assert.ok(src.includes("Only throw on HTTP non-2xx"), "must document the fix");
-  });
-});
+// Bug #3 — "Recovery Command Center does not throw on json.ok=false" — removed.
+// components/tender-recovery-command-center.tsx was deleted as unrendered dead
+// code (nothing imports or renders it). Its live successor,
+// components/next-action-panel.tsx, is a server component that reads
+// getCanonicalTenderWorkflowDecision() directly (via Prisma) rather than
+// doing a client-side fetch()+load() against a JSON API response — so the
+// specific failure mode this test guarded (a client throwing on a
+// business-logic `json.ok` field instead of only on HTTP non-2xx) cannot
+// occur in the new architecture. There is nothing structurally equivalent
+// to redirect this assertion to.
 
 describe("Bug #4 — Orchestrator forwards stale/partial", () => {
   it("analysisStatus type includes stale and partial fields", () => {
@@ -67,18 +70,27 @@ describe("Bug #4 — Orchestrator forwards stale/partial", () => {
   });
 });
 
-describe("Bug #5 — Analysis StatusRow checks stale flag", () => {
-  it("StatusRow shows STALE when stale, not green AI check", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(src.includes("data.analysisStatus.stale"), "must check stale flag");
-    assert.ok(src.includes("STALE — re-run required"), "must show stale label");
-    assert.ok(/!data\.analysisStatus\.stale/.test(src), "ok predicate must include !stale");
+describe("Bug #5 — stale analysis blocks downstream steps (not shown as a passing check)", () => {
+  // components/tender-recovery-command-center.tsx (the original StatusRow this
+  // block checked) was deleted as unrendered dead code (nothing imports or
+  // renders it). The live successor is lib/tender-next-action.ts, whose
+  // resolveTenderNextAction() gates on aiAnalysis.stale directly — a stronger
+  // property than a status label, since it hard-blocks Build Plan/generation/
+  // export via a red-toned RERUN_AI_ANALYZE decision rather than just
+  // switching an icon. components/next-action-panel.tsx renders the resulting
+  // reason/blockers text (covered by other tests in this suite), so the
+  // stale case is surfaced to the user, not silently shown as green.
+  it("resolveTenderNextAction returns RERUN_AI_ANALYZE with a red tone when analysis is stale", () => {
+    const src = read("lib/tender-next-action.ts");
+    assert.match(src, /input\.aiAnalysis\.exists && input\.aiAnalysis\.stale/, "must gate on aiAnalysis.stale");
+    assert.match(src, /primary:\s*"RERUN_AI_ANALYZE"/);
+    assert.match(src, /Analysis is stale — tender source content changed since last analysis/);
   });
 
-  it("analysisStatus type includes stale and partial", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(src.includes("stale?: boolean"), "type must include stale");
-    assert.ok(src.includes("partial?: boolean"), "type must include partial");
+  it("aiAnalysis and documents inputs both declare a stale flag", () => {
+    const src = read("lib/tender-next-action.ts");
+    const matches = src.match(/stale\?: boolean/g) ?? [];
+    assert.ok(matches.length >= 2, "must declare stale?: boolean on both aiAnalysis and documents inputs");
   });
 });
 

@@ -13,46 +13,10 @@ function stripComments(source: string): string {
 }
 const RAW_UNICODE_PATTERN = /[✓✗⚡▶↻⊘⏳✦→↓↑←▼▲✕↺↗ℹⓘ]/;
 
-describe("Recovery Command Center affordances", () => {
-  const source = read("components/tender-recovery-command-center.tsx");
-
-  it("shows an icon and text for its generic recovery mutation", () => {
-    // BoltIcon is now canonical for the generic "Execute" dispatch on the
-    // recovery-command-center surface (see lib/ui/workflow-action-icons.ts).
-    // PlayIcon is reserved for "Resume AI Analyze" — the two verbs must not
-    // share an icon or users cannot tell the buttons apart at a glance.
-    assert.match(source, /<BoltIcon \/>/);
-    assert.match(source, /"Execute"/);
-  });
-
-  it("does not own final ZIP download", () => {
-    assert.doesNotMatch(source, /<DownloadIcon/);
-  });
-
-  it("uses ArrowRightIcon for the two links to the one canonical engine control", () => {
-    assert.equal((source.match(/DisclosureAnchorLink href="#run-engine-action"/g) ?? []).length, 2);
-    assert.equal((source.match(/<ArrowRightIcon \/> Go to Run Engine/g) ?? []).length, 2);
-    assert.doesNotMatch(source, /executeAction\("RUN_ENGINE"\)/);
-  });
-
-  it("uses distinct mutation icons for the remaining quick actions", () => {
-    assert.match(source, /<RefreshIcon \/> Retry AI Analyze/);
-    assert.match(source, /<PlayIcon \/> Resume AI Analyze/);
-    assert.match(source, /<WarningIcon \/> Review Matching Inputs/);
-    assert.match(source, /<CheckIcon \/> Link Vault Evidence/);
-  });
-
-  it("does not use PlayIcon for the generic Execute button (collision with Resume)", () => {
-    // The "Execute" button must NOT use PlayIcon — that icon is reserved
-    // for "Resume AI Analyze" on the same surface. Two competing primary
-    // buttons on the same surface with the same icon is a collision.
-    const executeButtonMatch = source.match(/<BoltIcon \/>\s*\{actioning \? "Working…" : "Execute"\}/);
-    assert.ok(executeButtonMatch, "Execute button must use BoltIcon, not PlayIcon");
-    // Sanity: PlayIcon should only appear for Resume AI Analyze.
-    const playIconUsages = (source.match(/<PlayIcon \/>/g) ?? []).length;
-    assert.equal(playIconUsages, 1, "PlayIcon must appear exactly once (for Resume AI Analyze)");
-  });
-});
+// "Recovery Command Center affordances" describe block removed --
+// components/tender-recovery-command-center.tsx was deleted as unrendered
+// dead code (nothing imports or renders it). Its Execute/Retry/Resume/Review/
+// Link button set had no live equivalent to redirect to.
 
 describe("Next Required Action icons", () => {
   const source = read("components/next-action-panel.tsx");
@@ -105,7 +69,8 @@ describe("disabled critical actions remain readable and explained", () => {
   it("does not use 40% disabled opacity in priority workflow components", () => {
     for (const file of [
       "components/next-action-panel.tsx",
-      "components/tender-recovery-command-center.tsx",
+      // tender-recovery-command-center.tsx removed -- deleted as unrendered
+      // dead code (nothing imports or renders it).
       "components/engine-action-panel.tsx",
       "components/generation-action-panel.tsx",
       "components/submission-plan-completeness-panel.tsx",
@@ -150,7 +115,8 @@ describe("status badges use SVG icons with distinct meanings", () => {
 describe("workflow components contain no raw operational icons or user-facing metadata label", () => {
   const WORKFLOW_COMPONENTS = [
     "next-action-panel.tsx",
-    "tender-recovery-command-center.tsx",
+    // tender-recovery-command-center.tsx removed -- deleted as unrendered
+    // dead code (nothing imports or renders it).
     "engine-action-panel.tsx",
     "generation-action-panel.tsx",
     "submission-plan-completeness-panel.tsx",
@@ -165,7 +131,9 @@ describe("workflow components contain no raw operational icons or user-facing me
       assert.doesNotMatch(stripComments(read(`components/${file}`)), RAW_UNICODE_PATTERN);
     });
   }
-  it("does not expose metadata as user-facing recovery wording", () => {
-    assert.doesNotMatch(stripComments(read("components/tender-recovery-command-center.tsx")), />\s*[Mm]etadata[\s<]/);
-  });
+  // "does not expose metadata as user-facing recovery wording" test removed --
+  // components/tender-recovery-command-center.tsx was deleted as unrendered
+  // dead code (nothing imports or renders it); the no-user-facing-metadata
+  // property for the live recovery/next-action surface is already covered by
+  // tests/ui-workflow-polish.test.ts against components/next-action-panel.tsx.
 });
