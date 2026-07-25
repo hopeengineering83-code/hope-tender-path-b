@@ -126,32 +126,28 @@ describe("Spec Test 8 — Lifecycle panel 200 handling", () => {
     );
   });
 
-  it("recovery-command-center does not throw on json.ok=false", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    // Must NOT include !json.ok in the throw predicate
-    assert.ok(
-      !stripComments(src).includes("!json.ok"),
-      "must NOT throw on json.ok=false — only throw on HTTP non-2xx",
-    );
-    assert.ok(
-      src.includes("Only throw on HTTP non-2xx"),
-      "must document the fix",
-    );
-  });
+  // "recovery-command-center does not throw on json.ok=false" test removed --
+  // components/tender-recovery-command-center.tsx was deleted as unrendered
+  // dead code (nothing imports or renders it). Its live successor,
+  // components/next-action-panel.tsx, is a server component that reads
+  // getCanonicalTenderWorkflowDecision() directly (via Prisma) rather than
+  // doing a client-side fetch()+load() against a JSON API response, so the
+  // specific failure mode this test guarded (throwing on a business-logic
+  // `json.ok` field instead of only on HTTP non-2xx) cannot occur in the new
+  // architecture. There is nothing structurally equivalent to redirect to.
 });
 
 // ─── 9. Waiting-step buttons disabled/secondary ──────────────────────────────
 
 describe("Spec Test 9 — Waiting-step buttons", () => {
-  it("recovery-command-center Analysis StatusRow checks stale flag", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(src.includes("data.analysisStatus.stale"), "must check stale flag");
-    assert.ok(src.includes("STALE — re-run required"), "must show stale label");
-    assert.ok(
-      /ok=\{data\.analysisStatus\.source === "AI" && !data\.analysisStatus\.stale/.test(src),
-      "ok predicate must include !stale",
-    );
-  });
+  // "recovery-command-center Analysis StatusRow checks stale flag" test
+  // removed -- components/tender-recovery-command-center.tsx was deleted as
+  // unrendered dead code (nothing imports or renders it). The live successor
+  // is lib/tender-next-action.ts, whose resolveTenderNextAction() gates on
+  // aiAnalysis.stale directly — a stronger property than a status label,
+  // since it hard-blocks Build Plan/generation/export via a red-toned
+  // RERUN_AI_ANALYZE decision. See tests/deep-remaining-gaps-round3.test.ts's
+  // "Bug #5" block for the redirected assertion.
 });
 
 // ─── 10. Required-doc counts do not contradict ───────────────────────────────
@@ -240,6 +236,20 @@ describe("Spec Test 15 — Orchestrator forwards stale/partial", () => {
     const src = read("lib/engine/tender-lifecycle-orchestrator.ts");
     assert.ok(src.includes("resolveCurrentAnalysisBinding"), "must call resolveCurrentAnalysisBinding");
     assert.ok(src.includes("analysisInputHash !== binding.contentHash"), "must compare hashes");
+  });
+
+  // Preserved from the now-deleted tests/recovery-action-scoping.test.ts (its
+  // subject, tender-recovery-command-center.tsx, was itself deleted as
+  // unrendered dead code, but this specific assertion protects a real
+  // property of the still-live canonical release-state engine).
+  it("the canonical release-state engine does not import the separate lifecycle orchestrator", () => {
+    // tender-release-state.ts and tender-lifecycle-orchestrator.ts compute
+    // next-action decisions via two independent paths on purpose (see
+    // tests/tender-workspace-consolidation.test.ts) — one importing the
+    // other would silently couple them and reintroduce exactly the
+    // competing-next-action contradiction this consolidation removed.
+    const releaseStateSrc = read("lib/engine/tender-release-state.ts");
+    assert.doesNotMatch(releaseStateSrc, /tender-lifecycle-orchestrator/);
   });
 });
 

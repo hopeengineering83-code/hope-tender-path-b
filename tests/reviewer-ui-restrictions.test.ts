@@ -190,9 +190,11 @@ describe("AIAnalyzePanel — REVIEWER cannot dispatch AI Analyze", () => {
   });
 });
 
-describe("TenderRecoveryCommandCenter — REVIEWER filtering simulation", () => {
-  // Simulate the allowedActions filtering the recovery center does.
-  // When canMutate is false, only readonly actions pass through.
+describe("Recovery action dispatch — REVIEWER filtering simulation", () => {
+  // Simulate the allowedActions filtering that components/blocker-action-link.tsx
+  // (the live recovery-action dispatcher, wired into generation-action-panel.tsx)
+  // performs via isMutationAction()/canMutateTender(). When canMutate is
+  // false, only readonly actions pass through.
 
   const allActions = [
     "RUN_AI_ANALYZE",          // mutation

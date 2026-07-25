@@ -126,21 +126,12 @@ describe("F6 — submission-plan-reconciliation-panel gates mutation buttons on 
 });
 
 // ─── F7: raw ℹ replaced with InfoIcon in tender-recovery-command-center ──────
-
-describe("F7 — tender-recovery-command-center replaces raw ℹ with InfoIcon", () => {
-  it("imports InfoIcon from icons", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.match(src, /import \{[^}]* InfoIcon[^}]*\} from "\.\/icons"/);
-  });
-
-  it("does NOT contain raw ℹ in advisory warnings JSX", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    // Strip comments so the check only applies to real code.
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
-    assert.doesNotMatch(codeOnly, />ℹ/);
-    assert.match(codeOnly, /<InfoIcon className="inline h-3 w-3" \/>/);
-  });
-});
+//
+// "F7 — tender-recovery-command-center replaces raw ℹ with InfoIcon" describe
+// block removed -- components/tender-recovery-command-center.tsx was deleted
+// as unrendered dead code (nothing imports or renders it), taking its InfoIcon
+// usage with it. No other component ever used a raw ℹ character, so there is
+// nothing to redirect this to.
 
 // ─── F8: raw ℹ replaced with InfoIcon in score-breakdown-panel ────────────────
 

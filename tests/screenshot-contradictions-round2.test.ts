@@ -23,34 +23,14 @@ describe("Screenshot round 2 — no Unicode dingbats in engine-action-panel", ()
   });
 });
 
-describe("Screenshot round 2 — recovery command center error safety", () => {
-  it("does not pass raw e.message to setError", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(
-      !/setError\(e\s*instanceof\s*Error\s*\?\s*e\.message/.test(src),
-      "must not pass raw e.message to setError",
-    );
-    assert.ok(
-      !/setError\(e\.message/.test(src),
-      "must not pass raw e.message to setError",
-    );
-  });
-
-  it("lifecycle load does not throw new Error(json.error) — uses safe static message", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    // The lifecycle load function must not surface API error text.
-    // Check that the lifecycle fetch block uses a safe static message.
-    assert.ok(
-      src.includes('throw new Error("Failed to load lifecycle state")'),
-      "lifecycle load must use safe static error message",
-    );
-    // Check that the lifecycle catch block does not pass raw e.message
-    assert.ok(
-      !/setError\(e\s*instanceof\s*Error\s*\?\s*e\.message/.test(src),
-      "lifecycle catch must not pass raw e.message to setError",
-    );
-  });
-});
+// "Screenshot round 2 — recovery command center error safety" describe block
+// removed -- components/tender-recovery-command-center.tsx was deleted as
+// unrendered dead code (nothing imports or renders it). It was the only
+// component that ever fetched `/api/tenders/${tenderId}/lifecycle` directly
+// from the client; its live successor, components/next-action-panel.tsx, is
+// a server component that reads getCanonicalTenderWorkflowDecision() via
+// Prisma with no client-side fetch/setError/lifecycle-load path at all, so
+// there is nothing to redirect these two assertions to.
 
 describe("Screenshot round 2 — no raw Unicode dingbats remaining", () => {
   it("no ⚡ or ⏳ in any component (excluding comments in icons.tsx)", () => {

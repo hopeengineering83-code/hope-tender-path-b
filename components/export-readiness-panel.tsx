@@ -299,9 +299,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
     // An approval note is a real audit record of why a human accepted
     // regex-fallback output as authoritative — it must reflect this
     // reviewer's actual justification, not a canned string every approval
-    // shares (that reduces the audit trail to a checkbox, matching the
-    // required-note behavior tender-recovery-command-center.tsx already
-    // enforces for the same APPROVE_FALLBACK_WITH_NOTE action).
+    // shares (that reduces the audit trail to a checkbox).
     const note = approvalNote.trim();
     if (!note) { setError("An approval note is required."); return; }
     try {
@@ -692,8 +690,8 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                         via a second, separate synchronous/SSE-bounded POST
                         here — that path is explicitly documented in the
                         route itself as bounded by the Vercel function limit,
-                        the same class of gap fixed earlier in
-                        tender-recovery-command-center.tsx for RUN_ENGINE. */}
+                        the same class of gap fixed by generation-readiness-
+                        panel.tsx's #run-engine-action anchor for RUN_ENGINE. */}
                     <DisclosureAnchorLink href="#ai-analyze-section" className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100" title="Go to AI Analyze to re-run analysis with all available providers">
                       <RefreshIcon /> Go to Retry AI Analysis
                     </DisclosureAnchorLink>
@@ -708,9 +706,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                     </button>
                   </div>
                   {/* A real, reviewer-written justification — not a canned
-                      note — is required before approval, matching
-                      tender-recovery-command-center.tsx's required-note
-                      behavior for the same action. */}
+                      note — is required before approval. */}
                   <input
                     type="text"
                     value={approvalNote}
