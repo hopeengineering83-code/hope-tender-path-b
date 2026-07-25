@@ -24,6 +24,7 @@ export type ProposalContinuationResult =
         | "NOT_ENGINE_RUN"
         | "AUTO_CONTINUE_NOT_REQUESTED"
         | "ENGINE_NOT_SUCCEEDED"
+        | "ENGINE_OUTPUT_INVALID"
         | "ENGINE_PARTIAL"
         | "ENGINE_COMPLETED_WITH_BLOCKERS"
         | "ANALYSIS_REVISION_MISSING"
@@ -106,8 +107,10 @@ export function evaluateProposalContinuation(
     return { queued: false, reason: "ENGINE_COMPLETED_WITH_BLOCKERS" };
   }
 
+  if (!("result" in output)) return { queued: false, reason: "ENGINE_OUTPUT_INVALID" };
   const engineResult = asRecord(output.result);
   if (engineResult.partial === true) return { queued: false, reason: "ENGINE_PARTIAL" };
+  if (engineResult.partial !== false) return { queued: false, reason: "ENGINE_OUTPUT_INVALID" };
   if (hasBlockers(engineResult.blockers) || typeof engineResult.nextAction === "string") {
     return { queued: false, reason: "ENGINE_COMPLETED_WITH_BLOCKERS" };
   }
