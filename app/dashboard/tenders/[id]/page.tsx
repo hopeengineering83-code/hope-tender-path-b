@@ -177,7 +177,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
 
   return (
-    <main className="space-y-5" aria-label="Tender workflow workspace">
+    <section className="space-y-5" aria-label="Tender workflow workspace">
       <ClientEntityWarningBanner tender={{
         id: tender.id,
         reference: tender.reference,
@@ -277,6 +277,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           </Link>
         </div>
       </Disclosure>
-    </main>
+    </section>
   );
 }
