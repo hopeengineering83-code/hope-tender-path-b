@@ -23,6 +23,10 @@ function passwordField(page: Page) {
   return page.getByLabel("Password", { exact: true });
 }
 
+function loginAlert(page: Page) {
+  return page.locator("form[data-auth-form='safe-post'] [role='alert']");
+}
+
 test.describe("login security before hydration", () => {
   test.use({ javaScriptEnabled: false });
 
@@ -93,9 +97,10 @@ test.describe("hydrated login security", () => {
     await passwordField(page).fill(credentials.password);
     await page.getByRole("button", { name: "Sign In", exact: true }).click();
 
-    await expect(page.getByRole("alert")).toContainText("The email or password is incorrect.");
+    const alert = loginAlert(page);
+    await expect(alert).toContainText("The email or password is incorrect.");
     assertSecretAbsent(page.url(), [credentials.email, credentials.password]);
-    assertSecretAbsent(await page.getByRole("alert").innerText(), [credentials.email, credentials.password]);
+    assertSecretAbsent(await alert.innerText(), [credentials.email, credentials.password]);
     assertSecretAbsent(consoleText.join("\n"), [credentials.email, credentials.password]);
     for (const url of requestUrls) assertSecretAbsent(url, [credentials.email, credentials.password]);
   });
@@ -120,10 +125,11 @@ test.describe("hydrated login security", () => {
     await page.getByLabel("Email", { exact: true }).fill(credentials.email);
     await passwordField(page).fill(credentials.password);
     await page.getByRole("button", { name: "Sign In", exact: true }).click();
-    await expect(page.getByRole("alert")).toContainText("temporarily unavailable");
+    const alert = loginAlert(page);
+    await expect(alert).toContainText("temporarily unavailable");
     await page.getByRole("button", { name: "Retry now", exact: true }).click();
     await expect.poll(() => attempts).toBe(2);
-    await expect(page.getByRole("alert")).toContainText("incorrect");
+    await expect(alert).toContainText("incorrect");
     assertSecretAbsent(page.url(), [credentials.email, credentials.password]);
   });
 
