@@ -3,6 +3,7 @@ import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
 import { completeJob, failJob } from "../../../../lib/ai-jobs";
 import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
+import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
@@ -65,6 +66,7 @@ export async function POST(req: Request) {
     continuationReason?: string;
     continuationReused?: boolean;
     analysisRevision?: string;
+    generationBlockerCode?: string;
   };
   const processedJobs: WorkerJobResult[] = [];
 
@@ -158,6 +160,32 @@ export async function POST(req: Request) {
         });
       } else {
         await completeJob(claimed.id, result);
+
+        let nextJobId: string | undefined;
+        let nextJobType: string | undefined;
+        let continuationReason: string | undefined;
+        let continuationReused: boolean | undefined;
+        let analysisRevision: string | undefined;
+        let generationBlockerCode: string | undefined;
+
+        if (claimed.jobType === "ENGINE_RUN") {
+          try {
+            const continuation = await continueSuccessfulEngineToProposal(claimed.id);
+            if (continuation.queued) {
+              nextJobId = continuation.jobId;
+              nextJobType = "PROPOSAL_GENERATION";
+              continuationReused = continuation.reused;
+              analysisRevision = continuation.analysisRevision;
+            } else {
+              continuationReason = continuation.reason;
+              generationBlockerCode = continuation.blockerCode;
+            }
+          } catch (error) {
+            continuationReason = "PROPOSAL_CONTINUATION_ERROR";
+            logger.error(`[run-next] Proposal continuation failed after successful engine job ${claimed.id}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+
         processedJobs.push({
           jobId: claimed.id,
           jobType: claimed.jobType,
@@ -165,6 +193,12 @@ export async function POST(req: Request) {
           terminalStatus: "SUCCEEDED",
           resultCode: "OK",
           retryable: false,
+          nextJobId,
+          nextJobType,
+          continuationReason,
+          continuationReused,
+          analysisRevision,
+          generationBlockerCode,
         });
       }
     } catch (error) {
@@ -225,6 +259,7 @@ export async function POST(req: Request) {
     continuationReason: worst.continuationReason ?? null,
     continuationReused: worst.continuationReused ?? null,
     analysisRevision: worst.analysisRevision ?? null,
-    workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus.",
+    generationBlockerCode: worst.generationBlockerCode ?? null,
+    workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus and continuationReason.",
   });
 }
