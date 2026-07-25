@@ -88,8 +88,10 @@ describe("VLM audit fix — Export Hub ZIP locked explanation", () => {
 
   it("shows an inline blocker count and 'view checklist to resolve' link when ZIP is locked", () => {
     // The VLM audit found the "ZIP locked" button had no visible explanation.
-    // The fix adds an inline span showing the blocker count + a button that
-    // expands the checklist.
+    // The fix adds a full-width row below the buttons showing the blocker
+    // count + a button that expands the checklist. (Full-width to avoid
+    // horizontal overflow on mobile — the inline version caused 205px overflow
+    // at 390px.)
     assert.match(
       source,
       /canonicalBlockerCodes\.length[\s\S]*?blocker[\s\S]*?view checklist to resolve/,
@@ -108,6 +110,16 @@ describe("VLM audit fix — Export Hub ZIP locked explanation", () => {
     assert.match(
       source,
       /title=\{canonicalNextAction \?\? "Resolve all critical gaps to unlock the ZIP download\."\}/,
+    );
+  });
+
+  it("the blocker hint is in a full-width row (not inline with buttons) to prevent mobile overflow", () => {
+    // The hint must be in its own <div> below the button row, not inline
+    // with the buttons, so it can't push the button row past the mobile
+    // viewport width.
+    assert.match(
+      source,
+      /<\/div>\s*\{\/\* Inline blocker hint[\s\S]*?canonicalBlockerCodes\.length[\s\S]*?view checklist to resolve[\s\S]*?<\/div>/,
     );
   });
 });

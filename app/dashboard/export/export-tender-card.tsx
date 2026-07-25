@@ -73,18 +73,6 @@ export function ExportTenderCard({
               ZIP locked
             </span>
           )}
-          {!isReady && canonicalBlockerCodes.length > 0 && (
-            <span className="text-xs text-slate-500">
-              {canonicalBlockerCodes.length} blocker{canonicalBlockerCodes.length !== 1 ? "s" : ""} —{" "}
-              <button
-                type="button"
-                onClick={() => setExpanded(true)}
-                className="font-medium text-slate-700 underline hover:text-slate-900"
-              >
-                view checklist to resolve
-              </button>
-            </span>
-          )}
           <Link href={`/dashboard/tenders/${tenderId}`}
             className="rounded border px-3 py-2 text-sm text-slate-600 hover:bg-slate-50">
             Open workspace
@@ -104,6 +92,25 @@ export function ExportTenderCard({
           </button>
         </div>
       </div>
+
+      {/* Inline blocker hint — full-width row below the buttons so it
+          can't cause horizontal overflow on mobile (390px). The VLM audit
+          found the "ZIP locked" button had no visible explanation; this
+          hint shows the blocker count + a link to expand the checklist. */}
+      {!isReady && canonicalBlockerCodes.length > 0 && (
+        <div className="px-6 pb-4">
+          <p className="text-xs text-slate-500">
+            {canonicalBlockerCodes.length} blocker{canonicalBlockerCodes.length !== 1 ? "s" : ""} —{" "}
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              className="font-medium text-slate-700 underline hover:text-slate-900"
+            >
+              view checklist to resolve
+            </button>
+          </p>
+        </div>
+      )}
 
       {expanded && (
         <div className="border-t px-6 pb-6 pt-4">
