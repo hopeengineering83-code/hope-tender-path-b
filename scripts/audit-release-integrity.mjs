@@ -98,7 +98,9 @@ for (const path of directPersistentAiRoutes) {
 
 const middleware = read("middleware.ts");
 const rateGuard = read("app/api/internal/rate-guard/route.ts");
-check("large AI routes pass through signed guard", middleware.includes("ai-analyze|generate") && middleware.includes("/api/internal/rate-guard") && middleware.includes("suppliedToken === token") && middleware.includes("requestHeaders.delete(INTERNAL_GUARD_HEADER)"), "large AI handlers must not be callable without the signed persistent guard");
+// The signed-token comparison must also require a non-null derived token, so a
+// missing SESSION_SECRET can never be mistaken for a trusted internal hop.
+check("large AI routes pass through signed guard", middleware.includes("ai-analyze|generate") && middleware.includes("/api/internal/rate-guard") && middleware.includes("guardToken !== null && req.headers.get(INTERNAL_GUARD_HEADER) === guardToken") && middleware.includes("requestHeaders.delete(INTERNAL_GUARD_HEADER)"), "large AI handlers must not be callable without the signed persistent guard");
 check("AI guard authenticates and persists rate state", rateGuard.includes("await getSession()") && rateGuard.includes("await rateLimitPersistent") && rateGuard.includes('headers: { "Retry-After"'), "guard must authenticate and persistently limit before forwarding");
 check("AI guard cannot become an open proxy", rateGuard.includes("targetUrl.origin !== currentUrl.origin") && rateGuard.includes("GUARDED_ROUTE.test(targetUrl.pathname)"), "guard target must remain same-origin and allowlisted");
 check("AI guard forwards a strict header allowlist", rateGuard.includes("FORWARDED_REQUEST_HEADERS") && !rateGuard.includes("new Headers(req.headers)"), "guard must not forward arbitrary infrastructure headers");
