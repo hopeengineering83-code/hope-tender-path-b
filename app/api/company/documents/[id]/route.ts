@@ -34,8 +34,8 @@ function parseMetadata(value: string | null | undefined): Record<string, unknown
   try {
     return JSON.parse(value || "{}") as Record<string, unknown>;
   } catch (e) {
-    // Metadata parse failed — return {} so caller treats row as having no
-    // metadata. Surface the failure so corrupted metadata rows are observable.
+    // JSON parse failed — return {} so caller treats row as having no
+    // parsed payload. Surface the failure so corrupted rows are observable.
     logger.warn("[company/documents] parseMetadata failed — returning {}", {
       detail: e,
     });
