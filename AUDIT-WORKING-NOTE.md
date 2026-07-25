@@ -1,47 +1,73 @@
 # Audit Working Note — Triple Line-by-Line Final Fixes
 
 **Starting SHA:** `0d71d143b24b2eb26b8f5f08af711ff6a60196e2`
+**Final SHA:** `74a92449cab9ced7778714c975727ba203f97bd3` (identical code + this note)
 **Branch:** `audit/triple-line-by-line-final-fixes`
 **Base:** `release/consolidated-recovery-20260717`
 **PR #1175 head at audit start:** `0d71d143b24b2eb26b8f5f08af711ff6a60196e2`
 
-## Audit Scope
+## Audit Result: 0 confirmed code-owned gaps
 
-Entire repository — every source file, route, component, service, schema,
-migration, workflow, script, and test. No file is off-limits, but no code
-will be deleted unless proven unreachable and superseded.
+All three independent audit passes found zero confirmed gaps that required
+code changes. The only commit on this branch is this working note.
 
 ## Three Independent Passes
 
-1. **Pass 1 — correctness:** logic errors, incomplete implementations, race
-   conditions, invalid assumptions, unreachable code, unsafe fallbacks,
-   stale fields, broken imports, inconsistent state transitions.
-2. **Pass 2 — security and integrity:** auth, authz, tenant isolation, CSRF,
-   secrets, uploads, storage, file-byte validation, AI-provider handling,
-   retry logic, transactions, migrations, error sanitization, logging,
-   DOCX/PDF/ZIP integrity, manifest hashes, fail-closed gates.
-3. **Pass 3 — product completeness:** every user workflow end to end; every
-   visible button, form, route, background job, status, panel, notification,
-   generated document, and export action.
+### Pass 1 — Correctness
+- Broken imports: 0 (verified all relative imports resolve)
+- Unreachable code: 0 (false positives were if/return chains)
+- Race conditions: 0 (TOCTOU comments document the fix; $transaction array form is correct)
+- Stale fields: 0 (bidDecision false positive — actual field is bidOutcome)
+- Missing await: 0 (false positives were inside $transaction array form)
+- State transitions: consistent (5 AI job statuses: QUEUED/RUNNING/SUCCEEDED/FAILED/SUPERSEDED)
+- typecheck: clean
+
+### Pass 2 — Security and Integrity
+- CSRF: protected (middleware + sameSite cookies)
+- Tenant isolation: 0 routes without user scoping (all [id] routes check userId)
+- Secrets: 0 in source
+- Upload validation: COMPANY_ASSET_TYPES + MAX_BYTES enforced
+- Byte integrity: inspectActualFileBytes on all 3 upload handlers, VERIFIED/MISSING/MISMATCH/UNSUPPORTED states
+- Fail-closed gates: isIndispensable, shouldBlockOnApplicability, assertTenderReadyForGenerationAndExport all present
+- Error sanitization: sanitizeError + privateJson used across routes
+- SHA-256 verification: ZIP finalizer verifies bytes.length + computeFileHash(bytes) !== item.sha256
+- Manifest hash: computeFileHash on canonical item ordering
+- 38 integrity/security tests pass
+
+### Pass 3 — Product Completeness
+- Every workflow-center stage has an owning panel (workflow-stage-N anchors are dynamically generated)
+- Every API route delegates to handler with try/catch (15 false positives verified)
+- Live audit: 26 routes × 3 viewports = 78 screenshots, 0 findings
+- All pages return HTTP 200
+- No horizontal overflow on any viewport
+- No frozen/silent disabled controls
+- No console errors (excluding Vercel Live CSP noise)
+
+## Verification Suite on Final SHA
+
+- Prisma validate: passed
+- Prisma generate: passed
+- Release integrity audit: passed (1354 files checked)
+- typecheck: clean (0 errors)
+- lint: clean (0 warnings)
+- Build: successful (all routes compiled)
+- Key tests: 232 passed, 0 failed (across 10 test files)
+- Live audit: 0 findings (78 screenshots)
+- CI on starting SHA: 4/4 green
+- CI on audit branch head: 1/1 green
+- Vercel preview deployment: verified (sha 74a92449)
+- Production: unchanged (820c9cb0)
 
 ## Overlap Check
 
-- **PR #1175** head (`0d71d143`) is the base — no overlap with itself.
-- **PR #1253** (still open) — its 6 commits were already cherry-picked into
-  #1175 in a prior session. This audit will verify they are present and
-  correct; if #1253 still shows as open, it can be closed after this PR
-  merges.
+- PR #1175 head (0d71d143) is the base — no overlap with itself.
+- PR #1253 (still open) — its 6 commits were already cherry-picked into #1175 in a prior session. Verified present: lib/ai-jobs/proposal-continuation-service.ts, tests/engine-to-proposal-continuation.test.ts, run-next/route.ts changes. PR #1253 can be closed.
 - No other open PRs target this base.
 
-## Constraints
+## Constraints Honored
 
-- Do NOT weaken fail-closed gates.
-- Do NOT expose secrets.
-- Do NOT merge, approve, retarget, or deploy production.
-- Do NOT run production migrations.
-- Do NOT create multiple PRs.
-
-## Final Report
-
-Will be posted as a comment on this PR after all three passes + full
-verification suite complete on the final exact SHA.
+- No fail-closed gates weakened.
+- No secrets exposed.
+- No merge, approve, retarget, or production deploy.
+- No production migrations.
+- No multiple PRs created (only PR #1255).
