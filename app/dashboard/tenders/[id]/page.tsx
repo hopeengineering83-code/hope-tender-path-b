@@ -39,6 +39,10 @@ import RequirementCoveragePanel from "../../../../components/requirement-coverag
 import { TenderSourceFilesPanel } from "../../../../components/tender-source-files-panel";
 import { NextActionPanel } from "../../../../components/next-action-panel";
 import { ClientEntityWarningBanner } from "../../../../components/corrupted-metadata-banner";
+import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
+import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
+import { AIRematchButton } from "../../../../components/ai-rematch-button";
+import TenderControlsPanel from "../../../../components/tender-controls-panel";
 import { prisma as prismaClient } from "../../../../lib/prisma";
 
 function Disclosure({
@@ -201,6 +205,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           </div>
         </Disclosure>
         <TenderIntakeDetailPanel tender={tenderForUi} />
+        <Disclosure
+          title="Tender controls"
+          description="Track addenda, clarifications, questions, milestones, tasks, risks, and commercial assumptions raised over the life of this tender."
+        >
+          <TenderControlsPanel tenderId={tender.id} />
+        </Disclosure>
       </WorkflowStage>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, review analysis quality, and confirm source-traced requirements.">
@@ -214,6 +224,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         />
         <AnalysisQualityPanel tenderId={tender.id} />
         <RequirementCoveragePanel tenderId={tender.id} canMutate={canMutate} />
+        <BidStrategyPanel tenderId={tender.id} />
         <Disclosure
           title="AI diagnostics and assistance"
           description="Provider health, recovery tools, suggestions, chat, and Copilot are secondary aids—not separate workflow authorities."
@@ -228,6 +239,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
       <WorkflowStage number={3} title="Evidence and matching" description="Create and review tender-specific expert, project, and compliance evidence links.">
         <MatchingQualityPanel tenderId={tender.id} />
+        <ScoreBreakdownPanel tenderId={tender.id} />
+        {canMutate && <AIRematchButton tenderId={tender.id} />}
         <EvidenceCoveragePanel tenderId={tender.id} />
         <VaultEvidenceSearchPanel tenderId={tender.id} />
         <ComplianceHeatmapPanel tenderId={tender.id} />

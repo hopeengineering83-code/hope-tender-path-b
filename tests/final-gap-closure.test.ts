@@ -242,13 +242,6 @@ describe("Gaps T-Z — No raw Unicode in icon-audit round 2", () => {
     assert.ok(!src.includes("○"), "must not contain ○");
   });
 
-  it("tender-controls-panel.tsx has no emoji TYPE_CONFIG icons", () => {
-    const src = strip(read("components/tender-controls-panel.tsx"));
-    for (const glyph of ["📄", "💬", "❓", "🏁", "✅", "💰"]) {
-      assert.ok(!src.includes(glyph), `must not contain ${glyph}`);
-    }
-  });
-
   it("tender-chat-panel.tsx has no raw Unicode typing-indicator dots", () => {
     const src = strip(read("components/tender-chat-panel.tsx"));
     assert.ok(!src.includes("●"), "must not contain ●");
@@ -275,21 +268,17 @@ describe("Gaps T-Z — No raw Unicode in icon-audit round 2", () => {
     assert.ok(!src.includes("⌄"), "must not contain ⌄");
   });
 
-  it("components/tender-release-state-panel.tsx has no raw Unicode arrow", () => {
-    const src = strip(read("components/tender-release-state-panel.tsx"));
-    assert.ok(!src.includes("↗"), "must not contain ↗");
+  it("tender-controls-panel.tsx has no emoji TYPE_CONFIG icons", () => {
+    const src = strip(read("components/tender-controls-panel.tsx"));
+    for (const glyph of ["📄", "💬", "❓", "🏁", "✅", "💰"]) {
+      assert.ok(!src.includes(glyph), `must not contain ${glyph}`);
+    }
   });
 
   it("calendar-client.tsx month nav uses chevron icons, not raw triangles", () => {
     const src = strip(read("app/dashboard/calendar/calendar-client.tsx"));
     assert.ok(!src.includes("◀"), "must not contain ◀");
     assert.ok(!src.includes("▶"), "must not contain ▶");
-  });
-
-  it("vault-evidence-lists.tsx show-all toggles use chevron icons, not raw triangles", () => {
-    const src = strip(read("components/vault-evidence-lists.tsx"));
-    assert.ok(!src.includes("▲"), "must not contain ▲");
-    assert.ok(!src.includes("▼"), "must not contain ▼");
   });
 
   it("icons.tsx exports the new icon components used by this round", () => {

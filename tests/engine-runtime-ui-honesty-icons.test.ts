@@ -7,7 +7,8 @@
 //   GAP D: engine-action-panel checks data.partial before showing success
 //   GAP E: retired -- was pinned to the now-deleted, unreachable tender-detail.tsx;
 //          the live equivalent is covered by GAP D above.
-//   GAP G: No raw Unicode in audit-trail-list.tsx
+//   GAP G: retired -- was pinned to the now-deleted, unrendered
+//          audit-trail-list.tsx (nothing imported or rendered it).
 //   GAP H: No raw Unicode in build-version-badge.tsx
 
 import { describe, it } from "node:test";
@@ -163,26 +164,6 @@ describe("GAP D — UI (engine-action-panel) consumes partial/blockers", () => {
 });
 
 
-// ─── GAP G: No raw Unicode in audit-trail-list.tsx ───────────────────────────
-
-describe("GAP G — No raw Unicode in audit-trail-list.tsx", () => {
-  it("imports ChevronDownIcon from icons", () => {
-    const src = read("components/audit-trail-list.tsx");
-    assert.match(src, /import \{ ChevronDownIcon \} from "\.\/icons"/);
-  });
-
-  it("does NOT contain raw Unicode ▲ or ▼", () => {
-    const src = read("components/audit-trail-list.tsx");
-    assert.ok(!src.includes("▲"), "must not contain raw Unicode ▲");
-    assert.ok(!src.includes("▼"), "must not contain raw Unicode ▼");
-  });
-
-  it("uses ChevronDownIcon with rotate-180 for expanded state", () => {
-    const src = read("components/audit-trail-list.tsx");
-    assert.match(src, /ChevronDownIcon className=\{showAll \? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"\}/);
-  });
-});
-
 // ─── GAP H: No raw Unicode in build-version-badge.tsx ─────────────────────────
 
 describe("GAP H — No raw Unicode in build-version-badge.tsx", () => {
@@ -228,57 +209,10 @@ describe("GAP H — No raw Unicode in build-version-badge.tsx", () => {
   });
 });
 
-// ─── Blocker 3: Recovery Command Center handles partial engine responses ────
-
-describe("Blocker 3 — Recovery Command Center handles partial engine responses", () => {
-  it("RUN_ENGINE path checks json.partial / json.success BEFORE engineFollowUpMessage", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    const partialCheck = src.indexOf("if (json.partial === true || json.success === false)");
-    const followUpCall = src.indexOf("engineFollowUpMessage(refreshed)");
-    assert.ok(partialCheck > -1, "must check json.partial / json.success");
-    assert.ok(followUpCall > -1, "engineFollowUpMessage call must exist");
-    assert.ok(
-      partialCheck < followUpCall,
-      "partial check must come BEFORE engineFollowUpMessage so partial responses don't show 'Engine completed'",
-    );
-  });
-
-  it("partial path does NOT call engineFollowUpMessage (no 'Engine completed' on partial)", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    const partialCheck = src.indexOf("if (json.partial === true || json.success === false)");
-    // Find the return inside the partial branch (before engineFollowUpMessage).
-    const followUpCall = src.indexOf("engineFollowUpMessage(refreshed)");
-    const slice = src.slice(partialCheck, followUpCall);
-    // The partial branch must set a message that says "did NOT complete fully"
-    // and must `return` before reaching engineFollowUpMessage.
-    assert.match(slice, /Engine did NOT complete fully/);
-    assert.match(slice, /return;/);
-  });
-
-  it("partial path surfaces blockers[0], nextAction, and evidenceMatchingBlocker.code", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.match(src, /Array\.isArray\(json\.blockers\) && json\.blockers\.length > 0/);
-    assert.match(src, /String\(json\.blockers\[0\]\)/);
-    assert.match(src, /typeof json\.nextAction === "string" && json\.nextAction/);
-    assert.match(src, /json\.evidenceMatchingBlocker\?\.code/);
-  });
-
-  it("partial path default blocker code is EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.match(src, /\?\? "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED"/);
-  });
-
-  it("partial path falls back to REVIEW_MATCHING_INPUTS when nextAction is missing", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    // Slice the partial branch so the assertion is specific to the new code.
-    const partialIdx = src.indexOf("if (json.partial === true || json.success === false)");
-    const followUpIdx = src.indexOf("engineFollowUpMessage(refreshed)");
-    assert.ok(partialIdx > -1 && followUpIdx > partialIdx, "partial branch must exist");
-    const partialBranch = src.slice(partialIdx, followUpIdx);
-    // The fallback is the else branch of the nextAction ternary.
-    assert.match(partialBranch, /: "REVIEW_MATCHING_INPUTS"/);
-  });
-});
+// ─── Blocker 3: retired -- was pinned to tender-recovery-command-center.tsx,
+//     which nothing imports or renders. Its partial/blocker-handling contract
+//     is the same one GAP D above verifies on the live, rendered
+//     engine-action-panel.tsx.
 
 // ─── Required: provider fallback order unchanged ─────────────────────────────
 

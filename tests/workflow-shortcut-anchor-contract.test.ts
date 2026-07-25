@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 
 const anchors: Array<{ anchor: string; file: string }> = [
   { anchor: "tender-files", file: "components/tender-source-files-panel.tsx" },
-  { anchor: "extraction-quality", file: "components/extraction-quality-dashboard.tsx" },
+  // The id lives on the wrapping div in page.tsx, not inside the panel — the
+  // deleted extraction-quality-dashboard.tsx used to own its own id="extraction-quality"
+  // section, but the live extraction-quality-panel.tsx does not.
+  { anchor: "extraction-quality", file: "app/dashboard/tenders/[id]/page.tsx" },
   { anchor: "ai-analyze-section", file: "components/ai-analyze-panel.tsx" },
   { anchor: "requirement-coverage", file: "components/requirement-coverage-panel.tsx" },
   { anchor: "tender-edit-form", file: "app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx" },

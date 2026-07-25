@@ -9,10 +9,11 @@
 // the top 3 risks, the top 3 advantages, and a per-dimension score
 // breakdown.
 //
-// Drop into the tender workspace as a sticky right-rail card so the
-// bid team sees the verdict before clicking Generate Docs. Saves
-// 40+ person-hours per misjudged bid by surfacing structural issues
-// up-front.
+// Rendered once, in Stage 2 ("Analysis and engine") of the tender
+// workspace, right after requirement coverage is confirmed and before
+// Generate Docs — see app/dashboard/tenders/[id]/page.tsx. This is
+// read-only decision support; it does not gate, mutate, or own any
+// workflow action.
 
 import { useState, useEffect, useCallback } from "react";
 import { severityBadgeClassesCompact, severityToUISeverity } from "../lib/ui-tokens";
