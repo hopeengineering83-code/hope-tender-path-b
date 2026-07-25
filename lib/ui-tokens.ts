@@ -37,6 +37,61 @@ export function severityBadgeClasses(s: UISeverity): string {
   return `${severityBorderClass(s)} ${severityBgClass(s)} ${severityTextClass(s)}`;
 }
 
+/**
+ * Compact badge variant — no border, slightly stronger background tint.
+ *
+ * Why this exists: several panels historically used a 2-class local map like
+ * `{ HIGH: "bg-red-100 text-red-700", MEDIUM: "bg-amber-100 text-amber-700",
+ *    LOW: "bg-slate-100 text-slate-600" }` — different from the canonical
+ * 3-class `severityBadgeClasses()` (which adds `border-*-200` and uses the
+ * lighter `bg-*-50` tint).
+ *
+ * Replacing those local maps wholesale with `severityBadgeClasses()` would
+ * change the visible appearance of every badge in those panels (border added,
+ * background shade lightened). This variant produces the SAME visual output
+ * as those legacy local maps, so panels can migrate to the canonical helper
+ * without visual regression — and the canonical 8-state model (good/warning/
+ * poor/muted/stale/partial/running) is the single source of truth for which
+ * color maps to which severity.
+ *
+ * Use `severityBadgeClasses()` (border + lighter bg) for new panels with
+ * white-on-card layouts. Use `severityBadgeClassesCompact()` (no border,
+ * stronger bg) when migrating the legacy 2-class local maps.
+ */
+export function severityBadgeClassesCompact(s: UISeverity): string {
+  // Stronger bg tint (bg-*-100 vs canonical bg-*-50) + no border class
+  // — matches the legacy local SEVERITY_BADGE maps in bid-strategy-panel,
+  // evaluator-objections-panel, and tender-ai-copilot-panel exactly.
+  if (s === "good") return "bg-emerald-100 text-emerald-700";
+  if (s === "warning") return "bg-amber-100 text-amber-700";
+  if (s === "poor") return "bg-red-100 text-red-700";
+  if (s === "stale") return "bg-violet-100 text-violet-700";
+  if (s === "partial") return "bg-orange-100 text-orange-700";
+  if (s === "running") return "bg-blue-100 text-blue-700";
+  return "bg-slate-100 text-slate-600"; // muted
+}
+
+/**
+ * Map HIGH / MEDIUM / LOW severity strings to the canonical UISeverity.
+ *
+ * Several panels used local Record<HIGH|MEDIUM|LOW, string> maps that
+ * duplicated this exact mapping. Centralizing it here means a single edit
+ * changes the mapping everywhere — and lets panels use
+ * `severityBadgeClassesCompact(severityToUISeverity(...))` instead of a
+ * local SEVERITY_BADGE constant.
+ *
+ * "CRITICAL" is treated as "poor" (same red treatment as HIGH) so panels
+ * that surface CRITICAL alongside HIGH render them consistently.
+ */
+export function severityToUISeverity(severity: string): UISeverity {
+  const s = (severity ?? "").toUpperCase();
+  if (s === "HIGH" || s === "CRITICAL") return "poor";
+  if (s === "MEDIUM") return "warning";
+  if (s === "LOW") return "muted";
+  // Fall back to statusToSeverity for any other token (PASS/FAIL/READY/etc.)
+  return statusToSeverity(s);
+}
+
 /** Numeric score styling only. Never use this to enable generation or export. */
 export function scoreToSeverity(
   score: number,

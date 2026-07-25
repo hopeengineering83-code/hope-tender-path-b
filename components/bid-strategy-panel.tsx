@@ -15,6 +15,7 @@
 // up-front.
 
 import { useState, useEffect, useCallback } from "react";
+import { severityBadgeClassesCompact, severityToUISeverity } from "../lib/ui-tokens";
 
 type BidStrategy = {
   winProbability: number;
@@ -88,11 +89,8 @@ const POSTURE_LABEL: Record<BidStrategy["bidPosture"], string> = {
   DECLINE: "Decline",
 };
 
-const SEVERITY_BADGE: Record<"HIGH" | "MEDIUM" | "LOW", string> = {
-  HIGH: "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-700",
-  LOW: "bg-slate-100 text-slate-600",
-};
+// SEVERITY_BADGE migrated to lib/ui-tokens.ts::severityBadgeClassesCompact(severityToUISeverity(...)).
+// Single source of truth for severity color mapping across all panels.
 
 const DIMENSION_LABEL: Record<keyof BidStrategy["dimensionScores"], string> = {
   capabilityCoverage: "Capability coverage",
@@ -283,7 +281,7 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
                 {strategy.topRisks.map((risk, i) => (
                   <li key={i} className="rounded-lg border border-slate-100 bg-white p-2.5 text-xs">
                     <div className="flex items-start gap-2">
-                      <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[risk.severity]}`}>
+                      <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${severityBadgeClassesCompact(severityToUISeverity(risk.severity))}`}>
                         {risk.severity}
                       </span>
                       <div className="min-w-0">
