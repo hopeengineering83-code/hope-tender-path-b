@@ -47,7 +47,15 @@ export async function claimJobForCaller(options: {
       input = typeof candidate.input === "string"
         ? JSON.parse(candidate.input)
         : (candidate.input as Record<string, unknown> || {});
-    } catch {
+    } catch (e) {
+      // JSON.parse of job input failed — fall back to empty input map.
+      // Surface the failure so malformed job-input rows are visible to
+      // operators (a stuck series of these suggests a producer bug, not a
+      // one-off serialization glitch). Previously bare `catch {}`.
+      logger.warn("[job-claim-policy] failed to parse AiJob.input JSON — claiming with empty input map", {
+        detail: e,
+        jobId: candidate.id,
+      });
       input = {};
     }
 

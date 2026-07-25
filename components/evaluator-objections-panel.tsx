@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { severityBadgeClassesCompact, severityToUISeverity } from "../lib/ui-tokens";
 
 type Objection = {
   id: string;
@@ -27,11 +28,9 @@ type Summary = {
   exportBlockedByHighObjections: boolean;
 };
 
-const SEVERITY_BADGE: Record<string, string> = {
-  HIGH: "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-700",
-  LOW: "bg-slate-100 text-slate-600",
-};
+// SEVERITY_BADGE migrated to lib/ui-tokens.ts::severityBadgeClassesCompact(severityToUISeverity(...)).
+// Single source of truth for severity color mapping across all panels.
+// Unknown severity strings fall back to LOW/muted via severityToUISeverity.
 
 const STATUS_BADGE: Record<string, string> = {
   OPEN: "bg-red-100 text-red-700",
@@ -135,7 +134,7 @@ export function EvaluatorObjectionsPanel({ tenderId, canMutate = false }: { tend
             return (
               <li key={objection.id} className="rounded-xl border border-slate-100 bg-white p-3 text-xs">
                 <div className="flex flex-wrap items-start gap-2">
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[objection.severity] ?? SEVERITY_BADGE.LOW}`}>{objection.severity}</span>
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${severityBadgeClassesCompact(severityToUISeverity(objection.severity))}`}>{objection.severity}</span>
                   <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${STATUS_BADGE[objection.status] ?? STATUS_BADGE.OPEN}`}>{objection.status}</span>
                   <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">{objection.category}</span>
                   <div className="min-w-0 flex-1">
