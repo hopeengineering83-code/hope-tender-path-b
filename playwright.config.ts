@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3000";
+const baseOrigin = new URL(baseURL).origin;
 const isolatedFullAuth = process.env.E2E_FULL_AUTH === "true";
 
 // Desktop-only authenticated specs — these exercise the full app at desktop
@@ -46,6 +47,14 @@ export default defineConfig({
   globalSetup: "./e2e/global-setup.ts",
   use: {
     baseURL,
+    // Browser-context request clients do not synthesize Origin/Referer for
+    // programmatic API calls. Supply the same headers as the routed browser
+    // origin so strict CSRF is exercised rather than bypassed or falsely
+    // rejecting legitimate same-origin test mutations.
+    extraHTTPHeaders: {
+      Origin: baseOrigin,
+      Referer: `${baseOrigin}/dashboard`,
+    },
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
