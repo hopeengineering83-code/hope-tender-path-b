@@ -70,7 +70,27 @@ export async function middleware(req: NextRequest) {
   const requestId = extractRequestId(req as unknown as Request);
 
   return withRequestId(requestId, async () => {
-    if (!isAutomatedCaller(req)) {
+    const guardedAiRoute = req.method === "POST" && GUARDED_AI_ROUTE.test(req.nextUrl.pathname);
+    const guardToken = guardedAiRoute ? await deriveInternalGuardToken() : null;
+
+    /**
+     * /api/internal/rate-guard re-issues the guarded request server-side with
+     * this SESSION_SECRET-derived token. That internal hop resolves its target
+     * from `req.url`, which Next normalizes (127.0.0.1 becomes localhost) and
+     * which a reverse proxy or custom domain rewrites outright, so its Host
+     * routinely disagrees with the browser Origin it forwards. Re-running the
+     * browser CSRF check against it therefore rejected every AI Analyze and
+     * Generate Docs request whenever the two hostnames differed.
+     *
+     * Skipping the origin check here does not weaken the gate: the token is a
+     * SHA-256 of a server-only secret and cannot be produced by a cross-site
+     * caller, and the browser-facing request that triggered the rewrite was
+     * already fully CSRF-checked below before the guard ever saw it.
+     */
+    const trustedInternalGuardHop =
+      guardToken !== null && req.headers.get(INTERNAL_GUARD_HEADER) === guardToken;
+
+    if (!isAutomatedCaller(req) && !trustedInternalGuardHop) {
       const expectedOrigin = deriveRoutedRequestOrigin({
         requestUrlOrigin: req.nextUrl.origin,
         host: req.headers.get("host"),
@@ -96,9 +116,8 @@ export async function middleware(req: NextRequest) {
       }
     }
 
-    if (req.method === "POST" && GUARDED_AI_ROUTE.test(req.nextUrl.pathname)) {
-      const token = await deriveInternalGuardToken();
-      if (!token) {
+    if (guardedAiRoute) {
+      if (!guardToken) {
         return withRequestIdHeader(
           withSecurityHeaders(NextResponse.json({ error: "AI request guard is unavailable" }, { status: 503 })),
           requestId,
@@ -106,10 +125,9 @@ export async function middleware(req: NextRequest) {
       }
 
       const requestHeaders = withRequestIdDownstream(new Headers(req.headers), requestId);
-      const suppliedToken = requestHeaders.get(INTERNAL_GUARD_HEADER);
       requestHeaders.delete(INTERNAL_GUARD_HEADER);
 
-      if (suppliedToken === token) {
+      if (trustedInternalGuardHop) {
         return withRequestIdHeader(
           withSecurityHeaders(NextResponse.next({ request: { headers: requestHeaders } })),
           requestId,
