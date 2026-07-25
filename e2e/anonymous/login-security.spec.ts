@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 
 // Credentials must never be retained in Playwright traces, videos, or failure
@@ -19,7 +19,7 @@ function assertSecretAbsent(value: string, secrets: string[]) {
   for (const secret of secrets) expect(value).not.toContain(secret);
 }
 
-function passwordField(page: Parameters<typeof test>[0] extends never ? never : any) {
+function passwordField(page: Page) {
   return page.getByLabel("Password", { exact: true });
 }
 
