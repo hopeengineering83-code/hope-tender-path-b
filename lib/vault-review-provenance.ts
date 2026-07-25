@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { logger } from "../observability";
+import { logger } from "./observability";
 
 export const REVIEW_PROVENANCE_PREFIX = "vault-review-provenance:v2:";
 export const SOURCE_VERIFICATION_PROVENANCE_PREFIX = "vault-source-verification:v1:";
