@@ -76,6 +76,15 @@ describe("proposal continuation eligibility", () => {
     assert.equal(evaluateProposalContinuation(eligibleEngine()), null);
   });
 
+  it("blocks missing, malformed, or ambiguous engine output", () => {
+    assert.equal(evaluateProposalContinuation(eligibleEngine({ output: null }))?.reason, "ENGINE_OUTPUT_INVALID");
+    assert.equal(evaluateProposalContinuation(eligibleEngine({ output: "not-json" }))?.reason, "ENGINE_OUTPUT_INVALID");
+    assert.equal(evaluateProposalContinuation(eligibleEngine({ output: "{}" }))?.reason, "ENGINE_OUTPUT_INVALID");
+    assert.equal(evaluateProposalContinuation(eligibleEngine({
+      output: JSON.stringify({ result: { blockers: [], nextAction: null } }),
+    }))?.reason, "ENGINE_OUTPUT_INVALID");
+  });
+
   it("blocks partial or postcondition-blocked engine output", () => {
     assert.equal(evaluateProposalContinuation(eligibleEngine({
       output: JSON.stringify({ code: "ENGINE_COMPLETED_WITH_BLOCKERS", blockers: ["missing evidence"] }),
