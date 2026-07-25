@@ -12,6 +12,7 @@ type FakeClientOptions = {
   legalRecords?: number;
   financialRecords?: number;
   complianceRecords?: number;
+  complianceMatrixRows?: number;
   tender?: Record<string, unknown> | null;
 };
 
@@ -50,6 +51,10 @@ function fakeClient(options: FakeClientOptions): PrismaClient {
     legalRecord: { count: async () => options.legalRecords ?? 0 },
     financialRecord: { count: async () => options.financialRecords ?? 0 },
     companyComplianceRecord: { count: async () => options.complianceRecords ?? 0 },
+    // complianceMatrix model is used by getTenderGenerationReadiness() to check if
+    // any compliance matrix rows exist for mandatory requirements. Returning 0
+    // triggers the MANDATORY_EVIDENCE_NOT_ASSESSED warning.
+    complianceMatrix: { count: async () => options.complianceMatrixRows ?? 0 },
     tender: { findFirst: async () => options.tender ?? null },
   } as unknown as PrismaClient;
 }
@@ -166,4 +171,173 @@ test("tender generation readiness blocks when only unreviewed selected evidence 
   assert.equal(readiness.ready, false);
   assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_EXPERTS_UNREVIEWED"));
   assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_PROJECTS_UNREVIEWED"));
+});
+
+test("tender generation readiness passes when company, requirements, and reviewed selected evidence are present", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+    },
+  }), "user-1", "tender-1");
+  assert.ok(readiness);
+  assert.equal(readiness.ready, true);
+  assert.deepEqual(readiness.blockers, []);
+  assert.equal(readiness.counts.reviewedExpertMatches, 1);
+  assert.equal(readiness.counts.reviewedProjectMatches, 1);
+});
+
+test("tender generation readiness surfaces BEST_AVAILABLE_MATCHES_FLAGGED warning when both experts and projects are promoted below the safe floor", async () => {
+  // Force a low-confidence promotion: selected matches whose rationale is
+  // flagged "[BEST-AVAILABLE BELOW THRESHOLD]" by the selection-policy fallback.
+  // The readiness panel surfaces this as a BEST_AVAILABLE_MATCHES_FLAGGED warning
+  // so the bid team knows to manually verify each promoted match.
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }, { trustLevel: "DRAFT" }],
+    projects: [{ trustLevel: "REVIEWED" }, { trustLevel: "DRAFT" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "DRAFT", fullName: "Promoted Draft Expert" }, rationale: "[BEST-AVAILABLE BELOW THRESHOLD] auto-promoted" }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "DRAFT", name: "Promoted Draft Project" }, rationale: "[BEST-AVAILABLE BELOW THRESHOLD] auto-promoted" }],
+    },
+  }), "user-1", "tender-1");
+  assert.ok(readiness);
+  const warning = readiness.warnings.find((w) => w.code === "BEST_AVAILABLE_MATCHES_FLAGGED");
+  assert.ok(warning, `expected BEST_AVAILABLE_MATCHES_FLAGGED warning when both experts and projects were promoted below the safe floor; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+});
+
+test("tender generation readiness surfaces TENDER_REQUIRES_PDF warning when submission plan declares .pdf", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      // Override exactFileNaming to declare a PDF — this is the trigger condition.
+      exactFileNaming: JSON.stringify(["Technical-Proposal.pdf"]),
+      exactFileOrder: JSON.stringify(["Technical-Proposal.pdf"]),
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+    },
+  }), "user-1", "tender-1");
+  assert.ok(readiness);
+  const pdfWarning = readiness.warnings.find((w) => w.code === "TENDER_REQUIRES_PDF");
+  assert.ok(pdfWarning, `expected TENDER_REQUIRES_PDF warning when submission plan declares .pdf; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+});
+
+test("tender generation readiness warns EVAL_WEIGHTS_INCOMPLETE when extracted criteria weights sum outside 80-120%", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      // lib/tender-generation-readiness.ts reads from `evaluationCriteriaSourceJson`
+      // (not `evaluationCriteria`). Weights summing to 50 (outside the 80-120 range).
+      evaluationCriteriaSourceJson: JSON.stringify([
+        { criterion: "Technical", weight: 30 },
+        { criterion: "Financial", weight: 20 },
+      ]),
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+    },
+  }), "user-1", "tender-1");
+  assert.ok(readiness);
+  const w = readiness.warnings.find((w) => w.code === "EVAL_WEIGHTS_INCOMPLETE");
+  assert.ok(w, `expected EVAL_WEIGHTS_INCOMPLETE warning when weights sum to 50 (outside 80-120); got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+});
+
+test("tender generation readiness does NOT warn EVAL_WEIGHTS_INCOMPLETE when weights sum to ~100%", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      evaluationCriteriaSourceJson: JSON.stringify([
+        { criterion: "Technical", weight: 70 },
+        { criterion: "Financial", weight: 30 },
+      ]),
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+    },
+  }), "user-1", "tender-1");
+  assert.ok(readiness);
+  const w = readiness.warnings.find((w) => w.code === "EVAL_WEIGHTS_INCOMPLETE");
+  assert.equal(w, undefined, `EVAL_WEIGHTS_INCOMPLETE must NOT fire when weights sum to 100 (within 80-120 range); got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+});
+
+test("tender generation readiness warns EVAL_WEIGHTS_MISSING when evaluation methodology exists but no criteria JSON was extracted", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      // evaluationMethodology is set via goodAnalysisFields, but evaluationCriteriaSourceJson
+      // is NOT provided (no JSON.parse-able extraction). Should fire EVAL_WEIGHTS_MISSING.
+      requirements: [expertRequirement, projectRequirement],
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+    },
+  }), "user-1", "tender-1");
+  assert.ok(readiness);
+  const w = readiness.warnings.find((w) => w.code === "EVAL_WEIGHTS_MISSING");
+  assert.ok(w, `expected EVAL_WEIGHTS_MISSING warning when evaluationMethodology exists but no criteria JSON; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
+});
+
+test("tender generation readiness warns MANDATORY_EVIDENCE_NOT_ASSESSED when compliance matrix has no rows for mandatory requirements", async () => {
+  const readiness = await getTenderGenerationReadiness(fakeClient({
+    documents: [usefulDocument],
+    experts: [{ trustLevel: "REVIEWED" }],
+    projects: [{ trustLevel: "REVIEWED" }],
+    legalRecords: 0,
+    financialRecords: 0,
+    complianceRecords: 0,
+    // fakeClient now supports complianceMatrix.count — returns 0 here.
+    // The lib calls complianceMatrix.count({ where: { tenderId, requirementId: { in: mandatoryReqIds } } })
+    // and fires MANDATORY_EVIDENCE_NOT_ASSESSED when the result is exactly 0.
+    complianceMatrixRows: 0,
+    tender: {
+      id: "tender-1",
+      status: "ANALYZED",
+      ...goodAnalysisFields,
+      requirements: [expertRequirement, projectRequirement],
+      // No complianceGaps + no compliance matrix rows for mandatory requirements.
+      complianceGaps: [],
+      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
+      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+    },
+  }), "user-1", "tender-1");
+  assert.ok(readiness);
+  const w = readiness.warnings.find((w) => w.code === "MANDATORY_EVIDENCE_NOT_ASSESSED");
+  assert.ok(w, `expected MANDATORY_EVIDENCE_NOT_ASSESSED warning when no compliance matrix rows exist for mandatory requirements; got ${JSON.stringify(readiness.warnings.map((w) => w.code))}`);
 });
