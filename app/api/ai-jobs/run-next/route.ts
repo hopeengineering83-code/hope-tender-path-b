@@ -182,7 +182,10 @@ export async function POST(req: Request) {
             }
           } catch (error) {
             continuationReason = "PROPOSAL_CONTINUATION_ERROR";
-            logger.error(`[run-next] Proposal continuation failed after successful engine job ${claimed.id}: ${error instanceof Error ? error.message : String(error)}`);
+            logger.error("[run-next] Proposal continuation failed after successful engine job", {
+              jobId: claimed.id,
+              errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+            });
           }
         }
 
