@@ -43,17 +43,9 @@ describe("release-state route error handling", () => {
   });
 });
 
-describe("TenderReleaseStatePanel error handling", () => {
-  it("never renders raw error text in JSX", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(!src.includes("{error}"), "must not render the raw error state value in JSX");
-    assert.ok(!src.includes("{error.message}"), "must not render error.message in JSX");
-    assert.ok(!src.includes("{String(error)}"), "must not render String(error) in JSX");
-  });
-
-  it("shows a safe, fixed fallback message with a retry action", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(src.includes("Tender release state unavailable"), "must render a fixed safe fallback message");
-    assert.ok(src.includes("Retry"), "must offer a retry action");
-  });
-});
+// "TenderReleaseStatePanel error handling" describe block removed --
+// components/tender-release-state-panel.tsx was deleted as unrendered dead
+// code (nothing imports or renders it). The route it fetched
+// (app/api/tenders/[id]/release-state/route.ts, tested above) remains live
+// and is consumed directly by components/next-action-panel.tsx, which
+// fails safe with a silent null on error rather than a rendered error state.

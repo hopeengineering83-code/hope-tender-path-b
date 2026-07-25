@@ -20,12 +20,9 @@ describe("Integration — Lifecycle ok=true on HTTP 200", () => {
   });
 });
 
-describe("Integration — Recovery Command Center does not throw on blocked", () => {
-  it("load function only throws on HTTP non-2xx", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(!stripComments(src).includes("!json.ok"));
-  });
-});
+// "Recovery Command Center does not throw on blocked" test removed --
+// components/tender-recovery-command-center.tsx was deleted as unrendered
+// dead code (nothing imports or renders it).
 
 describe("Integration — Orchestrator stale analysis detection", () => {
   it("analysisStatus type includes stale and partial", () => {
@@ -43,13 +40,9 @@ describe("Integration — Orchestrator stale analysis detection", () => {
   });
 });
 
-describe("Integration — Recovery Command Center StatusRow stale", () => {
-  it("shows STALE when stale, not a green AI check", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(src.includes("data.analysisStatus.stale"));
-    assert.ok(src.includes("STALE — re-run required"));
-  });
-});
+// "Recovery Command Center StatusRow stale" test removed --
+// components/tender-recovery-command-center.tsx was deleted as unrendered
+// dead code (nothing imports or renders it).
 
 describe("Integration — Generation Readiness blocked on stale/compliance/PDF", () => {
   it("checks stale analysis and compliance blockers", () => {
@@ -93,11 +86,10 @@ describe("Integration — tender workspace exposes one release-state owner", () 
     assert.match(page, /Open read-only Command Center/);
   });
 
-  it("the retired release-state panel still gates BidDecisionForm if used elsewhere", () => {
-    const panel = read("components/tender-release-state-panel.tsx");
-    assert.match(panel, /canMutate = false/);
-    assert.match(panel, /\{canMutate && <BidDecisionForm tenderId=\{tenderId\} \/>\}/);
-  });
+  // "retired release-state panel still gates BidDecisionForm" test removed --
+  // components/tender-release-state-panel.tsx was deleted as unrendered dead
+  // code, and components/bid-decision-form.tsx (its exclusive consumer) is
+  // deleted alongside it as a cascading orphan.
 });
 
 describe("Integration — Duplicate blocker removed", () => {

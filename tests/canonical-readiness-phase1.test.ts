@@ -174,8 +174,9 @@ describe("migrated UI canonical rendering", () => {
 
 describe("phase 1 architectural guardrails", () => {
   it("migrated areas do not introduce a second readiness/severity authority", () => {
+    // components/tender-release-state-panel.tsx was itself later deleted as
+    // unrendered dead code (nothing imports or renders it).
     for (const file of [
-      "components/tender-release-state-panel.tsx",
       "components/generation-action-panel.tsx",
     ]) {
       const source = readFileSync(file, "utf8");

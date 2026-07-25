@@ -226,7 +226,8 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
       "app/api/tenders/[id]/generate-missing-plan-files/route.ts",
       "app/api/tenders/[id]/reconcile-docs/route.ts",
       "components/final-package-manifest-panel.tsx",
-      "components/tender-release-state-panel.tsx",
+      // components/tender-release-state-panel.tsx was deleted as unrendered
+      // dead code (nothing imports or renders it).
       "lib/engine/submission-plan-completeness.ts",
       "lib/engine/workflow/workflow-state.ts",
       "lib/canonical-tender-readiness.ts",

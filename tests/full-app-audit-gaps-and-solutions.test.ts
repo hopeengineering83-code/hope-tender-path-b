@@ -68,11 +68,10 @@ describe("H1 UI — mutation role gates remain fail-closed", () => {
     }
   });
 
-  it("retired release-state form remains gated if used on another route", () => {
-    const panel = read("components/tender-release-state-panel.tsx");
-    assert.match(panel, /canMutate = false/);
-    assert.match(panel, /\{canMutate && <BidDecisionForm tenderId=\{tenderId\} \/>\}/);
-  });
+  // "retired release-state form remains gated" test removed --
+  // components/tender-release-state-panel.tsx was deleted as unrendered dead
+  // code, and components/bid-decision-form.tsx (which it exclusively
+  // consumed) is deleted alongside it as a cascading orphan.
 });
 
 describe("M3 UI — dead EXTRACTION_NOT_READY branch removed", () => {
