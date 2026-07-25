@@ -67,10 +67,22 @@ export function ExportTenderCard({
           )}
           {!isReady && canonicalBlockerCodes.length > 0 && (
             <span
-              className="rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-400 cursor-not-allowed"
-              title={canonicalNextAction ?? "Not ready"}
+              className="rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-500 cursor-not-allowed"
+              title={canonicalNextAction ?? "Resolve all critical gaps to unlock the ZIP download."}
             >
               ZIP locked
+            </span>
+          )}
+          {!isReady && canonicalBlockerCodes.length > 0 && (
+            <span className="text-xs text-slate-500">
+              {canonicalBlockerCodes.length} blocker{canonicalBlockerCodes.length !== 1 ? "s" : ""} —{" "}
+              <button
+                type="button"
+                onClick={() => setExpanded(true)}
+                className="font-medium text-slate-700 underline hover:text-slate-900"
+              >
+                view checklist to resolve
+              </button>
             </span>
           )}
           <Link href={`/dashboard/tenders/${tenderId}`}
