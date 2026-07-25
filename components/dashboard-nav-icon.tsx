@@ -1,59 +1,28 @@
 import type { ComponentType, SVGProps } from "react";
 import type { DashboardNavIconName } from "../lib/dashboard-navigation";
 import {
-  HomeIcon,
   ListIcon,
-  ClockIcon,
-  CalendarIcon,
   DatabaseIcon,
-  TrendingUpIcon,
-  UploadIcon,
-  ClipboardCheckIcon,
-  CodeIcon,
-  ImageIcon,
-  SparklesIcon,
-  SettingsIcon,
   BrainIcon,
-  PuzzleIcon,
-  ShieldIcon,
   DocumentIcon,
-  PackageIcon,
-  BarChartIcon,
-  SearchIcon,
-  UsersIcon,
   GaugeIcon,
-  FlagIcon,
-  BellIcon,
 } from "./icons";
 
 type DashboardIconComponent = ComponentType<
   SVGProps<SVGSVGElement> & { title?: string }
 >;
 
+/**
+ * One component per sidebar destination. `satisfies Record<...>` makes this
+ * exhaustive against DashboardNavIconName, so an icon can never be added here
+ * without a destination, or referenced by a destination without existing here.
+ */
 const ICON_COMPONENTS = {
-  HomeIcon,
   ListIcon,
-  ClockIcon,
-  CalendarIcon,
   DatabaseIcon,
-  TrendingUpIcon,
-  UploadIcon,
-  ClipboardCheckIcon,
-  CodeIcon,
-  ImageIcon,
-  SparklesIcon,
-  SettingsIcon,
   BrainIcon,
-  PuzzleIcon,
-  ShieldIcon,
   DocumentIcon,
-  PackageIcon,
-  BarChartIcon,
-  SearchIcon,
-  UsersIcon,
   GaugeIcon,
-  FlagIcon,
-  BellIcon,
 } satisfies Record<DashboardNavIconName, DashboardIconComponent>;
 
 export function DashboardNavIcon({

@@ -9,12 +9,16 @@ import {
   type DashboardNavGroup,
 } from "../lib/dashboard-navigation";
 
+// Synthetic fixture for the pure active-href/containment helpers. The hrefs and
+// nesting are the subject here; the icon names are arbitrary valid values and
+// carry no meaning — real icon semantics are covered by
+// tests/semantic-icon-registry.test.ts.
 const groups: DashboardNavGroup[] = [
   {
     title: "Workspace",
     roles: null,
     links: [
-      { href: "/dashboard", label: "Overview", iconName: "HomeIcon" },
+      { href: "/dashboard", label: "Overview", iconName: "BrainIcon" },
       { href: "/dashboard/tenders", label: "Tenders", iconName: "ListIcon" },
     ],
   },
@@ -23,8 +27,8 @@ const groups: DashboardNavGroup[] = [
     roles: ["ADMIN", "PROPOSAL_MANAGER"],
     links: [
       { href: "/dashboard/company", label: "Company", iconName: "DatabaseIcon" },
-      { href: "/dashboard/company/readiness", label: "Readiness", iconName: "TrendingUpIcon" },
-      { href: "/dashboard/company/review", label: "Review", iconName: "CodeIcon" },
+      { href: "/dashboard/company/readiness", label: "Readiness", iconName: "DocumentIcon" },
+      { href: "/dashboard/company/review", label: "Review", iconName: "GaugeIcon" },
     ],
   },
 ];

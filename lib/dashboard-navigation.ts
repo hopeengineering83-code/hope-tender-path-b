@@ -1,27 +1,24 @@
+/**
+ * Icons the primary sidebar can render — exactly one per destination in
+ * DASHBOARD_NAV_GROUPS, and nothing else.
+ *
+ * This union deliberately mirrors the consolidated destination list rather
+ * than the full icon set. The route consolidation reduced the sidebar from 23
+ * destinations to 5, but this union kept all 23 names, so 18 of them were
+ * unreachable and free to be assigned to unrelated destinations without any
+ * check noticing. Keeping the union tight is what makes an icon collision a
+ * compile error instead of a visual bug.
+ *
+ * Adding a destination: add its icon here, add the component to
+ * ICON_COMPONENTS in components/dashboard-nav-icon.tsx, then run
+ * tests/semantic-icon-registry.test.ts.
+ */
 export type DashboardNavIconName =
-  | "HomeIcon"
   | "ListIcon"
-  | "ClockIcon"
-  | "CalendarIcon"
   | "DatabaseIcon"
-  | "TrendingUpIcon"
-  | "UploadIcon"
-  | "ClipboardCheckIcon"
-  | "CodeIcon"
-  | "ImageIcon"
-  | "SparklesIcon"
-  | "SettingsIcon"
   | "BrainIcon"
-  | "PuzzleIcon"
-  | "ShieldIcon"
   | "DocumentIcon"
-  | "PackageIcon"
-  | "BarChartIcon"
-  | "SearchIcon"
-  | "UsersIcon"
-  | "GaugeIcon"
-  | "FlagIcon"
-  | "BellIcon";
+  | "GaugeIcon";
 
 export type DashboardNavLink = {
   href: string;
