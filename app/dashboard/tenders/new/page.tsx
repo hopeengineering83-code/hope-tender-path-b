@@ -281,7 +281,8 @@ export default function NewTenderPage() {
               type="button"
               onClick={() => void handleUploadFirst()}
               disabled={uploading || files.length === 0}
-              className="min-h-11 rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+              title={files.length === 0 ? "Select at least one tender document to enable this action." : uploading ? "Upload in progress…" : undefined}
+              className="min-h-11 rounded-xl bg-blue-600 px-5 py-3 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
             >
               {uploadButtonLabel}
             </button>

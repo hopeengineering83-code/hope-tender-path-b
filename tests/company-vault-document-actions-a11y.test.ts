@@ -183,7 +183,10 @@ describe("Company Vault truthful guidance and reduced-motion navigation", () => 
 
 describe("Company Vault loading and upload announcements", () => {
   it("announces page, upload, and compliance loading states to assistive technology", () => {
-    assert.match(source, /role="status" aria-live="polite" className="text-sm text-slate-400 py-16 text-center">Loading Company Vault…/);
+    // Updated: the Company Vault loading state now uses a spinner + darker
+    // text (text-slate-700) for WCAG AA contrast, per VLM screenshot audit.
+    // The role="status" and aria-live="polite" are preserved.
+    assert.match(source, /role="status" aria-live="polite"[\s\S]*?Loading Company Vault…/);
     assert.match(source, /role="status" aria-live="polite" aria-label="Upload progress"/);
     assert.match(source, /role="status" aria-live="polite" className="text-sm text-slate-400">Loading compliance records…/);
   });
