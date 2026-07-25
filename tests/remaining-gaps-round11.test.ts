@@ -145,4 +145,30 @@ describe("round 11 — workflow-center N+1 batch fix", () => {
     assert.ok(src.includes("overrideFileIds"), "must build an overrideFileIds Set");
     assert.ok(src.includes("overrideFileIds.has"), "must use .has() for O(1) lookup");
   });
+
+  // Regression: the batch query filtered on `status: "ACTIVE"`, a column
+  // ExtractionQualityOverride has never had (confirmed against its migration,
+  // prisma/migrations/20260622193000_add_readiness_durable_records/migration.sql
+  // -- one row per (tenderId, tenderFileId) IS the active override; there is
+  // no status lifecycle). Every real Prisma call hit this and threw
+  // PrismaClientValidationError, so hasOverride was always silently wrong
+  // (Playwright's WebServer logs surfaced this live on a running server).
+  it("does not filter on a nonexistent `status` column", () => {
+    assert.ok(
+      !src.includes('status: "ACTIVE"'),
+      "ExtractionQualityOverride has no status column -- this always threw PrismaClientValidationError at runtime",
+    );
+  });
+
+  it("filters the batch lookup by the same staleness window as the canonical single-file check", () => {
+    assert.ok(
+      src.includes("import { EXTRACTION_OVERRIDE_MAX_AGE_MS } from \"./readiness-overrides\""),
+      "must import the canonical staleness window from readiness-overrides.ts",
+    );
+    assert.match(
+      src,
+      /overriddenAt:\s*\{\s*gte:\s*new Date\(Date\.now\(\)\s*-\s*EXTRACTION_OVERRIDE_MAX_AGE_MS\)\s*\}/,
+      "must exclude overrides older than EXTRACTION_OVERRIDE_MAX_AGE_MS, matching hasActiveExtractionOverride()",
+    );
+  });
 });

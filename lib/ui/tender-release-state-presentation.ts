@@ -1,8 +1,7 @@
 // Shared presentation helpers for the canonical Tender Release State
-// (readiness score + bid verdict). Used by both the collapsed diagnostic
-// panel (components/tender-release-state-panel.tsx) and the authoritative
-// top status card (components/next-action-panel.tsx) so the two surfaces
-// can never render different colors/labels for the same canonical value.
+// (readiness score + bid verdict). Used by the authoritative top status
+// card (components/next-action-panel.tsx) so the release-state score is
+// always colored/labeled through the one canonical mapping below.
 
 import { scoreToSeverity, type UISeverity } from "../ui-tokens";
 

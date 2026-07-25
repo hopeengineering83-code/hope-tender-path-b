@@ -105,8 +105,8 @@ const SEVERITY_RANK: Record<TenderReleaseBlockerSeverity, number> = { CRITICAL: 
 // Mapped to one dedup key (grouping only — the retained blocker keeps its
 // own original category for display) so the same real issue never renders
 // as two separate blockers here. The underlying engines are left unchanged
-// since export-readiness-panel.tsx and final-submission-control-center.tsx
-// still read their full, undeduped output directly.
+// since export-readiness-panel.tsx still reads its full, undeduped output
+// directly.
 const CATEGORY_DEDUP_KEY: Record<string, string> = {
   CLIENT_NAME_REQUIRED: "CLIENT_NAME_MISSING",
   "DOCUMENT_NOT_READY:__tender__": "NO_ACTIVE_GENERATED_DOCUMENTS",

@@ -4,14 +4,13 @@
 //   - app/api/tenders/[id]/export-readiness/route.ts
 //   - app/api/tenders/[id]/download/route.ts (final ZIP gate)
 //   - lib/engine/tender-release-state.ts (canonical Tender Release State)
-//   - components/final-submission-control-center.tsx (via the API)
 //   - components/export-readiness-panel.tsx (via the API)
 //   - app/api/admin/generated-proposals/audit/route.ts
 //
 // Why this lives here:
 //   Prior to this helper, every consumer rebuilt its own "is this tender
 //   ready?" logic from raw fields. That caused inconsistent counts across
-//   Bid Control, Export Gate, Final Submission Control Center, and the
+//   Bid Control, Export Gate, and the
 //   ZIP download route — the same tender could read "BID READY" in one
 //   place and "0 of 3 documents ready" in another. This module pulls
 //   the actual user-scoped tender, runs the existing

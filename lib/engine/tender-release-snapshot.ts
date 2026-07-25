@@ -17,6 +17,7 @@ import { isGroundedEvidence } from "./evidence-grounding";
 import { buildPageLedger, type PageLedger } from "./page-ledger";
 import { classifyTender, type TenderClassification } from "./tender-classification";
 import { buildReleaseSnapshotEligibility } from "./release-snapshot-eligibility";
+import { EXTRACTION_OVERRIDE_MAX_AGE_MS } from "./readiness-overrides";
 import {
   isDurablyReviewed,
   isDurablySourceVerified,
@@ -249,7 +250,16 @@ export async function getTenderReleaseSnapshot(
   const overrideFileIds = weakFileIds.length > 0
     ? new Set(
         (await prisma.extractionQualityOverride.findMany({
-          where: { tenderId, tenderFileId: { in: weakFileIds }, status: "ACTIVE" },
+          // ExtractionQualityOverride has no status column -- one row per
+          // (tenderId, tenderFileId) IS the active override (see the
+          // unique index in its migration and the canonical single-file
+          // check in hasActiveExtractionOverride()). "Active" here means
+          // "exists and not yet stale," matching that same helper.
+          where: {
+            tenderId,
+            tenderFileId: { in: weakFileIds },
+            overriddenAt: { gte: new Date(Date.now() - EXTRACTION_OVERRIDE_MAX_AGE_MS) },
+          },
           select: { tenderFileId: true },
           distinct: ["tenderFileId"],
         })).map((row) => row.tenderFileId),
