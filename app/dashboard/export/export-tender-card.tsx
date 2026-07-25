@@ -55,7 +55,15 @@ export function ExportTenderCard({
             {warningGaps > 0 && <span className="ml-2 text-amber-600">{warningGaps} warning{warningGaps !== 1 ? "s" : ""}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+        {/* w-full on mobile gives this row a definite width so flex-wrap can
+            actually constrain its children -- shrink-0 alone makes the
+            browser compute this container's intrinsic width as the sum of
+            all children's widths regardless of flex-wrap (wrapping only
+            affects layout once a definite width is imposed from outside),
+            so on narrow viewports the row silently overflowed instead of
+            wrapping. sm:w-auto sm:shrink-0 restores the original
+            don't-shrink-below-content behavior once there's room. */}
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
           {isReady && canonicalBlockerCodes.length === 0 && (
             <a
               href={`/api/tenders/${tenderId}/download?type=zip`}
