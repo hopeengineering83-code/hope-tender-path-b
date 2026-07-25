@@ -638,14 +638,9 @@ describe("[content-first] ocrModel column is written when OCR runs", () => {
   });
 });
 
-// ─── 19. ExtractionSnapshotPanel reads json.files (not json.reports) ───────
-describe("[content-first] ExtractionSnapshotPanel reads the actual API response shape", () => {
-  it("source: components/extraction-snapshot-panel.tsx reads json.files (with json.reports fallback)", () => {
-    const src = readFileSync(resolve("components/extraction-snapshot-panel.tsx"), "utf8");
-    // The panel must read json.files first (the actual API response shape)
-    assert.ok(/json\?\.files|json\.files/.test(src), "Panel must read json.files (the actual API response shape)");
-  });
-});
+// ─── 19. retired -- was pinned to extraction-snapshot-panel.tsx, which
+//     nothing imports or renders (superseded by tender-source-files-panel.tsx,
+//     see tests/latest-preview-extraction-engine-contradictions.test.ts).
 
 // ─── 20. Test runner picks up subdirectory tests ───────────────────────────
 describe("[content-first] test runner discovers tests in subdirectories", () => {

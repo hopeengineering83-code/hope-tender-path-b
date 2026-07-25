@@ -12,14 +12,10 @@ describe("latest preview — extraction truth has one meaning", () => {
     assert.doesNotMatch(source, /\$\{Math\.round\(file\.extractionScore\)\}% extraction/);
   });
 
-  it("snapshot diagnostics use canonical ledger or persisted aggregate coverage and hide clean duplicates", () => {
-    const source = read("components/extraction-snapshot-panel.tsx");
-    assert.match(source, /file\.pageLedger\?\.processedPages/);
-    assert.match(source, /file\.extractedPages/);
-    assert.match(source, /const issues = snapshots\.filter/);
-    assert.match(source, /if \(issues\.length === 0\) return null/);
-    assert.doesNotMatch(source, /Stored status rows/);
-  });
+  // "snapshot diagnostics" contract retired -- was pinned to
+  // extraction-snapshot-panel.tsx, which nothing imports or renders. The
+  // Coverage/quality distinction it duplicated is the sibling test above,
+  // against the live, rendered tender-source-files-panel.tsx.
 });
 
 describe("latest preview — Engine outcome is canonical and provenance-aware", () => {

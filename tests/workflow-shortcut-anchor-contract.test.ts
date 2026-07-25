@@ -37,13 +37,11 @@ describe("workflow shortcut anchor contract", () => {
     assert.match(source, /id="matching-quality"/);
   });
 
-  it("the Workflow Control Center references only contracted primary anchors", () => {
-    // TenderWorkflowActionCenter resolves its per-stage anchors from the
-    // canonical lib/tender-workflow-stage-targets.ts registry rather than an
-    // inline copy — assert against that shared source instead.
-    const source = readFileSync("lib/tender-workflow-stage-targets.ts", "utf8");
-    for (const { anchor } of anchors) {
-      assert.ok(source.includes(`#${anchor}`), `Workflow Control Center must link to #${anchor}`);
-    }
-  });
+  // "Workflow Control Center references only contracted primary anchors" test
+  // removed -- tender-workflow-action-center.tsx and its dedicated
+  // lib/tender-workflow-stage-targets.ts registry were both deleted as
+  // unrendered dead code. The live equivalent anchor-fallback mechanism
+  // (lib/tender-workflow-stages.ts, consumed by WorkflowStepLinks via
+  // NextActionPanel) is covered by the "workflow anchor targets" test in
+  // tests/final-overlap-consolidation.test.ts.
 });

@@ -65,13 +65,10 @@ describe("Dashboard panel consistency — no contradictory statuses", () => {
     );
   });
 
-  it("final-submission panel does not show 'ready' when generation is blocked", () => {
-    const src = readFileSync("components/final-submission-control-center.tsx", "utf8");
-    assert.ok(
-      src.includes("generationBlocked") || src.includes("blocked"),
-      "Final submission panel must check generation blocked state",
-    );
-  });
+  // "final-submission panel does not show 'ready' when blocked" retired --
+  // was pinned to final-submission-control-center.tsx, which nothing imports
+  // or renders (superseded by the live, rendered export-readiness-panel.tsx,
+  // which extensively checks blocked states before allowing export).
 
   it("authority-review panel uses errorCodeLabel for blocker codes (not raw enum)", () => {
     const src = readFileSync("components/authority-review-panel.tsx", "utf8");

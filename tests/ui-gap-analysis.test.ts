@@ -61,10 +61,7 @@ describe("UI gap analysis — canonical actions and disclosure-aware anchors", (
     for (const [file, pattern] of checks) assert.match(read(file), pattern);
   });
 
-  it("the retired workflow center still understands every canonical state if used in diagnostics", () => {
-    const source = read("components/tender-workflow-action-center.tsx");
-    for (const state of ["COMPLETE", "BLOCKED_BY_PRIOR_STEP", "WAITING_ON_PRIOR_STEP"]) {
-      assert.match(source, new RegExp(`case "${state}":|"${state}"`));
-    }
-  });
+  // "retired workflow center still understands every canonical state" test
+  // removed -- tender-workflow-action-center.tsx itself was deleted as
+  // unrendered dead code (nothing imports or renders it).
 });

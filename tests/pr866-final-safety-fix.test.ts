@@ -38,12 +38,14 @@ describe("PR #866 final safety — fallback wording", () => {
 
   it("NO component implies fallback/partial/regex unblocks or unlocks generation/export", () => {
     const files = [
-      "components/tender-recovery-command-center.tsx",
+      // tender-recovery-command-center.tsx and final-submission-control-center.tsx
+      // were deleted as unrendered dead code (nothing imports or renders
+      // either); export-readiness-panel.tsx below is the live successor to
+      // both and remains covered.
       "components/export-readiness-panel.tsx",
       "components/ai-analyze-recovery-panel.tsx",
       "components/ai-analyze-panel.tsx",
       "components/generation-readiness-panel.tsx",
-      "components/final-submission-control-center.tsx",
       "components/analysis-quality-panel.tsx",
     ];
     for (const f of files) {

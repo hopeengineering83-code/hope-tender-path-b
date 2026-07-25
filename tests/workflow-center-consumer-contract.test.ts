@@ -88,12 +88,9 @@ describe("workflow-center consumer contract", () => {
     assert.equal(workflowHasInProgressStage({ snapshot: { analysis: { state: "AI_SUCCEEDED" } }, stages: [] }), false);
   });
 
-  it("the retired Workflow Control Center remains internally synchronized if used in diagnostics", () => {
-    const source = readFileSync("components/tender-workflow-action-center.tsx", "utf8");
-    assert.match(source, /subscribeTenderWorkflowSync/);
-    assert.match(source, /emitTenderWorkflowSync/);
-    assert.match(source, /TENDER_WORKFLOW_STAGE_TARGETS\[stage\.stage\]/);
-  });
+  // "retired Workflow Control Center remains internally synchronized" test
+  // removed -- tender-workflow-action-center.tsx itself was deleted as
+  // unrendered dead code (nothing imports or renders it).
 
   it("the normal tender page composes five workflow stages in authority order without competing centers", () => {
     const page = readFileSync("app/dashboard/tenders/[id]/page.tsx", "utf8");
