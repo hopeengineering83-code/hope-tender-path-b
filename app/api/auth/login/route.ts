@@ -68,7 +68,13 @@ async function parseLoginRequest(req: Request): Promise<ParsedLogin> {
       email: typeof emailValue === "string" ? emailValue.trim().toLowerCase() : "",
       password: typeof passwordValue === "string" ? passwordValue : "",
     };
-  } catch {
+  } catch (e) {
+    // Login form parse failure — could indicate malformed request body or
+    // attack attempt. Surface the failure so silent form-parse failures
+    // are observable. Previously bare `catch {}`.
+    logger.warn("[auth/login] parseLoginForm failed — returning ok:false", {
+      detail: e,
+    });
     return { ok: false, nativeForm };
   }
 }

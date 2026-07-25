@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { logger } from "../observability";
 
 export const REVIEW_PROVENANCE_PREFIX = "vault-review-provenance:v2:";
 export const SOURCE_VERIFICATION_PROVENANCE_PREFIX = "vault-source-verification:v1:";
@@ -201,8 +202,14 @@ function sourceExtractionRevision(sourceDocument: Pick<ReviewSourceDocument, "me
       if (typeof metadata.reExtractedAt === "string" && metadata.reExtractedAt.trim()) {
         return `legacy-reextract:${metadata.reExtractedAt.trim()}`;
       }
-    } catch {
+    } catch (e) {
       // Legacy metadata is treated as the first extraction revision.
+      // Surface the failure so corrupted metadata rows are observable (a
+      // series of these suggests a serialization bug, not a one-off glitch).
+      // Previously bare `catch {}` — legacy metadata failures were invisible.
+      logger.warn("[vault-review-provenance] failed to parse source-document metadata — treating as first extraction revision", {
+        detail: e,
+      });
     }
   }
   return "revision:1";
@@ -430,7 +437,13 @@ function parseStoredReviewProvenance(reviewNotes: string | null | undefined): St
     return evidenceValid && new Set(fields).size === fields.length
       ? parsed as StoredReviewProvenance
       : null;
-  } catch {
+  } catch (e) {
+    // StoredReviewProvenance parse failed — return null so caller treats
+    // the row as unparseable. Surface the failure so corrupted provenance
+    // records are observable.
+    logger.warn("[vault-review-provenance] failed to parse StoredReviewProvenance — returning null", {
+      detail: e,
+    });
     return null;
   }
 }
@@ -460,7 +473,12 @@ function parseStoredSourceVerification(reviewNotes: string | null | undefined): 
     return evidenceValid && new Set(fields).size === fields.length
       ? parsed as StoredSourceVerificationProvenance
       : null;
-  } catch {
+  } catch (e) {
+    // StoredSourceVerificationProvenance parse failed — return null.
+    // Surface the failure so corrupted provenance records are observable.
+    logger.warn("[vault-review-provenance] failed to parse StoredSourceVerificationProvenance — returning null", {
+      detail: e,
+    });
     return null;
   }
 }
@@ -583,7 +601,12 @@ export function parseStoredStringList(value: unknown): string[] {
   try {
     const parsed = JSON.parse(value) as unknown;
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch {
+  } catch (e) {
+    // JSON.parse fallback for string array extraction — return [].
+    // Surface the failure so malformed stringified arrays are observable.
+    logger.warn("[vault-review-provenance] failed to parse string array — returning []", {
+      detail: e,
+    });
     return [];
   }
 }

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { prisma, prismaReady } from "../prisma";
+import { logger } from "../observability";
 
 export type AnalysisContinuationRecord = {
   id: string;
@@ -46,7 +47,13 @@ function parseInput(value: string): Record<string, unknown> {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? parsed as Record<string, unknown>
       : {};
-  } catch {
+  } catch (e) {
+    // Malformed continuation record JSON.parse — return {} so caller treats
+    // the record as having no input. Surface the failure so malformed
+    // continuation metadata is observable (a series suggests a producer bug).
+    logger.warn("[engine-continuation-service] failed to parse continuation record input — returning {}", {
+      detail: e,
+    });
     return {};
   }
 }

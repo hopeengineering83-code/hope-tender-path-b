@@ -7,6 +7,7 @@
  */
 
 import { emitTenderWorkflowSync } from "./tender-workflow-sync";
+import { logger } from "../observability";
 
 export type UploadFirstResponse = {
   success?: boolean;
@@ -109,7 +110,13 @@ export async function triggerCompanyDocumentAutoPipeline(): Promise<AutoPipeline
       status: "queued",
       message: "Company Vault source re-import completed. Draft evidence remains subject to human review.",
     };
-  } catch {
+  } catch (e) {
+    // Pipeline trigger failed — surface the failure so silent pipeline
+    // degradation is observable to operators. Previously bare `catch {}`.
+    logger.warn("[auto-pipeline] triggerCompanyDocumentAutoPipeline failed", {
+      detail: e,
+      endpoint,
+    });
     return {
       fired: false,
       endpoint,

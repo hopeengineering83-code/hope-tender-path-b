@@ -98,7 +98,10 @@ export default function NewTenderPage() {
       if (!Array.isArray(payload.results)) return { uploaded: 0, failed: batch.length };
       const uploaded = payload.results.filter((result) => result.success === true && Boolean(result.fileRecord)).length;
       return { uploaded, failed: Math.max(0, batch.length - uploaded) };
-    } catch {
+} catch (e) {
+      // Batch upload failed — surface to operator via console.
+      // Previously bare `catch {}` — silent upload failures were invisible.
+      try { console.error("[tenders/new] batch upload failed", e); } catch {}
       return { uploaded: 0, failed: batch.length };
     }
   }
