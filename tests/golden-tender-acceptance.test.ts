@@ -227,8 +227,11 @@ describe("Golden Tender Acceptance Suite", () => {
     assert.ok(src.includes("sourceFile"), "extractor must attribute to a source file");
   });
 
-  it("no contradictory UI state: release state panel shows 'Not calculated' rather than a confident score when ungrounded", () => {
-    const src = read("components/tender-release-state-panel.tsx");
+  it("no contradictory UI state: next-action panel shows 'Not calculated' rather than a confident score when ungrounded", () => {
+    // components/tender-release-state-panel.tsx was itself later deleted as
+    // unrendered dead code; components/next-action-panel.tsx is the live,
+    // rendered successor that now owns this same safeguard.
+    const src = read("components/next-action-panel.tsx");
     assert.ok(src.includes("Not calculated"), "must show Not calculated instead of a placeholder score when ungrounded");
     assert.ok(src.includes("readinessCalculable"), "must gate the score on the calculable flag");
   });

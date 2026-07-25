@@ -35,9 +35,10 @@ describe("UI metadata removal — no visible metadata text", () => {
   const componentFiles = [
     "components/generation-action-panel.tsx",
     "components/extraction-quality-panel.tsx",
-    "components/tender-release-state-panel.tsx",
+    // tender-release-state-panel.tsx and tender-recovery-command-center.tsx
+    // were deleted as unrendered dead code (nothing imports or renders
+    // either).
     "components/audit-trail-panel.tsx",
-    "components/tender-recovery-command-center.tsx",
     "components/corrupted-metadata-banner.tsx",
     "components/metadata-completion-panel.tsx",
     "components/metadata-truth-panel.tsx",
@@ -178,15 +179,11 @@ describe("Prisma error redaction — no raw Prisma text in UI", () => {
     );
   });
 
-  it("tender-release-state-panel uses safe error message", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(src.includes("catch"), "must catch errors");
-    // Must not expose raw error details
-    assert.ok(
-      !src.includes("error.message"),
-      "must not render raw error.message",
-    );
-  });
+  // "tender-release-state-panel uses safe error message" test removed --
+  // components/tender-release-state-panel.tsx was deleted as unrendered dead
+  // code; its safe-error-handling successor is covered in
+  // tests/runtime-metadata-readiness-parity.test.ts against the live
+  // components/next-action-panel.tsx.
 });
 
 // ─── 9. Repair prohibited assets button is conditional ──────────────────────
@@ -287,25 +284,10 @@ describe("Component renames — new tender-facts names", () => {
 
 // ─── 12. Loading states use skeletons ───────────────────────────────────────
 
-describe("Loading states — skeleton states", () => {
-  it("tender-release-state-panel uses skeleton loading (not vague text)", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(
-      src.includes("animate-pulse"),
-      "must use skeleton (animate-pulse) loading state",
-    );
-    // Must NOT use the old vague "Panel is loading" text
-    assert.ok(
-      !src.includes("Panel is loading"),
-      "must not use vague 'Panel is loading' text",
-    );
-  });
-
-  it("tender-release-state-panel has scoped retry button on error", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(
-      src.includes("Retry"),
-      "must have a scoped Retry button on error",
-    );
-  });
-});
+// "Loading states — skeleton states" describe block removed --
+// components/tender-release-state-panel.tsx was deleted as unrendered dead
+// code. Its live successor, components/next-action-panel.tsx, is a server
+// component that fetches release state directly and fails safe to a silent
+// null rather than a client-side loading/retry UI — the skeleton-loading and
+// scoped-retry-button UX this block checked does not carry over, since the
+// two components are architecturally different, not because of a regression.

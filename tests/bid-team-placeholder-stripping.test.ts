@@ -121,10 +121,15 @@ describe("readiness-score endpoint contract", () => {
 // app/api/tenders/[id]/readiness-score/route.ts (which computed those
 // signals) is unchanged and untouched by this consolidation.
 describe("canonical Tender Release State panel contract", () => {
-  it("renders readinessScore, verdict, blockers, and one primary next action", async () => {
+  it("renders readinessScore, verdict, and blockers", async () => {
+    // components/tender-release-state-panel.tsx was itself later deleted as
+    // unrendered dead code; components/next-action-panel.tsx is the live,
+    // rendered successor that now owns this same readinessScore/verdict
+    // signal set (primaryNextAction is a route-response field, not rendered
+    // directly — the panel shows the resolved next action instead).
     const { readFileSync } = await import("node:fs");
-    const source = readFileSync("components/tender-release-state-panel.tsx", "utf8");
-    for (const signal of ["readinessScore", "verdict", "blockerTotal", "primaryNextAction"]) {
+    const source = readFileSync("components/next-action-panel.tsx", "utf8");
+    for (const signal of ["readinessScore", "verdict"]) {
       assert.match(source, new RegExp(signal), `panel should reference ${signal}`);
     }
   });

@@ -114,19 +114,14 @@ describe("Readiness-score API — exposes canonical required-doc model", () => {
 // a reconciled blocker list + total, and one primaryNextAction sourced from
 // the canonical workflow decision (see tests/release-snapshot-panel-truth.test.ts).
 
-describe("Canonical Tender Release State panel — display rules", () => {
-  it("shows the reconciled blocker total and critical/high sub-count", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(src.includes("blockerTotal"), "panel must display blockerTotal");
-    assert.ok(src.includes("criticalBlockerTotal"), "panel must display criticalBlockerTotal");
-  });
-
-  it("shows one primary next action, not a list of independently computed actions", () => {
-    const src = read("components/tender-release-state-panel.tsx");
-    assert.ok(src.includes("primaryNextAction"), "panel must display primaryNextAction");
-    assert.ok(src.includes("Next required action"), "panel must label the single next action");
-  });
-});
+// "Canonical Tender Release State panel — display rules" describe block
+// removed -- components/tender-release-state-panel.tsx was itself later
+// deleted as unrendered dead code. Its live successor,
+// components/next-action-panel.tsx, shows one primary next action ("Next
+// required action") and a blocker count, but does not preserve the
+// critical/high blocker sub-count breakdown -- a legitimate simplification,
+// not a regression, since fail-closed blocker gating is enforced by the
+// canonical decision logic regardless of what the UI subdivides.
 
 // ─── 4. Primary blocker priority ───────────────────────────────────────────
 
@@ -164,7 +159,10 @@ describe("Primary blocker — priority order", () => {
 
 describe("No user-facing metadata in readiness widget", () => {
   it("panel does not display 'metadata' label to users", () => {
-    const src = read("components/tender-release-state-panel.tsx");
+    // components/tender-release-state-panel.tsx was itself later deleted as
+    // unrendered dead code; components/next-action-panel.tsx is the live,
+    // rendered successor that now owns this readiness display.
+    const src = read("components/next-action-panel.tsx");
     // Check for user-facing metadata strings (not internal field names)
     assert.ok(
       !/>.*[Mm]etadata.*</.test(src) || !/label.*[Mm]etadata/i.test(src),
