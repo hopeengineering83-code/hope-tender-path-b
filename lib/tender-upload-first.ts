@@ -15,6 +15,7 @@ import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter, type StorageProvider } from "./storage";
 import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
+import { enqueueAiAnalyzeServerSide } from "./engine/server-side-ai-enqueue";
 
 type StoredTenderUpload = {
   originalFileName: string;
@@ -450,6 +451,43 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
       });
     }
 
+    // ─── Server-side AI_ANALYZE enqueue ─────────────────────────────────
+    //
+    // Previously, the CLIENT fired POST /api/tenders/:id/ai-analyze after
+    // receiving this response. If the browser closed before the fetch
+    // completed, the job was never enqueued. Now the SERVER enqueues the
+    // job here — it persists in the AiJob table and will be picked up by
+    // the drain-ai-job-queue cron (runs every 5 min on main) or the next
+    // /api/ai-jobs/run-next call.
+    //
+    // The enqueue is idempotent: if a QUEUED or RUNNING AI_ANALYZE job
+    // already exists for this tender + analysis revision, it reuses it.
+    let serverEnqueueResult: Awaited<ReturnType<typeof enqueueAiAnalyzeServerSide>> = null;
+    if (meaningfulUploads.length > 0 && actor) {
+      try {
+        serverEnqueueResult = await enqueueAiAnalyzeServerSide(tenderId, actor.id, {
+          source: "upload-first",
+        });
+      } catch (enqueueError) {
+        // Don't fail the upload if the enqueue fails — the user can
+        // manually run AI Analyze from the tender detail page.
+        logger.error("[upload-first] server-side AI_ANALYZE enqueue failed", {
+          tenderId,
+          errorClass: enqueueError instanceof Error ? enqueueError.constructor.name : "UnknownError",
+        });
+      }
+    }
+
+    const nextAction = meaningfulUploads.length > 0
+      ? (serverEnqueueResult ? "AI_ANALYZE_QUEUED_SERVER_SIDE" : "RUN_AI_ANALYZE")
+      : "RUN_OCR_OR_REEXTRACT";
+
+    const message = meaningfulUploads.length > 0
+      ? serverEnqueueResult
+        ? serverEnqueueResult.message
+        : "Tender and source files were created. Open the tender and run AI Analyze."
+      : "Tender and source files were created, but OCR or re-extraction is required before AI Analyze.";
+
     return NextResponse.json({
       success: true,
       tenderId,
@@ -460,10 +498,9 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
       errors: [],
       engineSkipped: true,
       engineError: null,
-      nextAction: meaningfulUploads.length > 0 ? "RUN_AI_ANALYZE" : "RUN_OCR_OR_REEXTRACT",
-      message: meaningfulUploads.length > 0
-        ? "Tender and source files were created. Open the tender and run AI Analyze."
-        : "Tender and source files were created, but OCR or re-extraction is required before AI Analyze.",
+      nextAction,
+      serverEnqueue: serverEnqueueResult,
+      message,
       requestId,
     }, { status: 201 });
   } catch (error) {

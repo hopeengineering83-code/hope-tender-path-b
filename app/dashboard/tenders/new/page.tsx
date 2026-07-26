@@ -10,9 +10,11 @@ import {
   validateTenderPackageSelection,
 } from "../../../../lib/tender-upload-package";
 import {
-  triggerTenderUploadAutoPipeline,
   type AutoPipelineResult,
 } from "../../../../lib/ui/auto-pipeline";
+// Note: triggerTenderUploadAutoPipeline is no longer called from the client.
+// The server enqueues AI_ANALYZE in the upload-first handler — the job
+// persists and runs even if the browser is closed.
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Infrastructure", "Urban Planning", "Environmental", "Feasibility Study", "NGO/Donor-Funded", "Other"];
 const CURRENCIES = ["USD", "EUR", "GBP", "ZAR", "AUD", "CAD", "AED", "SAR", "KWD", "EGP", "ETB", "NGN"];
@@ -28,13 +30,24 @@ type UploadFirstPayload = {
   errors?: string[];
   tenderId?: string;
   /** Server advertises whether the engine was skipped (it always is for
-   * upload-first — extraction runs but AI Analyze does not). The client
-   * uses this to auto-fire the next pipeline step. */
+   * upload-first — extraction runs but AI Analyze does not). */
   engineSkipped?: boolean;
-  /** Server advertises the next pipeline action. The client auto-fires it
-   * when it is "RUN_AI_ANALYZE" — the user no longer has to click the AI
-   * Analyze button manually after upload. */
+  /** Server advertises the next pipeline action. When this is
+   * "AI_ANALYZE_QUEUED_SERVER_SIDE", the server already enqueued the job
+   * — the client does NOT need to fire it. When it is "RUN_AI_ANALYZE",
+   * the server-side enqueue failed and the user must manually run AI
+   * Analyze from the tender detail page. */
   nextAction?: string;
+  /** The server-side AI_ANALYZE enqueue result. Present when the server
+   * successfully enqueued the job (or found an existing one). The client
+   * surfaces this to the user — it does NOT fire a separate fetch. */
+  serverEnqueue?: {
+    created: boolean;
+    jobId: string;
+    analysisRevision: string;
+    status: "queued" | "already_running";
+    message: string;
+  } | null;
 };
 
 type AdditionalUploadPayload = {
@@ -158,16 +171,33 @@ export default function NewTenderPage() {
           packageIntake: "1",
           packageFailed: String(failed),
         });
-        // Auto-fire the next pipeline step (AI Analyze) so the user does
-        // not have to find and click the AI Analyze button manually after
-        // upload. The auto-pipeline module handles the workflow-sync event
-        // so the Action Center on the tender detail page refreshes to
-        // show "Queued" → "Analyzing" instead of "Ready".
+        // The SERVER now enqueues AI_ANALYZE as the final step of the
+        // upload-first handler — no client-side trigger needed. The
+        // serverEnqueue result in the response tells the UI the job was
+        // queued. The job persists in the AiJob table and will run even if
+        // the browser is closed.
         setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
-        setAutoPipeline(await triggerTenderUploadAutoPipeline(data));
+        // Surface the server-side enqueue result to the user (if present)
+        if (data.serverEnqueue) {
+          setAutoPipeline({
+            fired: data.serverEnqueue.created,
+            endpoint: null, // server-side, no client endpoint
+            status: data.serverEnqueue.status === "queued" ? "queued" : "skipped",
+            message: data.serverEnqueue.message,
+          });
+        }
         router.push(`/dashboard/tenders/${data.tenderId}?${query.toString()}`);
       } else {
-        setAutoPipeline(await triggerTenderUploadAutoPipeline(data));
+        // Single-batch upload — the server already enqueued AI_ANALYZE
+        // in the upload-first response. Just navigate to the tender.
+        if (data.serverEnqueue) {
+          setAutoPipeline({
+            fired: data.serverEnqueue.created,
+            endpoint: null,
+            status: data.serverEnqueue.status === "queued" ? "queued" : "skipped",
+            message: data.serverEnqueue.message,
+          });
+        }
         router.push(`/dashboard/tenders/${data.tenderId}`);
       }
     } catch {
