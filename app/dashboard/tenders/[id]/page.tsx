@@ -139,6 +139,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         include: { project: { select: { id: true, name: true, clientName: true, country: true, sector: true, contractValue: true, currency: true, trustLevel: true } } },
       },
       complianceMatrix: { orderBy: { createdAt: "asc" } },
+      metadataOverrides: {
+        select: { field: true, fieldState: true, overrideValue: true },
+      },
     },
   });
 

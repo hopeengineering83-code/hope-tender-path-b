@@ -62,7 +62,43 @@ type TenderDetailLike = {
   evaluationMethodology?: string | null;
   intakeSummary?: string | null;
   analysisSummary?: string | null;
+  metadataOverrides?: Array<{ field: string; fieldState: string; overrideValue: string | null }>;
 };
+
+// fieldState values that mean the user already resolved a missing/invalid
+// fact via Ignore or Edit (see FactActions below) -- the override endpoint
+// writes these to TenderMetadataOverride (and, best-effort, TenderFactsLedger)
+// but never promotes the value into the tender scalar column (the scalar is
+// the extractor's territory, the override is the user's -- see the
+// "Authority model" comment in app/api/tenders/[id]/metadata-override/route.ts).
+// Without consulting metadataOverrides here, a resolved fact kept
+// reappearing in the missing-facts list on every reload, and Ignore/Edit
+// appeared to have no effect.
+export const RESOLVED_OVERRIDE_STATES = new Set(["NOT_APPLICABLE", "IGNORED_WITH_REASON", "USER_EDITED", "USER_CONFIRMED"]);
+
+export function buildOverrideLookup(overrides: TenderDetailLike["metadataOverrides"]): Map<string, { fieldState: string; overrideValue: string | null }> {
+  const map = new Map<string, { fieldState: string; overrideValue: string | null }>();
+  for (const o of overrides ?? []) {
+    map.set(o.field, { fieldState: o.fieldState, overrideValue: o.overrideValue });
+  }
+  return map;
+}
+
+export function isResolvedByOverride(overrides: Map<string, { fieldState: string; overrideValue: string | null }>, key: string): boolean {
+  const o = overrides.get(key);
+  return !!o && RESOLVED_OVERRIDE_STATES.has(o.fieldState);
+}
+
+// Returns the user-resolved display value for a field, or null when no
+// override applies (in which case the caller's own extracted/scalar value
+// is used instead).
+export function overrideDisplayValue(overrides: Map<string, { fieldState: string; overrideValue: string | null }>, key: string): string | null {
+  const o = overrides.get(key);
+  if (!o) return null;
+  if (o.fieldState === "NOT_APPLICABLE" || o.fieldState === "IGNORED_WITH_REASON") return "Not applicable to this tender";
+  if ((o.fieldState === "USER_EDITED" || o.fieldState === "USER_CONFIRMED") && o.overrideValue) return o.overrideValue;
+  return null;
+}
 
 function formatDeadline(value: Date | string | null | undefined): string | null {
   if (!value) return null;
@@ -352,6 +388,11 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   // full extracted text) so the display and missing-facts list agree.
   const sourceDetail = deriveSourceDrivenTenderDetail(tender as Record<string, unknown>);
 
+  // A user-resolved override (Ignore / Edit) never touches the tender
+  // scalar or the source text, so it must be consulted explicitly here --
+  // see the RESOLVED_OVERRIDE_STATES comment above.
+  const overrides = buildOverrideLookup(tender.metadataOverrides);
+
   // Build effective missing-facts from the intelligence result (not from
   // scalar-only deriveSourceDrivenTenderDetail). This prevents the
   // contradiction where the panel displays a parsed deadline but the
@@ -370,28 +411,28 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
     // is null/invalid, it's genuinely missing. If the parser found it, it's
     // NOT missing — even if the scalar is null.
     const si = intelligence.submissionInstructions;
-    if (!si.deadlineDisplay && !tender.deadline) {
+    if (!si.deadlineDisplay && !tender.deadline && !isResolvedByOverride(overrides, "deadline")) {
       effectiveMissingFacts.push({ key: "deadline", label: "Submission Deadline", requiredFor: "final_submission", status: "missing" });
     }
-    if ((!si.method || si.method === "Unknown") && !tender.submissionMethod) {
+    if ((!si.method || si.method === "Unknown") && !tender.submissionMethod && !isResolvedByOverride(overrides, "submissionMethod")) {
       effectiveMissingFacts.push({ key: "submissionMethod", label: "Submission Method", requiredFor: "draft_context", status: "missing" });
     }
-    if (si.emails.length === 0 && !tender.submissionEmails && (si.method === "Email" || si.method === "Hybrid")) {
+    if (si.emails.length === 0 && !tender.submissionEmails && (si.method === "Email" || si.method === "Hybrid") && !isResolvedByOverride(overrides, "submissionEmails")) {
       effectiveMissingFacts.push({ key: "submissionEmails", label: "Submission Emails", requiredFor: "final_submission", status: "missing" });
     }
-    if (!si.physicalAddress && !tender.submissionAddress && (si.method === "Physical" || si.method === "Hybrid")) {
+    if (!si.physicalAddress && !tender.submissionAddress && (si.method === "Physical" || si.method === "Hybrid") && !isResolvedByOverride(overrides, "submissionAddress")) {
       effectiveMissingFacts.push({ key: "submissionAddress", label: "Submission Address", requiredFor: "final_submission", status: "missing" });
     }
-    if (!intelligence.clientOrProcuringEntity && !tender.clientName && !(tender as Record<string, unknown>).procuringEntityName) {
+    if (!intelligence.clientOrProcuringEntity && !tender.clientName && !(tender as Record<string, unknown>).procuringEntityName && !isResolvedByOverride(overrides, "clientName")) {
       effectiveMissingFacts.push({ key: "clientName", label: "Client / Procuring Entity", requiredFor: "draft_context", status: "missing" });
     }
-    if (!intelligence.projectTitle && !tender.title) {
-      effectiveMissingFacts.push({ key: "projectTitle", label: "Project Title", requiredFor: "draft_context", status: "missing" });
+    if (!intelligence.projectTitle && !tender.title && !isResolvedByOverride(overrides, "title")) {
+      effectiveMissingFacts.push({ key: "title", label: "Project Title", requiredFor: "draft_context", status: "missing" });
     }
   } else {
     // No intelligence — fall back to sourceDetail for missing facts
     for (const f of sourceDetail.facts) {
-      if ((f.status === "missing" || f.status === "rejected_invalid") && (f.requiredFor === "final_submission" || f.requiredFor === "draft_context")) {
+      if ((f.status === "missing" || f.status === "rejected_invalid") && (f.requiredFor === "final_submission" || f.requiredFor === "draft_context") && !isResolvedByOverride(overrides, f.key)) {
         effectiveMissingFacts.push({
           key: f.key, label: f.label, requiredFor: f.requiredFor as "final_submission" | "draft_context",
           reason: f.reason, status: f.status as "missing" | "rejected_invalid",
@@ -404,15 +445,20 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   // Override scalar-derived values with source-driven values when the source
   // text provides them. This fixes Defect 1 (extracted facts exist but are
   // not recognized) and Defect 2 (parser still depends on stored scalar columns).
+  //
+  // Each chain falls through to a resolved user override (Ignore/Edit) last,
+  // before the final NOT_EXTRACTED placeholder -- an override only fills a
+  // genuine extraction gap, it never fights a value the source already
+  // provided (see the RESOLVED_OVERRIDE_STATES comment above).
   const effectiveMethod = intelligence?.submissionInstructions.method
     && intelligence.submissionInstructions.method !== "Unknown"
     ? intelligence.submissionInstructions.method
-    : (sMethod !== NOT_EXTRACTED ? sMethod : NOT_EXTRACTED);
+    : (sMethod !== NOT_EXTRACTED ? sMethod : (overrideDisplayValue(overrides, "submissionMethod") ?? NOT_EXTRACTED));
   const effectiveDeadline = intelligence?.submissionInstructions.deadlineDisplay
-    ?? (sDeadline !== NOT_EXTRACTED ? sDeadline : NOT_EXTRACTED);
+    ?? (sDeadline !== NOT_EXTRACTED ? sDeadline : (overrideDisplayValue(overrides, "deadline") ?? NOT_EXTRACTED));
   const effectiveEmails = intelligence?.submissionInstructions.emails.length
     ? intelligence.submissionInstructions.emails.join(", ")
-    : sEmails;
+    : (sEmails !== NOT_EXTRACTED ? sEmails : (overrideDisplayValue(overrides, "submissionEmails") ?? sEmails));
   const effectiveEmailSubject = intelligence?.submissionInstructions.emailSubject ?? NOT_EXTRACTED;
   const effectiveTenderType = intelligence?.tenderType && intelligence.tenderType !== "Unknown"
     ? intelligence.tenderType
@@ -420,12 +466,13 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const effectiveServiceStreams = intelligence?.serviceStreams.length
     ? intelligence.serviceStreams.join(", ")
     : NOT_EXTRACTED;
-  const effectiveProjectTitle = intelligence?.projectTitle ?? tender.title ?? NOT_EXTRACTED;
+  const effectiveProjectTitle = intelligence?.projectTitle ?? tender.title ?? overrideDisplayValue(overrides, "title") ?? NOT_EXTRACTED;
   const effectiveClient = intelligence?.clientOrProcuringEntity
-    ?? (sClient !== NOT_EXTRACTED ? sClient : NOT_EXTRACTED);
+    ?? (sClient !== NOT_EXTRACTED ? sClient : (overrideDisplayValue(overrides, "clientName") ?? NOT_EXTRACTED));
   const effectiveFinancialProposal = intelligence
     ? (intelligence.financialProposalRequired ? "Required" : "Not required at this stage")
     : NOT_EXTRACTED;
+  const effectiveSubmissionAddress = sSubAddress !== NOT_EXTRACTED ? sSubAddress : (overrideDisplayValue(overrides, "submissionAddress") ?? sSubAddress);
 
   // Coverage = valid extracted facts / facts detected or relevant for this tender
   // Does not penalize the tender for not containing facts it never needed
@@ -543,7 +590,7 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
           <Detail label="Client contact" value={sContactName} />
           <Detail label="Contact email" value={sContactEmail} />
           <Detail label="Contact phone" value={sContactPhone} />
-          <Detail label="Submission address" value={sSubAddress} />
+          <Detail label="Submission address" value={effectiveSubmissionAddress} />
           <Detail label="Pre-bid meeting" value={sPreBid !== NOT_EXTRACTED ? sPreBid : (sPreBidLoc !== NOT_EXTRACTED ? sPreBidLoc : NOT_EXTRACTED)} />
           <Detail label="Proposal validity" value={sValidity !== NOT_EXTRACTED ? `${sValidity} days` : NOT_EXTRACTED} />
           <Detail label="Budget" value={sBudget} />
