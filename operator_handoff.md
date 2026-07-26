@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-26 15:35 UTC — Claude Code, wire CONDITIONAL_OR_UNSCHEDULED status (CLAUDE.md priority #4)
+
+- **Mode:** continuing "fix every gap end to end." Closed CLAUDE.md's own priority-list item #4: "Add `CONDITIONAL_OR_UNSCHEDULED` status to canonical resolver + wire through STATUS_BADGE maps."
+- **Finding:** `TenderFactsLedger`'s `AUTHORITY_STATE` enum (`lib/engine/tender-facts-ledger-service.ts`) and the shared `TenderFactAuthorityState` type (`lib/engine/effective-tender-context.ts`) have long included `CONDITIONAL_OR_UNSCHEDULED` for facts the source states conditionally or without a firm schedule (e.g. "site visit by arrangement", "pre-bid meeting TBD") — but `lib/engine/canonical-field-state.ts`'s resolver had no branch for it, and `components/canonical-field-status-badge.ts` had no entry (an unhandled `Record` key that would crash the badge lookup the moment any producer starts emitting this state). No extraction classifier currently produces this state, so this closes the resolver+badge half of the gap defensively.
+- **Fix:** added `CONDITIONAL_OR_UNSCHEDULED` to `CanonicalFieldStatus`/`ClientChipStatus` type unions; a ledger-authority-resolution branch; a status-determination branch (guarded by `!override` so a human edit/confirm always outranks an earlier conditional classification) that blocks FINAL export for critical fields with an explanatory reason while leaving draft work unblocked; excluded it from `effectiveValid`/`effectiveGrounded`; added an explicit `exportHardBlockReasons` disjunct; added a `canonicalToClientChip` case; added a badge entry.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175 (still draft). Commit `813a3eb5`.
+- **Tests:** new `tests/canonical-field-state-conditional-or-unscheduled.test.ts` (9 tests) — verified load-bearing via `git stash` on the two source files (6/9 fail without the fix, confirming the tests actually exercise the new code), then restored. Writing the tests surfaced and fixed a real override-precedence bug in the resolver (without `!override`, the new branch could incorrectly outrank a later `USER_EDITED` override on the same field) before it reached validation. `npx tsc --noEmit` clean; `npm run lint` clean; `npm run audit:release-integrity` 0 failures; full suite **8519/8529 pass** in default mode (10 failures are pre-existing `RUN_DB_INTEGRATION=true`-gated DB-integration tests, unrelated to this change — re-ran all 10 files against the local disposable Postgres with proper env: **79/79 pass**); production build clean.
+- **Known risk / scope note:** this only wires the resolver+badge plumbing. Nothing in the codebase yet classifies a source statement as `CONDITIONAL_OR_UNSCHEDULED` (no NLP/extraction producer exists) — building that classifier was out of scope for this pass and is a larger, unscoped feature.
+- **Next action:** continue "fix every gap end to end" — remaining open CLAUDE.md priorities include full BuildPlan/document-generator wiring for `TenderFactsLedger` (noted in Round 5 as not yet ledger-aware) and the backfill script (`scripts/backfill-tender-facts-ledger.ts`).
+- **Merge status:** DO NOT MERGE — draft, awaiting Hope's review.
+
 ### 2026-07-22 00:12 UTC — Claude Code, close remaining UX consolidation overlap + reconcile E2E drift
 
 - **Mode:** follow-up to the UX consolidation pass below, per "continue until all gaps are fixed." Two rounds of real work, not narration:
