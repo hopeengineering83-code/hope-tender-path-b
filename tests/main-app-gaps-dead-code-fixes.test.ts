@@ -342,11 +342,13 @@ describe("Bug #9b — operator_handoff.md Active Workboard updated", () => {
     }
   });
 
-  it("workboard lists current open PRs", () => {
+  it("workboard lists the current single consolidation authority", () => {
     const src = read("operator_handoff.md");
-    assert.ok(src.includes("fix/buildplan-document-generation-pipeline"), "workboard must list PR #1030");
-    assert.ok(src.includes("codex/add-route-driven-verification-tests"), "workboard must list PR #1031");
-    assert.ok(src.includes("fix/main-app-gaps-dead-code-contradictions"), "workboard must list this PR");
+    const workboard = src.match(/## Active Workboard([\s\S]*?)\n## /)?.[1] ?? "";
+    assert.ok(workboard.includes("release/consolidated-recovery-20260717"), "workboard must list the PR #1175 branch");
+    assert.ok(workboard.includes("PR #1175"), "workboard must identify PR #1175");
+    assert.ok(!workboard.includes("PR #1030"), "workboard must not retain closed PR #1030");
+    assert.ok(!workboard.includes("PR #1031"), "workboard must not retain closed PR #1031");
   });
 });
 
