@@ -33,6 +33,7 @@ export const CANONICAL_FIELD_STATUS_BADGE: Record<CanonicalFieldStatus, { label:
   SOURCE_CONFLICT:                       { label: "Source conflict — resolve",           classes: "bg-red-100 text-red-700" },
   INVALID:                               { label: "Not detected",                        classes: "bg-slate-100 text-slate-500" },
   BLOCKED:                               { label: "Final-check item",                    classes: "bg-slate-100 text-slate-600" },
+  CONDITIONAL_OR_UNSCHEDULED:            { label: "Conditional — confirm before final",  classes: "bg-orange-100 text-orange-700" },
 };
 
 // Convenience: the fallback entry (matches the prior `?? STATUS_BADGE.INVALID` pattern).
