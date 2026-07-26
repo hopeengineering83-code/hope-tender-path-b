@@ -74,6 +74,14 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-26 20:13 UTC — Codex (GPT-5.6 Sol), production-wiring correction
+
+- **Branch / PR:** local `release/consolidated-recovery-20260717`; PR metadata prepared after commit.
+- **Scope:** strict caller audit found most clean-room authority modules still had no production caller. Wired `client-output-separation` into the canonical generated-document quality gate so all twelve internal-only terms now create a HIGH `FORBIDDEN_INTERNAL_OUTPUT` issue and force `QUALITY_FAILED`; added a behavioral test using the real quality evaluator.
+- **Tests:** typecheck passed; lint passed with zero warnings; authority/output-integrity suite passed 34/34.
+- **Remaining blockers:** the other clean-room modules still require product-specific production integration rather than source-shape presence. Full PostgreSQL, authenticated Playwright, screenshots, Vercel preview/version/log/health, provider-secret configuration, and GitHub PR-state operations remain unavailable. No 100% claim is made.
+- **Production / merge status:** production unchanged; unsafe/incomplete, do not merge or deploy.
+
 ### 2026-07-26 20:08 UTC — Codex (GPT-5.6 Sol), remaining code-gap closure
 
 - **Branch / PR:** local `release/consolidated-recovery-20260717`; PR metadata prepared after commit. No remote PR mutation is possible from this checkout.

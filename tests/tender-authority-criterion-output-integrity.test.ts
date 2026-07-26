@@ -45,6 +45,16 @@ describe("tender authority, criterion, and client-output integrity", () => {
   it("defines twelve forbidden internal terms", () => assert.equal(FORBIDDEN_CLIENT_OUTPUT_TERMS.length, 12));
   for (const term of FORBIDDEN_CLIENT_OUTPUT_TERMS) it(`blocks internal client-output term '${term}'`, () => assert.equal(assertClientOutputSeparated(`Visible ${term} detail`).ok, false));
   it("allows clean client-facing prose", () => assert.deepEqual(assertClientOutputSeparated("Our delivery plan addresses every requirement."), { ok: true }));
+  it("wires client-output separation into the generated-document quality gate", async () => {
+    const { assessGeneratedDocumentQuality } = await import("../lib/engine/document-quality-gate");
+    const report = assessGeneratedDocumentQuality({
+      doc: { name: "Technical Proposal", exactFileName: "technical.docx", documentType: "TECHNICAL_PROPOSAL", format: "DOCX" },
+      visibleText: `${"Delivery methodology and implementation schedule. ".repeat(80)} Internal notes: provider fallback debug.`,
+      requirements: [],
+    });
+    assert.ok(report.issues.some((issue) => issue.code === "FORBIDDEN_INTERNAL_OUTPUT" && issue.severity === "HIGH"));
+    assert.equal(report.recommendedStatus, "QUALITY_FAILED");
+  });
 
   it("detects grounded cross-source conflicts", () => {
     const conflicts = validateCrossSourceConsistency([

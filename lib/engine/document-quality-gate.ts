@@ -31,6 +31,7 @@
 
 import { documentHygieneIssues } from "./export-readiness";
 import { looksLikeMetadataPlaceholder, METADATA_PLACEHOLDER_PATTERNS } from "./tender-metadata-completeness";
+import { findForbiddenClientOutputTerms } from "./client-output-separation";
 
 // ── Document-type gating ─────────────────────────────────────────────────────
 
@@ -249,6 +250,7 @@ export type DocumentQualityIssueCode =
   | "PLACEHOLDER"
   | "AI_TRACE"
   | "INTERNAL_TRACEABILITY"
+  | "FORBIDDEN_INTERNAL_OUTPUT"
   | "PRICING_LEAKAGE"
   | "UNSUPPORTED_CLAIM_RISK"
   | "DUPLICATED_SECTIONS"
@@ -588,6 +590,15 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
   // ── Internal traceability leakage. ───────────────────────────────────────
   if (text && INTERNAL_TRACEABILITY_PATTERNS.some((rx) => rx.test(text))) {
     issues.push({ code: "INTERNAL_TRACEABILITY", severity: "HIGH", message: "Document contains internal traceability text (source-id, evidence-id, match-score, win probability). Strip before submission." });
+  }
+
+  const forbiddenInternalTerms = text ? findForbiddenClientOutputTerms(text) : [];
+  if (forbiddenInternalTerms.length > 0) {
+    issues.push({
+      code: "FORBIDDEN_INTERNAL_OUTPUT",
+      severity: "HIGH",
+      message: `Document contains internal-only output term(s): ${forbiddenInternalTerms.join(", ")}. Remove them before client delivery.`,
+    });
   }
 
   // ── Unsupported claims. ─────────────────────────────────────────────────
