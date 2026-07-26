@@ -200,9 +200,9 @@ export type SafetyImportResult = {
   projectNamesDetected: number;
 };
 
-export async function runCompanyKnowledgeSafetyImport(client: PrismaClient, companyId: string): Promise<SafetyImportResult> {
+export async function runCompanyKnowledgeSafetyImport(client: PrismaClient, companyId: string, documentIds?: readonly string[]): Promise<SafetyImportResult> {
   const docs = await client.companyDocument.findMany({
-    where: { companyId, extractedText: { not: null } },
+    where: { companyId, ...(documentIds ? { id: { in: [...documentIds] } } : {}), extractedText: { not: null } },
     select: { id: true, originalFileName: true, category: true, extractedText: true },
   });
 

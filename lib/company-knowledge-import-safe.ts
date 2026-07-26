@@ -250,10 +250,11 @@ export type ImportResult = {
   deletedWrongDraftProjects: number;
 };
 
-export async function importCompanyKnowledgeFromDocuments(companyId: string): Promise<ImportResult> {
+export async function importCompanyKnowledgeFromDocuments(companyId: string, documentIds?: readonly string[]): Promise<ImportResult> {
   const docs = await prisma.companyDocument.findMany({
     where: {
       companyId,
+      ...(documentIds ? { id: { in: [...documentIds] } } : {}),
       extractedText: { not: null },
       // SECURITY (GAP-R2C-4): Exclude PENDING_DELETE documents so reimport
       // doesn't resurrect deleted documents' experts/projects.

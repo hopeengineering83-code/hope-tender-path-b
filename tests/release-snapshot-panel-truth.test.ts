@@ -100,6 +100,29 @@ describe("Spec Test 5 — Tender Health AI Analysis stale", () => {
     assert.ok(src.includes("analysisStale ? 0"), "must score 0 when stale");
     assert.ok(src.includes("Stale — re-run required"), "must show stale detail");
   });
+
+  it("does not trust requirement scoring derived from stale analysis", () => {
+    const src = read("components/tender-health-score-panel.tsx");
+    assert.match(
+      src,
+      /const analysisIsTrusted = !analysisStale/,
+      "stale analysis must also invalidate its downstream Requirements dimension",
+    );
+  });
+});
+
+describe("Spec Test 5b — Tender Health extraction page truth", () => {
+  it("fails extraction scoring when page coverage is unknown, failed, or incomplete", () => {
+    const src = read("components/tender-health-score-panel.tsx");
+    assert.ok(src.includes("pageCoverageIncomplete"), "must derive page-level coverage state");
+    assert.ok(src.includes("!totalPagesKnown"), "unknown total pages must not pass");
+    assert.ok(src.includes("(f.failedPages ?? 0) > 0"), "failed pages must not pass");
+    assert.ok(src.includes("coveredPages < f.totalPages!"), "incomplete page coverage must not pass");
+    assert.ok(
+      src.includes("anyCorrupted || hasIncompletePageCoverage ? 0"),
+      "untrusted page coverage must zero the extraction dimension",
+    );
+  });
 });
 
 // ─── 6. Tender Health Compliance dimension fails when compliance rows = 0 ────
@@ -110,6 +133,20 @@ describe("Spec Test 6 — Tender Health Compliance fails with 0 rows", () => {
     assert.ok(src.includes("mandatoryComplianceRowsCount"), "must accept mandatoryComplianceRowsCount");
     assert.ok(src.includes("hasNoComplianceRows"), "must compute hasNoComplianceRows");
     assert.ok(src.includes("No compliance matrix rows"), "must show no-rows detail");
+  });
+});
+
+describe("Spec Test 6b — Tender Health Documents requires confirmed plan", () => {
+  it("does not score fallback-derived package rows as document-ready", () => {
+    const src = read("components/tender-health-score-panel.tsx");
+    assert.ok(
+      src.includes("const docScore = !hasPlan || requiredDocs.length === 0 ? 0"),
+      "document score must be zero without a confirmed plan",
+    );
+    assert.ok(
+      src.includes('const docDetail = !hasPlan ? "Confirmed submission plan required"'),
+      "document detail must explain the confirmed-plan blocker",
+    );
   });
 });
 

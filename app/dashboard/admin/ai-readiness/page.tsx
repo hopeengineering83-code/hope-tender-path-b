@@ -3,6 +3,7 @@ import { getSession } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getAIEnvironmentReadiness } from "../../../../lib/ai-environment-readiness";
 import { ArrowRightIcon } from "../../../../components/icons";
+import { getCapabilityReadiness } from "../../../../lib/engine/capability-readiness";
 
 function Pill({ ok }: { ok: boolean }) {
   return ok
@@ -19,6 +20,7 @@ export default async function AIReadinessPage() {
   if (!user || user.role !== "ADMIN") redirect("/dashboard");
 
   const report = getAIEnvironmentReadiness();
+  const capabilities = getCapabilityReadiness();
 
   return (
     <div className="space-y-6">
@@ -29,6 +31,22 @@ export default async function AIReadinessPage() {
           Checks whether Vercel environment variables required for extraction, analysis, scoring, proposal generation, OCR, database, and session security are available to the running app. Secret values are never displayed.
         </p>
       </div>
+
+      <section className="rounded-2xl border bg-white p-5 shadow-sm">
+        <h2 className="font-semibold text-slate-900">Capability readiness</h2>
+        <p className="mt-1 text-sm text-slate-500">Each runtime capability is evaluated independently. General AI readiness does not imply OCR, storage, database, or worker readiness.</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {capabilities.map((item) => (
+            <article key={item.capability} className="min-w-0 rounded-xl border p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="break-words font-mono text-sm font-semibold text-slate-900">{item.capability}</h3>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${item.status === "READY" ? "bg-green-100 text-green-700" : item.status === "DEGRADED" ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-700"}`}>{item.status}</span>
+              </div>
+              {item.correctiveAction && <p className="mt-2 text-xs text-slate-600">{item.correctiveAction}</p>}
+            </article>
+          ))}
+        </div>
+      </section>
 
       <div className={`rounded-2xl border p-5 ${report.ready ? "border-green-200 bg-green-50" : "border-red-200 bg-red-50"}`}>
         <h2 className="font-semibold text-slate-900">Runtime status: {report.ready ? "ready" : "blocked"}</h2>

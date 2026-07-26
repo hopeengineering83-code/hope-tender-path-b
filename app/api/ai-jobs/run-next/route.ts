@@ -4,9 +4,11 @@ import { completeJob, failJob } from "../../../../lib/ai-jobs";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
-import { prismaReady } from "../../../../lib/prisma";
+import { prisma, prismaReady } from "../../../../lib/prisma";
 import { recordRetryStateForJob, findJobsDueForRetry, rearmJobForRetry } from "../../../../lib/ai-analyze/retry-service";
 import { restoreHealthFromDbBounded } from "../../../../lib/ai-provider-health-db";
+import { classifyStageRetry, isDurableRetryJobType } from "../../../../lib/engine/stage-retry-policy";
+import { recordSafeStageEvent } from "../../../../lib/engine/stage-observability";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -109,6 +111,8 @@ export async function POST(req: Request) {
     }
 
     try {
+      const stageStartedAt = Date.now();
+      const jobFacts = await prisma.aiJob.findUnique({ where: { id: claimed.id }, select: { createdAt: true, retries: true, analysisInputHash: true } });
       const result = await handler({
         jobId: claimed.id,
         userId: claimed.userId,
@@ -147,6 +151,14 @@ export async function POST(req: Request) {
         });
       } else {
         await completeJob(claimed.id, result);
+        recordSafeStageEvent({
+          jobType: claimed.jobType, jobId: claimed.id, packageRevision: null,
+          sourceRevision: jobFacts?.analysisInputHash ?? null, stage: "complete",
+          durationMs: Date.now() - stageStartedAt,
+          queueAgeMs: jobFacts ? Math.max(0, stageStartedAt - jobFacts.createdAt.getTime()) : 0,
+          retryCount: jobFacts?.retries ?? 0, providerClass: null, modelClass: null,
+          blockerCode: null, artifactIntegrityStatus: null,
+        });
         processedJobs.push({
           jobId: claimed.id,
           jobType: claimed.jobType,
@@ -159,8 +171,22 @@ export async function POST(req: Request) {
     } catch (error) {
       const correlationId = require("crypto").randomUUID().slice(0, 8);
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
-      await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId})`);
+      // Privacy boundary: the raw error may contain provider/database detail,
+      // storage paths, or request fragments. Classify it locally but emit only
+      // the correlation id and stable blocker code publicly/in logs.
+      const job = await prisma.aiJob.findUnique({ where: { id: claimed.id }, select: { retries: true } });
+      const retry = isDurableRetryJobType(claimed.jobType)
+        ? classifyStageRetry(message, job?.retries ?? 0)
+        : { retryable: false, blockerCode: "JOB_EXECUTION_FAILED", delayMs: null };
+      console.error(`[run-next] Job execution failed correlationId=${correlationId} jobType=${claimed.jobType} blockerCode=${retry.blockerCode}`);
+      if (retry.retryable && retry.delayMs !== null) {
+        await prisma.aiJob.update({
+          where: { id: claimed.id },
+          data: { status: "QUEUED", retries: { increment: 1 }, nextAttemptAt: new Date(Date.now() + retry.delayMs), startedAt: null, errorMessage: `TRANSIENT_STAGE_FAILURE (ref: ${correlationId})` },
+        });
+      } else {
+        await failJob(claimed.id, `${retry.blockerCode} (ref: ${correlationId})`);
+      }
       processedJobs.push({
         jobId: claimed.id,
         jobType: claimed.jobType,
@@ -168,11 +194,12 @@ export async function POST(req: Request) {
         terminalStatus: "FAILED",
         resultCode: "JOB_EXECUTION_FAILED",
         correlationId,
-        retryable: true,
+        retryable: retry.retryable,
+        retryScheduled: retry.retryable,
       });
     }
 
-    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE"].includes(claimed.jobType)) break;
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "EXTRACT_TEXT", "VAULT_INGEST", "AI_ANALYZE"].includes(claimed.jobType)) break;
   }
 
   if (processedJobs.length === 0) {

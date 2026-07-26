@@ -50,7 +50,10 @@ export type JobType =
   // extractedText + totalPages + extractionScore + extractionMethod, and runs
   // the candidate pipeline so the canonical resolver can ground the metadata.
   // Input: { tenderFileId: string }.
-  | "EXTRACT_TEXT";
+  | "EXTRACT_TEXT"
+  // Per-document Company Vault ingestion. Input is scoped to one immutable
+  // package of CompanyDocument ids; it must never scan the whole vault.
+  | "VAULT_INGEST";
 
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" | "CANCELED";
 
@@ -85,6 +88,7 @@ export async function claimNextJob(opts: { jobType?: JobType }): Promise<{ id: s
     const candidate = await tx.aiJob.findFirst({
       where: {
         status: "QUEUED",
+        OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
         ...(opts.jobType ? { jobType: opts.jobType } : {}),
       },
       orderBy: { createdAt: "asc" },

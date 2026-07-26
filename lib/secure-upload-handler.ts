@@ -6,8 +6,6 @@ import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMean
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
 import { logAction } from "./audit";
 import { ensureCompanyForUser } from "./company-workspace";
-import { importCompanyKnowledgeFromDocuments } from "./company-knowledge-import-safe";
-import { runCompanyKnowledgeSafetyImport } from "./company-knowledge-safety-import";
 import { rateLimitPersistent, UPLOAD_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter } from "./storage";
@@ -65,6 +63,7 @@ export async function handleSecureUpload(req: Request) {
   const storage = getStorageAdapter();
   const results: Array<Record<string, unknown>> = [];
   let companyFilesCreated = 0;
+  const companyDocumentIds: string[] = [];
   let tenderFilesCreated = 0;
 
   for (const file of files) {
@@ -170,6 +169,7 @@ export async function handleSecureUpload(req: Request) {
           select: { id: true, companyId: true, fileName: true, originalFileName: true, mimeType: true, size: true, category: true, integrityStatus: true, contentSha256: true, contentByteLength: true, detectedFormat: true, createdAt: true },
         });
         companyFilesCreated += 1;
+        companyDocumentIds.push(record.id);
         results.push({ success: true, scope: "company", docRecord: record, extraction, storageProvider: stored.provider });
         await logAction({
           userId: actor.id,
@@ -198,17 +198,12 @@ export async function handleSecureUpload(req: Request) {
 
   let companyImport: Record<string, unknown> | null = null;
   if (!tenderId && companyFilesCreated > 0) {
-    try {
-      const primary = await importCompanyKnowledgeFromDocuments(company.id);
-      const aiSucceeded = primary.aiUsed && primary.aiFailures === 0;
-      const safety = aiSucceeded
-        ? { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 }
-        : await runCompanyKnowledgeSafetyImport(prisma, company.id);
-      companyImport = { ...primary, safetyImport: safety } as unknown as Record<string, unknown>;
-    } catch (error) {
-      logger.error(`[secure-upload] requestId=${requestId} company import failed: ${sanitizeError(error)}`);
-      companyImport = { status: "FAILED", error: "Company knowledge import failed", requestId };
-    }
+    const job = await enqueueJob({
+      userId: actor.id,
+      jobType: "VAULT_INGEST",
+      input: { companyId: company.id, documentIds: companyDocumentIds, requestId },
+    });
+    companyImport = { status: "QUEUED", jobId: job.id, documentCount: companyDocumentIds.length };
   }
 
   const uploaded = results.filter((item) => item.success === true).length;
