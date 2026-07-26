@@ -41,13 +41,21 @@ export default function NewTenderPage() {
       const form = new FormData();
       for (const file of files) form.append("file", file);
       const res = await fetch("/api/tenders/upload-first", { method: "POST", body: form });
-      const data = await res.json().catch(() => ({})) as { error?: string; errors?: string[]; tenderId?: string };
+      const data = await res.json().catch(() => ({})) as {
+        error?: string;
+        errors?: string[];
+        tenderId?: string;
+        serverEnqueue?: { status: "ENQUEUED" | "ALREADY_ACTIVE" | "SKIPPED_NO_MEANINGFUL_TEXT"; jobId: string | null };
+      };
       if (!res.ok) {
         const details = Array.isArray(data.errors) && data.errors.length > 0 ? ` Details: ${data.errors.join("; ")}` : "";
         setUploadError(`${data.error || "Upload-first tender intake failed"}${details}`.trim());
         return;
       }
-      router.push(`/dashboard/tenders/${data.tenderId}`);
+      // AI_ANALYZE is durably enqueued by the upload-first server handler.
+      // Do not start background work from this browser: navigation/window
+      // closure must never determine whether the analysis job exists.
+      router.push(`/dashboard/tenders/${data.tenderId}?analysisEnqueue=${data.serverEnqueue?.status ?? "UNKNOWN"}`);
     } catch {
       setUploadError("Network error. Please try again.");
     } finally {

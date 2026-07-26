@@ -44,6 +44,8 @@ import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extra
 import { inferTenderMetadata } from "./engine/tender-metadata";
 import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
 import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
+import { importCompanyKnowledgeFromDocuments } from "./company-knowledge-import-safe";
+import { runCompanyKnowledgeSafetyImport } from "./company-knowledge-safety-import";
 
 export interface JobContext {
   jobId: string;
@@ -143,6 +145,28 @@ function safeJsonArray(value: string | null | undefined): string[] {
 }
 
 const handlers: Partial<Record<JobType, JobHandler>> = {
+  VAULT_INGEST: async (ctx) => {
+    const companyId = typeof ctx.input.companyId === "string" ? ctx.input.companyId : null;
+    const documentIds = Array.isArray(ctx.input.documentIds)
+      ? ctx.input.documentIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+      : [];
+    if (!companyId || documentIds.length === 0) throw new Error("VAULT_INGEST_INVALID_PACKAGE");
+
+    const company = await prisma.company.findFirst({
+      where: { id: companyId, userId: ctx.userId },
+      select: { id: true },
+    });
+    if (!company) throw new Error("VAULT_INGEST_COMPANY_NOT_FOUND_OR_FORBIDDEN");
+
+    await recordStep(ctx.jobId, { stepName: "vault.load", message: "Loading selected vault package", status: "RUNNING" });
+    const primary = await importCompanyKnowledgeFromDocuments(companyId, documentIds);
+    const aiSucceeded = primary.aiUsed && primary.aiFailures === 0;
+    const safety = aiSucceeded
+      ? { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 }
+      : await runCompanyKnowledgeSafetyImport(prisma, companyId, documentIds);
+    await recordStep(ctx.jobId, { stepName: "vault.complete", message: "Selected vault package ingestion completed", status: "SUCCEEDED" });
+    return { companyId, documentIds, primary, safetyImport: safety } as unknown as Record<string, unknown>;
+  },
   // ─── ENGINE_RUN — runs the full tender engine in the background ──────
   // The engine pipeline (analyze → match → AI rematch → write) can
   // exceed 60s on Vercel Hobby for large tenders. Wrapping it in a job

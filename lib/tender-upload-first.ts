@@ -15,6 +15,7 @@ import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter, type StorageProvider } from "./storage";
 import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
+import { enqueueAiAnalyzeServerSide } from "./engine/server-side-ai-enqueue";
 
 type StoredTenderUpload = {
   originalFileName: string;
@@ -451,6 +452,13 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
       });
     }
 
+    const serverEnqueue = await enqueueAiAnalyzeServerSide(prisma, {
+      tenderId,
+      userId: actor.id,
+      hasMeaningfulText: meaningfulUploads.length > 0,
+      sourceRevision: null,
+    });
+
     return NextResponse.json({
       success: true,
       tenderId,
@@ -466,6 +474,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         ? "Tender and source files were created. Open the tender and run AI Analyze."
         : "Tender and source files were created, but OCR or re-extraction is required before AI Analyze.",
       requestId,
+      serverEnqueue,
     }, { status: 201 });
   } catch (error) {
     if (storedUploads.length > 0) await cleanupStoredUploads(storedUploads);

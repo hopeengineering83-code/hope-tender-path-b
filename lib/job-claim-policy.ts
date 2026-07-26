@@ -19,7 +19,7 @@ export async function claimJobForCaller(options: {
   await prismaReady;
   if (!options.global && !options.userId) return null;
 
-  const conditions: Prisma.Sql[] = [Prisma.sql`"status" = 'QUEUED'`];
+  const conditions: Prisma.Sql[] = [Prisma.sql`"status" = 'QUEUED'`, Prisma.sql`("nextAttemptAt" IS NULL OR "nextAttemptAt" <= NOW())`];
   if (!options.global && options.userId) conditions.push(Prisma.sql`"userId" = ${options.userId}`);
   if (options.jobType) conditions.push(Prisma.sql`"jobType" = ${options.jobType}`);
   const whereClause = Prisma.join(conditions, " AND ");
