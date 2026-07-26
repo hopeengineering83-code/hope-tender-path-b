@@ -7,6 +7,10 @@
  */
 
 import { emitTenderWorkflowSync } from "./tender-workflow-sync";
+import { logger } from "../observability";
+
+// The server is the single orchestration owner. Browser code may wake a
+// durable server-created job, but it cannot create AI Analyze work.
 
 export type UploadFirstResponse = {
   success?: boolean;
@@ -87,4 +91,48 @@ export async function triggerTenderUploadAutoPipeline(
       ? `Upload completed. Continue with the canonical ${response.nextAction} workflow action.`
       : "Upload completed. Open the tender to continue through the canonical workflow.",
   };
+}
+
+/**
+ * Company Vault repair uses the complete byte re-import route. The route
+ * preserves dedicated-source eligibility and never auto-promotes records to
+ * REVIEWED. Keep this safety-locked helper even while the current UI has no
+ * direct caller; any future repair control must use byte re-import rather than
+ * an extracted-text-only shortcut.
+ */
+export async function triggerCompanyDocumentAutoPipeline(): Promise<AutoPipelineResult> {
+  const endpoint = "/api/company/reimport";
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      return {
+        fired: false,
+        endpoint,
+        status: "failed",
+        message: body.error ?? `Company Vault re-import failed (HTTP ${response.status}).`,
+      };
+    }
+    return {
+      fired: true,
+      endpoint,
+      status: "queued",
+      message: "Company Vault source re-import completed. Draft evidence remains subject to human review.",
+    };
+  } catch (error) {
+    logger.warn("[auto-pipeline] triggerCompanyDocumentAutoPipeline failed", {
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      endpoint,
+    });
+    return {
+      fired: false,
+      endpoint,
+      status: "failed",
+      message: "Company Vault re-import failed because of a network error.",
+    };
+  }
 }
