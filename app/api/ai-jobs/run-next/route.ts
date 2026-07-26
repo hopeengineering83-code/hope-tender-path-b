@@ -110,9 +110,9 @@ export async function POST(req: Request) {
       continue;
     }
 
+    const stageStartedAt = Date.now();
+    const jobFacts = await prisma.aiJob.findUnique({ where: { id: claimed.id }, select: { createdAt: true, retries: true, analysisInputHash: true } });
     try {
-      const stageStartedAt = Date.now();
-      const jobFacts = await prisma.aiJob.findUnique({ where: { id: claimed.id }, select: { createdAt: true, retries: true, analysisInputHash: true } });
       const result = await handler({
         jobId: claimed.id,
         userId: claimed.userId,
@@ -149,10 +149,19 @@ export async function POST(req: Request) {
           correlationId: result.correlationId,
           retryScheduled: claimed.jobType === "AI_ANALYZE" && (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED"),
         });
+        recordSafeStageEvent({
+          jobType: claimed.jobType, jobId: claimed.id, packageRevision: null,
+          sourceRevision: jobFacts?.analysisInputHash ?? null, stage: result.terminalStatus.toLowerCase(),
+          durationMs: Date.now() - stageStartedAt,
+          queueAgeMs: jobFacts ? Math.max(0, stageStartedAt - jobFacts.createdAt.getTime()) : 0,
+          retryCount: jobFacts?.retries ?? 0, providerClass: null, modelClass: null,
+          blockerCode: result.code ?? null, artifactIntegrityStatus: null,
+        });
       } else {
         await completeJob(claimed.id, result);
         recordSafeStageEvent({
-          jobType: claimed.jobType, jobId: claimed.id, packageRevision: null,
+          jobType: claimed.jobType, jobId: claimed.id,
+          packageRevision: typeof result.packageRevision === "string" ? result.packageRevision : null,
           sourceRevision: jobFacts?.analysisInputHash ?? null, stage: "complete",
           durationMs: Date.now() - stageStartedAt,
           queueAgeMs: jobFacts ? Math.max(0, stageStartedAt - jobFacts.createdAt.getTime()) : 0,
@@ -187,6 +196,14 @@ export async function POST(req: Request) {
       } else {
         await failJob(claimed.id, `${retry.blockerCode} (ref: ${correlationId})`);
       }
+      recordSafeStageEvent({
+        jobType: claimed.jobType, jobId: claimed.id, packageRevision: null,
+        sourceRevision: jobFacts?.analysisInputHash ?? null, stage: retry.retryable ? "retry_scheduled" : "failed",
+        durationMs: Date.now() - stageStartedAt,
+        queueAgeMs: jobFacts ? Math.max(0, stageStartedAt - jobFacts.createdAt.getTime()) : 0,
+        retryCount: (job?.retries ?? 0) + (retry.retryable ? 1 : 0), providerClass: null, modelClass: null,
+        blockerCode: retry.blockerCode, artifactIntegrityStatus: null,
+      });
       processedJobs.push({
         jobId: claimed.id,
         jobType: claimed.jobType,

@@ -46,6 +46,8 @@ import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enric
 import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
 import { importCompanyKnowledgeFromDocuments } from "./company-knowledge-import-safe";
 import { runCompanyKnowledgeSafetyImport } from "./company-knowledge-safety-import";
+import { createHash } from "node:crypto";
+import { parseStageCheckpoint, persistStageCheckpoint } from "./engine/stage-checkpoint-recovery";
 
 export interface JobContext {
   jobId: string;
@@ -158,14 +160,24 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     });
     if (!company) throw new Error("VAULT_INGEST_COMPANY_NOT_FOUND_OR_FORBIDDEN");
 
-    await recordStep(ctx.jobId, { stepName: "vault.load", message: "Loading selected vault package", status: "RUNNING" });
-    const primary = await importCompanyKnowledgeFromDocuments(companyId, documentIds);
-    const aiSucceeded = primary.aiUsed && primary.aiFailures === 0;
-    const safety = aiSucceeded
-      ? { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 }
-      : await runCompanyKnowledgeSafetyImport(prisma, companyId, documentIds);
+    const packageRevision = createHash("sha256").update([...documentIds].sort().join("\n")).digest("hex");
+    const saved = await prisma.aiJob.findUnique({ where: { id: ctx.jobId }, select: { output: true } });
+    const checkpoint = parseStageCheckpoint(saved?.output, "VAULT_INGEST", packageRevision);
+    const remaining = documentIds.filter((id) => !checkpoint.completedItemIds.includes(id));
+    await recordStep(ctx.jobId, { stepName: "vault.load", message: `Loading selected vault package (${remaining.length} remaining)`, status: "RUNNING" });
+    const packageResults: Record<string, unknown>[] = [];
+    for (const documentId of remaining) {
+      const primary = await importCompanyKnowledgeFromDocuments(companyId, [documentId]);
+      const aiSucceeded = primary.aiUsed && primary.aiFailures === 0;
+      const safety = aiSucceeded
+        ? { docsScanned: 0, expertsCreated: 0, projectsCreated: 0, expertNamesDetected: 0, projectNamesDetected: 0 }
+        : await runCompanyKnowledgeSafetyImport(prisma, companyId, [documentId]);
+      packageResults.push({ documentId, primary, safetyImport: safety });
+      checkpoint.completedItemIds.push(documentId);
+      await persistStageCheckpoint(prisma, ctx.jobId, checkpoint);
+    }
     await recordStep(ctx.jobId, { stepName: "vault.complete", message: "Selected vault package ingestion completed", status: "SUCCEEDED" });
-    return { companyId, documentIds, primary, safetyImport: safety } as unknown as Record<string, unknown>;
+    return { companyId, documentIds, packageRevision, revisionStatus: "FINALIZED", completedItemIds: checkpoint.completedItemIds, packageResults };
   },
   // ─── ENGINE_RUN — runs the full tender engine in the background ──────
   // The engine pipeline (analyze → match → AI rematch → write) can

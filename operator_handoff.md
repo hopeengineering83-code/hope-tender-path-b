@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-26 20:08 UTC — Codex (GPT-5.6 Sol), remaining code-gap closure
+
+- **Branch / PR:** local `release/consolidated-recovery-20260717`; PR metadata prepared after commit. No remote PR mutation is possible from this checkout.
+- **Scope / files:** added all nine previously missing authority modules (`upload-intake-session`, `pharo-acceptance-fixture`, phrase classifier, criterion coverage, scope/discipline crosswalk, appendix authority, client-output separation, cross-source consistency, client-quality scoring); pinned upload enqueue to a stable file-content source revision; added serialization retries; added revision-matched durable stage checkpoints and resumable per-document `VAULT_INGEST`; expanded safe telemetry to success, terminal, retry, and failure outcomes; added authority/output-integrity and sanitized golden-path tests.
+- **Tests:** Prisma validate/generate passed with a non-secret disposable URL; typecheck passed; lint passed with zero warnings; targeted authority/orchestration/golden-path/snapshot suite passed 69/69; release-integrity audit passed; production build passed with non-secret placeholder environment values; `git diff --check` passed.
+- **Remaining acceptance gaps:** code artifacts requested in Gap 1 are now present, but they are clean-room implementations because the closed #1260/#1261 diffs remain unavailable; the requested original 84-test suite cannot be claimed. `VAULT_INGEST` has revision-matched item checkpoints, but `EXTRACT_TEXT` and `ENGINE_RUN` still rely on idempotent persistence rather than new content checkpoints. The sanitized golden-path fixture is executable at the pure-model level, not a populated database/browser workflow. Vercel secrets/provider configuration, full PostgreSQL tests/migration drift, authenticated Playwright/237 screenshots, preview SHA/log/health verification, and changing #1175 from draft remain impossible without external access.
+- **Production / risk:** production unchanged; no production migration, secret mutation, deployment, merge, approval, retarget, or PR-state transition attempted. Fail-closed gates remain unchanged.
+- **Next action:** run full DB and browser acceptance in an environment with PostgreSQL and GitHub/Vercel access, review these clean-room modules against the actual closed PR diffs, configure Z.ai/OpenRouter using approved secrets, and only then mark #1175 ready if CI is green.
+- **Merge status:** unsafe / not final-accepted; do not merge or deploy.
+
 ### 2026-07-26 19:53 UTC — Codex (GPT-5.6 Sol), final-acceptance follow-up
 
 - **Branch / PR:** local `release/consolidated-recovery-20260717` / PR metadata to be updated after commit. This local branch was created from `65359ce`; the actual remote release ref is unavailable.

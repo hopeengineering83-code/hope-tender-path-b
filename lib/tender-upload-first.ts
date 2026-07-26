@@ -16,6 +16,7 @@ import { extractRequestId } from "./request-id";
 import { getStorageAdapter, type StorageProvider } from "./storage";
 import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
 import { enqueueAiAnalyzeServerSide } from "./engine/server-side-ai-enqueue";
+import { buildUploadIntakeSession } from "./engine/upload-intake-session";
 
 type StoredTenderUpload = {
   originalFileName: string;
@@ -308,7 +309,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         },
       });
 
-      const fileRecords: Array<{ id: string; originalFileName: string; totalPages: number | null }> = [];
+      const fileRecords: Array<{ id: string; originalFileName: string; totalPages: number | null; contentHash: string | null }> = [];
       for (const upload of storedUploads) {
         const metrics = deriveFileExtractionMetrics(upload.extractedText);
         // Compute contentHash for dedup — prevents duplicate uploads of the
@@ -337,7 +338,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
             pageStatusJson: metrics.pageStatusJson,
             ocrModel: metrics.ocrModel,
           },
-          select: { id: true, originalFileName: true, totalPages: true },
+          select: { id: true, originalFileName: true, totalPages: true, contentHash: true },
         }));
       }
 
@@ -452,11 +453,12 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
       });
     }
 
+    const intakeSession = buildUploadIntakeSession(actor.id, tenderId, persisted.fileRecords);
     const serverEnqueue = await enqueueAiAnalyzeServerSide(prisma, {
       tenderId,
       userId: actor.id,
       hasMeaningfulText: meaningfulUploads.length > 0,
-      sourceRevision: null,
+      sourceRevision: intakeSession.sourceRevision,
     });
 
     return NextResponse.json({
@@ -475,6 +477,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         : "Tender and source files were created, but OCR or re-extraction is required before AI Analyze.",
       requestId,
       serverEnqueue,
+      intakeSession: { sessionKey: intakeSession.sessionKey, sourceRevision: intakeSession.sourceRevision },
     }, { status: 201 });
   } catch (error) {
     if (storedUploads.length > 0) await cleanupStoredUploads(storedUploads);

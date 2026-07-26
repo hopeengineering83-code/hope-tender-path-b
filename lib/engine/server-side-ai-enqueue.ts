@@ -16,7 +16,9 @@ export async function enqueueAiAnalyzeServerSide(
 ): Promise<ServerEnqueueResult> {
   if (!input.hasMeaningfulText) return { status: "SKIPPED_NO_MEANINGFUL_TEXT", jobId: null };
 
-  return client.$transaction(async (tx) => {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await client.$transaction(async (tx) => {
     const tender = await tx.tender.findFirst({
       where: { id: input.tenderId, userId: input.userId },
       select: { id: true },
@@ -29,6 +31,7 @@ export async function enqueueAiAnalyzeServerSide(
         userId: input.userId,
         jobType: "AI_ANALYZE",
         status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS"] },
+        ...(input.sourceRevision ? { analysisInputHash: input.sourceRevision } : {}),
       },
       orderBy: { createdAt: "desc" },
       select: { id: true },
@@ -41,6 +44,7 @@ export async function enqueueAiAnalyzeServerSide(
         userId: input.userId,
         jobType: "AI_ANALYZE",
         status: "QUEUED",
+        analysisInputHash: input.sourceRevision ?? null,
         input: JSON.stringify({
           tenderId: input.tenderId,
           source: "upload-first-server",
@@ -49,6 +53,11 @@ export async function enqueueAiAnalyzeServerSide(
       },
       select: { id: true },
     });
-    return { status: "ENQUEUED" as const, jobId: job.id };
-  }, { isolationLevel: "Serializable" });
+        return { status: "ENQUEUED" as const, jobId: job.id };
+      }, { isolationLevel: "Serializable" });
+    } catch (error) {
+      if ((error as { code?: string }).code !== "P2034" || attempt === 2) throw error;
+    }
+  }
+  throw new Error("AI_ANALYZE_ENQUEUE_SERIALIZATION_RETRY_EXHAUSTED");
 }

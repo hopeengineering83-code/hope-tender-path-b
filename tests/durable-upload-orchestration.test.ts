@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { classifyStageRetry, isDurableRetryJobType } from "../lib/engine/stage-retry-policy";
+import { parseStageCheckpoint } from "../lib/engine/stage-checkpoint-recovery";
 
 const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8");
 
@@ -47,5 +48,12 @@ describe("durable upload orchestration", () => {
       assert.match(observability, new RegExp(field));
     }
     assert.doesNotMatch(observability, /documentText|storagePath|credentials|rawError/);
+  });
+
+  it("resumes only checkpoints for the same stage and source revision", () => {
+    const output = JSON.stringify({ checkpoint: { stage: "VAULT_INGEST", sourceRevision: "rev-1", completedItemIds: ["doc-1", "doc-1"], updatedAt: new Date().toISOString() } });
+    assert.deepEqual(parseStageCheckpoint(output, "VAULT_INGEST", "rev-1").completedItemIds, ["doc-1"]);
+    assert.deepEqual(parseStageCheckpoint(output, "VAULT_INGEST", "rev-2").completedItemIds, []);
+    assert.deepEqual(parseStageCheckpoint("malformed", "VAULT_INGEST", "rev-1").completedItemIds, []);
   });
 });
