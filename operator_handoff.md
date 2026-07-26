@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-26 UTC (workflow interconnection follow-up) — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** local `work`, requested draft PR #1175. A user-supplied fine-grained token was used only in process memory; it was not persisted or printed. Authenticated Git fetch/API access still failed because the mandatory CONNECT proxy rejects GitHub with HTTP 403; direct access has no DNS. `origin` is configured with the token-free repository URL only.
+- **Scope / files changed:** completed one end-to-end frontend interconnection chain before starting another. `components/tender-workflow-action-center.tsx` previously received ten server `actionName` values but ignored them: the route supplies no `actionUrl`, and the component's five-entry local scroll map meant stages 2, 4, 6, 7, and 9 silently did nothing; API-backed stages such as AI Analyze, Build Plan, evidence link, Generate, and Validate also did not dispatch their registered endpoints. It now delegates every action to the shared `recovery-command-actions` registry, executes API/scroll/navigate/download/refresh behavior, surfaces success/error state, refreshes canonical workflow/server UI state after mutations, prevents concurrent dispatch, hides mutations from REVIEWER, disables downstream/prior-step and completed mutation actions, and renders all canonical stage statuses rather than showing them as Pending. `tests/ui-gap-analysis.test.ts` now locks the shared-registry behavior instead of the removed competing partial map.
+- **Tests:** 72/72 workflow/recovery/role/action-registry tests pass; typecheck and changed-file lint pass. TOC/PDF tests from the preceding commit remain 37/37 pass.
+- **External limitations:** package installation (GitHub CLI/PostgreSQL/LibreOffice/Chromium), PR comments/CI, DB migrations/drift, production build, and browser screenshots remain blocked by the environment proxy and absent non-production database/session/AI/test-user secrets.
+- **Next action:** once GitHub/network and test environment access exist, rebase/verify against the actual #1175 head and run the authenticated click sequence against a synthetic tender; then continue with the next complete chain (CompanyAsset bytes → DOCX image insertion → approved-DOCX conversion → PDF parity) without weakening approval.
+- **Merge status:** **unsafe** — the verified Workflow Control Center no-op/competing-map defect is fixed locally, but the complete requested release audit and external verification are not complete.
+
 ### 2026-07-26 UTC (follow-up) — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** local `work`, requested draft PR #1175. GitHub state and inline comments remain unavailable: the checkout has no remote or token. Installation of `gh`, PostgreSQL, LibreOffice, and Chromium was attempted with root authorization, but the environment proxy returned HTTP 403 for all Ubuntu package downloads.

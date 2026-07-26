@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { getRecoveryCommandActionSpec } from "../lib/recovery-command-actions";
 const read = (p: string) => readFileSync(p, "utf8");
 
 describe("UI gap analysis — AI Analyze button + broken anchors", () => {
@@ -20,15 +21,20 @@ describe("UI gap analysis — AI Analyze button + broken anchors", () => {
   });
 
   describe("Gap 2 — TenderWorkflowActionCenter anchors are valid", () => {
-    it("stage 1 targets #tender-files (not #tender-source-files)", () => {
+    it("uses the shared recovery-action registry instead of a partial local stage map", () => {
       const src = read("components/tender-workflow-action-center.tsx");
-      assert.match(src, /1:\s*"#tender-files"/);
-      assert.ok(!src.includes("#tender-source-files"), "must not reference #tender-source-files");
+      assert.match(src, /getRecoveryCommandActionSpec\(s\.actionName\)/);
+      assert.ok(!src.includes("const targets: Record<number, string>"), "must not maintain a competing partial stage-to-anchor map");
     });
-    it("stage 10 targets #export-readiness (not #export-section)", () => {
+    it("registry keeps source-files and export actions connected", () => {
+      assert.equal(getRecoveryCommandActionSpec("UPLOAD_TENDER_DOCUMENT")?.anchorId, "tender-files");
+      assert.equal(getRecoveryCommandActionSpec("DOWNLOAD_FINAL_ZIP")?.path, "/api/tenders/{tenderId}/download");
+    });
+    it("executes API actions and reports structured failures instead of silently doing nothing", () => {
       const src = read("components/tender-workflow-action-center.tsx");
-      assert.match(src, /10:\s*"#export-readiness"/);
-      assert.ok(!src.includes("#export-section"), "must not reference #export-section");
+      assert.match(src, /spec\.kind === "api"/);
+      assert.match(src, /role=\{message\.kind === "error" \? "alert" : "status"\}/);
+      assert.match(src, /if \(!res\.ok \|\| json\.success === false\)/);
     });
   });
 
