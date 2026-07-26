@@ -19,8 +19,6 @@
 //   PROFILE_FACT_EXTRACTION — async pure-regex fact harvest from company/project/tender prose
 
 import { recordStep, type JobType } from "./ai-jobs";
-import { verifiedIntegrityDataFromBase64 } from "./engine/persisted-byte-integrity";
-import { withTransactionalGenerationGate } from "./engine/transactional-generation-gate";
 import { isStrictBase64 } from "./engine/generated-file-integrity";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
@@ -36,7 +34,8 @@ import {
 import { simulateEvaluatorPanel } from "./engine/evaluator-simulator";
 import { answerTenderCopilotQuestion, type TenderCopilotContext } from "./engine/tender-ai-copilot";
 import { extractCompanyFacts } from "./engine/company-fact-extractor";
-import { generateProposalSectionsParallel, type AIBidWriterInput } from "./ai";
+import { generateTenderDocuments } from "./engine/generate-elite";
+import { applyActiveUploadedLetterheadToTenderDocuments } from "./engine/apply-active-letterhead";
 import { assertTenderReadyForGenerationAndExport } from "./engine/generation-readiness-gate";
 import { getStorageAdapter } from "./storage";
 import { extractTextFromBuffer } from "./extract-text";
@@ -44,6 +43,9 @@ import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extra
 import { autoFillTenderMetadata } from "./engine/auto-fill-tender-metadata";
 import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
 import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
+import { ingestCompanyVault } from "./company-vault-ingestion";
+import { classifyStageRetry } from "./engine/stage-retry-policy";
+import { recordSafeStageEvent } from "./engine/stage-observability";
 
 export interface JobContext {
   jobId: string;
@@ -365,11 +367,17 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
   },
 
   // ─── PROPOSAL_GENERATION — async proposal generation ─────────────────
-  // Wraps generateProposalSectionsParallel. The interactive path is
-  // /api/tenders/[id]/ai-proposal (which 3-chunks for in-browser
-  // generation); this handler runs the full pipeline server-side in
-  // the worker's 60s budget so the user can close the tab.
-  // input.sectionFilter — optional ProposalSectionId[] to limit scope.
+  // Calls the SAME canonical document-generation pipeline as the interactive
+  // /api/tenders/[id]/generate route (generateTenderDocuments), so the
+  // unattended path produces real, byte-verified DOCX documents with active
+  // letterhead branding — not throwaway Markdown. Previously this handler
+  // called generateProposalSectionsParallel directly and persisted raw
+  // Markdown labeled QUICK_DRAFT/NOT_EXPORTABLE: a second, weaker generation
+  // authority that could never produce a Final-ZIP-eligible document. That
+  // duplication is removed; there is now one canonical implementation.
+  // generateTenderDocuments enforces its own evidence-specific ZERO_REVIEWED_*
+  // guards (requirement-type aware, stricter than the readiness gate below),
+  // so failures surface with the same blocker codes regardless of caller.
   PROPOSAL_GENERATION: async (ctx) => {
     if (!ctx.tenderId) throw new Error("PROPOSAL_GENERATION requires tenderId on the job");
 
@@ -387,144 +395,42 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       throw new Error(`PROPOSAL_GENERATION blocked by readiness gate (${readiness.blockerCode}): ${readiness.blockerDetail}`);
     }
 
-    await recordStep(ctx.jobId, { stepName: "proposal.load", message: "Loading tender + company context", status: "RUNNING" });
+    // Concurrency guard — mirrors the interactive /generate route's guard.
+    // Without this, an unattended retry/re-continuation could race a
+    // GENERATING/QUEUED run already in flight for the same tender and create
+    // duplicate or corrupted GeneratedDocument rows.
+    const alreadyGenerating = await prisma.generatedDocument.count({
+      where: { tenderId: ctx.tenderId, generationStatus: { in: ["GENERATING", "QUEUED"] } },
+    });
+    if (alreadyGenerating > 0) {
+      await recordStep(ctx.jobId, { stepName: "proposal.gate", message: "Blocked: another generation run is already in progress for this tender.", status: "FAILED" });
+      throw new Error("GENERATION_IN_PROGRESS");
+    }
 
-    const [tender, company] = await Promise.all([
-      prisma.tender.findFirst({
-        where: { id: ctx.tenderId, userId: ctx.userId },
-        include: {
-          requirements: true,
-          expertMatches: { where: { isSelected: true, expert: { is: { trustLevel: "REVIEWED", deletedAt: null } } }, include: { expert: true } },
-          projectMatches: { where: { isSelected: true, project: { is: { trustLevel: "REVIEWED", deletedAt: null } } }, include: { project: true } },
-          complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
-        },
-      }),
-      prisma.company.findUnique({ where: { userId: ctx.userId } }),
-    ]);
-    if (!tender) throw new Error(`PROPOSAL_GENERATION: tender ${ctx.tenderId} not found`);
-    if (!company) throw new Error("PROPOSAL_GENERATION: Company Vault not found");
+    await recordStep(ctx.jobId, { stepName: "proposal.generate", message: "Generating real DOCX proposal package via the canonical generation pipeline", status: "RUNNING" });
+    await generateTenderDocuments(ctx.tenderId, ctx.userId);
 
-    const input: AIBidWriterInput = {
-      tenderTitle: tender.title,
-      clientName: tender.clientName ?? "the procuring entity",
-      tenderText: tender.requirements.map((r) => `${r.title}: ${r.description}`).join("\n\n").slice(0, 24_000),
-      analysisSummary: tender.analysisSummary ?? "",
-      evaluationMethodology: tender.evaluationMethodology ?? "",
-      submissionNotes: tender.submissionMethod ?? "",
-      requirements: tender.requirements.map((r) => `${r.title}: ${r.description}`).join("\n"),
-      companyProfile: company?.profileSummary ?? "",
-      experts: tender.expertMatches.map((m) => `${m.expert.fullName} (${m.expert.title}) — ${m.expert.yearsExperience} yrs`).join("\n"),
-      projects: tender.projectMatches.map((m) => `${m.project.name} — ${m.project.clientName ?? "client"} — ${m.project.sector ?? ""}`).join("\n"),
-      compliance: tender.complianceMatrix.map((c) => `${c.requirement?.title ?? "Requirement"}: ${c.supportLevel} (${c.evidenceType})`).join("\n"),
-      differentiators: "",
+    await recordStep(ctx.jobId, { stepName: "proposal.letterhead", message: "Applying active Company Vault letterhead branding", status: "RUNNING" });
+    const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(ctx.tenderId, ctx.userId);
+
+    await prisma.tender.update({ where: { id: ctx.tenderId }, data: { stage: "GENERATION" } }).catch(() => {});
+
+    const generated = await prisma.generatedDocument.findMany({
+      where: { tenderId: ctx.tenderId, generationStatus: { not: "SUPERSEDED" } },
+      select: { id: true, documentType: true, format: true },
+      orderBy: { exactOrder: "asc" },
+    });
+
+    await recordStep(ctx.jobId, {
+      stepName: "proposal.complete",
+      message: `Generated ${generated.length} document(s) (${generated.map((d) => d.documentType).join(", ") || "none"}); letterhead applied to ${letterheadAppliedCount} file(s)`,
+      status: "SUCCEEDED",
+    });
+    return {
+      generatedDocumentIds: generated.map((d) => d.id),
+      documentTypes: generated.map((d) => d.documentType),
+      letterheadAppliedCount,
     };
-
-    const rawFilter = ctx.input?.sectionFilter;
-    const sectionFilter = Array.isArray(rawFilter) && rawFilter.length > 0
-      ? (rawFilter as string[]).filter((s): s is "cover-and-summary" | "company-and-experience" | "technical-approach" | "additional-and-declaration" =>
-          ["cover-and-summary", "company-and-experience", "technical-approach", "additional-and-declaration"].includes(s))
-      : undefined;
-
-    const needsReviewedExperts = !sectionFilter || sectionFilter.includes("technical-approach");
-    const needsReviewedProjects = !sectionFilter || sectionFilter.includes("company-and-experience");
-    if (needsReviewedExperts && tender.expertMatches.length === 0) {
-      await recordStep(ctx.jobId, {
-        stepName: "proposal.evidence",
-        message: "Blocked: no REVIEWED selected expert evidence is available.",
-        status: "FAILED",
-      });
-      throw new Error("NO_REVIEWED_EXPERT_EVIDENCE");
-    }
-    if (needsReviewedProjects && tender.projectMatches.length === 0) {
-      await recordStep(ctx.jobId, {
-        stepName: "proposal.evidence",
-        message: "Blocked: no REVIEWED selected project evidence is available.",
-        status: "FAILED",
-      });
-      throw new Error("NO_REVIEWED_PROJECT_EVIDENCE");
-    }
-
-    await recordStep(ctx.jobId, { stepName: "proposal.generate", message: `Generating proposal sections${sectionFilter ? ` (filtered: ${sectionFilter.join(", ")})` : " (full)"}`, status: "RUNNING" });
-    const sectionResult = await generateProposalSectionsParallel(input, sectionFilter);
-    const markdown = sectionResult.markdown;
-    // Fail closed on ANY deterministic fallback. Mixed AI/fallback output is
-    // not an authoritative proposal and must be rejected before readiness
-    // recheck, byte encoding, transaction entry, database insert, or storage.
-    if (sectionResult.anyFallback) {
-      const fallbackSectionIds = sectionResult.sections
-        .filter((section) => section.source === "fallback")
-        .map((section) => section.id);
-      await recordStep(ctx.jobId, {
-        stepName: "proposal.fallback",
-        message: `Blocked non-authoritative proposal output: deterministic fallback used by ${fallbackSectionIds.length} section(s) (${fallbackSectionIds.join(", ") || "unknown"}). Zero documents and zero bytes persisted.`,
-        status: "FAILED",
-      });
-      throw new Error(sectionResult.allFallback
-        ? "AI_PROPOSAL_ALL_SECTIONS_FALLBACK"
-        : "AI_PROPOSAL_MIXED_FALLBACK_BLOCKED");
-    }
-    if (!markdown || markdown.trim().length < 50) {
-    await recordStep(ctx.jobId, {
-      stepName: "proposal.output",
-      message: "AI proposal output was empty or insufficient; no document was persisted.",
-      status: "FAILED",
-    });
-    throw new Error("AI_PROPOSAL_OUTPUT_INSUFFICIENT");
-  }
-
-  const postGenerationReadiness = await assertTenderReadyForGenerationAndExport({
-    prisma,
-    tenderId: ctx.tenderId,
-    userId: ctx.userId,
-    purpose: "background-proposal-generation",
-  });
-  if (!postGenerationReadiness.ok) {
-    await recordStep(ctx.jobId, {
-      stepName: "proposal.post-gate",
-      message: `Readiness changed while AI generation was running: ${postGenerationReadiness.blockerCode}`,
-      status: "FAILED",
-    });
-    throw new Error(`PROPOSAL_GENERATION readiness changed (${postGenerationReadiness.blockerCode})`);
-  }
-    const backgroundFileName = `Technical-Proposal-Background-${ctx.jobId}.md`;
-    const backgroundFileContent = Buffer.from(markdown, "utf8").toString("base64");
-    const backgroundIntegrity = verifiedIntegrityDataFromBase64({
-      fileContent: backgroundFileContent,
-      filename: backgroundFileName,
-      claimedMimeType: "text/markdown",
-    });
-
-    // Persist into GeneratedDocument so the user can fetch it later via
-    // the existing tender detail page (which already lists generated docs).
-    const doc = await prisma.$transaction(async (tx) =>
-      withTransactionalGenerationGate({
-        prisma,
-        tx,
-        tenderId: ctx.tenderId!,
-        userId: ctx.userId,
-        purpose: "background-proposal-generation",
-        write: async (lockedTx) => {
-          const doc = await lockedTx.generatedDocument.create({
-      data: {
-        tenderId: ctx.tenderId!,
-        name: `Technical Proposal (background) ${new Date().toISOString().slice(0, 19).replace("T", " ")}`,
-        documentType: "QUICK_DRAFT",
-        format: "MARKDOWN",
-        exactFileName: backgroundFileName,
-        fileContent: backgroundFileContent,
-        ...backgroundIntegrity,
-        generationStatus: "GENERATED",
-        validationStatus: "PENDING",
-        reviewStatus: "NOT_EXPORTABLE",
-      },
-    })
-          return doc;
-        },
-      }),
-    );;
-
-    await recordStep(ctx.jobId, { stepName: "proposal.complete", message: `Saved ${markdown.length} chars to GeneratedDocument ${doc.id}`, status: "SUCCEEDED" });
-    return { generatedDocumentId: doc.id, markdownChars: markdown.length, sectionsGenerated: sectionFilter ?? "all" };
   },
 
   // ─── EVALUATOR_SIM — async 4-persona panel evaluation ────────────────
@@ -896,6 +802,65 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       totalPages: perPage.totalDetectedPages,
       ocrOutcome,
     };
+  },
+
+  // ─── VAULT_INGEST — background Company Vault re-ingestion ────────────
+  // Moves ingestCompanyVault (deterministic regex extraction + an optional
+  // full AI extraction pass over every usable company document) out of the
+  // upload-request response cycle. The job type existed in the JobType
+  // union with no registered handler and no caller anywhere in the
+  // codebase; this closes that gap for the highest-frequency synchronous
+  // call site (a company-document upload triggering re-ingestion). Bulk
+  // administrative routes (reimport-all, single-document repair) combine
+  // their own synchronous OCR re-extraction with this ingestion step and
+  // are not yet converted — they remain a follow-up.
+  //
+  // Input: { companyId: string }
+  // Output: CompanyVaultIngestionResult (docsProcessed, expertsCreated, ...)
+  VAULT_INGEST: async (ctx) => {
+    const companyId = ctx.input?.companyId as string | undefined;
+    if (!companyId) throw new Error("VAULT_INGEST requires companyId in the job input");
+
+    const company = await prisma.company.findFirst({ where: { id: companyId, userId: ctx.userId }, select: { id: true } });
+    if (!company) throw new Error(`VAULT_INGEST: Company ${companyId} not found or not owned by this user`);
+
+    await recordStep(ctx.jobId, { stepName: "vault.start", message: `Starting Company Vault ingestion for ${companyId}`, status: "RUNNING" });
+    recordSafeStageEvent({
+      jobType: "VAULT_INGEST", jobId: ctx.jobId, stage: "vault.start",
+      packageRevision: null, sourceRevision: null, durationMs: 0, queueAgeMs: 0,
+      retryCount: (ctx.input?.retryCount as number | undefined) ?? 0,
+      providerClass: null, modelClass: null, blockerCode: null, artifactIntegrityStatus: null,
+    });
+
+    const startedAt = Date.now();
+    let result: Awaited<ReturnType<typeof ingestCompanyVault>>;
+    try {
+      result = await ingestCompanyVault(companyId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const decision = classifyStageRetry(message, (ctx.input?.retryCount as number | undefined) ?? 0);
+      recordSafeStageEvent({
+        jobType: "VAULT_INGEST", jobId: ctx.jobId, stage: "vault.failed",
+        packageRevision: null, sourceRevision: null, durationMs: Date.now() - startedAt, queueAgeMs: 0,
+        retryCount: (ctx.input?.retryCount as number | undefined) ?? 0,
+        providerClass: null, modelClass: null, blockerCode: decision.blockerCode, artifactIntegrityStatus: null,
+      });
+      await recordStep(ctx.jobId, { stepName: "vault.failed", message: message.slice(0, 500), status: "FAILED" });
+      throw error;
+    }
+
+    recordSafeStageEvent({
+      jobType: "VAULT_INGEST", jobId: ctx.jobId, stage: "vault.complete",
+      packageRevision: null, sourceRevision: null, durationMs: Date.now() - startedAt, queueAgeMs: 0,
+      retryCount: (ctx.input?.retryCount as number | undefined) ?? 0,
+      providerClass: null, modelClass: null, blockerCode: null, artifactIntegrityStatus: null,
+    });
+    await recordStep(ctx.jobId, {
+      stepName: "vault.complete",
+      message: `Ingestion complete: ${result.docsProcessed} document(s) processed, ${result.expertsCreated} expert(s) and ${result.projectsCreated} project(s) created.`,
+      status: "SUCCEEDED",
+    });
+    return result as unknown as Record<string, unknown>;
   },
 };
 

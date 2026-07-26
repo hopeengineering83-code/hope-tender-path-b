@@ -104,7 +104,9 @@ describe("run-next respects the handler terminal status", () => {
 
   it("AI_ANALYZE is a one-job-per-invocation type (worker breaks after it)", () => {
     const src = readFileSync("app/api/ai-jobs/run-next/route.ts", "utf8");
-    assert.match(src, /"AI_ANALYZE"\]\.includes\(claimed\.jobType\)\) break/);
+    const match = src.match(/if \(\[([^\]]+)\]\.includes\(claimed\.jobType\)\) break;/);
+    assert.ok(match, "run-next must have the single-job-per-tick break list");
+    assert.match(match![1], /"AI_ANALYZE"/);
   });
 });
 

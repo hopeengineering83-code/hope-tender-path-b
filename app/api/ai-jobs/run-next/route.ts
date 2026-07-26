@@ -10,6 +10,8 @@ import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-typ
 import { prismaReady } from "../../../../lib/prisma";
 import { recordRetryStateForJob, findJobsDueForRetry, rearmJobForRetry } from "../../../../lib/ai-analyze/retry-service";
 import { restoreHealthFromDbBounded } from "../../../../lib/ai-provider-health-db";
+import { failStuckJobs } from "../../../../lib/ai-jobs";
+import { reapStaleQueuedJobs } from "../../../../lib/engine/stale-job-reaper";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -82,6 +84,37 @@ export async function POST(req: Request) {
       }
     } catch (err) {
       logger.error(`[run-next] Retry due-job lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Unattended stuck-job recovery: a worker killed mid-run (Vercel's 60s
+    // cap, an uncaught crash) leaves its AiJob row RUNNING forever unless
+    // something notices. Previously this only ran lazily (a browser polling
+    // that exact job's status endpoint) or manually (an admin visiting
+    // /admin/release-stuck-jobs) — neither fires without a human present.
+    // Running it here means every automated drain tick (the GitHub Actions
+    // cron) also sweeps for and fails stuck jobs, closing the "unattended
+    // stuck-job recovery" gap. failStuckJobs is idempotent (WHERE status =
+    // 'RUNNING') so this is safe to run on every tick.
+    try {
+      const recovery = await failStuckJobs();
+      if (recovery.recovered > 0) {
+        logger.error(`[run-next] Stuck-job recovery failed ${recovery.recovered} job(s): ${recovery.ids.join(", ")}`);
+      }
+    } catch (err) {
+      logger.error(`[run-next] Stuck-job recovery sweep failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Complementary to the RUNNING-job sweep above: a job that was never
+    // claimed at all (QUEUED forever) is a different failure mode and is
+    // covered by reapStaleQueuedJobs rather than duplicating failStuckJobs'
+    // RUNNING-only logic.
+    try {
+      const reaped = await reapStaleQueuedJobs();
+      if (reaped.reaped > 0) {
+        logger.error(`[run-next] Stale-queued-job reaper failed ${reaped.reaped} job(s)`);
+      }
+    } catch (err) {
+      logger.error(`[run-next] Stale-queued-job reaper sweep failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -220,7 +253,7 @@ export async function POST(req: Request) {
       });
     }
 
-    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE"].includes(claimed.jobType)) break;
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE", "VAULT_INGEST"].includes(claimed.jobType)) break;
   }
 
   if (processedJobs.length === 0) {

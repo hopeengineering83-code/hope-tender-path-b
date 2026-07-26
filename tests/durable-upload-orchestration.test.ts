@@ -3,27 +3,28 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { classifyStageRetry, isDurableRetryJobType } from "../lib/engine/stage-retry-policy";
-import { parseStageCheckpoint } from "../lib/engine/stage-checkpoint-recovery";
+import { getHandler } from "../lib/ai-job-handlers";
+import { SUPPORTED_JOB_TYPES } from "../lib/job-type-policy";
 
 const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8");
 
 describe("durable upload orchestration", () => {
-  it("server-side AI enqueue module exists and exports the enqueue function", () => {
-    // The server-side enqueue module is present — the actual wiring into
-    // tender-upload-first.ts requires the release branch's full handler
-    // which already has multi-batch support. The module is ready for
-    // integration when the handler is updated.
-    const server = read("lib/engine/server-side-ai-enqueue.ts");
-    assert.match(server, /export async function enqueueAiAnalyzeServerSide/);
-  });
+  // The server-side enqueue module (lib/engine/server-side-ai-enqueue.ts)
+  // was deleted: its wiring attempt conflicted with the release branch and
+  // was reverted, and the canonical, already-wired, already-tested path
+  // (lib/ai-jobs/automatic-tender-pipeline.ts -> createAnalysisJob, which is
+  // content-hash idempotent) already covers the same "durable server-side
+  // AI_ANALYZE enqueue" concern. Keeping both would have been a competing
+  // authority for the same job type.
 
-  it("VAULT_INGEST job type is registered for per-document vault processing", () => {
-    // The VAULT_INGEST job type is added to the JobType enum — the actual
-    // handler wiring requires the release branch's full secure-upload-handler
-    // which already has the full vault import. The job type is ready for
-    // integration when the handler is updated.
-    const jobs = read("lib/ai-jobs.ts");
-    assert.match(jobs, /"VAULT_INGEST"/);
+  it("VAULT_INGEST job type is registered with a real handler, not just declared", () => {
+    // Previously this only checked the string appeared in the JobType union
+    // (a producer-less declaration). VAULT_INGEST is now a real, wired,
+    // tested background job — see tests/vault-ingest-job.test.ts for full
+    // end-to-end coverage (real Company/CompanyDocument rows, real claim +
+    // execute, real Expert draft persisted).
+    assert.ok((SUPPORTED_JOB_TYPES as readonly string[]).includes("VAULT_INGEST"));
+    assert.ok(getHandler("VAULT_INGEST"), "VAULT_INGEST must have a registered handler");
   });
 
   it("registers all recovery stages as durable job types", () => {
@@ -54,12 +55,21 @@ describe("durable upload orchestration", () => {
       assert.match(observability, new RegExp(field));
     }
     assert.doesNotMatch(observability, /documentText|storagePath|credentials|rawError/);
+    // recordSafeStageEvent is now a real, called dependency of the
+    // VAULT_INGEST handler (see tests/vault-ingest-job.test.ts, which
+    // asserts a real "[job-stage]" log line is emitted end to end) — not
+    // just a defined-but-unused module.
+    const handlers = read("lib/ai-job-handlers.ts");
+    assert.match(handlers, /import \{ recordSafeStageEvent \} from "\.\/engine\/stage-observability"/);
+    assert.match(handlers, /recordSafeStageEvent\(/);
   });
 
-  it("resumes only checkpoints for the same stage and source revision", () => {
-    const output = JSON.stringify({ checkpoint: { stage: "VAULT_INGEST", sourceRevision: "rev-1", completedItemIds: ["doc-1", "doc-1"], updatedAt: new Date().toISOString() } });
-    assert.deepEqual(parseStageCheckpoint(output, "VAULT_INGEST", "rev-1").completedItemIds, ["doc-1"]);
-    assert.deepEqual(parseStageCheckpoint(output, "VAULT_INGEST", "rev-2").completedItemIds, []);
-    assert.deepEqual(parseStageCheckpoint("malformed", "VAULT_INGEST", "rev-1").completedItemIds, []);
-  });
+  // Note: lib/engine/stage-checkpoint-recovery.ts (parseStageCheckpoint) was
+  // deleted. Real per-item checkpoint/resume for VAULT_INGEST would require
+  // refactoring ingestCompanyVault to process CompanyDocuments incrementally
+  // instead of batching all of a company's usable documents into one/two AI
+  // calls — a real change to well-established extraction logic, out of
+  // scope for this pass. Wiring the checkpoint module in without that
+  // refactor would have been decorative, not functional, so it was removed
+  // rather than left as an unused "connected-looking" dependency.
 });

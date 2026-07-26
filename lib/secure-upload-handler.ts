@@ -6,11 +6,11 @@ import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMean
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
 import { logAction } from "./audit";
 import { ensureCompanyForUser } from "./company-workspace";
-import { ingestCompanyVault } from "./company-vault-ingestion";
 import { rateLimitPersistent, UPLOAD_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter } from "./storage";
 import { queueAutomaticTenderPipeline } from "./ai-jobs/automatic-tender-pipeline";
+import { enqueueJob } from "./ai-jobs";
 import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
 import { sanitizeError } from "./sanitize-error";
 import { inspectActualFileBytes } from "./engine/persisted-byte-integrity";
@@ -352,13 +352,21 @@ export async function handleSecureUpload(req: Request) {
     }
   }
 
+  // Company Vault re-ingestion (deterministic regex + optional AI extraction
+  // over every usable document) previously ran synchronously here, inside
+  // the 60s-capped upload request. It now runs as a background VAULT_INGEST
+  // job so a slow AI extraction pass on a large document set cannot risk the
+  // request timeout; the response reports "QUEUED" instead of the finished
+  // ingestion result, and new/updated Expert/Project drafts appear in the
+  // Company Vault review queue once the job completes.
   let companyImport: Record<string, unknown> | null = null;
   if (!tenderId && companyFilesCreated > 0) {
     try {
-      companyImport = await ingestCompanyVault(company.id) as unknown as Record<string, unknown>;
+      const job = await enqueueJob({ userId: actor.id, jobType: "VAULT_INGEST", input: { companyId: company.id } });
+      companyImport = { status: "QUEUED", jobId: job.id };
     } catch (error) {
-      logger.error(`[secure-upload] requestId=${requestId} company import failed: ${sanitizeError(error)}`);
-      companyImport = { status: "FAILED", error: "Company knowledge import failed", requestId };
+      logger.error(`[secure-upload] requestId=${requestId} company import enqueue failed: ${sanitizeError(error)}`);
+      companyImport = { status: "FAILED", error: "Company knowledge import could not be queued", requestId };
     }
   }
 

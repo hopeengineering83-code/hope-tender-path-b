@@ -34,14 +34,17 @@ type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; err
 /**
  * Pipeline status surfaced after a company-document upload completes.
  *
- * The secure-upload handler already runs `importCompanyKnowledgeFromDocuments`
- * synchronously when `companyDoc=true` — the vault re-ingest is DONE by the
- * time the response returns. The previous UI did not show this, so users
- * navigated to the Review Board and clicked "Repair" manually. This badge
- * makes the auto-pipeline visible.
+ * The secure-upload handler enqueues a background VAULT_INGEST job when
+ * `companyDoc=true` rather than running the ingestion inline (a full AI
+ * extraction pass over every usable document could otherwise risk the
+ * upload request's timeout). This badge tells the user their newly
+ * uploaded document has been queued for re-ingestion, so they know not to
+ * expect it in the Review Board instantly, without needing a live-polling
+ * progress indicator — refreshing the Review Board after a short wait
+ * shows the new drafts once the job completes.
  */
 type VaultPipelineStatus = {
-  phase: "ingested" | "failed";
+  phase: "queued" | "failed";
   message: string;
   /** ISO timestamp so the badge can fade after a few seconds if desired. */
   at: number;
@@ -68,7 +71,7 @@ const CAT_COLORS: Record<string,string> = {
   CERTIFICATION:"bg-orange-100 text-orange-700",MANUAL:"bg-slate-100 text-slate-600",
   PORTFOLIO:"bg-teal-100 text-teal-700",COMPLIANCE_RECORD:"bg-rose-100 text-rose-700",OTHER:"bg-slate-100 text-slate-500",
 };
-const ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.csv,.txt,.rtf,.jpg,.jpeg,.png,.gif,.webp";
+const ACCEPT = ".pdf,.docx,.xlsx,.csv,.txt";
 const empty: Company = { name:"",legalName:"",description:"",website:"",address:"",phone:"",email:"",knowledgeMode:"PROFILE_FIRST",serviceLines:[],sectors:[],profileSummary:"",gmName:"",gmTitle:"",gmLicense:"",foundingYear:null,headcount:null,licenseGrade:"",registrationNumber:"",tin:"",vat:"" };
 
 const PLACEHOLDER_PATTERNS = /^\s*(tbd|tbc|n\/a|unknown|not provided|placeholder|pending|to be confirmed|to be determined)\s*$/i;
@@ -315,10 +318,11 @@ export default function CompanyPage() {
         const data = await res.json() as {
           success?: boolean;
           results?: Array<{ error?: string }>;
-          /** Vault re-ingest result — present when companyDoc=true. The
-           * secure-upload handler runs `importCompanyKnowledgeFromDocuments`
-           * synchronously, so this is the pipeline result, not a job ID. */
-          companyImport?: { status?: string; aiUsed?: boolean; aiFailures?: number; error?: string } | null;
+          /** Vault re-ingest status — present when companyDoc=true. The
+           * secure-upload handler enqueues a background VAULT_INGEST job
+           * rather than running ingestion inline, so this reports "QUEUED"
+           * or "FAILED" (enqueue failure), not the finished result. */
+          companyImport?: { status?: string; jobId?: string; error?: string } | null;
         };
         const firstErr = data.results?.[0] && "error" in data.results[0] ? data.results[0].error : undefined;
         if (!res.ok || firstErr) {
@@ -326,26 +330,20 @@ export default function CompanyPage() {
         } else {
           setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"done" } : x));
           await loadDocs();
-          // Surface the auto-pipeline result. The vault re-ingest already
-          // happened server-side; this badge tells the user their newly
-          // uploaded document is already in the review queue — they do
-          // NOT need to navigate to the Review Board and click "Repair".
-          if (data.companyImport && data.companyImport.status !== "FAILED") {
-            const aiUsed = data.companyImport.aiUsed === true;
-            const aiFailures = data.companyImport.aiFailures ?? 0;
+          // Surface the auto-pipeline status. Ingestion now runs in the
+          // background, so this badge tells the user their newly uploaded
+          // document has been queued for re-ingestion — check back in the
+          // Review Board shortly, rather than the old "already done" message.
+          if (data.companyImport && data.companyImport.status === "QUEUED") {
             setVaultPipeline({
-              phase: "ingested",
-              message: aiUsed && aiFailures === 0
-                ? "Document ingested. AI extraction complete — review drafts in the Review Board."
-                : aiFailures > 0
-                  ? `Document ingested. AI extraction had ${aiFailures} failure(s) — safety import ran as fallback. Review drafts in the Review Board.`
-                  : "Document ingested. Regex-based drafts created — review and promote in the Review Board.",
+              phase: "queued",
+              message: "Document stored. Vault re-ingestion queued — new drafts will appear in the Review Board shortly.",
               at: Date.now(),
             });
           } else if (data.companyImport && data.companyImport.status === "FAILED") {
             setVaultPipeline({
               phase: "failed",
-              message: "Document stored, but vault re-ingest failed. Open the Review Board to repair manually.",
+              message: "Document stored, but vault re-ingest could not be queued. Open the Review Board to repair manually.",
               at: Date.now(),
             });
           }
@@ -758,7 +756,7 @@ export default function CompanyPage() {
             onClick={()=>fileInputRef.current?.click()}
             className={`cursor-pointer rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors ${dragOver?"border-blue-400 bg-blue-50":"border-slate-200 hover:border-slate-400"}`}>
             <p className="text-sm font-medium text-slate-600">{dragOver?"Drop files here":"Drag & drop files here"}</p>
-            <p className="mt-1 text-xs text-slate-400">PDF · DOCX · XLSX · Images · and more · Up to 10 MB</p>
+            <p className="mt-1 text-xs text-slate-400">PDF · DOCX · XLSX · CSV · TXT · Up to 10 MB</p>
           </div>
           {uploadQueue.length>0 && (
             <div role="status" aria-live="polite" aria-label="Upload progress" className="space-y-1.5">
@@ -777,7 +775,7 @@ export default function CompanyPage() {
               role="status"
               aria-live="polite"
               className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
-                vaultPipeline.phase === "ingested"
+                vaultPipeline.phase === "queued"
                   ? "border-blue-200 bg-blue-50 text-blue-800"
                   : "border-amber-200 bg-amber-50 text-amber-800"
               }`}
@@ -785,7 +783,7 @@ export default function CompanyPage() {
               <span
                 aria-hidden="true"
                 className={`mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full ${
-                  vaultPipeline.phase === "ingested"
+                  vaultPipeline.phase === "queued"
                     ? "animate-pulse bg-blue-600"
                     : "bg-amber-600"
                 }`}
