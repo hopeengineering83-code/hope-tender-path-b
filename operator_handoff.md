@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-26 UTC (follow-up) — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** local `work`, requested draft PR #1175. GitHub state and inline comments remain unavailable: the checkout has no remote or token. Installation of `gh`, PostgreSQL, LibreOffice, and Chromium was attempted with root authorization, but the environment proxy returned HTTP 403 for all Ubuntu package downloads.
+- **Scope / files changed:** completed the Word-TOC chain started in the prior commit. `lib/engine/generate-elite.ts` now recognizes both `#` and `##` TOC headings (the secondary composer emits `##`), removes nested static TOC entries through the next same/higher heading, and renders the TOC title without Heading 1–3 styling so the TOC cannot include itself. `tests/word-toc-field.test.ts` verifies both heading levels and self-exclusion.
+- **Automation audit:** the app is **not** currently upload-and-done. `handleUploadFirstTender` explicitly returns `engineSkipped: true` and instructs the user to run AI Analyze. Separate authenticated actions are required for AI Analyze, Build Plan confirmation, Run Engine/evidence confirmation, Generate Docs, validation, review/approval, PDF finalization, and ZIP. Company assets are securely persisted, but the active proposal generator does not load `CompanyAsset` logo/signature/stamp bytes. Automatic approval would contradict the repository's fail-closed review rules and the prior explicit requirement to require review/approval.
+- **Tests:** targeted TOC/PDF tests 37/37 pass; typecheck passes. Package-backed database, LibreOffice fidelity, and browser verification remain externally blocked by the package proxy plus absent application secrets.
+- **Next action:** obtain the actual #1175 checkout/GitHub access and a policy decision distinguishing “automatic draft generation” from prohibited “automatic approval/final release”; then implement a durable resumable post-upload orchestrator up to the human approval boundary.
+- **Merge status:** **unsafe** — the requested hands-off workflow is not implemented, PR state is unavailable, and material asset/rendering gaps remain.
+
 ### 2026-07-26 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** local branch `work`; requested draft PR #1175. This checkout has no Git remote and no `gh` executable, so the PR head, open-PR list, remote CI, and target-branch freshness could not be independently verified or updated.

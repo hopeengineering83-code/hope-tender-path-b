@@ -262,7 +262,7 @@ export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfCo
   const out: (Paragraph | Table | TableOfContents)[] = [];
   let h1Count = 0;
   let tableBuffer: string[] = [];
-  let insideRenderedToc = false;
+  let renderedTocHeadingLevel: number | null = null;
 
   const flushTable = () => {
     if (tableBuffer.length >= 2) {
@@ -280,20 +280,28 @@ export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfCo
     // needs a real field so page numbers and links update after pagination.
     // Replace the entire generated markdown TOC block with Word's TOC field;
     // headings below remain Heading 1–3 and therefore feed the field.
-    if (/^#\s+Table of Contents$/i.test(trimmed)) {
+    const tocHeading = /^(#{1,3})\s+Table of Contents$/i.exec(trimmed);
+    if (tocHeading) {
       if (tableBuffer.length > 0) flushTable();
-      h1Count++;
-      out.push(heading("Table of Contents", 1, h1Count > 1));
+      // Deliberately NOT a Heading 1–3 paragraph: otherwise Word includes
+      // "Table of Contents" as an entry inside its own TOC.
+      out.push(new Paragraph({
+        pageBreakBefore: h1Count > 0,
+        spacing: { before: 360, after: 180 },
+        border: { bottom: { color: LIGHT_BLUE, space: 1, style: BorderStyle.SINGLE, size: 8 } },
+        children: [new TextRun({ text: "Table of Contents", bold: true, size: 32, color: BRAND_BLUE, font: "Calibri" })],
+      }));
       out.push(new TableOfContents("Table of Contents", {
         hyperlink: true,
         headingStyleRange: "1-3",
       }));
-      insideRenderedToc = true;
+      renderedTocHeadingLevel = tocHeading[1].length;
       continue;
     }
-    if (insideRenderedToc) {
-      if (!/^#\s+/.test(trimmed)) continue;
-      insideRenderedToc = false;
+    if (renderedTocHeadingLevel !== null) {
+      const nextHeading = /^(#{1,3})\s+/.exec(trimmed);
+      if (!nextHeading || nextHeading[1].length > renderedTocHeadingLevel) continue;
+      renderedTocHeadingLevel = null;
     }
 
     if (isTableLine(trimmed)) {
