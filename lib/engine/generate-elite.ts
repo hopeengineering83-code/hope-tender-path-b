@@ -1,8 +1,9 @@
 import { logger } from "../observability";
-import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
+import { verifiedIntegrityDataFromBase64, verifyPersistedFileBytes } from "./persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "./transactional-generation-gate";
-import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
+import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, ImageRun, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableOfContents, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
+import { getStorageAdapter } from "../storage";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
 import { PROPOSAL_AI_TIMEOUT_MS } from "../timeout-config";
 import { detectAnalysisSource } from "./analysis-source";
@@ -91,6 +92,51 @@ import { buildServiceStreamMethodologyBlock } from "../document-generation/gener
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
 const LIGHT_BLUE = "D9EAF7";
+
+type CompanyLogo = {
+  data: Buffer;
+  type: "png" | "jpg";
+  width: number;
+  height: number;
+};
+
+function brandImageTransformation(data: Buffer, type: "png" | "jpg"): {
+  width: number;
+  height: number;
+} {
+  let sourceWidth = 0;
+  let sourceHeight = 0;
+  if (type === "png" && data.length >= 24) {
+    sourceWidth = data.readUInt32BE(16);
+    sourceHeight = data.readUInt32BE(20);
+  } else if (type === "jpg" && data.length >= 12) {
+    let offset = 2;
+    while (offset + 9 < data.length) {
+      if (data[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = data[offset + 1];
+      const segmentLength = data.readUInt16BE(offset + 2);
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        sourceHeight = data.readUInt16BE(offset + 5);
+        sourceWidth = data.readUInt16BE(offset + 7);
+        break;
+      }
+      if (segmentLength < 2) break;
+      offset += segmentLength + 2;
+    }
+  }
+
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    return { width: 160, height: 64 };
+  }
+  const scale = Math.min(180 / sourceWidth, 72 / sourceHeight, 1);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
+  };
+}
 
 // In-pipeline timeout for the Claude proposal call. Layered INSIDE the
 // Vercel maxDuration window so the engine can fail gracefully (fall
@@ -258,10 +304,11 @@ function cleanClientLanguage(text: string): string {
     .trim());
 }
 
-function markdownToDocx(markdown: string): (Paragraph | Table)[] {
-  const out: (Paragraph | Table)[] = [];
+export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfContents)[] {
+  const out: (Paragraph | Table | TableOfContents)[] = [];
   let h1Count = 0;
   let tableBuffer: string[] = [];
+  let renderedTocHeadingLevel: number | null = null;
 
   const flushTable = () => {
     if (tableBuffer.length >= 2) {
@@ -274,6 +321,31 @@ function markdownToDocx(markdown: string): (Paragraph | Table)[] {
   for (const raw of markdown.replace(/\r/g, "").split("\n")) {
     const line = raw.trimEnd();
     const trimmed = line.trim();
+
+    // Replace the static markdown TOC with a native updating Word field. The
+    // title deliberately is not a Heading 1–3 paragraph, so it cannot include
+    // itself in the generated entries.
+    const tocHeading = /^(#{1,3})\s+Table of Contents$/i.exec(trimmed);
+    if (tocHeading) {
+      if (tableBuffer.length > 0) flushTable();
+      out.push(new Paragraph({
+        pageBreakBefore: h1Count > 0,
+        spacing: { before: 360, after: 180 },
+        border: { bottom: { color: LIGHT_BLUE, space: 1, style: BorderStyle.SINGLE, size: 8 } },
+        children: [new TextRun({ text: "Table of Contents", bold: true, size: 32, color: BRAND_BLUE, font: "Calibri" })],
+      }));
+      out.push(new TableOfContents("Table of Contents", {
+        hyperlink: true,
+        headingStyleRange: "1-3",
+      }));
+      renderedTocHeadingLevel = tocHeading[1].length;
+      continue;
+    }
+    if (renderedTocHeadingLevel !== null) {
+      const nextHeading = /^(#{1,3})\s+/.exec(trimmed);
+      if (!nextHeading || nextHeading[1].length > renderedTocHeadingLevel) continue;
+      renderedTocHeadingLevel = null;
+    }
 
     if (isTableLine(trimmed)) {
       tableBuffer.push(trimmed);
@@ -741,6 +813,7 @@ function buildCoverBlock(params: {
   clientName: string;
   companyName: string;
   reference?: string | null;
+  logo?: CompanyLogo;
   // PR #259 — full company-vault credentials surfaced on the
   // cover page. When provided, the page now includes registered
   // address, TIN, VAT, license grade, GM with PPE license, phone,
@@ -765,6 +838,26 @@ function buildCoverBlock(params: {
 }): Paragraph[] {
   const v = params.vault ?? {};
   const blocks: Paragraph[] = [];
+
+  if (params.logo) {
+    blocks.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 100 },
+      children: [new ImageRun({
+        type: params.logo.type,
+        data: params.logo.data,
+        transformation: {
+          width: params.logo.width,
+          height: params.logo.height,
+        },
+        altText: {
+          title: `${params.companyName} logo`,
+          description: "Active Company Vault logo",
+          name: "Company logo",
+        },
+      })],
+    }));
+  }
 
   // Optional service-line tagline (Claude's PATH cover page had:
   // "Design | Interior Design | Water Drilling | Geotechnical
@@ -853,13 +946,14 @@ function buildContactFooterText(company: { name: string; address?: string | null
   return parts.length > 0 ? parts.join(" | ") : "";
 }
 
-function buildProfessionalDocument(params: {
+export function buildProfessionalDocument(params: {
   tenderTitle: string;
   clientName: string;
   companyName: string;
   reference?: string | null;
   contactFooter?: string;
-  children: (Paragraph | Table)[];
+  children: (Paragraph | Table | TableOfContents)[];
+  logo?: CompanyLogo;
   // STRICT SCOPE FLAGS (PR #245):
   // The product spec mandates "must prepare exactly and only what the
   // tender requires." When the analyzed tender forbids a cover page or
@@ -916,6 +1010,7 @@ function buildProfessionalDocument(params: {
     creator: params.companyName,
     title: params.tenderTitle,
     description: "Client-ready technical proposal generated by Hope Tender Engine",
+    features: { updateFields: true },
     sections: [{
       properties: { page: { margin: { top: 1000, bottom: 850, left: 900, right: 900 } } },
       headers: { default: header },
@@ -933,6 +1028,7 @@ function buildProfessionalDocument(params: {
             clientName: params.clientName,
             companyName: params.companyName,
             reference: params.reference,
+            logo: params.logo,
             vault: params.coverVault,
           }), ...params.children],
     }],
@@ -968,52 +1064,74 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
       financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
       complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-      // PR #248 — fallback evidence library for the evidence-marker
-      // injector. When the matching engine selected 0 projects (low
-      // similarity scores or unreviewed inventory), the injector still
-      // needs a pool of project records to pull anchor sentences from.
-      // Take the top 8 reviewed projects sorted by contractValue desc
-      // so the strongest portfolio entries surface first as fallback
-      // anchors.
+      assets: {
+        where: { assetType: "LOGO", isActive: true },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          fileName: true,
+          originalFileName: true,
+          mimeType: true,
+          storagePath: true,
+          fileContent: true,
+          contentSha256: true,
+          contentByteLength: true,
+          contentMimeType: true,
+          detectedFormat: true,
+          integrityStatus: true,
+        },
+      },
+      // Reviewed client names are loaded only for negative hygiene checks
+      // (preventing an unrelated client's name from leaking into a proposal).
+      // These records are never used as positive tender evidence unless the
+      // tender-specific matching relation selected the project above.
       projects: {
         where: { trustLevel: "REVIEWED" },
         orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
         take: 8,
-        include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
-      },
-      // PR J — vault-fallback experts. When zero experts are selected
-      // for a tender, the deterministic Section A.4 / A.5 builders
-      // emit placeholder text. With the vault loaded here, when the
-      // selected list is empty we substitute the firm's reviewed expert
-      // roster so the proposal carries real names + licences instead.
-      experts: {
-        where: { trustLevel: "REVIEWED" },
-        orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
-        take: 12,
+        select: { clientName: true },
       },
     },
   });
   if (!company) throw new Error("Company not found");
 
+  let companyLogo: CompanyLogo | undefined;
+  const activeLogo = company.assets[0];
+  if (activeLogo) {
+    try {
+      const data = await getStorageAdapter().getFile({
+        storagePath: activeLogo.storagePath,
+        fileContent: activeLogo.fileContent,
+        fileName: activeLogo.originalFileName || activeLogo.fileName,
+      });
+      const integrity = verifyPersistedFileBytes({
+        bytes: data,
+        filename: activeLogo.originalFileName || activeLogo.fileName,
+        claimedMimeType: activeLogo.mimeType,
+        persisted: activeLogo,
+      });
+      if (
+        integrity.integrityStatus === "VERIFIED" &&
+        (integrity.detectedFormat === "PNG" || integrity.detectedFormat === "JPEG")
+      ) {
+        const type = integrity.detectedFormat === "PNG" ? "png" : "jpg";
+        companyLogo = {
+          data,
+          type,
+          ...brandImageTransformation(data, type),
+        };
+      }
+    } catch (error) {
+      logger.warn("[generate-elite] Active Company Vault logo could not be loaded; generation continues without it.", {
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    }
+  }
+
   const allSelectedExperts = tender.expertMatches.map((m) => m.expert);
   const allSelectedProjects = tender.projectMatches.map((m) => m.project);
   let experts = allSelectedExperts.filter((e) => e.trustLevel === "REVIEWED");
   let projects = allSelectedProjects.filter((p) => p.trustLevel === "REVIEWED");
-
-  // PR J — vault-fallback when the bid team forgot to select.
-  // If no expert / project was selected for this tender, fall back to
-  // the firm's reviewed vault roster so deterministic builders never
-  // see an empty array. Without this, Sections A.4, A.5, B.2 emit
-  // "Source-evidence action: select reviewed records before final
-  // submission" placeholder text (the exact gap the user flagged).
-  if (experts.length === 0 && (company.experts ?? []).length > 0) {
-    experts = company.experts as typeof experts;
-    logger.warn(`[generate-elite] No experts selected for tender — falling back to ${experts.length} reviewed vault expert(s).`);
-  }
-  if (projects.length === 0 && (company.projects ?? []).length > 0) {
-    projects = company.projects as typeof projects;
-    logger.warn(`[generate-elite] No projects selected for tender — falling back to ${projects.length} reviewed vault project(s).`);
-  }
 
   // Zero-evidence HARD BLOCK (defense-in-depth, round-2 strengthened):
   //
@@ -2204,21 +2322,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // The injector below takes any substantive paragraph that fails the
   // scorer's marker tests and appends a single short evidence-anchor
   // sentence drawn from the company's reviewed evidence library. Two
-  // sources stack: selected projects (preferred) + the company's wider
-  // reviewed portfolio (fallback when 0 are selected). Capped at 12
-  // injections to avoid bloating the prose.
+  // The source is strictly the tender-specific selected project set. The wider
+  // Company Vault must never become an automatic fallback: unrelated reviewed
+  // projects are factual records, but they are not evidence for this tender
+  // until matching selects them.
   //
   // Idempotent: paragraphs that already have markers are skipped, so
   // re-running on already-anchored markdown produces identical output.
-  const evidenceLibrary = [
-    ...(projects as ProjectRecord[]),
-    // Fallback: company's wider reviewed portfolio. Excludes already-
-    // selected projects so the same project doesn't get cited from
-    // both sources (would still work — just not optimal rotation).
-    ...((company.projects ?? []).filter((p) =>
-      !projects.some((selected) => selected.id === p.id),
-    ) as ProjectRecord[]),
-  ];
+  const evidenceLibrary = projects as ProjectRecord[];
   const evidenceInjection = injectEvidenceMarkers(humanizedMarkdown, evidenceLibrary);
   if (evidenceInjection.injected > 0) {
     logger.info(`[generate-elite] Evidence-marker injector added ${evidenceInjection.injected} anchor sentence(s) to lift evidenceDensity score.`);
@@ -2785,6 +2896,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     children,
     suppressCoverBlock: tenderForbidsCoverPage,
     suppressBrandedHeader: tenderForbidsBranding,
+    logo: tenderForbidsBranding ? undefined : companyLogo,
     coverVault,
   });
 
@@ -3091,6 +3203,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         children: finalChildren,
         suppressCoverBlock: tenderForbidsCoverPage,
         suppressBrandedHeader: tenderForbidsBranding,
+        logo: tenderForbidsBranding ? undefined : companyLogo,
         coverVault,
       })
     : doc;

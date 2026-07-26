@@ -10,7 +10,7 @@ import { ingestCompanyVault } from "./company-vault-ingestion";
 import { rateLimitPersistent, UPLOAD_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter } from "./storage";
-import { createAnalysisJob } from "./ai-jobs/analysis-job-service";
+import { queueAutomaticTenderPipeline } from "./ai-jobs/automatic-tender-pipeline";
 import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
 import { sanitizeError } from "./sanitize-error";
 import { inspectActualFileBytes } from "./engine/persisted-byte-integrity";
@@ -53,6 +53,7 @@ export async function handleSecureUpload(req: Request) {
   const companyDoc = formData.get("companyDoc") === "true";
   const classificationValue = formData.get("classification");
   const classification = typeof classificationValue === "string" ? classificationValue : null;
+  const deferAnalysis = formData.get("deferAnalysis") === "true";
   if (!tenderId && !companyDoc) return NextResponse.json({ error: "tenderId or companyDoc=true is required" }, { status: 400 });
 
   const company = await ensureCompanyForUser(prisma, actor.id);
@@ -196,41 +197,26 @@ export async function handleSecureUpload(req: Request) {
 
   let processingJobId: string | null = null;
   let analysisRevision: string | null = null;
-  if (tenderId && tenderFilesCreated > 0) {
-    const analysis = await createAnalysisJob({ tenderId, userId: actor.id });
-    processingJobId = analysis.jobId;
-
-    const currentJob = await prisma.aiJob.findUnique({
-      where: { id: analysis.jobId },
-      select: { input: true, analysisInputHash: true },
-    });
-    let currentInput: Record<string, unknown> = {};
+  let pipelineWarning: string | null = null;
+  const uploadBatchFailed = results.some((result) => result.success !== true);
+  if (tenderId && tenderFilesCreated > 0 && !deferAnalysis && !uploadBatchFailed) {
     try {
-      const parsed = JSON.parse(currentJob?.input ?? "{}");
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) currentInput = parsed as Record<string, unknown>;
-    } catch {
-      currentInput = {};
-    }
-    analysisRevision = currentJob?.analysisInputHash ?? null;
-    await prisma.aiJob.updateMany({
-      where: {
-        id: analysis.jobId,
-        userId: actor.id,
+      const pipeline = await queueAutomaticTenderPipeline({
         tenderId,
-        jobType: "AI_ANALYZE",
-        status: { in: ["QUEUED", "RUNNING"] },
-      },
-      data: {
-        input: JSON.stringify({
-          ...currentInput,
-          source: "secure-upload",
-          force: false,
-          autoContinue: true,
-          companyId: company.id,
-          analysisRevision,
-        }),
-      },
-    });
+        userId: actor.id,
+        companyId: company.id,
+        source: "secure-upload",
+      });
+      processingJobId = pipeline.jobId;
+      analysisRevision = pipeline.analysisRevision;
+    } catch (error) {
+      pipelineWarning = "Files were stored, but automatic analysis could not be queued. Open the tender and retry AI Analyze.";
+      logger.error("[secure-upload] automatic tender pipeline queue failed", {
+        requestId,
+        tenderId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    }
   }
 
   let companyImport: Record<string, unknown> | null = null;
@@ -254,6 +240,8 @@ export async function handleSecureUpload(req: Request) {
       processingJobId,
       analysisRevision,
       pipelineStage: processingJobId ? "AI_ANALYZE_QUEUED" : null,
+      pipelineDeferred: Boolean(tenderId && deferAnalysis),
+      pipelineWarning,
       engineQueued: false,
       companyImport,
     },

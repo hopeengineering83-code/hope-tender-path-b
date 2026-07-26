@@ -68,7 +68,7 @@ describe("large tender package intake", () => {
     assert.match(intakePage, /const firstBatch = batches\[0\]/);
     assert.match(intakePage, /fetch\("\/api\/tenders\/upload-first"/);
     assert.match(intakePage, /const additionalBatches = batches\.slice\(1\)/);
-    assert.match(intakePage, /appendTenderBatch\(data\.tenderId, batch\)/);
+    assert.match(intakePage, /appendTenderBatch\(\s*data\.tenderId,\s*batch,/);
     assert.match(intakePage, /fetch\("\/api\/upload"/);
     assert.match(intakePage, /body\.append\("tenderId", tenderId\)/);
   });
@@ -79,12 +79,12 @@ describe("large tender package intake", () => {
     assert.match(sourcePanel, /searchParams\.get\("packageIntake"\) === "1"/);
     assert.match(sourcePanel, /Large tender package intake completed/);
     assert.match(sourcePanel, /source-file list currently contains <strong>\{files\.length\}<\/strong>/);
-    assert.match(sourcePanel, /before running AI Analyze/);
+    assert.match(sourcePanel, /automatic AI analysis is queued/);
   });
 
-  it("does not falsely claim that upload-first already ran analysis", () => {
-    assert.match(intakePage, /Review the created tender, then run AI Analyze/);
-    assert.match(intakePage, /before running AI Analyze/);
+  it("describes queued automation without claiming gated work already completed", () => {
+    assert.match(intakePage, /automatically queues AI analysis, matching, and gated draft generation/);
+    assert.match(intakePage, /analysis starts only after the final batch succeeds/);
     assert.doesNotMatch(intakePage, /Extracting and running engine/);
     assert.doesNotMatch(intakePage, /run analysis, and rank best-fit/);
   });

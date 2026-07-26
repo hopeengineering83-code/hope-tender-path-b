@@ -9,6 +9,7 @@ import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from 
 import { inferTenderMetadata } from "./engine/tender-metadata";
 import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
 import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
+import { queueAutomaticTenderPipeline } from "./ai-jobs/automatic-tender-pipeline";
 import { reportError, logger } from "./observability";
 import { prisma, prismaReady } from "./prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "./rate-limit";
@@ -140,6 +141,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
   try {
     const form = await req.formData();
     const files = form.getAll("file").filter((entry): entry is File => entry instanceof File);
+    const deferAnalysis = form.get("deferAnalysis") === "true";
     const batchError = validateUploadBatch(files);
     if (batchError) {
       return NextResponse.json({ error: batchError, code: "UPLOAD_BATCH_INVALID", errors: [batchError], requestId }, { status: 400 });
@@ -450,6 +452,29 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
       });
     }
 
+    let processingJobId: string | null = null;
+    let analysisRevision: string | null = null;
+    let pipelineWarning: string | null = null;
+    if (meaningfulUploads.length > 0 && !deferAnalysis) {
+      try {
+        const pipeline = await queueAutomaticTenderPipeline({
+          tenderId,
+          userId: actor.id,
+          companyId: company.id,
+          source: "upload-first",
+        });
+        processingJobId = pipeline.jobId;
+        analysisRevision = pipeline.analysisRevision;
+      } catch (error) {
+        pipelineWarning = "Tender intake completed, but automatic analysis could not be queued. Open the tender and retry AI Analyze.";
+        logger.error("[upload-first] automatic tender pipeline queue failed", {
+          requestId,
+          tenderId,
+          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        });
+      }
+    }
+
     return NextResponse.json({
       success: true,
       tenderId,
@@ -460,9 +485,24 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
       errors: [],
       engineSkipped: true,
       engineError: null,
-      nextAction: meaningfulUploads.length > 0 ? "RUN_AI_ANALYZE" : "RUN_OCR_OR_REEXTRACT",
-      message: meaningfulUploads.length > 0
-        ? "Tender and source files were created. Open the tender and run AI Analyze."
+      processingJobId,
+      analysisRevision,
+      pipelineStage: processingJobId ? "AI_ANALYZE_QUEUED" : null,
+      pipelineDeferred: deferAnalysis,
+      pipelineWarning,
+      nextAction: meaningfulUploads.length > 0
+        ? processingJobId
+          ? "WAIT_FOR_AI_ANALYZE"
+          : deferAnalysis
+            ? "UPLOAD_REMAINING_SOURCE_FILES"
+            : "RUN_AI_ANALYZE"
+        : "RUN_OCR_OR_REEXTRACT",
+      message: processingJobId
+        ? "Tender and source files were created. Automatic AI analysis is queued."
+        : meaningfulUploads.length > 0 && deferAnalysis
+          ? "Tender and the first secure source batch were created. Automatic analysis will queue after the remaining package batches are stored."
+          : meaningfulUploads.length > 0
+            ? "Tender and source files were created, but automatic AI analysis must be retried."
         : "Tender and source files were created, but OCR or re-extraction is required before AI Analyze.",
       requestId,
     }, { status: 201 });

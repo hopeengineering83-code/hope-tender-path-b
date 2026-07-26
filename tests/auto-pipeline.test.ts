@@ -7,7 +7,7 @@ import {
 } from "../lib/ui/auto-pipeline";
 
 describe("server-owned tender pipeline", () => {
-  it("never returns a client mutation decision", () => {
+  it("wakes the worker only for a durable server-created job", () => {
     const response: UploadFirstResponse = {
       success: true,
       tenderId: "tender-abc",
@@ -15,14 +15,18 @@ describe("server-owned tender pipeline", () => {
       nextAction: "RUN_AI_ANALYZE",
     };
     assert.equal(decideTenderUploadAutoPipeline(response), null);
+    assert.equal(decideTenderUploadAutoPipeline({
+      ...response,
+      processingJobId: "job-123",
+    }), "/api/ai-jobs/run-next?jobType=AI_ANALYZE");
   });
 
-  it("does not POST AI Analyze from the browser", async () => {
+  it("does not call any worker when the server did not create a job", async () => {
     let calls = 0;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => {
       calls += 1;
-      throw new Error("client fetch must not run");
+      throw new Error("worker fetch must not run");
     }) as typeof fetch;
     try {
       const result = await triggerTenderUploadAutoPipeline({
@@ -40,16 +44,26 @@ describe("server-owned tender pipeline", () => {
     }
   });
 
-  it("surfaces a server-created processing job without creating another job", async () => {
-    const result = await triggerTenderUploadAutoPipeline({
-      success: true,
-      tenderId: "tender-abc",
-      processingJobId: "job-123",
-    });
-    assert.equal(result.fired, false);
-    assert.equal(result.endpoint, null);
-    assert.equal(result.status, "queued");
-    assert.match(result.message, /server pipeline queued/i);
+  it("immediately wakes the worker for a server-created processing job", async () => {
+    const originalFetch = globalThis.fetch;
+    let endpoint = "";
+    globalThis.fetch = (async (input) => {
+      endpoint = String(input);
+      return new Response(JSON.stringify({ ran: 1 }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const result = await triggerTenderUploadAutoPipeline({
+        success: true,
+        tenderId: "tender-abc",
+        processingJobId: "job-123",
+      });
+      assert.equal(endpoint, "/api/ai-jobs/run-next?jobType=AI_ANALYZE");
+      assert.equal(result.fired, true);
+      assert.equal(result.endpoint, endpoint);
+      assert.equal(result.status, "queued");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("preserves the upload response contract", () => {

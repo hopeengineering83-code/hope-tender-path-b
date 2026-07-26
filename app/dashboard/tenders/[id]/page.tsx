@@ -187,8 +187,20 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   }));
 
   const ai = isAIEnabled();
-  const generationReadiness = await getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null);
-  const canonicalReadiness = await getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null);
+  const [generationReadiness, canonicalReadiness, activeAnalysisJob] = await Promise.all([
+    getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null),
+    getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null),
+    prismaClient.aiJob.findFirst({
+      where: {
+        userId,
+        tenderId: tender.id,
+        jobType: "AI_ANALYZE",
+        status: { in: ["QUEUED", "RUNNING"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    }).catch(() => null),
+  ]);
 
   return (
     <section className="space-y-5" aria-label="Tender workflow workspace">
@@ -224,7 +236,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       </WorkflowStage>
 
       <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, review analysis quality, and confirm source-traced requirements.">
-        <AIAnalyzePanel tenderId={tender.id} aiEnabled={ai} canMutate={canMutate} />
+        <AIAnalyzePanel
+          tenderId={tender.id}
+          initialContinueJobId={activeAnalysisJob?.id ?? null}
+          aiEnabled={ai}
+          canMutate={canMutate}
+        />
         <EngineActionPanel
           tenderId={tender.id}
           vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}

@@ -92,6 +92,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
   const [pipelineStatus, setPipelineStatus] = useState<{ jobId: string | null; phase: "queued" | "extracting" | "done" } | null>(null);
   const packageIntake = searchParams.get("packageIntake") === "1";
   const packageFailed = safePackageFailureCount(searchParams.get("packageFailed"));
+  const intakePipelineStatus = searchParams.get("pipeline");
   const [showPackageNotice, setShowPackageNotice] = useState(packageIntake);
 
   const uploadFiles = useCallback(async (incoming: File[]) => {
@@ -227,7 +228,9 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
                 The authoritative source-file list currently contains <strong>{files.length}</strong> file(s).
                 {packageFailed > 0
                   ? ` ${packageFailed} additional file(s) could not be uploaded; select those files again below.`
-                  : " Confirm that every selected document appears below before running AI Analyze."}
+                  : intakePipelineStatus === "queued"
+                    ? " The complete package was stored and automatic AI analysis is queued."
+                    : " Confirm that every selected document appears below; automatic analysis can be retried from the Analysis stage if it did not queue."}
               </p>
               <p className="mt-1 text-xs opacity-80">The server&apos;s per-request security limits remained unchanged; the package was processed in smaller requests.</p>
             </div>

@@ -20,7 +20,12 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props) {
+export function AIAnalyzePanel({
+  tenderId,
+  initialContinueJobId = null,
+  aiEnabled,
+  canMutate = false,
+}: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [analyzing, setAnalyzing] = useState(false);
@@ -73,6 +78,62 @@ export function AIAnalyzePanel({ tenderId, aiEnabled, canMutate = false }: Props
       if (autoRetryCountdownRef.current) clearInterval(autoRetryCountdownRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!initialContinueJobId) return;
+
+    let active = true;
+    cancelledRef.current = false;
+    setAnalyzing(true);
+    setJobStatus("QUEUED");
+    setPhase("Automatic analysis is queued — waiting for the background worker…");
+
+    async function watchServerQueuedJob() {
+      while (active && !cancelledRef.current) {
+        let job: {
+          status: JobStatus;
+          errorMessage: string | null;
+          steps?: Array<{ message: string | null }>;
+        } | null = null;
+        try {
+          const response = await fetch(`/api/ai-jobs/${initialContinueJobId}`, {
+            method: "GET",
+          });
+          if (response.ok) {
+            const body = await response.json().catch(() => null);
+            job = body?.job ?? null;
+          }
+        } catch {
+          // The durable job remains authoritative; retry the status read.
+        }
+
+        if (job) {
+          setJobStatus(job.status);
+          const lastStep = job.steps?.at(-1)?.message;
+          if (lastStep) setPhase(lastStep);
+          if (TERMINAL.includes(job.status)) {
+            setAnalyzing(false);
+            if (job.status === "SUCCEEDED") {
+              setPhase("Analysis complete — the gated Engine continuation is queued.");
+              router.refresh();
+            } else {
+              setError(job.status === "PARTIAL_SUCCESS"
+                ? "Automatic analysis stopped at partial success. Generation and export remain blocked until a full AI analysis succeeds."
+                : job.errorMessage || "Automatic analysis failed. Retry AI Analyze when the provider is available.");
+            }
+            return;
+          }
+        }
+
+        await sleep(POLL_INTERVAL_MS);
+      }
+    }
+
+    void watchServerQueuedJob();
+    return () => {
+      active = false;
+    };
+  }, [initialContinueJobId, router]);
 
   function cancelAutoRetry() {
     if (autoRetryTimerRef.current) { clearTimeout(autoRetryTimerRef.current); autoRetryTimerRef.current = null; }

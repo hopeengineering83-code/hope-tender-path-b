@@ -153,21 +153,21 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
       // (automated global callers — cron, external orchestrators — cannot
       // invoke the worker without a user session), not a security hole.
       //
-      // This is NOT an unconditional production blocker — the endpoint
-      // remains safely usable through authenticated user-scoped execution.
-      // Marking production CRITICAL is only correct when this deployment
-      // is configured to require cron/global automated processing. Since
-      // we cannot infer that from the environment, we keep this as a
-      // WARNING with a precise operational limitation, and do NOT mark
-      // it requiredForProduction. Deployments that require automated
-      // callers should monitor this check and set secrets accordingly.
+      // This product's target workflow is upload-and-continue: later Engine
+      // and proposal jobs must keep moving after the browser closes. The
+      // endpoint remains secure without a secret, but the promised background
+      // automation does not. Treat missing automated-caller authentication as
+      // a production-readiness blocker rather than silently degrading to a
+      // manual, browser-dependent workflow.
       severity: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
         ? "OK"
-        : "WARNING",
-      requiredForProduction: false,
+        : !production
+          ? "WARNING"
+          : "CRITICAL",
+      requiredForProduction: true,
       detail: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
         ? "Automated worker authentication is configured (AI_JOBS_WORKER_SECRET or CRON_SECRET)."
-        : "No automated worker secret is configured. The worker endpoint falls back to requireRole(ADMIN, PROPOSAL_MANAGER) — user-scoped execution remains available. Set AI_JOBS_WORKER_SECRET or CRON_SECRET ONLY if this deployment requires automated callers (cron, external orchestrators).",
+        : "No automated worker secret is configured. User-scoped execution remains secure, but queued Engine and proposal continuations cannot reliably progress after the browser closes. Configure AI_JOBS_WORKER_SECRET or CRON_SECRET and the queue-drain scheduler.",
     },
   );
 

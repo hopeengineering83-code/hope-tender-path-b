@@ -11,7 +11,6 @@ import {
 } from "../../../../lib/tender-upload-package";
 import {
   triggerTenderUploadAutoPipeline,
-  type AutoPipelineResult,
 } from "../../../../lib/ui/auto-pipeline";
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Infrastructure", "Urban Planning", "Environmental", "Feasibility Study", "NGO/Donor-Funded", "Other"];
@@ -35,11 +34,13 @@ type UploadFirstPayload = {
    * when it is "RUN_AI_ANALYZE" — the user no longer has to click the AI
    * Analyze button manually after upload. */
   nextAction?: string;
+  processingJobId?: string;
 };
 
 type AdditionalUploadPayload = {
   error?: string;
   results?: Array<{ success?: boolean; fileRecord?: { id: string }; error?: string }>;
+  processingJobId?: string;
 };
 
 function formatMegabytes(bytes: number): string {
@@ -54,12 +55,6 @@ export default function NewTenderPage() {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
-  /**
-   * Auto-pipeline status shown to the user after upload-first succeeds.
-   * Replaces the previous "Open the tender and run AI Analyze" silent skip
-   * with a visible "Pipeline auto-started" badge.
-   */
-  const [autoPipeline, setAutoPipeline] = useState<AutoPipelineResult | null>(null);
   const [error, setError] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -86,23 +81,34 @@ export default function NewTenderPage() {
     setUploadProgress(null);
   }
 
-  async function appendTenderBatch(tenderId: string, batch: File[]): Promise<{ uploaded: number; failed: number }> {
+  async function appendTenderBatch(
+    tenderId: string,
+    batch: File[],
+    deferAnalysis: boolean,
+  ): Promise<{ uploaded: number; failed: number; processingJobId: string | null }> {
     const body = new FormData();
     for (const file of batch) body.append("file", file);
     body.append("tenderId", tenderId);
     body.append("classification", "BID_DOCUMENT");
+    if (deferAnalysis) body.append("deferAnalysis", "true");
 
     try {
       const response = await fetch("/api/upload", { method: "POST", body });
       const payload = await response.json().catch(() => ({})) as AdditionalUploadPayload;
-      if (!Array.isArray(payload.results)) return { uploaded: 0, failed: batch.length };
+      if (!Array.isArray(payload.results)) {
+        return { uploaded: 0, failed: batch.length, processingJobId: null };
+      }
       const uploaded = payload.results.filter((result) => result.success === true && Boolean(result.fileRecord)).length;
-      return { uploaded, failed: Math.max(0, batch.length - uploaded) };
-} catch (e) {
+      return {
+        uploaded,
+        failed: Math.max(0, batch.length - uploaded),
+        processingJobId: payload.processingJobId ?? null,
+      };
+    } catch (e) {
       // Batch upload failed — surface to operator via console.
       // Previously bare `catch {}` — silent upload failures were invisible.
       try { console.error("[tenders/new] batch upload failed", e); } catch {}
-      return { uploaded: 0, failed: batch.length };
+      return { uploaded: 0, failed: batch.length, processingJobId: null };
     }
   }
 
@@ -128,6 +134,7 @@ export default function NewTenderPage() {
 
       const form = new FormData();
       for (const file of firstBatch) form.append("file", file);
+      if (batches.length > 1) form.append("deferAnalysis", "true");
       const res = await fetch("/api/tenders/upload-first", { method: "POST", body: form });
       const data = await res.json().catch(() => ({})) as UploadFirstPayload;
       if (!res.ok) {
@@ -142,33 +149,40 @@ export default function NewTenderPage() {
 
       let processed = firstBatch.length;
       let failed = 0;
+      let processingJobId = data.processingJobId ?? null;
       const additionalBatches = batches.slice(1);
       if (additionalBatches.length > 0) {
         setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
-        for (const batch of additionalBatches) {
-          const result = await appendTenderBatch(data.tenderId, batch);
+        for (const [batchIndex, batch] of additionalBatches.entries()) {
+          const isFinalBatch = batchIndex === additionalBatches.length - 1;
+          const result = await appendTenderBatch(
+            data.tenderId,
+            batch,
+            !isFinalBatch || failed > 0,
+          );
           failed += result.failed;
           processed += batch.length;
+          processingJobId = result.processingJobId ?? processingJobId;
           setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
         }
       }
+
+      const pipeline = await triggerTenderUploadAutoPipeline({
+        ...data,
+        processingJobId: failed === 0 ? processingJobId ?? undefined : undefined,
+        nextAction: failed === 0 ? data.nextAction : "RECONCILE_SOURCE_FILES",
+      });
 
       if (batches.length > 1) {
         const query = new URLSearchParams({
           packageIntake: "1",
           packageFailed: String(failed),
+          pipeline: pipeline.status,
         });
-        // Auto-fire the next pipeline step (AI Analyze) so the user does
-        // not have to find and click the AI Analyze button manually after
-        // upload. The auto-pipeline module handles the workflow-sync event
-        // so the Action Center on the tender detail page refreshes to
-        // show "Queued" → "Analyzing" instead of "Ready".
         setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
-        setAutoPipeline(await triggerTenderUploadAutoPipeline(data));
         router.push(`/dashboard/tenders/${data.tenderId}?${query.toString()}`);
       } else {
-        setAutoPipeline(await triggerTenderUploadAutoPipeline(data));
-        router.push(`/dashboard/tenders/${data.tenderId}`);
+        router.push(`/dashboard/tenders/${data.tenderId}?pipeline=${pipeline.status}`);
       }
     } catch {
       setUploadError("Network error. The tender was not confirmed as created. Check the tender list before retrying.");
@@ -220,14 +234,14 @@ export default function NewTenderPage() {
     <div className="max-w-4xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">New Tender Intake</h1>
-        <p className="mt-1 text-sm text-slate-500">Upload tender documents first so the app can extract details and establish the source record. Review the created tender, then run AI Analyze for requirements, matching, and compliance.</p>
+        <p className="mt-1 text-sm text-slate-500">Upload the complete tender package once. The app stores and extracts every source file, then automatically queues AI analysis, matching, and gated draft generation. Human review and final approval remain required.</p>
       </div>
 
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm sm:p-6" aria-labelledby="upload-first-heading">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Recommended</p>
           <h2 id="upload-first-heading" className="mt-1 text-xl font-bold text-slate-900">Upload tender documents first</h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-600">The first secure batch creates the tender and extracts core details. Larger packages are then added to the same tender in request-safe batches. Confirm the complete source-file list before running AI Analyze.</p>
+          <p className="mt-1 max-w-2xl text-sm text-slate-600">The first secure batch creates the tender and extracts core details. Larger packages are added to the same tender in request-safe batches; analysis starts only after the final batch succeeds.</p>
         </div>
 
         <div className="mt-5 rounded-2xl border border-dashed border-blue-300 bg-white p-4 sm:p-5">
