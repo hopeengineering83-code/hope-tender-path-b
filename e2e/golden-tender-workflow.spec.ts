@@ -32,7 +32,7 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
   test.skip(!FULL, "Set E2E_GOLDEN_AUTH=true and seed the isolated E2E account");
   test.setTimeout(120_000);
 
-  test("upload-first → add source file → AI Analyze fallback → readiness gate", async ({ page }) => {
+  test("upload-first → automatic analysis queue → AI Analyze fallback → readiness gate", async ({ page }) => {
     // The storage state is set by the global setup / project config.
     // Navigate directly to the dashboard — no login needed.
     await page.goto("/dashboard");
@@ -71,14 +71,31 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       tenderId: string;
       uploadedFiles: number;
       nextAction: string;
+      processingJobId: string | null;
+      pipelineStage: string | null;
     };
     expect(intakeJson.success).toBe(true);
     expect(intakeJson.uploadedFiles).toBe(2);
     expect(intakeJson.tenderId).toBeTruthy();
-    expect(["RUN_AI_ANALYZE", "RUN_OCR_OR_REEXTRACT"]).toContain(intakeJson.nextAction);
+    expect(intakeJson.nextAction).toBe("WAIT_FOR_AI_ANALYZE");
+    expect(intakeJson.processingJobId).toBeTruthy();
+    expect(intakeJson.pipelineStage).toBe("AI_ANALYZE_QUEUED");
 
     const tenderId = intakeJson.tenderId;
     try {
+      // Upload-first now creates the durable, user-owned analysis job before
+      // returning. The browser may wake the worker, but it is never the
+      // orchestration authority and a lost tab cannot lose the queued work.
+      const queuedJob = await page.request.get(`/api/ai-jobs/${intakeJson.processingJobId}`);
+      expect(queuedJob.status(), await queuedJob.text()).toBe(200);
+      const queuedJobJson = await queuedJob.json() as {
+        job: { id: string; tenderId: string; jobType: string; status: string };
+      };
+      expect(queuedJobJson.job.id).toBe(intakeJson.processingJobId);
+      expect(queuedJobJson.job.tenderId).toBe(tenderId);
+      expect(queuedJobJson.job.jobType).toBe("AI_ANALYZE");
+      expect(["QUEUED", "RUNNING"]).toContain(queuedJobJson.job.status);
+
       // Confirm the real contract for inspecting a tender's source files:
       // GET /api/tenders/{tenderId} and inspect its files array (there is no
       // /api/tenders/{id}/source-files endpoint that returns this shape for
