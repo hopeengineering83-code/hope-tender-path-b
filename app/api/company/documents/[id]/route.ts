@@ -10,7 +10,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "../../../../../lib/extract-text";
 import { assessExtractionQuality, assessExtractionQualityPerPage } from "../../../../../lib/extraction-quality";
-import { ingestCompanyVault } from "../../../../../lib/company-vault-ingestion";
+import { enqueueJob } from "../../../../../lib/ai-jobs";
 import { getStorageAdapter } from "../../../../../lib/storage";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import {
@@ -201,14 +201,24 @@ export async function POST(
     },
   });
 
-  let knowledgeImport: Awaited<ReturnType<typeof ingestCompanyVault>> | null = null;
+  // ingestCompanyVault can involve an AI extraction pass over every usable
+  // company document — moved into the VAULT_INGEST job queue rather than
+  // running inline. This single document's own extraction above stays
+  // synchronous (fast, single-file); only the company-wide ingestion pass
+  // is deferred to the worker.
+  let knowledgeImportJobId: string | null = null;
   let knowledgeImportError: string | null = null;
   if (meaningful) {
     try {
-      knowledgeImport = await ingestCompanyVault(company.id);
+      const job = await enqueueJob({
+        userId: actor.id,
+        jobType: "VAULT_INGEST",
+        input: { companyId: company.id },
+      });
+      knowledgeImportJobId = job.id;
     } catch (error) {
       knowledgeImportError = error instanceof Error ? error.constructor.name : "UnknownError";
-      logger.error("[document reextract] canonical company ingestion failed", { errorClass: knowledgeImportError });
+      logger.error("[document reextract] canonical company ingestion enqueue failed", { errorClass: knowledgeImportError });
     }
   }
 
@@ -225,7 +235,7 @@ export async function POST(
       extracted: meaningful,
       extractionRevision,
       extractionScore: quality.score,
-      knowledgeImport,
+      knowledgeImportJobId,
       knowledgeImportError,
     },
   });
@@ -236,7 +246,7 @@ export async function POST(
     extracted: meaningful,
     extractionRevision,
     extractionScore: quality.score,
-    knowledgeImport,
+    knowledgeImportJobId,
     knowledgeImportError,
   });
 }

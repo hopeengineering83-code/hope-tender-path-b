@@ -140,7 +140,6 @@ export default function CompanyPage() {
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
   const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string|null>(null);
   const [reimporting, setReimporting] = useState(false);
-  const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
   const [assets, setAssets] = useState<CompanyAsset[]>([]);
   const [searchExpert, setSearchExpert] = useState("");
   const [searchProject, setSearchProject] = useState("");
@@ -437,18 +436,24 @@ export default function CompanyPage() {
   }
 
   async function reimportAll() {
-    setReimporting(true); setReimportResult(null);
+    setReimporting(true);
     try {
       const res = await fetch("/api/company/reimport", { method:"POST" });
-      if (!res.ok) { setError("We could not re-import Company Vault documents. Please retry, or re-extract the specific failed document first."); return; }
-      const data = await res.json() as { expertsCreated?:number; projectsCreated?:number; docsProcessed?:number };
-      setReimportResult({ expertsCreated: data.expertsCreated ?? 0, projectsCreated: data.projectsCreated ?? 0, docsProcessed: data.docsProcessed ?? 0 });
-      await loadDocs();
-      // Refresh experts/projects in company state
-      const c = await fetch("/api/company").then(r=>r.json()) as Company;
-      setCompany(prev => ({ ...prev, experts: c.experts ?? [], projects: c.projects ?? [] }));
+      if (!res.ok) { setError("We could not queue a Company Vault re-import. Please retry, or re-extract the specific failed document first."); return; }
+      const data = await res.json() as { status?: string };
+      if (data.status === "QUEUED") {
+        setVaultPipeline({
+          phase: "queued",
+          message: "Re-extraction and re-import queued — large document sets can take a few minutes. Refresh this page shortly to see updated documents, experts, and projects.",
+          at: Date.now(),
+        });
+        // Best-effort nudge so the worker starts immediately instead of
+        // waiting for the next scheduled drain tick; the job stays queued
+        // and durable either way.
+        void fetch("/api/ai-jobs/run-next?jobType=VAULT_INGEST", { method: "POST" }).catch(() => {});
+      }
     } catch {
-      setError("Network interruption while re-importing Company Vault documents. Please retry when your connection is stable.");
+      setError("Network interruption while queuing the Company Vault re-import. Please retry when your connection is stable.");
     } finally {
       setReimporting(false);
     }
@@ -739,11 +744,6 @@ export default function CompanyPage() {
               {reimporting ? "Re-importing…" : "Re-extract & Re-import All"}
             </button>
           </div>
-          {reimportResult && (
-            <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-2.5 text-xs text-green-800">
-              Re-import complete — {reimportResult.docsProcessed} docs processed · {reimportResult.expertsCreated} expert{reimportResult.expertsCreated!==1?"s":""} added · {reimportResult.projectsCreated} project{reimportResult.projectsCreated!==1?"s":""} added
-            </div>
-          )}
           <div className="flex gap-2 items-center">
             <select value={docCategory} onChange={e=>setDocCategory(e.target.value)} className="flex-1 rounded-lg border px-2 py-1.5 text-xs bg-white">
               {DOC_CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]??c}</option>)}

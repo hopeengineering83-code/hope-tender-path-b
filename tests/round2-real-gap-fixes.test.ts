@@ -25,9 +25,12 @@ test("GAP-R2C-3: forgot-password adds timing-equalization for non-existent email
   assert.ok(src.includes("enumeration") || src.includes("timing"));
 });
 
-test("GAP-R2C-4: company reimport route excludes PENDING_DELETE documents", () => {
+test("GAP-R2C-4: company reimport's re-extraction loop excludes PENDING_DELETE documents", () => {
+  // The re-extraction loop moved out of the route into
+  // lib/company-vault-reextraction.ts (see tasks around the VAULT_INGEST
+  // background job) — the route itself now only enqueues that job.
   const src = fs.readFileSync(
-    path.join(process.cwd(), "app/api/company/reimport/route.ts"),
+    path.join(process.cwd(), "lib/company-vault-reextraction.ts"),
     "utf8",
   );
   assert.match(src, /COMPANY_DOCUMENT_PENDING_DELETE_MARKER/);

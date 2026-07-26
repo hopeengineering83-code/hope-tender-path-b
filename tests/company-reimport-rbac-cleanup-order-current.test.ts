@@ -15,16 +15,23 @@ describe("company reimport safety", () => {
     assert.doesNotMatch(route, /"REVIEWER"|"VIEWER"/);
   });
 
-  it("re-extracts verified bytes, then invokes the single canonical ingestion owner", () => {
+  it("enqueues re-extraction + the single canonical ingestion owner as one background job", () => {
+    // Re-extracting bytes for every company document and then ingesting them
+    // used to run inline (inspectActualFileBytes -> ingestCompanyVault ->
+    // cleanupSupportDocImportedRecords), which could exceed the request's
+    // time budget for a large vault. All three now run inside the
+    // VAULT_INGEST job handler (lib/ai-job-handlers.ts, reExtractAll: true)
+    // instead — this route only enqueues it.
     const postStart = route.indexOf("export async function POST");
-    const integrityPos = route.indexOf("inspectActualFileBytes", postStart);
-    const ingestPos = route.indexOf("ingestCompanyVault(company.id)", postStart);
-    const auditPos = route.indexOf("cleanupSupportDocImportedRecords(company.id)", postStart);
     assert.ok(postStart >= 0);
-    assert.ok(integrityPos > postStart);
-    assert.ok(ingestPos > integrityPos);
-    assert.ok(auditPos > ingestPos);
-    assert.equal(route.slice(postStart).match(/ingestCompanyVault\(company\.id\)/g)?.length, 1);
+    const postRegion = route.slice(postStart);
+    assert.doesNotMatch(postRegion, /inspectActualFileBytes/);
+    assert.doesNotMatch(postRegion, /ingestCompanyVault\(/);
+    assert.doesNotMatch(postRegion, /cleanupSupportDocImportedRecords\(/);
+    assert.match(postRegion, /enqueueJob\(\{/);
+    assert.match(postRegion, /jobType: "VAULT_INGEST"/);
+    assert.match(postRegion, /reExtractAll: true/);
+    assert.match(postRegion, /auditAction: "COMPANY_KNOWLEDGE_REPAIR"/);
   });
 
   it("treats mixed/support document handling as a non-destructive audit", () => {
@@ -52,10 +59,15 @@ describe("company reimport safety", () => {
     assert.doesNotMatch(route, /error:\s*(?:error\.message|String\(error\))/);
   });
 
-  it("makes post-success audit persistence non-fatal", () => {
-    assert.match(route, /void logAction\(/);
-    assert.match(route, /company reimport audit persistence failed/);
-    assert.match(route, /\.catch\(\(error\) =>/);
+  it("the audit entry moved to the job handler (real outcome, not a pre-run guess)", () => {
+    // The route can no longer log real counts synchronously because
+    // ingestion hasn't run yet at response time. lib/ai-job-handlers.ts's
+    // VAULT_INGEST handler logs COMPANY_KNOWLEDGE_REPAIR once the job
+    // actually completes, gated on the auditAction this route passes in.
+    assert.doesNotMatch(route, /logAction\(/);
+    const handlers = readFileSync("lib/ai-job-handlers.ts", "utf8");
+    assert.match(handlers, /auditAction === "COMPANY_KNOWLEDGE_REPAIR"/);
+    assert.match(handlers, /\.catch\(\(error\) => \{/);
   });
 
   it("keeps Vercel Git deployment enabled (repo policy)", () => {

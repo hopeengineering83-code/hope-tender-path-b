@@ -124,8 +124,8 @@ describe("Company Vault add/reimport mutation failures", () => {
     assert.match(source, /We could not add that compliance record/);
     assert.match(source, /We could not add that legal record/);
     assert.match(source, /We could not add that financial record/);
-    assert.match(source, /We could not re-import Company Vault documents/);
-    assert.match(source, /Network interruption while re-importing Company Vault documents/);
+    assert.match(source, /We could not queue a Company Vault re-import/);
+    assert.match(source, /Network interruption while queuing the Company Vault re-import/);
     assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
   });
 });

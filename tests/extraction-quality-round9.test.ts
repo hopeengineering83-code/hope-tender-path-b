@@ -54,15 +54,21 @@ describe("extraction quality round 9/14 — source-driven 2M cap is fail-closed"
 });
 
 describe("extraction quality round 9 — reimport surfaces failures", () => {
-  const src = read("app/api/company/reimport/route.ts");
+  // The re-extraction loop (and its failedFiles collection) moved out of
+  // app/api/company/reimport/route.ts into lib/company-vault-reextraction.ts
+  // so it can also run inside the VAULT_INGEST background job — the route
+  // itself now only enqueues that job. See tests/vault-ingest-job.test.ts
+  // for real end-to-end coverage of a failed re-extraction surfacing in the
+  // job output.
+  const src = read("lib/company-vault-reextraction.ts");
   it("collects failed files with public error text and an optional stable integrity code", () => {
-    assert.match(src, /const failedFiles: Array<\{ name: string; error: string; code\?: string \}>/);
+    assert.match(src, /failedFiles: Array<\{ name: string; error: string; code\?: string \}>/);
     assert.match(src, /failedFiles\.push\(/);
     assert.match(src, /FILE_INTEGRITY_NOT_VERIFIED/);
   });
-  it("includes failedFiles + docsFailed in the response body", () => {
-    assert.ok(src.includes("docsFailed: failedFiles.length"));
-    assert.ok(src.includes("failedFiles,"));
+  it("returns reextracted + failedFiles from reextractAllCompanyDocuments", () => {
+    assert.match(src, /export async function reextractAllCompanyDocuments/);
+    assert.match(src, /return \{ reextracted, failedFiles \}/);
   });
 });
 

@@ -2,8 +2,7 @@ import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { ingestCompanyVault } from "../../../../../lib/company-vault-ingestion";
-import { logAction } from "../../../../../lib/audit";
+import { enqueueJob } from "../../../../../lib/ai-jobs";
 import { isCompanyKnowledgeAIEnabled } from "../../../../../lib/company-knowledge-ai";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
@@ -344,32 +343,18 @@ export async function POST(req: Request) {
     const company = await getCompany(actor.id);
     if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
 
-    const result = await ingestCompanyVault(company.id);
+    // ingestCompanyVault can involve an AI extraction pass over every usable
+    // company document — moved into the VAULT_INGEST job queue rather than
+    // running inline (see lib/ai-job-handlers.ts). The job handler emits the
+    // COMPANY_KNOWLEDGE_REPROCESS audit entry once real results are known.
+    const job = await enqueueJob({
+      userId: actor.id,
+      jobType: "VAULT_INGEST",
+      input: { companyId: company.id, auditAction: "COMPANY_KNOWLEDGE_REPROCESS" },
+    });
     const diagnostics = await buildDiagnostics(company.id);
 
-    void logAction({
-      userId: actor.id,
-      action: "COMPANY_KNOWLEDGE_REPROCESS",
-      entityType: "Company",
-      entityId: company.id,
-      description: "Company Vault sources were reprocessed through the canonical ingestion and source-verification path.",
-      metadata: {
-        expertsCreated: result.expertsCreated,
-        projectsCreated: result.projectsCreated,
-        expertsUpdated: result.expertsUpdated,
-        projectsUpdated: result.projectsUpdated,
-        aiUsed: result.aiUsed,
-        sourceVerification: result.sourceVerification,
-      },
-      requestId,
-    }).catch((error) => {
-      logger.warn("company knowledge reprocessing audit persistence failed", {
-        requestId,
-        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      });
-    });
-
-    return NextResponse.json({ result: { ...result, diagnostics }, requestId });
+    return NextResponse.json({ status: "QUEUED", jobId: job.id, diagnostics, requestId });
   } catch (error) {
     logger.error("company knowledge reprocessing failed", {
       requestId,

@@ -33,22 +33,30 @@ describe("company knowledge repair mutation RBAC", () => {
     assert.match(postRegion, /userId: actor\.id/);
   });
 
-  it("invokes the single canonical ingestion owner and returns paginated diagnostics", () => {
-    assert.match(postRegion, /ingestCompanyVault\(company\.id\)/);
+  it("enqueues the single canonical ingestion owner via VAULT_INGEST and returns paginated diagnostics", () => {
+    // ingestCompanyVault used to run inline in this request; it now runs in
+    // the VAULT_INGEST background job (lib/ai-job-handlers.ts) so a large
+    // vault's AI extraction pass cannot exceed the request's time budget.
+    // The job handler is the one canonical owner — this route must enqueue
+    // it, not call ingestCompanyVault directly.
+    assert.doesNotMatch(postRegion, /ingestCompanyVault\(/);
+    assert.match(postRegion, /enqueueJob\(\{/);
+    assert.match(postRegion, /jobType: "VAULT_INGEST"/);
+    assert.match(postRegion, /auditAction: "COMPANY_KNOWLEDGE_REPROCESS"/);
     assert.match(postRegion, /buildDiagnostics\(company\.id\)/);
-    assert.match(postRegion, /result: \{ \.\.\.result, diagnostics \}/);
-    assert.match(postRegion, /expertsCreated: result\.expertsCreated/);
-    assert.match(postRegion, /projectsCreated: result\.projectsCreated/);
-    assert.doesNotMatch(postRegion, /importCompanyKnowledgeFromDocuments/);
+    assert.match(postRegion, /status: "QUEUED", jobId: job\.id, diagnostics/);
   });
 
-  it("returns stable correlated failures and makes audit persistence non-fatal", () => {
+  it("returns stable correlated failures on enqueue failure; audit persistence moved to the job handler", () => {
     assert.match(postRegion, /COMPANY_KNOWLEDGE_REPROCESS_FAILED/);
     assert.match(postRegion, /extractRequestId\(req\)/);
     assert.match(postRegion, /errorClass: error instanceof Error \? error\.constructor\.name : "UnknownError"/);
-    assert.match(postRegion, /void logAction\(/);
-    assert.match(postRegion, /company knowledge reprocessing audit persistence failed/);
     assert.doesNotMatch(postRegion, /error:\s*(?:error\.message|String\(error\))/);
+    // The route no longer logs COMPANY_KNOWLEDGE_REPROCESS itself — the
+    // VAULT_INGEST job handler does, once the real outcome is known (see
+    // tests/vault-ingest-job.test.ts for real end-to-end coverage of that
+    // audit entry, gated on auditAction in the job input).
+    assert.doesNotMatch(postRegion, /logAction\(/);
   });
 
   it("keeps Vercel Git deployment enabled (repo policy)", () => {

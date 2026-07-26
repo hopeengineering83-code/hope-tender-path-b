@@ -44,8 +44,12 @@ import { autoFillTenderMetadata } from "./engine/auto-fill-tender-metadata";
 import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
 import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
 import { ingestCompanyVault } from "./company-vault-ingestion";
+import { reextractAllCompanyDocuments, type ReextractAllResult } from "./company-vault-reextraction";
+import { cleanupSupportDocImportedRecords } from "./company-support-doc-cleanup";
 import { classifyStageRetry } from "./engine/stage-retry-policy";
 import { recordSafeStageEvent } from "./engine/stage-observability";
+import { logAction } from "./audit";
+import { logger } from "./observability";
 
 export interface JobContext {
   jobId: string;
@@ -804,46 +808,60 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     };
   },
 
-  // ─── VAULT_INGEST — background Company Vault re-ingestion ────────────
+  // ─── VAULT_INGEST — background Company Vault re-extraction + re-ingestion ─
   // Moves ingestCompanyVault (deterministic regex extraction + an optional
   // full AI extraction pass over every usable company document) out of the
-  // upload-request response cycle. The job type existed in the JobType
-  // union with no registered handler and no caller anywhere in the
-  // codebase; this closes that gap for the highest-frequency synchronous
-  // call site (a company-document upload triggering re-ingestion). Bulk
-  // administrative routes (reimport-all, single-document repair) combine
-  // their own synchronous OCR re-extraction with this ingestion step and
-  // are not yet converted — they remain a follow-up.
+  // upload-request response cycle. Optionally also moves the OCR/text
+  // re-extraction loop (reextractAllCompanyDocuments) out of the same cycle
+  // when input.reExtractAll is true — this covers every synchronous caller
+  // of ingestCompanyVault: a company-document upload (secure-upload-handler),
+  // bulk "Re-extract & Re-import All" (reimport route, reExtractAll: true),
+  // single-document re-extraction (documents/[id] route), and the standalone
+  // knowledge-repair reprocess action.
   //
-  // Input: { companyId: string }
-  // Output: CompanyVaultIngestionResult (docsProcessed, expertsCreated, ...)
+  // Input: { companyId: string; reExtractAll?: boolean }
+  // Output: CompanyVaultIngestionResult, plus docsReextracted/failedFiles
+  // when reExtractAll was requested.
   VAULT_INGEST: async (ctx) => {
     const companyId = ctx.input?.companyId as string | undefined;
     if (!companyId) throw new Error("VAULT_INGEST requires companyId in the job input");
+    const reExtractAll = ctx.input?.reExtractAll === true;
 
     const company = await prisma.company.findFirst({ where: { id: companyId, userId: ctx.userId }, select: { id: true } });
     if (!company) throw new Error(`VAULT_INGEST: Company ${companyId} not found or not owned by this user`);
 
-    await recordStep(ctx.jobId, { stepName: "vault.start", message: `Starting Company Vault ingestion for ${companyId}`, status: "RUNNING" });
+    const retryCount = (ctx.input?.retryCount as number | undefined) ?? 0;
+    await recordStep(ctx.jobId, { stepName: "vault.start", message: `Starting Company Vault ${reExtractAll ? "re-extraction + " : ""}ingestion for ${companyId}`, status: "RUNNING" });
     recordSafeStageEvent({
       jobType: "VAULT_INGEST", jobId: ctx.jobId, stage: "vault.start",
       packageRevision: null, sourceRevision: null, durationMs: 0, queueAgeMs: 0,
-      retryCount: (ctx.input?.retryCount as number | undefined) ?? 0,
-      providerClass: null, modelClass: null, blockerCode: null, artifactIntegrityStatus: null,
+      retryCount, providerClass: null, modelClass: null, blockerCode: null, artifactIntegrityStatus: null,
     });
 
     const startedAt = Date.now();
+    let reextraction: ReextractAllResult | undefined;
+    let supportAudit: Awaited<ReturnType<typeof cleanupSupportDocImportedRecords>> | undefined;
     let result: Awaited<ReturnType<typeof ingestCompanyVault>>;
     try {
+      if (reExtractAll) {
+        reextraction = await reextractAllCompanyDocuments(companyId);
+        await recordStep(ctx.jobId, {
+          stepName: "vault.reextract",
+          message: `Re-extracted ${reextraction.reextracted} document(s); ${reextraction.failedFiles.length} failed.`,
+          status: "RUNNING",
+        });
+      }
       result = await ingestCompanyVault(companyId);
+      if (reExtractAll) {
+        supportAudit = await cleanupSupportDocImportedRecords(companyId);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const decision = classifyStageRetry(message, (ctx.input?.retryCount as number | undefined) ?? 0);
+      const decision = classifyStageRetry(message, retryCount);
       recordSafeStageEvent({
         jobType: "VAULT_INGEST", jobId: ctx.jobId, stage: "vault.failed",
         packageRevision: null, sourceRevision: null, durationMs: Date.now() - startedAt, queueAgeMs: 0,
-        retryCount: (ctx.input?.retryCount as number | undefined) ?? 0,
-        providerClass: null, modelClass: null, blockerCode: decision.blockerCode, artifactIntegrityStatus: null,
+        retryCount, providerClass: null, modelClass: null, blockerCode: decision.blockerCode, artifactIntegrityStatus: null,
       });
       await recordStep(ctx.jobId, { stepName: "vault.failed", message: message.slice(0, 500), status: "FAILED" });
       throw error;
@@ -852,15 +870,53 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     recordSafeStageEvent({
       jobType: "VAULT_INGEST", jobId: ctx.jobId, stage: "vault.complete",
       packageRevision: null, sourceRevision: null, durationMs: Date.now() - startedAt, queueAgeMs: 0,
-      retryCount: (ctx.input?.retryCount as number | undefined) ?? 0,
-      providerClass: null, modelClass: null, blockerCode: null, artifactIntegrityStatus: null,
+      retryCount, providerClass: null, modelClass: null, blockerCode: null, artifactIntegrityStatus: null,
     });
     await recordStep(ctx.jobId, {
       stepName: "vault.complete",
       message: `Ingestion complete: ${result.docsProcessed} document(s) processed, ${result.expertsCreated} expert(s) and ${result.projectsCreated} project(s) created.`,
       status: "SUCCEEDED",
     });
-    return result as unknown as Record<string, unknown>;
+
+    // Admin-triggered reprocess/reimport actions get a human-readable audit
+    // entry with the real outcome (only known now that the job has actually
+    // run). Routine per-upload ingestion does not pass auditAction and stays
+    // silent here, matching its prior behavior (the upload itself is already
+    // logged as COMPANY_DOCUMENT_UPLOAD by the caller).
+    const auditAction = ctx.input?.auditAction as string | undefined;
+    if (auditAction === "COMPANY_KNOWLEDGE_REPAIR" || auditAction === "COMPANY_KNOWLEDGE_REPROCESS") {
+      const sourceVerification = result.sourceVerification;
+      await logAction({
+        userId: ctx.userId,
+        action: auditAction,
+        entityType: "Company",
+        entityId: companyId,
+        description: reExtractAll
+          ? `Company Vault reimport completed: ${result.expertsCreated} experts and ${result.projectsCreated} projects created; ${sourceVerification.expertsVerified} experts and ${sourceVerification.projectsVerified} projects machine source-verified; uncertain mixed-document records were preserved for review.`
+          : "Company Vault sources were reprocessed through the canonical ingestion and source-verification path.",
+        metadata: {
+          docsReextracted: reextraction?.reextracted ?? 0,
+          docsFailed: reextraction?.failedFiles.length ?? 0,
+          expertsCreated: result.expertsCreated,
+          projectsCreated: result.projectsCreated,
+          expertsUpdated: result.expertsUpdated,
+          projectsUpdated: result.projectsUpdated,
+          aiUsed: result.aiUsed,
+          sourceVerification,
+          supportAudit,
+        },
+      }).catch((error) => {
+        logger.warn("[job-handler] VAULT_INGEST audit persistence failed", {
+          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        });
+      });
+    }
+
+    return {
+      ...result,
+      ...(reextraction ? { docsReextracted: reextraction.reextracted, reextractionFailedFiles: reextraction.failedFiles } : {}),
+      ...(supportAudit ? { supportAudit } : {}),
+    } as unknown as Record<string, unknown>;
   },
 };
 

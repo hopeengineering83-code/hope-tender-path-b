@@ -60,14 +60,8 @@ type Diagnostics = {
   };
 };
 type ReimportResult = {
-  docsReextracted?: number;
-  docsFailed?: number;
-  expertsCreated?: number;
-  projectsCreated?: number;
-  expertsUpdated?: number;
-  projectsUpdated?: number;
-  expertsSourceVerified?: number;
-  projectsSourceVerified?: number;
+  status?: string;
+  jobId?: string;
   error?: string;
   requestId?: string;
 };
@@ -200,13 +194,13 @@ export default function ReviewInboxPage() {
       if (!response.ok) {
         throw new Error(data.error || `Company Vault reprocessing failed${data.requestId ? ` (request ${data.requestId})` : ""}`);
       }
-      await load();
+      // Re-extraction + re-ingestion now run in a background job (large
+      // document sets can exceed a request's time budget) — nudge the
+      // worker to start immediately, then let the user refresh to see
+      // results rather than blocking this request on the outcome.
+      void fetch("/api/ai-jobs/run-next?jobType=VAULT_INGEST", { method: "POST" }).catch(() => {});
       setMessage(
-        `Sources reprocessed. ${data.docsReextracted ?? 0} document(s) re-extracted; ` +
-        `${data.expertsCreated ?? 0} expert and ${data.projectsCreated ?? 0} project record(s) created; ` +
-        `${data.expertsUpdated ?? 0} expert and ${data.projectsUpdated ?? 0} project record(s) updated; ` +
-        `${data.expertsSourceVerified ?? 0} expert and ${data.projectsSourceVerified ?? 0} project record(s) source-verified.` +
-        ((data.docsFailed ?? 0) > 0 ? ` ${data.docsFailed} document(s) still need attention.` : ""),
+        "Source reprocessing queued — large document sets can take a few minutes. Refresh this page shortly to see updated records.",
       );
     } catch (repairError) {
       setError(repairError instanceof Error ? repairError.message : "Company Vault reprocessing failed");

@@ -147,6 +147,59 @@ describe("VAULT_INGEST job — real execution against real PostgreSQL", () => {
     assert.ok(steps.some((s) => s.stepName === "vault.complete" && s.status === "SUCCEEDED"));
   });
 
+  it("reExtractAll: true re-extracts real document bytes before ingestion — closes the bulk reimport gap", async () => {
+    // This is the path app/api/company/reimport/route.ts now enqueues
+    // instead of looping OCR/text extraction inline. Prove the loop
+    // (lib/company-vault-reextraction.ts) genuinely re-derives extractedText
+    // from stored fileContent bytes, and that the freshly re-extracted text
+    // feeds into the same ingestion pass — not just that a flag is accepted.
+    const cvText = [
+      "CURRICULUM VITAE",
+      "Name of Expert: Amara Nwosu",
+      "Proposed Position: Structural Engineer",
+      "12 years of professional experience in bridge and highway design.",
+      "Certification: Chartered Structural Engineer",
+    ].join("\n");
+    const doc = await prisma.companyDocument.create({
+      data: {
+        companyId,
+        fileName: "expert-cv-reextract-test.txt",
+        originalFileName: "expert-cv-reextract-test.txt",
+        category: "EXPERT_CV",
+        mimeType: "text/plain",
+        size: cvText.length,
+        fileContent: Buffer.from(cvText, "utf8").toString("base64"),
+        extractedText: null,
+        integrityStatus: "VERIFIED",
+      },
+    });
+
+    const enqueued = await enqueueJob({ userId, jobType: "VAULT_INGEST", input: { companyId, reExtractAll: true } });
+    const claimed = await claimJobForCaller({ jobType: "VAULT_INGEST", global: true });
+    assert.ok(claimed, "the queued reExtractAll VAULT_INGEST job must be claimable");
+    assert.equal(claimed!.id, enqueued.id);
+
+    const handler = getHandler("VAULT_INGEST")!;
+    const result = await handler({
+      jobId: claimed!.id,
+      userId: claimed!.userId,
+      tenderId: claimed!.tenderId,
+      input: claimed!.input,
+    });
+
+    const output = result as unknown as { docsReextracted: number; expertsCreated: number };
+    assert.ok(output.docsReextracted >= 1, "reExtractAll must re-extract at least the one stale-text document");
+
+    const refreshed = await prisma.companyDocument.findUnique({ where: { id: doc.id } });
+    assert.ok(refreshed?.extractedText?.includes("Amara Nwosu"), "re-extraction must derive real text from the stored bytes, not leave extractedText null");
+
+    const experts = await prisma.expert.findMany({ where: { companyId } });
+    assert.ok(experts.some((e) => e.fullName.includes("Amara Nwosu")), "the newly re-extracted CV must feed into the same ingestion pass and produce an Expert draft");
+
+    const steps = await prisma.aiJobStep.findMany({ where: { jobId: claimed!.id }, orderBy: { createdAt: "asc" } });
+    assert.ok(steps.some((s) => s.stepName === "vault.reextract"), "the reExtractAll step must be recorded");
+  });
+
   it("run-next's single-job-per-tick list includes VAULT_INGEST (heavy AI-capable job, not chained with lighter types)", () => {
     const src = require("fs").readFileSync(require("path").join(process.cwd(), "app/api/ai-jobs/run-next/route.ts"), "utf8");
     const match = src.match(/if \(\[([^\]]+)\]\.includes\(claimed\.jobType\)\) break;/);
