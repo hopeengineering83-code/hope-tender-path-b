@@ -22,6 +22,7 @@ import {
   stagePartialResult
 } from "../ai-analyze-promotion";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health-db";
+import { syncPersistedTenderFactsToLedger } from "../engine/tender-facts-ledger-service";
 
 export type AnalysisJobCreateInput = {
   tenderId: string;
@@ -708,6 +709,18 @@ export async function finalizeJob(jobId: string, userId: string) {
         }
     } catch (refErr) {
         logger.warn(`[finalizeJob] reference fileId resolution failed (non-critical): ${refErr instanceof Error ? refErr.message : String(refErr)}`);
+    }
+
+    try {
+        await syncPersistedTenderFactsToLedger(prisma, job.tenderId!, job.userId);
+    } catch (ledgerErr) {
+        // The canonical scalar/evidence write is already committed. Keep the
+        // job successful but surface a safe diagnostic; readiness continues
+        // to fail closed through the scalar evidence gates until a later sync.
+        logger.warn("[finalizeJob] tender fact ledger sync failed (non-critical)", {
+            tenderId: job.tenderId!,
+            errorClass: ledgerErr instanceof Error ? ledgerErr.constructor.name : "UnknownError",
+        });
     }
 
     logger.info(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);

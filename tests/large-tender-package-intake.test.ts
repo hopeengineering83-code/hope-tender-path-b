@@ -71,6 +71,8 @@ describe("large tender package intake", () => {
     assert.match(intakePage, /appendTenderBatch\(\s*data\.tenderId,\s*batch,/);
     assert.match(intakePage, /fetch\("\/api\/upload"/);
     assert.match(intakePage, /body\.append\("tenderId", tenderId\)/);
+    assert.match(intakePage, /intakeSessionIdRef/);
+    assert.match(intakePage, /intakeManifest/);
   });
 
   it("redirects partial packages to a canonical source-file reconciliation notice", () => {
@@ -80,6 +82,8 @@ describe("large tender package intake", () => {
     assert.match(sourcePanel, /Large tender package intake completed/);
     assert.match(sourcePanel, /source-file list currently contains <strong>\{files\.length\}<\/strong>/);
     assert.match(sourcePanel, /automatic AI analysis is queued/);
+    assert.match(sourcePanel, /activeIntakeSession/);
+    assert.match(sourcePanel, /Choose expected batch/);
   });
 
   it("describes queued automation without claiming gated work already completed", () => {

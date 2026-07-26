@@ -61,8 +61,8 @@ describe("round 13 — migration file", () => {
 describe("round 13 — contentHash computation in upload", () => {
   const source = read("lib/tender-upload-first.ts");
 
-  it("computes contentHash at upload time", () => {
-    assert.ok(source.includes('crypto.createHash("md5")'), "must compute md5 contentHash at upload time");
+  it("computes contentHash from the actual-byte SHA-256 integrity digest at upload time", () => {
+    assert.ok(source.includes("upload.integrity.contentSha256"), "must bind contentHash to the actual uploaded bytes");
     assert.ok(source.includes("contentHash,"), "must store contentHash in the TenderFile create");
   });
 });

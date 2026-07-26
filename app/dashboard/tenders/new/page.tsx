@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   MAX_TENDER_PACKAGE_BYTES,
@@ -35,6 +35,7 @@ type UploadFirstPayload = {
    * Analyze button manually after upload. */
   nextAction?: string;
   processingJobId?: string;
+  intakeSessionId?: string;
 };
 
 type AdditionalUploadPayload = {
@@ -52,6 +53,7 @@ export default function NewTenderPage() {
   const fileInputId = useId();
   const uploadHelpId = useId();
   const uploadStatusId = useId();
+  const intakeSessionIdRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
@@ -71,6 +73,7 @@ export default function NewTenderPage() {
     }
     setUploadError("");
     setUploadProgress(null);
+    intakeSessionIdRef.current = null;
     setFiles(selected);
   }
 
@@ -79,18 +82,31 @@ export default function NewTenderPage() {
     setFiles(nextFiles);
     setUploadError("");
     setUploadProgress(null);
+    intakeSessionIdRef.current = null;
   }
 
   async function appendTenderBatch(
     tenderId: string,
     batch: File[],
     deferAnalysis: boolean,
+    intake: {
+      sessionId: string;
+      batchIndex: number;
+      expectedBatches: number;
+      expectedFiles: number;
+      manifestJson: string;
+    },
   ): Promise<{ uploaded: number; failed: number; processingJobId: string | null }> {
     const body = new FormData();
     for (const file of batch) body.append("file", file);
     body.append("tenderId", tenderId);
     body.append("classification", "BID_DOCUMENT");
     if (deferAnalysis) body.append("deferAnalysis", "true");
+    body.append("intakeSessionId", intake.sessionId);
+    body.append("intakeBatchIndex", String(intake.batchIndex));
+    body.append("intakeExpectedBatches", String(intake.expectedBatches));
+    body.append("intakeExpectedFiles", String(intake.expectedFiles));
+    body.append("intakeManifest", intake.manifestJson);
 
     try {
       const response = await fetch("/api/upload", { method: "POST", body });
@@ -126,6 +142,12 @@ export default function NewTenderPage() {
       }
 
       const batches = partitionTenderUploadPackage(files);
+      const intakeSessionId = intakeSessionIdRef.current ?? crypto.randomUUID();
+      intakeSessionIdRef.current = intakeSessionId;
+      const intakeManifest = batches.map((batch) =>
+        batch.map((file) => ({ name: file.name, size: file.size })),
+      );
+      const intakeManifestJson = JSON.stringify(intakeManifest);
       const firstBatch = batches[0];
       if (!firstBatch || firstBatch.length === 0) {
         setUploadError("Select at least one supported tender document.");
@@ -135,6 +157,11 @@ export default function NewTenderPage() {
       const form = new FormData();
       for (const file of firstBatch) form.append("file", file);
       if (batches.length > 1) form.append("deferAnalysis", "true");
+      form.append("intakeSessionId", intakeSessionId);
+      form.append("intakeBatchIndex", "0");
+      form.append("intakeExpectedBatches", String(batches.length));
+      form.append("intakeExpectedFiles", String(files.length));
+      form.append("intakeManifest", intakeManifestJson);
       const res = await fetch("/api/tenders/upload-first", { method: "POST", body: form });
       const data = await res.json().catch(() => ({})) as UploadFirstPayload;
       if (!res.ok) {
@@ -149,6 +176,7 @@ export default function NewTenderPage() {
 
       let processed = firstBatch.length;
       let failed = 0;
+      let resumeBatchIndex: number | null = null;
       let processingJobId = data.processingJobId ?? null;
       const additionalBatches = batches.slice(1);
       if (additionalBatches.length > 0) {
@@ -159,8 +187,20 @@ export default function NewTenderPage() {
             data.tenderId,
             batch,
             !isFinalBatch || failed > 0,
+            {
+              sessionId: intakeSessionId,
+              batchIndex: batchIndex + 1,
+              expectedBatches: batches.length,
+              expectedFiles: files.length,
+              manifestJson: intakeManifestJson,
+            },
           );
-          failed += result.failed;
+          if (result.failed > 0) {
+            resumeBatchIndex = batchIndex + 1;
+            failed = files.length - processed;
+            setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
+            break;
+          }
           processed += batch.length;
           processingJobId = result.processingJobId ?? processingJobId;
           setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
@@ -178,6 +218,8 @@ export default function NewTenderPage() {
           packageIntake: "1",
           packageFailed: String(failed),
           pipeline: pipeline.status,
+          intakeSession: data.intakeSessionId ?? intakeSessionId,
+          ...(resumeBatchIndex !== null ? { resumeBatch: String(resumeBatchIndex) } : {}),
         });
         setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
         router.push(`/dashboard/tenders/${data.tenderId}?${query.toString()}`);

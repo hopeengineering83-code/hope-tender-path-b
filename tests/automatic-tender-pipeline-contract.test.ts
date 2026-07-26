@@ -10,14 +10,14 @@ const generator = readFileSync("lib/engine/generate-elite.ts", "utf8");
 describe("upload-and-continue tender pipeline contract", () => {
   it("queues analysis for a complete single-batch package", () => {
     assert.match(firstUpload, /queueAutomaticTenderPipeline/);
-    assert.match(firstUpload, /meaningfulUploads\.length > 0 && !deferAnalysis/);
+    assert.match(firstUpload, /meaningfulUploads\.length > 0 && sourcePackageComplete && !deferAnalysis/);
     assert.match(firstUpload, /processingJobId/);
   });
 
   it("defers analysis until the final large-package batch succeeds", () => {
     assert.match(intakePage, /batches\.length > 1\) form\.append\("deferAnalysis", "true"\)/);
     assert.match(intakePage, /!isFinalBatch \|\| failed > 0/);
-    assert.match(secureUpload, /!deferAnalysis && !uploadBatchFailed/);
+    assert.match(secureUpload, /sourcePackageComplete && !uploadBatchFailed/);
   });
 
   it("wakes only the worker for a durable server-created job", () => {

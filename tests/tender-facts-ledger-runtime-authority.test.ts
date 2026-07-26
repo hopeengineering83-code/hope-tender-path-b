@@ -235,7 +235,8 @@ describe("backfill — safety and features", () => {
   it("emails are normalized with pipe/comma/semicolon/and/space", () => {
     const src = read("lib/engine/tender-facts-ledger-service.ts");
     assert.ok(src.includes("normalizeEmailList"), "must use normalizeEmailList");
-    assert.ok(src.includes("split(/[|;,]|\\s+/)"), "must split on | ; , whitespace");
+    const parser = read("lib/engine/source-driven-tender-text-parser.ts");
+    assert.ok(parser.includes("split(/[|;,]|\\s+/)"), "shared normalizer must split on | ; , whitespace");
   });
 
   it("source-grounded only when file/page/quote evidence exists", () => {
@@ -273,9 +274,10 @@ describe("backfill — safety and features", () => {
     assert.ok(src.includes("JSON.stringify(summary"), "must stringify summary");
   });
 
-  it("does not modify Tender scalar columns", () => {
+  it("delegates to the canonical service and does not modify Tender scalar columns", () => {
     const src = read("scripts/backfill-tender-facts-ledger.ts");
-    // The script only creates ledger rows — it must not update tender columns
+    assert.ok(src.includes("backfillTenderFactsForTender"), "script must use the canonical service");
+    assert.ok(!src.includes("tenderFactsLedger.create"), "script must not duplicate the canonical writer");
     assert.ok(!src.includes("prisma.tender.update"), "must not call prisma.tender.update");
   });
 });
@@ -591,42 +593,17 @@ describe("audit logging — every mutation is audited", () => {
   });
 });
 
-// ─── 11. No conflict with PR #976 (source-level) ────────────────────────────
+// ─── 11. Shared normalization authority (source-level) ─────────────────────
 
-describe("no conflict with PR #976", () => {
-  it("does not import from source-driven-tender-text-parser (owned by #976)", () => {
+describe("shared normalization authority", () => {
+  it("reuses the canonical parser email normalizer", () => {
     const src = read("lib/engine/tender-facts-ledger-service.ts");
-    // The service must NOT have an active import from the #976-owned parser module.
-    // (Comments mentioning the module name are OK; active imports are not.)
     const activeImport = src.match(/^import\s+.*from\s+"\.\/source-driven-tender-text-parser"/m);
-    assert.ok(!activeImport, "must not have an active import from #976-owned parser module");
-    assert.ok(src.includes("PR #976 owns"), "must document #976 boundary in a comment");
+    assert.ok(activeImport, "ledger service must reuse the canonical parser normalizer");
   });
 
-  it("inlines normalizeEmailList instead of importing from #976", () => {
+  it("does not retain a competing inline email normalizer", () => {
     const src = read("lib/engine/tender-facts-ledger-service.ts");
-    assert.ok(src.includes("function normalizeEmailList"), "must inline normalizeEmailList");
-  });
-
-  it("does not modify any #976-owned file", () => {
-    // #976-owned files:
-    // app/api/ai-jobs/[id]/recover/route.ts
-    // app/dashboard/tenders/[id]/page.tsx
-    // app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx
-    // components/corrupted-metadata-banner.tsx
-    // lib/ai-jobs/chunk-recovery.ts
-    // lib/engine/metadata-validators.ts
-    // lib/engine/source-driven-tender-text-parser.ts
-    // tests/generic-tender-intelligence-fixtures.test.ts
-    // tests/generic-tender-ui-defects.test.ts
-    //
-    // This PR does NOT touch any of those files. The integration targets are:
-    // lib/engine/canonical-field-state.ts (modified — not #976-owned)
-    // lib/engine/final-submission-readiness.ts (modified — not #976-owned)
-    // app/api/tenders/[id]/metadata-override/route.ts (modified — not #976-owned)
-    // scripts/backfill-tender-facts-ledger.ts (modified — not #976-owned)
-    // lib/engine/tender-facts-ledger-service.ts (NEW — not #976-owned)
-    // app/api/tenders/[id]/facts-ledger/route.ts (NEW — not #976-owned)
-    assert.ok(true, "no #976-owned files modified");
+    assert.ok(!src.includes("function normalizeEmailList"), "ledger service must not duplicate normalizeEmailList");
   });
 });

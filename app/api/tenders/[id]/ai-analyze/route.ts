@@ -41,6 +41,7 @@ import {
 } from "../../../../../lib/ai-analyze-promotion";
 import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import { syncPersistedTenderFactsToLedger } from "../../../../../lib/engine/tender-facts-ledger-service";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -922,6 +923,14 @@ async function handleStreamingAnalyze(
                 // until repair-metadata is called. Log but do not fail the analysis.
                 logger.warn("[ai-analyze/stream] reference fileId resolution failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
               }
+              if (!streamPromoSuperseded) {
+                await syncPersistedTenderFactsToLedger(prisma, id, userId).catch((ledgerError) => {
+                  logger.warn("[ai-analyze/stream] tender fact ledger sync failed (non-critical)", {
+                    tenderId: id,
+                    errorClass: ledgerError instanceof Error ? ledgerError.constructor.name : "UnknownError",
+                  });
+                });
+              }
             }
 
             if (analysisJob) {
@@ -1751,6 +1760,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           }
           if (!nsPromoSuperseded && analysisJob) {
             await promoteAnalysisToCanonical(analysisJob.id, nsRunId);
+          }
+          if (!nsPromoSuperseded) {
+            await syncPersistedTenderFactsToLedger(prisma, id, userId).catch((ledgerError) => {
+              logger.warn("[ai-analyze/non-stream] tender fact ledger sync failed (non-critical)", {
+                tenderId: id,
+                errorClass: ledgerError instanceof Error ? ledgerError.constructor.name : "UnknownError",
+              });
+            });
           }
         }
 

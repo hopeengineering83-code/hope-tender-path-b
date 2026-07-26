@@ -51,6 +51,10 @@ import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
 import { AIRematchButton } from "../../../../components/ai-rematch-button";
 import TenderControlsPanel from "../../../../components/tender-controls-panel";
 import { prisma as prismaClient } from "../../../../lib/prisma";
+import {
+  TENDER_PACKAGE_INTAKE_OPERATION,
+  parseTenderPackageSessionResult,
+} from "../../../../lib/tender-package-intake-session";
 
 function Disclosure({
   title,
@@ -187,7 +191,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   }));
 
   const ai = isAIEnabled();
-  const [generationReadiness, canonicalReadiness, activeAnalysisJob] = await Promise.all([
+  const [generationReadiness, canonicalReadiness, activeAnalysisJob, activeIntakeRun] = await Promise.all([
     getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null),
     getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null),
     prismaClient.aiJob.findFirst({
@@ -200,7 +204,17 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       orderBy: { createdAt: "desc" },
       select: { id: true },
     }).catch(() => null),
+    prismaClient.tenderWorkflowRun.findFirst({
+      where: {
+        tenderId: tender.id,
+        operation: TENDER_PACKAGE_INTAKE_OPERATION,
+        status: "QUEUED",
+      },
+      orderBy: { createdAt: "desc" },
+      select: { resultJson: true },
+    }).catch(() => null),
   ]);
+  const activeIntakeSession = parseTenderPackageSessionResult(activeIntakeRun?.resultJson);
 
   return (
     <section className="space-y-5" aria-label="Tender workflow workspace">
@@ -217,7 +231,12 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <NextActionPanel tenderId={tender.id} />
 
       <WorkflowStage number={1} title="Intake and extraction" open description="Manage source documents, extraction quality, and submission-critical Tender Details.">
-        <TenderSourceFilesPanel tenderId={tender.id} initialFiles={tender.files} canMutate={canMutate} />
+        <TenderSourceFilesPanel
+          tenderId={tender.id}
+          initialFiles={tender.files}
+          canMutate={canMutate}
+          activeIntakeSession={activeIntakeSession}
+        />
         <Disclosure
           title="Extraction quality"
           description="One canonical report for page coverage, OCR, weak or failed pages, and extraction readiness."

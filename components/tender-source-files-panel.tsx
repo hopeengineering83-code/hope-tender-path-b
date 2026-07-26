@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { triggerTenderUploadAutoPipeline } from "../lib/ui/auto-pipeline";
 
 type TenderSourceFile = {
   id: string;
@@ -23,6 +24,18 @@ type TenderSourceFile = {
 type UploadResult = {
   fileRecord?: TenderSourceFile;
   error?: string;
+};
+
+type ActiveIntakeSession = {
+  sessionId: string;
+  expectedBatches: number;
+  expectedFiles: number;
+  manifest: Array<Array<{ name: string; size: number }>>;
+  receivedBatchIndexes: number[];
+  receivedFiles: number;
+  missingBatchIndexes: number[];
+  analysisJobId: string | null;
+  analysisRevision: string | null;
 };
 
 const CLASSIFICATIONS = [
@@ -72,7 +85,17 @@ function safePackageFailureCount(value: string | null): number {
   return Math.min(50, parsed);
 }
 
-export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = false }: { tenderId: string; initialFiles: TenderSourceFile[]; canMutate?: boolean }) {
+export function TenderSourceFilesPanel({
+  tenderId,
+  initialFiles,
+  canMutate = false,
+  activeIntakeSession = null,
+}: {
+  tenderId: string;
+  initialFiles: TenderSourceFile[];
+  canMutate?: boolean;
+  activeIntakeSession?: ActiveIntakeSession | null;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -90,10 +113,15 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
    * instruction that required a separate click.
    */
   const [pipelineStatus, setPipelineStatus] = useState<{ jobId: string | null; phase: "queued" | "extracting" | "done" } | null>(null);
+  const [intakeSession, setIntakeSession] = useState<ActiveIntakeSession | null>(activeIntakeSession);
   const packageIntake = searchParams.get("packageIntake") === "1";
   const packageFailed = safePackageFailureCount(searchParams.get("packageFailed"));
   const intakePipelineStatus = searchParams.get("pipeline");
   const [showPackageNotice, setShowPackageNotice] = useState(packageIntake);
+  const nextMissingBatchIndex = intakeSession?.missingBatchIndexes[0] ?? null;
+  const nextExpectedBatch = nextMissingBatchIndex === null
+    ? null
+    : intakeSession?.manifest[nextMissingBatchIndex] ?? null;
 
   const uploadFiles = useCallback(async (incoming: File[]) => {
     if (incoming.length === 0 || uploading) return;
@@ -108,6 +136,84 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
 
     setUploading(true);
     setMessage(null);
+
+    // Resume the durable package session as one exact, byte-idempotent batch.
+    // The server validates the stored manifest, ownership, counters, and bytes.
+    if (intakeSession && nextMissingBatchIndex !== null && nextExpectedBatch) {
+      const exactBatch =
+        incoming.length === nextExpectedBatch.length &&
+        nextExpectedBatch.every((expected, index) =>
+          expected.name === incoming[index]?.name && expected.size === incoming[index]?.size);
+      if (!exactBatch) {
+        setUploading(false);
+        setMessage({
+          kind: "error",
+          text: `Select the next ${nextExpectedBatch.length} expected file(s) in order: ${nextExpectedBatch.map((file) => file.name).join(", ")}.`,
+        });
+        return;
+      }
+
+      try {
+        const body = new FormData();
+        for (const file of incoming) body.append("file", file);
+        body.append("tenderId", tenderId);
+        body.append("classification", classification || "BID_DOCUMENT");
+        body.append("intakeSessionId", intakeSession.sessionId);
+        body.append("intakeBatchIndex", String(nextMissingBatchIndex));
+        body.append("intakeExpectedBatches", String(intakeSession.expectedBatches));
+        body.append("intakeExpectedFiles", String(intakeSession.expectedFiles));
+        body.append("intakeManifest", JSON.stringify(intakeSession.manifest));
+        if (intakeSession.missingBatchIndexes.length > 1) body.append("deferAnalysis", "true");
+
+        const response = await fetch("/api/upload", { method: "POST", body });
+        const payload = await response.json().catch(() => ({})) as {
+          results?: UploadResult[];
+          error?: string;
+          processingJobId?: string | null;
+          intakeSession?: ActiveIntakeSession | null;
+        };
+        if (!response.ok || !Array.isArray(payload.results) || payload.results.some((result) => !result.fileRecord)) {
+          setMessage({
+            kind: "error",
+            text: payload.error ?? "The package batch was not completed. Select the same expected files to retry safely.",
+          });
+          return;
+        }
+
+        const uploadedRecords = payload.results
+          .map((result) => result.fileRecord)
+          .filter((record): record is TenderSourceFile => Boolean(record));
+        setFiles((current) => [
+          ...uploadedRecords,
+          ...current.filter((item) => !uploadedRecords.some((record) => record.id === item.id)),
+        ]);
+        const updatedSession = payload.intakeSession ?? intakeSession;
+        setIntakeSession(updatedSession.missingBatchIndexes.length > 0 ? updatedSession : null);
+        if (payload.processingJobId) {
+          setPipelineStatus({ jobId: payload.processingJobId, phase: "queued" });
+          await triggerTenderUploadAutoPipeline({
+            tenderId,
+            processingJobId: payload.processingJobId,
+          });
+        }
+        setMessage({
+          kind: "success",
+          text: updatedSession.missingBatchIndexes.length > 0
+            ? `${uploadedRecords.length} file(s) restored. Continue with the next expected package batch.`
+            : "The complete source package is stored and automatic AI analysis is queued.",
+        });
+        router.refresh();
+      } catch {
+        setMessage({
+          kind: "error",
+          text: "The package batch response was interrupted. Select the same expected files again; the server will replay it without duplicates.",
+        });
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
+
     let uploaded = 0;
     const errors: string[] = [];
     /** Local mirror of pipelineStatus — avoids stale-closure issues inside
@@ -164,7 +270,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
       });
     }
     router.refresh();
-  }, [classification, router, tenderId, uploading]);
+  }, [classification, intakeSession, nextExpectedBatch, nextMissingBatchIndex, router, tenderId, uploading]);
 
   async function removeFile(file: TenderSourceFile) {
     if (!window.confirm(`Delete ${file.originalFileName}?`)) return;
@@ -216,30 +322,38 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
         </div>
       </div>
 
-      {showPackageNotice && (
+      {(showPackageNotice || intakeSession) && (
         <div
-          role={packageFailed > 0 ? "alert" : "status"}
-          className={`mt-4 rounded-xl border px-4 py-3 text-sm ${packageFailed > 0 ? "border-amber-300 bg-amber-50 text-amber-900" : "border-blue-200 bg-blue-50 text-blue-900"}`}
+          role={packageFailed > 0 || intakeSession ? "alert" : "status"}
+          className={`mt-4 rounded-xl border px-4 py-3 text-sm ${packageFailed > 0 || intakeSession ? "border-amber-300 bg-amber-50 text-amber-900" : "border-blue-200 bg-blue-50 text-blue-900"}`}
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="font-semibold">Large tender package intake completed</p>
+              <p className="font-semibold">{intakeSession ? "Large tender package intake needs completion" : "Large tender package intake completed"}</p>
               <p className="mt-1 leading-6">
                 The authoritative source-file list currently contains <strong>{files.length}</strong> file(s).
-                {packageFailed > 0
+                {intakeSession && nextExpectedBatch
+                  ? ` ${intakeSession.receivedFiles} of ${intakeSession.expectedFiles} package files are durably reconciled. Select the next expected batch below; analysis stays blocked until all ${intakeSession.expectedBatches} batches are complete.`
+                  : packageFailed > 0
                   ? ` ${packageFailed} additional file(s) could not be uploaded; select those files again below.`
                   : intakePipelineStatus === "queued"
                     ? " The complete package was stored and automatic AI analysis is queued."
                     : " Confirm that every selected document appears below; automatic analysis can be retried from the Analysis stage if it did not queue."}
               </p>
+              {intakeSession && nextExpectedBatch && (
+                <p className="mt-2 text-xs font-medium">
+                  Next expected: {nextExpectedBatch.map((file) => file.name).join(", ")}
+                </p>
+              )}
               <p className="mt-1 text-xs opacity-80">The server&apos;s per-request security limits remained unchanged; the package was processed in smaller requests.</p>
             </div>
             <button
               type="button"
               onClick={() => setShowPackageNotice(false)}
+              disabled={Boolean(intakeSession)}
               className="min-h-11 shrink-0 rounded-lg border border-current bg-white/70 px-3 py-2 text-xs font-semibold hover:bg-white"
             >
-              Dismiss
+              {intakeSession ? "Complete intake to dismiss" : "Dismiss"}
             </button>
           </div>
         </div>
@@ -269,7 +383,11 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
             void uploadFiles(selected);
           }}
         />
-        <p className="text-sm font-medium text-slate-700">Drop tender documents here</p>
+        <p className="text-sm font-medium text-slate-700">
+          {intakeSession && nextExpectedBatch
+            ? `Resume with the next ${nextExpectedBatch.length} expected package file(s)`
+            : "Drop tender documents here"}
+        </p>
         <p className="mt-1 text-xs text-slate-500">PDF, DOCX, XLSX, TXT, and CSV only. Convert legacy DOC/XLS files before upload.</p>
         {canMutate && (
         <button
@@ -278,7 +396,7 @@ export function TenderSourceFilesPanel({ tenderId, initialFiles, canMutate = fal
           disabled={uploading}
           className="mt-3 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
-          {uploading ? "Uploading…" : "Choose files"}
+          {uploading ? "Uploading…" : intakeSession ? "Choose expected batch" : "Choose files"}
         </button>
         )}
         {!canMutate && (

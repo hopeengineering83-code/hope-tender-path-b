@@ -44,10 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Claude Code (Fable 5) | `claude/pdf-finalization-safety-fos70j` (PR #1034) | Required-PDF finalization safety: pdf-finalizer rewrite, ZIP required-format hard gate, finalize-pdf route | lib/engine/workflow/pdf-finalizer.ts, download route (zip gate + type=pdf), app/api/tenders/[id]/finalize-pdf/ | Open, CI running | Await Hope's review |
-| GLM (Super Z) | `fix/buildplan-document-generation-pipeline` (PR #1030) | Backend pipeline: bulk-review gates, validate fail-closed, DOCX visible-text extraction, OUTSIDE_PLAN_DOCUMENTS blocker | bulk-review, validate, export-readiness.ts, document-quality-validator.ts, final-submission-readiness.ts, download route | Open, CI green | Await Hope's review |
-| Codex | `codex/add-route-driven-verification-tests` (PR #1031) | Normalize panel readiness payloads with shared public envelope | lib/engine/public-readiness-envelope.ts, lifecycle/readiness-score/generation-readiness/export-readiness/workflow-status routes | Open | Await Hope's review |
-| GLM (Super Z) | `fix/main-app-gaps-dead-code-contradictions` (this PR) | Real bugs: orchestrator metadata branch, dead code, format-policy fallback, document-output-state regex, stale docs | tender-lifecycle-orchestrator.ts, download route, export-format-policy.ts, document-output-state.ts, runtime-readiness-facts.ts, generation-readiness-gate.ts, CLAUDE.md, AGENTS.md | Open | Await Hope's review |
+| Codex | `release/consolidated-recovery-20260717` (PR #1175) | Durable resumable tender-package intake, runtime TenderFactsLedger authority sync, open-PR disposition, final release verification | Tender intake handlers/UI, analysis promotion, ledger service, backfill wrapper, tests | Local verification complete; publication pending | Publish one commit, renew exact-head CI, close #1258–#1261 as superseded |
 
 ### Lock rules
 
@@ -73,6 +70,20 @@ Never claim a fix is complete unless the stated tests passed.
 ## Session Log
 
 <!-- Add newest entry at the top. -->
+
+### 2026-07-26 18:55 UTC — Codex, resumable intake and runtime fact-authority completion
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175 (keep draft).
+- **Open-PR re-audit:** #1258–#1261 were unchanged from the prior audit. #1258's native Word TOC is already in #1175; its alternate action center remains deliberately rejected as a duplicate. #1259 contains only a handoff note and no product code. #1260's disconnected, Pharo/healthcare-specific modules remain unsafe to treat as universal runtime authority. #1261's unsupported intake pseudo-job and non-atomic/id-from-time design remain unsafe. No donor commit is suitable for wholesale merge.
+- **Durable intake completion:** multi-request tender packages now use ownership-scoped `TenderWorkflowRun` session and batch ledgers with a manifest hash, byte-bound batch fingerprints, stable idempotency keys, lost-response replay, stale-run recovery, exact batch/file completeness, and resumable UI. Analysis is queued only after server-verified package completion and still uses the canonical `AI_ANALYZE` job service/content hash.
+- **Fact-authority completion:** successful foreground and background AI promotion now synchronizes persisted tender facts into `TenderFactsLedger` under the tender mutation advisory lock. Source grounding requires an active file and a quote proven on the stored page. Human-confirmed/not-applicable authority is preserved and grounded facts are never downgraded. Historical `title` and canonical `projectTitle` ledger aliases resolve consistently.
+- **Overlap removal:** the 452-line duplicate TenderFactsLedger backfill implementation is replaced by a thin CLI wrapper around the canonical service; email normalization now reuses the existing source-driven parser helper.
+- **Required PDF:** no second PDF workflow was added. The app already has two guarded paths: in-engine content rendering from an approved DOCX and `attach-original` for an official tender-issued, byte-verified PDF when exact vendor/page rendering is required. Final validation, reviewer approval, byte integrity, required-format, and ZIP gates remain fail closed.
+- **Verification:** release-integrity audit passed (including 407 API routes and 1,334 source files); workflow-state audit passed with the same three warning-only wording findings; typecheck and lint passed; focused changed-area suite passed **139/139**; Prisma validate/generate passed; production Next build passed with non-secret build-only placeholders. The complete no-provider/no-database run produced **8,523/8,535 passing**; the same 12 environment-gated tests failed because disposable PostgreSQL and production/provider variables are absent, not because of assertion regressions. Exact-head GitHub CI must renew the database/browser proof after publication.
+- **Security hold:** do not perform real-account testing. The previously exposed application password must be replaced, active sessions revoked, the canonical GitHub secret `REAL_APP_PASSWORD` (and any actually-used legacy alias) updated, and retained credential-bearing artifacts sanitized first. The leaked value is intentionally not recorded here.
+- **Known production limits:** no current environment here can verify real provider output, real PostgreSQL integration, the exact Vercel preview, or real-account acceptance. In-engine PDF generation preserves approved content and branded structure but is not a page-faithful Microsoft Word renderer; use the existing official-original attachment path when exact pagination is contractually required.
+- **Next action:** publish the verified commit, renew exact-head CI/screenshot/preview checks, close #1258–#1261 with precise dispositions, then wait for credential rotation and owner UAT before merge/deploy.
+- **Merge status:** not reviewed — draft; do not merge or deploy.
 
 ### 2026-07-26 17:38 UTC — Codex, upload-once workflow and open-PR consolidation audit
 

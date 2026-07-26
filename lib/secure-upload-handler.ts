@@ -15,6 +15,15 @@ import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./u
 import { sanitizeError } from "./sanitize-error";
 import { inspectActualFileBytes } from "./engine/persisted-byte-integrity";
 import { invalidateTenderForSourceRevision } from "./engine/source-revision-invalidation";
+import {
+  beginTenderPackageBatch,
+  completeTenderPackageBatch,
+  failTenderPackageBatch,
+  fingerprintTenderPackageBatch,
+  parseTenderPackageIntake,
+  recordTenderPackageAnalysisJob,
+  type TenderPackageSessionResult,
+} from "./tender-package-intake-session";
 
 function extractionMetadata(fileType: string, text: string, truncated: boolean) {
   const meaningful = isMeaningfulExtraction(text);
@@ -55,12 +64,65 @@ export async function handleSecureUpload(req: Request) {
   const classification = typeof classificationValue === "string" ? classificationValue : null;
   const deferAnalysis = formData.get("deferAnalysis") === "true";
   if (!tenderId && !companyDoc) return NextResponse.json({ error: "tenderId or companyDoc=true is required" }, { status: 400 });
+  const intakeParse = parseTenderPackageIntake(formData, files);
+  if (!intakeParse.ok) {
+    return NextResponse.json({ error: intakeParse.error, code: intakeParse.code }, { status: 400 });
+  }
+  const intake = intakeParse.descriptor;
+  if (intake && (!tenderId || companyDoc)) {
+    return NextResponse.json({ error: "Tender package sessions can append only to an existing tender.", code: "INTAKE_TENDER_REQUIRED" }, { status: 400 });
+  }
 
   const company = await ensureCompanyForUser(prisma, actor.id);
   const tender = tenderId
     ? await prisma.tender.findFirst({ where: { id: tenderId, userId: actor.id }, select: { id: true } })
     : null;
   if (tenderId && !tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  const batchFingerprint = intake ? await fingerprintTenderPackageBatch(files) : null;
+  const packageBatch = intake && tenderId && batchFingerprint
+    ? await beginTenderPackageBatch({
+        prisma,
+        companyId: company.id,
+        tenderId,
+        descriptor: intake,
+        batchFingerprint,
+      })
+    : null;
+  if (packageBatch && !packageBatch.ok) {
+    return NextResponse.json({ error: packageBatch.error, code: packageBatch.code }, { status: packageBatch.status });
+  }
+  if (packageBatch?.ok && packageBatch.replayed) {
+    const records = tenderId && packageBatch.createdFileIds.length > 0
+      ? await prisma.tenderFile.findMany({
+          where: {
+            tenderId,
+            id: { in: packageBatch.createdFileIds },
+            deletionStatus: "ACTIVE",
+          },
+          select: {
+            id: true, tenderId: true, fileName: true, originalFileName: true,
+            mimeType: true, size: true, classification: true,
+            integrityStatus: true, contentSha256: true, contentByteLength: true,
+            detectedFormat: true, createdAt: true,
+          },
+        })
+      : [];
+    return NextResponse.json({
+      success: true,
+      replayed: true,
+      uploaded: records.length,
+      errors: 0,
+      results: records.map((fileRecord) => ({ success: true, scope: "tender", replayed: true, fileRecord })),
+      processingJobId: packageBatch.session.analysisJobId,
+      analysisRevision: packageBatch.session.analysisRevision,
+      pipelineStage: packageBatch.session.analysisJobId ? "AI_ANALYZE_QUEUED" : null,
+      pipelineDeferred: packageBatch.session.missingBatchIndexes.length > 0,
+      intakeSessionId: intake?.sessionId ?? null,
+      intakeSession: packageBatch.session,
+      engineQueued: false,
+    }, { status: 200 });
+  }
 
   const storage = getStorageAdapter();
   const results: Array<Record<string, unknown>> = [];
@@ -88,6 +150,27 @@ export async function handleSecureUpload(req: Request) {
           code: integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED",
         });
         continue;
+      }
+      const contentHash = integrity.contentSha256;
+
+      // Package retries are byte-idempotent. A prior attempt may have stored
+      // some files before its response failed; reuse those active rows instead
+      // of creating duplicates, then continue with the missing files.
+      if (tenderId && contentHash) {
+        const existingFile = await prisma.tenderFile.findFirst({
+          where: { tenderId, contentHash, deletionStatus: "ACTIVE" },
+          select: {
+            id: true, tenderId: true, fileName: true, originalFileName: true,
+            mimeType: true, size: true, classification: true,
+            integrityStatus: true, contentSha256: true, contentByteLength: true,
+            detectedFormat: true, createdAt: true,
+          },
+        });
+        if (existingFile) {
+          results.push({ success: true, scope: "tender", replayed: true, fileRecord: existingFile });
+          if (intake) tenderFilesCreated += 1;
+          continue;
+        }
       }
 
       const extracted = limitExtractedText(await extractTextFromBuffer(buffer, mimeType, fileName));
@@ -124,6 +207,7 @@ export async function handleSecureUpload(req: Request) {
               failedPages: perPage.failedPages.length,
               extractionScore: quality.score,
               pageStatusJson: JSON.stringify(perPage.pages),
+              contentHash,
             },
             select: { id: true, tenderId: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, integrityStatus: true, contentSha256: true, contentByteLength: true, detectedFormat: true, createdAt: true },
           });
@@ -199,7 +283,39 @@ export async function handleSecureUpload(req: Request) {
   let analysisRevision: string | null = null;
   let pipelineWarning: string | null = null;
   const uploadBatchFailed = results.some((result) => result.success !== true);
-  if (tenderId && tenderFilesCreated > 0 && !deferAnalysis && !uploadBatchFailed) {
+  let intakeSession: TenderPackageSessionResult | null = packageBatch?.ok ? packageBatch.session : null;
+  let sourcePackageComplete = !intake;
+  if (intake && packageBatch?.ok && !packageBatch.replayed) {
+    const createdFileIds = results
+      .map((result) => {
+        const fileRecord = result.fileRecord;
+        return fileRecord && typeof fileRecord === "object" && "id" in fileRecord && typeof fileRecord.id === "string"
+          ? fileRecord.id
+          : null;
+      })
+      .filter((id): id is string => Boolean(id));
+    if (uploadBatchFailed || createdFileIds.length !== files.length) {
+      await failTenderPackageBatch({
+        prisma,
+        runId: packageBatch.runId,
+        createdFileIds,
+        errorCode: "INTAKE_BATCH_INCOMPLETE",
+      });
+    } else {
+      const completed = await completeTenderPackageBatch({
+        prisma,
+        companyId: company.id,
+        tenderId: tenderId!,
+        descriptor: intake,
+        runId: packageBatch.runId,
+        createdFileIds,
+      });
+      sourcePackageComplete = completed.sessionComplete;
+      intakeSession = completed.session;
+    }
+  }
+
+  if (tenderId && tenderFilesCreated > 0 && sourcePackageComplete && !uploadBatchFailed && (!deferAnalysis || Boolean(intake))) {
     try {
       const pipeline = await queueAutomaticTenderPipeline({
         tenderId,
@@ -209,6 +325,23 @@ export async function handleSecureUpload(req: Request) {
       });
       processingJobId = pipeline.jobId;
       analysisRevision = pipeline.analysisRevision;
+      if (intake) {
+        await recordTenderPackageAnalysisJob({
+          prisma,
+          companyId: company.id,
+          tenderId,
+          sessionId: intake.sessionId,
+          jobId: pipeline.jobId,
+          analysisRevision: pipeline.analysisRevision,
+        });
+        if (intakeSession) {
+          intakeSession = {
+            ...intakeSession,
+            analysisJobId: pipeline.jobId,
+            analysisRevision: pipeline.analysisRevision,
+          };
+        }
+      }
     } catch (error) {
       pipelineWarning = "Files were stored, but automatic analysis could not be queued. Open the tender and retry AI Analyze.";
       logger.error("[secure-upload] automatic tender pipeline queue failed", {
@@ -240,8 +373,10 @@ export async function handleSecureUpload(req: Request) {
       processingJobId,
       analysisRevision,
       pipelineStage: processingJobId ? "AI_ANALYZE_QUEUED" : null,
-      pipelineDeferred: Boolean(tenderId && deferAnalysis),
+      pipelineDeferred: Boolean(tenderId && (intake ? !sourcePackageComplete : deferAnalysis)),
       pipelineWarning,
+      intakeSessionId: intake?.sessionId ?? null,
+      intakeSession,
       engineQueued: false,
       companyImport,
     },
