@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-26 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** local `work` branch at `820c9cb`; requested PR #1175 could not be verified or checked out because this repository snapshot has no Git remote and the GitHub CLI is unavailable.
+- **Scope:** release-engineering intake and fail-closed verification only. No tender/proposal upload was opened or requested, and no production workflow code was changed because the supplied checkout cannot be proven to be PR #1175's head (its HEAD identifies merged PR #1188 instead).
+- **Files changed:** `operator_handoff.md` only, recording the exact environment blocker and verification evidence for the next operator.
+- **Tests:** `npx prisma generate` passed. Targeted content-first, DOCX/PDF, template detection, claim-evidence, evidence-ranking, and final-package tests passed: 112 tests, 0 failures.
+- **CI / deployment:** not checked; `gh` is not installed and no `origin` (or other remote) is configured. No merge, approval, rebase, preview, or deployment was attempted.
+- **Known risks / assumptions:** `lib/engine/workflow/pdf-finalizer.ts` currently reconstructs a PDF from extracted DOCX text/Markdown rather than using a page-faithful Word-layout conversion engine. The local environment also has no `libreoffice`/`soffice` binary. It would be unsafe to claim preservation of Word layout, TOC fields, headers/footers, images, signatures, stamps, or page numbering until this is fixed and byte/render parity is tested on the actual PR head.
+- **Next action:** provide a checkout with PR #1175's exact head and GitHub/remote access, then audit its diff and CI before implementing and validating the requested workflow on that SHA.
+- **Merge status:** unsafe — requested PR identity and head SHA are unverified, and page-faithful DOCX→PDF conversion remains a confirmed gap in this snapshot.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.
