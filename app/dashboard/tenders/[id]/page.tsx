@@ -3,6 +3,13 @@ import Link from "next/link";
 import { FinalPackageManifestPanel } from "../../../../components/final-package-manifest-panel";
 import { ArrowRightIcon, ChevronDownIcon } from "../../../../components/icons";
 import { SubmissionPlanTruthPanel } from "../../../../components/submission-plan-truth-panel";
+import { SubmissionPlanCompletenessPanel } from "../../../../components/submission-plan-completeness-panel";
+// ClientSubmissionDetailsPanel is intentionally NOT imported here — it was
+// found to be a duplicate of TenderIntakeDetailPanel in the normal Stage 1
+// workflow (see tests/generic-tender-ui-defects.test.ts "defect 3"). It
+// remains available as a component file for a future Final Submission Check
+// or admin-diagnostics surface, but must not appear in the normal draft
+// workflow.
 import { RequirementTruthBanner } from "../../../../components/requirement-truth-banner";
 import { notFound, redirect } from "next/navigation";
 import { getSession, getCurrentUser } from "../../../../lib/auth";
@@ -257,6 +264,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         >
           <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
           <SubmissionPlanReconciliationPanel tenderId={tender.id} />
+          <SubmissionPlanCompletenessPanel tenderId={tender.id} />
           <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />
         </Disclosure>
       </WorkflowStage>

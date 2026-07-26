@@ -154,3 +154,31 @@ test("category E: engine actions use distinct semantic icons", () => {
   assert.match(safeButton, /<BoltIcon \/>/);
   assert.match(aiButton, /<ClockIcon \/>/);
 });
+
+// Category F — a built-but-orphaned panel wired into the workspace.
+// SubmissionPlanCompletenessPanel was fully built, tested, and consumed the
+// live /api/tenders/[id]/submission-plan endpoint, but had zero importers
+// anywhere in app/ — including its row actions
+// (/api/tenders/[id]/documents/[docId]/plan-action and
+// /api/tenders/[id]/submission-plan/auto-classify), which had no other UI
+// caller at all. Wired into the tender detail workspace rather than left
+// orphaned or deleted, since it provides genuinely distinct capability
+// (per-document reclassify/supersede/exclude actions) not available
+// anywhere else.
+//
+// ClientSubmissionDetailsPanel was NOT wired in alongside it, despite also
+// being orphaned and despite consuming the same live snapshot endpoint --
+// tests/generic-tender-ui-defects.test.ts "defect 3" already established,
+// with its own regression test, that this exact panel is a duplicate of
+// TenderIntakeDetailPanel in the normal Stage 1 workflow and must not
+// reappear there. That decision stands; re-wiring it here would revert it.
+test("category F: tender detail page imports and renders SubmissionPlanCompletenessPanel", () => {
+  const source = readSource("app/dashboard/tenders/[id]/page.tsx");
+  assert.match(source, /import \{ SubmissionPlanCompletenessPanel \} from "..\/..\/..\/..\/components\/submission-plan-completeness-panel"/);
+  assert.match(source, /<SubmissionPlanCompletenessPanel tenderId=\{tender\.id\} \/>/);
+});
+
+test("category F: metadata-completion-panel and metadata-truth-panel were deleted, not left as dead code", () => {
+  assert.equal(fs.existsSync(path.join(repoRoot, "components/metadata-completion-panel.tsx")), false);
+  assert.equal(fs.existsSync(path.join(repoRoot, "components/metadata-truth-panel.tsx")), false);
+});

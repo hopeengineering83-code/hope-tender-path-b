@@ -8,8 +8,6 @@ import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-relea
  * Unified release snapshot endpoint.
  *
  * Single authenticated endpoint that returns the authoritative snapshot consumed by ALL panels.
- * - MetadataTruthPanel
- * - MetadataCompletionPanel
  * - ClientSubmissionDetailsPanel
  * - workflow-center
  *

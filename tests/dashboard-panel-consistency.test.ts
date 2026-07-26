@@ -80,12 +80,18 @@ describe("Dashboard panel consistency — no contradictory statuses", () => {
     );
   });
 
-  it("metadata-truth panel uses canonical field states (not independent classification)", () => {
-    const src = readFileSync("components/metadata-truth-panel.tsx", "utf8");
+  // "metadata-truth panel uses canonical field states" retired --
+  // components/metadata-truth-panel.tsx was deleted as superseded dead code
+  // (a read-only summary of the same snapshot.metadata.fields data that
+  // components/client-submission-details-panel.tsx's ClientSubmissionDetailsPanel
+  // fully subsumes, including the same canonical STATUS_BADGE usage).
+
+  it("client-submission-details panel uses canonical field states (not independent classification)", () => {
+    const src = readFileSync("components/client-submission-details-panel.tsx", "utf8");
     // The panel should consume canonical states, not reclassify
     assert.ok(
       src.includes("status") && src.includes("STATUS_BADGE"),
-      "Metadata truth panel must use canonical status badges",
+      "Client submission details panel must use canonical status badges",
     );
   });
 });

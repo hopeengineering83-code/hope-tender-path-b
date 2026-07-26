@@ -4,18 +4,20 @@ import { readFileSync } from "node:fs";
 import type { TenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 
 /**
- * Integration test: Both panels render snapshot fields directly from the same source.
+ * Integration test: panels render snapshot fields directly from the same source.
  *
- * Proves that MetadataCompletionPanel and ClientSubmissionDetailsPanel both
- * render snapshot.metadata.fields from a single unified endpoint without
- * synthesizing or contradicting each other.
+ * Proves that the unified TenderReleaseSnapshot's metadata.fields carry a
+ * consistent status/blockerReason so that every consumer (currently
+ * ClientSubmissionDetailsPanel, and the workflow-center stage-5/6 status
+ * derivation checked below) renders the same state from the same snapshot
+ * without synthesizing or contradicting each other.
  *
  * Key scenarios:
  * 1. Ungrounded manual deadline (USER_EDITED, no source) = BLOCKED
- *    Both panels must show this field as BLOCKED from the same snapshot
+ *    Every consumer must show this field as BLOCKED from the same snapshot
  *
  * 2. Missing critical deadline with hasExportBlocker, false
- *    Completion panel never shows green; both panels show hasExportBlocker warning
+ *    No consumer ever shows green; all show the hasExportBlocker warning
  */
 
 const mockSnapshot = (overrides: Partial<TenderReleaseSnapshot> = {}): TenderReleaseSnapshot => ({

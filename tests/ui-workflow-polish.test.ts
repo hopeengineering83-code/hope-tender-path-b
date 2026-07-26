@@ -37,11 +37,12 @@ describe("UI metadata removal — no visible metadata text", () => {
     "components/extraction-quality-panel.tsx",
     // tender-release-state-panel.tsx and tender-recovery-command-center.tsx
     // were deleted as unrendered dead code (nothing imports or renders
-    // either).
+    // either). metadata-completion-panel.tsx and metadata-truth-panel.tsx
+    // were deleted as superseded dead code (subsumed by
+    // client-submission-details-panel.tsx, now wired into page.tsx).
     "components/audit-trail-panel.tsx",
     "components/corrupted-metadata-banner.tsx",
-    "components/metadata-completion-panel.tsx",
-    "components/metadata-truth-panel.tsx",
+    "components/client-submission-details-panel.tsx",
     "components/analysis-quality-panel.tsx",
     "components/engine-action-panel.tsx",
     "components/next-action-panel.tsx",
@@ -231,26 +232,13 @@ describe("Tender Detail panel — advisory vs required distinction", () => {
 // ─── 11. Component renames ──────────────────────────────────────────────────
 
 describe("Component renames — new tender-facts names", () => {
-  it("metadata-completion-panel exports TenderDetailsPanel", () => {
-    const src = read("components/metadata-completion-panel.tsx");
-    assert.ok(
-      src.includes("export function TenderDetailsPanel"),
-      "must export TenderDetailsPanel (renamed from MetadataCompletionPanel)",
-    );
-    // Backward-compat alias is OK
-    assert.ok(
-      src.includes("MetadataCompletionPanel = TenderDetailsPanel"),
-      "must provide backward-compat alias",
-    );
-  });
-
-  it("metadata-truth-panel exports SourceGroundedTenderFactsPanel", () => {
-    const src = read("components/metadata-truth-panel.tsx");
-    assert.ok(
-      src.includes("export function SourceGroundedTenderFactsPanel"),
-      "must export SourceGroundedTenderFactsPanel (renamed from MetadataTruthPanel)",
-    );
-  });
+  // "metadata-completion-panel exports TenderDetailsPanel" and
+  // "metadata-truth-panel exports SourceGroundedTenderFactsPanel" removed --
+  // both files were deleted as superseded dead code (read-only summaries of
+  // the same snapshot.metadata.fields data that
+  // client-submission-details-panel.tsx's ClientSubmissionDetailsPanel fully
+  // subsumes, now wired into page.tsx). See tests/canonical-field-state-resolver.test.ts
+  // for ClientSubmissionDetailsPanel's own coverage.
 
   it("corrupted-metadata-banner exports ClientEntityWarningBanner", () => {
     const src = read("components/corrupted-metadata-banner.tsx");

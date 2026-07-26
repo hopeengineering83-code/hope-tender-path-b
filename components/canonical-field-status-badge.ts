@@ -1,14 +1,15 @@
 // Shared canonical-field-status badge config.
 //
-// Previously this 16-entry Record<CanonicalFieldStatus, {label, classes}>
-// was duplicated verbatim across 3 panel files:
-//   - components/client-submission-details-panel.tsx
-//   - components/metadata-truth-panel.tsx
-//   - components/metadata-completion-panel.tsx
+// Originally this 16-entry Record<CanonicalFieldStatus, {label, classes}>
+// was duplicated verbatim across 3 panel files. Two of those
+// (metadata-truth-panel.tsx, metadata-completion-panel.tsx) were read-only
+// summaries of the same snapshot.metadata.fields data that
+// components/client-submission-details-panel.tsx fully subsumes (same
+// fields, same badges, plus per-field editing/confirmation/source-quote
+// review) and were deleted as superseded dead code.
 //
-// The duplication caused real divergence bugs (one panel updated a label,
-// the others didn't). Centralising here guarantees every panel renders the
-// same label + colour for the same status.
+// Centralising here guarantees every panel renders the same label + colour
+// for the same status.
 //
 // This module is PURE data — no React — so it can be imported by both
 // server components and client components without pulling in react/jsx.
