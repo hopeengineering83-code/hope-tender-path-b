@@ -74,6 +74,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-26 19:37 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/audit-pr-1175-main-gaps` / PR metadata to be created after commit.
+- **Scope:** audited the supplied current-main snapshot and the locally available history around PR #1175. The checkout has no Git remote, `gh` is unavailable, GitHub web access returned 401/403, and no PR #1175 ref is present locally, so live PR diff/open-PR/CI verification was not possible. Reviewed built-in integrity/workflow audits and the Tender Health Score truth seams affected by the most recent readiness work.
+- **Files changed:** `components/tender-health-score-panel.tsx`, `tests/release-snapshot-panel-truth.test.ts`, `operator_handoff.md`.
+- **Fixes:** extraction health now fails closed for unknown, failed, or incomplete page coverage; stale AI analysis now invalidates its downstream Requirements score; fallback-derived package rows can no longer make Documents green without a current confirmed Build Plan.
+- **Tests:** `npm run audit:release-integrity` passed; `npm run audit:workflow-state-consistency` passed with the two pre-existing warning-only findings; `npx prisma generate && npm run typecheck` passed; `npm run lint` passed; targeted release-snapshot test passed (25/25); production build passed with explicit non-secret placeholder build variables. Plain `npm test` correctly refused to run DB suites without `RUN_DB_INTEGRATION=true`; the integration-enabled full run was attempted but PostgreSQL was unavailable at localhost:5432, produced DB-only failures, and was stopped late in the suite after the non-DB coverage had continued to pass. Browser screenshot verification was not possible because the authenticated tender surface requires the unavailable database.
+- **CI / deployment:** not verifiable in this environment; no deployment attempted.
+- **Known risks / assumptions:** PR #1175 itself could not be fetched, so this is not represented as a line-by-line remote PR review. Page coverage treats `extractedPages + ocrPages < totalPages` as incomplete, consistent with the separate stored text/OCR page counters and fail-closed release rules.
+- **Next action:** review the created PR, run the full DB-backed suite and authenticated browser check in CI/a PostgreSQL-enabled environment, and compare against the live #1175 diff if GitHub access is available.
+- **Merge status:** not reviewed / do not merge until CI and the unavailable live-PR comparison are complete.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.

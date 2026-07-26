@@ -136,17 +136,29 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness, ana
     const fileScores = tender.files.map((f) => {
       const q = assessExtractionQuality(f.extractedText, f.originalFileName || f.fileName);
       const corrupted = f.extractedText ? isExtractionCorrupted(f.extractedText) : false;
-      return { score: Math.min(f.extractionScore ?? q.score, q.score), corrupted };
+      const totalPagesKnown = typeof f.totalPages === "number" && f.totalPages > 0;
+      const coveredPages = Math.max(0, f.extractedPages ?? 0) + Math.max(0, f.ocrPages ?? 0);
+      const pageCoverageIncomplete = !totalPagesKnown
+        || (f.failedPages ?? 0) > 0
+        || coveredPages < f.totalPages!;
+      return {
+        score: Math.min(f.extractionScore ?? q.score, q.score),
+        corrupted,
+        pageCoverageIncomplete,
+      };
     });
     const avg = Math.round(fileScores.reduce((s, f) => s + f.score, 0) / fileScores.length);
     const anyCorrupted = fileScores.some((f) => f.corrupted);
-    const dimScore = anyCorrupted ? 0 : Math.round((avg / 100) * 20);
-    const extStatus: Dimension["status"] = anyCorrupted ? "FAIL" : avg >= 70 ? "PASS" : avg >= 45 ? "WARN" : "FAIL";
+    const hasIncompletePageCoverage = fileScores.some((f) => f.pageCoverageIncomplete);
+    const dimScore = anyCorrupted || hasIncompletePageCoverage ? 0 : Math.round((avg / 100) * 20);
+    const extStatus: Dimension["status"] = anyCorrupted || hasIncompletePageCoverage ? "FAIL" : avg >= 70 ? "PASS" : avg >= 45 ? "WARN" : "FAIL";
     dimensions.push({
       label: "Extraction",
       score: dimScore,
       max: 20,
-      detail: anyCorrupted ? "Extraction corrupted" : `Avg score ${avg}/100`,
+      detail: anyCorrupted ? "Extraction corrupted"
+        : hasIncompletePageCoverage ? "Page coverage unknown, failed, or incomplete"
+        : `Avg score ${avg}/100`,
       status: extStatus,
       ...(extStatus !== "PASS" ? { actionLabel: "Re-extract / Upload clearer scan", actionHref: "#tender-files" } : {}),
     });
@@ -208,7 +220,11 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness, ana
   });
 
   // ── 4. Requirements (15 pts) ─────────────────────────────────────────────
-  const analysisIsTrusted = analysisStatus === "FULL_EXTRACTION_AI_ANALYZED" || analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED";
+  // Requirements are an output of the analysis snapshot. They cannot remain
+  // trusted after that snapshot becomes stale, even if its old status string
+  // still says that AI analysis succeeded.
+  const analysisIsTrusted = !analysisStale
+    && (analysisStatus === "FULL_EXTRACTION_AI_ANALYZED" || analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED");
   const reqScore = !hasAnalysis ? 0
     : !analysisIsTrusted ? 0
     : finalPackage.requirements.total === 0 ? 0
@@ -256,11 +272,14 @@ export async function TenderHealthScorePanel({ tenderId, canonicalReadiness, ana
   const exportReadyDocs = finalPackage.documents.exportReady;
   const missingDocs = finalPackage.documents.missingRequired;
   const docBlockers = finalPackage.documents.blockers;
-  const docScore = requiredDocs.length === 0 ? 0
+  // Fallback-derived package rows can exist without a confirmed Build Plan.
+  // They must not make Documents green while Submission Plan is blocked.
+  const docScore = !hasPlan || requiredDocs.length === 0 ? 0
     : Math.round((exportReadyDocs.length / Math.max(requiredDocs.length, 1)) * 15);
-  const docStatusLabel: Dimension["status"] = missingDocs.length > 0 || docBlockers.length > 0 ? "FAIL" : docScore >= 12 ? "PASS" : docScore >= 7 ? "WARN" : "FAIL";
+  const docStatusLabel: Dimension["status"] = !hasPlan || missingDocs.length > 0 || docBlockers.length > 0 ? "FAIL" : docScore >= 12 ? "PASS" : docScore >= 7 ? "WARN" : "FAIL";
   const firstDocBlocker = docBlockers[0];
-  const docDetail = requiredDocs.length === 0 ? "No package plan documents"
+  const docDetail = !hasPlan ? "Confirmed submission plan required"
+    : requiredDocs.length === 0 ? "No package plan documents"
     : firstDocBlocker ? `${exportReadyDocs.length}/${requiredDocs.length} export-ready — ${firstDocBlocker.documentName ?? firstDocBlocker.title}`
     : `${exportReadyDocs.length}/${requiredDocs.length} export-ready`;
   dimensions.push({
