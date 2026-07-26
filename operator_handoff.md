@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-26 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** local branch `work`; requested draft PR #1175. This checkout has no Git remote and no `gh` executable, so the PR head, open-PR list, remote CI, and target-branch freshness could not be independently verified or updated.
+- **Scope / files changed:** closed the verified Word-TOC gap in `lib/engine/generate-elite.ts` and added byte-level regression coverage in `tests/word-toc-field.test.ts`. The final DOCX renderer now replaces the static markdown TOC list with a genuine Word `TOC` field covering Heading 1–3, enables hyperlinks, marks the field dirty, and sets `w:updateFields` so Word refreshes page numbers and links after pagination. No uploaded proposal or tender files were inspected.
+- **Tests:** targeted DOCX/PDF suites passed (35/35); Prisma Client generation, typecheck, and lint passed. Prisma validate/deploy/drift, full DB suite, build, and authenticated Playwright could not complete because this checkout has no `DATABASE_URL`, `SESSION_SECRET`, running application, AI keys, or shadow database. The unconfigured full suite explicitly failed its required `RUN_DB_INTEGRATION=true` guard and was stopped after that environmental failure.
+- **Risks / assumptions:** the current checkout already contains substantial content-first DOCX/PDF work from merged #1124, but the requested PR #1175 branch is not identifiable locally. Because remote access is absent, claiming that every #1175 gap or CI check is complete would be unsafe. Direct logo/signature/stamp insertion and a truly page-faithful Word-layout-to-PDF converter remain genuine unresolved product gaps in the current code; the in-engine PDF path reconstructs content with `pdf-lib` rather than rendering Word pagination.
+- **Next action:** provide a checkout of the actual #1175 head with its Git remote/CI credentials, then implement and validate the remaining asset insertion, immutable DOCX→PDF lineage, template population, and authenticated responsive workflow coverage without opening another PR.
+- **Merge status:** **unsafe** — external repository/PR state is unavailable and material requested gaps remain.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.
