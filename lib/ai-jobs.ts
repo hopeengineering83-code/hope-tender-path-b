@@ -50,7 +50,13 @@ export type JobType =
   // extractedText + totalPages + extractionScore + extractionMethod, and runs
   // the candidate pipeline so the canonical resolver can ground the metadata.
   // Input: { tenderFileId: string }.
-  | "EXTRACT_TEXT";
+  | "EXTRACT_TEXT"
+  // Per-document vault ingestion. Replaces the synchronous whole-vault
+  // reprocessing that used to run on every company-document upload. The
+  // worker reads the CompanyDocument, runs the company-knowledge import
+  // for just that document, and updates the ingestion revision.
+  // Input: { companyDocumentId: string, companyId: string }.
+  | "VAULT_INGEST";
 
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" | "CANCELED";
 
