@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
+import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
 import { completeJob, failJob } from "../../../../lib/ai-jobs";
+import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
+import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
-import { prisma, prismaReady } from "../../../../lib/prisma";
+import { prismaReady } from "../../../../lib/prisma";
 import { recordRetryStateForJob, findJobsDueForRetry, rearmJobForRetry } from "../../../../lib/ai-analyze/retry-service";
 import { restoreHealthFromDbBounded } from "../../../../lib/ai-provider-health-db";
-import { classifyStageRetry, isDurableRetryJobType } from "../../../../lib/engine/stage-retry-policy";
-import { recordSafeStageEvent } from "../../../../lib/engine/stage-observability";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -60,30 +61,27 @@ export async function POST(req: Request) {
     retryable?: boolean;
     correlationId?: string;
     retryScheduled?: boolean;
+    nextJobId?: string;
+    nextJobType?: string;
+    continuationReason?: string;
+    continuationReused?: boolean;
+    analysisRevision?: string;
+    generationBlockerCode?: string;
   };
   const processedJobs: WorkerJobResult[] = [];
 
-  // Provider-aware retry backstop. When an automated caller (Vercel cron or the
-  // worker secret) drives the queue, first re-arm any AI_ANALYZE jobs that
-  // stopped short and are now due — but only when a provider is eligible and
-  // the tender content is unchanged. This lets the EXISTING daily run-next cron
-  // resume stalled analyses with no extra cron entry (Vercel Hobby caps crons
-  // at two). UI-triggered calls (session auth) skip this so a user only ever
-  // drives their own job. Best-effort — never block the claim loop.
   if (isAutomatedCaller) {
     try {
-      // Restore DB-backed provider cooldowns before retry eligibility checks;
-      // otherwise a cold-start worker can re-arm jobs using empty in-memory health.
       const healthRestore = await restoreHealthFromDbBounded(2_000);
-      if (healthRestore.warning) console.error(`[run-next] Provider health restore warning before retry re-arm: ${healthRestore.warning}`);
+      if (healthRestore.warning) logger.error(`[run-next] Provider health restore warning before retry re-arm: ${healthRestore.warning}`);
       const due = await findJobsDueForRetry(10);
       for (const job of due) {
         await rearmJobForRetry(job.jobId).catch((err: unknown) => {
-          console.error(`[run-next] Retry re-arm failed for job ${job.jobId}: ${err instanceof Error ? err.message : String(err)}`);
+          logger.error(`[run-next] Retry re-arm failed for job ${job.jobId}: ${err instanceof Error ? err.message : String(err)}`);
         });
       }
     } catch (err) {
-      console.error(`[run-next] Retry due-job lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+      logger.error(`[run-next] Retry due-job lookup failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -110,8 +108,6 @@ export async function POST(req: Request) {
       continue;
     }
 
-    const stageStartedAt = Date.now();
-    const jobFacts = await prisma.aiJob.findUnique({ where: { id: claimed.id }, select: { createdAt: true, retries: true, analysisInputHash: true } });
     try {
       const result = await handler({
         jobId: claimed.id,
@@ -120,25 +116,33 @@ export async function POST(req: Request) {
         input: claimed.input,
       });
       if (isTerminalHandlerResult(result)) {
-        // The handler already drove the job to its terminal state (e.g.
-        // AI_ANALYZE: SUCCEEDED only after canonical promotion, otherwise
-        // PARTIAL_SUCCESS/FAILED). Respect it — calling completeJob() here
-        // would corrupt a partial/failed analysis into SUCCEEDED and falsely
-        // unlock generation/export. The handler owns output persistence.
-        //
-        // When an AI_ANALYZE run stops short, record durable retry state so the
-        // provider-aware scheduler (cron /api/cron/ai-analyze-retry) can re-arm
-        // it once a provider is eligible again — resuming from the last
-        // completed chunk. Best-effort: a bookkeeping failure must not break
-        // the worker loop. SUCCEEDED needs no retry.
         if (
           claimed.jobType === "AI_ANALYZE" &&
           (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED")
         ) {
           await recordRetryStateForJob(claimed.id, result.terminalStatus).catch((err: unknown) => {
-            console.error(`[run-next] Retry-state persistence failed for job ${claimed.id}: ${err instanceof Error ? err.message : String(err)}. Job remains ${result.terminalStatus}; generation blocked.`);
+            logger.error(`[run-next] Retry-state persistence failed for job ${claimed.id}: ${err instanceof Error ? err.message : String(err)}. Job remains ${result.terminalStatus}; generation blocked.`);
           });
         }
+
+        let nextJobId: string | undefined;
+        let nextJobType: string | undefined;
+        let continuationReason: string | undefined;
+        let continuationReused: boolean | undefined;
+        let analysisRevision: string | undefined;
+
+        if (claimed.jobType === "AI_ANALYZE") {
+          const continuation = await continueSuccessfulAnalysis(claimed.id);
+          if (continuation.queued) {
+            nextJobId = continuation.jobId;
+            nextJobType = "ENGINE_RUN";
+            continuationReused = continuation.reused;
+            analysisRevision = continuation.analysisRevision;
+          } else {
+            continuationReason = continuation.reason;
+          }
+        }
+
         processedJobs.push({
           jobId: claimed.id,
           jobType: claimed.jobType,
@@ -148,26 +152,43 @@ export async function POST(req: Request) {
           retryable: result.terminalStatus === "FAILED" ? Boolean(result.retryable) : undefined,
           correlationId: result.correlationId,
           retryScheduled: claimed.jobType === "AI_ANALYZE" && (result.terminalStatus === "PARTIAL_SUCCESS" || result.terminalStatus === "FAILED"),
-        });
-        recordSafeStageEvent({
-          jobType: claimed.jobType, jobId: claimed.id, packageRevision: null,
-          sourceRevision: jobFacts?.analysisInputHash ?? null, stage: result.terminalStatus.toLowerCase(),
-          durationMs: Date.now() - stageStartedAt,
-          queueAgeMs: jobFacts ? Math.max(0, stageStartedAt - jobFacts.createdAt.getTime()) : 0,
-          retryCount: jobFacts?.retries ?? 0, providerClass: null, modelClass: null,
-          blockerCode: result.code ?? null, artifactIntegrityStatus: null,
+          nextJobId,
+          nextJobType,
+          continuationReason,
+          continuationReused,
+          analysisRevision,
         });
       } else {
         await completeJob(claimed.id, result);
-        recordSafeStageEvent({
-          jobType: claimed.jobType, jobId: claimed.id,
-          packageRevision: typeof result.packageRevision === "string" ? result.packageRevision : null,
-          sourceRevision: jobFacts?.analysisInputHash ?? null, stage: "complete",
-          durationMs: Date.now() - stageStartedAt,
-          queueAgeMs: jobFacts ? Math.max(0, stageStartedAt - jobFacts.createdAt.getTime()) : 0,
-          retryCount: jobFacts?.retries ?? 0, providerClass: null, modelClass: null,
-          blockerCode: null, artifactIntegrityStatus: null,
-        });
+
+        let nextJobId: string | undefined;
+        let nextJobType: string | undefined;
+        let continuationReason: string | undefined;
+        let continuationReused: boolean | undefined;
+        let analysisRevision: string | undefined;
+        let generationBlockerCode: string | undefined;
+
+        if (claimed.jobType === "ENGINE_RUN") {
+          try {
+            const continuation = await continueSuccessfulEngineToProposal(claimed.id);
+            if (continuation.queued) {
+              nextJobId = continuation.jobId;
+              nextJobType = "PROPOSAL_GENERATION";
+              continuationReused = continuation.reused;
+              analysisRevision = continuation.analysisRevision;
+            } else {
+              continuationReason = continuation.reason;
+              generationBlockerCode = continuation.blockerCode;
+            }
+          } catch (error) {
+            continuationReason = "PROPOSAL_CONTINUATION_ERROR";
+            logger.error("[run-next] Proposal continuation failed after successful engine job", {
+              jobId: claimed.id,
+              errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+            });
+          }
+        }
+
         processedJobs.push({
           jobId: claimed.id,
           jobType: claimed.jobType,
@@ -175,35 +196,19 @@ export async function POST(req: Request) {
           terminalStatus: "SUCCEEDED",
           resultCode: "OK",
           retryable: false,
+          nextJobId,
+          nextJobType,
+          continuationReason,
+          continuationReused,
+          analysisRevision,
+          generationBlockerCode,
         });
       }
     } catch (error) {
       const correlationId = require("crypto").randomUUID().slice(0, 8);
       const message = error instanceof Error ? error.message : String(error);
-      // Privacy boundary: the raw error may contain provider/database detail,
-      // storage paths, or request fragments. Classify it locally but emit only
-      // the correlation id and stable blocker code publicly/in logs.
-      const job = await prisma.aiJob.findUnique({ where: { id: claimed.id }, select: { retries: true } });
-      const retry = isDurableRetryJobType(claimed.jobType)
-        ? classifyStageRetry(message, job?.retries ?? 0)
-        : { retryable: false, blockerCode: "JOB_EXECUTION_FAILED", delayMs: null };
-      console.error(`[run-next] Job execution failed correlationId=${correlationId} jobType=${claimed.jobType} blockerCode=${retry.blockerCode}`);
-      if (retry.retryable && retry.delayMs !== null) {
-        await prisma.aiJob.update({
-          where: { id: claimed.id },
-          data: { status: "QUEUED", retries: { increment: 1 }, nextAttemptAt: new Date(Date.now() + retry.delayMs), startedAt: null, errorMessage: `TRANSIENT_STAGE_FAILURE (ref: ${correlationId})` },
-        });
-      } else {
-        await failJob(claimed.id, `${retry.blockerCode} (ref: ${correlationId})`);
-      }
-      recordSafeStageEvent({
-        jobType: claimed.jobType, jobId: claimed.id, packageRevision: null,
-        sourceRevision: jobFacts?.analysisInputHash ?? null, stage: retry.retryable ? "retry_scheduled" : "failed",
-        durationMs: Date.now() - stageStartedAt,
-        queueAgeMs: jobFacts ? Math.max(0, stageStartedAt - jobFacts.createdAt.getTime()) : 0,
-        retryCount: (job?.retries ?? 0) + (retry.retryable ? 1 : 0), providerClass: null, modelClass: null,
-        blockerCode: retry.blockerCode, artifactIntegrityStatus: null,
-      });
+      logger.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
+      await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId})`);
       processedJobs.push({
         jobId: claimed.id,
         jobType: claimed.jobType,
@@ -211,12 +216,11 @@ export async function POST(req: Request) {
         terminalStatus: "FAILED",
         resultCode: "JOB_EXECUTION_FAILED",
         correlationId,
-        retryable: retry.retryable,
-        retryScheduled: retry.retryable,
+        retryable: true,
       });
     }
 
-    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "EXTRACT_TEXT", "VAULT_INGEST", "AI_ANALYZE"].includes(claimed.jobType)) break;
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE"].includes(claimed.jobType)) break;
   }
 
   if (processedJobs.length === 0) {
@@ -231,15 +235,15 @@ export async function POST(req: Request) {
   }
 
   const statusPriority: Record<string, number> = {
-    "FAILED": 4,
-    "PARTIAL_SUCCESS": 3,
-    "SUPERSEDED": 2,
-    "SUCCEEDED": 1,
+    FAILED: 4,
+    PARTIAL_SUCCESS: 3,
+    SUPERSEDED: 2,
+    SUCCEEDED: 1,
   };
-  const worst = processedJobs.reduce((worstSoFar, j) => {
-    const pri = statusPriority[j.terminalStatus ?? ""] ?? 0;
-    const worstPri = statusPriority[worstSoFar.terminalStatus ?? ""] ?? 0;
-    return pri > worstPri ? j : worstSoFar;
+  const worst = processedJobs.reduce((worstSoFar, job) => {
+    const priority = statusPriority[job.terminalStatus ?? ""] ?? 0;
+    const worstPriority = statusPriority[worstSoFar.terminalStatus ?? ""] ?? 0;
+    return priority > worstPriority ? job : worstSoFar;
   });
 
   return NextResponse.json({
@@ -253,6 +257,12 @@ export async function POST(req: Request) {
     retryable: Boolean(worst.retryable),
     correlationId: worst.correlationId ?? null,
     retryScheduled: Boolean(worst.retryScheduled),
-    workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus.",
+    nextJobId: worst.nextJobId ?? null,
+    nextJobType: worst.nextJobType ?? null,
+    continuationReason: worst.continuationReason ?? null,
+    continuationReused: worst.continuationReused ?? null,
+    analysisRevision: worst.analysisRevision ?? null,
+    generationBlockerCode: worst.generationBlockerCode ?? null,
+    workerNotice: "HTTP 200 indicates the worker ran, NOT that the job succeeded. Inspect terminalStatus and continuationReason.",
   });
 }
