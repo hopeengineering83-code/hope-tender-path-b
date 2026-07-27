@@ -13,6 +13,7 @@ import {
 } from "./company-knowledge-safety-import";
 import { autoVerifyCompanyKnowledge } from "./company-auto-verification";
 import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "./company-document-durable-deletion";
+import { remapUnlinkedVaultSources } from "./company-vault-source-remap";
 import { sanitizeError } from "./sanitize-error";
 
 const DEDICATED_EXPERT_CATEGORIES = new Set(["EXPERT_CV"]);
@@ -123,6 +124,7 @@ export type CompanyVaultIngestionResult = {
   projectsUpdated: number;
   deterministicCandidates: { experts: number; projects: number };
   aiCandidates: { experts: number; projects: number };
+  sourceRemap: Awaited<ReturnType<typeof remapUnlinkedVaultSources>>;
   sourceVerification: Awaited<ReturnType<typeof autoVerifyCompanyKnowledge>>;
 };
 
@@ -191,6 +193,12 @@ export async function ingestCompanyVault(companyId: string): Promise<CompanyVaul
     experts: [...deterministic.experts, ...aiExperts],
     projects: [...deterministic.projects, ...aiProjects],
   });
+  // Backfills sourceDocumentId for drafts that already have a bona fide
+  // owned document (for example, Plan-B legacy-data imports that persist
+  // uploaded documents but do not always declare which one produced each
+  // record) before running the same source-verification pass that already
+  // covers freshly-ingested candidates.
+  const sourceRemap = await remapUnlinkedVaultSources(companyId);
   const sourceVerification = await autoVerifyCompanyKnowledge(companyId);
 
   const failedDocumentIds = new Set<string>();
@@ -224,6 +232,7 @@ export async function ingestCompanyVault(companyId: string): Promise<CompanyVaul
       projects: deterministic.projects.length,
     },
     aiCandidates: { experts: aiExperts.length, projects: aiProjects.length },
+    sourceRemap,
     sourceVerification,
   };
 }
