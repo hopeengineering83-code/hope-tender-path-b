@@ -34,12 +34,27 @@ function nextExtractionRevision(metadata: Record<string, unknown>): number {
   return Number.isInteger(current) && current > 0 ? current + 1 : 2;
 }
 
-export async function reextractAllCompanyDocuments(companyId: string): Promise<ReextractAllResult> {
+export async function reextractAllCompanyDocuments(
+  companyId: string,
+  options?: {
+    // Document IDs already processed by an earlier, interrupted attempt at
+    // this same batch (see the VAULT_INGEST job handler's checkpoint) — a
+    // retry after a mid-batch crash resumes from the next unprocessed
+    // document instead of restarting the whole vault from scratch.
+    skipDocumentIds?: ReadonlySet<string>;
+    // Invoked after each document is attempted (success or failure), so the
+    // caller can persist an incremental checkpoint mid-loop rather than only
+    // after the entire batch finishes.
+    onDocumentDone?: (documentId: string) => Promise<void>;
+  },
+): Promise<ReextractAllResult> {
+  const skip = options?.skipDocumentIds;
   const docs = await prisma.companyDocument.findMany({
     where: {
       companyId,
       NOT: { metadata: { contains: COMPANY_DOCUMENT_PENDING_DELETE_MARKER } },
       OR: [{ fileContent: { not: null } }, { storagePath: { not: "" } }],
+      ...(skip && skip.size > 0 ? { id: { notIn: [...skip] } } : {}),
     },
     select: {
       id: true,
@@ -94,6 +109,7 @@ export async function reextractAllCompanyDocuments(companyId: string): Promise<R
           error: "Byte integrity verification failed",
           code: integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED",
         });
+        await options?.onDocumentDone?.(doc.id);
         continue;
       }
 
@@ -145,12 +161,14 @@ export async function reextractAllCompanyDocuments(companyId: string): Promise<R
       });
       if (meaningful) reextracted += 1;
       else failedFiles.push({ name: doc.originalFileName, error: "No meaningful text extracted" });
+      await options?.onDocumentDone?.(doc.id);
     } catch (error) {
       logger.error("company vault re-extraction failed", {
         documentId: doc.id,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
       });
       failedFiles.push({ name: doc.originalFileName, error: "Processing failed" });
+      await options?.onDocumentDone?.(doc.id);
     }
   }
 

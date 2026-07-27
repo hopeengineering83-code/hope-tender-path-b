@@ -128,4 +128,61 @@ describe("durable-stage retry/backoff — real PostgreSQL", () => {
     const claimed = await claimJobForCaller({ jobType: "VAULT_INGEST", global: true });
     assert.ok(claimed && claimed.id === job.id, "a normal QUEUED job with no nextAttemptAt must be claimable immediately");
   });
+
+  // ─── Max-attempts / retry-budget exhaustion ──────────────────────────────
+  // classifyStageRetry's BACKOFF_MS array has 4 entries — a transient
+  // failure gets re-armed at most 4 times before the SAME failure message
+  // is treated as non-retryable (RETRY_BUDGET_EXHAUSTED_OR_UNKNOWN_FAILURE)
+  // and terminally failed instead of looping forever. This proves that
+  // boundary both as a pure classification check AND end-to-end against
+  // real rows, replaying the exact claim -> classify -> conditionally-rearm
+  // sequence app/api/ai-jobs/run-next/route.ts's catch block runs.
+  it("classifyStageRetry: the same transient message is retryable up through retryCount 3, then exhausted at retryCount 4", () => {
+    for (let retryCount = 0; retryCount < 4; retryCount++) {
+      const decision = classifyStageRetry("ETIMEDOUT contacting storage", retryCount);
+      assert.equal(decision.retryable, true, `retryCount=${retryCount} must still be retryable`);
+    }
+    const exhausted = classifyStageRetry("ETIMEDOUT contacting storage", 4);
+    assert.equal(exhausted.retryable, false);
+    assert.equal(exhausted.blockerCode, "RETRY_BUDGET_EXHAUSTED_OR_UNKNOWN_FAILURE");
+  });
+
+  it("a job re-armed 4 times for the same transient failure is terminally failed on the 5th failure, never resurrected again", async () => {
+    const job = await enqueueJob({ userId, jobType: "EXTRACT_TEXT", input: {} });
+
+    // Replay 4 real claim -> classify -> rearm cycles, exactly what
+    // run-next's catch block does on each transient failure.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const claimed = await claimJobForCaller({ jobType: "EXTRACT_TEXT", global: true });
+      assert.ok(claimed && claimed.id === job.id, `attempt ${attempt}: job must be claimable`);
+      assert.equal(claimed!.retries, attempt, `attempt ${attempt}: retries must reflect ${attempt} prior rearms`);
+
+      const decision = classifyStageRetry("ETIMEDOUT contacting storage", claimed!.retries);
+      assert.equal(decision.retryable, true, `attempt ${attempt}: still within the retry budget`);
+      const rearmed = await rearmDurableStageJob(job.id, { errorMessage: "ETIMEDOUT contacting storage", delayMs: decision.delayMs! });
+      assert.equal(rearmed, true);
+
+      // Simulate the backoff window elapsing so the next loop iteration can reclaim it.
+      await prisma.aiJob.update({ where: { id: job.id }, data: { nextAttemptAt: new Date(Date.now() - 1_000) } });
+    }
+
+    // 5th failure: retries is now 4 (the retry budget), so the SAME
+    // transient-looking message must be classified non-retryable.
+    const finalClaim = await claimJobForCaller({ jobType: "EXTRACT_TEXT", global: true });
+    assert.ok(finalClaim && finalClaim.id === job.id);
+    assert.equal(finalClaim!.retries, 4);
+    const finalDecision = classifyStageRetry("ETIMEDOUT contacting storage", finalClaim!.retries);
+    assert.equal(finalDecision.retryable, false);
+    assert.equal(finalDecision.blockerCode, "RETRY_BUDGET_EXHAUSTED_OR_UNKNOWN_FAILURE");
+
+    // Terminally fail it (mirrors run-next's fallback to failJob when
+    // retryScheduled stays false) and prove it is never resurrected again.
+    await prisma.aiJob.update({ where: { id: job.id }, data: { status: "FAILED", errorMessage: "ETIMEDOUT contacting storage", finishedAt: new Date() } });
+    const rearmAfterExhaustion = await rearmDurableStageJob(job.id, { errorMessage: "ETIMEDOUT contacting storage", delayMs: 30_000 });
+    assert.equal(rearmAfterExhaustion, false, "a terminally FAILED job must never be resurrected, even by a stray rearm call");
+
+    const finalRow = await prisma.aiJob.findUniqueOrThrow({ where: { id: job.id } });
+    assert.equal(finalRow.status, "FAILED");
+    assert.equal(finalRow.retries, 4, "the retry counter is preserved at the exhausted budget, not incremented further");
+  });
 });

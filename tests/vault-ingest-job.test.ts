@@ -200,6 +200,93 @@ describe("VAULT_INGEST job — real execution against real PostgreSQL", () => {
     assert.ok(steps.some((s) => s.stepName === "vault.reextract"), "the reExtractAll step must be recorded");
   });
 
+  it("reExtractAll mid-batch checkpoint/resume: a document already recorded as processed in AiJob.output is skipped, not re-extracted", async () => {
+    // Simulates a VAULT_INGEST job interrupted mid-batch (e.g. a Vercel
+    // function kill) and re-armed by rearmDurableStageJob: on the retry the
+    // SAME job re-claims and re-runs, but must resume from the next
+    // unprocessed document instead of restarting the whole vault re-extraction.
+    //
+    // Uses its own dedicated user+company (Company.userId is unique, so it
+    // can't reuse the shared companyId/userId) so leftover fileContent-
+    // bearing documents from earlier tests in this file can't inflate the
+    // docsReextracted count this test asserts exactly.
+    const checkpointUser = await prisma.user.create({
+      data: { email: `vault-checkpoint-${Date.now()}@example.test`, name: "Vault Checkpoint Test", passwordHash: "test-hash" },
+    });
+    const checkpointCompany = await prisma.company.create({
+      data: { userId: checkpointUser.id, name: `Vault Checkpoint Test Firm ${Date.now()}` },
+    });
+    try {
+      const alreadyDoneText = "CURRICULUM VITAE. Name of Expert: Previously Done Person. 9 years of experience.";
+      const alreadyDoneDoc = await prisma.companyDocument.create({
+        data: {
+          companyId: checkpointCompany.id,
+          fileName: "already-done.txt",
+          originalFileName: "already-done.txt",
+          category: "EXPERT_CV",
+          mimeType: "text/plain",
+          size: alreadyDoneText.length,
+          fileContent: Buffer.from(alreadyDoneText, "utf8").toString("base64"),
+          extractedText: null, // stale — would be re-extracted if NOT skipped
+          integrityStatus: "VERIFIED",
+        },
+      });
+      const remainingText = "CURRICULUM VITAE. Name of Expert: Still Remaining Person. 11 years of experience.";
+      const remainingDoc = await prisma.companyDocument.create({
+        data: {
+          companyId: checkpointCompany.id,
+          fileName: "still-remaining.txt",
+          originalFileName: "still-remaining.txt",
+          category: "EXPERT_CV",
+          mimeType: "text/plain",
+          size: remainingText.length,
+          fileContent: Buffer.from(remainingText, "utf8").toString("base64"),
+          extractedText: null,
+          integrityStatus: "VERIFIED",
+        },
+      });
+
+      const enqueued = await enqueueJob({ userId: checkpointUser.id, jobType: "VAULT_INGEST", input: { companyId: checkpointCompany.id, reExtractAll: true } });
+      const claimed = await claimJobForCaller({ jobType: "VAULT_INGEST", global: true });
+      assert.ok(claimed && claimed.id === enqueued.id);
+
+      // Seed the checkpoint a prior (interrupted) attempt at THIS job would
+      // have persisted after successfully processing alreadyDoneDoc.
+      await prisma.aiJob.update({
+        where: { id: claimed!.id },
+        data: { output: JSON.stringify({ vaultIngestCheckpoint: { processedDocumentIds: [alreadyDoneDoc.id] } }) },
+      });
+
+      const handler = getHandler("VAULT_INGEST")!;
+      const result = await handler({
+        jobId: claimed!.id,
+        userId: claimed!.userId,
+        tenderId: claimed!.tenderId,
+        input: claimed!.input,
+      });
+      const output = result as unknown as { docsReextracted: number };
+      assert.equal(output.docsReextracted, 1, "only the un-checkpointed document should be re-extracted this run");
+
+      const skipped = await prisma.companyDocument.findUnique({ where: { id: alreadyDoneDoc.id } });
+      assert.equal(skipped?.extractedText, null, "the checkpointed document must be skipped, not re-extracted");
+
+      const processed = await prisma.companyDocument.findUnique({ where: { id: remainingDoc.id } });
+      assert.ok(processed?.extractedText?.includes("Still Remaining Person"), "the un-checkpointed document must genuinely be re-extracted");
+
+      const steps = await prisma.aiJobStep.findMany({ where: { jobId: claimed!.id }, orderBy: { createdAt: "asc" } });
+      assert.ok(
+        steps.some((s) => s.stepName === "vault.resume" && s.message?.includes("skipping 1 document")),
+        "a vault.resume step must record that the checkpointed document was skipped",
+      );
+    } finally {
+      await prisma.expert.deleteMany({ where: { companyId: checkpointCompany.id } });
+      await prisma.companyDocument.deleteMany({ where: { companyId: checkpointCompany.id } });
+      await prisma.aiJob.deleteMany({ where: { userId: checkpointUser.id } });
+      await prisma.company.deleteMany({ where: { id: checkpointCompany.id } });
+      await prisma.user.deleteMany({ where: { id: checkpointUser.id } });
+    }
+  });
+
   it("run-next's single-job-per-tick list includes VAULT_INGEST (heavy AI-capable job, not chained with lighter types)", () => {
     const src = require("fs").readFileSync(require("path").join(process.cwd(), "app/api/ai-jobs/run-next/route.ts"), "utf8");
     const match = src.match(/if \(\[([^\]]+)\]\.includes\(claimed\.jobType\)\) break;/);

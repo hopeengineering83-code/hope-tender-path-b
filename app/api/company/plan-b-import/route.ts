@@ -14,6 +14,9 @@ import {
   buildReviewProvenance,
   expertReviewFields,
   projectReviewFields,
+  legalReviewFields,
+  financialReviewFields,
+  complianceReviewFields,
   type ReviewSourceDocument,
 } from "../../../../lib/vault-review-provenance";
 
@@ -91,6 +94,7 @@ type PlanBLegalRecord = {
   expiryDate?: string | null;
   status?: string;
   metadata?: Record<string, unknown>;
+  sourceDocument?: string;
 };
 
 type PlanBFinancialRecord = {
@@ -100,6 +104,7 @@ type PlanBFinancialRecord = {
   amount?: number | null;
   notes?: string | null;
   metadata?: Record<string, unknown>;
+  sourceDocument?: string;
 };
 
 type PlanBComplianceRecord = {
@@ -110,6 +115,7 @@ type PlanBComplianceRecord = {
   referenceNumber?: string | null;
   expiryDate?: string | null;
   metadata?: Record<string, unknown>;
+  sourceDocument?: string;
 };
 
 type PlanBPayload = {
@@ -207,6 +213,7 @@ const planBPayloadSchema = z.object({
     expiryDate: z.string().nullable().optional(),
     status: z.string().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+    sourceDocument: z.string().optional(),
   }).passthrough()).max(5000).optional(),
   financialRecords: z.array(z.object({
     fiscalYear: z.number().optional(),
@@ -215,6 +222,7 @@ const planBPayloadSchema = z.object({
     amount: z.number().nullable().optional(),
     notes: z.string().nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+    sourceDocument: z.string().optional(),
   }).passthrough()).max(5000).optional(),
   complianceRecords: z.array(z.object({
     complianceType: z.string().optional(),
@@ -224,6 +232,7 @@ const planBPayloadSchema = z.object({
     referenceNumber: z.string().nullable().optional(),
     expiryDate: z.string().nullable().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+    sourceDocument: z.string().optional(),
   }).passthrough()).max(5000).optional(),
   expectedCounts: z.object({
     experts: z.number().int().min(0).optional(),
@@ -305,70 +314,183 @@ function sourceLine(item: { sourceDocument?: string; sourcePages?: { start?: num
 }
 
 
-async function upsertLegalRecord(db: PlanBDb, companyId: string, record: PlanBLegalRecord) {
+type PlanBRecordTrustContext = {
+  documentByFileName: Map<string, ReviewSourceDocument>;
+  importTrust: TrustLevel;
+  userId: string;
+  now: Date;
+  notes: string;
+};
+
+type PlanBRecordUpsertResult = { created: number; updated: number; skipped: number; evidenceDowngraded: number; warning: string | null };
+
+// Same evidence gate as the Expert/Project loops above: importPolicy.trustLevel
+// (default REVIEWED) is the CALLER's self-declared request, not an authority.
+// A record only persists as REVIEWED when it links a real, persisted source
+// document whose text genuinely contains the claimed field values
+// (buildReviewProvenance's quote-containment check) — otherwise it is
+// downgraded to AI_DRAFT regardless of what was requested. Before this fix,
+// LegalRecord/FinancialRecord/CompanyComplianceRecord had no trustLevel
+// concept at all, so every Plan-B import (fabricated or genuine) was fed
+// directly into generation evidence with zero gating.
+async function upsertLegalRecord(db: PlanBDb, companyId: string, record: PlanBLegalRecord, ctx: PlanBRecordTrustContext): Promise<PlanBRecordUpsertResult> {
   const title = clean(record.title);
-  if (!title) return { created: 0, updated: 0, skipped: 1 };
+  if (!title) return { created: 0, updated: 0, skipped: 1, evidenceDowngraded: 0, warning: null };
   const recordType = clean(record.recordType) || "LEGAL";
+  const authority = clean(record.authority) || null;
+  const referenceNumber = clean(record.referenceNumber) || null;
+  const issueDate = parseDate(record.issueDate);
+  const expiryDate = parseDate(record.expiryDate);
   const existing = await db.legalRecord.findFirst({ where: { companyId, title, recordType }, select: { id: true } });
+
+  const linkedSourceDoc = record.sourceDocument ? ctx.documentByFileName.get(key(clean(record.sourceDocument))) ?? null : null;
+  let effectiveTrust: TrustLevel = ctx.importTrust;
+  let effectiveReviewNotes = ctx.notes;
+  let evidenceDowngraded = 0;
+  let warning: string | null = null;
+  if (ctx.importTrust === "REVIEWED") {
+    const provenance = buildReviewProvenance({
+      recordType: "LEGAL",
+      sourceDocument: linkedSourceDoc,
+      fields: legalReviewFields({ recordType, title, authority, referenceNumber, issueDate, expiryDate }),
+      reviewerId: ctx.userId,
+      reviewedAt: ctx.now,
+    });
+    if (provenance.ok) {
+      effectiveReviewNotes = provenance.serialized;
+    } else {
+      effectiveTrust = "AI_DRAFT";
+      evidenceDowngraded = 1;
+      warning = `Legal record "${title}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Board.`;
+    }
+  }
+
   const data = {
     recordType,
     title,
-    authority: clean(record.authority) || null,
-    referenceNumber: clean(record.referenceNumber) || null,
-    issueDate: parseDate(record.issueDate),
-    expiryDate: parseDate(record.expiryDate),
+    authority,
+    referenceNumber,
+    issueDate,
+    expiryDate,
     status: clean(record.status) || "ACTIVE",
     metadata: JSON.stringify(record.metadata ?? {}),
+    sourceDocumentId: linkedSourceDoc?.id ?? null,
+    trustLevel: effectiveTrust,
+    reviewedBy: effectiveTrust === "REVIEWED" ? ctx.userId : null,
+    reviewedAt: effectiveTrust === "REVIEWED" ? ctx.now : null,
+    reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : ctx.notes,
   };
   if (existing) {
     await db.legalRecord.update({ where: { id: existing.id }, data });
-    return { created: 0, updated: 1, skipped: 0 };
+    return { created: 0, updated: 1, skipped: 0, evidenceDowngraded, warning };
   }
   await db.legalRecord.create({ data: { companyId, ...data } });
-  return { created: 1, updated: 0, skipped: 0 };
+  return { created: 1, updated: 0, skipped: 0, evidenceDowngraded, warning };
 }
 
-async function upsertFinancialRecord(db: PlanBDb, companyId: string, record: PlanBFinancialRecord) {
+async function upsertFinancialRecord(db: PlanBDb, companyId: string, record: PlanBFinancialRecord, ctx: PlanBRecordTrustContext): Promise<PlanBRecordUpsertResult> {
   const recordType = clean(record.recordType) || "FINANCIAL";
   const fiscalYear = Number(record.fiscalYear || 0);
-  if (!fiscalYear) return { created: 0, updated: 0, skipped: 1 };
+  if (!fiscalYear) return { created: 0, updated: 0, skipped: 1, evidenceDowngraded: 0, warning: null };
+  const currency = clean(record.currency) || "ETB";
+  const amount = typeof record.amount === "number" ? record.amount : null;
+  const notesText = sourceText(record.notes);
   const existing = await db.financialRecord.findFirst({ where: { companyId, recordType, fiscalYear }, select: { id: true } });
+
+  const linkedSourceDoc = record.sourceDocument ? ctx.documentByFileName.get(key(clean(record.sourceDocument))) ?? null : null;
+  let effectiveTrust: TrustLevel = ctx.importTrust;
+  let effectiveReviewNotes = ctx.notes;
+  let evidenceDowngraded = 0;
+  let warning: string | null = null;
+  if (ctx.importTrust === "REVIEWED") {
+    const provenance = buildReviewProvenance({
+      recordType: "FINANCIAL",
+      sourceDocument: linkedSourceDoc,
+      fields: financialReviewFields({ fiscalYear, recordType, currency, amount, notes: notesText }),
+      reviewerId: ctx.userId,
+      reviewedAt: ctx.now,
+    });
+    if (provenance.ok) {
+      effectiveReviewNotes = provenance.serialized;
+    } else {
+      effectiveTrust = "AI_DRAFT";
+      evidenceDowngraded = 1;
+      warning = `Financial record "${recordType} ${fiscalYear}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Board.`;
+    }
+  }
+
   const data = {
     fiscalYear,
     recordType,
-    currency: clean(record.currency) || "ETB",
-    amount: typeof record.amount === "number" ? record.amount : null,
-    notes: sourceText(record.notes),
+    currency,
+    amount,
+    notes: notesText,
     metadata: JSON.stringify(record.metadata ?? {}),
+    sourceDocumentId: linkedSourceDoc?.id ?? null,
+    trustLevel: effectiveTrust,
+    reviewedBy: effectiveTrust === "REVIEWED" ? ctx.userId : null,
+    reviewedAt: effectiveTrust === "REVIEWED" ? ctx.now : null,
+    reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : ctx.notes,
   };
   if (existing) {
     await db.financialRecord.update({ where: { id: existing.id }, data });
-    return { created: 0, updated: 1, skipped: 0 };
+    return { created: 0, updated: 1, skipped: 0, evidenceDowngraded, warning };
   }
   await db.financialRecord.create({ data: { companyId, ...data } });
-  return { created: 1, updated: 0, skipped: 0 };
+  return { created: 1, updated: 0, skipped: 0, evidenceDowngraded, warning };
 }
 
-async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: PlanBComplianceRecord) {
+async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: PlanBComplianceRecord, ctx: PlanBRecordTrustContext): Promise<PlanBRecordUpsertResult> {
   const title = clean(record.title);
-  if (!title) return { created: 0, updated: 0, skipped: 1 };
+  if (!title) return { created: 0, updated: 0, skipped: 1, evidenceDowngraded: 0, warning: null };
   const complianceType = clean(record.complianceType) || "COMPLIANCE";
+  const referenceNumber = clean(record.referenceNumber) || null;
+  const expiryDate = parseDate(record.expiryDate);
+  const evidenceSummary = sourceText(record.evidenceSummary);
   const existing = await db.companyComplianceRecord.findFirst({ where: { companyId, title, complianceType }, select: { id: true } });
+
+  const linkedSourceDoc = record.sourceDocument ? ctx.documentByFileName.get(key(clean(record.sourceDocument))) ?? null : null;
+  let effectiveTrust: TrustLevel = ctx.importTrust;
+  let effectiveReviewNotes = ctx.notes;
+  let evidenceDowngraded = 0;
+  let warning: string | null = null;
+  if (ctx.importTrust === "REVIEWED") {
+    const provenance = buildReviewProvenance({
+      recordType: "COMPLIANCE",
+      sourceDocument: linkedSourceDoc,
+      fields: complianceReviewFields({ complianceType, title, referenceNumber, expiryDate }),
+      reviewerId: ctx.userId,
+      reviewedAt: ctx.now,
+    });
+    if (provenance.ok) {
+      effectiveReviewNotes = provenance.serialized;
+    } else {
+      effectiveTrust = "AI_DRAFT";
+      evidenceDowngraded = 1;
+      warning = `Compliance record "${title}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Board.`;
+    }
+  }
+
   const data = {
     complianceType,
     title,
     status: clean(record.status) || "ACTIVE",
-    evidenceSummary: sourceText(record.evidenceSummary),
-    referenceNumber: clean(record.referenceNumber) || null,
-    expiryDate: parseDate(record.expiryDate),
+    evidenceSummary,
+    referenceNumber,
+    expiryDate,
     metadata: JSON.stringify(record.metadata ?? {}),
+    sourceDocumentId: linkedSourceDoc?.id ?? null,
+    trustLevel: effectiveTrust,
+    reviewedBy: effectiveTrust === "REVIEWED" ? ctx.userId : null,
+    reviewedAt: effectiveTrust === "REVIEWED" ? ctx.now : null,
+    reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : ctx.notes,
   };
   if (existing) {
     await db.companyComplianceRecord.update({ where: { id: existing.id }, data });
-    return { created: 0, updated: 1, skipped: 0 };
+    return { created: 0, updated: 1, skipped: 0, evidenceDowngraded, warning };
   }
   await db.companyComplianceRecord.create({ data: { companyId, ...data } });
-  return { created: 1, updated: 0, skipped: 0 };
+  return { created: 1, updated: 0, skipped: 0, evidenceDowngraded, warning };
 }
 
 export async function POST(req: Request) {
@@ -706,19 +828,27 @@ export async function POST(req: Request) {
       }
     }
 
+    const recordTrustCtx: PlanBRecordTrustContext = { documentByFileName, importTrust, userId, now, notes };
+
     for (const record of legalRecords) {
-      const r = await upsertLegalRecord(tx, company.id, record);
+      const r = await upsertLegalRecord(tx, company.id, record, recordTrustCtx);
       legal.created += r.created; legal.updated += r.updated; legal.skipped += r.skipped;
+      evidenceDowngraded += r.evidenceDowngraded;
+      if (r.warning) warnings.push(r.warning);
     }
 
     for (const record of financialRecords) {
-      const r = await upsertFinancialRecord(tx, company.id, record);
+      const r = await upsertFinancialRecord(tx, company.id, record, recordTrustCtx);
       financial.created += r.created; financial.updated += r.updated; financial.skipped += r.skipped;
+      evidenceDowngraded += r.evidenceDowngraded;
+      if (r.warning) warnings.push(r.warning);
     }
 
     for (const record of complianceRecords) {
-      const r = await upsertComplianceRecord(tx, company.id, record);
+      const r = await upsertComplianceRecord(tx, company.id, record, recordTrustCtx);
       compliance.created += r.created; compliance.updated += r.updated; compliance.skipped += r.skipped;
+      evidenceDowngraded += r.evidenceDowngraded;
+      if (r.warning) warnings.push(r.warning);
     }
     });
 

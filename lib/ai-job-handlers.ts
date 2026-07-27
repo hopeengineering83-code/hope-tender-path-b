@@ -412,7 +412,18 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     }
 
     await recordStep(ctx.jobId, { stepName: "proposal.generate", message: "Generating real DOCX proposal package via the canonical generation pipeline", status: "RUNNING" });
-    await generateTenderDocuments(ctx.tenderId, ctx.userId);
+    // Heartbeat every 25s so the progress-stall stuck-job checker (90s
+    // threshold, see isProgressStuckOnlyType in lib/ai-jobs.ts) never fires
+    // on a legitimately slow but progressing multi-section AI generation —
+    // mirrors ENGINE_RUN's heartbeat above.
+    const heartbeat = setInterval(() => {
+      void recordStep(ctx.jobId, { stepName: "proposal.heartbeat", message: "Generation running — waiting for AI section responses", status: "RUNNING" }).catch(() => {});
+    }, 25_000);
+    try {
+      await generateTenderDocuments(ctx.tenderId, ctx.userId);
+    } finally {
+      clearInterval(heartbeat);
+    }
 
     await recordStep(ctx.jobId, { stepName: "proposal.letterhead", message: "Applying active Company Vault letterhead branding", status: "RUNNING" });
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(ctx.tenderId, ctx.userId);
@@ -851,7 +862,39 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     let result: Awaited<ReturnType<typeof ingestCompanyVault>>;
     try {
       if (reExtractAll) {
-        reextraction = await reextractAllCompanyDocuments(companyId);
+        // Mid-batch checkpoint/resume: a prior attempt at THIS job may have
+        // been interrupted partway through (e.g. a Vercel function kill)
+        // and re-armed by rearmDurableStageJob. Read any already-processed
+        // document IDs it persisted to AiJob.output before restarting, so
+        // the retry resumes from the next unprocessed document instead of
+        // re-running the whole vault's re-extraction from scratch.
+        const existingJob = await prisma.aiJob.findUnique({ where: { id: ctx.jobId }, select: { output: true } });
+        let checkpoint: string[] = [];
+        try {
+          const parsed = existingJob?.output ? JSON.parse(existingJob.output) as { vaultIngestCheckpoint?: { processedDocumentIds?: string[] } } : null;
+          checkpoint = Array.isArray(parsed?.vaultIngestCheckpoint?.processedDocumentIds) ? parsed!.vaultIngestCheckpoint!.processedDocumentIds! : [];
+        } catch {
+          checkpoint = [];
+        }
+        const processed = new Set(checkpoint);
+        if (processed.size > 0) {
+          await recordStep(ctx.jobId, {
+            stepName: "vault.resume",
+            message: `Resuming re-extraction — skipping ${processed.size} document(s) already processed by a prior attempt.`,
+            status: "RUNNING",
+          });
+        }
+
+        reextraction = await reextractAllCompanyDocuments(companyId, {
+          skipDocumentIds: processed,
+          onDocumentDone: async (documentId) => {
+            processed.add(documentId);
+            await prisma.aiJob.update({
+              where: { id: ctx.jobId },
+              data: { output: JSON.stringify({ vaultIngestCheckpoint: { processedDocumentIds: [...processed] } }) },
+            }).catch(() => {});
+          },
+        });
         await recordStep(ctx.jobId, {
           stepName: "vault.reextract",
           message: `Re-extracted ${reextraction.reextracted} document(s); ${reextraction.failedFiles.length} failed.`,

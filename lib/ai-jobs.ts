@@ -269,21 +269,23 @@ export async function findActiveEngineRunForTender(tenderId: string, userId: str
  * progress-stalled basis (no AiJobStep within
  * AI_JOB_PROGRESS_STUCK_AFTER_MS), regardless of total wall-clock runtime.
  *
- * WHY ENGINE_RUN IS SPECIAL
- * ─────────────────────────
- * A Vercel function killed at 60s can leave an ENGINE_RUN job RUNNING
- * with no further steps. With only the wall-clock threshold (15 min) the
- * job stays RUNNING for 15 minutes before being marked FAILED — the UI
- * keeps spinning the whole time. Tying ENGINE_RUN recovery solely to
- * "no recent step" surfaces the failure within ~90s instead of 15 min.
+ * WHY ENGINE_RUN AND PROPOSAL_GENERATION ARE SPECIAL
+ * ───────────────────────────────────────────────────
+ * A Vercel function killed at 60s can leave one of these jobs RUNNING with
+ * no further steps. With only the wall-clock threshold (15 min) the job
+ * stays RUNNING for 15 minutes before being marked FAILED — the UI keeps
+ * spinning the whole time. Both handlers emit a 25s heartbeat step
+ * (lib/ai-job-handlers.ts) around their long-running AI call, so tying
+ * their recovery solely to "no recent step" surfaces a genuine crash within
+ * ~90s instead of 15 min, without spuriously recovering a slow-but-alive run.
  *
  * Other job types still require BOTH thresholds: those workflows can
  * legitimately spend many minutes inside a single Claude call without
  * recording a step in between, and a 90s progress threshold would
  * trigger spurious recoveries.
  */
-function isProgressStuckOnlyType(jobType: string): boolean {
-  return jobType === "ENGINE_RUN";
+export function isProgressStuckOnlyType(jobType: string): boolean {
+  return jobType === "ENGINE_RUN" || jobType === "PROPOSAL_GENERATION";
 }
 
 /**
@@ -318,17 +320,17 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
 
   // We query a wide candidate set covering BOTH branches:
   //   - jobs started before totalThreshold (covers the legacy wall-clock branch
-  //     for non-ENGINE_RUN types)
-  //   - jobs started before progressThreshold AND of an ENGINE_RUN-style type
+  //     for non-progress-only types)
+  //   - jobs started before progressThreshold AND of a progress-only type
   //     (covers the progress-only branch even when wall-clock < 15 min)
   // The Prisma where uses an OR with the appropriate predicates so we never
-  // miss a 60-second-killed ENGINE_RUN.
+  // miss a 60-second-killed ENGINE_RUN or PROPOSAL_GENERATION run.
   const candidates = await prisma.aiJob.findMany({
     where: {
       status: "RUNNING",
       OR: [
         { startedAt: { lt: totalThreshold } },
-        { jobType: "ENGINE_RUN", startedAt: { lt: progressThreshold } },
+        { jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION"] }, startedAt: { lt: progressThreshold } },
       ],
     },
     select: {

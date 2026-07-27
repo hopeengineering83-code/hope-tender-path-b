@@ -144,6 +144,9 @@ model CompanyDocument {
 
   expertsSourced  Expert[]
   projectsSourced Project[]
+  legalRecordsSourced      LegalRecord[]
+  financialRecordsSourced  FinancialRecord[]
+  complianceRecordsSourced CompanyComplianceRecord[]
 
   @@index([companyId])
   @@index([integrityStatus])
@@ -265,6 +268,7 @@ model ProjectEvidence {
   @@index([projectId])
 }
 
+// trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED (see lib/vault-review-provenance.ts)
 model LegalRecord {
   id              String    @id @default(uuid())
   companyId       String
@@ -277,8 +281,18 @@ model LegalRecord {
   expiryDate      DateTime?
   status          String    @default("ACTIVE")
   metadata        String    @default("{}")
+  // Trust level — must be REVIEWED (with durable source provenance) before use in final generation
+  trustLevel       String           @default("AI_DRAFT")
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  reviewNotes      String?
+  sourceDocumentId String?
+  sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+
+  @@index([companyId])
+  @@index([trustLevel])
 }
 
 model FinancialRecord {
@@ -291,8 +305,18 @@ model FinancialRecord {
   amount     Float?
   notes      String?
   metadata   String   @default("{}")
+  // Trust level — must be REVIEWED (with durable source provenance) before use in final generation
+  trustLevel       String           @default("AI_DRAFT")
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  reviewNotes      String?
+  sourceDocumentId String?
+  sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([trustLevel])
 }
 
 model CompanyComplianceRecord {
@@ -306,8 +330,18 @@ model CompanyComplianceRecord {
   referenceNumber String?
   expiryDate      DateTime?
   metadata        String    @default("{}")
+  // Trust level — must be REVIEWED (with durable source provenance) before use in final generation
+  trustLevel       String           @default("AI_DRAFT")
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  reviewNotes      String?
+  sourceDocumentId String?
+  sourceDocument   CompanyDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
+
+  @@index([companyId])
+  @@index([trustLevel])
 }
 
 model Tender {

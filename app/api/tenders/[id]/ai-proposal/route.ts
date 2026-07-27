@@ -18,6 +18,7 @@ import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engi
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
+import { recordIsExpired } from "../../../../../lib/vault-review-provenance";
 import { extractRequestId } from "../../../../../lib/request-id";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
@@ -224,6 +225,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+
+  // Legal/Financial/Compliance records have no auto-verification pipeline —
+  // only trustLevel REVIEWED (evidence-gated at write time, see
+  // lib/vault-review-provenance.ts) and non-expired records may feed
+  // generation evidence, mirroring generate-elite.ts's canonical generator.
+  if (company) {
+    company.legalRecords = company.legalRecords.filter(
+      (r) => r.trustLevel === "REVIEWED" && !recordIsExpired(r.expiryDate),
+    );
+    company.financialRecords = company.financialRecords.filter((r) => r.trustLevel === "REVIEWED");
+    company.complianceRecords = company.complianceRecords.filter(
+      (r) => r.trustLevel === "REVIEWED" && !recordIsExpired(r.expiryDate),
+    );
+  }
 
   // ── Operation gate (DRAFT_GENERATION) — non-blocking observability ────
   // AI proposal generation is a DRAFT_GENERATION operation. The gate

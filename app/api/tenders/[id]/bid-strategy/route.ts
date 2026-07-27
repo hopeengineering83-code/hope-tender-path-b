@@ -131,8 +131,8 @@ export async function GET(
           select: {
             experts: { where: { trustLevel: "REVIEWED" } },
             projects: { where: { trustLevel: "REVIEWED" } },
-            legalRecords: true,
-            financialRecords: true,
+            legalRecords: { where: { trustLevel: "REVIEWED" } },
+            financialRecords: { where: { trustLevel: "REVIEWED" } },
           },
         },
       },

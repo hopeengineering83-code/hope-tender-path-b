@@ -5,6 +5,7 @@ import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { rateLimit, MUTATION_RATE_LIMIT, API_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../lib/request-id";
 import { companyRecordRuntimeError } from "../../../../lib/company-record-route-error";
+import { logAction } from "../../../../lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -48,7 +49,7 @@ export async function GET(req: Request) {
     const [records, total] = await prisma.$transaction([
       prisma.legalRecord.findMany({
       where,
-      select: { id: true, recordType: true, title: true, authority: true, referenceNumber: true, status: true, issueDate: true, expiryDate: true, createdAt: true },
+      select: { id: true, recordType: true, title: true, authority: true, referenceNumber: true, status: true, issueDate: true, expiryDate: true, trustLevel: true, createdAt: true },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip: (page - 1) * limit,
       take: limit,
@@ -112,6 +113,22 @@ export async function POST(req: Request) {
       expiryDate = parsed;
     }
 
+    // Optional sourceDocumentId — traceable to the uploaded CompanyDocument
+    // it was derived from, mirroring Expert/Project manual creation.
+    let sourceDocumentId: string | null = null;
+    if (typeof body.sourceDocumentId === "string" && body.sourceDocumentId.trim()) {
+      const docId = body.sourceDocumentId.trim();
+      const doc = await prisma.companyDocument.findFirst({ where: { id: docId, companyId: company.id }, select: { id: true } });
+      if (!doc) return NextResponse.json({ error: "sourceDocumentId does not reference a document in your Company Vault." }, { status: 400 });
+      sourceDocumentId = doc.id;
+    }
+
+    // Manual, single-record creation by an authenticated human is itself the
+    // review act (same precedent as Expert/Project manual creation) — no
+    // buildReviewProvenance evidence blob is required, but reviewNotes is a
+    // plain string (not the "vault-review-provenance:v2:" prefix), so
+    // isDurablyReviewed() correctly does NOT treat this as durable/export-
+    // grade evidence unless a real review with linked source text follows.
     const record = await prisma.legalRecord.create({
       data: {
         companyId: company.id,
@@ -122,7 +139,20 @@ export async function POST(req: Request) {
         status: str(body.status, 50) || "ACTIVE",
         issueDate,
         expiryDate,
+        trustLevel: "REVIEWED",
+        reviewedBy: actor.id,
+        reviewedAt: new Date(),
+        reviewNotes: "Manual legal record created by authenticated user.",
+        sourceDocumentId,
       },
+    });
+    await logAction({
+      userId: actor.id,
+      action: "LEGAL_RECORD_CREATE",
+      entityType: "LegalRecord",
+      entityId: record.id,
+      description: `Legal record "${record.title}" created`,
+      metadata: { companyId: company.id },
     });
     return NextResponse.json({ ok: true, record }, { status: 201 });
   } catch (error) {

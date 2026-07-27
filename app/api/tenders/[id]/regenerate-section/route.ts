@@ -147,9 +147,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         where: { userId },
         include: {
           documents: { orderBy: { updatedAt: "desc" }, take: 24 },
-          legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-          financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
-          complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
+          // trustLevel REVIEWED is evidence-gated at write time (see
+          // lib/vault-review-provenance.ts) — mirrors the experts/projects
+          // filters just below so unreviewed legal/financial/compliance
+          // drafts never reach the section-regeneration prompt.
+          legalRecords: {
+            where: { trustLevel: "REVIEWED", OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }] },
+            orderBy: { updatedAt: "desc" },
+            take: 12,
+          },
+          financialRecords: { where: { trustLevel: "REVIEWED" }, orderBy: { fiscalYear: "desc" }, take: 12 },
+          complianceRecords: {
+            where: { trustLevel: "REVIEWED", OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }] },
+            orderBy: { updatedAt: "desc" },
+            take: 12,
+          },
           experts: {
             where: { trustLevel: "REVIEWED", deletedAt: null },
             orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],

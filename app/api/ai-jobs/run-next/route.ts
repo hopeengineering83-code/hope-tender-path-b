@@ -143,11 +143,15 @@ export async function POST(req: Request) {
     }
 
     try {
+      // retryCount threaded through so handlers' own classifyStageRetry
+      // calls (used for telemetry only — the real retry GATE is this
+      // route's catch block below, using claimed.retries directly) report
+      // the genuine attempt number instead of always reading undefined/0.
       const result = await handler({
         jobId: claimed.id,
         userId: claimed.userId,
         tenderId: claimed.tenderId,
-        input: claimed.input,
+        input: { ...claimed.input, retryCount: claimed.retries },
       });
       if (isTerminalHandlerResult(result)) {
         if (

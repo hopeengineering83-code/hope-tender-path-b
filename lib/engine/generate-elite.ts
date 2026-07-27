@@ -18,6 +18,7 @@ import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
+import { recordIsExpired } from "../vault-review-provenance";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
@@ -1094,6 +1095,20 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     },
   });
   if (!company) throw new Error("Company not found");
+
+  // Legal/Financial/Compliance records have no auto-verification pipeline —
+  // every record (manual create or Plan-B import) must have trustLevel
+  // REVIEWED (see lib/vault-review-provenance.ts's evidence gate at write
+  // time) AND must not be expired to be used as generation evidence. Mirrors
+  // the trustLevel === "REVIEWED" filter Expert/Project already apply below,
+  // plus the expiry check those two record types don't need.
+  company.legalRecords = company.legalRecords.filter(
+    (r) => r.trustLevel === "REVIEWED" && !recordIsExpired(r.expiryDate),
+  );
+  company.financialRecords = company.financialRecords.filter((r) => r.trustLevel === "REVIEWED");
+  company.complianceRecords = company.complianceRecords.filter(
+    (r) => r.trustLevel === "REVIEWED" && !recordIsExpired(r.expiryDate),
+  );
 
   let companyLogo: CompanyLogo | undefined;
   const activeLogo = company.assets[0];

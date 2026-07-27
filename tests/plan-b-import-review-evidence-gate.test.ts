@@ -29,6 +29,9 @@ import {
   buildReviewProvenance,
   expertReviewFields,
   projectReviewFields,
+  legalReviewFields,
+  financialReviewFields,
+  complianceReviewFields,
   type ReviewSourceDocument,
 } from "../lib/vault-review-provenance";
 
@@ -162,5 +165,113 @@ describe("buildReviewProvenance evidence contract (as wired by plan-b-import)", 
       reviewedAt: new Date(),
     });
     assert.equal(fabricated.ok, false);
+  });
+});
+
+// Legal/Financial/Compliance records previously had NO trustLevel concept at
+// all — every Plan-B-imported record was fed directly into generation
+// evidence regardless of the caller's importPolicy. This closes the same
+// class of bug the Expert/Project fix above closed, for these three types.
+describe("plan-b-import wires the same evidence gate for legal/financial/compliance records", () => {
+  it("imports legalReviewFields/financialReviewFields/complianceReviewFields and calls buildReviewProvenance for each type", () => {
+    assert.match(route, /import \{[^}]*legalReviewFields[^}]*\} from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/vault-review-provenance"/);
+    assert.match(route, /recordType: "LEGAL"/);
+    assert.match(route, /recordType: "FINANCIAL"/);
+    assert.match(route, /recordType: "COMPLIANCE"/);
+  });
+
+  it("upsertLegalRecord/upsertFinancialRecord/upsertComplianceRecord each downgrade to AI_DRAFT and never blindly trust a self-declared REVIEWED", () => {
+    for (const fn of ["upsertLegalRecord", "upsertFinancialRecord", "upsertComplianceRecord"]) {
+      const idx = route.indexOf(`async function ${fn}(`);
+      assert.ok(idx > -1, `${fn} must exist`);
+      const region = route.slice(idx, idx + 2400);
+      assert.match(region, /provenance\.ok/);
+      assert.match(region, /effectiveTrust = "AI_DRAFT"/);
+      assert.match(region, /evidenceDowngraded = 1/);
+      assert.match(region, /sourceDocumentId: linkedSourceDoc\?\.id \?\? null/);
+    }
+  });
+
+  it("the call sites thread documentByFileName/importTrust/userId/now/notes through a shared context, and roll up evidenceDowngraded/warnings", () => {
+    assert.match(route, /const recordTrustCtx: PlanBRecordTrustContext = \{ documentByFileName, importTrust, userId, now, notes \};/);
+    assert.match(route, /upsertLegalRecord\(tx, company\.id, record, recordTrustCtx\)/);
+    assert.match(route, /upsertFinancialRecord\(tx, company\.id, record, recordTrustCtx\)/);
+    assert.match(route, /upsertComplianceRecord\(tx, company\.id, record, recordTrustCtx\)/);
+  });
+
+  it("buildReviewProvenance passes for a genuinely matching legal record and fails closed for a fabricated one", () => {
+    const doc: ReviewSourceDocument = {
+      id: "doc-legal-1",
+      companyId: "company-1",
+      extractedText: "BUSINESS LICENSE CERTIFICATE. License type: General Contracting License. Reference Number: BL-99101. Issuing Authority: Ministry of Trade and Regional Integration.",
+      contentSha256: "d".repeat(64),
+      contentByteLength: 200,
+      integrityStatus: "VERIFIED",
+    };
+    const ok = buildReviewProvenance({
+      recordType: "LEGAL",
+      sourceDocument: doc,
+      fields: legalReviewFields({ recordType: "General Contracting License", title: "General Contracting License", referenceNumber: "BL-99101" }),
+      reviewerId: "user-1",
+      reviewedAt: new Date(),
+    });
+    assert.equal(ok.ok, true);
+
+    const fabricated = buildReviewProvenance({
+      recordType: "LEGAL",
+      sourceDocument: doc,
+      fields: legalReviewFields({ recordType: "General Contracting License", title: "A License That Does Not Exist", referenceNumber: "FAKE-000" }),
+      reviewerId: "user-1",
+      reviewedAt: new Date(),
+    });
+    assert.equal(fabricated.ok, false);
+  });
+
+  it("the same gate applies to financial and compliance records", () => {
+    const financialDoc: ReviewSourceDocument = {
+      id: "doc-financial-1",
+      companyId: "company-1",
+      extractedText: "AUDITED FINANCIAL STATEMENT FOR FISCAL YEAR 2025. Statement type: Annual Turnover Statement. Total Annual Turnover: ETB 5000000 for fiscal year 2025.",
+      contentSha256: "e".repeat(64),
+      contentByteLength: 200,
+      integrityStatus: "VERIFIED",
+    };
+    assert.equal(buildReviewProvenance({
+      recordType: "FINANCIAL",
+      sourceDocument: financialDoc,
+      fields: financialReviewFields({ fiscalYear: 2025, recordType: "Annual Turnover Statement", currency: "ETB", amount: 5000000 }),
+      reviewerId: "user-1",
+      reviewedAt: new Date(),
+    }).ok, true);
+    assert.equal(buildReviewProvenance({
+      recordType: "FINANCIAL",
+      sourceDocument: financialDoc,
+      fields: financialReviewFields({ fiscalYear: 2025, recordType: "Annual Turnover Statement", amount: 999 }),
+      reviewerId: "user-1",
+      reviewedAt: new Date(),
+    }).ok, false);
+
+    const complianceDoc: ReviewSourceDocument = {
+      id: "doc-compliance-1",
+      companyId: "company-1",
+      extractedText: "ISO 9001:2015 QUALITY MANAGEMENT CERTIFICATE. Certificate: ISO 9001:2015 Quality Management Certificate. Certificate Reference: ISO-12345.",
+      contentSha256: "f".repeat(64),
+      contentByteLength: 200,
+      integrityStatus: "VERIFIED",
+    };
+    assert.equal(buildReviewProvenance({
+      recordType: "COMPLIANCE",
+      sourceDocument: complianceDoc,
+      fields: complianceReviewFields({ complianceType: "ISO", title: "ISO 9001:2015 Quality Management Certificate", referenceNumber: "ISO-12345" }),
+      reviewerId: "user-1",
+      reviewedAt: new Date(),
+    }).ok, true);
+    assert.equal(buildReviewProvenance({
+      recordType: "COMPLIANCE",
+      sourceDocument: complianceDoc,
+      fields: complianceReviewFields({ complianceType: "ISO", title: "A Certificate Never Issued" }),
+      reviewerId: "user-1",
+      reviewedAt: new Date(),
+    }).ok, false);
   });
 });

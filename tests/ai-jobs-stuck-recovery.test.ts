@@ -15,6 +15,7 @@ import {
   findStuckJobs,
   failStuckJobs,
   recoverIfStuck,
+  isProgressStuckOnlyType,
 } from "../lib/ai-jobs";
 
 describe("AI_JOB_STUCK_AFTER_MS — env-var parsing", () => {
@@ -59,15 +60,19 @@ describe("stuck-job recovery API surface", () => {
   });
 });
 
-// ─── Gap 1 — logic-level tests for ENGINE_RUN stuck-detection policy ──────────
+// ─── Gap 1 — logic-level tests for progress-only stuck-detection policy ──────
 //
 // The actual DB-backed functions are async wrappers over Prisma. We can't run
 // them without a real database in the test runner. Instead we exercise the
-// SAME predicate logic on plain JavaScript objects so the behavioural rules
-// are locked in regardless of how the underlying query is structured.
-
-// Replicates the policy inside `findStuckJobs` / `recoverIfStuck` for a
-// single candidate row. Pure function — no DB.
+// SAME predicate logic on plain JavaScript objects — but, critically, this
+// predicate CALLS THE REAL isProgressStuckOnlyType() exported from
+// lib/ai-jobs.ts rather than re-implementing the ENGINE_RUN/PROPOSAL_GENERATION
+// membership check inline. An earlier version of this file hard-coded
+// `job.jobType === "ENGINE_RUN"` here, which silently drifted out of sync
+// when PROPOSAL_GENERATION was added to isProgressStuckOnlyType (it also
+// gets a 25s AiJobStep heartbeat now, see lib/ai-job-handlers.ts) — this test
+// kept "passing" while asserting the OLD, no-longer-true behavior. Calling
+// the real predicate makes that class of drift impossible.
 function isStuck(
   job: { jobType: string; startedAt: Date | null; latestStepAt: Date | null },
   now: number,
@@ -78,67 +83,77 @@ function isStuck(
   const progressThreshold = new Date(now - progressThresholdMs);
   const progressStalled = !job.latestStepAt || job.latestStepAt < progressThreshold;
   if (!progressStalled) return false;
-  if (job.jobType === "ENGINE_RUN") {
-    // ENGINE_RUN: progress-stall alone is sufficient, but the job must have
-    // been running at least the progress threshold (otherwise it's a fresh
-    // job whose first step hasn't been emitted yet).
+  if (isProgressStuckOnlyType(job.jobType)) {
+    // Progress-stall alone is sufficient, but the job must have been
+    // running at least the progress threshold (otherwise it's a fresh job
+    // whose first step hasn't been emitted yet).
     return job.startedAt !== null && job.startedAt < progressThreshold;
   }
   // Other types: wall-clock AND progress both required.
   return job.startedAt !== null && job.startedAt < totalThreshold;
 }
 
-describe("Gap 1 — ENGINE_RUN stuck-job policy", () => {
+describe("Gap 1 — progress-only stuck-job policy (ENGINE_RUN, PROPOSAL_GENERATION)", () => {
   const now = Date.now();
   const FIFTEEN_MIN = 15 * 60 * 1000;
   const NINETY_SECONDS = 90_000;
 
-  it("marks an ENGINE_RUN with no recent step as STUCK after 90s even if wall-clock < 15 min", () => {
-    const startedAt = new Date(now - 5 * 60 * 1000); // 5 min ago
-    const job = { jobType: "ENGINE_RUN", startedAt, latestStepAt: null };
-    assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), true);
+  it("isProgressStuckOnlyType covers exactly ENGINE_RUN and PROPOSAL_GENERATION", () => {
+    assert.equal(isProgressStuckOnlyType("ENGINE_RUN"), true);
+    assert.equal(isProgressStuckOnlyType("PROPOSAL_GENERATION"), true);
+    assert.equal(isProgressStuckOnlyType("VAULT_INGEST"), false);
+    assert.equal(isProgressStuckOnlyType("EXTRACT_TEXT"), false);
+    assert.equal(isProgressStuckOnlyType("AI_ANALYZE"), false);
   });
 
-  it("marks an ENGINE_RUN with stale step (>90s) as STUCK even if wall-clock < 15 min", () => {
-    const startedAt = new Date(now - 5 * 60 * 1000); // 5 min ago
-    const latestStepAt = new Date(now - 2 * 60 * 1000); // 2 min ago (> 90s)
-    const job = { jobType: "ENGINE_RUN", startedAt, latestStepAt };
-    assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), true);
-  });
+  for (const progressOnlyType of ["ENGINE_RUN", "PROPOSAL_GENERATION"]) {
+    it(`marks a ${progressOnlyType} with no recent step as STUCK after 90s even if wall-clock < 15 min`, () => {
+      const startedAt = new Date(now - 5 * 60 * 1000); // 5 min ago
+      const job = { jobType: progressOnlyType, startedAt, latestStepAt: null };
+      assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), true);
+    });
 
-  it("does NOT mark an ENGINE_RUN as STUCK when a fresh step exists within 90s", () => {
-    const startedAt = new Date(now - 5 * 60 * 1000);
-    const latestStepAt = new Date(now - 30_000); // 30 s ago
-    const job = { jobType: "ENGINE_RUN", startedAt, latestStepAt };
+    it(`marks a ${progressOnlyType} with stale step (>90s) as STUCK even if wall-clock < 15 min`, () => {
+      const startedAt = new Date(now - 5 * 60 * 1000); // 5 min ago
+      const latestStepAt = new Date(now - 2 * 60 * 1000); // 2 min ago (> 90s)
+      const job = { jobType: progressOnlyType, startedAt, latestStepAt };
+      assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), true);
+    });
+
+    it(`does NOT mark a ${progressOnlyType} as STUCK when a fresh (heartbeat) step exists within 90s`, () => {
+      const startedAt = new Date(now - 5 * 60 * 1000);
+      const latestStepAt = new Date(now - 30_000); // 30 s ago
+      const job = { jobType: progressOnlyType, startedAt, latestStepAt };
+      assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), false);
+    });
+
+    it(`does NOT mark a brand-new ${progressOnlyType} (started <90s ago) as STUCK even with no steps`, () => {
+      const startedAt = new Date(now - 30_000); // 30 s ago
+      const job = { jobType: progressOnlyType, startedAt, latestStepAt: null };
+      assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), false);
+    });
+  }
+
+  it("does NOT aggressively fail a non-progress-only job (VAULT_INGEST) that is progress-stalled but wall-clock < 15 min", () => {
+    // A VAULT_INGEST job can legitimately run several minutes re-extracting a
+    // large batch of documents without emitting a step in between. The
+    // ENGINE_RUN/PROPOSAL_GENERATION shortcut must NOT apply to it.
+    const startedAt = new Date(now - 5 * 60 * 1000); // 5 min ago
+    const job = { jobType: "VAULT_INGEST", startedAt, latestStepAt: null };
     assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), false);
   });
 
-  it("does NOT mark a brand-new ENGINE_RUN (started <90s ago) as STUCK even with no steps", () => {
-    const startedAt = new Date(now - 30_000); // 30 s ago
-    const job = { jobType: "ENGINE_RUN", startedAt, latestStepAt: null };
-    assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), false);
-  });
-
-  it("does NOT aggressively fail a non-ENGINE_RUN job that is progress-stalled but wall-clock < 15 min", () => {
-    // A PROPOSAL_GENERATION job can legitimately run several minutes without
-    // emitting a step (a single long Claude call). The ENGINE_RUN shortcut
-    // must NOT apply to it.
-    const startedAt = new Date(now - 5 * 60 * 1000); // 5 min ago
-    const job = { jobType: "PROPOSAL_GENERATION", startedAt, latestStepAt: null };
-    assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), false);
-  });
-
-  it("marks a non-ENGINE_RUN job STUCK only when BOTH wall-clock and progress thresholds passed", () => {
+  it("marks a non-progress-only job STUCK only when BOTH wall-clock and progress thresholds passed", () => {
     const startedAt = new Date(now - 20 * 60 * 1000); // 20 min ago
     const latestStepAt = new Date(now - 5 * 60 * 1000); // 5 min ago (>90s)
-    const job = { jobType: "PROPOSAL_GENERATION", startedAt, latestStepAt };
+    const job = { jobType: "VAULT_INGEST", startedAt, latestStepAt };
     assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), true);
   });
 
-  it("a non-ENGINE_RUN job past wall-clock but with fresh step is NOT stuck", () => {
+  it("a non-progress-only job past wall-clock but with fresh step is NOT stuck", () => {
     const startedAt = new Date(now - 20 * 60 * 1000); // 20 min ago
     const latestStepAt = new Date(now - 30_000); // 30 s ago
-    const job = { jobType: "PROPOSAL_GENERATION", startedAt, latestStepAt };
+    const job = { jobType: "VAULT_INGEST", startedAt, latestStepAt };
     assert.equal(isStuck(job, now, FIFTEEN_MIN, NINETY_SECONDS), false);
   });
 });

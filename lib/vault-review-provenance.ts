@@ -61,6 +61,32 @@ export const VAULT_REVIEW_CONSUMER_SELECT = {
     contractValue: true,
     currency: true,
   },
+  LEGAL: {
+    ...VAULT_REVIEW_AUTHORITY_SELECT,
+    recordType: true,
+    title: true,
+    authority: true,
+    referenceNumber: true,
+    issueDate: true,
+    expiryDate: true,
+  },
+  FINANCIAL: {
+    ...VAULT_REVIEW_AUTHORITY_SELECT,
+    fiscalYear: true,
+    recordType: true,
+    currency: true,
+    amount: true,
+    notes: true,
+  },
+  COMPLIANCE: {
+    ...VAULT_REVIEW_AUTHORITY_SELECT,
+    complianceType: true,
+    title: true,
+    status: true,
+    evidenceSummary: true,
+    referenceNumber: true,
+    expiryDate: true,
+  },
 } as const;
 
 type VaultReviewAuthorityRecord = {
@@ -92,12 +118,45 @@ export type VaultProjectReviewConsumerRecord = VaultReviewAuthorityRecord & {
   currency?: string | null;
 };
 
+export type VaultLegalReviewConsumerRecord = VaultReviewAuthorityRecord & {
+  recordType: string;
+  title: string;
+  authority?: string | null;
+  referenceNumber?: string | null;
+  issueDate?: Date | string | null;
+  expiryDate?: Date | string | null;
+};
+
+export type VaultFinancialReviewConsumerRecord = VaultReviewAuthorityRecord & {
+  fiscalYear: number;
+  recordType: string;
+  currency?: string | null;
+  amount?: number | null;
+  notes?: string | null;
+};
+
+export type VaultComplianceReviewConsumerRecord = VaultReviewAuthorityRecord & {
+  complianceType: string;
+  title: string;
+  status?: string | null;
+  evidenceSummary?: string | null;
+  referenceNumber?: string | null;
+  expiryDate?: Date | string | null;
+};
+
 export type VaultReviewConsumerRecord =
   | VaultExpertReviewConsumerRecord
-  | VaultProjectReviewConsumerRecord;
+  | VaultProjectReviewConsumerRecord
+  | VaultLegalReviewConsumerRecord
+  | VaultFinancialReviewConsumerRecord
+  | VaultComplianceReviewConsumerRecord;
 
 export type ReviewRecordState = VaultReviewConsumerRecord;
-export type ReviewRecordType = "EXPERT" | "PROJECT";
+export type ReviewRecordType = "EXPERT" | "PROJECT" | "LEGAL" | "FINANCIAL" | "COMPLIANCE";
+const REVIEW_RECORD_TYPES: readonly ReviewRecordType[] = ["EXPERT", "PROJECT", "LEGAL", "FINANCIAL", "COMPLIANCE"];
+function isReviewRecordType(value: unknown): value is ReviewRecordType {
+  return typeof value === "string" && (REVIEW_RECORD_TYPES as readonly string[]).includes(value);
+}
 
 export type DurableReviewEvidence = {
   field: string;
@@ -419,7 +478,7 @@ function parseStoredReviewProvenance(reviewNotes: string | null | undefined): St
     const parsed = JSON.parse(reviewNotes.slice(REVIEW_PROVENANCE_PREFIX.length)) as Partial<StoredReviewProvenance>;
     if (
       parsed.version !== 2 ||
-      (parsed.recordType !== "EXPERT" && parsed.recordType !== "PROJECT") ||
+      !isReviewRecordType(parsed.recordType) ||
       typeof parsed.sourceDocumentId !== "string" ||
       !HASH_PATTERN.test(parsed.sourceContentHash ?? "") ||
       !Number.isInteger(parsed.sourceByteLength) ||
@@ -454,7 +513,7 @@ function parseStoredSourceVerification(reviewNotes: string | null | undefined): 
     const parsed = JSON.parse(reviewNotes.slice(SOURCE_VERIFICATION_PROVENANCE_PREFIX.length)) as Partial<StoredSourceVerificationProvenance>;
     if (
       parsed.version !== 1 ||
-      (parsed.recordType !== "EXPERT" && parsed.recordType !== "PROJECT") ||
+      !isReviewRecordType(parsed.recordType) ||
       typeof parsed.sourceDocumentId !== "string" ||
       !HASH_PATTERN.test(parsed.sourceContentHash ?? "") ||
       !Number.isInteger(parsed.sourceByteLength) ||
@@ -500,16 +559,54 @@ function currentRecordEvidenceFields(
     }));
   }
 
-  const project = record as Partial<VaultProjectReviewConsumerRecord>;
-  if (typeof project.name !== "string" || project.name.trim().length === 0) return null;
-  return normalizedEvidenceFields(projectReviewFields({
-    name: project.name,
-    clientName: project.clientName,
-    country: project.country,
-    sector: project.sector,
-    serviceAreas: project.serviceAreas,
-    contractValue: project.contractValue,
-    currency: project.currency,
+  if (recordType === "PROJECT") {
+    const project = record as Partial<VaultProjectReviewConsumerRecord>;
+    if (typeof project.name !== "string" || project.name.trim().length === 0) return null;
+    return normalizedEvidenceFields(projectReviewFields({
+      name: project.name,
+      clientName: project.clientName,
+      country: project.country,
+      sector: project.sector,
+      serviceAreas: project.serviceAreas,
+      contractValue: project.contractValue,
+      currency: project.currency,
+    }));
+  }
+
+  if (recordType === "LEGAL") {
+    const legal = record as Partial<VaultLegalReviewConsumerRecord>;
+    if (typeof legal.title !== "string" || legal.title.trim().length === 0) return null;
+    return normalizedEvidenceFields(legalReviewFields({
+      recordType: legal.recordType ?? "",
+      title: legal.title,
+      authority: legal.authority,
+      referenceNumber: legal.referenceNumber,
+      issueDate: legal.issueDate,
+      expiryDate: legal.expiryDate,
+    }));
+  }
+
+  if (recordType === "FINANCIAL") {
+    const financial = record as Partial<VaultFinancialReviewConsumerRecord>;
+    if (!Number.isFinite(financial.fiscalYear)) return null;
+    return normalizedEvidenceFields(financialReviewFields({
+      fiscalYear: financial.fiscalYear!,
+      recordType: financial.recordType ?? "",
+      currency: financial.currency,
+      amount: financial.amount,
+      notes: financial.notes,
+    }));
+  }
+
+  const compliance = record as Partial<VaultComplianceReviewConsumerRecord>;
+  if (typeof compliance.title !== "string" || compliance.title.trim().length === 0) return null;
+  return normalizedEvidenceFields(complianceReviewFields({
+    complianceType: compliance.complianceType ?? "",
+    title: compliance.title,
+    status: compliance.status,
+    evidenceSummary: compliance.evidenceSummary,
+    referenceNumber: compliance.referenceNumber,
+    expiryDate: compliance.expiryDate,
   }));
 }
 
@@ -591,6 +688,11 @@ export function canUseVaultRecord(
   record: ReviewRecordState,
   purpose: "MATCHING" | "GENERATION" | "EXPORT",
 ): boolean {
+  // Expired legal/compliance evidence (e.g. a lapsed license or certificate)
+  // must never be presented as current, regardless of how durably it was
+  // reviewed — block it for every purpose, not just final export.
+  const expiryDate = (record as { expiryDate?: Date | string | null }).expiryDate;
+  if (recordIsExpired(expiryDate)) return false;
   if (purpose === "EXPORT") return isDurablyReviewed(record);
   return isDurablyReviewed(record) || isDurablySourceVerified(record);
 }
@@ -646,6 +748,77 @@ export function projectReviewFields(record: {
     ...parseStoredStringList(record.serviceAreas).slice(0, 8).map((value, index) => ({ field: `serviceAreas[${index}]`, value })),
     { field: "contractValue", value: record.contractValue },
     { field: "currency", value: record.currency },
+  ];
+}
+
+// Dates are matched against source text as literal ISO (YYYY-MM-DD) strings,
+// the same exact-match design already accepted for numeric fields
+// (yearsExperience, contractValue) above — the source document's extracted
+// text must contain the date in this normalized form for the evidence check
+// to pass.
+function dateOnlyValue(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+}
+
+export function recordIsExpired(expiryDate: Date | string | null | undefined, asOf: Date = new Date()): boolean {
+  if (!expiryDate) return false;
+  const parsed = expiryDate instanceof Date ? expiryDate : new Date(expiryDate);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.getTime() < asOf.getTime();
+}
+
+export function legalReviewFields(record: {
+  recordType: string;
+  title: string;
+  authority?: string | null;
+  referenceNumber?: string | null;
+  issueDate?: Date | string | null;
+  expiryDate?: Date | string | null;
+}): ReviewEvidenceField[] {
+  return [
+    { field: "recordType", value: record.recordType },
+    { field: "title", value: record.title },
+    { field: "authority", value: record.authority },
+    { field: "referenceNumber", value: record.referenceNumber },
+    { field: "issueDate", value: dateOnlyValue(record.issueDate) },
+    { field: "expiryDate", value: dateOnlyValue(record.expiryDate) },
+  ];
+}
+
+// notes/evidenceSummary are intentionally excluded below, same as Expert's
+// free-text "profile" field is excluded from expertReviewFields — long
+// free-text is unlikely to appear verbatim in source text, so requiring an
+// exact-quote match on it would make the gate impractically strict.
+export function financialReviewFields(record: {
+  fiscalYear: number;
+  recordType: string;
+  currency?: string | null;
+  amount?: number | null;
+  notes?: string | null;
+}): ReviewEvidenceField[] {
+  return [
+    { field: "fiscalYear", value: record.fiscalYear },
+    { field: "recordType", value: record.recordType },
+    { field: "currency", value: record.currency },
+    { field: "amount", value: record.amount },
+  ];
+}
+
+export function complianceReviewFields(record: {
+  complianceType: string;
+  title: string;
+  status?: string | null;
+  evidenceSummary?: string | null;
+  referenceNumber?: string | null;
+  expiryDate?: Date | string | null;
+}): ReviewEvidenceField[] {
+  return [
+    { field: "complianceType", value: record.complianceType },
+    { field: "title", value: record.title },
+    { field: "referenceNumber", value: record.referenceNumber },
+    { field: "expiryDate", value: dateOnlyValue(record.expiryDate) },
   ];
 }
 
