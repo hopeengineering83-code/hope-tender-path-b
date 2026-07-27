@@ -102,6 +102,7 @@ type FinancialRecord = {
 export default function CompanyPage() {
   const [tab, setTab] = useState<Tab>("documents");
   const [company, setCompany] = useState<Company>(empty);
+  const [reviewTotals, setReviewTotals] = useState<{ humanReviewedExperts: number; humanReviewedProjects: number } | null>(null);
   const [docs, setDocs] = useState<CompanyDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -293,13 +294,27 @@ export default function CompanyPage() {
       fetch("/api/company").then(r=>r.json()),
       fetch("/api/company/documents?limit=50").then(r=>r.json()),
       fetch("/api/company/assets?limit=50").then(r=>r.json()),
-    ]).then(([c, d, a]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }]) => {
+      // Durable review status (whether an Expert/Project has real, verified
+      // human-review provenance, not just a raw trustLevel="REVIEWED" flag)
+      // can only be computed server-side, where source-document bytes are
+      // available — see lib/company-ingestion-readiness.ts, the same
+      // canonical resolver the Engine's matching gate uses. Fetching it here
+      // keeps this page's "reviewed" count from silently disagreeing with
+      // what the Engine will actually accept as usable evidence.
+      fetch("/api/company/ingestion-readiness").then(r=>r.json()).catch(() => null),
+    ]).then(([c, d, a, readiness]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }, { totals?: { humanReviewedExperts?: number; humanReviewedProjects?: number } } | null]) => {
       const co = c.company ?? c;
       if (co.name !== undefined) {
         setCompany({ ...empty, ...(co as Company) });
       }
       setDocs(d.items ?? []);
       setAssets(a.assets ?? []);
+      if (readiness?.totals) {
+        setReviewTotals({
+          humanReviewedExperts: readiness.totals.humanReviewedExperts ?? 0,
+          humanReviewedProjects: readiness.totals.humanReviewedProjects ?? 0,
+        });
+      }
     }).finally(() => setLoading(false));
   }, []);
 
@@ -649,8 +664,18 @@ export default function CompanyPage() {
         const activeAssetTypes = new Set(assets.filter(a => a.isActive).map(a => a.assetType));
         const allExperts = company.experts ?? [];
         const allProjects = company.projects ?? [];
-        const reviewedExpertCount = allExperts.filter(e => e.trustLevel === "REVIEWED").length;
-        const reviewedProjectCount = allProjects.filter(p => p.trustLevel === "REVIEWED").length;
+        // A raw trustLevel === "REVIEWED" flag is not sufficient on its own —
+        // it can be stale or was never durably provenance-backed (missing
+        // sourceDocumentId/reviewedBy/reviewedAt, or a quote that no longer
+        // matches the source bytes). The Engine's matching gate
+        // (lib/engine/matching-eligibility.ts) only accepts records that
+        // pass isDurablyReviewed(), so this label must use the same
+        // canonical count (fetched server-side, where source-document bytes
+        // are available) instead of recomputing its own looser check here —
+        // otherwise this page can claim "N reviewed" while the Engine
+        // simultaneously reports zero eligible matches.
+        const reviewedExpertCount = reviewTotals?.humanReviewedExperts ?? 0;
+        const reviewedProjectCount = reviewTotals?.humanReviewedProjects ?? 0;
         const draftExpertCount = allExperts.length - reviewedExpertCount;
         const draftProjectCount = allProjects.length - reviewedProjectCount;
         const checks = [

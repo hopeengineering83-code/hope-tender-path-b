@@ -34,10 +34,14 @@ describe("run-next terminal failure persists a safe diagnostic category", () => 
   });
 
   it("a non-retryable EXTRACT_TEXT failure keeps a ref and safe category without leaking the raw record id", async () => {
-    // A nonexistent tenderFileId makes the EXTRACT_TEXT handler throw
-    // "EXTRACT_TEXT: TenderFile <id> not found" — a message that does not
-    // match classifyStageRetry's RETRYABLE pattern, so it is classified
-    // non-retryable and must hit the failJob() terminal path.
+    // lib/ai-jobs/tender-extraction-service.ts's runTenderFileExtractionJob
+    // requires companyId + a well-formed sourceContentSha256 up front and
+    // throws the generic "EXTRACT_TEXT_INPUT_INVALID" when either is
+    // missing (a genuinely missing/superseded tenderFile no longer throws —
+    // it now resolves gracefully via a SUPERSEDED terminal result, a
+    // different code path entirely). An incomplete job input therefore
+    // falls into the generic INTERNAL_JOB_ERROR category, not a
+    // record-not-found one.
     const bogusFileId = "00000000-0000-0000-0000-000000000000";
     const job = await enqueueJob({ userId, jobType: "EXTRACT_TEXT", input: { tenderFileId: bogusFileId } });
 
@@ -50,7 +54,7 @@ describe("run-next terminal failure persists a safe diagnostic category", () => 
 
     const row = await prisma.aiJob.findUniqueOrThrow({ where: { id: job.id } });
     assert.equal(row.status, "FAILED");
-    assert.match(row.errorMessage ?? "", /^JOB_EXECUTION_FAILED \(ref: [0-9a-f]{8}\): REQUIRED_INPUT_NOT_FOUND:/, "must retain the correlation ref and safe category");
+    assert.match(row.errorMessage ?? "", /^JOB_EXECUTION_FAILED \(ref: [0-9a-f]{8}\): INTERNAL_JOB_ERROR:/, "must retain the correlation ref and safe category");
     assert.doesNotMatch(row.errorMessage ?? "", /TenderFile|00000000-0000-0000-0000-000000000000/, "must not expose internal model names or record identifiers");
   });
 });

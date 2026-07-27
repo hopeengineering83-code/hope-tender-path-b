@@ -2,10 +2,18 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getSession } from "../../../../lib/auth";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
+import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../../../../lib/vault-review-provenance";
 
-function countTrust(records: Array<{ trustLevel: string | null }>) {
+// A raw trustLevel === "REVIEWED" flag is not sufficient on its own — it can
+// be stale or was never durably provenance-backed (missing
+// sourceDocumentId/reviewedBy/reviewedAt, or a quote that no longer matches
+// the source bytes). The same durable check the Engine's matching gate uses
+// (lib/engine/matching-eligibility.ts -> isDurablyReviewed) must gate this
+// summary too, or it can report records "reviewed" and "ready for final
+// generation" that the Engine and export gate will actually reject.
+function countTrust(records: ReviewRecordState[]) {
   return {
-    reviewed: records.filter((r) => r.trustLevel === "REVIEWED").length,
+    reviewed: records.filter((r) => isDurablyReviewed(r)).length,
     aiDraft: records.filter((r) => r.trustLevel === "AI_DRAFT").length,
     regexDraft: records.filter((r) => r.trustLevel === "REGEX_DRAFT" || !r.trustLevel).length,
     total: records.length,
@@ -19,8 +27,8 @@ export async function GET() {
 
   const company = await ensureCompanyForUser(prisma, userId);
   const [experts, projects, docs] = await Promise.all([
-    prisma.expert.findMany({ where: { companyId: company.id }, select: { trustLevel: true, sourceDocumentId: true } }),
-    prisma.project.findMany({ where: { companyId: company.id }, select: { trustLevel: true, sourceDocumentId: true } }),
+    prisma.expert.findMany({ where: { companyId: company.id }, select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT }),
+    prisma.project.findMany({ where: { companyId: company.id }, select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT }),
     prisma.companyDocument.findMany({ where: { companyId: company.id }, select: { id: true, originalFileName: true, category: true, extractedText: true } }),
   ]);
 
