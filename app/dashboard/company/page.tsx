@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { classifyDeleteResponse, type DeleteResponse } from "../../../lib/company-vault-delete-classifier";
 import { CheckIcon, CrossIcon, PersonIcon, FolderIcon, ChevronDownIcon } from "../../../components/icons";
@@ -870,6 +871,25 @@ export default function CompanyPage() {
       {/* Experts Tab */}
       {tab==="experts" && (
         <div className="space-y-6">
+          {(() => {
+            // The Experts table below only has Edit/Delete — there is no
+            // per-row review status or approve action here by design (see
+            // app/dashboard/company/review-board/page.tsx: this codebase
+            // deliberately keeps a single review/approval authority instead
+            // of a second mutation surface on this table). Without this
+            // banner, a user looking only at this tab has no visible signal
+            // that any of these records still need human review, or where
+            // to go to do it.
+            const totalExperts = (company.experts ?? []).length;
+            const awaitingReview = totalExperts - (reviewTotals?.humanReviewedExperts ?? 0);
+            if (totalExperts === 0 || awaitingReview <= 0) return null;
+            return (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <span><strong>{awaitingReview}</strong> of {totalExperts} expert{totalExperts === 1 ? "" : "s"} still need{totalExperts === 1 ? "s" : ""} human review before they can support tender matching or final export.</span>
+                <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 no-underline hover:bg-amber-100">Review experts →</Link>
+              </div>
+            );
+          })()}
           <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
             <h2 className="font-semibold text-slate-900 mb-4">Add Expert</h2>
             <form onSubmit={addExpert} className="space-y-3">
@@ -972,6 +992,17 @@ export default function CompanyPage() {
       {/* Projects Tab */}
       {tab==="projects" && (
         <div className="space-y-6">
+          {(() => {
+            const totalProjects = (company.projects ?? []).length;
+            const awaitingReview = totalProjects - (reviewTotals?.humanReviewedProjects ?? 0);
+            if (totalProjects === 0 || awaitingReview <= 0) return null;
+            return (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                <span><strong>{awaitingReview}</strong> of {totalProjects} project{totalProjects === 1 ? "" : "s"} still need{totalProjects === 1 ? "s" : ""} human review before they can support tender matching or final export.</span>
+                <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 no-underline hover:bg-amber-100">Review projects →</Link>
+              </div>
+            );
+          })()}
           <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
             <h2 className="font-semibold text-slate-900 mb-4">Add Project</h2>
             <form ref={projectFormRef} onSubmit={addProject} className="space-y-3">
