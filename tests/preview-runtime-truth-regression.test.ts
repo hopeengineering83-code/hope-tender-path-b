@@ -28,6 +28,18 @@ describe("preview schema compatibility and public diagnostics", () => {
     assert.match(message, /980887ac/);
     assert.doesNotMatch(message, /Prisma|LegalRecord|trustLevel/);
   });
+
+  it("reuses a bare, static, all-caps precondition code as its own safe category instead of a generic fallback", () => {
+    for (const code of ["EXTRACT_TEXT_INPUT_INVALID", "EXTRACT_TEXT_SOURCE_HASH_INVALID", "GENERATION_IN_PROGRESS", "ENGINE_CONTINUATION_OWNERSHIP_NOT_RESOLVED"]) {
+      const message = publicJobFailureMessage(new Error(code), "2c115587");
+      assert.match(message, new RegExp(`^JOB_EXECUTION_FAILED \\(ref: 2c115587\\): ${code}:`), `${code} must be surfaced verbatim as the category, not collapsed to INTERNAL_JOB_ERROR`);
+    }
+  });
+
+  it("still falls back to the generic category for a real, non-code sentence error (no false-positive code extraction)", () => {
+    const message = publicJobFailureMessage(new Error("Unexpected token o in JSON at position 4"), "2c115587");
+    assert.match(message, /INTERNAL_JOB_ERROR/);
+  });
 });
 
 describe("single workflow authority regressions from the latest preview", () => {

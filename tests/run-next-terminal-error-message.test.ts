@@ -33,15 +33,17 @@ describe("run-next terminal failure persists a safe diagnostic category", () => 
     await prisma.user.deleteMany({ where: { id: userId } });
   });
 
-  it("a non-retryable EXTRACT_TEXT failure keeps a ref and safe category without leaking the raw record id", async () => {
+  it("a non-retryable EXTRACT_TEXT failure keeps a ref and a specific safe category without leaking the raw record id", async () => {
     // lib/ai-jobs/tender-extraction-service.ts's runTenderFileExtractionJob
     // requires companyId + a well-formed sourceContentSha256 up front and
-    // throws the generic "EXTRACT_TEXT_INPUT_INVALID" when either is
-    // missing (a genuinely missing/superseded tenderFile no longer throws —
-    // it now resolves gracefully via a SUPERSEDED terminal result, a
-    // different code path entirely). An incomplete job input therefore
-    // falls into the generic INTERNAL_JOB_ERROR category, not a
-    // record-not-found one.
+    // throws the bare, static "EXTRACT_TEXT_INPUT_INVALID" code when either
+    // is missing (a genuinely missing/superseded tenderFile no longer
+    // throws — it now resolves gracefully via a SUPERSEDED terminal result,
+    // a different code path entirely). publicJobFailureMessage() recognizes
+    // this class of bare all-caps precondition code (no colon, no
+    // interpolated value, so it's always safe to surface) and reuses it
+    // directly as the category, rather than collapsing it into a generic
+    // "the job failed" message.
     const bogusFileId = "00000000-0000-0000-0000-000000000000";
     const job = await enqueueJob({ userId, jobType: "EXTRACT_TEXT", input: { tenderFileId: bogusFileId } });
 
@@ -54,7 +56,7 @@ describe("run-next terminal failure persists a safe diagnostic category", () => 
 
     const row = await prisma.aiJob.findUniqueOrThrow({ where: { id: job.id } });
     assert.equal(row.status, "FAILED");
-    assert.match(row.errorMessage ?? "", /^JOB_EXECUTION_FAILED \(ref: [0-9a-f]{8}\): INTERNAL_JOB_ERROR:/, "must retain the correlation ref and safe category");
+    assert.match(row.errorMessage ?? "", /^JOB_EXECUTION_FAILED \(ref: [0-9a-f]{8}\): EXTRACT_TEXT_INPUT_INVALID:/, "must retain the correlation ref and the specific precondition code, not a generic fallback");
     assert.doesNotMatch(row.errorMessage ?? "", /TenderFile|00000000-0000-0000-0000-000000000000/, "must not expose internal model names or record identifiers");
   });
 });
