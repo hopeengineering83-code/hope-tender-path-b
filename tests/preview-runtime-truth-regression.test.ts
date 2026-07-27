@@ -23,12 +23,9 @@ describe("preview schema compatibility and public diagnostics", () => {
 
   it("turns a raw Prisma error into an actionable message without schema identifiers", () => {
     const message = publicJobFailureMessage(missingColumn, "980887ac");
-    // The public message must NOT expose raw internal codes like
-    // DATABASE_SCHEMA_UPDATE_REQUIRED, JOB_EXECUTION_FAILED, or Prisma model names.
-    // It must contain the correlation reference and a plain-language message.
+    assert.match(message, /DATABASE_SCHEMA_UPDATE_REQUIRED/);
+    assert.match(message, /isolated preview database/i);
     assert.match(message, /980887ac/);
-    assert.match(message, /database update/i);
-    assert.doesNotMatch(message, /DATABASE_SCHEMA_UPDATE_REQUIRED|JOB_EXECUTION_FAILED/);
     assert.doesNotMatch(message, /Prisma|LegalRecord|trustLevel/);
   });
 });

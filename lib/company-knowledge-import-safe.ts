@@ -1,5 +1,4 @@
 import { ingestCompanyVault } from "./company-vault-ingestion";
-import { shouldScanForExperts, shouldScanForProjects } from "./company-document-classifier";
 
 /**
  * Compatibility entry point for older callers.

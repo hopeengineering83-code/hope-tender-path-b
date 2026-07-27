@@ -32,7 +32,7 @@ export async function TenderNotificationsBanner() {
             <div key={t.id} className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm">
               <ClockIcon className="h-4 w-4 text-amber-600" />
               <span className="flex-1 text-amber-900"><strong>{(t.title ?? "Untitled").slice(0, 60)}</strong> — deadline in {daysLeft} day{daysLeft !== 1 ? "s" : ""}</span>
-              <Link href={`/dashboard/tenders/${t.id}`} className="text-xs font-medium text-amber-800 underline inline-flex items-center gap-0.5">View <ArrowRightIcon className="inline h-3 w-3" /></Link>
+              <Link href={`/dashboard/tenders/${t.id}`} className="text-xs font-medium text-amber-700 underline inline-flex items-center gap-0.5">View <ArrowRightIcon className="inline h-3 w-3" /></Link>
             </div>
           );
         })}

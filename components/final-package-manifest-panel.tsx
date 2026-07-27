@@ -55,7 +55,7 @@ function envelopeLabel(doc: DocRow): string {
 
 function statusBadge(state: string) {
   if (state === "READY_FOR_EXPORT") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Ready</span>;
-  if (state === "VALIDATED" || state === "DOCX_GENERATED" || state === "PDF_GENERATED") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Not approved</span>;
+  if (state === "VALIDATED" || state === "DOCX_GENERATED" || state === "PDF_GENERATED") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Not approved</span>;
   if (state === "SUPERSEDED") return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">Superseded</span>;
   if (state === "ORIGINAL_REQUIRED") return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Original required</span>;
   if (state === "NEEDS_REVALIDATION") return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Needs revalidation</span>;
@@ -215,7 +215,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
             </div>
             <div className="rounded-xl border bg-amber-50 px-4 py-2">
               <p className="text-xs text-amber-600">Blocked</p>
-              <p className="text-xl font-bold text-amber-800">{blockedRows.length}</p>
+              <p className="text-xl font-bold text-amber-700">{blockedRows.length}</p>
             </div>
             <div className="rounded-xl border bg-slate-50 px-4 py-2">
               <p className="text-xs text-slate-500">Excluded</p>

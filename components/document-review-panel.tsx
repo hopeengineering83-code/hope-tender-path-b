@@ -78,12 +78,12 @@ const REVIEW_ACTIONS: Array<{ key: string; label: string; status: string; color:
 const STATUS_COLORS: Record<string, string> = {
   APPROVED: "bg-green-100 text-green-700",
   READY_FOR_EXPORT: "bg-blue-100 text-blue-700",
-  CHANGES_REQUESTED: "bg-amber-100 text-amber-800",
+  CHANGES_REQUESTED: "bg-amber-100 text-amber-700",
   REJECTED: "bg-red-100 text-red-700",
   REJECTED_DUPLICATE: "bg-red-100 text-red-700",
   PENDING: "bg-slate-100 text-slate-500",
-  NEEDS_REVISION: "bg-amber-100 text-amber-800",
-  NEEDS_REVIEW: "bg-amber-100 text-amber-800",
+  NEEDS_REVISION: "bg-amber-100 text-amber-700",
+  NEEDS_REVIEW: "bg-amber-100 text-amber-700",
 };
 
 function formatDate(iso: string): string {

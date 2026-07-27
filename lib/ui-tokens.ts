@@ -25,7 +25,7 @@ export function severityBgClass(s: UISeverity): string {
 
 export function severityTextClass(s: UISeverity): string {
   if (s === "good") return "text-emerald-700";
-  if (s === "warning") return "text-amber-800";
+  if (s === "warning") return "text-amber-700";
   if (s === "poor") return "text-red-700";
   if (s === "stale") return "text-violet-700";
   if (s === "partial") return "text-orange-700";
@@ -41,7 +41,7 @@ export function severityBadgeClasses(s: UISeverity): string {
  * Compact badge variant — no border, slightly stronger background tint.
  *
  * Why this exists: several panels historically used a 2-class local map like
- * `{ HIGH: "bg-red-100 text-red-700", MEDIUM: "bg-amber-100 text-amber-800",
+ * `{ HIGH: "bg-red-100 text-red-700", MEDIUM: "bg-amber-100 text-amber-700",
  *    LOW: "bg-slate-100 text-slate-600" }` — different from the canonical
  * 3-class `severityBadgeClasses()` (which adds `border-*-200` and uses the
  * lighter `bg-*-50` tint).
@@ -63,7 +63,7 @@ export function severityBadgeClassesCompact(s: UISeverity): string {
   // — matches the legacy local SEVERITY_BADGE maps in bid-strategy-panel,
   // evaluator-objections-panel, and tender-ai-copilot-panel exactly.
   if (s === "good") return "bg-emerald-100 text-emerald-700";
-  if (s === "warning") return "bg-amber-100 text-amber-800";
+  if (s === "warning") return "bg-amber-100 text-amber-700";
   if (s === "poor") return "bg-red-100 text-red-700";
   if (s === "stale") return "bg-violet-100 text-violet-700";
   if (s === "partial") return "bg-orange-100 text-orange-700";

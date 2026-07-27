@@ -162,7 +162,7 @@ export async function GenerationReadinessPanel({
               <p className="mt-1 text-sm text-red-700 font-medium">No confirmed Build Plan. Build and confirm the submission plan before generating.</p>
             )}
             {supportPackageReady && !effectivelyReady && (
-              <p className="mt-1 text-sm text-amber-800">Support packages may be generated, but the full proposal remains blocked.</p>
+              <p className="mt-1 text-sm text-amber-700">Support packages may be generated, but the full proposal remains blocked.</p>
             )}
           </div>
           <div className="flex items-center gap-3">
@@ -216,7 +216,7 @@ export async function GenerationReadinessPanel({
                   <span className="inline-flex items-center gap-2">
                     {canMutate && item.nextAction === "FINALIZE_REQUIRED_PDF"
                       ? <FinalizeRequiredPdfButton tenderId={tenderId} />
-                      : <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-800 underline">{buildActionLabel(item.nextAction)}</Link>}
+                      : <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>}
                   </span>
                 </div>
               </div>

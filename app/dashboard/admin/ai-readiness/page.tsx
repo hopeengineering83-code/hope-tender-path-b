@@ -95,7 +95,7 @@ export default async function AIReadinessPage() {
       {report.warnings.length > 0 && (
         <section className="rounded-2xl border border-amber-200 bg-white p-5" aria-labelledby="ai-warnings-title">
           <h2 id="ai-warnings-title" className="font-semibold text-amber-800">Warnings</h2>
-          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-800">
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-700">
             {report.warnings.map((item) => <li key={item}>{item}</li>)}
           </ul>
         </section>
@@ -117,7 +117,7 @@ export default async function AIReadinessPage() {
 }
 
 function SummaryCard({ label, value, tone }: { label: string; value: string; tone: "good" | "warn" | "bad" }) {
-  const valueClass = tone === "good" ? "text-emerald-700" : tone === "warn" ? "text-amber-800" : "text-red-700";
+  const valueClass = tone === "good" ? "text-emerald-700" : tone === "warn" ? "text-amber-700" : "text-red-700";
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>

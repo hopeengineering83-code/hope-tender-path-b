@@ -76,13 +76,13 @@ function scoreColor(score: number): string {
 
 function scoreBadgeColor(score: number): string {
   if (score >= 70) return "text-green-700 bg-green-50";
-  if (score >= 40) return "text-amber-800 bg-amber-50";
+  if (score >= 40) return "text-amber-700 bg-amber-50";
   return "text-red-700 bg-red-50";
 }
 
 function severityBadge(action: CorrectiveAction) {
   if (action.severity === "HIGH") return "border-red-200 bg-red-50 text-red-700";
-  if (action.severity === "MEDIUM") return "border-amber-200 bg-amber-50 text-amber-800";
+  if (action.severity === "MEDIUM") return "border-amber-200 bg-amber-50 text-amber-700";
   return "border-gray-200 bg-gray-50 text-gray-700";
 }
 
@@ -170,7 +170,7 @@ function EntityCard({ entity }: { entity: EntityBreakdown }) {
               </span>
             )}
             {actions.length > 0 && (
-              <span className="rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-xs text-amber-800">
+              <span className="rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-xs text-amber-700">
                 {actions.length} action{actions.length === 1 ? "" : "s"}
               </span>
             )}

@@ -328,7 +328,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                 style={{ width: `${coveragePct}%` }}
               />
             </div>
-            <span className={`text-xs font-semibold ${coveragePct >= 80 ? "text-green-700" : coveragePct >= 50 ? "text-amber-800" : "text-red-700"}`}>
+            <span className={`text-xs font-semibold ${coveragePct >= 80 ? "text-green-700" : coveragePct >= 50 ? "text-amber-700" : "text-red-700"}`}>
               {coveragePct}%
             </span>
           </div>
@@ -366,7 +366,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
       {/* Traceability summary */}
       {traceOpen && traceability && (
         <div id="traceability-panel" className="border-b border-gray-100 px-5 py-3 bg-amber-50">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-800 mb-2">Traceability Audit</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700 mb-2">Traceability Audit</p>
           <div className="grid grid-cols-4 gap-3 text-xs text-center">
             <div><div className="text-base font-bold text-gray-800">{traceability.summary.requirements}</div><div className="text-gray-500">Requirements</div></div>
             <div><div className={`text-base font-bold ${traceability.summary.weakRequirements > 0 ? "text-red-600" : "text-green-600"}`}>{traceability.summary.weakRequirements}</div><div className="text-gray-500">Weak source</div></div>
@@ -382,7 +382,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
             <p className="mt-2 text-xs text-green-700">All requirements and selected evidence have acceptable traceability.</p>
           )}
           {traceability.warnings.length === 0 && coveragePct === 0 && (
-            <p className="mt-2 text-xs text-amber-800">No compliance coverage has been confirmed yet. Source traceability may be acceptable, but requirement coverage is not yet confirmed.</p>
+            <p className="mt-2 text-xs text-amber-700">No compliance coverage has been confirmed yet. Source traceability may be acceptable, but requirement coverage is not yet confirmed.</p>
           )}
         </div>
       )}
@@ -393,7 +393,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
           { label: "Mandatory", value: data.totalMandatory, color: "text-gray-800" },
           { label: "Traced", value: data.totalMandatory - data.missingSourceRef, color: "text-blue-700" },
           { label: "Covered", value: data.fullyCovered, color: "text-green-700" },
-          { label: "Partial", value: data.partiallyCovered, color: "text-amber-800" },
+          { label: "Partial", value: data.partiallyCovered, color: "text-amber-700" },
           { label: "Uncovered", value: data.uncovered, color: data.uncovered > 0 ? "text-red-600" : "text-gray-400" },
         ].map((cell) => (
           <div key={cell.label} className="bg-white py-2">
@@ -453,7 +453,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                         {cfg.label}
                       </span>
                       {!row.hasSourceRef && (
-                        <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-xs text-amber-800">
+                        <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-xs text-amber-700">
                           No source ref
                         </span>
                       )}
@@ -485,7 +485,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                             const cls = pct >= 70
                               ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                               : pct >= 40
-                                ? "bg-amber-50 text-amber-800 border-amber-200"
+                                ? "bg-amber-50 text-amber-700 border-amber-200"
                                 : "bg-red-50 text-red-700 border-red-200";
                             const label = pct >= 70 ? "high" : pct >= 40 ? "med" : "low";
                             return (
@@ -499,7 +499,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                           })()}
                         </div>
                       ) : (
-                        <p className="inline-flex items-start gap-1 text-xs text-amber-800"><WarningIcon className="mt-0.5 shrink-0" /> <span>No source reference recorded. Run source extraction or add manually.</span></p>
+                        <p className="inline-flex items-start gap-1 text-xs text-amber-700"><WarningIcon className="mt-0.5 shrink-0" /> <span>No source reference recorded. Run source extraction or add manually.</span></p>
                       )}
                     </div>
 

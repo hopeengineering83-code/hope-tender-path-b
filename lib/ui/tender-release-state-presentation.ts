@@ -16,7 +16,7 @@ const RELEASE_SCORE_THRESHOLDS = { good: 80, warn: 50 };
 
 const TONE_BY_SEVERITY: Record<UISeverity, { text: string; bg: string; bar: string }> = {
   good:    { text: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", bar: "bg-emerald-500" },
-  warning: { text: "text-amber-800",   bg: "bg-amber-50 border-amber-200",   bar: "bg-amber-400"   },
+  warning: { text: "text-amber-700",   bg: "bg-amber-50 border-amber-200",   bar: "bg-amber-400"   },
   poor:    { text: "text-red-700",     bg: "bg-red-50 border-red-200",       bar: "bg-red-500"     },
   // Unused by scoreTone() but required by the Record type — the canonical
   // 8-state model has these for other surfaces (stale/partial/running/muted).
@@ -32,7 +32,7 @@ export function scoreTone(score: number): { text: string; bg: string; bar: strin
 
 export function verdictLabel(verdict: TenderReleaseVerdict): { label: string; tone: string } {
   if (verdict === "BID") return { label: "BID", tone: "bg-emerald-100 text-emerald-700" };
-  if (verdict === "BID_WITH_CONDITIONS") return { label: "BID WITH CONDITIONS", tone: "bg-amber-100 text-amber-800" };
+  if (verdict === "BID_WITH_CONDITIONS") return { label: "BID WITH CONDITIONS", tone: "bg-amber-100 text-amber-700" };
   if (verdict === "NO_BID") return { label: "NO BID", tone: "bg-red-100 text-red-700" };
   return { label: "Decision unavailable", tone: "bg-slate-100 text-slate-500" };
 }

@@ -195,7 +195,7 @@ export default function AssetsPage() {
 
       <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
         <h2 className="text-sm font-semibold text-amber-800">Asset usage rules</h2>
-        <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-amber-800">
+        <ul className="mt-2 list-inside list-disc space-y-1 text-xs text-amber-700">
           <li>DOCX letterhead is a preferred source only where branding is permitted.</li>
           <li>Logo, header, footer, signature, and stamp files must be PNG or JPEG.</li>
           <li>Macro-enabled or embedded-object letterhead files are rejected.</li>

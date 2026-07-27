@@ -167,7 +167,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
                     ) : (
                       <button
                         onClick={() => setConfirmRestoreId(v.id)}
-                        className="rounded border border-amber-200 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50"
+                        className="rounded border border-amber-200 px-2 py-0.5 text-xs text-amber-700 hover:bg-amber-50"
                       >
                         Restore
                       </button>
