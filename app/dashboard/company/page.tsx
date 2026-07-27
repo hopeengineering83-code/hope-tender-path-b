@@ -67,7 +67,7 @@ const CATEGORY_LABELS: Record<string,string> = {
 const CAT_COLORS: Record<string,string> = {
   COMPANY_PROFILE:"bg-blue-100 text-blue-700",EXPERT_CV:"bg-purple-100 text-purple-700",
   PROJECT_REFERENCE:"bg-green-100 text-green-700",PROJECT_CONTRACT:"bg-emerald-100 text-emerald-700",
-  FINANCIAL_STATEMENT:"bg-amber-100 text-amber-700",LEGAL_REGISTRATION:"bg-red-100 text-red-700",
+  FINANCIAL_STATEMENT:"bg-amber-100 text-amber-800",LEGAL_REGISTRATION:"bg-red-100 text-red-700",
   CERTIFICATION:"bg-orange-100 text-orange-700",MANUAL:"bg-slate-100 text-slate-600",
   PORTFOLIO:"bg-teal-100 text-teal-700",COMPLIANCE_RECORD:"bg-rose-100 text-rose-700",OTHER:"bg-slate-100 text-slate-500",
 };
