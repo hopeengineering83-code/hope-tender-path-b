@@ -8,6 +8,7 @@ import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../l
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "../../../../../lib/vault-review-provenance";
 import { inferType as inferRequirementType } from "../../../../../lib/engine/analysis";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
@@ -146,11 +147,22 @@ const COMPANY_PRODUCED_KINDS: ReadonlySet<SupportDocKind> = new Set<SupportDocKi
 ]);
 
 async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: Set<string>): Promise<number> {
-  const tender = await prisma.tender.findUnique({ where: { id: tenderId }, select: { title: true, clientName: true, procuringEntityName: true, description: true, requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
+  const tender = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: {
+      title: true, clientName: true, procuringEntityName: true, description: true, requirements: true,
+      expertMatches: { where: { isSelected: true }, include: { expert: { select: { ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT, profile: true, deletedAt: true } } }, orderBy: { score: "desc" } },
+      projectMatches: { where: { isSelected: true }, include: { project: { select: { ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT, summary: true, deletedAt: true } } }, orderBy: { score: "desc" } },
+    },
+  });
   if (!tender) return 0;
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
-  const experts = tender.expertMatches.filter((m) => m.expert && m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
-  const projects = tender.projectMatches.filter((m) => m.project && m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
+  // isDurablyReviewed(), not a raw trustLevel==="REVIEWED" check — a stale or
+  // never-durably-provenance-backed REVIEWED record must not be quoted as
+  // real evidence in a generated, submittable support document. A
+  // soft-deleted record (deletedAt set) must never surface here either.
+  const experts = tender.expertMatches.filter((m) => m.expert && !m.expert.deletedAt && isDurablyReviewed(m.expert)).map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
+  const projects = tender.projectMatches.filter((m) => m.project && !m.project.deletedAt && isDurablyReviewed(m.project)).map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
   const docs = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, storagePath: true } });
   // Deduplicate by filename before filling: if multiple non-superseded records share the same
   // exactFileName (from prior generation runs), only fill the first one encountered to avoid
@@ -934,14 +946,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   const promotion = await promoteBestAvailableReviewedMatchesForGeneration({ tenderId: id, requirements: tender.requirements });
-  const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { expert: { select: { fullName: true, trustLevel: true } } } });
-  const selectedProjectMatches = await prisma.tenderProjectMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { project: { select: { name: true, trustLevel: true } } } });
+  const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } });
+  const selectedProjectMatches = await prisma.tenderProjectMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } });
   const [totalExpertMatches, totalProjectMatches] = await Promise.all([
     prisma.tenderExpertMatch.count({ where: { tenderId: id } }),
     prisma.tenderProjectMatch.count({ where: { tenderId: id } }),
   ]);
-  const draftExperts = selectedExpertMatches.filter((m) => m.expert.trustLevel !== "REVIEWED");
-  const draftProjects = selectedProjectMatches.filter((m) => m.project.trustLevel !== "REVIEWED");
+  // isDurablyReviewed(), not raw trustLevel — see fillPlannedSupportDocuments
+  // above for the same reasoning: a stale REVIEWED record must gate
+  // generation identically to an unreviewed one.
+  const draftExperts = selectedExpertMatches.filter((m) => !isDurablyReviewed(m.expert));
+  const draftProjects = selectedProjectMatches.filter((m) => !isDurablyReviewed(m.project));
   const reviewedExpertCount = selectedExpertMatches.length - draftExperts.length;
   const reviewedProjectCount = selectedProjectMatches.length - draftProjects.length;
   // Reuses requiresExperts/requiresProjects computed above (already
@@ -968,10 +983,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // submission. Block generation when the company vault has no reviewed experts
   // AND no reviewed projects so the user is prompted to add real evidence before
   // generating documents that will be submitted under their company name.
-  const [vaultReviewedExpertCount, vaultReviewedProjectCount] = await Promise.all([
-    prisma.expert.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
-    prisma.project.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
+  const [vaultExpertsForGate, vaultProjectsForGate] = await Promise.all([
+    prisma.expert.findMany({ where: { company: { userId }, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT }),
+    prisma.project.findMany({ where: { company: { userId }, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT }),
   ]);
+  const vaultReviewedExpertCount = vaultExpertsForGate.filter(isDurablyReviewed).length;
+  const vaultReviewedProjectCount = vaultProjectsForGate.filter(isDurablyReviewed).length;
   if (vaultReviewedExpertCount === 0 && vaultReviewedProjectCount === 0) {
     return NextResponse.json({
       errorCode: "EMPTY_VAULT",
