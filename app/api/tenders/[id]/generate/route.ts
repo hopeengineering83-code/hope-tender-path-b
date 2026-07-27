@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../../lib/engine/best-available-selection";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
+import { applyActiveSignatureAndStampToTenderDocuments } from "../../../../../lib/engine/apply-signature-stamp";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
@@ -1040,6 +1041,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     advanceJob(job.id, "LETTERHEAD");
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
+    // Auto-apply company signature and stamp images (user uploads all company
+    // documents — the App uses them automatically, no human approval needed).
+    const { signatureApplied, stampApplied } = await applyActiveSignatureAndStampToTenderDocuments(id, userId);
+    if (signatureApplied > 0) warnings.push(`Company signature auto-applied to ${signatureApplied} generated DOCX file(s).`);
+    if (stampApplied > 0) warnings.push(`Company stamp auto-applied to ${stampApplied} generated DOCX file(s).`);
 
     const generatedDocsForPlan = explicitSubmissionScope ? await prisma.generatedDocument.findMany({ where: { tenderId: id }, select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true } }) : [];
     const missingPlanFiles = explicitSubmissionScope ? findMissingGeneratedDocuments(submissionPlan, generatedDocsForPlan) : [];

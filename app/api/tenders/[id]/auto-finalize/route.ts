@@ -8,6 +8,7 @@ import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
 import { generateWithFallback } from "../../../../../lib/ai";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
+import { applyActiveSignatureAndStampToTenderDocuments } from "../../../../../lib/engine/apply-signature-stamp";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../../../../../lib/engine/build-plan";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
@@ -470,6 +471,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
 
   await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  // Auto-apply company signature and stamp images after letterhead
+  await applyActiveSignatureAndStampToTenderDocuments(tenderId, actor.id);
   // The readiness check verifies actual bytes and persisted integrity
   // (checkExportFileByteReadiness). Fetching without fileContent/integrity
   // columns made it report false MISSING_FILE_BYTES / unverified-integrity
