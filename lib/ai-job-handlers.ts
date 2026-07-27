@@ -19,7 +19,7 @@
 //   PROFILE_FACT_EXTRACTION — async pure-regex fact harvest from company/project/tender prose
 
 import { recordStep, type JobType } from "./ai-jobs";
-import { isStrictBase64 } from "./engine/generated-file-integrity";
+import { resolveProposalNarrativeText } from "./engine/proposal-narrative-resolver";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
 import { executeAnalysis, finalizeAnalysisJob } from "./engine/analysis-orchestrator";
@@ -442,22 +442,29 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
   // recent GeneratedDocument for the tender.
   EVALUATOR_SIM: async (ctx) => {
     if (!ctx.tenderId) throw new Error("EVALUATOR_SIM requires tenderId on the job");
-    await recordStep(ctx.jobId, { stepName: "evaluator.load", message: "Loading tender + proposal markdown", status: "RUNNING" });
+    await recordStep(ctx.jobId, { stepName: "evaluator.load", message: "Loading tender + proposal narrative", status: "RUNNING" });
 
     const tender = await prisma.tender.findFirst({
       where: { id: ctx.tenderId, userId: ctx.userId },
-      include: { generatedDocuments: { orderBy: { createdAt: "desc" }, take: 1 } },
+      select: {
+        title: true,
+        evaluationMethodology: true,
+        generatedDocuments: {
+          where: { documentType: { in: ["TECHNICAL_PROPOSAL", "QUICK_DRAFT"] }, generationStatus: { not: "SUPERSEDED" } },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { fileContent: true, format: true, contentMimeType: true, exactFileName: true, name: true },
+        },
+      },
     });
     if (!tender) throw new Error(`EVALUATOR_SIM: tender ${ctx.tenderId} not found`);
 
-    const storedProposal = tender.generatedDocuments[0]?.fileContent ?? "";
-    const proposalMarkdown = typeof ctx.input?.proposalMarkdown === "string"
-      ? (ctx.input.proposalMarkdown as string)
-      : storedProposal && isStrictBase64(storedProposal)
-        ? Buffer.from(storedProposal, "base64").toString("utf8")
-        : storedProposal;
+    const proposalMarkdown = await resolveProposalNarrativeText(
+      tender.generatedDocuments[0],
+      typeof ctx.input?.proposalMarkdown === "string" ? ctx.input.proposalMarkdown as string : null,
+    );
     if (!proposalMarkdown) {
-      throw new Error("EVALUATOR_SIM: no proposal markdown found (input.proposalMarkdown empty and no GeneratedDocument exists). Generate a proposal first.");
+      throw new Error("EVALUATOR_SIM: no proposal narrative found (input.proposalMarkdown empty and no GeneratedDocument exists). Generate a proposal first.");
     }
 
     await recordStep(ctx.jobId, { stepName: "evaluator.run", message: "Running 4-persona evaluator panel (TECHNICAL, COMPLIANCE, END_USER, COMMERCIAL)", status: "RUNNING" });

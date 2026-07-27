@@ -1,8 +1,8 @@
-export type DurableRetryJobType = "EXTRACT_TEXT" | "VAULT_INGEST" | "ENGINE_RUN";
+export type DurableRetryJobType = "EXTRACT_TEXT" | "VAULT_INGEST" | "ENGINE_RUN" | "PROPOSAL_GENERATION";
 export type RetryDecision = { retryable: boolean; blockerCode: string; delayMs: number | null };
 
-const NON_RETRYABLE = /(?:NOT_FOUND_OR_FORBIDDEN|INVALID_PACKAGE|AUTHORITY|INTEGRITY|REVIEW_REQUIRED|UNAUTHORIZED|FORBIDDEN|CONTENT_HASH_MISMATCH)/i;
-const RETRYABLE = /(?:TIMEOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|RATE.?LIMIT|TOO.?MANY.?REQUESTS|SERVICE.?UNAVAILABLE|TEMPORAR|STORAGE.*FAILED|PROVIDER)/i;
+const NON_RETRYABLE = /(?:NOT_FOUND_OR_FORBIDDEN|INVALID_PACKAGE|AUTHORITY|INTEGRITY|REVIEW_REQUIRED|UNAUTHORIZED|FORBIDDEN|CONTENT_HASH_MISMATCH|ZERO_REVIEWED|readiness gate)/i;
+const RETRYABLE = /(?:TIMEOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|RATE.?LIMIT|TOO.?MANY.?REQUESTS|SERVICE.?UNAVAILABLE|TEMPORAR|STORAGE.*FAILED|PROVIDER|GENERATION_IN_PROGRESS)/i;
 const BACKOFF_MS = [30_000, 60_000, 180_000, 600_000] as const;
 
 export function classifyStageRetry(errorCodeOrMessage: string, retryCount: number): RetryDecision {
@@ -13,5 +13,5 @@ export function classifyStageRetry(errorCodeOrMessage: string, retryCount: numbe
 }
 
 export function isDurableRetryJobType(value: string): value is DurableRetryJobType {
-  return value === "EXTRACT_TEXT" || value === "VAULT_INGEST" || value === "ENGINE_RUN";
+  return value === "EXTRACT_TEXT" || value === "VAULT_INGEST" || value === "ENGINE_RUN" || value === "PROPOSAL_GENERATION";
 }

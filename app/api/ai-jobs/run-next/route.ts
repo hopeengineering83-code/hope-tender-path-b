@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
-import { completeJob, failJob } from "../../../../lib/ai-jobs";
+import { completeJob, failJob, rearmDurableStageJob } from "../../../../lib/ai-jobs";
+import { classifyStageRetry, isDurableRetryJobType } from "../../../../lib/engine/stage-retry-policy";
 import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
 import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
@@ -241,15 +242,43 @@ export async function POST(req: Request) {
       const correlationId = require("crypto").randomUUID().slice(0, 8);
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
-      await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId})`);
+
+      // Durable-stage bounded backoff: EXTRACT_TEXT / VAULT_INGEST /
+      // ENGINE_RUN / PROPOSAL_GENERATION failures are classified retryable
+      // vs non-retryable (lib/engine/stage-retry-policy.ts) using the SAME
+      // policy VAULT_INGEST already computed a blockerCode from. A
+      // retryable, budget-remaining failure is re-armed (QUEUED with a
+      // future nextAttemptAt, gated by claimJobForCaller) instead of
+      // terminally failed — closing the gap where these job types had no
+      // automatic recovery path at all (only AI_ANALYZE did, via
+      // AiAnalyzeRetryState).
+      let retryScheduled = false;
+      let stageBlockerCode: string | undefined;
+      if (isDurableRetryJobType(claimed.jobType)) {
+        const decision = classifyStageRetry(message, claimed.retries);
+        stageBlockerCode = decision.blockerCode;
+        if (decision.retryable && decision.delayMs !== null) {
+          retryScheduled = await rearmDurableStageJob(claimed.id, {
+            errorMessage: `JOB_EXECUTION_FAILED (ref: ${correlationId}): ${message}`,
+            delayMs: decision.delayMs,
+          });
+        }
+      }
+
+      if (!retryScheduled) {
+        await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId})`);
+      }
+
       processedJobs.push({
         jobId: claimed.id,
         jobType: claimed.jobType,
-        status: "FAILED",
-        terminalStatus: "FAILED",
-        resultCode: "JOB_EXECUTION_FAILED",
+        status: retryScheduled ? "QUEUED" : "FAILED",
+        terminalStatus: retryScheduled ? undefined : "FAILED",
+        resultCode: retryScheduled ? "STAGE_RETRY_SCHEDULED" : "JOB_EXECUTION_FAILED",
         correlationId,
-        retryable: true,
+        retryable: !retryScheduled,
+        retryScheduled,
+        generationBlockerCode: stageBlockerCode,
       });
     }
 

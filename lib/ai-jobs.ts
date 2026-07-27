@@ -159,6 +159,34 @@ export async function failJob(jobId: string, errorMessage: string): Promise<void
   });
 }
 
+// Generic durable-stage retry: re-arms a job that failed with a retryable,
+// transient error (see lib/engine/stage-retry-policy.ts's classifyStageRetry)
+// instead of terminally failing it. Uses AiJob's existing generic
+// retries/nextAttemptAt columns (already indexed — @@index([nextAttemptAt,
+// status])) so claimJobForCaller can gate on them without a new migration.
+// Guarded on WHERE status = 'RUNNING' so a job that already reached a
+// terminal state (e.g. raced by a concurrent recovery sweep) is never
+// silently resurrected.
+export async function rearmDurableStageJob(
+  jobId: string,
+  input: { errorMessage: string; delayMs: number },
+): Promise<boolean> {
+  await prismaReady;
+  const result = await prisma.aiJob.updateMany({
+    where: { id: jobId, status: "RUNNING" },
+    data: {
+      status: "QUEUED",
+      errorMessage: input.errorMessage.slice(0, 2000),
+      nextAttemptAt: new Date(Date.now() + input.delayMs),
+      retries: { increment: 1 },
+      startedAt: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    },
+  });
+  return result.count === 1;
+}
+
 export async function getJob(jobId: string): Promise<{
   id: string;
   status: JobStatus;
