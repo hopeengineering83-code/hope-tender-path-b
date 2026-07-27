@@ -34,56 +34,48 @@ export type EligibilityResult =
 
 export type EligibilityRejectionCode =
   | "NOT_REVIEWED"
-  | "NOT_VERIFIED"
   | "NO_SOURCE_DOCUMENT"
   | "NO_REVIEWER"
   | "NO_REVIEW_TIMESTAMP"
   | "NO_DURABLE_PROVENANCE";
 
-/**
- * Check whether a Company Vault record (Expert, Project, Legal, Financial,
- * Compliance) is eligible for matching.
- *
- * Accepts BOTH "REVIEWED" (human-reviewed) AND "SOURCE_VERIFIED" (system-
- * verified against uploaded source bytes) records. This matches the policy
- * in `canUseVaultRecord()` (vault-review-provenance.ts) which explicitly
- * accepts `isDurablyReviewed || isDurablySourceVerified` for MATCHING.
- *
- * The user uploads all company documents — the App auto-verifies them
- * against source bytes (trustLevel = "SOURCE_VERIFIED") via
- * `lib/company-auto-verification.ts`. These records are eligible for
- * matching without requiring a human to click "Review" on each one.
- *
- * Only "AI_DRAFT" and "REGEX_DRAFT" records are rejected (they haven't
- * been verified against source bytes yet).
- */
 export function checkMatchingEligibility(record: MatchingEligibilityRecord): EligibilityResult {
-  // Reject draft (unverified) records — they haven't been checked against
-  // the uploaded source bytes yet.
-  if (record.trustLevel === "AI_DRAFT" || record.trustLevel === "REGEX_DRAFT" || !record.trustLevel) {
-    return { eligible: false, reason: "NOT_VERIFIED", detail: `trustLevel is "${record.trustLevel ?? "null"}", must be "REVIEWED" or "SOURCE_VERIFIED"` };
+  // canUseVaultRecord's MATCHING purpose accepts BOTH a durably human-REVIEWED
+  // record and a durably machine-SOURCE_VERIFIED one (see
+  // vault-review-provenance.ts's canUseVaultRecord) — a record that has been
+  // auto-verified against its own owned, byte-verified source document is
+  // genuinely eligible evidence for matching even before a human has looked
+  // at it. Checking this FIRST (rather than hard-rejecting anything that
+  // isn't literally trustLevel==="REVIEWED" before ever reaching this check,
+  // as a prior version of this function did) is what actually determines
+  // eligibility; everything below only exists to give a specific rejection
+  // reason for the UI when it's false.
+  if (record.companyId && (record.fullName || record.name) && canUseVaultRecord(record as ReviewRecordState, "MATCHING")) {
+    return { eligible: true };
   }
-  // Accept both REVIEWED and SOURCE_VERIFIED from here on.
+
+  if (record.trustLevel !== "REVIEWED" && record.trustLevel !== "SOURCE_VERIFIED") {
+    return { eligible: false, reason: "NOT_REVIEWED", detail: `trustLevel is "${record.trustLevel ?? "null"}", must be "REVIEWED" or "SOURCE_VERIFIED"` };
+  }
   if (!record.sourceDocumentId?.trim()) {
     return { eligible: false, reason: "NO_SOURCE_DOCUMENT", detail: "sourceDocumentId is missing" };
   }
-  // REVIEWED records require a reviewer + timestamp; SOURCE_VERIFIED records
-  // are system-verified (reviewedBy = "SYSTEM_AUTO_VERIFIED") so they always
-  // have these fields set by company-auto-verification.ts.
-  if (!record.reviewedBy?.trim()) {
-    return { eligible: false, reason: "NO_REVIEWER", detail: "reviewedBy is missing" };
+  // reviewedBy/reviewedAt are only required for a human REVIEWED record —
+  // SOURCE_VERIFIED records are machine-verified and correctly leave both
+  // null (see autoVerifyCompanyKnowledge / isDurablySourceVerified).
+  if (record.trustLevel === "REVIEWED") {
+    if (!record.reviewedBy?.trim()) {
+      return { eligible: false, reason: "NO_REVIEWER", detail: "reviewedBy is missing" };
+    }
+    if (!record.reviewedAt || (typeof record.reviewedAt === "string" && !record.reviewedAt.trim())) {
+      return { eligible: false, reason: "NO_REVIEW_TIMESTAMP", detail: "reviewedAt is missing" };
+    }
   }
-  if (!record.reviewedAt || (typeof record.reviewedAt === "string" && !record.reviewedAt.trim())) {
-    return { eligible: false, reason: "NO_REVIEW_TIMESTAMP", detail: "reviewedAt is missing" };
-  }
-  if (!record.companyId || (!record.fullName && !record.name) || !canUseVaultRecord(record as ReviewRecordState, "MATCHING")) {
-    return {
-      eligible: false,
-      reason: "NO_DURABLE_PROVENANCE",
-      detail: "record is not bound to current verified source bytes and current record values",
-    };
-  }
-  return { eligible: true };
+  return {
+    eligible: false,
+    reason: "NO_DURABLE_PROVENANCE",
+    detail: "review state is not bound to current verified source bytes and current record values",
+  };
 }
 
 export function isEligibleForMatching(record: MatchingEligibilityRecord): boolean {
