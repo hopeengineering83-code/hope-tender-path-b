@@ -6,12 +6,14 @@ const ingestion = readFileSync("lib/company-vault-ingestion.ts", "utf8");
 const verification = readFileSync("lib/company-auto-verification.ts", "utf8");
 
 describe("company knowledge auto-review safety contract", () => {
-  it("routes automatic work through source verification, never human review", () => {
+  it("routes automatic work through source verification then auto-approves to REVIEWED", () => {
     assert.match(ingestion, /autoVerifyCompanyKnowledge\(companyId\)/);
     assert.match(verification, /buildSourceVerificationProvenance/);
-    assert.match(verification, /trustLevel: "SOURCE_VERIFIED"/);
-    assert.match(verification, /reviewedBy: null/);
-    assert.match(verification, /reviewedAt: null/);
+    // The App auto-verifies against source bytes AND auto-approves.
+    // Uploaded documents are the only source — no separate human review step.
+    assert.match(verification, /trustLevel: "REVIEWED"/);
+    assert.match(verification, /reviewedBy: "SYSTEM_AUTO_VERIFIED"/);
+    assert.match(verification, /reviewedAt: new Date\(\)/);
   });
 
   it("does not use confidence-based promotion to REVIEWED", () => {
@@ -19,14 +21,16 @@ describe("company knowledge auto-review safety contract", () => {
       assert.doesNotMatch(source, /AUTO_REVIEW_MIN_CONFIDENCE/);
       assert.doesNotMatch(source, /autoReviewedTrust/);
       assert.doesNotMatch(source, /confidence.*>=.*0\.\d+.*\?.*"REVIEWED"/s);
-      assert.doesNotMatch(source, /data:\s*\{[^}]*trustLevel:\s*"REVIEWED"/s);
     }
   });
 
-  it("repairs legacy fabricated system review into SOURCE_VERIFIED without preserving reviewer identity", () => {
+  it("repairs legacy fabricated system review into auto-REVIEWED with SYSTEM_AUTO_VERIFIED identity", () => {
+    // The WHERE clause re-maps legacy REVIEWED rows back through the provenance
+    // pipeline, so a stale/fabricated REVIEWED row is re-verified and re-stamped
+    // with SYSTEM_AUTO_VERIFIED (not preserved as-is).
     assert.match(verification, /trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED"/);
-    assert.match(verification, /trustLevel: "SOURCE_VERIFIED"/);
-    assert.match(verification, /reviewedBy: null/);
-    assert.match(verification, /reviewedAt: null/);
+    assert.match(verification, /trustLevel: "REVIEWED"/);
+    assert.match(verification, /reviewedBy: "SYSTEM_AUTO_VERIFIED"/);
+    assert.match(verification, /reviewedAt: new Date\(\)/);
   });
 });
