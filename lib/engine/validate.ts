@@ -5,6 +5,7 @@ import { buildDeterministicComprehension } from "./deterministic-prohibition-ext
 import { validateConstraints } from "./constraint-validator";
 import { filterFinalExportCandidateDocuments } from "./document-output-state";
 import { documentHygieneIssues } from "./export-readiness";
+import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
 
 export interface ValidationIssue {
   code: string;
@@ -71,8 +72,13 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   const selectedProjectIds = tender.projectMatches.map((m) => m.projectId);
 
   if (selectedExpertIds.length > 0) {
-    const experts = await prisma.expert.findMany({ where: { id: { in: selectedExpertIds } }, select: { id: true, fullName: true, trustLevel: true } });
-    const unreviewed = experts.filter((e) => e.trustLevel !== "REVIEWED");
+    const experts = await prisma.expert.findMany({ where: { id: { in: selectedExpertIds }, deletedAt: null }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT } });
+    // isDurablyReviewed(), not a raw trustLevel==="REVIEWED" check — a stale
+    // or never-durably-provenance-backed REVIEWED record must not pass this
+    // check as if genuinely human-reviewed (it would otherwise produce a
+    // false-positive "✓ All experts are REVIEWED" that contradicts the
+    // Engine's and generation's own durable gate).
+    const unreviewed = experts.filter((e) => !isDurablyReviewed(e));
     const regexDraft = experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT");
     const aiDraft = experts.filter((e) => e.trustLevel === "AI_DRAFT");
     if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_EXPERT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected expert(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((e) => e.fullName).join(", ")}.` });
@@ -81,7 +87,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   }
 
   if (selectedProjectIds.length > 0) {
-    const projects = await prisma.project.findMany({ where: { id: { in: selectedProjectIds } }, select: { id: true, name: true, trustLevel: true } });
+    const projects = await prisma.project.findMany({ where: { id: { in: selectedProjectIds }, deletedAt: null }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT } });
     const regexDraft = projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT");
     const aiDraft = projects.filter((p) => p.trustLevel === "AI_DRAFT");
     if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_PROJECT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((p) => p.name).join(", ")}.` });
