@@ -404,14 +404,19 @@ describe("re-extract-metadata route — enrichment wired in", () => {
     );
   });
 
-  it("calls enrichMetadataWithSourceEvidence before prisma.tender.update", () => {
+  it("calls enrichMetadataWithSourceEvidence before persisting the update", () => {
     const enrichIdx = src.indexOf("enrichMetadataWithSourceEvidence({");
-    const updateIdx = src.indexOf("await prisma.tender.update({ where: { id }, data: update });");
+    // The persist call now runs inside a transaction alongside
+    // invalidateTenderForSourceRevision (a corrected metadata value must
+    // supersede any already-generated document/BuildPlan that baked in the
+    // old value — see H-02), so the tender update runs through `tx`, not
+    // the bare `prisma` client.
+    const updateIdx = src.indexOf("await tx.tender.update({ where: { id }, data: update });");
     assert.ok(enrichIdx > -1, "must call enrichMetadataWithSourceEvidence");
-    assert.ok(updateIdx > -1, "must call prisma.tender.update");
+    assert.ok(updateIdx > -1, "must persist the update inside the invalidation transaction");
     assert.ok(
       enrichIdx < updateIdx,
-      "enrichment must happen BEFORE prisma.tender.update",
+      "enrichment must happen BEFORE the update is persisted",
     );
   });
 
