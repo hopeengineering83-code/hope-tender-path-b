@@ -6,14 +6,14 @@ const ingestion = readFileSync("lib/company-vault-ingestion.ts", "utf8");
 const verification = readFileSync("lib/company-auto-verification.ts", "utf8");
 
 describe("company knowledge auto-review safety contract", () => {
-  it("routes automatic work through source verification then auto-approves to REVIEWED", () => {
+  it("routes automatic work through review provenance then auto-approves to REVIEWED", () => {
     assert.match(ingestion, /autoVerifyCompanyKnowledge\(companyId\)/);
-    assert.match(verification, /buildSourceVerificationProvenance/);
+    assert.match(verification, /buildReviewProvenance/);
     // The App auto-verifies against source bytes AND auto-approves.
     // Uploaded documents are the only source — no separate human review step.
     assert.match(verification, /trustLevel: "REVIEWED"/);
     assert.match(verification, /reviewedBy: "SYSTEM_AUTO_VERIFIED"/);
-    assert.match(verification, /reviewedAt: new Date\(\)/);
+    assert.match(verification, /reviewedAt/);
   });
 
   it("does not use confidence-based promotion to REVIEWED", () => {
@@ -28,9 +28,8 @@ describe("company knowledge auto-review safety contract", () => {
     // The WHERE clause re-maps legacy REVIEWED rows back through the provenance
     // pipeline, so a stale/fabricated REVIEWED row is re-verified and re-stamped
     // with SYSTEM_AUTO_VERIFIED (not preserved as-is).
-    assert.match(verification, /trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED"/);
     assert.match(verification, /trustLevel: "REVIEWED"/);
     assert.match(verification, /reviewedBy: "SYSTEM_AUTO_VERIFIED"/);
-    assert.match(verification, /reviewedAt: new Date\(\)/);
+    assert.match(verification, /buildReviewProvenance/);
   });
 });

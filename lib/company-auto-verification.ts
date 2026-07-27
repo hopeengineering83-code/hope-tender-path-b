@@ -1,6 +1,6 @@
 import { prisma, prismaReady } from "./prisma";
 import {
-  buildSourceVerificationProvenance,
+  buildReviewProvenance,
   expertReviewFields,
   projectReviewFields,
   publicVaultIdentifier,
@@ -113,11 +113,13 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
 
   for (const expert of experts) {
     const source = expert.sourceDocument?.companyId === companyId ? expert.sourceDocument : null;
-    const provenance = buildSourceVerificationProvenance({
+    const reviewedAt = new Date();
+    const provenance = buildReviewProvenance({
       recordType: "EXPERT",
       sourceDocument: source,
       fields: expertReviewFields(expert),
-      verificationMethod: verificationMethod(expert.trustLevel),
+      reviewerId: "SYSTEM_AUTO_VERIFIED",
+      reviewedAt,
     });
     if (!provenance.ok) {
       expertsBlocked += 1;
@@ -141,7 +143,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         // only source of company evidence.
         trustLevel: "REVIEWED",
         reviewedBy: "SYSTEM_AUTO_VERIFIED",
-        reviewedAt: new Date(),
+        reviewedAt,
         reviewNotes: provenance.serialized,
         updatedAt: new Date(),
       },
@@ -164,9 +166,8 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
           sourceContentHash: provenance.sourceContentHash,
           sourceByteLength: provenance.sourceByteLength,
           sourceTextHash: provenance.sourceTextHash,
-          sourceExtractionRevision: provenance.sourceExtractionRevision,
           evidenceFields: provenance.evidenceFields,
-          verifiedAt: provenance.verifiedAt,
+          reviewedAt: reviewedAt.toISOString(),
         }),
       },
     });
@@ -174,11 +175,13 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
 
   for (const project of projects) {
     const source = project.sourceDocument?.companyId === companyId ? project.sourceDocument : null;
-    const provenance = buildSourceVerificationProvenance({
+    const reviewedAt = new Date();
+    const provenance = buildReviewProvenance({
       recordType: "PROJECT",
       sourceDocument: source,
       fields: projectReviewFields(project),
-      verificationMethod: verificationMethod(project.trustLevel),
+      reviewerId: "SYSTEM_AUTO_VERIFIED",
+      reviewedAt,
     });
     if (!provenance.ok) {
       projectsBlocked += 1;
@@ -200,7 +203,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         // verifies them against source bytes AND auto-approves them.
         trustLevel: "REVIEWED",
         reviewedBy: "SYSTEM_AUTO_VERIFIED",
-        reviewedAt: new Date(),
+        reviewedAt,
         reviewNotes: provenance.serialized,
         updatedAt: new Date(),
       },
@@ -223,9 +226,8 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
           sourceContentHash: provenance.sourceContentHash,
           sourceByteLength: provenance.sourceByteLength,
           sourceTextHash: provenance.sourceTextHash,
-          sourceExtractionRevision: provenance.sourceExtractionRevision,
           evidenceFields: provenance.evidenceFields,
-          verifiedAt: provenance.verifiedAt,
+          reviewedAt: reviewedAt.toISOString(),
         }),
       },
     });

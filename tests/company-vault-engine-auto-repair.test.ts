@@ -24,9 +24,10 @@ test("Review Inbox reprocesses stored source bytes before rebuilding records", (
 
 test("automatic repair produces auto-REVIEWED with SYSTEM_AUTO_VERIFIED, never fabricated human REVIEWED", () => {
   assert.match(ingestion, /autoVerifyCompanyKnowledge\(companyId\)/);
-  // The App auto-verifies against source bytes AND auto-approves to REVIEWED.
-  // Uploaded documents are the only source — no separate human review step.
+  // The App auto-verifies against source bytes AND auto-approves to REVIEWED
+  // using buildReviewProvenance (not buildSourceVerificationProvenance).
+  assert.match(verification, /buildReviewProvenance/);
   assert.match(verification, /trustLevel: "REVIEWED"/);
   assert.match(verification, /reviewedBy: "SYSTEM_AUTO_VERIFIED"/);
-  assert.match(verification, /reviewedAt: new Date\(\)/);
+  assert.match(verification, /reviewerId: "SYSTEM_AUTO_VERIFIED"/);
 });
