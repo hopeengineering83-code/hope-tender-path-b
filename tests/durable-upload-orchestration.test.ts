@@ -59,7 +59,10 @@ describe("durable upload orchestration", () => {
     // VAULT_INGEST handler (see tests/vault-ingest-job.test.ts, which
     // asserts a real "[job-stage]" log line is emitted end to end) — not
     // just a defined-but-unused module.
-    const handlers = read("lib/ai-job-handlers.ts");
+    // VAULT_INGEST's implementation lives in ai-job-handlers-legacy.ts —
+    // lib/ai-job-handlers.ts now only re-exports it and locally overrides
+    // EXTRACT_TEXT's getHandler branch.
+    const handlers = read("lib/ai-job-handlers-legacy.ts");
     assert.match(handlers, /import \{ recordSafeStageEvent \} from "\.\/engine\/stage-observability"/);
     assert.match(handlers, /recordSafeStageEvent\(/);
   });

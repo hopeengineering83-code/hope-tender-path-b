@@ -25,7 +25,10 @@ describe("pipeline authority non-negotiables", () => {
   });
 
   it("partial analysis remains terminally non-successful", () => {
-    const source = read("lib/ai-job-handlers.ts");
+    // AI_ANALYZE's implementation lives in ai-job-handlers-legacy.ts —
+    // lib/ai-job-handlers.ts now only re-exports it and locally overrides
+    // EXTRACT_TEXT's getHandler branch.
+    const source = read("lib/ai-job-handlers-legacy.ts");
     assert.match(source, /Partial \/ fallback \/ provider-exhausted/);
     assert.match(source, /do NOT create or\s*\n\s*\/\/ unlock GeneratedDocument rows/);
     assert.match(source, /if \(exec\.completedChunks > 0\) return "PARTIAL_SUCCESS"/);

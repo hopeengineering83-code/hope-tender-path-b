@@ -4,7 +4,10 @@ import { readFileSync } from "node:fs";
 
 const upload = readFileSync("lib/secure-upload-handler.ts", "utf8");
 const automaticPipeline = readFileSync("lib/ai-jobs/automatic-tender-pipeline.ts", "utf8");
-const analyze = readFileSync("lib/ai-job-handlers.ts", "utf8");
+// AI_ANALYZE's implementation lives in ai-job-handlers-legacy.ts —
+// lib/ai-job-handlers.ts now only re-exports it and locally overrides
+// EXTRACT_TEXT's getHandler branch.
+const analyze = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
 
 describe("server-owned upload pipeline sequencing", () => {
   it("queues AI Analyze but never queues Engine concurrently", () => {

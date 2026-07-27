@@ -14,9 +14,9 @@ import {
 } from "./ai-job-handlers-legacy";
 import { runTenderFileExtractionJob } from "./ai-jobs/tender-extraction-service";
 
-export function getHandler(jobType: JobType): JobHandler | undefined {
+export function getHandler(jobType: JobType): JobHandler | null {
   if (jobType === "EXTRACT_TEXT") {
     return runTenderFileExtractionJob as JobHandler;
   }
-  return getLegacyHandler(jobType) ?? undefined;
+  return getLegacyHandler(jobType);
 }
