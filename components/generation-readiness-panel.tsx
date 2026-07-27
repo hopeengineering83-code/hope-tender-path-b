@@ -214,7 +214,7 @@ export async function GenerationReadinessPanel({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>{item.message}</span>
                   <span className="inline-flex items-center gap-2">
-                    {item.nextAction === "FINALIZE_REQUIRED_PDF" && canMutate
+                    {canMutate && item.nextAction === "FINALIZE_REQUIRED_PDF"
                       ? <FinalizeRequiredPdfButton tenderId={tenderId} />
                       : <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>}
                   </span>

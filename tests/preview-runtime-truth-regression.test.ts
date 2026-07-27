@@ -89,6 +89,6 @@ describe("single workflow authority regressions from the latest preview", () => 
     assert.match(heatmap, /s === "FULL".*s === "SUBSTANTIAL"/);
     assert.match(vault, /canUseVaultRecord\(record,\s*"GENERATION"\)/);
     assert.match(vault, /Generation-eligible experts/);
-    assert.match(readiness, /item\.nextAction === "FINALIZE_REQUIRED_PDF" && canMutate[\s\S]*FinalizeRequiredPdfButton[\s\S]*:\s*<Link/);
+    assert.match(readiness, /canMutate && item\.nextAction === "FINALIZE_REQUIRED_PDF"[\s\S]*FinalizeRequiredPdfButton[\s\S]*:\s*<Link/);
   });
 });
