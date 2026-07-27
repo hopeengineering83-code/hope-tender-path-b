@@ -57,6 +57,7 @@ export async function PATCH(
       amount: true,
       notes: true,
       sourceDocumentId: true,
+      updatedAt: true,
       sourceDocument: {
         select: {
           id: true,
@@ -98,7 +99,25 @@ export async function PATCH(
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.financialRecord.updateMany({
-        where: { id, companyId: company.id },
+        where: isApprove
+          ? {
+              id,
+              companyId: company.id,
+              updatedAt: record.updatedAt,
+              sourceDocumentId: record.sourceDocumentId,
+              sourceDocument: {
+                is: {
+                  id: ownedSource!.id,
+                  companyId: company.id,
+                  extractedText: ownedSource!.extractedText,
+                  contentSha256: ownedSource!.contentSha256,
+                  contentByteLength: ownedSource!.contentByteLength,
+                  integrityStatus: ownedSource!.integrityStatus,
+                  metadata: ownedSource!.metadata,
+                },
+              },
+            }
+          : { id, companyId: company.id, updatedAt: record.updatedAt },
         data: isApprove
           ? {
               trustLevel: "REVIEWED",
