@@ -1,3 +1,5 @@
+import { canUseVaultRecord, type ReviewRecordState } from "./vault-review-provenance";
+
 export type MatchingQualitySeverity = "GOOD" | "WARNING" | "POOR";
 
 /**
@@ -28,9 +30,20 @@ export type MatchLike = {
   id?: string;
   score?: number | null;
   isSelected?: boolean | null;
-  expert?: { trustLevel?: string | null; fullName?: string | null } | null;
-  project?: { trustLevel?: string | null; name?: string | null } | null;
+  expert?: (ReviewRecordState & { fullName?: string | null }) | null;
+  project?: (ReviewRecordState & { name?: string | null }) | null;
 };
+
+// GENERATION accepts either a durably human-REVIEWED record or a durably
+// machine-SOURCE_VERIFIED one (see canUseVaultRecord) — a naive
+// trustLevel === "REVIEWED" check here would silently treat legitimately
+// usable, machine-verified vault evidence as "not reviewed" and could
+// report a false POOR/blocked matching-quality score even though the
+// Engine and generate-elite.ts would both accept the same record.
+function isUsableForGeneration(record: (ReviewRecordState & Record<string, unknown>) | null | undefined): boolean {
+  if (!record) return false;
+  return canUseVaultRecord(record, "GENERATION");
+}
 
 export type RequirementLikeForMatching = {
   requirementType?: string | null;
@@ -82,10 +95,10 @@ export function assessMatchingQuality(params: {
   const projectRequirementExists = params.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
   const selectedExperts = params.expertMatches.filter((match) => Boolean(match.isSelected));
   const selectedProjects = params.projectMatches.filter((match) => Boolean(match.isSelected));
-  const reviewedExpertMatches = params.expertMatches.filter((match) => match.expert?.trustLevel === "REVIEWED");
-  const reviewedProjectMatches = params.projectMatches.filter((match) => match.project?.trustLevel === "REVIEWED");
-  const reviewedSelectedExperts = selectedExperts.filter((match) => match.expert?.trustLevel === "REVIEWED");
-  const reviewedSelectedProjects = selectedProjects.filter((match) => match.project?.trustLevel === "REVIEWED");
+  const reviewedExpertMatches = params.expertMatches.filter((match) => isUsableForGeneration(match.expert));
+  const reviewedProjectMatches = params.projectMatches.filter((match) => isUsableForGeneration(match.project));
+  const reviewedSelectedExperts = selectedExperts.filter((match) => isUsableForGeneration(match.expert));
+  const reviewedSelectedProjects = selectedProjects.filter((match) => isUsableForGeneration(match.project));
   const scoredExpertMatches = params.expertMatches.filter((match) => hasNumericScore(match.score));
   const scoredProjectMatches = params.projectMatches.filter((match) => hasNumericScore(match.score));
   const highConfidenceExpertMatches = scoredExpertMatches.filter((match) => numericScore(match.score) >= 0.7).length;

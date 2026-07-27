@@ -3,6 +3,7 @@ import { prisma, prismaReady } from "../lib/prisma";
 import { assessMatchingQuality } from "../lib/matching-quality";
 import { ensureCompanyForUser } from "../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
+import { VAULT_REVIEW_CONSUMER_SELECT } from "../lib/vault-review-provenance";
 
 export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
@@ -15,8 +16,8 @@ export async function MatchingQualityPanel({ tenderId }: { tenderId: string }) {
       where: { id: tenderId, userId },
       include: {
         requirements: true,
-        expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
-        projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
+        expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
+        projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },
       },
     }),
     prisma.aiJob.findFirst({

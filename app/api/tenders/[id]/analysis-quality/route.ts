@@ -7,6 +7,7 @@ import { assessMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { detectAnalysisSourceWithApproval, type AnalysisSource } from "../../../../../lib/engine/analysis-source";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../../../../../lib/vault-review-provenance";
 import { randomUUID } from "node:crypto";
 
 export const dynamic = "force-dynamic";
@@ -65,8 +66,8 @@ export async function GET(
         where: { id, userId },
         include: {
           requirements: { orderBy: { createdAt: "asc" } },
-          expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
-          projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
+          expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
+          projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },
         },
       }),
     ]);
@@ -123,8 +124,8 @@ export async function GET(
       submissionAddress: tender.submissionAddress,
       submissionEmails: tender.submissionEmails,
       analysisExtractionStatus: tender.analysisExtractionStatus,
-      selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
-      selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
+      selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length,
+      selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length,
       analysisSource: resolvedAnalysisSource,
     });
 

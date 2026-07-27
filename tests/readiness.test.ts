@@ -1,8 +1,76 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { getCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
 import { getTenderGenerationReadiness } from "../lib/tender-generation-readiness";
+import { buildReviewProvenance, expertReviewFields, projectReviewFields } from "../lib/vault-review-provenance";
+
+// getTenderGenerationReadiness now delegates expert/project match evidence
+// checks to canUseVaultRecord(), the same durable-provenance authority the
+// Engine and generate-elite.ts use — a bare `{ trustLevel: "REVIEWED" }`
+// match (no sourceDocumentId/reviewedBy/reviewedAt/reviewNotes) correctly
+// fails closed, so fixtures meant to be genuinely reviewed need a real
+// bound-and-verified provenance envelope.
+function durableReviewedExpert(fullName = "Senior Engineer") {
+  const companyId = "company-1";
+  const sourceText = `CURRICULUM VITAE\nName of Key Expert: ${fullName}\n${fullName} is a Senior Consultant with 15 years of experience in General Consultancy Services, proposed for the technical team.`;
+  const sourceDocument = {
+    id: `doc-${fullName.replace(/\s+/g, "-").toLowerCase()}`,
+    companyId,
+    extractedText: sourceText,
+    contentSha256: createHash("sha256").update(sourceText, "utf8").digest("hex"),
+    contentByteLength: Buffer.byteLength(sourceText),
+    integrityStatus: "VERIFIED",
+  };
+  const record = {
+    id: `expert-${fullName.replace(/\s+/g, "-").toLowerCase()}`,
+    companyId,
+    fullName,
+    trustLevel: "REVIEWED",
+    sourceDocumentId: sourceDocument.id,
+    reviewedBy: "user-readiness-test",
+    reviewedAt: new Date("2026-01-01T00:00:00.000Z"),
+    sourceDocument,
+  };
+  const provenance = buildReviewProvenance({
+    recordType: "EXPERT", sourceDocument, fields: expertReviewFields(record),
+    reviewerId: record.reviewedBy, reviewedAt: record.reviewedAt,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("fixture provenance failed");
+  return { ...record, reviewNotes: provenance.serialized };
+}
+
+function durableReviewedProject(name = "Relevant Project") {
+  const companyId = "company-1";
+  const sourceText = `PROJECT REFERENCE SHEET\nProject Name: ${name}\n${name} is a general consultancy assignment delivered for a public-sector client, demonstrating relevant experience.`;
+  const sourceDocument = {
+    id: `doc-${name.replace(/\s+/g, "-").toLowerCase()}`,
+    companyId,
+    extractedText: sourceText,
+    contentSha256: createHash("sha256").update(sourceText, "utf8").digest("hex"),
+    contentByteLength: Buffer.byteLength(sourceText),
+    integrityStatus: "VERIFIED",
+  };
+  const record = {
+    id: `project-${name.replace(/\s+/g, "-").toLowerCase()}`,
+    companyId,
+    name,
+    trustLevel: "REVIEWED",
+    sourceDocumentId: sourceDocument.id,
+    reviewedBy: "user-readiness-test",
+    reviewedAt: new Date("2026-01-01T00:00:00.000Z"),
+    sourceDocument,
+  };
+  const provenance = buildReviewProvenance({
+    recordType: "PROJECT", sourceDocument, fields: projectReviewFields(record),
+    reviewerId: record.reviewedBy, reviewedAt: record.reviewedAt,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("fixture provenance failed");
+  return { ...record, reviewNotes: provenance.serialized };
+}
 
 type FakeClientOptions = {
   company?: Record<string, unknown> | null;
@@ -139,8 +207,8 @@ test("tender generation readiness does not over-block when reviewed matches can 
       ...goodAnalysisFields,
       requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
-      expertMatches: [{ isSelected: false, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
-      projectMatches: [{ isSelected: false, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+      expertMatches: [{ isSelected: false, expert: durableReviewedExpert() }],
+      projectMatches: [{ isSelected: false, project: durableReviewedProject() }],
     },
   }), "user-1", "tender-1");
   assert.ok(readiness);
@@ -184,8 +252,8 @@ test("tender generation readiness passes when company, requirements, and reviewe
       ...goodAnalysisFields,
       requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+      expertMatches: [{ isSelected: true, expert: durableReviewedExpert() }],
+      projectMatches: [{ isSelected: true, project: durableReviewedProject() }],
     },
   }), "user-1", "tender-1");
   assert.ok(readiness);
@@ -233,8 +301,8 @@ test("tender generation readiness surfaces TENDER_REQUIRES_PDF warning when subm
       exactFileOrder: JSON.stringify(["Technical-Proposal.pdf"]),
       requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+      expertMatches: [{ isSelected: true, expert: durableReviewedExpert() }],
+      projectMatches: [{ isSelected: true, project: durableReviewedProject() }],
     },
   }), "user-1", "tender-1");
   assert.ok(readiness);
@@ -259,8 +327,8 @@ test("tender generation readiness warns EVAL_WEIGHTS_INCOMPLETE when extracted c
       ]),
       requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+      expertMatches: [{ isSelected: true, expert: durableReviewedExpert() }],
+      projectMatches: [{ isSelected: true, project: durableReviewedProject() }],
     },
   }), "user-1", "tender-1");
   assert.ok(readiness);
@@ -283,8 +351,8 @@ test("tender generation readiness does NOT warn EVAL_WEIGHTS_INCOMPLETE when wei
       ]),
       requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+      expertMatches: [{ isSelected: true, expert: durableReviewedExpert() }],
+      projectMatches: [{ isSelected: true, project: durableReviewedProject() }],
     },
   }), "user-1", "tender-1");
   assert.ok(readiness);
@@ -305,8 +373,8 @@ test("tender generation readiness warns EVAL_WEIGHTS_MISSING when evaluation met
       // is NOT provided (no JSON.parse-able extraction). Should fire EVAL_WEIGHTS_MISSING.
       requirements: [expertRequirement, projectRequirement],
       complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+      expertMatches: [{ isSelected: true, expert: durableReviewedExpert() }],
+      projectMatches: [{ isSelected: true, project: durableReviewedProject() }],
     },
   }), "user-1", "tender-1");
   assert.ok(readiness);
@@ -333,8 +401,8 @@ test("tender generation readiness warns MANDATORY_EVIDENCE_NOT_ASSESSED when com
       requirements: [expertRequirement, projectRequirement],
       // No complianceGaps + no compliance matrix rows for mandatory requirements.
       complianceGaps: [],
-      expertMatches: [{ isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Senior Engineer" } }],
-      projectMatches: [{ isSelected: true, project: { trustLevel: "REVIEWED", name: "Relevant Project" } }],
+      expertMatches: [{ isSelected: true, expert: durableReviewedExpert() }],
+      projectMatches: [{ isSelected: true, project: durableReviewedProject() }],
     },
   }), "user-1", "tender-1");
   assert.ok(readiness);

@@ -15,7 +15,7 @@ import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
-import { isDurablyReviewed } from "../vault-review-provenance";
+import { canUseVaultRecord } from "../vault-review-provenance";
 import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
 
 // ─── Vercel function-budget reserves ────────────────────────────────────
@@ -250,10 +250,17 @@ export async function runTenderEngine(
       analysis = analyzeTender(tender);
     }
 
-    const reviewedExperts = company.experts.filter((expert) => isDurablyReviewed(expert));
-    const reviewedProjects = company.projects.filter((project) => isDurablyReviewed(project));
-    const unsupportedReviewedExpertCount = company.experts.filter((expert) => expert.trustLevel === "REVIEWED" && !isDurablyReviewed(expert)).length;
-    const unsupportedReviewedProjectCount = company.projects.filter((project) => project.trustLevel === "REVIEWED" && !isDurablyReviewed(project)).length;
+    // canUseVaultRecord(..., "GENERATION"), not isDurablyReviewed alone — a
+    // durably SOURCE_VERIFIED (machine-verified against the company's own
+    // uploaded source) expert/project is genuinely usable evidence for
+    // generation, same as a durably REVIEWED one; treating it as "not
+    // reviewed" here previously produced a false "No REVIEWED experts
+    // found" warning and dropped it from the front of the matching
+    // candidate list even when it was fully eligible.
+    const reviewedExperts = company.experts.filter((expert) => canUseVaultRecord(expert, "GENERATION"));
+    const reviewedProjects = company.projects.filter((project) => canUseVaultRecord(project, "GENERATION"));
+    const unsupportedReviewedExpertCount = company.experts.filter((expert) => (expert.trustLevel === "REVIEWED" || expert.trustLevel === "SOURCE_VERIFIED") && !canUseVaultRecord(expert, "GENERATION")).length;
+    const unsupportedReviewedProjectCount = company.projects.filter((project) => (project.trustLevel === "REVIEWED" || project.trustLevel === "SOURCE_VERIFIED") && !canUseVaultRecord(project, "GENERATION")).length;
     const aiDraftExpertCount = company.experts.filter((e) => e.trustLevel === "AI_DRAFT").length;
     const aiDraftProjectCount = company.projects.filter((p) => p.trustLevel === "AI_DRAFT").length;
     const regexDraftExpertCount = company.experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT").length;
@@ -261,8 +268,8 @@ export async function runTenderEngine(
 
     const knowledge = {
       companyId: company.id,
-      experts: [...reviewedExperts, ...company.experts.filter((e) => e.trustLevel !== "REVIEWED")],
-      projects: [...reviewedProjects, ...company.projects.filter((p) => p.trustLevel !== "REVIEWED")],
+      experts: [...reviewedExperts, ...company.experts.filter((e) => !reviewedExperts.includes(e))],
+      projects: [...reviewedProjects, ...company.projects.filter((p) => !reviewedProjects.includes(p))],
       documents: company.documents,
       legalRecords: company.legalRecords,
       financialRecords: company.financialRecords,
@@ -688,12 +695,12 @@ export async function runTenderEngine(
             analysisMethod === "AI" ? "Analysis source: AI (chunked multi-call when tender > 60K chars)." : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
             hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
             reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
-            knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.` : null,
-            knowledgeReadiness.hasBlockingProjects ? `${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until REVIEWED.` : null,
-            !knowledgeReadiness.hasUsableExperts ? "No REVIEWED experts found — review extracted CV records before final generation." : null,
-            !knowledgeReadiness.hasUsableProjects ? "No REVIEWED projects found — review extracted project records before final generation." : null,
-            knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} REVIEWED expert(s) available for final generation.` : null,
-            knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} REVIEWED project(s) available for final generation.` : null,
+            knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until reviewed or source-verified.` : null,
+            knowledgeReadiness.hasBlockingProjects ? `${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until reviewed or source-verified.` : null,
+            !knowledgeReadiness.hasUsableExperts ? "No REVIEWED or SOURCE_VERIFIED experts found — review extracted CV records before final generation." : null,
+            !knowledgeReadiness.hasUsableProjects ? "No REVIEWED or SOURCE_VERIFIED projects found — review extracted project records before final generation." : null,
+            knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} REVIEWED/SOURCE_VERIFIED expert(s) available for final generation.` : null,
+            knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} REVIEWED/SOURCE_VERIFIED project(s) available for final generation.` : null,
           ].filter(Boolean).join("\n") || null,
         },
       });

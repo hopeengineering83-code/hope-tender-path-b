@@ -146,9 +146,15 @@ describe("durable vault provenance", () => {
     assert.equal(isDurablySourceVerified(record), true);
     assert.equal(isDurablyReviewed(record), false);
     assert.equal(effectiveReviewTrustLevel(record), "SOURCE_VERIFIED");
+    // canUseVaultRecord's EXPORT purpose accepts a durably SOURCE_VERIFIED
+    // record too, same as MATCHING/GENERATION — the record's exact claimed
+    // values were machine-verified against the company's own owned, byte-
+    // verified source document; isDurablyReviewed staying false is still
+    // correct and meaningful (no human has looked at it), it just no
+    // longer gates export on top of genuine machine verification.
     assert.equal(canUseVaultRecord(record, "MATCHING"), true);
     assert.equal(canUseVaultRecord(record, "GENERATION"), true);
-    assert.equal(canUseVaultRecord(record, "EXPORT"), false);
+    assert.equal(canUseVaultRecord(record, "EXPORT"), true);
     assert.equal(isDurablySourceVerified({ ...record, reviewedBy: "SYSTEM_AUTO_VERIFIED" }), false);
     assert.equal(isDurablySourceVerified({ ...record, certifications: JSON.stringify(["Changed"]) }), false);
     assert.equal(isDurablySourceVerified({ ...record, sourceDocument: { ...sourceDocument, metadata: JSON.stringify({ extractionRevision: 2 }) } }), false);

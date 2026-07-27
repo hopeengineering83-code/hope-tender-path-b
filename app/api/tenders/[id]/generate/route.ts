@@ -8,7 +8,7 @@ import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../l
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
-import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "../../../../../lib/vault-review-provenance";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT } from "../../../../../lib/vault-review-provenance";
 import { inferType as inferRequirementType } from "../../../../../lib/engine/analysis";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
@@ -157,12 +157,14 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
   });
   if (!tender) return 0;
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
-  // isDurablyReviewed(), not a raw trustLevel==="REVIEWED" check — a stale or
-  // never-durably-provenance-backed REVIEWED record must not be quoted as
-  // real evidence in a generated, submittable support document. A
-  // soft-deleted record (deletedAt set) must never surface here either.
-  const experts = tender.expertMatches.filter((m) => m.expert && !m.expert.deletedAt && isDurablyReviewed(m.expert)).map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
-  const projects = tender.projectMatches.filter((m) => m.project && !m.project.deletedAt && isDurablyReviewed(m.project)).map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
+  // canUseVaultRecord(..., "GENERATION"), not a raw trustLevel==="REVIEWED"
+  // check — a stale or never-durably-provenance-backed record must not be
+  // quoted as real evidence in a generated, submittable support document,
+  // while a durably SOURCE_VERIFIED record (machine-verified against the
+  // company's own uploaded source) is accepted same as GENERATION elsewhere.
+  // A soft-deleted record (deletedAt set) must never surface here either.
+  const experts = tender.expertMatches.filter((m) => m.expert && !m.expert.deletedAt && canUseVaultRecord(m.expert, "GENERATION")).map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
+  const projects = tender.projectMatches.filter((m) => m.project && !m.project.deletedAt && canUseVaultRecord(m.project, "GENERATION")).map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
   const docs = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, storagePath: true } });
   // Deduplicate by filename before filling: if multiple non-superseded records share the same
   // exactFileName (from prior generation runs), only fill the first one encountered to avoid
@@ -952,11 +954,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     prisma.tenderExpertMatch.count({ where: { tenderId: id } }),
     prisma.tenderProjectMatch.count({ where: { tenderId: id } }),
   ]);
-  // isDurablyReviewed(), not raw trustLevel — see fillPlannedSupportDocuments
-  // above for the same reasoning: a stale REVIEWED record must gate
-  // generation identically to an unreviewed one.
-  const draftExperts = selectedExpertMatches.filter((m) => !isDurablyReviewed(m.expert));
-  const draftProjects = selectedProjectMatches.filter((m) => !isDurablyReviewed(m.project));
+  // canUseVaultRecord(..., "GENERATION"), not raw trustLevel — see
+  // fillPlannedSupportDocuments above for the same reasoning: a stale
+  // REVIEWED record must gate generation identically to an unreviewed one,
+  // while a durably SOURCE_VERIFIED record is accepted.
+  const draftExperts = selectedExpertMatches.filter((m) => !canUseVaultRecord(m.expert, "GENERATION"));
+  const draftProjects = selectedProjectMatches.filter((m) => !canUseVaultRecord(m.project, "GENERATION"));
   const reviewedExpertCount = selectedExpertMatches.length - draftExperts.length;
   const reviewedProjectCount = selectedProjectMatches.length - draftProjects.length;
   // Reuses requiresExperts/requiresProjects computed above (already
@@ -987,8 +990,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     prisma.expert.findMany({ where: { company: { userId }, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT }),
     prisma.project.findMany({ where: { company: { userId }, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT }),
   ]);
-  const vaultReviewedExpertCount = vaultExpertsForGate.filter(isDurablyReviewed).length;
-  const vaultReviewedProjectCount = vaultProjectsForGate.filter(isDurablyReviewed).length;
+  const vaultReviewedExpertCount = vaultExpertsForGate.filter((e) => canUseVaultRecord(e, "GENERATION")).length;
+  const vaultReviewedProjectCount = vaultProjectsForGate.filter((p) => canUseVaultRecord(p, "GENERATION")).length;
   if (vaultReviewedExpertCount === 0 && vaultReviewedProjectCount === 0) {
     return NextResponse.json({
       errorCode: "EMPTY_VAULT",
