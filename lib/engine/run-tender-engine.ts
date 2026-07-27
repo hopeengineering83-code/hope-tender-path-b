@@ -156,9 +156,17 @@ export async function runTenderEngine(
         },
       },
       documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
-      legalRecords: true,
-      financialRecords: true,
-      complianceRecords: true,
+      // trustLevel REVIEWED is evidence-gated at write time (see
+      // lib/vault-review-provenance.ts) — without this filter an
+      // unreviewed/fabricated legal, financial, or compliance record could
+      // satisfy a LEGAL/FINANCIAL/COMPLIANCE requirement's evidence check
+      // in lib/engine/compliance.ts as if it were verified. Mirrors the
+      // same authority gate already applied to legalRecords/financialRecords/
+      // complianceRecords in generate-elite.ts, /ai-proposal, and
+      // /regenerate-section.
+      legalRecords: { where: { trustLevel: "REVIEWED", OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }] } },
+      financialRecords: { where: { trustLevel: "REVIEWED" } },
+      complianceRecords: { where: { trustLevel: "REVIEWED", OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }] } },
     },
   });
   if (!company) throw new Error("Company profile required before engine run");
