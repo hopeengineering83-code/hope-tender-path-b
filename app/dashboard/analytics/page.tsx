@@ -103,8 +103,13 @@ export default async function AnalyticsPage() {
         updatedAt: true,
         _count: {
           select: {
-            experts: true,
-            projects: true,
+            // A relation _count with no `where` counts every row including
+            // soft-deleted ones — after deleting an expert/project this tile
+            // kept showing the pre-delete total while /api/company (which
+            // does filter deletedAt: null) correctly showed the new total,
+            // producing "one place says present, another says zero".
+            experts: { where: { deletedAt: null } },
+            projects: { where: { deletedAt: null } },
             documents: true,
           },
         },

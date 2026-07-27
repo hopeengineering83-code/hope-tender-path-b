@@ -3,6 +3,9 @@ import {
   buildReviewProvenance,
   expertReviewFields,
   projectReviewFields,
+  legalReviewFields,
+  financialReviewFields,
+  complianceReviewFields,
   publicVaultIdentifier,
 } from "./vault-review-provenance";
 
@@ -11,9 +14,19 @@ export type AutoVerificationResult = {
   projectsVerified: number;
   expertsBlocked: number;
   projectsBlocked: number;
+  legalVerified: number;
+  legalBlocked: number;
+  financialVerified: number;
+  financialBlocked: number;
+  complianceVerified: number;
+  complianceBlocked: number;
 };
 
 const MACHINE_ELIGIBLE_TRUST = ["REGEX_DRAFT", "AI_DRAFT", "SOURCE_VERIFIED"];
+// Legal/Financial/Compliance records have no SOURCE_VERIFIED intermediate
+// state (their PATCH review route only ever sets REVIEWED or AI_DRAFT), so
+// this list is narrower than Expert/Project's.
+const MACHINE_ELIGIBLE_TRUST_LFC = ["REGEX_DRAFT", "AI_DRAFT"];
 
 function verificationMethod(trustLevel: string | null | undefined): "AI" | "DETERMINISTIC" | "HYBRID" {
   if (trustLevel === "AI_DRAFT") return "AI";
@@ -29,10 +42,24 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
     select: { id: true, userId: true },
   });
   if (!company) {
-    return { expertsVerified: 0, projectsVerified: 0, expertsBlocked: 0, projectsBlocked: 0 };
+    return {
+      expertsVerified: 0, projectsVerified: 0, expertsBlocked: 0, projectsBlocked: 0,
+      legalVerified: 0, legalBlocked: 0, financialVerified: 0, financialBlocked: 0,
+      complianceVerified: 0, complianceBlocked: 0,
+    };
   }
 
-  const [experts, projects] = await Promise.all([
+  const sourceDocumentSelect = {
+    id: true,
+    companyId: true,
+    extractedText: true,
+    contentSha256: true,
+    contentByteLength: true,
+    integrityStatus: true,
+    metadata: true,
+  } as const;
+
+  const [experts, projects, legalRecords, financialRecords, complianceRecords] = await Promise.all([
     prisma.expert.findMany({
       where: {
         companyId,
@@ -102,6 +129,54 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
             metadata: true,
           },
         },
+      },
+    }),
+    prisma.legalRecord.findMany({
+      where: {
+        companyId,
+        sourceDocumentId: { not: null },
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST_LFC } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
+      select: {
+        id: true, companyId: true, trustLevel: true, reviewedBy: true,
+        recordType: true, title: true, authority: true, referenceNumber: true,
+        issueDate: true, expiryDate: true, sourceDocumentId: true,
+        sourceDocument: { select: sourceDocumentSelect },
+      },
+    }),
+    prisma.financialRecord.findMany({
+      where: {
+        companyId,
+        sourceDocumentId: { not: null },
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST_LFC } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
+      select: {
+        id: true, companyId: true, trustLevel: true, reviewedBy: true,
+        fiscalYear: true, recordType: true, currency: true, amount: true, notes: true,
+        sourceDocumentId: true,
+        sourceDocument: { select: sourceDocumentSelect },
+      },
+    }),
+    prisma.companyComplianceRecord.findMany({
+      where: {
+        companyId,
+        sourceDocumentId: { not: null },
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST_LFC } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
+      select: {
+        id: true, companyId: true, trustLevel: true, reviewedBy: true,
+        complianceType: true, title: true, status: true, evidenceSummary: true,
+        referenceNumber: true, expiryDate: true, sourceDocumentId: true,
+        sourceDocument: { select: sourceDocumentSelect },
       },
     }),
   ]);
@@ -233,5 +308,191 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
     });
   }
 
-  return { expertsVerified, projectsVerified, expertsBlocked, projectsBlocked };
+  let legalVerified = 0;
+  let financialVerified = 0;
+  let complianceVerified = 0;
+  let legalBlocked = 0;
+  let financialBlocked = 0;
+  let complianceBlocked = 0;
+
+  for (const record of legalRecords) {
+    const source = record.sourceDocument?.companyId === companyId ? record.sourceDocument : null;
+    const reviewedAt = new Date();
+    const provenance = buildReviewProvenance({
+      recordType: "LEGAL",
+      sourceDocument: source,
+      fields: legalReviewFields(record),
+      reviewerId: "SYSTEM_AUTO_VERIFIED",
+      reviewedAt,
+    });
+    if (!provenance.ok) {
+      legalBlocked += 1;
+      continue;
+    }
+
+    const updated = await prisma.legalRecord.updateMany({
+      where: {
+        id: record.id,
+        companyId,
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST_LFC } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
+      data: {
+        // Auto-review: the user uploads all company documents — the App
+        // verifies them against source bytes AND auto-approves them.
+        // No human review is required because uploaded documents are the
+        // only source of company evidence.
+        trustLevel: "REVIEWED",
+        reviewedBy: "SYSTEM_AUTO_VERIFIED",
+        reviewedAt,
+        reviewNotes: provenance.serialized,
+        updatedAt: new Date(),
+      },
+    });
+    if (updated.count !== 1) continue;
+    legalVerified += 1;
+
+    await prisma.auditLog.create({
+      data: {
+        userId: company.userId,
+        action: "LEGAL_RECORD_AUTO_REVIEWED",
+        entityType: "LegalRecord",
+        entityId: record.id,
+        description: "Legal record evidence was machine-verified against owned source bytes and auto-approved for use.",
+        metadata: JSON.stringify({
+          recordRef: publicVaultIdentifier(record.id),
+          trustLevel: "REVIEWED",
+          reviewedBy: "SYSTEM_AUTO_VERIFIED",
+          verificationMethod: verificationMethod(record.trustLevel),
+          sourceContentHash: provenance.sourceContentHash,
+          sourceByteLength: provenance.sourceByteLength,
+          sourceTextHash: provenance.sourceTextHash,
+          evidenceFields: provenance.evidenceFields,
+          reviewedAt: reviewedAt.toISOString(),
+        }),
+      },
+    });
+  }
+
+  for (const record of financialRecords) {
+    const source = record.sourceDocument?.companyId === companyId ? record.sourceDocument : null;
+    const reviewedAt = new Date();
+    const provenance = buildReviewProvenance({
+      recordType: "FINANCIAL",
+      sourceDocument: source,
+      fields: financialReviewFields(record),
+      reviewerId: "SYSTEM_AUTO_VERIFIED",
+      reviewedAt,
+    });
+    if (!provenance.ok) {
+      financialBlocked += 1;
+      continue;
+    }
+
+    const updated = await prisma.financialRecord.updateMany({
+      where: {
+        id: record.id,
+        companyId,
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST_LFC } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
+      data: {
+        trustLevel: "REVIEWED",
+        reviewedBy: "SYSTEM_AUTO_VERIFIED",
+        reviewedAt,
+        reviewNotes: provenance.serialized,
+        updatedAt: new Date(),
+      },
+    });
+    if (updated.count !== 1) continue;
+    financialVerified += 1;
+
+    await prisma.auditLog.create({
+      data: {
+        userId: company.userId,
+        action: "FINANCIAL_RECORD_AUTO_REVIEWED",
+        entityType: "FinancialRecord",
+        entityId: record.id,
+        description: "Financial record evidence was machine-verified against owned source bytes and auto-approved for use.",
+        metadata: JSON.stringify({
+          recordRef: publicVaultIdentifier(record.id),
+          trustLevel: "REVIEWED",
+          reviewedBy: "SYSTEM_AUTO_VERIFIED",
+          verificationMethod: verificationMethod(record.trustLevel),
+          sourceContentHash: provenance.sourceContentHash,
+          sourceByteLength: provenance.sourceByteLength,
+          sourceTextHash: provenance.sourceTextHash,
+          evidenceFields: provenance.evidenceFields,
+          reviewedAt: reviewedAt.toISOString(),
+        }),
+      },
+    });
+  }
+
+  for (const record of complianceRecords) {
+    const source = record.sourceDocument?.companyId === companyId ? record.sourceDocument : null;
+    const reviewedAt = new Date();
+    const provenance = buildReviewProvenance({
+      recordType: "COMPLIANCE",
+      sourceDocument: source,
+      fields: complianceReviewFields(record),
+      reviewerId: "SYSTEM_AUTO_VERIFIED",
+      reviewedAt,
+    });
+    if (!provenance.ok) {
+      complianceBlocked += 1;
+      continue;
+    }
+
+    const updated = await prisma.companyComplianceRecord.updateMany({
+      where: {
+        id: record.id,
+        companyId,
+        OR: [
+          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST_LFC } },
+          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
+        ],
+      },
+      data: {
+        trustLevel: "REVIEWED",
+        reviewedBy: "SYSTEM_AUTO_VERIFIED",
+        reviewedAt,
+        reviewNotes: provenance.serialized,
+        updatedAt: new Date(),
+      },
+    });
+    if (updated.count !== 1) continue;
+    complianceVerified += 1;
+
+    await prisma.auditLog.create({
+      data: {
+        userId: company.userId,
+        action: "COMPLIANCE_RECORD_AUTO_REVIEWED",
+        entityType: "CompanyComplianceRecord",
+        entityId: record.id,
+        description: "Compliance record evidence was machine-verified against owned source bytes and auto-approved for use.",
+        metadata: JSON.stringify({
+          recordRef: publicVaultIdentifier(record.id),
+          trustLevel: "REVIEWED",
+          reviewedBy: "SYSTEM_AUTO_VERIFIED",
+          verificationMethod: verificationMethod(record.trustLevel),
+          sourceContentHash: provenance.sourceContentHash,
+          sourceByteLength: provenance.sourceByteLength,
+          sourceTextHash: provenance.sourceTextHash,
+          evidenceFields: provenance.evidenceFields,
+          reviewedAt: reviewedAt.toISOString(),
+        }),
+      },
+    });
+  }
+
+  return {
+    expertsVerified, projectsVerified, expertsBlocked, projectsBlocked,
+    legalVerified, legalBlocked, financialVerified, financialBlocked,
+    complianceVerified, complianceBlocked,
+  };
 }
