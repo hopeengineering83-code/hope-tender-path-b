@@ -18,8 +18,8 @@ import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engi
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { logAction } from "../../../../../lib/audit";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
-import { recordIsExpired } from "../../../../../lib/vault-review-provenance";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { loadDurableCompanySupportRecords } from "../../../../../lib/prisma-schema-compatibility";
 
 // Vercel route timeout — Claude proposal generation needs >10s default.
 // 60 = Hobby max; Pro applies its own plan limit when this is exceeded.
@@ -179,7 +179,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  const [tender, company] = await Promise.all([
+  const [tender, companyBase] = await Promise.all([
     prisma.tender.findFirst({
       where: { id, userId },
       include: {
@@ -203,9 +203,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       where: { userId },
       include: {
         documents: { orderBy: { updatedAt: "desc" }, take: 24 },
-        legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-        financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
-        complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
         // Vault fallback — mirrors generate-elite.ts: when selected
         // records are all unreviewed we substitute the firm's reviewed
         // vault so the AI proposal still has real names + evidence.
@@ -225,20 +222,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ]);
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
-
-  // Legal/Financial/Compliance records have no auto-verification pipeline —
-  // only trustLevel REVIEWED (evidence-gated at write time, see
-  // lib/vault-review-provenance.ts) and non-expired records may feed
-  // generation evidence, mirroring generate-elite.ts's canonical generator.
-  if (company) {
-    company.legalRecords = company.legalRecords.filter(
-      (r) => r.trustLevel === "REVIEWED" && !recordIsExpired(r.expiryDate),
-    );
-    company.financialRecords = company.financialRecords.filter((r) => r.trustLevel === "REVIEWED");
-    company.complianceRecords = company.complianceRecords.filter(
-      (r) => r.trustLevel === "REVIEWED" && !recordIsExpired(r.expiryDate),
-    );
-  }
+  const supportRecords = companyBase
+    ? await loadDurableCompanySupportRecords(prisma, companyBase.id, 12)
+    : { legalRecords: [], financialRecords: [], complianceRecords: [], schemaCompatible: true };
+  const company = companyBase ? { ...companyBase, ...supportRecords } : null;
 
   // ── Operation gate (DRAFT_GENERATION) — non-blocking observability ────
   // AI proposal generation is a DRAFT_GENERATION operation. The gate

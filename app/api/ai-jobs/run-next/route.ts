@@ -13,6 +13,7 @@ import { recordRetryStateForJob, findJobsDueForRetry, rearmJobForRetry } from ".
 import { restoreHealthFromDbBounded } from "../../../../lib/ai-provider-health-db";
 import { failStuckJobs } from "../../../../lib/ai-jobs";
 import { reapStaleQueuedJobs } from "../../../../lib/engine/stale-job-reaper";
+import { publicJobFailureMessage } from "../../../../lib/prisma-schema-compatibility";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -246,6 +247,7 @@ export async function POST(req: Request) {
       const correlationId = require("crypto").randomUUID().slice(0, 8);
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
+      const publicFailure = publicJobFailureMessage(error, correlationId);
 
       // Durable-stage bounded backoff: EXTRACT_TEXT / VAULT_INGEST /
       // ENGINE_RUN / PROPOSAL_GENERATION failures are classified retryable
@@ -263,20 +265,18 @@ export async function POST(req: Request) {
         stageBlockerCode = decision.blockerCode;
         if (decision.retryable && decision.delayMs !== null) {
           retryScheduled = await rearmDurableStageJob(claimed.id, {
-            errorMessage: `JOB_EXECUTION_FAILED (ref: ${correlationId}): ${message}`,
+            errorMessage: publicFailure,
             delayMs: decision.delayMs,
           });
         }
       }
 
       if (!retryScheduled) {
-        // Include the real underlying message, not just the correlation ID —
-        // the rearm path 7 lines above already does this. Without it, a
-        // terminally-failed job's errorMessage (and the UI's "Technical
-        // diagnostics" panel, which can only show what's persisted) reduced
-        // to an opaque "JOB_EXECUTION_FAILED (ref: xxxxxxxx)" with the actual
-        // cause visible only in ephemeral server logs.
-        await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId}): ${message}`);
+        // Persist only a stable, user-actionable category plus correlation
+        // reference. Raw ORM errors remain in server logs; they must never be
+        // copied into AiJob.errorMessage because that field is rendered in the
+        // authenticated browser UI.
+        await failJob(claimed.id, publicFailure);
       }
 
       processedJobs.push({

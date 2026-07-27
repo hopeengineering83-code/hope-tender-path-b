@@ -332,13 +332,21 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
     planState = "NO_REQUIREMENTS";
   }
 
-  const requiresUserConfirmation = planState === "DERIVED_DRAFT_UNCONFIRMED";
+  // Only a current CONFIRMED BuildPlan authorizes generation/export. An
+  // explicit tender-issued file list is stronger than a derived draft, but it
+  // is still an input to the Build Plan—not proof that a BuildPlan was built
+  // and confirmed.
+  const requiresUserConfirmation = planState !== "CONFIRMED_BUILD_PLAN";
 
   if ((planState as string) === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" || (planState as string) === "PLAN_NOT_BUILT") {
     warnings.push(`${requirementCount} tender requirement(s) exist, but no submission file plan has been built or confirmed. Build Submission Plan before Generate Docs so outputs can be validated against tender scope.`);
   }
   if (requiresUserConfirmation) {
-    warnings.push("Submission plan is a derived draft from requirement titles/types. Confirm tender-issued file names/order before final export; do not treat derived rows as official tender forms.");
+    warnings.push(
+      planState === "EXPLICIT_TENDER_PLAN"
+        ? "Tender-issued file scope is available, but no current confirmed Build Plan exists. Build and confirm it before generation or export."
+        : "Submission plan is a derived draft from requirement titles/types. Confirm tender-issued file names/order before final export; do not treat derived rows as official tender forms.",
+    );
   }
 
   if (totalRequired > 0 && totalMissing > 0) {

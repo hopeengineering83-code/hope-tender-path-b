@@ -7,6 +7,16 @@ import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-rea
 import type { TenderGenerationReadiness } from "../lib/tender-generation-readiness";
 import { clientLogger } from "@/lib/ui/client-logger";
 
+function dedupeReadinessItems<T extends { code?: string; message: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = `${item.code ?? ""}|${item.message.trim().toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function actionHref(tenderId: string, action?: string): string {
   if (action === "EDIT_TENDER") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
   if (action === "EDIT_TENDER_METADATA") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
@@ -100,7 +110,12 @@ export async function GenerationReadinessPanel({
       );
     }
 
-    const { blockers, fullProposalBlockers, warnings, score } = readiness;
+    const { score } = readiness;
+    const blockers = dedupeReadinessItems(readiness.blockers);
+    const blockerKeys = new Set(blockers.map((item) => `${item.code ?? ""}|${item.message.trim().toLowerCase()}`));
+    const fullProposalBlockers = dedupeReadinessItems(readiness.fullProposalBlockers ?? [])
+      .filter((item) => !blockerKeys.has(`${item.code ?? ""}|${item.message.trim().toLowerCase()}`));
+    const warnings = dedupeReadinessItems(readiness.warnings);
     const fullProposalReady = Boolean(readiness.fullProposalReady);
     const supportPackageReady = Boolean(readiness.supportPackageReady);
     // If there are full-proposal blockers, the proposal is NOT ready regardless
@@ -199,10 +214,9 @@ export async function GenerationReadinessPanel({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>{item.message}</span>
                   <span className="inline-flex items-center gap-2">
-                    {item.nextAction === "FINALIZE_REQUIRED_PDF" && canMutate && (
-                      <FinalizeRequiredPdfButton tenderId={tenderId} />
-                    )}
-                    <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>
+                    {item.nextAction === "FINALIZE_REQUIRED_PDF" && canMutate
+                      ? <FinalizeRequiredPdfButton tenderId={tenderId} />
+                      : <Link href={actionHref(tenderId, item.nextAction)} className="text-xs font-semibold text-amber-700 underline">{buildActionLabel(item.nextAction)}</Link>}
                   </span>
                 </div>
               </div>

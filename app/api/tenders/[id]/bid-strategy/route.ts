@@ -19,6 +19,11 @@ import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import {
+  VAULT_REVIEW_CONSUMER_SELECT,
+  canUseVaultRecord,
+} from "../../../../../lib/vault-review-provenance";
+import { loadDurableCompanySupportRecords } from "../../../../../lib/prisma-schema-compatibility";
 
 // Confidence ceiling applied to bid-strategy win probability when the tender
 // analysis came from regex/deterministic fallback. The strategy is computed
@@ -121,20 +126,13 @@ export async function GET(
     prisma.company.findUnique({
       where: { userId: actor.id },
       select: {
+        id: true,
         name: true,
         sectors: true,
         serviceLines: true,
         licenseGrade: true,
         country: true,
         headcount: true,
-        _count: {
-          select: {
-            experts: { where: { trustLevel: "REVIEWED" } },
-            projects: { where: { trustLevel: "REVIEWED" } },
-            legalRecords: { where: { trustLevel: "REVIEWED" } },
-            financialRecords: { where: { trustLevel: "REVIEWED" } },
-          },
-        },
       },
     }),
     // Historical bid outcomes — all past tenders with a resolved outcome
@@ -146,6 +144,24 @@ export async function GET(
 
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (!company) return NextResponse.json({ error: "Company profile required" }, { status: 400 });
+
+  const [expertRecords, projectRecords, supportRecords] = await Promise.all([
+    prisma.expert.findMany({
+      where: { companyId: company.id, deletedAt: null, isActive: true },
+      select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT,
+    }),
+    prisma.project.findMany({
+      where: { companyId: company.id, deletedAt: null },
+      select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT,
+    }),
+    loadDurableCompanySupportRecords(prisma, company.id),
+  ]);
+  const companyEvidenceCounts = {
+    experts: expertRecords.filter((record) => canUseVaultRecord(record, "GENERATION")).length,
+    projects: projectRecords.filter((record) => canUseVaultRecord(record, "GENERATION")).length,
+    legalRecords: supportRecords.legalRecords.length,
+    financialRecords: supportRecords.financialRecords.length,
+  };
 
   const historicalTotal = pastTenders.length;
   const historicalWins = pastTenders.filter((t) => t.bidOutcome === "WON").length;
@@ -243,10 +259,10 @@ export async function GET(
       licenseGrade: company.licenseGrade,
       country: company.country,
       headcount: company.headcount,
-      expertCount: company._count.experts,
-      projectCount: company._count.projects,
-      legalRecordCount: company._count.legalRecords,
-      financialRecordCount: company._count.financialRecords,
+      expertCount: companyEvidenceCounts.experts,
+      projectCount: companyEvidenceCounts.projects,
+      legalRecordCount: companyEvidenceCounts.legalRecords,
+      financialRecordCount: companyEvidenceCounts.financialRecords,
       historicalWins,
       historicalTotal,
     },

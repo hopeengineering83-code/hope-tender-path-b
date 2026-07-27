@@ -187,6 +187,12 @@ export function inferEnvelope(
   const financialRx = /\bfinancial\b|commercial[\s-]+offer|price[\s-]+(schedule|proposal|form)|bill[\s-]+of[\s-]+quantit|rate[\s-]+card|cost[\s-]+proposal|budget[\s-]+proposal|pricing|fee[\s-]+schedule|boq\b|b\.o\.q\b|lump[\s-]+sum[\s-]+offer|schedule[\s-]+of[\s-]+rates/i;
   if (financialRx.test(text)) return "FINANCIAL";
 
+  // Explicit technical deliverables outrank a generic FORM requirement type.
+  // Otherwise "Technical Proposal.pdf" extracted as requirementType=FORM is
+  // incorrectly classified into the ADMIN envelope.
+  const technicalRx = /\btechnical[\s-]+proposal\b|\btechnical[\s-]+offer\b|\bmethodology\b|\btechnical[\s-]+approach\b|\bwork[\s-]+plan\b|\bimplementation[\s-]+plan\b|\bteam[\s-]+(?:cv|curriculum)|\bkey[\s-]+experts?\b/i;
+  if (technicalRx.test(`${fileName} ${description ?? ""}`.toLowerCase())) return "TECHNICAL";
+
   const adminRx = /\bregistration\b|\bdeclaration\b|\beligibility\b|\bbid\s+bond\b|\bbid\s+security\b|\bbank\s+guarantee\b|\btax\s+clearance\b|\bvat\s+cert|\btin\s+cert|\bincorporation\b|\bundertaking\b|\bintegrity\s+pact\b|\bannex\b|\bschedule\b|\bform\b|\bcompliance\s+(matrix|certif)|\bpower\s+of\s+attorney\b|\baudited\s+financial\b|\bbank\s+statement\b|\bbusiness\s+licen\b/i;
   if (adminRx.test(text)) return "ADMIN";
 

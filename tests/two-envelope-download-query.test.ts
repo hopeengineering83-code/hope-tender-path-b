@@ -27,6 +27,7 @@ describe("envelope inference — TECHNICAL / FINANCIAL / ADMIN", () => {
   it("defaults to TECHNICAL for everything else", () => {
     assert.equal(inferEnvelope("TECHNICAL", "Technical-Proposal.docx"), "TECHNICAL");
     assert.equal(inferEnvelope("TECHNICAL", "Methodology.docx"), "TECHNICAL");
+    assert.equal(inferEnvelope("FORM", "Technical Proposal.pdf"), "TECHNICAL");
   });
 });
 

@@ -24,8 +24,11 @@ type PlanSummary = {
 };
 
 function planReason(summary: PlanSummary): string {
-  if (!summary.requiresUserConfirmation) {
+  if (summary.planState === "CONFIRMED_BUILD_PLAN" && !summary.requiresUserConfirmation) {
     return "A confirmed Build Plan is active. Generated documents are reconciled against it.";
+  }
+  if (summary.planState === "EXPLICIT_TENDER_PLAN") {
+    return "Tender-issued file scope is available, but it is not a confirmed Build Plan. Build and confirm the plan before generation or export.";
   }
   if (summary.planState === "DERIVED_DRAFT_UNCONFIRMED") {
     return "This plan is a derived draft. Build and confirm the Build Plan — derived drafts never authorize generation or export.";
@@ -81,7 +84,7 @@ export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
     );
   }
 
-  const verified = !summary.requiresUserConfirmation;
+  const verified = summary.planState === "CONFIRMED_BUILD_PLAN" && !summary.requiresUserConfirmation;
   return (
     <div id="submission-plan" className={`mt-4 rounded-xl border p-4 ${verified ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}`}>
       <h3 className={`text-sm font-bold ${verified ? "text-green-900" : "text-amber-900"}`}>

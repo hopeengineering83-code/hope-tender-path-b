@@ -97,7 +97,7 @@ function planStateLabel(state: PlanState): string {
 
 function planStateTone(state: PlanState): "ok" | "warn" | "bad" | "neutral" {
   if (state === "CONFIRMED_BUILD_PLAN") return "ok";
-  if (state === "EXPLICIT_TENDER_PLAN") return "ok";
+  if (state === "EXPLICIT_TENDER_PLAN") return "warn";
   if (state === "PLAN_NOT_BUILT") return "bad";
   if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "bad";
   if (state === "DERIVED_DRAFT_UNCONFIRMED") return "warn";
@@ -390,7 +390,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           <p className="mt-2">Tender requirements have been extracted, but the submission file plan has not been built yet. Use <strong>Build Plan</strong> to derive the submission file list from the extracted requirements before generating documents.</p>
         )}
         {data.summary.requiresUserConfirmation && (
-          <p className="mt-2">This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Confirm exact file names/order from the tender before final export; official forms/templates must still be attached as originals and must not be fabricated.</p>
+          <p className="mt-2">
+            {data.summary.planState === "EXPLICIT_TENDER_PLAN"
+              ? "Tender-issued file scope is available, but it has not been bound into a current confirmed Build Plan. Build and confirm the plan before generation or export."
+              : "This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Confirm exact file names/order from the tender before final export; official forms/templates must still be attached as originals and must not be fabricated."}
+          </p>
         )}
         {data.summary.planState === "DERIVED_DRAFT_UNCONFIRMED" && (
           <p className="mt-2 font-semibold">Submission plan is derived from weak extraction — verify all required documents against the original tender before finalising.</p>

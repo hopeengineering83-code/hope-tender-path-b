@@ -18,7 +18,7 @@ import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
-import { recordIsExpired } from "../vault-review-provenance";
+import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
@@ -1058,13 +1058,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   });
   if (!tender) throw new Error("Tender not found");
 
-  const company = await prisma.company.findUnique({
+  const companyBase = await prisma.company.findUnique({
     where: { userId },
     include: {
       documents: { orderBy: { updatedAt: "desc" }, take: 24 },
-      legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-      financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
-      complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
       assets: {
         where: { assetType: "LOGO", isActive: true },
         orderBy: { createdAt: "desc" },
@@ -1094,21 +1091,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       },
     },
   });
-  if (!company) throw new Error("Company not found");
-
-  // Legal/Financial/Compliance records have no auto-verification pipeline —
-  // every record (manual create or Plan-B import) must have trustLevel
-  // REVIEWED (see lib/vault-review-provenance.ts's evidence gate at write
-  // time) AND must not be expired to be used as generation evidence. Mirrors
-  // the trustLevel === "REVIEWED" filter Expert/Project already apply below,
-  // plus the expiry check those two record types don't need.
-  company.legalRecords = company.legalRecords.filter(
-    (r) => r.trustLevel === "REVIEWED" && !recordIsExpired(r.expiryDate),
-  );
-  company.financialRecords = company.financialRecords.filter((r) => r.trustLevel === "REVIEWED");
-  company.complianceRecords = company.complianceRecords.filter(
-    (r) => r.trustLevel === "REVIEWED" && !recordIsExpired(r.expiryDate),
-  );
+  if (!companyBase) throw new Error("Company not found");
+  const supportRecords = await loadDurableCompanySupportRecords(prisma, companyBase.id, 12);
+  const company = { ...companyBase, ...supportRecords };
 
   let companyLogo: CompanyLogo | undefined;
   const activeLogo = company.assets[0];

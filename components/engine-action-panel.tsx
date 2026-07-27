@@ -72,6 +72,27 @@ export type EngineResponse = {
 
 export type EngineAsyncStatus = { jobId: string; message: string };
 
+function asyncEngineFailureResult(
+  publicError: string | null | undefined,
+  jobId: string,
+  jobOutput?: Record<string, unknown> | null,
+): EngineResponse {
+  const message = publicError ?? "No worker detail was returned.";
+  const schemaUpdateRequired = message.includes("DATABASE_SCHEMA_UPDATE_REQUIRED");
+  return {
+    error: `Background engine run failed: ${message}`,
+    code: schemaUpdateRequired
+      ? "DATABASE_SCHEMA_UPDATE_REQUIRED"
+      : typeof jobOutput?.code === "string" ? jobOutput.code : "ASYNC_ENGINE_FAILED",
+    nextAction: schemaUpdateRequired
+      ? "CONTACT_ADMIN_DATABASE_MIGRATION"
+      : typeof jobOutput?.nextAction === "string" ? jobOutput.nextAction : "RETRY_OR_REDUCE_INPUT",
+    failedStage: typeof jobOutput?.failedStage === "string" ? jobOutput.failedStage : undefined,
+    safeModeAvailable: jobOutput?.safeModeAvailable === true,
+    jobId,
+  };
+}
+
 type CompanyVaultRepairResponse = {
   success?: boolean;
   docsReextracted?: number;
@@ -91,6 +112,7 @@ function actionLabel(action?: string) {
   if (action === "UPLOAD_TENDER_DOCUMENT") return "Upload the tender source document, then run Engine.";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Open Extraction Quality and repair weak or unreadable files.";
   if (action === "RETRY_OR_REDUCE_INPUT") return "Retry, or remove duplicate and oversized tender inputs.";
+  if (action === "CONTACT_ADMIN_DATABASE_MIGRATION") return "Ask an administrator to update the isolated preview database, then retry.";
   if (action === "RETRY_BACKGROUND_JOB") return "Retry the background run; the previous request failed before completion.";
   if (action === "RETRY_AFTER_DATABASE_CHECK") return "Check database/runtime readiness, then retry.";
   if (action === "RETRY_AS_BACKGROUND_JOB") return "Run the engine in the background.";
@@ -354,14 +376,7 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
       callbacks.onSuccess();
     } else if (finalStatus === "FAILED") {
       const jobOutput = finalJob?.output as Record<string, unknown> | null | undefined;
-      callbacks.setResult({
-        error: `Background engine run failed: ${finalJob?.errorMessage ?? "No worker detail was returned."}`,
-        code: typeof jobOutput?.code === "string" ? jobOutput.code : "ASYNC_ENGINE_FAILED",
-        nextAction: typeof jobOutput?.nextAction === "string" ? jobOutput.nextAction : "RETRY_OR_REDUCE_INPUT",
-        failedStage: typeof jobOutput?.failedStage === "string" ? jobOutput.failedStage : undefined,
-        safeModeAvailable: jobOutput?.safeModeAvailable === true,
-        jobId,
-      });
+      callbacks.setResult(asyncEngineFailureResult(finalJob?.errorMessage, jobId, jobOutput));
     } else {
       callbacks.setResult({
         error: "The engine is still running in the background. The browser stopped polling, but the worker continues.",
@@ -601,7 +616,9 @@ export function EngineActionPanel({
               type="button"
               onClick={async () => {
                 try {
-                  const response = await fetch(`/api/ai-jobs/${result.jobId}`, { method: "GET" });
+                  const jobId = result.jobId;
+                  if (!jobId) return;
+                  const response = await fetch(`/api/ai-jobs/${jobId}`, { method: "GET" });
                   const json = await response.json().catch(() => ({}));
                   const jobStatus = json?.job?.status ?? json?.status;
                   const jobError = json?.job?.errorMessage ?? json?.errorMessage;
@@ -609,19 +626,15 @@ export function EngineActionPanel({
                     setResult({
                       success: true,
                       async: true,
-                      jobId: result.jobId,
+                      jobId,
                       error: lifecycleBlockersExist
                         ? "Engine completed. Workflow blockers remain; follow the Next Required Action card above."
                         : "Engine completed in the background. Follow the Next Required Action card above.",
                     });
                     startTransition(() => router.refresh());
                   } else if (jobStatus === "FAILED") {
-                    setResult({
-                      error: `Background engine run failed: ${jobError ?? "No worker detail was returned."}`,
-                      code: "ASYNC_ENGINE_FAILED",
-                      nextAction: "RETRY_OR_REDUCE_INPUT",
-                      jobId: result.jobId,
-                    });
+                    const jobOutput = (json?.job?.output ?? json?.output) as Record<string, unknown> | null | undefined;
+                    setResult(asyncEngineFailureResult(jobError, jobId, jobOutput));
                   } else {
                     setResult({
                       ...result,

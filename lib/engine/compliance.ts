@@ -101,13 +101,17 @@ export function buildCompliance(
       evidenceSource = supportStrength >= 1 ? "Company profile/support documents" : "No company profile found";
       evidenceReference = knowledge.documents.find((doc) => /COMPANY_PROFILE/i.test(doc.category))?.originalFileName ?? knowledge.documents[0]?.originalFileName;
     } else if (isProposalResponseRequirement(req.requirementType)) {
-      supportStrength = documentCount > 0 || selectedEvidenceCount > 0 ? 1 : 0.65;
-      supportStatus = supportStrength >= 1 ? "SUPPORTED" : "PARTIAL";
+      const draftingEvidenceExists = documentCount > 0 || selectedEvidenceCount > 0;
+      // This engine stage has no generated-document input. It must not claim
+      // that a proposal response exists or grant FULL coverage merely because
+      // generic company documents could help draft one.
+      supportStrength = draftingEvidenceExists ? 0.75 : 0.4;
+      supportStatus = draftingEvidenceExists ? "EVIDENCE_PENDING_REVIEW" : "PARTIAL";
       evidenceSummary = documentCount > 0 || selectedEvidenceCount > 0
-        ? `${documentCount} company document(s), ${selectedExperts.length} selected expert(s), ${selectedProjects.length} selected project reference(s), and generated response sections can support this proposal-response requirement.`
-        : "The proposal generator can write this response section, but no supporting company evidence is mapped yet.";
+        ? `${documentCount} company document(s), ${selectedExperts.length} selected expert(s), and ${selectedProjects.length} selected project reference(s) may support drafting. The response is not covered until generated content is source-linked and reviewed.`
+        : "No generated, source-linked proposal response exists yet; drafting and reviewer confirmation are still required.";
       evidenceType = "PROPOSAL_RESPONSE";
-      evidenceSource = "Generated proposal response + company evidence library";
+      evidenceSource = draftingEvidenceExists ? "Company evidence available for drafting" : "No generated response evidence";
       evidenceReference = knowledge.documents[0]?.originalFileName ?? selectedExperts[0]?.expertId ?? selectedProjects[0]?.projectId;
     } else {
       supportStrength = documentCount > 0 || selectedEvidenceCount > 0 ? 0.9 : 0.55;

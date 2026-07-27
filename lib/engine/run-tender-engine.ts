@@ -16,6 +16,7 @@ import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
 import { isDurablyReviewed } from "../vault-review-provenance";
+import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
 
 // ─── Vercel function-budget reserves ────────────────────────────────────
 // The engine route passes deadlineAt = Date.now() + 50_000 so the whole run
@@ -138,7 +139,7 @@ export async function runTenderEngine(
   if (!tender) throw new Error("Tender not found");
   progress("engine.company", "Loading company vault (experts + projects + documents)");
 
-  const company = await prisma.company.findUnique({
+  const companyBase = await prisma.company.findUnique({
     where: { userId },
     include: {
       experts: {
@@ -156,20 +157,11 @@ export async function runTenderEngine(
         },
       },
       documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
-      // trustLevel REVIEWED is evidence-gated at write time (see
-      // lib/vault-review-provenance.ts) — without this filter an
-      // unreviewed/fabricated legal, financial, or compliance record could
-      // satisfy a LEGAL/FINANCIAL/COMPLIANCE requirement's evidence check
-      // in lib/engine/compliance.ts as if it were verified. Mirrors the
-      // same authority gate already applied to legalRecords/financialRecords/
-      // complianceRecords in generate-elite.ts, /ai-proposal, and
-      // /regenerate-section.
-      legalRecords: { where: { trustLevel: "REVIEWED", OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }] } },
-      financialRecords: { where: { trustLevel: "REVIEWED" } },
-      complianceRecords: { where: { trustLevel: "REVIEWED", OR: [{ expiryDate: null }, { expiryDate: { gte: new Date() } }] } },
     },
   });
-  if (!company) throw new Error("Company profile required before engine run");
+  if (!companyBase) throw new Error("Company profile required before engine run");
+  const supportRecords = await loadDurableCompanySupportRecords(prisma, companyBase.id);
+  const company = { ...companyBase, ...supportRecords };
 
   const engineRunId = randomUUID();
   const startedAt = new Date();

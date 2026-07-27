@@ -1,18 +1,9 @@
-// Real-DB proof for a bug found via live screenshots: when
-// app/api/ai-jobs/run-next/route.ts's generic catch block classified a
-// failure as non-retryable (or the retry budget was exhausted) and called
-// failJob(), it persisted ONLY `JOB_EXECUTION_FAILED (ref: xxxxxxxx)` —
-// dropping the real underlying error message entirely, even though the
-// rearm-for-retry branch 7 lines above already included it
-// (`JOB_EXECUTION_FAILED (ref: xxxxxxxx): <real message>`). The real cause
-// was only ever visible in ephemeral server logs — the UI's "Technical
-// diagnostics" panel (components/engine-action-panel.tsx) can only show
-// what's persisted to AiJob.errorMessage, so users saw an opaque
-// correlation ID with no way to self-diagnose or even report the failure
-// usefully.
-//
-// This proves the fix: a terminally-failed job's errorMessage now includes
-// the real message on both paths.
+// Real-DB proof for a security regression found via the latest preview:
+// app/api/ai-jobs/run-next/route.ts persisted raw ORM/runtime messages into
+// AiJob.errorMessage, and the Engine UI rendered that field. The screenshot
+// exposed a Prisma model and missing database column. The persisted message
+// must retain an actionable category and correlation reference without
+// copying internal identifiers or raw errors into the browser.
 
 import { after, before, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -27,7 +18,7 @@ if (process.env.RUN_DB_INTEGRATION !== "true") {
 let userId: string;
 const WORKER_SECRET = "test-worker-secret-at-least-16-chars-long";
 
-describe("run-next terminal failure persists the real error message, not just a correlation ref", () => {
+describe("run-next terminal failure persists a safe diagnostic category", () => {
   before(async () => {
     await prismaReady;
     process.env.AI_JOBS_WORKER_SECRET = WORKER_SECRET;
@@ -42,7 +33,7 @@ describe("run-next terminal failure persists the real error message, not just a 
     await prisma.user.deleteMany({ where: { id: userId } });
   });
 
-  it("a non-retryable EXTRACT_TEXT handler failure is terminally failed with the real message included", async () => {
+  it("a non-retryable EXTRACT_TEXT failure keeps a ref and safe category without leaking the raw record id", async () => {
     // A nonexistent tenderFileId makes the EXTRACT_TEXT handler throw
     // "EXTRACT_TEXT: TenderFile <id> not found" — a message that does not
     // match classifyStageRetry's RETRYABLE pattern, so it is classified
@@ -59,7 +50,7 @@ describe("run-next terminal failure persists the real error message, not just a 
 
     const row = await prisma.aiJob.findUniqueOrThrow({ where: { id: job.id } });
     assert.equal(row.status, "FAILED");
-    assert.match(row.errorMessage ?? "", /^JOB_EXECUTION_FAILED \(ref: [0-9a-f]{8}\): /, "must retain the correlation-ref prefix");
-    assert.match(row.errorMessage ?? "", new RegExp(`TenderFile ${bogusFileId} not found`), "must include the REAL underlying error, not just the correlation ref");
+    assert.match(row.errorMessage ?? "", /^JOB_EXECUTION_FAILED \(ref: [0-9a-f]{8}\): REQUIRED_INPUT_NOT_FOUND:/, "must retain the correlation ref and safe category");
+    assert.doesNotMatch(row.errorMessage ?? "", /TenderFile|00000000-0000-0000-0000-000000000000/, "must not expose internal model names or record identifiers");
   });
 });

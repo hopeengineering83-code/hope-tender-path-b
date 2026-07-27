@@ -19,11 +19,11 @@ type HeatmapRow = {
   notes: string | null;
 };
 
-function toHeatmapStatus(supportLevel: string): HeatmapStatus {
+export function toHeatmapStatus(supportLevel: string): HeatmapStatus {
   const s = (supportLevel ?? "").toUpperCase();
-  if (s === "SUPPORTED") return "FULLY_MET";
+  if (s === "SUPPORTED" || s === "FULL" || s === "SUBSTANTIAL") return "FULLY_MET";
   if (s === "PARTIAL" || s === "EVIDENCE_PENDING_REVIEW") return "PARTIALLY_MET";
-  if (s === "UNSUPPORTED") return "NOT_MET";
+  if (s === "UNSUPPORTED" || s === "NONE" || s === "NOT_COVERED") return "NOT_MET";
   return "UNKNOWN";
 }
 
@@ -93,7 +93,10 @@ export async function ComplianceHeatmapPanel({ tenderId }: { tenderId: string })
     if (!ownsTender) return null;
 
     const matrixRows = await prisma.complianceMatrix.findMany({
-      where: { tenderId },
+      // Orphaned historical rows have requirementId=NULL after a requirement
+      // refresh. They are audit history, not current compliance requirements,
+      // and must not inflate the active heatmap or render as "Requirement —".
+      where: { tenderId, requirementId: { not: null } },
       orderBy: { createdAt: "asc" },
       include: {
         requirement: { select: { id: true, title: true, requirementType: true, priority: true } },
@@ -111,13 +114,13 @@ export async function ComplianceHeatmapPanel({ tenderId }: { tenderId: string })
 
     if (matrixRows.length === 0) return null;
 
-    const rows: HeatmapRow[] = matrixRows.map((row) => {
+    const rows: HeatmapRow[] = matrixRows.filter((row) => row.requirement !== null).map((row) => {
       const status = toHeatmapStatus(row.supportLevel);
       const priority = row.requirement?.priority ?? "OPTIONAL";
       return {
         id: row.id,
-        title: row.requirement?.title ?? `Requirement ${row.requirementId ?? "—"}`,
-        requirementType: row.requirement?.requirementType ?? row.evidenceType ?? "—",
+        title: row.requirement!.title,
+        requirementType: row.requirement!.requirementType,
         priority,
         status,
         risk: riskLevel(status, priority),
