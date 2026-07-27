@@ -6,6 +6,7 @@ import { assessMatchingQuality, type MatchingQualityReport } from "./matching-qu
 import { isValidClientName, getClientNameStatus } from "./engine/metadata-validators";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "./engine/analysis-source";
 import { assessTenderMetadataCompleteness } from "./engine/tender-metadata-completeness";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
 // Round follow-up to PR #424/#425 — surface PDF-required + branding/
 // signature/stamp policy in the readiness panel BEFORE the user
 // clicks Download. Operators see the conflict early and fix it
@@ -169,8 +170,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
       include: {
         requirements: true,
         complianceGaps: { where: { isResolved: false }, select: { title: true, description: true, mitigationPlan: true, severity: true } },
-        expertMatches: { include: { expert: { select: { trustLevel: true, fullName: true } } } },
-        projectMatches: { include: { project: { select: { trustLevel: true, name: true } } } },
+        expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
+        projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },
       },
     }),
   ]);
@@ -250,8 +251,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     submissionAddress: tender.submissionAddress,
     submissionEmails: tender.submissionEmails,
     analysisExtractionStatus: tender.analysisExtractionStatus,
-    selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && m.expert.trustLevel === "REVIEWED").length,
-    selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && m.project.trustLevel === "REVIEWED").length,
+    selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length,
+    selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length,
     analysisSource: resolvedAnalysisSource,
   });
 
@@ -297,10 +298,10 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   const projectRequirementExists = tender.requirements.some((req) => req.requirementType === "PROJECT_EXPERIENCE");
   const selectedExperts = tender.expertMatches.filter((match) => match.isSelected);
   const selectedProjects = tender.projectMatches.filter((match) => match.isSelected);
-  const reviewedExpertMatches = tender.expertMatches.filter((match) => match.expert.trustLevel === "REVIEWED");
-  const reviewedProjectMatches = tender.projectMatches.filter((match) => match.project.trustLevel === "REVIEWED");
-  const reviewedSelectedExperts = selectedExperts.filter((match) => match.expert.trustLevel === "REVIEWED");
-  const reviewedSelectedProjects = selectedProjects.filter((match) => match.project.trustLevel === "REVIEWED");
+  const reviewedExpertMatches = tender.expertMatches.filter((match) => canUseVaultRecord(match.expert as ReviewRecordState, "GENERATION"));
+  const reviewedProjectMatches = tender.projectMatches.filter((match) => canUseVaultRecord(match.project as ReviewRecordState, "GENERATION"));
+  const reviewedSelectedExperts = selectedExperts.filter((match) => canUseVaultRecord(match.expert as ReviewRecordState, "GENERATION"));
+  const reviewedSelectedProjects = selectedProjects.filter((match) => canUseVaultRecord(match.project as ReviewRecordState, "GENERATION"));
 
   // PR #398 follow-up to #394 — BEST-AVAILABLE detection. The
   // selection policy's second-pass fallback (main-engine-selection-

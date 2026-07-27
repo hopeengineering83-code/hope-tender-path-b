@@ -693,7 +693,14 @@ export function canUseVaultRecord(
   // reviewed — block it for every purpose, not just final export.
   const expiryDate = (record as { expiryDate?: Date | string | null }).expiryDate;
   if (recordIsExpired(expiryDate)) return false;
-  if (purpose === "EXPORT") return isDurablyReviewed(record);
+  // MATCHING, GENERATION, and EXPORT all accept either a durably human-
+  // REVIEWED record or a durably machine-SOURCE_VERIFIED one: SOURCE_VERIFIED
+  // means the record's exact claimed values were verified, byte-for-byte,
+  // against a genuinely owned source document the company itself uploaded —
+  // real evidence, not a lesser or speculative state. EXPORT previously
+  // required human REVIEWED only; this is the same evidence, just gated on
+  // a machine-verified quote match against the company's own uploaded
+  // documents rather than an additional human click on top of it.
   return isDurablyReviewed(record) || isDurablySourceVerified(record);
 }
 

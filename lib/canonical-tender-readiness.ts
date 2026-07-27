@@ -7,6 +7,7 @@ import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./engine/build
 import { computeTenderReadinessState } from "./tender-readiness-state";
 import { buildCanonicalModulePayload, computeCanonicalModuleStates, type CanonicalModuleStatePayload } from "./engine/canonical-readiness-state";
 import { detectAnalysisSourceWithApproval } from "./engine/analysis-source";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
 
 export type CanonicalTenderReadiness = {
   readyForAnalysis: boolean;
@@ -30,8 +31,8 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     where: { id: tenderId, userId },
     include: {
       requirements: true,
-      expertMatches: { include: { expert: { select: { trustLevel: true } } } },
-      projectMatches: { include: { project: { select: { trustLevel: true } } } },
+      expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
+      projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },
       // Feeds computeTenderReadinessState's exportAllowed/complianceCurrent
       // below — without this, unresolved CRITICAL compliance gaps are
       // silently invisible to this resolver's export readiness, even though
@@ -74,8 +75,8 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
   const expertRequirementExists = tender.requirements.some((r) => r.requirementType === "EXPERT");
   const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
-  const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length;
-  const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length;
+  const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length;
+  const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length;
   const unresolvedCriticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
 
   const analysisSource = await detectAnalysisSourceWithApproval(client, tenderId, tender);

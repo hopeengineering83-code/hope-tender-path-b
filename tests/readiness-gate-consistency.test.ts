@@ -1,6 +1,47 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { assessMatchingQuality } from "../lib/matching-quality";
+import { buildReviewProvenance, expertReviewFields } from "../lib/vault-review-provenance";
+
+// assessMatchingQuality now delegates to canUseVaultRecord(), the same
+// durable-provenance authority the Engine/generate-elite.ts use — a bare
+// `{ trustLevel: "REVIEWED" }` object (no sourceDocumentId/reviewedBy/
+// reviewedAt/reviewNotes) correctly fails closed, so a fixture that's meant
+// to be genuinely reviewed needs a real bound-and-verified provenance
+// envelope, not just the trustLevel string.
+function durableReviewedExpert(fullName: string) {
+  const companyId = "company-readiness-gate-consistency";
+  const sourceText = `CURRICULUM VITAE\nName of Key Expert: ${fullName}\n${fullName} is a Senior Consultant with 15 years of experience in General Consultancy Services, proposed for the technical team.`;
+  const sourceDocument = {
+    id: `doc-${fullName.replace(/\s+/g, "-").toLowerCase()}`,
+    companyId,
+    extractedText: sourceText,
+    contentSha256: createHash("sha256").update(sourceText, "utf8").digest("hex"),
+    contentByteLength: Buffer.byteLength(sourceText),
+    integrityStatus: "VERIFIED",
+  };
+  const record = {
+    id: `expert-${fullName.replace(/\s+/g, "-").toLowerCase()}`,
+    companyId,
+    fullName,
+    trustLevel: "REVIEWED",
+    sourceDocumentId: sourceDocument.id,
+    reviewedBy: "user-readiness-gate-consistency",
+    reviewedAt: new Date("2026-01-01T00:00:00.000Z"),
+    sourceDocument,
+  };
+  const provenance = buildReviewProvenance({
+    recordType: "EXPERT",
+    sourceDocument,
+    fields: expertReviewFields(record),
+    reviewerId: record.reviewedBy,
+    reviewedAt: record.reviewedAt,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("fixture provenance failed");
+  return { ...record, reviewNotes: provenance.serialized };
+}
 
 describe("readiness gate consistency", () => {
   it("VAULT_AWAITS_ENGINE state is never ready for full proposal generation", () => {
@@ -55,8 +96,8 @@ describe("readiness gate consistency", () => {
     const report = assessMatchingQuality({
       requirements: [{ requirementType: "EXPERT" }] as Parameters<typeof assessMatchingQuality>[0]["requirements"],
       expertMatches: [
-        { isSelected: true, score: 0.95, expert: { trustLevel: "REVIEWED" } },
-        { isSelected: true, score: 0.88, expert: { trustLevel: "REVIEWED" } },
+        { isSelected: true, score: 0.95, expert: durableReviewedExpert("Reviewed Expert One") },
+        { isSelected: true, score: 0.88, expert: durableReviewedExpert("Reviewed Expert Two") },
       ] as Parameters<typeof assessMatchingQuality>[0]["expertMatches"],
       projectMatches: [],
       vaultReviewedExperts: 15,

@@ -14,6 +14,7 @@ import {
   type SubmissionEnvelope,
   type SubmissionPlanFile,
 } from "./submission-plan";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../vault-review-provenance";
 
 export type FinalPackageBlocker = {
   area: "requirements" | "evidence" | "documents" | "export";
@@ -183,8 +184,8 @@ type RequirementLike = {
 type MatchLike = {
   isSelected?: boolean | null;
   score?: number | null;
-  expert?: { trustLevel?: string | null } | null;
-  project?: { trustLevel?: string | null } | null;
+  expert?: ReviewRecordState | null;
+  project?: ReviewRecordState | null;
 };
 
 type GeneratedDocLike = DocumentLike & {
@@ -283,12 +284,16 @@ function hasRequirementSourceTrace(requirement: RequirementLike): boolean {
     && hasText(requirement.sourceExactQuote);
 }
 
+// This model gates the FINAL package/export decision, so it uses
+// canUseVaultRecord's "EXPORT" purpose — durably human-REVIEWED evidence,
+// or a durably machine-SOURCE_VERIFIED record once EXPORT accepts that too
+// (see canUseVaultRecord in vault-review-provenance.ts).
 function selectedReviewedExperts(matches: MatchLike[]): number {
-  return matches.filter((match) => match.isSelected && match.expert?.trustLevel === "REVIEWED").length;
+  return matches.filter((match) => match.isSelected && match.expert && canUseVaultRecord(match.expert, "EXPORT")).length;
 }
 
 function selectedReviewedProjects(matches: MatchLike[]): number {
-  return matches.filter((match) => match.isSelected && match.project?.trustLevel === "REVIEWED").length;
+  return matches.filter((match) => match.isSelected && match.project && canUseVaultRecord(match.project, "EXPORT")).length;
 }
 
 function documentOutputBlockReason(document: DocumentLike): string | null {
@@ -754,8 +759,8 @@ export async function getFinalPackageReadinessModel(
         analysisExtractionStatus: true,
         requirements: { include: { complianceMatrixRows: true } },
         generatedDocuments: { orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] },
-        expertMatches: { include: { expert: { select: { trustLevel: true } } } },
-        projectMatches: { include: { project: { select: { trustLevel: true } } } },
+        expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
+        projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },
       },
     }),
     prisma.buildPlan?.findFirst
