@@ -15,14 +15,14 @@ import { ArrowRightIcon } from "./icons";
 
 function coverageBadge(state: "COVERED" | "PARTIAL" | "UNCOVERED") {
   if (state === "COVERED") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Covered</span>;
-  if (state === "PARTIAL") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Partial</span>;
+  if (state === "PARTIAL") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">Partial</span>;
   return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Uncovered</span>;
 }
 
 function evidenceBadge(level: string) {
   const normalized = normalizeSupportLevel(level);
   if (normalized === "FULL" || normalized === "SUBSTANTIAL" || normalized === "NOT_APPLICABLE") return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">{normalized}</span>;
-  if (normalized === "PARTIAL") return <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">PARTIAL</span>;
+  if (normalized === "PARTIAL") return <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">PARTIAL</span>;
   return <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">NONE</span>;
 }
 
@@ -151,7 +151,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
           </div>
           <div className="rounded-xl border bg-amber-50 px-4 py-2">
             <p className="text-xs text-amber-600">Partial</p>
-            <p className="text-xl font-bold text-amber-700">{partialCount}</p>
+            <p className="text-xl font-bold text-amber-800">{partialCount}</p>
           </div>
           <div className="rounded-xl border bg-red-50 px-4 py-2">
             <p className="text-xs text-red-600">Uncovered</p>
