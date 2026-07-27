@@ -66,7 +66,7 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
     // implementation), so the coverage check is the same shape as the
     // "generate route" test above: gate before generateTenderDocuments(.
     it("calls the gate before generateTenderDocuments", () => {
-      const src = read("lib/ai-job-handlers.ts");
+      const src = read("lib/ai-job-handlers-legacy.ts");
       expectContains(src, /assertTenderReadyForGenerationAndExport/);
       const propGenBlock = src.slice(
         src.indexOf("PROPOSAL_GENERATION:"),
@@ -79,7 +79,7 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
     });
 
     it("also guards against a concurrent in-flight generation for the same tender", () => {
-      const src = read("lib/ai-job-handlers.ts");
+      const src = read("lib/ai-job-handlers-legacy.ts");
       const propGenBlock = src.slice(
         src.indexOf("PROPOSAL_GENERATION:"),
         src.indexOf("EVALUATOR_SIM:"),

@@ -45,7 +45,10 @@ describe("full AI success is the only path to SUCCEEDED", () => {
   });
 
   it("the AI_ANALYZE handler calls finalizeAnalysisJob ONLY inside the full-success branch", () => {
-    const src = readFileSync("lib/ai-job-handlers.ts", "utf8");
+    // AI_ANALYZE's implementation lives in ai-job-handlers-legacy.ts — see
+    // lib/ai-job-handlers.ts's header comment: it now only re-exports the
+    // legacy handlers and locally overrides EXTRACT_TEXT's getHandler branch.
+    const src = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
     assert.match(src, /if \(isFullAiSuccess\(result\)\) \{[\s\S]*?finalizeAnalysisJob\(result\.jobId, ctx\.userId\)/);
     // finalizeAnalysisJob must appear exactly once — partial path must not finalize.
     assert.equal((src.match(/finalizeAnalysisJob\(/g) ?? []).length, 1);
@@ -240,7 +243,7 @@ describe("provider failure → partial/failed → downstream stays blocked", () 
   });
 
   it("a partial result never creates GeneratedDocument rows (no generation in the handler)", () => {
-    const handlers = readFileSync("lib/ai-job-handlers.ts", "utf8");
+    const handlers = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
     // The AI_ANALYZE handler must not create generated documents.
     const analyzeBlock = handlers.slice(handlers.indexOf("AI_ANALYZE:"), handlers.indexOf("AI_REMATCH:"));
     assert.doesNotMatch(analyzeBlock, /generatedDocument\.create/);

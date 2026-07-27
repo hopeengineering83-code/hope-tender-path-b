@@ -20,7 +20,7 @@ describe("company reimport safety", () => {
     // used to run inline (inspectActualFileBytes -> ingestCompanyVault ->
     // cleanupSupportDocImportedRecords), which could exceed the request's
     // time budget for a large vault. All three now run inside the
-    // VAULT_INGEST job handler (lib/ai-job-handlers.ts, reExtractAll: true)
+    // VAULT_INGEST job handler (lib/ai-job-handlers-legacy.ts, reExtractAll: true)
     // instead — this route only enqueues it.
     const postStart = route.indexOf("export async function POST");
     assert.ok(postStart >= 0);
@@ -65,7 +65,10 @@ describe("company reimport safety", () => {
     // VAULT_INGEST handler logs COMPANY_KNOWLEDGE_REPAIR once the job
     // actually completes, gated on the auditAction this route passes in.
     assert.doesNotMatch(route, /logAction\(/);
-    const handlers = readFileSync("lib/ai-job-handlers.ts", "utf8");
+    // VAULT_INGEST's implementation lives in ai-job-handlers-legacy.ts —
+    // lib/ai-job-handlers.ts now only re-exports it and locally overrides
+    // EXTRACT_TEXT's getHandler branch.
+    const handlers = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
     assert.match(handlers, /auditAction === "COMPANY_KNOWLEDGE_REPAIR"/);
     assert.match(handlers, /\.catch\(\(error\) => \{/);
   });

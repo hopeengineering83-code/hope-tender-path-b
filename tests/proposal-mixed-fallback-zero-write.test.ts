@@ -29,7 +29,10 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
-const handlers = readFileSync("lib/ai-job-handlers.ts", "utf8");
+// PROPOSAL_GENERATION's implementation lives in ai-job-handlers-legacy.ts —
+// lib/ai-job-handlers.ts now only re-exports it and locally overrides
+// EXTRACT_TEXT's getHandler branch.
+const handlers = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
 const generateElite = readFileSync("lib/engine/generate-elite.ts", "utf8");
 const schema = readFileSync("prisma/schema.prisma", "utf8");
 

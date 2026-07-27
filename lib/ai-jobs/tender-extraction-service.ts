@@ -106,6 +106,16 @@ export async function enqueueTenderFileExtractionJob(
   }
 }
 
+function deriveOcrOutcome(text: string): string {
+  if (text.startsWith("[PDF text extracted via Claude vision OCR")) return "OCR_ATTEMPTED_SUCCEEDED";
+  if (text.startsWith("[OCR_TIMEOUT")) return "OCR_TIMEOUT";
+  if (text.startsWith("[OCR_AUTH_FAILED")) return "OCR_AUTH_FAILED";
+  if (text.startsWith("[OCR_RATE_LIMITED")) return "OCR_RATE_LIMITED";
+  if (text.startsWith("[Scanned PDF")) return "OCR_ATTEMPTED_FAILED";
+  if (text.startsWith("[Extraction failed")) return "OCR_OUTPUT_INSUFFICIENT";
+  return "OCR_NOT_ATTEMPTED";
+}
+
 function extractionMetrics(text: string): {
   totalPages: number | null;
   extractedPages: number | null;
@@ -512,6 +522,7 @@ export async function runTenderFileExtractionJob(
   // After the if-block above, metrics is guaranteed non-null:
   // either it was truthy before, or it was reassigned inside the block.
   if (!metrics) throw new Error("Extraction metrics unavailable");
+  const ocrOutcome = deriveOcrOutcome(extractedText);
 
   try {
     await enrichTenderFromCurrentSources({
@@ -548,6 +559,7 @@ export async function runTenderFileExtractionJob(
       extractionMethod: metrics!.extractionMethod,
       extractionScore: metrics!.extractionScore,
       totalPages: metrics!.totalPages,
+      ocrOutcome,
       continuationReason: continuation.reason,
       analysisJobId: continuation.jobId ?? null,
     },
@@ -555,9 +567,9 @@ export async function runTenderFileExtractionJob(
 
   await recordStep(ctx.jobId, {
     stepName: "extract.complete",
-    message: continuation.queued
+    message: (continuation.queued
       ? "Extraction completed and the canonical analysis job was queued."
-      : `Extraction completed; continuation state: ${continuation.reason}.`,
+      : `Extraction completed; continuation state: ${continuation.reason}.`) + ` OCR: ${ocrOutcome}.`,
     status: "SUCCEEDED",
   });
 
@@ -569,6 +581,7 @@ export async function runTenderFileExtractionJob(
     extractionScore: metrics.extractionScore,
     extractionMethod: metrics.extractionMethod,
     totalPages: metrics.totalPages,
+    ocrOutcome,
     extractionUsable: isMeaningfulExtraction(extractedText) && metrics.extractionMethod !== "failed",
     continuation,
   };

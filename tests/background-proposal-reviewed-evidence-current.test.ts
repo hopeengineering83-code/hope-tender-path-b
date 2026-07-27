@@ -35,7 +35,11 @@ if (process.env.RUN_DB_INTEGRATION !== "true") {
   process.exit(1);
 }
 
-const handlerSource = readFileSync("lib/ai-job-handlers.ts", "utf8");
+// PROPOSAL_GENERATION's implementation lives in ai-job-handlers-legacy.ts —
+// lib/ai-job-handlers.ts now only re-exports it (`export * from
+// "./ai-job-handlers-legacy"`) and locally overrides EXTRACT_TEXT's getHandler
+// branch. The import graph this test checks was never touched by that split.
+const handlerSource = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
 
 describe("PROPOSAL_GENERATION — single canonical implementation (import graph)", () => {
   it("imports the canonical generation pipeline and letterhead applier", () => {
