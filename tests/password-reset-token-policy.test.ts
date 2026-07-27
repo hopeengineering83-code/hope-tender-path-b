@@ -26,13 +26,20 @@ describe("password reset token policy", () => {
   });
 
   it("keeps expiry fail-closed and revokes expired rows before returning the sanitized invalid response", () => {
+    // The non-ACTIVE branch must NOT throw inside prisma.$transaction: Prisma
+    // rolls back every statement executed through `tx` (including raw
+    // queries) when the interactive-transaction callback throws, so a throw
+    // here would silently discard the "mark this expired token consumed"
+    // UPDATE below it and it would never actually commit. The transaction
+    // must instead return normally so that cleanup persists, with the
+    // caller deciding the HTTP response from `tokenState` afterward.
     const source = readFileSync("lib/secure-password-reset.ts", "utf8");
     assert.match(source, /const tokenState = classifyPasswordResetToken\(row\)/);
     assert.match(source, /if \(tokenState !== "ACTIVE"\)/);
     assert.match(source, /tokenState === "EXPIRED"/);
     assert.match(source, /UPDATE "PasswordResetToken"[\s\S]*SET "consumedAt" = NOW\(\)[\s\S]*WHERE "id" = \$\{row\.id\} AND "consumedAt" IS NULL/);
-    assert.match(source, /throw new Error\("INVALID_RESET_TOKEN"\)/);
-    assert.match(source, /NextResponse\.json\(invalidReset, \{ status: 400 \}\)/);
+    assert.doesNotMatch(source, /throw new Error\("INVALID_RESET_TOKEN"\)/, "the non-ACTIVE branch must return normally, not throw, so its cleanup UPDATE commits instead of being rolled back");
+    assert.match(source, /if \(outcome\.tokenState !== "ACTIVE"\) \{\s*return NextResponse\.json\(invalidReset, \{ status: 400 \}\);/);
   });
 
   it("consumes the accepted token, deletes sibling tokens, and revokes sessions inside the same transaction", () => {

@@ -37,6 +37,11 @@ describe("password reset one-time and privacy semantics", () => {
     assert.match(reset, /if \(new Date\(row\.expiresAt\)\.getTime\(\) <= now\.getTime\(\)\) return "EXPIRED";/);
     assert.match(reset, /const tokenState = classifyPasswordResetToken\(row\);/);
     assert.match(reset, /tokenState === "EXPIRED"/);
+    // The non-ACTIVE branch must return normally rather than throw, so the
+    // opportunistic expired-token consumedAt UPDATE actually commits instead
+    // of being rolled back by prisma.$transaction (see
+    // tests/password-reset-token-policy.test.ts for the full rationale).
+    assert.doesNotMatch(reset, /throw new Error\("INVALID_RESET_TOKEN"\)/);
     assert.match(reset, /WHERE "id" = \$\{row\.id\} AND "consumedAt" IS NULL/);
     assert.match(reset, /tx\.user\.update/);
     assert.match(reset, /tx\.session\.deleteMany/);
