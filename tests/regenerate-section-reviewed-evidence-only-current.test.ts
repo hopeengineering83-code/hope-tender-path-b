@@ -80,8 +80,10 @@ describe("reviewed-only section evidence resolver", () => {
 describe("section regeneration release authority", () => {
   it("passes the canonical gate before loading prompt evidence", () => {
     const gatePos = route.indexOf("assertTenderReadyForGenerationAndExport({");
-    const queryPos = route.indexOf("const [tender, company] = await Promise.all");
+    const queryPos = route.indexOf("const [tender, companyBase] = await Promise.all");
+    const supportEvidencePos = route.indexOf("loadDurableCompanySupportRecords(");
     assert.ok(gatePos >= 0 && queryPos > gatePos);
+    assert.ok(supportEvidencePos > queryPos);
     assert.match(route, /purpose: "regenerate-section"/);
     assert.match(route, /Resolve the canonical generation-readiness blocker/);
   });
