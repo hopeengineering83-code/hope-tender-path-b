@@ -40,8 +40,8 @@ export async function GET() {
   const company = await prisma.company.findUnique({
     where: { userId: actor.id },
     include: {
-      experts: { select: { id: true, trustLevel: true, sourceDocumentId: true } },
-      projects: { select: { id: true, trustLevel: true, sourceDocumentId: true } },
+      experts: { where: { deletedAt: null }, select: { id: true, trustLevel: true, sourceDocumentId: true } },
+      projects: { where: { deletedAt: null }, select: { id: true, trustLevel: true, sourceDocumentId: true } },
       documents: { select: { id: true, originalFileName: true, aiExtractionStatus: true, aiExtractionError: true, category: true } },
     },
   });

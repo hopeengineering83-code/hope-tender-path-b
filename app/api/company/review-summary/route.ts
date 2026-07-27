@@ -27,8 +27,8 @@ export async function GET() {
 
   const company = await ensureCompanyForUser(prisma, userId);
   const [experts, projects, docs] = await Promise.all([
-    prisma.expert.findMany({ where: { companyId: company.id }, select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT }),
-    prisma.project.findMany({ where: { companyId: company.id }, select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT }),
+    prisma.expert.findMany({ where: { companyId: company.id, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT }),
+    prisma.project.findMany({ where: { companyId: company.id, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT }),
     prisma.companyDocument.findMany({ where: { companyId: company.id }, select: { id: true, originalFileName: true, category: true, extractedText: true } }),
   ]);
 

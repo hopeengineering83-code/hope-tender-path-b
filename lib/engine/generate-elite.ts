@@ -1084,7 +1084,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       // These records are never used as positive tender evidence unless the
       // tender-specific matching relation selected the project above.
       projects: {
-        where: { trustLevel: "REVIEWED" },
+        where: { trustLevel: "REVIEWED", deletedAt: null },
         orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
         take: 8,
         select: { clientName: true },

@@ -538,6 +538,7 @@ export default function CompanyPage() {
         return;
       }
       setCompany(c => ({ ...c, experts:(c.experts||[]).filter(x => x.id!==id) }));
+      setReviewTotals(rt => rt ? { ...rt, humanReviewedExperts: Math.max(0, rt.humanReviewedExperts - 1) } : rt);
       setConfirmingDeleteExpertId(null);
     } catch {
       setError("Network interruption while deleting the expert record. Please retry when your connection is stable.");
@@ -559,6 +560,7 @@ export default function CompanyPage() {
       }
       const data = await res.json().catch(() => ({}));
       setCompany(c => ({ ...c, experts: [] }));
+      setReviewTotals({ humanReviewedExperts: 0, humanReviewedProjects: reviewTotals?.humanReviewedProjects ?? 0 });
       setConfirmingDeleteAllExperts(false);
       if (data.deletedCount > 0) {
         setError(`Deleted ${data.deletedCount} expert record(s).`);
@@ -629,6 +631,7 @@ export default function CompanyPage() {
         return;
       }
       setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
+      setReviewTotals(rt => rt ? { ...rt, humanReviewedProjects: Math.max(0, rt.humanReviewedProjects - 1) } : rt);
       setConfirmingDeleteProjectId(null);
     } catch {
       setError("Network interruption while deleting the project record. Please retry when your connection is stable.");
@@ -650,6 +653,7 @@ export default function CompanyPage() {
       }
       const data = await res.json().catch(() => ({}));
       setCompany(c => ({ ...c, projects: [] }));
+      setReviewTotals({ humanReviewedExperts: reviewTotals?.humanReviewedExperts ?? 0, humanReviewedProjects: 0 });
       setConfirmingDeleteAllProjects(false);
       if (data.deletedCount > 0) {
         setError(`Deleted ${data.deletedCount} project record(s).`);

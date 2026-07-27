@@ -143,6 +143,7 @@ export async function runTenderEngine(
     where: { userId },
     include: {
       experts: {
+        where: { deletedAt: null },
         include: {
           sourceDocument: {
             select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
@@ -150,6 +151,7 @@ export async function runTenderEngine(
         },
       },
       projects: {
+        where: { deletedAt: null },
         include: {
           sourceDocument: {
             select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
