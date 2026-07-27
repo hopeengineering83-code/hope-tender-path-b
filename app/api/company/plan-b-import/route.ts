@@ -10,6 +10,12 @@ import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../lib/rate-l
 import { completenessStats, deriveExpectedCounts, hasUsableText } from "./helpers";
 import { sanitizeError } from "../../../../lib/sanitize-error";
 import { safeParse } from "../../../../lib/safe-json";
+import {
+  buildReviewProvenance,
+  expertReviewFields,
+  projectReviewFields,
+  type ReviewSourceDocument,
+} from "../../../../lib/vault-review-provenance";
 
 // Vercel route timeout — plan-B import processes all uploaded documents.
 // 60 = Hobby max; Pro applies its own plan limit when exceeded.
@@ -480,6 +486,13 @@ export async function POST(req: Request) {
     let documentsCreated = 0;
     let documentsUpdated = 0;
     let documentsSkipped = 0;
+    // Maps each source document's declared fileName to the real, persisted
+    // CompanyDocument row it produced, so experts/projects that claim
+    // "REVIEWED" can be checked against genuine stored evidence (the same
+    // buildReviewProvenance gate the interactive Review Board uses) instead
+    // of trusting the caller's self-declared trustLevel outright.
+    const documentByFileName = new Map<string, ReviewSourceDocument>();
+    let evidenceDowngraded = 0;
     let expertsCreated = 0;
     let expertsUpdated = 0;
     let expertsSkipped = 0;
@@ -555,13 +568,24 @@ export async function POST(req: Request) {
         aiExtractionError: exactText ? null : "No rawText supplied in Plan B JSON",
         metadata: JSON.stringify({ planB: true, evidenceAuthority: "IMPORTED_JSON_DIAGNOSTIC", sourceType: doc.type, sourceCategory: doc.category, normalizedCategory: category, parsedExperts: doc.parsedExperts, parsedProjects: doc.parsedProjects, sha256: doc.sha256, reviewNotes: notes }),
       };
+      let persistedDocId: string;
       if (existing) {
         await tx.companyDocument.update({ where: { id: existing.id }, data });
+        persistedDocId = existing.id;
         documentsUpdated += 1;
       } else {
-        await tx.companyDocument.create({ data: { companyId: company.id, storagePath: "", ...data } });
+        const created = await tx.companyDocument.create({ data: { companyId: company.id, storagePath: "", ...data } });
+        persistedDocId = created.id;
         documentsCreated += 1;
       }
+      documentByFileName.set(key(fileName), {
+        id: persistedDocId,
+        companyId: company.id,
+        extractedText: data.extractedText,
+        contentSha256: data.contentSha256,
+        contentByteLength: data.contentByteLength,
+        integrityStatus: data.integrityStatus,
+      });
     }
 
     const existingExperts = await tx.expert.findMany({ where: { companyId: company.id }, select: { id: true, fullName: true } });
@@ -576,20 +600,45 @@ export async function POST(req: Request) {
       if (requireRawText && (!exactRawText || exactRawText.length < 50)) { expertsSkipped += 1; warnings.push(`Skipped expert ${fullName}: missing full raw CV text.`); continue; }
       const source = sourceLine(expert);
       const profile = [exactRawText, source].filter(Boolean).join("\n\n");
+      const disciplines = arr(expert.disciplines);
+      const sectors = arr(expert.sectors);
+      const certifications = arr(expert.certifications);
+      const title = clean(expert.title) || null;
+      const yearsExperience = typeof expert.yearsExperience === "number" ? expert.yearsExperience : null;
+      const linkedSourceDoc = expert.sourceDocument ? documentByFileName.get(key(clean(expert.sourceDocument))) ?? null : null;
+      let effectiveTrust: TrustLevel = importTrust;
+      let effectiveReviewNotes = notes;
+      if (importTrust === "REVIEWED") {
+        const provenance = buildReviewProvenance({
+          recordType: "EXPERT",
+          sourceDocument: linkedSourceDoc,
+          fields: expertReviewFields({ fullName, title, yearsExperience, disciplines, sectors, certifications }),
+          reviewerId: userId,
+          reviewedAt: now,
+        });
+        if (provenance.ok) {
+          effectiveReviewNotes = provenance.serialized;
+        } else {
+          effectiveTrust = "AI_DRAFT";
+          evidenceDowngraded += 1;
+          warnings.push(`Expert ${fullName} requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Board.`);
+        }
+      }
       const data = {
         fullName,
-        title: clean(expert.title) || null,
+        title,
         email: clean(expert.email) || null,
         phone: clean(expert.phone) || null,
-        yearsExperience: typeof expert.yearsExperience === "number" ? expert.yearsExperience : null,
-        disciplines: arr(expert.disciplines),
-        sectors: arr(expert.sectors),
-        certifications: arr(expert.certifications),
+        yearsExperience,
+        disciplines,
+        sectors,
+        certifications,
         profile: profile || null,
-        trustLevel: importTrust,
-        reviewedBy: importTrust === "REVIEWED" ? userId : null,
-        reviewedAt: importTrust === "REVIEWED" ? now : null,
-        reviewNotes: notes,
+        sourceDocumentId: linkedSourceDoc?.id ?? null,
+        trustLevel: effectiveTrust,
+        reviewedBy: effectiveTrust === "REVIEWED" ? userId : null,
+        reviewedAt: effectiveTrust === "REVIEWED" ? now : null,
+        reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : notes,
       };
       const existing = expertMap.get(key(fullName));
       if (existing) {
@@ -610,17 +659,41 @@ export async function POST(req: Request) {
       const source = sourceLine(project);
       const summary = [exactRawText, project.contractValueSummary ? `Value / fee summary: ${clean(project.contractValueSummary)}` : null, project.duration ? `Duration: ${clean(project.duration)}` : null, source].filter(Boolean).join("\n\n");
       const serviceAreas = Array.isArray(project.serviceAreas) && project.serviceAreas.length > 0 ? project.serviceAreas : project.sectors;
+      const clientName = clean(project.clientName) || null;
+      const country = clean(project.country) || null;
+      const sector = clean(project.sector || project.sectors?.[0]) || null;
+      const serviceAreasJson = arr(serviceAreas);
+      const linkedSourceDoc = project.sourceDocument ? documentByFileName.get(key(clean(project.sourceDocument))) ?? null : null;
+      let effectiveTrust: TrustLevel = importTrust;
+      let effectiveReviewNotes = notes;
+      if (importTrust === "REVIEWED") {
+        const provenance = buildReviewProvenance({
+          recordType: "PROJECT",
+          sourceDocument: linkedSourceDoc,
+          fields: projectReviewFields({ name, clientName, country, sector, serviceAreas: serviceAreasJson }),
+          reviewerId: userId,
+          reviewedAt: now,
+        });
+        if (provenance.ok) {
+          effectiveReviewNotes = provenance.serialized;
+        } else {
+          effectiveTrust = "AI_DRAFT";
+          evidenceDowngraded += 1;
+          warnings.push(`Project ${name} requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Board.`);
+        }
+      }
       const data = {
         name,
-        clientName: clean(project.clientName) || null,
-        country: clean(project.country) || null,
-        sector: clean(project.sector || project.sectors?.[0]) || null,
-        serviceAreas: arr(serviceAreas),
+        clientName,
+        country,
+        sector,
+        serviceAreas: serviceAreasJson,
         summary: summary || null,
-        trustLevel: importTrust,
-        reviewedBy: importTrust === "REVIEWED" ? userId : null,
-        reviewedAt: importTrust === "REVIEWED" ? now : null,
-        reviewNotes: notes,
+        sourceDocumentId: linkedSourceDoc?.id ?? null,
+        trustLevel: effectiveTrust,
+        reviewedBy: effectiveTrust === "REVIEWED" ? userId : null,
+        reviewedAt: effectiveTrust === "REVIEWED" ? now : null,
+        reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : notes,
       };
       const existing = projectMap.get(key(name));
       if (existing) {
@@ -659,6 +732,12 @@ export async function POST(req: Request) {
       schemaVersion: payload.schemaVersion ?? null,
       sourceDocuments: sourceDocuments.map((d) => ({ fileName: d.fileName, type: d.type, category: normalizeDocumentCategory(d) })),
       trustLevel: importTrust,
+      // Individual records requesting REVIEWED without verifiable stored
+      // source evidence (a real sourceDocument match + buildReviewProvenance
+      // quote-containment check) are silently downgraded to AI_DRAFT rather
+      // than trusting the caller's self-declared trustLevel — see the
+      // per-record warnings for which ones were downgraded and why.
+      evidenceDowngraded,
       requireRawText,
       enforceExpectedCounts,
       companyProfileUpdated,
