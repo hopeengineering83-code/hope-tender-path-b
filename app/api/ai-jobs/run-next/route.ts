@@ -270,7 +270,13 @@ export async function POST(req: Request) {
       }
 
       if (!retryScheduled) {
-        await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId})`);
+        // Include the real underlying message, not just the correlation ID —
+        // the rearm path 7 lines above already does this. Without it, a
+        // terminally-failed job's errorMessage (and the UI's "Technical
+        // diagnostics" panel, which can only show what's persisted) reduced
+        // to an opaque "JOB_EXECUTION_FAILED (ref: xxxxxxxx)" with the actual
+        // cause visible only in ephemeral server logs.
+        await failJob(claimed.id, `JOB_EXECUTION_FAILED (ref: ${correlationId}): ${message}`);
       }
 
       processedJobs.push({
