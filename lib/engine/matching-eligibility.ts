@@ -40,26 +40,42 @@ export type EligibilityRejectionCode =
   | "NO_DURABLE_PROVENANCE";
 
 export function checkMatchingEligibility(record: MatchingEligibilityRecord): EligibilityResult {
-  if (record.trustLevel !== "REVIEWED") {
-    return { eligible: false, reason: "NOT_REVIEWED", detail: `trustLevel is "${record.trustLevel ?? "null"}", must be "REVIEWED"` };
+  // canUseVaultRecord's MATCHING purpose accepts BOTH a durably human-REVIEWED
+  // record and a durably machine-SOURCE_VERIFIED one (see
+  // vault-review-provenance.ts's canUseVaultRecord) — a record that has been
+  // auto-verified against its own owned, byte-verified source document is
+  // genuinely eligible evidence for matching even before a human has looked
+  // at it. Checking this FIRST (rather than hard-rejecting anything that
+  // isn't literally trustLevel==="REVIEWED" before ever reaching this check,
+  // as a prior version of this function did) is what actually determines
+  // eligibility; everything below only exists to give a specific rejection
+  // reason for the UI when it's false.
+  if (record.companyId && (record.fullName || record.name) && canUseVaultRecord(record as ReviewRecordState, "MATCHING")) {
+    return { eligible: true };
+  }
+
+  if (record.trustLevel !== "REVIEWED" && record.trustLevel !== "SOURCE_VERIFIED") {
+    return { eligible: false, reason: "NOT_REVIEWED", detail: `trustLevel is "${record.trustLevel ?? "null"}", must be "REVIEWED" or "SOURCE_VERIFIED"` };
   }
   if (!record.sourceDocumentId?.trim()) {
     return { eligible: false, reason: "NO_SOURCE_DOCUMENT", detail: "sourceDocumentId is missing" };
   }
-  if (!record.reviewedBy?.trim()) {
-    return { eligible: false, reason: "NO_REVIEWER", detail: "reviewedBy is missing" };
+  // reviewedBy/reviewedAt are only required for a human REVIEWED record —
+  // SOURCE_VERIFIED records are machine-verified and correctly leave both
+  // null (see autoVerifyCompanyKnowledge / isDurablySourceVerified).
+  if (record.trustLevel === "REVIEWED") {
+    if (!record.reviewedBy?.trim()) {
+      return { eligible: false, reason: "NO_REVIEWER", detail: "reviewedBy is missing" };
+    }
+    if (!record.reviewedAt || (typeof record.reviewedAt === "string" && !record.reviewedAt.trim())) {
+      return { eligible: false, reason: "NO_REVIEW_TIMESTAMP", detail: "reviewedAt is missing" };
+    }
   }
-  if (!record.reviewedAt || (typeof record.reviewedAt === "string" && !record.reviewedAt.trim())) {
-    return { eligible: false, reason: "NO_REVIEW_TIMESTAMP", detail: "reviewedAt is missing" };
-  }
-  if (!record.companyId || (!record.fullName && !record.name) || !canUseVaultRecord(record as ReviewRecordState, "MATCHING")) {
-    return {
-      eligible: false,
-      reason: "NO_DURABLE_PROVENANCE",
-      detail: "review state is not bound to current verified source bytes and current record values",
-    };
-  }
-  return { eligible: true };
+  return {
+    eligible: false,
+    reason: "NO_DURABLE_PROVENANCE",
+    detail: "review state is not bound to current verified source bytes and current record values",
+  };
 }
 
 export function isEligibleForMatching(record: MatchingEligibilityRecord): boolean {
