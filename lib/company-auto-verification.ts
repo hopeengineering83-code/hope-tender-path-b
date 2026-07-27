@@ -135,9 +135,13 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         ],
       },
       data: {
-        trustLevel: "SOURCE_VERIFIED",
-        reviewedBy: null,
-        reviewedAt: null,
+        // Auto-review: the user uploads all company documents — the App
+        // verifies them against source bytes AND auto-approves them.
+        // No human review is required because uploaded documents are the
+        // only source of company evidence.
+        trustLevel: "REVIEWED",
+        reviewedBy: "SYSTEM_AUTO_VERIFIED",
+        reviewedAt: new Date(),
         reviewNotes: provenance.serialized,
         updatedAt: new Date(),
       },
@@ -148,13 +152,14 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
     await prisma.auditLog.create({
       data: {
         userId: company.userId,
-        action: "EXPERT_SOURCE_VERIFIED",
+        action: "EXPERT_AUTO_REVIEWED",
         entityType: "Expert",
         entityId: expert.id,
-        description: "Expert evidence was machine-verified against owned source bytes and exact fields.",
+        description: "Expert evidence was machine-verified against owned source bytes and auto-approved for use.",
         metadata: JSON.stringify({
           recordRef: publicVaultIdentifier(expert.id),
-          trustLevel: "SOURCE_VERIFIED",
+          trustLevel: "REVIEWED",
+          reviewedBy: "SYSTEM_AUTO_VERIFIED",
           verificationMethod: verificationMethod(expert.trustLevel),
           sourceContentHash: provenance.sourceContentHash,
           sourceByteLength: provenance.sourceByteLength,
@@ -191,9 +196,11 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         ],
       },
       data: {
-        trustLevel: "SOURCE_VERIFIED",
-        reviewedBy: null,
-        reviewedAt: null,
+        // Auto-review: the user uploads all company documents — the App
+        // verifies them against source bytes AND auto-approves them.
+        trustLevel: "REVIEWED",
+        reviewedBy: "SYSTEM_AUTO_VERIFIED",
+        reviewedAt: new Date(),
         reviewNotes: provenance.serialized,
         updatedAt: new Date(),
       },
@@ -204,13 +211,14 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
     await prisma.auditLog.create({
       data: {
         userId: company.userId,
-        action: "PROJECT_SOURCE_VERIFIED",
+        action: "PROJECT_AUTO_REVIEWED",
         entityType: "Project",
         entityId: project.id,
-        description: "Project evidence was machine-verified against owned source bytes and exact fields.",
+        description: "Project evidence was machine-verified against owned source bytes and auto-approved for use.",
         metadata: JSON.stringify({
           recordRef: publicVaultIdentifier(project.id),
-          trustLevel: "SOURCE_VERIFIED",
+          trustLevel: "REVIEWED",
+          reviewedBy: "SYSTEM_AUTO_VERIFIED",
           verificationMethod: verificationMethod(project.trustLevel),
           sourceContentHash: provenance.sourceContentHash,
           sourceByteLength: provenance.sourceByteLength,

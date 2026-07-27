@@ -131,6 +131,8 @@ export default function CompanyPage() {
   const [expertEditForm, setExpertEditForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
   const [deletingExpertId, setDeletingExpertId] = useState<string|null>(null);
   const [confirmingDeleteExpertId, setConfirmingDeleteExpertId] = useState<string|null>(null);
+  const [confirmingDeleteAllExperts, setConfirmingDeleteAllExperts] = useState(false);
+  const [deletingAllExperts, setDeletingAllExperts] = useState(false);
 
   // Project state
   const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"",summary:"" });
@@ -141,6 +143,8 @@ export default function CompanyPage() {
   const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"",summary:"" });
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
   const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string|null>(null);
+  const [confirmingDeleteAllProjects, setConfirmingDeleteAllProjects] = useState(false);
+  const [deletingAllProjects, setDeletingAllProjects] = useState(false);
   const [reimporting, setReimporting] = useState(false);
   const [assets, setAssets] = useState<CompanyAsset[]>([]);
   const [searchExpert, setSearchExpert] = useState("");
@@ -542,6 +546,30 @@ export default function CompanyPage() {
     }
   }
 
+  async function deleteAllExperts() {
+    if (deletingAllExperts) return;
+    setDeletingAllExperts(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/experts/batch`, { method:"DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "We could not delete all expert records. Please retry.");
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setCompany(c => ({ ...c, experts: [] }));
+      setConfirmingDeleteAllExperts(false);
+      if (data.deletedCount > 0) {
+        setError(`Deleted ${data.deletedCount} expert record(s).`);
+      }
+    } catch {
+      setError("Network interruption while deleting expert records. Please retry when your connection is stable.");
+    } finally {
+      setDeletingAllExperts(false);
+    }
+  }
+
   async function addProject(e: React.FormEvent) {
     e.preventDefault();
     if (projectSaving) return;
@@ -606,6 +634,30 @@ export default function CompanyPage() {
       setError("Network interruption while deleting the project record. Please retry when your connection is stable.");
     } finally {
       setDeletingProjectId(null);
+    }
+  }
+
+  async function deleteAllProjects() {
+    if (deletingAllProjects) return;
+    setDeletingAllProjects(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/projects/batch`, { method:"DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "We could not delete all project records. Please retry.");
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setCompany(c => ({ ...c, projects: [] }));
+      setConfirmingDeleteAllProjects(false);
+      if (data.deletedCount > 0) {
+        setError(`Deleted ${data.deletedCount} project record(s).`);
+      }
+    } catch {
+      setError("Network interruption while deleting project records. Please retry when your connection is stable.");
+    } finally {
+      setDeletingAllProjects(false);
     }
   }
 
@@ -983,6 +1035,28 @@ export default function CompanyPage() {
                   </button>
                 </div>
               )}
+              {filteredExperts.length > 0 && (
+                <div className="border-t px-5 py-2.5 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingDeleteAllExperts(v => !v)}
+                    disabled={deletingAllExperts || deletingExpertId !== null}
+                    className="text-xs text-red-600 hover:text-red-800 font-medium disabled:opacity-60"
+                  >
+                    {confirmingDeleteAllExperts ? "Cancel" : "Delete all experts"}
+                  </button>
+                  {confirmingDeleteAllExperts && (
+                    <button
+                      type="button"
+                      onClick={() => void deleteAllExperts()}
+                      disabled={deletingAllExperts}
+                      className="rounded bg-red-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-800 disabled:opacity-60"
+                    >
+                      {deletingAllExperts ? "Deleting all…" : `Yes, delete all ${filteredExperts.length} experts`}
+                    </button>
+                  )}
+                </div>
+              )}
               </>
             )}
           </div>
@@ -1098,6 +1172,28 @@ export default function CompanyPage() {
                   <button onClick={() => setShowAllProjects(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
                     {showAllProjects ? `Show fewer` : <>Show all {filteredProjects.length} projects <ChevronDownIcon /></>}
                   </button>
+                </div>
+              )}
+              {filteredProjects.length > 0 && (
+                <div className="border-t px-5 py-2.5 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingDeleteAllProjects(v => !v)}
+                    disabled={deletingAllProjects || deletingProjectId !== null}
+                    className="text-xs text-red-600 hover:text-red-800 font-medium disabled:opacity-60"
+                  >
+                    {confirmingDeleteAllProjects ? "Cancel" : "Delete all projects"}
+                  </button>
+                  {confirmingDeleteAllProjects && (
+                    <button
+                      type="button"
+                      onClick={() => void deleteAllProjects()}
+                      disabled={deletingAllProjects}
+                      className="rounded bg-red-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-800 disabled:opacity-60"
+                    >
+                      {deletingAllProjects ? "Deleting all…" : `Yes, delete all ${filteredProjects.length} projects`}
+                    </button>
+                  )}
                 </div>
               )}
               </>

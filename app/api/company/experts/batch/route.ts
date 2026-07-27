@@ -5,6 +5,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { logAction } from "../../../../../lib/audit";
 import {
   buildReviewProvenance,
   expertReviewFields,
@@ -176,4 +177,39 @@ export async function PATCH(req: Request) {
       { status: 500 },
     );
   }
+}
+
+/**
+ * Bulk delete ALL experts for the company (soft-delete with deletedAt + deletedBy).
+ * Used by the "Delete All Experts" button in the Company Vault UI.
+ */
+export async function DELETE(_req: Request) {
+  let actor;
+  try {
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
+  } catch (error) {
+    return error instanceof Error && error.message === "Forbidden"
+      ? forbiddenResponse()
+      : unauthorizedResponse();
+  }
+
+  await prismaReady;
+  const company = await prisma.company.findUnique({ where: { userId: actor.id } });
+  if (!company) return NextResponse.json({ error: "Company not found" }, { status: 404 });
+
+  const result = await prisma.expert.updateMany({
+    where: { companyId: company.id, deletedAt: null },
+    data: { deletedAt: new Date(), deletedBy: actor.id },
+  });
+
+  await logAction({
+    userId: actor.id,
+    action: "EXPERT_BULK_DELETE",
+    entityType: "Expert",
+    entityId: company.id,
+    description: `Bulk deleted ${result.count} expert record(s).`,
+    metadata: { companyId: company.id, deletedCount: result.count },
+  });
+
+  return NextResponse.json({ success: true, deletedCount: result.count });
 }
