@@ -37,7 +37,7 @@ current-head dispositions below.
 | Secondary ZIP workflow | REMOVED | deleted `lib/engine/workflow/zip-finalizer.ts`; all former consumers reconnected | Consumer sweep found test-only use. Tests now exercise the production assembler instead of a disconnected implementation. |
 | Generated DOCX/PDF/ZIP tests | REVIEWED WITH FINDING | `tests/generated-output-binary-inspection.test.ts`, downloaded artifact | F005 open: synthetic isolated bytes, not production full pipeline. |
 | Golden path acceptance | REVIEWED WITH FINDING | `tests/golden-path-release-acceptance.test.ts` | Static fixture/scoring assertions only; not a real golden workflow. |
-| Export gate tests | PARTIAL | two screenshot-export-gates test files | F006/F007 open: migration race and source-string proof. |
+| Export gate tests | PARTIAL | two screenshot-export-gates test files + CI migration owner | F006 fixed locally: no migration subprocess remains in parallel test bodies; F007 source-string proof remains open. |
 | CI workflow | PARTIAL | `.github/workflows/ci.yml`, downloaded exact-head artifact | F008 open: success evidence omits mandatory logs and totals. |
 | Screenshot audit | PARTIAL | downloaded index, route manifest, summary, Review Inbox screenshots | F009 open: summary counter contradiction; render coverage does not prove behavior. |
 | Vercel preview | PARTIAL | supplied screenshot deployment `aed98737…`, governing deployment `ec0eaa83…`, scoped runtime queries | Historical screenshot log lines have expired; screenshot binds a P2022 failure to `aed98737…`. Governing deployment has no retained error/500 logs but no authenticated acceptance traffic. |
@@ -73,8 +73,9 @@ current-head dispositions below.
 | `lib/engine/workflow/zip-finalizer.ts` | Removed | competing archive implementation | test-only consumers | disconnected result | duplicated final approval/integrity | complete consumer sweep | removed; no runtime consumer |
 | `tests/generated-output-binary-inspection.test.ts` | Yes | claimed binary evidence | synthetic builders + canonical assembler | acceptance artifact | none (isolated test) | artifact independently inspected | F005 OPEN: canonical owner, still not full pipeline |
 | `tests/golden-path-release-acceptance.test.ts` | Yes | claimed golden path | static fixture | scoring assertions | none | source inspection | F005 OPEN |
-| `tests/screenshot-export-gates-003-server.test.ts` | Transitive/unchanged | migration and export gate evidence | source strings/DB | CI result | DB migration | source inspection | F006/F007 OPEN |
-| `tests/screenshot-export-gates-003-structural.test.ts` | Transitive/unchanged | migration and export gate evidence | source strings/DB | CI result | DB migration | source inspection | F006/F007 OPEN |
+| `tests/screenshot-export-gates-003-server.test.ts` | Yes | migration and export gate evidence | source strings/DB | CI result | DB behavior | failing-before/passing-after ownership contract | F006 FIXED_LOCAL / F007 OPEN |
+| `tests/screenshot-export-gates-003-structural.test.ts` | Yes | migration and export gate evidence | source strings/DB | CI result | DB behavior | 73/73 related assertions | F006 FIXED_LOCAL / F007 OPEN |
+| `tests/migration-test-ownership.test.ts` | New | migration execution ownership | CI workflow + migration suites | test-runner safety | shared migration state | failing-before 1/2, passing-after 2/2 | F006 FIXED_LOCAL |
 | `.github/workflows/ci.yml` | Yes | mandatory release proof | frozen SHA | check result/artifact | synthetic credentials/secrets | artifact inspection | F008 OPEN |
 
 ## Pass status
@@ -82,7 +83,7 @@ current-head dispositions below.
 | Pass | Status | Current result |
 |---|---|---|
 | 1 — static/character-sensitive | IN PROGRESS | F002/F004 fixed locally; F007 and the broad file sweep remain open. |
-| 2 — dataflow/database/concurrency | IN PROGRESS | F001/F013/F014 fixed locally and F003 verified in exact-checkpoint CI; F006 and extraction concurrency remain open. |
+| 2 — dataflow/database/concurrency | IN PROGRESS | F001/F006/F013/F014 fixed locally and F003 verified in exact-checkpoint CI; extraction concurrency remains open. |
 | 3 — authority/security/tenant isolation | IN PROGRESS | Tenant filters observed in reviewed routes; adversarial route sweep incomplete. |
 | 4 — full product workflow/authority | IN PROGRESS | F001/F002/F004 fixed locally; real end-to-end execution not completed. |
 | 5 — falsification/runtime/release proof | IN PROGRESS | F015 critical-schema detection fixed locally; exact audit-head CI/preview and F005/F008/F009 remain open. |
@@ -114,5 +115,6 @@ transitive assertions for the extraction checkpoint, 63/63
 schema/migration/preview-regression assertions, and 60/60 related Review
 Inbox/privacy/RBAC/provenance/concurrency assertions. The Final ZIP checkpoint
 adds 213/213 affected scope/assembly/Build Plan/PDF/package/static-safety/binary
-assertions. Database integration is not claimed because no isolated
-PostgreSQL service is available in this workspace.
+assertions. Migration ownership adds 73/73 related assertions. Database
+integration is not claimed because no isolated PostgreSQL service is available
+in this workspace.

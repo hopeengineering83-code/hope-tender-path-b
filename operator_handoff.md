@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; Review Inbox checkpoint published; sole Final ZIP owner fixed locally | Publish Final ZIP checkpoint, then continue remaining generation/export and release-evidence gaps |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; Final ZIP checkpoint published; migration test ownership fixed locally | Publish migration-race checkpoint, then continue runtime truth and release-evidence gaps |
 
 ### Lock rules
 
@@ -68,6 +68,16 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T16:48:29Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — deterministic migration test ownership.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** two parallel `node:test` files each spawned two `prisma migrate deploy` commands against the shared CI schema even though CI already performs deploy and idempotency checks sequentially before `npm test`. Removed all four in-test migration subprocesses; CI is now the one migration executor, while the suites retain their post-migration row-behavior assertions.
+- **Tests:** the ownership contract failed before implementation and passes 2/2 after; 73/73 related CI routing, migration, export-gate and release-integrity assertions pass; TypeScript is clean. Database execution is not claimed locally.
+- **CI / deployment:** exact-head CI for prior Final ZIP checkpoint `611b638d…` is in progress as run `30379756743`; no deployment or real-account test was triggered.
+- **Next action:** publish after rechecking governing PR #1175, then continue F007/F008 and the cross-panel runtime truth gaps.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
 
 ### 2026-07-28T16:41:45Z — Codex
 

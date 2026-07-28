@@ -15,7 +15,7 @@
 //   - DB-gated helper tests: verify readiness/predicate functions, not handler paths
 //   - Migration tests: create post-migration rows, do NOT prove pre-existing upgrade survival
 
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -429,15 +429,6 @@ dbDescribe("[SCREENSHOT-EXPORT-003] Item 5 — migration DB-gated tests (SKIPPED
     }
   });
 
-  it("prisma migrate deploy is idempotent (two consecutive runs succeed)", async () => {
-    const { execSync } = await import("node:child_process");
-    const env = { ...process.env, DATABASE_URL: process.env.DATABASE_URL };
-    // First run
-    execSync("npx prisma migrate deploy", { env, stdio: "pipe" });
-    // Second run (must be a no-op)
-    execSync("npx prisma migrate deploy", { env, stdio: "pipe" });
-    assert.ok(true, "prisma migrate deploy is idempotent");
-  });
 });
 
 // ─── Item 1: Currency provenance UI test ───────────────────────────────────

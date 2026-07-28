@@ -104,11 +104,19 @@ This ledger records only findings supported by source or runtime evidence. A fin
 
 - Severity: HIGH
 - Pass: 2 / 5
-- Status: OPEN
+- Status: FIXED_LOCAL — exact CI proof pending
 - Primary files: `tests/screenshot-export-gates-003-server.test.ts`, `tests/screenshot-export-gates-003-structural.test.ts`
 - Root cause: both test files shell out to `npx prisma migrate deploy` from the test runner against the shared `DATABASE_URL`.
 - Impact: parallel tests can contend on `_prisma_migrations`, producing nondeterministic failures or masking migration defects.
-- Required fix: isolated database/schema per migration-owning test or one narrowly serialized migration fixture outside parallel test bodies.
+- Fix: removed all four in-test migration subprocesses. The CI workflow is
+  the single migration owner: it deploys the complete history, runs a second
+  serialized deploy to prove idempotency, and only then starts the parallel
+  test runner. Database row-behavior assertions remain in their existing
+  suites.
+- Regression proof: the new ownership contract failed before implementation
+  and passes 2/2 after; the related CI/migration/source suites pass 73/73 and
+  TypeScript is clean. Exact-head CI must still prove the serialized steps and
+  database suites together.
 
 ## PR1175-F007 — Source-string assertions are presented as release gates
 
