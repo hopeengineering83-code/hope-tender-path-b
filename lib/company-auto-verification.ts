@@ -1,8 +1,13 @@
 import { prisma, prismaReady } from "./prisma";
 import {
   buildSourceVerificationProvenance,
+  isDurablySourceVerified,
+  type ReviewRecordState,
   expertReviewFields,
   projectReviewFields,
+  legalReviewFields,
+  financialReviewFields,
+  complianceReviewFields,
   publicVaultIdentifier,
   type ReviewEvidenceField,
   type ReviewRecordType,
@@ -14,14 +19,44 @@ export type AutoVerificationResult = {
   projectsVerified: number;
   expertsBlocked: number;
   projectsBlocked: number;
+  legalVerified: number;
+  legalBlocked: number;
+  financialVerified: number;
+  financialBlocked: number;
+  complianceVerified: number;
+  complianceBlocked: number;
 };
 
 const MACHINE_ELIGIBLE_TRUST = ["REGEX_DRAFT", "AI_DRAFT", "SOURCE_VERIFIED"];
+// Legal/Financial/Compliance records also carry MANUAL_DRAFT — a record the
+// owner typed in by hand rather than one extracted from an uploaded document.
+// It is machine-eligible on exactly the same terms as the other drafts: it is
+// promoted only if its claimed values are actually found in a linked, owned,
+// byte-verified source document, and otherwise stays exactly as it is.
+const MACHINE_ELIGIBLE_TRUST_SUPPORT = [...MACHINE_ELIGIBLE_TRUST, "MANUAL_DRAFT"];
 
 function verificationMethod(trustLevel: string | null | undefined): "AI" | "DETERMINISTIC" | "HYBRID" {
   if (trustLevel === "AI_DRAFT") return "AI";
   if (trustLevel === "REGEX_DRAFT") return "DETERMINISTIC";
   return "HYBRID";
+}
+
+/**
+ * A record that is ALREADY durably source-verified against the current source
+ * bytes and its own current field values needs no further work.
+ *
+ * This guard matters because SOURCE_VERIFIED is deliberately re-selected on
+ * every pass (so that a record whose source later changed gets re-checked),
+ * while buildSourceVerificationProvenance() stamps a fresh `verifiedAt` on
+ * each call. Without the guard, every ingest re-wrote and re-audited every
+ * already-verified record: identical evidence, new timestamp, one more audit
+ * row per record per pass, growing without bound. Re-verification still
+ * happens for anything whose provenance no longer holds — isDurablySourceVerified
+ * returns false the moment the source bytes, extraction revision, or any bound
+ * field value stops matching.
+ */
+function alreadyDurablySourceVerified(record: unknown): boolean {
+  return isDurablySourceVerified(record as ReviewRecordState);
 }
 
 /**
@@ -65,8 +100,28 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
     select: { id: true, userId: true },
   });
   if (!company) {
-    return { expertsVerified: 0, projectsVerified: 0, expertsBlocked: 0, projectsBlocked: 0 };
+    return {
+      expertsVerified: 0, projectsVerified: 0, expertsBlocked: 0, projectsBlocked: 0,
+      legalVerified: 0, legalBlocked: 0, financialVerified: 0, financialBlocked: 0,
+      complianceVerified: 0, complianceBlocked: 0,
+    };
   }
+
+  const supportSourceDocumentSelect = {
+    id: true,
+    companyId: true,
+    extractedText: true,
+    contentSha256: true,
+    contentByteLength: true,
+    integrityStatus: true,
+    metadata: true,
+  } as const;
+
+  const supportRecordWhere = {
+    companyId,
+    sourceDocumentId: { not: null },
+    trustLevel: { in: MACHINE_ELIGIBLE_TRUST_SUPPORT },
+  } as const;
 
   const [experts, projects] = await Promise.all([
     prisma.expert.findMany({
@@ -84,6 +139,8 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         companyId: true,
         trustLevel: true,
         reviewedBy: true,
+        reviewedAt: true,
+        reviewNotes: true,
         fullName: true,
         title: true,
         yearsExperience: true,
@@ -119,6 +176,8 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         companyId: true,
         trustLevel: true,
         reviewedBy: true,
+        reviewedAt: true,
+        reviewNotes: true,
         name: true,
         clientName: true,
         country: true,
@@ -148,6 +207,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
   let projectsBlocked = 0;
 
   for (const expert of experts) {
+    if (alreadyDurablySourceVerified(expert)) continue;
     const source = expert.sourceDocument?.companyId === companyId ? expert.sourceDocument : null;
     const decision = deriveAutomaticSourceVerification({
       recordType: "EXPERT",
@@ -202,6 +262,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
   }
 
   for (const project of projects) {
+    if (alreadyDurablySourceVerified(project)) continue;
     const source = project.sourceDocument?.companyId === companyId ? project.sourceDocument : null;
     const decision = deriveAutomaticSourceVerification({
       recordType: "PROJECT",
@@ -255,5 +316,181 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
     });
   }
 
-  return { expertsVerified, projectsVerified, expertsBlocked, projectsBlocked };
+  // ── Legal / Financial / Compliance support records ──────────────────────
+  // These carry the same trustLevel/provenance columns as Expert/Project and
+  // are gated by the same canUseVaultRecord() authority, but had no automatic
+  // verification path at all — so a company that uploaded its licence,
+  // audited accounts and certificates still had to approve each one by hand
+  // before generation could use them. They now go through the identical
+  // deriveAutomaticSourceVerification() decision: promoted only when their
+  // exact claimed values are found in a linked, owned, byte-verified source
+  // document, and left untouched otherwise.
+  const [legalRecords, financialRecords, complianceRecords] = await Promise.all([
+    prisma.legalRecord.findMany({
+      where: supportRecordWhere,
+      select: {
+        id: true, companyId: true, trustLevel: true,
+        reviewedBy: true, reviewedAt: true, reviewNotes: true,
+        recordType: true, title: true, authority: true, referenceNumber: true,
+        issueDate: true, expiryDate: true, sourceDocumentId: true,
+        sourceDocument: { select: supportSourceDocumentSelect },
+      },
+    }),
+    prisma.financialRecord.findMany({
+      where: supportRecordWhere,
+      select: {
+        id: true, companyId: true, trustLevel: true,
+        reviewedBy: true, reviewedAt: true, reviewNotes: true,
+        fiscalYear: true, recordType: true, currency: true, amount: true, notes: true,
+        sourceDocumentId: true,
+        sourceDocument: { select: supportSourceDocumentSelect },
+      },
+    }),
+    prisma.companyComplianceRecord.findMany({
+      where: supportRecordWhere,
+      select: {
+        id: true, companyId: true, trustLevel: true,
+        reviewedBy: true, reviewedAt: true, reviewNotes: true,
+        complianceType: true, title: true, status: true, evidenceSummary: true,
+        referenceNumber: true, expiryDate: true, sourceDocumentId: true,
+        sourceDocument: { select: supportSourceDocumentSelect },
+      },
+    }),
+  ]);
+
+  let legalVerified = 0;
+  let legalBlocked = 0;
+  let financialVerified = 0;
+  let financialBlocked = 0;
+  let complianceVerified = 0;
+  let complianceBlocked = 0;
+
+  for (const record of legalRecords) {
+    if (alreadyDurablySourceVerified(record)) continue;
+    const source = record.sourceDocument?.companyId === companyId ? record.sourceDocument : null;
+    const decision = deriveAutomaticSourceVerification({
+      recordType: "LEGAL",
+      sourceDocument: source,
+      fields: legalReviewFields(record),
+      priorTrustLevel: record.trustLevel,
+    });
+    if (!decision.ok) { legalBlocked += 1; continue; }
+    const { provenance } = decision;
+
+    const updated = await prisma.legalRecord.updateMany({
+      where: { id: record.id, companyId, trustLevel: { in: MACHINE_ELIGIBLE_TRUST_SUPPORT } },
+      data: { ...decision.reviewState, updatedAt: new Date() },
+    });
+    if (updated.count !== 1) continue;
+    legalVerified += 1;
+
+    await prisma.auditLog.create({
+      data: {
+        userId: company.userId,
+        action: "LEGAL_RECORD_SOURCE_VERIFIED",
+        entityType: "LegalRecord",
+        entityId: record.id,
+        description: "Legal record evidence was machine-verified against owned source bytes and exact fields.",
+        metadata: JSON.stringify({
+          recordRef: publicVaultIdentifier(record.id),
+          trustLevel: "SOURCE_VERIFIED",
+          verificationMethod: verificationMethod(record.trustLevel),
+          sourceContentHash: provenance.sourceContentHash,
+          sourceByteLength: provenance.sourceByteLength,
+          sourceTextHash: provenance.sourceTextHash,
+          sourceExtractionRevision: provenance.sourceExtractionRevision,
+          evidenceFields: provenance.evidenceFields,
+          verifiedAt: provenance.verifiedAt,
+        }),
+      },
+    });
+  }
+
+  for (const record of financialRecords) {
+    if (alreadyDurablySourceVerified(record)) continue;
+    const source = record.sourceDocument?.companyId === companyId ? record.sourceDocument : null;
+    const decision = deriveAutomaticSourceVerification({
+      recordType: "FINANCIAL",
+      sourceDocument: source,
+      fields: financialReviewFields(record),
+      priorTrustLevel: record.trustLevel,
+    });
+    if (!decision.ok) { financialBlocked += 1; continue; }
+    const { provenance } = decision;
+
+    const updated = await prisma.financialRecord.updateMany({
+      where: { id: record.id, companyId, trustLevel: { in: MACHINE_ELIGIBLE_TRUST_SUPPORT } },
+      data: { ...decision.reviewState, updatedAt: new Date() },
+    });
+    if (updated.count !== 1) continue;
+    financialVerified += 1;
+
+    await prisma.auditLog.create({
+      data: {
+        userId: company.userId,
+        action: "FINANCIAL_RECORD_SOURCE_VERIFIED",
+        entityType: "FinancialRecord",
+        entityId: record.id,
+        description: "Financial record evidence was machine-verified against owned source bytes and exact fields.",
+        metadata: JSON.stringify({
+          recordRef: publicVaultIdentifier(record.id),
+          trustLevel: "SOURCE_VERIFIED",
+          verificationMethod: verificationMethod(record.trustLevel),
+          sourceContentHash: provenance.sourceContentHash,
+          sourceByteLength: provenance.sourceByteLength,
+          sourceTextHash: provenance.sourceTextHash,
+          sourceExtractionRevision: provenance.sourceExtractionRevision,
+          evidenceFields: provenance.evidenceFields,
+          verifiedAt: provenance.verifiedAt,
+        }),
+      },
+    });
+  }
+
+  for (const record of complianceRecords) {
+    if (alreadyDurablySourceVerified(record)) continue;
+    const source = record.sourceDocument?.companyId === companyId ? record.sourceDocument : null;
+    const decision = deriveAutomaticSourceVerification({
+      recordType: "COMPLIANCE",
+      sourceDocument: source,
+      fields: complianceReviewFields(record),
+      priorTrustLevel: record.trustLevel,
+    });
+    if (!decision.ok) { complianceBlocked += 1; continue; }
+    const { provenance } = decision;
+
+    const updated = await prisma.companyComplianceRecord.updateMany({
+      where: { id: record.id, companyId, trustLevel: { in: MACHINE_ELIGIBLE_TRUST_SUPPORT } },
+      data: { ...decision.reviewState, updatedAt: new Date() },
+    });
+    if (updated.count !== 1) continue;
+    complianceVerified += 1;
+
+    await prisma.auditLog.create({
+      data: {
+        userId: company.userId,
+        action: "COMPLIANCE_RECORD_SOURCE_VERIFIED",
+        entityType: "CompanyComplianceRecord",
+        entityId: record.id,
+        description: "Compliance record evidence was machine-verified against owned source bytes and exact fields.",
+        metadata: JSON.stringify({
+          recordRef: publicVaultIdentifier(record.id),
+          trustLevel: "SOURCE_VERIFIED",
+          verificationMethod: verificationMethod(record.trustLevel),
+          sourceContentHash: provenance.sourceContentHash,
+          sourceByteLength: provenance.sourceByteLength,
+          sourceTextHash: provenance.sourceTextHash,
+          sourceExtractionRevision: provenance.sourceExtractionRevision,
+          evidenceFields: provenance.evidenceFields,
+          verifiedAt: provenance.verifiedAt,
+        }),
+      },
+    });
+  }
+
+  return {
+    expertsVerified, projectsVerified, expertsBlocked, projectsBlocked,
+    legalVerified, legalBlocked, financialVerified, financialBlocked,
+    complianceVerified, complianceBlocked,
+  };
 }

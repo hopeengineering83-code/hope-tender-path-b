@@ -103,8 +103,13 @@ export default async function AnalyticsPage() {
         updatedAt: true,
         _count: {
           select: {
-            experts: true,
-            projects: true,
+            // A relation _count with no `where` counts every row including
+            // soft-deleted ones. Every other expert/project count in the app
+            // filters deletedAt: null, so after deleting a record the Company
+            // Vault page correctly showed it gone while these tiles kept the
+            // pre-delete total — "one place says present, another says zero".
+            experts: { where: { deletedAt: null } },
+            projects: { where: { deletedAt: null } },
             documents: true,
           },
         },
