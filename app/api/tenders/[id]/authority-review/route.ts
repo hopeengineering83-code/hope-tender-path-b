@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
 import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
+import { resolveAuthorityReviewAvailability } from "../../../../../lib/engine/authority-review-availability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -74,26 +75,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ...finalPackage.export.blockers,
     ];
 
-    // Authority Review is a document-level examination, not an early-stage
-    // readiness score. It is unavailable until a confirmed Build Plan exists
-    // and every required item has a generated, validated document. Returning
-    // an explicit unavailable state avoids presenting a misleading 0/100 or
-    // 10/100 score before there is anything legitimate to review.
     const requiredDocumentCount = finalPackage.documents.required.length;
-    const authorityReviewAvailable = finalPackage.buildPlan.confirmed
-      && requiredDocumentCount > 0
-      && finalPackage.documents.missingRequired.length === 0
-      && finalPackage.documents.valid.length >= requiredDocumentCount
-      && documents.length > 0;
+    const availability = resolveAuthorityReviewAvailability({
+      buildPlanConfirmed: finalPackage.buildPlan.confirmed,
+      requiredDocumentCount,
+      missingRequiredCount: finalPackage.documents.missingRequired.length,
+      validDocumentCount: finalPackage.documents.valid.length,
+      generatedDocumentCount: documents.length,
+    });
 
-    if (!authorityReviewAvailable) {
-      const unavailableReason = !finalPackage.buildPlan.confirmed
-        ? "Confirm the Build Plan before Authority Review."
-        : requiredDocumentCount === 0
-          ? "Build the tender-controlled document plan before Authority Review."
-          : finalPackage.documents.missingRequired.length > 0 || documents.length === 0
-            ? "Generate every required document before Authority Review."
-            : "Validate every required document before Authority Review.";
+    if (!availability.available) {
       const envelope = buildPublicReadinessEnvelope({
         ok: false,
         blockers: canonicalBlockers.map((blocker) => ({
@@ -109,7 +100,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({
         success: true,
         available: false,
-        unavailableReason,
+        unavailableCode: availability.code,
+        unavailableReason: availability.reason,
         ...envelope,
         tenderId: id,
         authorityReview: null,
@@ -153,11 +145,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
     });
 
-    // result.recommendedFixes was computed by runAuthorityReview from its own
-    // internal status (document-level blockers only) BEFORE canonicalBlockers
-    // and finalPackage.buildPlan.confirmed are folded into the outer `ok`
-    // gate below. When those add a blocker runAuthorityReview never saw, strip
-    // any contradictory ready-for-export recommendation.
     const recommendedFixes = ok
       ? result.recommendedFixes
       : result.recommendedFixes.filter((fix) => fix !== "All authority review checks pass. Document is ready for final export.");
@@ -165,6 +152,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({
       success: true,
       available: true,
+      unavailableCode: null,
       unavailableReason: null,
       ...envelope,
       tenderId: id,
