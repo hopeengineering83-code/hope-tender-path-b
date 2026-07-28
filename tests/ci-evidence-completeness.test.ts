@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { existsSync, readFileSync } from "node:fs";
+import playwrightConfig from "../playwright.config";
 
 const workflow = readFileSync(".github/workflows/ci.yml", "utf8");
 
@@ -11,6 +12,12 @@ describe("exact-head CI evidence completeness", () => {
     assert.match(workflow, /run-evidence-command\.mjs/);
     assert.match(workflow, /command-ledger\.ndjson/);
     assert.match(workflow, /verify-ci-evidence\.mjs/);
+  });
+
+  it("keeps Playwright cleanup outside the immutable command-evidence directory", () => {
+    assert.equal(playwrightConfig.outputDir, "./browser-results/test-artifacts");
+    assert.notEqual(playwrightConfig.outputDir, "test-results");
+    assert.notEqual(playwrightConfig.outputDir, "./test-results");
   });
 
   it("retains every mandatory success log, not only build and migration fragments", () => {

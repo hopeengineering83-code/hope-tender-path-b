@@ -187,6 +187,16 @@ This proves deployment identity and basic health only. No complete authenticated
   continuation carried `reason: "AI_ANALYZE_QUEUED"`. The golden acceptance
   now asserts that exact structured field and rejects the stale string
   substring contract. Replacement exact-head CI remains required.
+- Run `30387667640` for structured-continuation checkpoint `07901d3f…`
+  passed all migration/schema/drift gates, release integrity, typecheck, lint,
+  the complete unit/database suite, production build, and 179 authenticated
+  Playwright assertions with 3 intentional skips. The final evidence verifier
+  then failed because Playwright's default `test-results` output directory
+  cleared the earlier command ledger and 14 pre-browser logs at startup. The
+  downloaded SHA-bound diagnostic artifact proves only the final `playwright`
+  and `reject-test-source-mutation` entries survived. Playwright transient
+  output now has a dedicated `browser-results/test-artifacts` directory, with
+  a regression preventing overlap with immutable command evidence.
 
 No isolated PostgreSQL, Playwright, DOCX/PDF/ZIP full-pipeline, audit-head
 Vercel preview, or real-account result is claimed. A local production build
