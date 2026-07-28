@@ -279,30 +279,24 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER))
       .map((doc) => doc.exactFileName ?? doc.name);
 
+    // Export-package state and the tender lifecycle transition are one atomic
+    // commit. The prior implementation created a READY package in one
+    // transaction and changed the tender to EXPORTED in a second transaction,
+    // allowing a durable contradiction if the second transaction failed.
     const exportPackage = await prisma.$transaction(async (tx) => {
       await tx.exportPackage.updateMany({
         where: { tenderId: id, status: "READY" },
         data: { status: "SUPERSEDED" },
       });
-      return tx.exportPackage.create({
+      const created = await tx.exportPackage.create({
         data: { tenderId: id, status: "READY", fileList: JSON.stringify(generatedFileNames), downloadCount: 0 },
       });
-    }, { timeout: 30_000 });
-
-    // Move the tender status update inside the same transaction to prevent
-    // the export package being READY while the tender shows a stale status
-    // (was outside the tx — if the tender update failed, the export package
-    // was READY but the UI showed a stale status).
-    await prisma.$transaction(async (tx) => {
-      await tx.exportPackage.updateMany({
-        where: { tenderId: id, status: "READY" },
-        data: {},
-      });
       await tx.tender.update({
-        where: { id },
+        where: { id, userId },
         data: { status: "EXPORTED", stage: "EXPORT" },
       });
-    });
+      return created;
+    }, { timeout: 30_000 });
 
     await logAction({
       userId,
