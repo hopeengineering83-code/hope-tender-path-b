@@ -75,14 +75,28 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ...finalPackage.export.blockers,
     ];
 
-    const requiredDocumentCount = finalPackage.documents.required.length;
+    const requiredDocuments = finalPackage.documents.required;
+    const requiredDocumentCount = requiredDocuments.length;
+    const generatedRequiredDocumentCount = requiredDocuments.filter((document) => Boolean(document.generatedDocumentId)).length;
+    const validRequiredDocumentCount = requiredDocuments.filter((document) =>
+      document.status === "valid" || document.status === "approved" || document.status === "export_ready"
+    ).length;
     const availability = resolveAuthorityReviewAvailability({
       buildPlanConfirmed: finalPackage.buildPlan.confirmed,
       requiredDocumentCount,
       missingRequiredCount: finalPackage.documents.missingRequired.length,
-      validDocumentCount: finalPackage.documents.valid.length,
-      generatedDocumentCount: documents.length,
+      validDocumentCount: validRequiredDocumentCount,
+      generatedDocumentCount: generatedRequiredDocumentCount,
     });
+
+    const finalPackageFacts = {
+      requiredDocumentsTotal: requiredDocumentCount,
+      generatedRequiredDocumentsTotal: generatedRequiredDocumentCount,
+      validRequiredDocumentsTotal: validRequiredDocumentCount,
+      generatedDocumentsTotal: finalPackage.documents.generated.length,
+      validDocumentsTotal: finalPackage.documents.valid.length,
+      exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+    };
 
     if (!availability.available) {
       const envelope = buildPublicReadinessEnvelope({
@@ -94,7 +108,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         })),
         warnings: [],
         requiredDocumentsTotal: requiredDocumentCount,
-        generatedDocumentsTotal: finalPackage.documents.generated.length,
+        generatedDocumentsTotal: generatedRequiredDocumentCount,
         exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
       });
       return NextResponse.json({
@@ -107,16 +121,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         authorityReview: null,
         buildPlan: finalPackage.buildPlan,
         finalPackageBlockers: canonicalBlockers,
-        finalPackageFacts: {
-          requiredDocumentsTotal: requiredDocumentCount,
-          generatedDocumentsTotal: finalPackage.documents.generated.length,
-          validDocumentsTotal: finalPackage.documents.valid.length,
-          exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
-        },
+        finalPackageFacts,
       });
     }
 
-    const tenderRequiredSections = finalPackage.documents.required.map((document) => document.displayName);
+    const tenderRequiredSections = requiredDocuments.map((document) => document.displayName);
     const result = runAuthorityReview(documents, manifestEntries, tenderRequiredSections);
 
     const publicBlockers = [
@@ -140,8 +149,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ok,
       blockers: publicBlockers,
       warnings: result.warnings,
-      requiredDocumentsTotal: finalPackage.documents.required.length,
-      generatedDocumentsTotal: finalPackage.documents.generated.length,
+      requiredDocumentsTotal: requiredDocumentCount,
+      generatedDocumentsTotal: generatedRequiredDocumentCount,
       exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
     });
 
@@ -163,12 +172,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       },
       buildPlan: finalPackage.buildPlan,
       finalPackageBlockers: canonicalBlockers,
-      finalPackageFacts: {
-        requiredDocumentsTotal: finalPackage.documents.required.length,
-        generatedDocumentsTotal: finalPackage.documents.generated.length,
-        validDocumentsTotal: finalPackage.documents.valid.length,
-        exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
-      },
+      finalPackageFacts,
     });
   } catch (error) {
     logger.error("Authority review route failed", { detail: error });
