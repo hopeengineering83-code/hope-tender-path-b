@@ -49,11 +49,14 @@ describe("the production support-record compatibility loader enforces durable ev
     const company = await prisma.company.create({ data: { userId, name: `Engine LFC Filter Firm ${nonce}` } });
     companyId = company.id;
 
+    // Provenance matching is deliberately exact. Include every normalized
+    // persisted field exactly as the production field builders emit it,
+    // including ISO dates and the record-type labels.
     const sourceText = [
       "[Page 1]",
-      "Current Consulting Licence LIC-2099 issued by National Authority and valid until 01 January 2099.",
-      "Audited Financial Statement for fiscal year 2025 in ETB with amount 1250000.",
-      "ISO 9001 Quality Certificate ISO-9001-2099 status ACTIVE and valid until 01 January 2099.",
+      "License Current Consulting Licence LIC-2099 issued by National Authority; expiryDate 2099-01-01.",
+      "Audited Financial Statement fiscalYear 2025 currency ETB amount 1250000.",
+      "ISO ISO 9001 Quality Certificate reference ISO-9001-2099 expiryDate 2099-01-01.",
       "This source document contains the exact company support evidence used by the deterministic verification test.",
     ].join("\n");
     const bytes = Buffer.from(sourceText, "utf8");
@@ -116,7 +119,7 @@ describe("the production support-record compatibility loader enforces durable ev
       issueDate: null,
       expiryDate: new Date("2020-01-01"),
     };
-    const expiredText = `${sourceText}\nExpired Consulting Licence LIC-2020 National Authority 01 January 2020.`;
+    const expiredText = `${sourceText}\nLicense Expired Consulting Licence LIC-2020 National Authority expiryDate 2020-01-01.`;
     const expiredBytes = Buffer.from(expiredText, "utf8");
     const expiredSource = await prisma.companyDocument.create({
       data: {
