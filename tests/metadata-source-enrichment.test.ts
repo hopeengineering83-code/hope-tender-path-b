@@ -451,33 +451,35 @@ describe("re-extract-metadata route — enrichment wired in", () => {
   });
 });
 
-// ─── 3. Source-inspection: tender-upload-first wiring ────────────────────────
+// ─── 3. Source-inspection: durable extraction wiring ────────────────────────
 
-describe("tender-upload-first — enrichment wired in", () => {
-  const src = read("lib/tender-upload-first.ts");
+describe("durable tender extraction — enrichment wired in", () => {
+  const src = read("lib/ai-jobs/tender-extraction-service.ts");
 
   it("imports enrichMetadataWithSourceEvidence", () => {
     assert.ok(
-      src.includes('import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";'),
+      src.includes('import { enrichMetadataWithSourceEvidence } from "../engine/metadata-source-enrichment";'),
       "must import enrichMetadataWithSourceEvidence",
     );
   });
 
-  it("calls enrichMetadataWithSourceEvidence after the transaction commits", () => {
-    const txEndIdx = src.indexOf("}, { timeout: 30_000 });");
+  it("calls enrichMetadataWithSourceEvidence after the extraction checkpoint persists", () => {
+    const persistedIdx = src.indexOf("const persisted = await prisma.tenderFile.updateMany");
     const enrichIdx = src.indexOf("enrichMetadataWithSourceEvidence({");
-    assert.ok(txEndIdx > -1, "must have transaction end");
+    assert.ok(persistedIdx > -1, "must persist the extraction checkpoint");
     assert.ok(enrichIdx > -1, "must call enrichMetadataWithSourceEvidence");
     assert.ok(
-      enrichIdx > txEndIdx,
-      "enrichment must happen AFTER the transaction commits (so file IDs are available)",
+      enrichIdx < persistedIdx,
+      "the helper definition must exist before the persisted worker call",
     );
+    const workerCall = src.indexOf("await enrichTenderFromCurrentSources({");
+    assert.ok(workerCall > persistedIdx, "enrichment must run after durable extraction persistence");
   });
 
-  it("uses persisted.fileRecords for file IDs", () => {
+  it("binds enrichment to the exact current file ID and content hash", () => {
     assert.ok(
-      src.includes("persisted.fileRecords.map"),
-      "must use persisted.fileRecords to map file IDs for enrichment",
+      src.includes("expectedFileId") && src.includes("expectedContentSha256"),
+      "must bind enrichment to the exact source revision",
     );
   });
 
@@ -489,12 +491,9 @@ describe("tender-upload-first — enrichment wired in", () => {
   });
 
   it("wraps enrichment in try/catch (best-effort, non-fatal — H1 route-level gap fix)", () => {
-    // The enrichment must be wrapped in try/catch so a failure does NOT 500
-    // the upload. The tender and files are already persisted (transaction
-    // committed above); only the source-evidence enrichment is skipped.
-    const tryIdx = src.indexOf("try {");
-    const enrichIdx = src.indexOf("enrichMetadataWithSourceEvidence({");
-    const catchIdx = src.indexOf("// Best-effort, non-fatal. The tender and files are already persisted");
+    const tryIdx = src.indexOf("try {\n    await enrichTenderFromCurrentSources({");
+    const enrichIdx = src.indexOf("await enrichTenderFromCurrentSources({", tryIdx);
+    const catchIdx = src.indexOf('logger.warn("[extract-text] source enrichment failed after durable extraction"', enrichIdx);
     assert.ok(tryIdx > -1, "must have a try block around enrichment");
     assert.ok(enrichIdx > -1, "must call enrichMetadataWithSourceEvidence");
     assert.ok(catchIdx > -1, "must have a catch block with non-fatal comment");

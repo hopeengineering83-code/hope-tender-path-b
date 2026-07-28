@@ -31,7 +31,7 @@ function parseMetadata(value: string | null | undefined): Record<string, unknown
 
 function nextExtractionRevision(metadata: Record<string, unknown>): number {
   const current = Number(metadata.extractionRevision);
-  return Number.isInteger(current) && current > 0 ? current + 1 : 2;
+  return Number.isInteger(current) && current >= 0 ? current + 1 : 2;
 }
 
 export async function reextractAllCompanyDocuments(

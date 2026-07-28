@@ -175,19 +175,28 @@ async function enrichTenderFromCurrentSources(input: {
     select: {
       id: true,
       title: true,
+      description: true,
+      intakeSummary: true,
       reference: true,
       clientName: true,
+      procuringEntityName: true,
+      donorAgency: true,
+      implementingAgency: true,
+      clientWebsite: true,
+      submissionEmailSubject: true,
       category: true,
       country: true,
+      budget: true,
+      currency: true,
       deadline: true,
       submissionMethod: true,
       submissionAddress: true,
       submissionEmails: true,
-      submissionEmailSubject: true,
       clientContactName: true,
       clientContactTitle: true,
       clientContactEmail: true,
       clientContactPhone: true,
+      clientAddress: true,
       preBidMeetingDate: true,
       preBidMeetingLocation: true,
       validityDays: true,
@@ -197,6 +206,8 @@ async function enrichTenderFromCurrentSources(input: {
       numberOfCopiesRequired: true,
       mandatorySiteVisit: true,
       evaluationMethodology: true,
+      technicalWeight: true,
+      financialWeight: true,
       contactDetailsSourceJson: true,
       files: {
         where: { deletionStatus: "ACTIVE" },
@@ -441,6 +452,7 @@ export async function runTenderFileExtractionJob(
   }
 
   let extractedText = file.extractedText ?? "";
+  let extractionTruncated = false;
   let metrics = file.extractionMethod
     ? {
         totalPages: file.totalPages,
@@ -481,6 +493,7 @@ export async function runTenderFileExtractionJob(
       await extractTextFromBuffer(buffer, file.mimeType, file.originalFileName),
     );
     extractedText = limited.text;
+    extractionTruncated = limited.truncated;
     metrics = extractionMetrics(extractedText);
 
     const persisted = await prisma.tenderFile.updateMany({
@@ -560,6 +573,7 @@ export async function runTenderFileExtractionJob(
       extractionScore: metrics!.extractionScore,
       totalPages: metrics!.totalPages,
       ocrOutcome,
+      extractionTruncated,
       continuationReason: continuation.reason,
       analysisJobId: continuation.jobId ?? null,
     },
@@ -569,7 +583,8 @@ export async function runTenderFileExtractionJob(
     stepName: "extract.complete",
     message: (continuation.queued
       ? "Extraction completed and the canonical analysis job was queued."
-      : `Extraction completed; continuation state: ${continuation.reason}.`) + ` OCR: ${ocrOutcome}.`,
+      : `Extraction completed; continuation state: ${continuation.reason}.`)
+      + ` OCR: ${ocrOutcome}. Truncated: ${extractionTruncated ? "yes" : "no"}.`,
     status: "SUCCEEDED",
   });
 
@@ -582,6 +597,7 @@ export async function runTenderFileExtractionJob(
     extractionMethod: metrics.extractionMethod,
     totalPages: metrics.totalPages,
     ocrOutcome,
+    extractionTruncated,
     extractionUsable: isMeaningfulExtraction(extractedText) && metrics.extractionMethod !== "failed",
     continuation,
   };

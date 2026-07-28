@@ -8,13 +8,13 @@ import { readFileSync, existsSync } from "node:fs";
 const read = (p: string) => readFileSync(p, "utf8");
 
 describe("extraction quality round 9 — totalPages for non-PDF (Option C)", () => {
-  const src = read("lib/tender-upload-first.ts");
+  const src = read("lib/ai-jobs/tender-extraction-service.ts");
   it("uses assessExtractionQualityPerPage to derive totalPages", () => {
-    assert.ok(src.includes("assessExtractionQualityPerPage(extractedText)"));
-    assert.ok(src.includes("perPageReport.totalDetectedPages"));
+    assert.ok(src.includes("assessExtractionQualityPerPage(text)"));
+    assert.ok(src.includes("perPage.totalDetectedPages"));
   });
   it("defaults totalPages to the detected document-level page for non-PDF", () => {
-    assert.ok(src.includes("perPageReport.totalDetectedPages > 0 ? perPageReport.totalDetectedPages : null"));
+    assert.ok(src.includes("perPage.totalDetectedPages > 0 ? perPage.totalDetectedPages : null"));
     assert.ok(!src.includes("pageMarkers > 0 ? pageMarkers : null"));
   });
 });
@@ -95,7 +95,8 @@ describe("extraction truncation flag — behavioral (round 14)", () => {
     assert.equal(result.text.length, OUTER);
   });
   it("upload paths surface a user-visible partial-extraction warning", () => {
-    const uploadFirst = read("lib/tender-upload-first.ts");
-    assert.ok(uploadFirst.includes("extracted text was truncated to the safe analysis limit"));
+    const worker = read("lib/ai-jobs/tender-extraction-service.ts");
+    assert.match(worker, /extractionTruncated = limited\.truncated/);
+    assert.match(worker, /Truncated: \$\{extractionTruncated \? "yes" : "no"\}/);
   });
 });

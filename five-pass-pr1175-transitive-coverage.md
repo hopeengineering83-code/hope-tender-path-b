@@ -102,28 +102,33 @@ request validation
   -> canonical AI analysis queue
 ```
 
-Current gaps:
+Implemented local chain:
 
-- request-time extraction still owns the critical path;
-- canonical enqueue helper has no production caller;
-- request handlers directly queue analysis;
-- partial package completion can race job continuation unless one authority
-  rechecks the completed package;
-- a duplicate legacy extraction implementation remains.
+```text
+integrity-verified bytes + source/package rows
+  -> exact hash-bound EXTRACT_TEXT job
+  -> canonical worker extraction + optimistic persistence
+  -> current-source metadata enrichment
+  -> all-active-file/package readiness recheck
+  -> canonical AI analysis continuation
+```
 
-Required coverage before closure:
+Coverage:
 
-- first tender upload;
-- append upload;
-- multi-file upload;
-- partial package and final batch;
-- duplicate/replay;
-- stale source hash;
-- extraction failure and retry;
-- tender deletion/cancellation;
-- exactly-once analysis continuation after all files complete.
+| Area | Evidence | State |
+|---|---|---|
+| first/append/multi-file upload | background-wiring, upload-first, route, sequencing tests | PASS |
+| partial package/final batch/replay | package-session, auto-pipeline, durable orchestration tests | PASS |
+| duplicate enqueue and stale hash | deterministic enqueue and invalid-hash worker tests | PASS |
+| extraction failure/truncation/retry state | extraction quality and worker tests | PASS |
+| worker-to-analysis continuation | pipeline sequencing and contract tests | PASS |
+| deletion/cancellation and concurrent package commits | isolated database integration | OPEN |
+| exact preview worker/runtime | Vercel runtime proof | OPEN |
 
-State: **OPEN**
+The legacy extraction implementation is removed. Production upload paths no
+longer call `extractTextFromBuffer` or queue AI analysis directly.
+
+State: **FIXED_LOCAL — database/runtime proof pending**
 
 ## T004 — company upload to durable Vault ingestion
 
@@ -138,19 +143,26 @@ request validation
   -> optional authenticated human REVIEWED transition
 ```
 
-Current gap:
+Implemented local chain:
 
-- normal company upload relies on request-time extracted text and queues
-  `VAULT_INGEST` without proving that a background extraction step completed.
+- upload persists verified bytes with `aiExtractionStatus = PENDING` and no
+  trusted request-time extracted text;
+- `VAULT_INGEST` is queued with `reExtractAll: true`;
+- revision-zero queued documents enter the canonical background extraction
+  revision before grounded ingestion;
+- automatic promotion remains `SOURCE_VERIFIED`, never a synthesized human
+  review.
 
-Required coverage:
+Coverage:
 
-- legal, financial, compliance, expert CV, and project-reference document types;
-- extraction retry and hash change;
-- no stale knowledge after replacement/deletion;
-- review identity cannot be synthesized.
+| Area | Evidence | State |
+|---|---|---|
+| upload-to-re-extraction ownership | upload background-wiring/source-contract tests | PASS |
+| source-hash provenance and review semantics | source-verification and repair tests | PASS |
+| legal/financial/compliance/expert/project persistence | isolated database integration | OPEN |
+| replacement/deletion/concurrent retry | isolated database integration | OPEN |
 
-State: **OPEN**
+State: **FIXED_LOCAL — database integration pending**
 
 ## T005 — lifecycle truth shared by UI and gates
 

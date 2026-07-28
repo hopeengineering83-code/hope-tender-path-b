@@ -617,24 +617,26 @@ describe("[content-first] /api/upload route is restored", () => {
     assert.ok(/export async function POST/.test(src), "Upload route must export a POST handler");
   });
 
-  it("source: handleSecureUpload persists pageStatusJson (no more PAGE_STATUS_INCOMPLETE on fresh upload)", () => {
-    const src = readFileSync(resolve("lib/secure-upload-handler.ts"), "utf8");
-    assert.ok(/pageStatusJson/.test(src), "handleSecureUpload must persist pageStatusJson");
+  it("source: durable extraction persists pageStatusJson after verified bytes are processed", () => {
+    const upload = readFileSync(resolve("lib/secure-upload-handler.ts"), "utf8");
+    const worker = readFileSync(resolve("lib/ai-jobs/tender-extraction-service.ts"), "utf8");
+    assert.ok(!/extractTextFromBuffer/.test(upload), "upload request must not own extraction");
+    assert.ok(/pageStatusJson: metrics!\.pageStatusJson/.test(worker), "worker must persist pageStatusJson");
   });
 });
 
 // ─── 18. ocrModel column is written ────────────────────────────────────────
 describe("[content-first] ocrModel column is written when OCR runs", () => {
-  it("source: lib/tender-upload-first.ts writes ocrModel when OCR marker is present", () => {
-    const src = readFileSync(resolve("lib/tender-upload-first.ts"), "utf8");
-    assert.ok(/ocrModel/.test(src), "tender-upload-first must write ocrModel");
+  it("source: durable extraction writes ocrModel when OCR marker is present", () => {
+    const src = readFileSync(resolve("lib/ai-jobs/tender-extraction-service.ts"), "utf8");
+    assert.ok(/ocrModel/.test(src), "durable extraction must write ocrModel");
     // The OCR model label is derived from the marker prefix
     assert.ok(/claude-vision/.test(src), "ocrModel must be set to 'claude-vision' when OCR marker is present");
   });
 
-  it("source: lib/tender-upload-first.ts writes pageStatusJson (no more false PAGE_STATUS_INCOMPLETE)", () => {
-    const src = readFileSync(resolve("lib/tender-upload-first.ts"), "utf8");
-    assert.ok(/pageStatusJson/.test(src), "tender-upload-first must write pageStatusJson");
+  it("source: durable extraction writes pageStatusJson (no false PAGE_STATUS_INCOMPLETE)", () => {
+    const src = readFileSync(resolve("lib/ai-jobs/tender-extraction-service.ts"), "utf8");
+    assert.ok(/pageStatusJson/.test(src), "durable extraction must write pageStatusJson");
   });
 });
 

@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `audit/pr1175-complete-five-pass-forensic-audit` (child draft pending) | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; two authority regressions locally verified | Publish the first audit checkpoint, then wire uploads to the durable extraction owner |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; authority checkpoint published; durable extraction root fixed locally | Publish the extraction checkpoint, then investigate the exact preview schema/runtime failure |
 
 ### Lock rules
 
@@ -68,6 +68,19 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T18:20:00Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — background extraction authority.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains draft and unmerged.
+- **Frozen source:** governing PR head rechecked unchanged at `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca` before this checkpoint.
+- **Root cause and fix:** both tender request paths performed extraction inline and bypassed the registered durable worker; company upload trusted request-time text; a dead duplicate extraction implementation remained. Upload now persists verified bytes/source/package state plus exact hash-bound `EXTRACT_TEXT` jobs, the canonical worker exclusively owns extraction/metadata/continuation, replay returns durable state, and Vault ingestion forces background re-extraction.
+- **Files changed:** both tender upload handlers; canonical and legacy AI job handlers; metadata/re-extraction/pipeline UI helpers; tender upload UI consumers; focused upload, integrity, extraction, package, sequencing, metadata, and provenance tests; all four five-pass ledgers; this handoff.
+- **Tests:** new wiring contract failed 7/7 before the fix and passes 7/7 after; `npx tsc --noEmit`, ESLint, and the complete release-integrity audit clean; affected transitive suite 382/382 across 92 suites.
+- **CI / deployment:** no claim yet for the audit-head CI, isolated PostgreSQL integration, or audit-head Vercel preview. Local Node 24.14 differs from required Node `>=22 <23`.
+- **Security:** real-account testing remains prohibited until the leaked app password is rotated, active sessions are revoked, the GitHub secret is updated, and retained artifacts are sanitized.
+- **Next action:** publish this checkpoint, then reproduce and repair the preview `LegalRecord.trustLevel` schema/runtime boundary without touching a shared or production database.
+- **Merge status:** **UNSAFE — DO NOT MERGE.**
 
 ### 2026-07-28T15:34:40Z — Codex
 

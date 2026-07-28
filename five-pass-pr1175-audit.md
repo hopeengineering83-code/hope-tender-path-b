@@ -96,21 +96,51 @@ Remaining:
 
 Status: **IN PROGRESS**
 
-Current root cause:
+Root cause reproduced:
 
-- the durable `EXTRACT_TEXT` service exists and is registered, but no production
-  upload path calls `enqueueTenderFileExtractionJob`;
-- `lib/tender-upload-first.ts` and `lib/secure-upload-handler.ts` still perform
-  OCR/text extraction in the HTTP request and then queue analysis directly;
-- the legacy job handler still contains a second extraction implementation.
+- the durable `EXTRACT_TEXT` service was registered but had no production
+  upload caller;
+- both tender upload handlers performed OCR/text extraction in the HTTP request
+  and queued analysis directly;
+- company uploads persisted request-time extraction and could queue
+  `VAULT_INGEST` without requiring background re-extraction;
+- the legacy job module retained a second unreachable extraction
+  implementation.
 
-Required outcome:
+Closed locally:
 
-- request handlers validate/store bytes and persist source rows;
-- one canonical worker owns extraction and continues analysis only after all
-  active source files reach a durable terminal extraction state;
-- partial-package and replay behavior is deterministic and cannot strand a
-  tender between upload and analysis.
+1. Tender request handlers now validate and persist integrity-verified bytes,
+   source rows, package ledgers, and exact content-hash-bound extraction jobs.
+   The first-upload transaction owns both the durable source state and its job;
+   the append path reconciles durable package state before enqueueing.
+2. Only `lib/ai-jobs/tender-extraction-service.ts` owns extraction, optimistic
+   persistence, truncation disclosure, metadata enrichment, and the
+   all-active-file continuation check. The dead legacy implementation was
+   removed.
+3. Browser code only wakes the durable worker for the explicit returned stage;
+   it is not job authority. Replay returns the existing job/continuation state.
+4. Company uploads persist `PENDING` extraction state and queue
+   `VAULT_INGEST` with `reExtractAll: true`, so ingestion owns retryable
+   extraction rather than trusting request-time text.
+
+Verification:
+
+- the new upload-to-background-extraction wiring contract failed 7/7 before
+  the fix and passes 7/7 after it;
+- TypeScript and ESLint are clean;
+- the release-integrity, safe-error, user-metadata, and protected-gap audits
+  pass;
+- 382 focused and transitive assertions pass across upload, integrity,
+  extraction, package replay, pipeline continuation, metadata, provenance,
+  generation, PDF, and export consumers.
+
+Remaining:
+
+- database-backed ingestion/replay/concurrency proof on an isolated PostgreSQL
+  database;
+- supported Node 22 CI and exact-preview runtime proof;
+- explicit worker cancellation/deletion evidence in the final transitive
+  acceptance matrix.
 
 ### Pass 4 — evidence, generation, approval, export, and ZIP authority
 
@@ -159,7 +189,8 @@ outstanding.
 
 ## Acceptance state
 
-The audit is deliberately not marked complete. Two authority regressions are
-closed locally; background extraction wiring and the remaining pass matrix are
-still open. See the findings, transitive-coverage, and dependency-proof
-ledgers for claim-level status.
+The audit is deliberately not marked complete. Two authority regressions and
+the request-bound extraction root are closed locally; database-backed
+extraction proof and the remaining pass matrix are still open. See the
+findings, transitive-coverage, and dependency-proof ledgers for claim-level
+status.

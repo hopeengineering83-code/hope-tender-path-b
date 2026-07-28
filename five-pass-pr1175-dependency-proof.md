@@ -24,7 +24,7 @@ accepted as current evidence.
 
 | Donor item | Current-head disposition |
 |---|---|
-| request-bound tender extraction/OCR | Still present; canonical durable extraction worker exists but is disconnected. Remediation is OPEN. |
+| request-bound tender extraction/OCR | Reproduced and fixed locally: verified source/package persistence now owns deterministic extraction jobs and the canonical worker owns continuation. Database/runtime acceptance remains open. |
 | Review Inbox missing legal/financial/compliance | Revalidation OPEN. |
 | ineffective legal/financial/compliance concurrency guards | Revalidation OPEN. |
 | incomplete final ZIP manifest / duplicate ZIP owner | Revalidation OPEN. |
@@ -50,9 +50,12 @@ accepted as current evidence.
    matching policy; generation must not relabel that evidence as human-reviewed.
 3. Generation and auto-finalization no longer depend on an automatic
    signature/stamp mutator.
-4. Tender analysis should depend on completed durable extraction jobs, but the
-   request handlers have not yet been rewired to that existing service.
-5. Final release depends on supported-runtime CI, migration/database integration,
+4. Tender analysis now depends on completed durable extraction jobs. Upload
+   responses expose the exact durable stage so clients only wake the worker;
+   clients do not own extraction or analysis creation.
+5. Vault ingestion now depends on canonical background re-extraction from
+   verified stored bytes, not request-time text.
+6. Final release depends on supported-runtime CI, migration/database integration,
    exact-head Vercel runtime evidence, and closure or explicit deferral of every
    finding in the ledger.
 

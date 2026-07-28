@@ -47,6 +47,29 @@ Budget is approximately USD 2,500,000. Proposal validity: 120 days.
 `.repeat(4);
 
 describe("autoFillTenderMetadata — fills missing fields", () => {
+  it("replaces the upload-time review placeholder with a source-derived title", async () => {
+    const prismaMock = makePrismaMock();
+    const tender = {
+      id: "t-title",
+      title: "[REVIEW NEEDED] rfp",
+      clientName: null,
+      reference: null,
+      category: "General",
+      country: null,
+      deadline: null,
+      submissionMethod: null,
+      submissionAddress: null,
+      files: [{ extractedText: RICH_TEXT, originalFileName: "rfp.pdf" }],
+    };
+
+    const result = await autoFillTenderMetadata(tender, prismaMock as never);
+    const patch = prismaMock.getLastPatch();
+
+    assert.ok(result.filled.includes("title"));
+    assert.equal(typeof patch?.title, "string");
+    assert.doesNotMatch(String(patch?.title), /^\[REVIEW NEEDED\]/);
+  });
+
   it("fills clientName when it is empty", async () => {
     const prismaMock = makePrismaMock();
     const tender = {

@@ -15,7 +15,7 @@ const read = (p: string) => readFileSync(p, "utf8");
 describe("byte-integrity wiring — every writer pins at creation", () => {
   it("tender upload pins TenderFile integrity from the actual uploaded bytes", () => {
     const src = read("lib/tender-upload-first.ts");
-    assert.ok(src.includes("inspectActualFileBytes({ bytes: buffer"), "upload must inspect the real bytes");
+    assert.match(src, /inspectActualFileBytes\(\{\s*bytes: buffer,/s, "upload must inspect the real bytes");
     assert.ok(src.includes("...upload.integrity"), "tenderFile.create must persist the integrity record");
   });
 

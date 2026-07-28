@@ -19,6 +19,10 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { SUPPORTED_JOB_TYPES, parseJobTypeFilter } from "../lib/job-type-policy";
 import type { JobType } from "../lib/ai-jobs";
+import {
+  enqueueTenderFileExtractionJob,
+  tenderExtractionRunId,
+} from "../lib/ai-jobs/tender-extraction-service";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
@@ -120,7 +124,7 @@ describe("EXTRACT_TEXT job — handler registration", () => {
     assert.ok(service.includes('"OCR_AUTH_FAILED"'), "must distinguish OCR_AUTH_FAILED");
     assert.ok(service.includes('"OCR_RATE_LIMITED"'), "must distinguish OCR_RATE_LIMITED");
     assert.match(service, /const ocrOutcome = deriveOcrOutcome\(extractedText\);/);
-    assert.match(service, /ocrOutcome,\n\s*continuationReason: continuation\.reason,/, );
+    assert.match(service, /ocrOutcome,[\s\S]*continuationReason: continuation\.reason,/, );
   });
 
   it("EXTRACT_TEXT handler applies inferred metadata before enrichment + candidate classification", () => {
@@ -146,6 +150,54 @@ describe("EXTRACT_TEXT job — handler registration", () => {
     const region = service.slice(enrichBlockStart, enrichBlockEnd);
     assert.match(region, /try \{[\s\S]*catch \(error\) \{/);
     assert.match(region, /logger\.warn\("\[extract-text\] source enrichment failed after durable extraction"/);
+  });
+});
+
+describe("EXTRACT_TEXT job — deterministic producer", () => {
+  it("creates one hash-bound job and reuses it on replay", async () => {
+    const rows = new Map<string, { id: string; status: string }>();
+    const db = {
+      aiJob: {
+        findUnique: async ({ where }: { where: { runId: string } }) => rows.get(where.runId) ?? null,
+        create: async ({ data }: { data: { runId: string; status: string } }) => {
+          const row = { id: `job-${rows.size + 1}`, status: data.status };
+          rows.set(data.runId, row);
+          return row;
+        },
+      },
+    };
+    const sourceContentSha256 = "a".repeat(64);
+    const input = {
+      userId: "user-1",
+      companyId: "company-1",
+      tenderId: "tender-1",
+      tenderFileId: "file-1",
+      sourceContentSha256,
+      intakeSessionId: "session-1",
+    };
+
+    const first = await enqueueTenderFileExtractionJob(db as never, input);
+    const replay = await enqueueTenderFileExtractionJob(db as never, input);
+
+    assert.equal(first.reused, false);
+    assert.equal(replay.reused, true);
+    assert.equal(first.id, replay.id);
+    assert.equal(rows.size, 1);
+    assert.equal(first.runId, tenderExtractionRunId(input));
+    assert.match(first.runId, new RegExp(`file-1:${sourceContentSha256}$`));
+  });
+
+  it("rejects a producer input without an exact SHA-256 source identity", async () => {
+    await assert.rejects(
+      enqueueTenderFileExtractionJob({ aiJob: {} } as never, {
+        userId: "user-1",
+        companyId: "company-1",
+        tenderId: "tender-1",
+        tenderFileId: "file-1",
+        sourceContentSha256: "not-a-sha256",
+      }),
+      /EXTRACT_TEXT_SOURCE_HASH_INVALID/,
+    );
   });
 });
 

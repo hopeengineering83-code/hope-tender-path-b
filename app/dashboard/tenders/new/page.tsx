@@ -35,6 +35,7 @@ type UploadFirstPayload = {
    * Analyze button manually after upload. */
   nextAction?: string;
   processingJobId?: string;
+  pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
   intakeSessionId?: string;
 };
 
@@ -42,6 +43,7 @@ type AdditionalUploadPayload = {
   error?: string;
   results?: Array<{ success?: boolean; fileRecord?: { id: string }; error?: string }>;
   processingJobId?: string;
+  pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
 };
 
 function formatMegabytes(bytes: number): string {
@@ -96,7 +98,12 @@ export default function NewTenderPage() {
       expectedFiles: number;
       manifestJson: string;
     },
-  ): Promise<{ uploaded: number; failed: number; processingJobId: string | null }> {
+  ): Promise<{
+    uploaded: number;
+    failed: number;
+    processingJobId: string | null;
+    pipelineStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+  }> {
     const body = new FormData();
     for (const file of batch) body.append("file", file);
     body.append("tenderId", tenderId);
@@ -112,19 +119,20 @@ export default function NewTenderPage() {
       const response = await fetch("/api/upload", { method: "POST", body });
       const payload = await response.json().catch(() => ({})) as AdditionalUploadPayload;
       if (!Array.isArray(payload.results)) {
-        return { uploaded: 0, failed: batch.length, processingJobId: null };
+        return { uploaded: 0, failed: batch.length, processingJobId: null, pipelineStage: null };
       }
       const uploaded = payload.results.filter((result) => result.success === true && Boolean(result.fileRecord)).length;
       return {
         uploaded,
         failed: Math.max(0, batch.length - uploaded),
         processingJobId: payload.processingJobId ?? null,
+        pipelineStage: payload.pipelineStage ?? null,
       };
     } catch (e) {
       // Batch upload failed — surface to operator via console.
       // Previously bare `catch {}` — silent upload failures were invisible.
       try { console.error("[tenders/new] batch upload failed", e); } catch {}
-      return { uploaded: 0, failed: batch.length, processingJobId: null };
+      return { uploaded: 0, failed: batch.length, processingJobId: null, pipelineStage: null };
     }
   }
 
@@ -178,6 +186,7 @@ export default function NewTenderPage() {
       let failed = 0;
       let resumeBatchIndex: number | null = null;
       let processingJobId = data.processingJobId ?? null;
+      let pipelineStage = data.pipelineStage ?? null;
       const additionalBatches = batches.slice(1);
       if (additionalBatches.length > 0) {
         setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
@@ -203,6 +212,7 @@ export default function NewTenderPage() {
           }
           processed += batch.length;
           processingJobId = result.processingJobId ?? processingJobId;
+          pipelineStage = result.pipelineStage ?? pipelineStage;
           setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
         }
       }
@@ -210,6 +220,7 @@ export default function NewTenderPage() {
       const pipeline = await triggerTenderUploadAutoPipeline({
         ...data,
         processingJobId: failed === 0 ? processingJobId ?? undefined : undefined,
+        pipelineStage: failed === 0 ? pipelineStage : null,
         nextAction: failed === 0 ? data.nextAction : "RECONCILE_SOURCE_FILES",
       });
 

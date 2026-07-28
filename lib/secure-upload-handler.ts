@@ -2,16 +2,19 @@ import { logger } from "./observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "./prisma";
 import { requireRole } from "./auth";
-import { extractTextFromBuffer, detectCategoryFromFile, getFileTypeLabel, isMeaningfulExtraction } from "./extract-text";
-import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
+import { detectCategoryFromFile, getFileTypeLabel } from "./extract-text";
 import { logAction } from "./audit";
 import { ensureCompanyForUser } from "./company-workspace";
 import { rateLimitPersistent, UPLOAD_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter } from "./storage";
-import { queueAutomaticTenderPipeline } from "./ai-jobs/automatic-tender-pipeline";
+import {
+  continueTenderPipelineAfterExtraction,
+  enqueueTenderFileExtractionJob,
+  type EnqueueTenderExtractionInput,
+} from "./ai-jobs/tender-extraction-service";
 import { enqueueJob } from "./ai-jobs";
-import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
+import { validateUploadBatch, validateUploadFile } from "./upload-security";
 import { sanitizeError } from "./sanitize-error";
 import { inspectActualFileBytes } from "./engine/persisted-byte-integrity";
 import { invalidateTenderForSourceRevision } from "./engine/source-revision-invalidation";
@@ -21,20 +24,8 @@ import {
   failTenderPackageBatch,
   fingerprintTenderPackageBatch,
   parseTenderPackageIntake,
-  recordTenderPackageAnalysisJob,
   type TenderPackageSessionResult,
 } from "./tender-package-intake-session";
-
-function extractionMetadata(fileType: string, text: string, truncated: boolean) {
-  const meaningful = isMeaningfulExtraction(text);
-  return {
-    fileType,
-    extracted: meaningful,
-    extractedChars: meaningful ? text.length : 0,
-    extractionStatus: meaningful ? (truncated ? "TRUNCATED" : "EXTRACTED") : text ? "WARNING" : "EMPTY",
-    extractionMessage: meaningful ? null : "No meaningful text extracted",
-  };
-}
 
 export async function handleSecureUpload(req: Request) {
   const requestId = extractRequestId(req);
@@ -93,6 +84,40 @@ export async function handleSecureUpload(req: Request) {
     return NextResponse.json({ error: packageBatch.error, code: packageBatch.code }, { status: packageBatch.status });
   }
   if (packageBatch?.ok && packageBatch.replayed) {
+    let replayJobId = packageBatch.session.analysisJobId;
+    let replayAnalysisRevision = packageBatch.session.analysisRevision;
+    let replayStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null =
+      replayJobId ? "AI_ANALYZE_QUEUED" : null;
+    if (!replayJobId && packageBatch.session.missingBatchIndexes.length === 0 && tenderId) {
+      const continuation = await continueTenderPipelineAfterExtraction({
+        userId: actor.id,
+        tenderId,
+        companyId: company.id,
+        intakeSessionId: intake?.sessionId ?? null,
+        deferAnalysis,
+      }).catch(() => null);
+      if (continuation?.queued && continuation.jobId) {
+        replayJobId = continuation.jobId;
+        replayAnalysisRevision = continuation.analysisRevision ?? null;
+        replayStage = "AI_ANALYZE_QUEUED";
+      }
+    }
+    if (!replayJobId && tenderId) {
+      const queuedExtraction = await prisma.aiJob.findFirst({
+        where: {
+          tenderId,
+          userId: actor.id,
+          jobType: "EXTRACT_TEXT",
+          status: { in: ["QUEUED", "RUNNING"] },
+        },
+        orderBy: { createdAt: "asc" },
+        select: { id: true },
+      });
+      if (queuedExtraction) {
+        replayJobId = queuedExtraction.id;
+        replayStage = "EXTRACT_TEXT_QUEUED";
+      }
+    }
     const records = tenderId && packageBatch.createdFileIds.length > 0
       ? await prisma.tenderFile.findMany({
           where: {
@@ -114,9 +139,9 @@ export async function handleSecureUpload(req: Request) {
       uploaded: records.length,
       errors: 0,
       results: records.map((fileRecord) => ({ success: true, scope: "tender", replayed: true, fileRecord })),
-      processingJobId: packageBatch.session.analysisJobId,
-      analysisRevision: packageBatch.session.analysisRevision,
-      pipelineStage: packageBatch.session.analysisJobId ? "AI_ANALYZE_QUEUED" : null,
+      processingJobId: replayJobId,
+      analysisRevision: replayAnalysisRevision,
+      pipelineStage: replayStage,
       pipelineDeferred: packageBatch.session.missingBatchIndexes.length > 0,
       intakeSessionId: intake?.sessionId ?? null,
       intakeSession: packageBatch.session,
@@ -127,10 +152,11 @@ export async function handleSecureUpload(req: Request) {
   const storage = getStorageAdapter();
   const results: Array<Record<string, unknown>> = [];
   let companyFilesCreated = 0;
-  let tenderFilesCreated = 0;
+  const tenderExtractionInputs: EnqueueTenderExtractionInput[] = [];
 
   for (const file of files) {
     let stored: Awaited<ReturnType<typeof storage.putFile>> | null = null;
+    let sourceRowPersisted = false;
     try {
       const buffer = Buffer.from(await file.arrayBuffer());
       const validation = await validateUploadFile(file, buffer);
@@ -142,7 +168,8 @@ export async function handleSecureUpload(req: Request) {
       const fileName = validation.safeFileName;
       const mimeType = validation.normalizedMime;
       const integrity = inspectActualFileBytes({ bytes: buffer, filename: fileName, claimedMimeType: mimeType });
-      if (integrity.integrityStatus !== "VERIFIED") {
+      const contentHash = integrity.contentSha256;
+      if (integrity.integrityStatus !== "VERIFIED" || !contentHash) {
         results.push({
           success: false,
           fileName,
@@ -151,7 +178,6 @@ export async function handleSecureUpload(req: Request) {
         });
         continue;
       }
-      const contentHash = integrity.contentSha256;
 
       // Package retries are byte-idempotent. A prior attempt may have stored
       // some files before its response failed; reuse those active rows instead
@@ -168,16 +194,22 @@ export async function handleSecureUpload(req: Request) {
         });
         if (existingFile) {
           results.push({ success: true, scope: "tender", replayed: true, fileRecord: existingFile });
-          if (intake) tenderFilesCreated += 1;
+          if (existingFile.contentSha256) {
+            tenderExtractionInputs.push({
+              userId: actor.id,
+              companyId: company.id,
+              tenderId,
+              tenderFileId: existingFile.id,
+              sourceContentSha256: existingFile.contentSha256,
+              intakeSessionId: intake?.sessionId ?? null,
+              deferAnalysis,
+            });
+          }
           continue;
         }
       }
 
-      const extracted = limitExtractedText(await extractTextFromBuffer(buffer, mimeType, fileName));
       const fileType = getFileTypeLabel(mimeType, fileName);
-      const extraction = extractionMetadata(fileType, extracted.text, extracted.truncated);
-      const quality = assessExtractionQuality(extracted.text, fileName);
-      const perPage = assessExtractionQualityPerPage(extracted.text);
 
       stored = await storage.putFile(buffer, {
         fileName,
@@ -200,13 +232,15 @@ export async function handleSecureUpload(req: Request) {
               fileContent: stored!.fileContent ?? null,
               ...integrity,
               classification,
-              extractedText: extracted.text || null,
-              totalPages: perPage.totalDetectedPages,
-              extractedPages: perPage.totalDetectedPages - perPage.failedPages.length,
-              ocrPages: perPage.ocrPages.length,
-              failedPages: perPage.failedPages.length,
-              extractionScore: quality.score,
-              pageStatusJson: JSON.stringify(perPage.pages),
+              extractedText: null,
+              totalPages: null,
+              extractedPages: null,
+              ocrPages: null,
+              failedPages: null,
+              extractionScore: null,
+              extractionMethod: null,
+              pageStatusJson: null,
+              ocrModel: null,
               contentHash,
             },
             select: { id: true, tenderId: true, fileName: true, originalFileName: true, mimeType: true, size: true, classification: true, integrityStatus: true, contentSha256: true, contentByteLength: true, detectedFormat: true, createdAt: true },
@@ -214,16 +248,44 @@ export async function handleSecureUpload(req: Request) {
           await invalidateTenderForSourceRevision(tx, tenderId, "SOURCE_FILE_ADDED");
           return created;
         });
-        tenderFilesCreated += 1;
-        results.push({ success: true, scope: "tender", fileRecord: record, extraction, storageProvider: stored.provider });
+        sourceRowPersisted = true;
+        results.push({
+          success: true,
+          scope: "tender",
+          fileRecord: record,
+          extraction: { fileType, extractionStatus: "QUEUED" },
+          storageProvider: stored.provider,
+        });
+        tenderExtractionInputs.push({
+          userId: actor.id,
+          companyId: company.id,
+          tenderId,
+          tenderFileId: record.id,
+          sourceContentSha256: contentHash,
+          intakeSessionId: intake?.sessionId ?? null,
+          deferAnalysis,
+        });
         await logAction({
           userId: actor.id,
           action: "TENDER_FILE_UPLOAD",
           entityType: "TenderFile",
           entityId: record.id,
           description: `Uploaded validated ${fileType} file to tender`,
-          metadata: { tenderId, fileName, storageProvider: stored.provider, ...extraction },
+          metadata: {
+            tenderId,
+            fileName,
+            storageProvider: stored.provider,
+            extractionStatus: "QUEUED",
+            extractionOwner: "EXTRACT_TEXT",
+          },
           requestId,
+        }).catch((error) => {
+          logger.warn("[secure-upload] tender upload audit persistence failed", {
+            requestId,
+            tenderId,
+            fileId: record.id,
+            errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+          });
         });
       } else {
         const categoryValue = formData.get("category");
@@ -242,36 +304,58 @@ export async function handleSecureUpload(req: Request) {
             fileContent: stored!.fileContent ?? null,
             ...integrity,
             category,
-            extractedText: extracted.text || null,
+            extractedText: null,
+            aiExtractionStatus: "PENDING",
+            aiExtractedAt: null,
+            aiExtractionError: null,
             metadata: JSON.stringify({
               category,
               autoDetected: !providedCategory || providedCategory === "AUTO",
               storageProvider: stored.provider,
-              extractionRevision: 1,
-              extractionScore: quality.score,
-              pageStatus: perPage.pages,
-              totalPages: perPage.totalDetectedPages,
-              failedPages: perPage.failedPages,
-              ocrPages: perPage.ocrPages,
-              ...extraction,
+              extractionRevision: 0,
+              extractionStatus: "QUEUED",
+              extractionOwner: "VAULT_INGEST",
+              fileType,
             }),
           },
           select: { id: true, companyId: true, fileName: true, originalFileName: true, mimeType: true, size: true, category: true, integrityStatus: true, contentSha256: true, contentByteLength: true, detectedFormat: true, createdAt: true },
         });
+        sourceRowPersisted = true;
         companyFilesCreated += 1;
-        results.push({ success: true, scope: "company", docRecord: record, extraction, storageProvider: stored.provider });
+        results.push({
+          success: true,
+          scope: "company",
+          docRecord: record,
+          extraction: { fileType, extractionStatus: "QUEUED" },
+          storageProvider: stored.provider,
+        });
         await logAction({
           userId: actor.id,
           action: "COMPANY_DOCUMENT_UPLOAD",
           entityType: "CompanyDocument",
           entityId: record.id,
           description: `Uploaded validated ${fileType} company document`,
-          metadata: { companyId: company.id, fileName, category, storageProvider: stored.provider, extractionRevision: 1, ...extraction },
+          metadata: {
+            companyId: company.id,
+            fileName,
+            category,
+            storageProvider: stored.provider,
+            extractionRevision: 0,
+            extractionStatus: "QUEUED",
+            extractionOwner: "VAULT_INGEST",
+          },
           requestId,
+        }).catch((error) => {
+          logger.warn("[secure-upload] company upload audit persistence failed", {
+            requestId,
+            companyId: company.id,
+            documentId: record.id,
+            errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+          });
         });
       }
     } catch (error) {
-      if (stored) {
+      if (stored && !sourceRowPersisted) {
         await storage.deleteFile({ storagePath: stored.storagePath, fileContent: stored.fileContent, fileName: file.name }).catch(() => {});
       }
       logger.error(`[secure-upload] requestId=${requestId} file=${file.name}: ${sanitizeError(error)}`);
@@ -281,6 +365,7 @@ export async function handleSecureUpload(req: Request) {
 
   let processingJobId: string | null = null;
   let analysisRevision: string | null = null;
+  let processingStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null = null;
   let pipelineWarning: string | null = null;
   const uploadBatchFailed = results.some((result) => result.success !== true);
   let intakeSession: TenderPackageSessionResult | null = packageBatch?.ok ? packageBatch.session : null;
@@ -315,36 +400,56 @@ export async function handleSecureUpload(req: Request) {
     }
   }
 
-  if (tenderId && tenderFilesCreated > 0 && sourcePackageComplete && !uploadBatchFailed && (!deferAnalysis || Boolean(intake))) {
-    try {
-      const pipeline = await queueAutomaticTenderPipeline({
-        tenderId,
-        userId: actor.id,
-        companyId: company.id,
-        source: "secure-upload",
-      });
-      processingJobId = pipeline.jobId;
-      analysisRevision = pipeline.analysisRevision;
-      if (intake) {
-        await recordTenderPackageAnalysisJob({
-          prisma,
-          companyId: company.id,
+  // Package state is reconciled before jobs become visible. Each deterministic
+  // job is safe to replay and is bound to the exact persisted source hash.
+  if (tenderId && tenderExtractionInputs.length > 0) {
+    for (const input of tenderExtractionInputs) {
+      try {
+        const extractionJob = await enqueueTenderFileExtractionJob(prisma, input);
+        if (!processingJobId) {
+          processingJobId = extractionJob.id;
+          processingStage = "EXTRACT_TEXT_QUEUED";
+        }
+      } catch (error) {
+        pipelineWarning = "Files were stored, but durable source extraction could not be queued. Retry the upload safely.";
+        logger.error("[secure-upload] tender extraction enqueue failed", {
+          requestId,
           tenderId,
-          sessionId: intake.sessionId,
-          jobId: pipeline.jobId,
-          analysisRevision: pipeline.analysisRevision,
+          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
         });
+      }
+    }
+  }
+
+  // This is a readiness check, not request-bound extraction. It closes the
+  // final-batch/replay case where every source was already extracted before
+  // the package session became complete. Pending jobs will perform the same
+  // continuation after their durable checkpoints are written.
+  if (tenderId && sourcePackageComplete && !uploadBatchFailed && (!deferAnalysis || Boolean(intake))) {
+    try {
+      const continuation = await continueTenderPipelineAfterExtraction({
+        userId: actor.id,
+        tenderId,
+        companyId: company.id,
+        intakeSessionId: intake?.sessionId ?? null,
+        deferAnalysis,
+      });
+      if (continuation.queued && continuation.jobId) {
+        processingJobId = continuation.jobId;
+        processingStage = "AI_ANALYZE_QUEUED";
+        analysisRevision = continuation.analysisRevision ?? null;
         if (intakeSession) {
           intakeSession = {
             ...intakeSession,
-            analysisJobId: pipeline.jobId,
-            analysisRevision: pipeline.analysisRevision,
+            analysisJobId: continuation.jobId,
+            analysisRevision,
           };
         }
       }
     } catch (error) {
-      pipelineWarning = "Files were stored, but automatic analysis could not be queued. Open the tender and retry AI Analyze.";
-      logger.error("[secure-upload] automatic tender pipeline queue failed", {
+      pipelineWarning = pipelineWarning
+        ?? "Source extraction is durable, but automatic analysis continuation must retry.";
+      logger.error("[secure-upload] tender continuation check failed", {
         requestId,
         tenderId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
@@ -362,7 +467,11 @@ export async function handleSecureUpload(req: Request) {
   let companyImport: Record<string, unknown> | null = null;
   if (!tenderId && companyFilesCreated > 0) {
     try {
-      const job = await enqueueJob({ userId: actor.id, jobType: "VAULT_INGEST", input: { companyId: company.id } });
+      const job = await enqueueJob({
+        userId: actor.id,
+        jobType: "VAULT_INGEST",
+        input: { companyId: company.id, reExtractAll: true },
+      });
       companyImport = { status: "QUEUED", jobId: job.id };
     } catch (error) {
       logger.error(`[secure-upload] requestId=${requestId} company import enqueue failed: ${sanitizeError(error)}`);
@@ -380,7 +489,7 @@ export async function handleSecureUpload(req: Request) {
       results,
       processingJobId,
       analysisRevision,
-      pipelineStage: processingJobId ? "AI_ANALYZE_QUEUED" : null,
+      pipelineStage: processingStage,
       pipelineDeferred: Boolean(tenderId && (intake ? !sourcePackageComplete : deferAnalysis)),
       pipelineWarning,
       intakeSessionId: intake?.sessionId ?? null,
