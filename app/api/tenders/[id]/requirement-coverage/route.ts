@@ -6,6 +6,7 @@ import { rateLimit, API_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
 import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../../../../../lib/vault-review-provenance";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -162,28 +163,33 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       }),
       company ? prisma.expert.findMany({
         where: { companyId: company.id, deletedAt: null },
-        select: { id: true, fullName: true, trustLevel: true },
+        select: { ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT, id: true },
         take: 50,
       }) : Promise.resolve([]),
       company ? prisma.project.findMany({
         where: { companyId: company.id, deletedAt: null },
-        select: { id: true, name: true, trustLevel: true },
+        select: { ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT, id: true },
         take: 50,
       }) : Promise.resolve([]),
     ]);
 
     const vaultEvidence: VaultEvidence[] = [
+      // isReviewed drives whether the UI offers this record as linkable
+      // evidence, so it must mean "generation can actually use this", not
+      // "the label is literally REVIEWED". The raw comparison marked every
+      // durably SOURCE_VERIFIED record unusable, hiding the entire vault from
+      // a company whose evidence comes only from its own uploaded documents.
       ...vaultExperts.map((expert) => ({
         id: expert.id,
         name: expert.fullName ?? "Expert",
         type: "EXPERT" as const,
-        isReviewed: expert.trustLevel === "REVIEWED",
+        isReviewed: canUseVaultRecord(expert as ReviewRecordState, "GENERATION"),
       })),
       ...vaultProjects.map((project) => ({
         id: project.id,
         name: project.name ?? "Project",
         type: "PROJECT" as const,
-        isReviewed: project.trustLevel === "REVIEWED",
+        isReviewed: canUseVaultRecord(project as ReviewRecordState, "GENERATION"),
       })),
     ];
     const canonicalStatuses = new Map(

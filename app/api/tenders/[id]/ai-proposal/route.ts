@@ -187,12 +187,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         files: { select: { originalFileName: true, extractedText: true } },
         expertMatches: {
           where: { isSelected: true },
-          include: { expert: true },
+          include: { expert: { include: { sourceDocument: true } } },
           orderBy: { score: "desc" },
         },
         projectMatches: {
           where: { isSelected: true },
-          include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } },
+          include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 }, sourceDocument: true } } },
           orderBy: { score: "desc" },
         },
         complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
@@ -206,16 +206,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         // Vault fallback — mirrors generate-elite.ts: when selected
         // records are all unreviewed we substitute the firm's reviewed
         // vault so the AI proposal still has real names + evidence.
+        // Prefilter to the two trust levels that can possibly be usable, then
+        // let selectReviewedEvidenceForAIDraft apply the real authority
+        // (canUseVaultRecord). Filtering to trustLevel:"REVIEWED" here dropped
+        // every durably SOURCE_VERIFIED record before the resolver ever saw
+        // it, so a company whose evidence comes only from its own uploaded
+        // documents had an empty vault fallback and got a proposal with no
+        // expert or project evidence at all.
         experts: {
-          where: { trustLevel: "REVIEWED", deletedAt: null },
+          where: { trustLevel: { in: ["REVIEWED", "SOURCE_VERIFIED"] }, deletedAt: null },
           orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
           take: 12,
+          include: { sourceDocument: true },
         },
         projects: {
-          where: { trustLevel: "REVIEWED", deletedAt: null },
+          where: { trustLevel: { in: ["REVIEWED", "SOURCE_VERIFIED"] }, deletedAt: null },
           orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
           take: 8,
-          include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
+          include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 }, sourceDocument: true },
         },
       },
     }),
@@ -317,28 +325,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: true, proposal, fallback: true });
   }
 
-  let experts = tender.expertMatches.map((m) => m.expert).filter((e) => e.trustLevel === "REVIEWED");
-  let projects = tender.projectMatches.map((m) => m.project).filter((p) => p.trustLevel === "REVIEWED");
-
-  // Vault fallback: if selected matches are all unreviewed (AI_DRAFT /
-  // REGEX_DRAFT), use the company's reviewed vault.
-  // Do NOT include unreviewed evidence in AI draft context. Unreviewed
-  // records remain visible in dashboards but are excluded from factual
-  // proposal evidence generation.
-  const vaultExperts = (company as unknown as { experts?: typeof experts }).experts ?? [];
-  const vaultProjects = (company as unknown as { projects?: typeof projects }).projects ?? [];
-  const expertSelection = selectReviewedEvidenceForAIDraft(
-    tender.expertMatches.map((m) => m.expert),
-    vaultExperts,
-  );
+  // Vault fallback: if no selected match carries usable evidence, fall back to
+  // the company's own usable vault records.
+  // Eligibility is decided once, inside selectReviewedEvidenceForAIDraft, by
+  // canUseVaultRecord(..., "GENERATION") — the same authority the rest of
+  // generation uses. Draft records (and records whose provenance no longer
+  // verifies) stay visible in dashboards but are excluded from factual
+  // proposal evidence. Two naive raw-trustLevel prefilters used to run here
+  // first; they were both wrong and, since their results were immediately
+  // overwritten by the selection below, dead as well.
+  const selectedExperts = tender.expertMatches.map((m) => m.expert);
+  const selectedProjects = tender.projectMatches.map((m) => m.project);
+  const vaultExperts = (company as unknown as { experts?: typeof selectedExperts }).experts ?? [];
+  const vaultProjects = (company as unknown as { projects?: typeof selectedProjects }).projects ?? [];
+  const expertSelection = selectReviewedEvidenceForAIDraft(selectedExperts, vaultExperts);
   const projectSelection = selectReviewedEvidenceForAIDraft(
-    tender.projectMatches.map((m) => m.project),
-    vaultProjects as typeof projects,
+    selectedProjects,
+    vaultProjects as typeof selectedProjects,
   );
-  experts = expertSelection.evidence;
-  projects = projectSelection.evidence;
-  if (expertSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No REVIEWED selected experts — using ${experts.length} reviewed vault expert(s).`);
-  if (projectSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No REVIEWED selected projects — using ${projects.length} reviewed vault project(s).`);
+  const experts = expertSelection.evidence;
+  const projects = projectSelection.evidence;
+  if (expertSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No usable selected experts — using ${experts.length} usable vault expert(s).`);
+  if (projectSelection.usedReviewedVaultFallback) logger.warn(`[ai-proposal] No usable selected projects — using ${projects.length} usable vault project(s).`);
   if (experts.length === 0 && tender.expertMatches.length > 0) logger.warn("[ai-proposal] No reviewed expert evidence available — expert claims will be omitted from AI draft evidence context.");
   if (projects.length === 0 && tender.projectMatches.length > 0) logger.warn("[ai-proposal] No reviewed project evidence available — project claims will be omitted from AI draft evidence context.");
 

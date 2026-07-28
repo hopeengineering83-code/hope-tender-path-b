@@ -37,8 +37,12 @@ describe("requirement-coverage safe response boundary", () => {
   it("keeps auto-linked Vault evidence display-only and never fully covered", () => {
     assert.match(source, /evidenceSource: "VAULT_AUTO_LINK"/);
     assert.match(source, /supportLevel: "PARTIAL"/);
-    assert.match(source, /isReviewed: expert\.trustLevel === "REVIEWED"/);
-    assert.match(source, /isReviewed: project\.trustLevel === "REVIEWED"/);
+    // isReviewed decides whether the UI offers a record as linkable evidence,
+    // so it must be the canonical generation authority rather than a raw
+    // trustLevel comparison — the latter marked every durably SOURCE_VERIFIED
+    // record unusable and hid the whole vault from an upload-only company.
+    assert.match(source, /isReviewed: canUseVaultRecord\(expert as ReviewRecordState, "GENERATION"\)/);
+    assert.match(source, /isReviewed: canUseVaultRecord\(project as ReviewRecordState, "GENERATION"\)/);
     assert.match(source, /canonicalStatus\?\.displayStatus/);
     assert.match(source, /canonicalStatus\?\.displayStatus === "FULLY_MET"/);
   });
