@@ -170,6 +170,15 @@ This proves deployment identity and basic health only. No complete authenticated
   selector and full containment/page-bound authority and pass locally with
   their behavioral suites. Build and Playwright were skipped, so this run is
   not release acceptance.
+- Run `30385573397` for Build Plan checkpoint `21c18227…` passed migration
+  deployment, critical schema, retroactive initialization, idempotency, zero
+  drift, release integrity, typecheck and lint. Unit/database tests completed
+  with one failure: the workflow-anchor acceptance test did not include the
+  new canonical `SubmissionPlanReconciliationPanel` in its owning-source
+  manifest even though the registry, rendered page and component anchor were
+  aligned. The manifest now checks that real owner and its focused suite passes
+  20/20 locally. Build and Playwright were skipped; replacement exact-head CI
+  remains required.
 
 No isolated PostgreSQL, Playwright, DOCX/PDF/ZIP full-pipeline, audit-head
 Vercel preview, or real-account result is claimed. A local production build
