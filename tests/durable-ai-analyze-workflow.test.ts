@@ -82,9 +82,13 @@ describe("partial / fallback analysis cannot promote or reach SUCCEEDED", () => 
     assert.doesNotMatch(src, /status:\s*"SUCCEEDED"/);
   });
 
-  it("the worker recovery path also finalizes instead of blindly completing", () => {
-    const src = readFileSync("lib/ai-jobs/worker.ts", "utf8");
-    assert.match(src, /finalizeAnalysisJob\(result\.jobId, job\.userId\)/);
+  // Retargeted from the deleted lib/ai-jobs/worker.ts (no production importer)
+  // to the handler the durable queue actually runs. The property is the same:
+  // the recovery path must go through finalizeAnalysisJob rather than deciding
+  // a terminal status itself and skipping canonical promotion.
+  it("the live handler recovery path also finalizes instead of blindly completing", () => {
+    const src = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
+    assert.match(src, /finalizeAnalysisJob\(result\.jobId, ctx\.userId\)/);
     assert.doesNotMatch(src, /const finalStatus = result\.isPartial \? "PARTIAL_SUCCESS" : "SUCCEEDED"/);
   });
 });

@@ -97,21 +97,25 @@ describe("P1-6 — contentChangedHardBlock is no longer always false", () => {
   });
 });
 
-// ─── P0-1: tender-operation-lock idempotencyKey is deterministic ───────────
+// ─── P0-1: the workflow idempotencyKey is deterministic ────────────────────
+//
+// Retargeted from lib/engine/tender-operation-lock.ts, which was deleted: it
+// had no production importer, so a deterministic key in it protected nothing.
+// The live key is derived in lib/engine/tender-workflow-runner.ts.
 
-describe("P0-1 — tender-operation-lock idempotencyKey is deterministic", () => {
-  it("does NOT include Date.now() in the idempotencyKey", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    // Strip comments so the check only applies to real code.
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "");
-    // The old code had: `${operation}-${Date.now()}`
-    // The new code has: `${operation}`
-    assert.doesNotMatch(codeOnly, /idempotencyKey\s*=\s*`\$\{operation\}-\$\{Date\.now\(\)\}`/);
+describe("P0-1 — workflow idempotencyKey is deterministic", () => {
+  const src = read("lib/engine/tender-workflow-runner.ts");
+  // Strip comments so the check only applies to real code.
+  const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  it("does NOT derive the idempotencyKey from wall-clock time", () => {
+    assert.doesNotMatch(codeOnly, /idempotencyKey[^\n]*Date\.now\(\)/);
+    assert.doesNotMatch(codeOnly, /idempotencyKey[^\n]*randomUUID/);
   });
 
-  it("uses a deterministic key derived from operation only", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.match(src, /idempotencyKey\s*=\s*`\$\{operation\}`/);
+  it("derives it by stable hash of tenant, tender, operation and request", () => {
+    assert.match(src, /export function deriveIdempotencyKey/);
+    assert.match(src, /computeStableHash\(\{[\s\S]*?tenantId[\s\S]*?tenderId[\s\S]*?operation/);
   });
 });
 
