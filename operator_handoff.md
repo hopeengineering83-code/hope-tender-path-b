@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `release/consolidated-recovery-20260717` (PR #1175) | Latest-preview runtime repair and single-authority workflow truth | AI job diagnostics, support-evidence loading, bid strategy, compliance/vault/plan/readiness panels, tests | Published; exact-head CI/preview proof required | Inspect exact-head CI/preview logs and retain the real-account security hold |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` (child draft pending) | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; two authority regressions locally verified | Publish the first audit checkpoint, then wire uploads to the durable extraction owner |
 
 ### Lock rules
 
@@ -68,6 +68,19 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T15:34:40Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — work remains active.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / child draft pending first checkpoint commit; governing PR #1175 remains draft and unmerged.
+- **Frozen source:** PR #1175 head `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`; base `b3c9db5de89a2a665e61a83facbff0f276f9983c`; governing branch rechecked unchanged before editing.
+- **Scope completed locally:** restored truthful automatic evidence authority (`SOURCE_VERIFIED`, never fabricated `REVIEWED`); removed automatic signature/stamp mutation from generation and auto-finalize; added the four five-pass audit ledgers.
+- **Files changed:** `lib/company-auto-verification.ts`; generation/auto-finalize routes; removed `lib/engine/apply-signature-stamp.ts`; provenance/repair/signature tests; `five-pass-pr1175-*.md`; this handoff.
+- **Tests:** `npx tsc --noEmit` clean; 126/126 focused and transitive tests pass across provenance, matching, signature approval, auto-finalize, PDF finalization, and export format.
+- **CI / deployment:** governing exact-head CI and screenshot runs were green and exact-head Vercel deployment was READY before this audit; no audit-head CI/preview exists yet.
+- **Known risks:** request-bound OCR still bypasses the registered durable extraction worker; the supplied preview shows database migration and cross-panel truth contradictions; no local PostgreSQL service; local Node 24.14 differs from required Node `>=22 <23`; real-account security hold remains active.
+- **Next action:** publish/open the child draft PR, then reconnect both upload paths to deterministic background extraction and continue the remaining pass ledger.
+- **Merge status:** **UNSAFE — DO NOT MERGE.**
 
 <!-- Add newest entry at the top. -->
 

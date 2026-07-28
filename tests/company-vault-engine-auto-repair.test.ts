@@ -22,12 +22,11 @@ test("Review Inbox reprocesses stored source bytes before rebuilding records", (
   assert.doesNotMatch(review, /fetch\("\/api\/company\/knowledge\/repair", \{ method: "POST" \}\)/);
 });
 
-test("automatic repair produces auto-REVIEWED with SYSTEM_AUTO_VERIFIED, never fabricated human REVIEWED", () => {
+test("automatic repair produces SOURCE_VERIFIED, never fabricated human REVIEWED", () => {
   assert.match(ingestion, /autoVerifyCompanyKnowledge\(companyId\)/);
-  // The App auto-verifies against source bytes AND auto-approves to REVIEWED
-  // using buildReviewProvenance (not buildSourceVerificationProvenance).
-  assert.match(verification, /buildReviewProvenance/);
-  assert.match(verification, /trustLevel: "REVIEWED"/);
-  assert.match(verification, /reviewedBy: "SYSTEM_AUTO_VERIFIED"/);
-  assert.match(verification, /reviewerId: "SYSTEM_AUTO_VERIFIED"/);
+  assert.match(verification, /buildSourceVerificationProvenance/);
+  assert.match(verification, /trustLevel: "SOURCE_VERIFIED"/);
+  assert.match(verification, /reviewedBy: null/);
+  assert.match(verification, /reviewedAt: null/);
+  assert.doesNotMatch(verification, /data:\s*\{[^}]*trustLevel: "REVIEWED"/s);
 });

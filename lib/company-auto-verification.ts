@@ -1,9 +1,12 @@
 import { prisma, prismaReady } from "./prisma";
 import {
-  buildReviewProvenance,
+  buildSourceVerificationProvenance,
   expertReviewFields,
   projectReviewFields,
   publicVaultIdentifier,
+  type ReviewEvidenceField,
+  type ReviewRecordType,
+  type ReviewSourceDocument,
 } from "./vault-review-provenance";
 
 export type AutoVerificationResult = {
@@ -19,6 +22,39 @@ function verificationMethod(trustLevel: string | null | undefined): "AI" | "DETE
   if (trustLevel === "AI_DRAFT") return "AI";
   if (trustLevel === "REGEX_DRAFT") return "DETERMINISTIC";
   return "HYBRID";
+}
+
+/**
+ * Automatic ingestion may prove that fields are grounded in current, owned
+ * source bytes. It cannot manufacture an authenticated human review.
+ *
+ * Keeping this decision pure makes the authority transition executable in
+ * tests and gives every database writer one canonical state payload.
+ */
+export function deriveAutomaticSourceVerification(input: {
+  recordType: ReviewRecordType;
+  sourceDocument: ReviewSourceDocument | null | undefined;
+  fields: ReviewEvidenceField[];
+  priorTrustLevel: string | null | undefined;
+}) {
+  const provenance = buildSourceVerificationProvenance({
+    recordType: input.recordType,
+    sourceDocument: input.sourceDocument,
+    fields: input.fields,
+    verificationMethod: verificationMethod(input.priorTrustLevel),
+  });
+  if (!provenance.ok) return provenance;
+
+  return {
+    ok: true as const,
+    provenance,
+    reviewState: {
+      trustLevel: "SOURCE_VERIFIED" as const,
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNotes: provenance.serialized,
+    },
+  };
 }
 
 export async function autoVerifyCompanyKnowledge(companyId: string): Promise<AutoVerificationResult> {
@@ -113,18 +149,17 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
 
   for (const expert of experts) {
     const source = expert.sourceDocument?.companyId === companyId ? expert.sourceDocument : null;
-    const reviewedAt = new Date();
-    const provenance = buildReviewProvenance({
+    const decision = deriveAutomaticSourceVerification({
       recordType: "EXPERT",
       sourceDocument: source,
       fields: expertReviewFields(expert),
-      reviewerId: "SYSTEM_AUTO_VERIFIED",
-      reviewedAt,
+      priorTrustLevel: expert.trustLevel,
     });
-    if (!provenance.ok) {
+    if (!decision.ok) {
       expertsBlocked += 1;
       continue;
     }
+    const { provenance } = decision;
 
     const updated = await prisma.expert.updateMany({
       where: {
@@ -137,14 +172,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         ],
       },
       data: {
-        // Auto-review: the user uploads all company documents — the App
-        // verifies them against source bytes AND auto-approves them.
-        // No human review is required because uploaded documents are the
-        // only source of company evidence.
-        trustLevel: "REVIEWED",
-        reviewedBy: "SYSTEM_AUTO_VERIFIED",
-        reviewedAt,
-        reviewNotes: provenance.serialized,
+        ...decision.reviewState,
         updatedAt: new Date(),
       },
     });
@@ -154,20 +182,20 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
     await prisma.auditLog.create({
       data: {
         userId: company.userId,
-        action: "EXPERT_AUTO_REVIEWED",
+        action: "EXPERT_SOURCE_VERIFIED",
         entityType: "Expert",
         entityId: expert.id,
-        description: "Expert evidence was machine-verified against owned source bytes and auto-approved for use.",
+        description: "Expert evidence was machine-verified against owned source bytes and exact fields.",
         metadata: JSON.stringify({
           recordRef: publicVaultIdentifier(expert.id),
-          trustLevel: "REVIEWED",
-          reviewedBy: "SYSTEM_AUTO_VERIFIED",
+          trustLevel: "SOURCE_VERIFIED",
           verificationMethod: verificationMethod(expert.trustLevel),
           sourceContentHash: provenance.sourceContentHash,
           sourceByteLength: provenance.sourceByteLength,
           sourceTextHash: provenance.sourceTextHash,
+          sourceExtractionRevision: provenance.sourceExtractionRevision,
           evidenceFields: provenance.evidenceFields,
-          reviewedAt: reviewedAt.toISOString(),
+          verifiedAt: provenance.verifiedAt,
         }),
       },
     });
@@ -175,18 +203,17 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
 
   for (const project of projects) {
     const source = project.sourceDocument?.companyId === companyId ? project.sourceDocument : null;
-    const reviewedAt = new Date();
-    const provenance = buildReviewProvenance({
+    const decision = deriveAutomaticSourceVerification({
       recordType: "PROJECT",
       sourceDocument: source,
       fields: projectReviewFields(project),
-      reviewerId: "SYSTEM_AUTO_VERIFIED",
-      reviewedAt,
+      priorTrustLevel: project.trustLevel,
     });
-    if (!provenance.ok) {
+    if (!decision.ok) {
       projectsBlocked += 1;
       continue;
     }
+    const { provenance } = decision;
 
     const updated = await prisma.project.updateMany({
       where: {
@@ -199,12 +226,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         ],
       },
       data: {
-        // Auto-review: the user uploads all company documents — the App
-        // verifies them against source bytes AND auto-approves them.
-        trustLevel: "REVIEWED",
-        reviewedBy: "SYSTEM_AUTO_VERIFIED",
-        reviewedAt,
-        reviewNotes: provenance.serialized,
+        ...decision.reviewState,
         updatedAt: new Date(),
       },
     });
@@ -214,20 +236,20 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
     await prisma.auditLog.create({
       data: {
         userId: company.userId,
-        action: "PROJECT_AUTO_REVIEWED",
+        action: "PROJECT_SOURCE_VERIFIED",
         entityType: "Project",
         entityId: project.id,
-        description: "Project evidence was machine-verified against owned source bytes and auto-approved for use.",
+        description: "Project evidence was machine-verified against owned source bytes and exact fields.",
         metadata: JSON.stringify({
           recordRef: publicVaultIdentifier(project.id),
-          trustLevel: "REVIEWED",
-          reviewedBy: "SYSTEM_AUTO_VERIFIED",
+          trustLevel: "SOURCE_VERIFIED",
           verificationMethod: verificationMethod(project.trustLevel),
           sourceContentHash: provenance.sourceContentHash,
           sourceByteLength: provenance.sourceByteLength,
           sourceTextHash: provenance.sourceTextHash,
+          sourceExtractionRevision: provenance.sourceExtractionRevision,
           evidenceFields: provenance.evidenceFields,
-          reviewedAt: reviewedAt.toISOString(),
+          verifiedAt: provenance.verifiedAt,
         }),
       },
     });
