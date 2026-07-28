@@ -65,7 +65,7 @@ describe("canonical workflow action registry", () => {
   it("binds executable registry actions to the canonical live route contracts", () => {
     assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/ai-analyze?mode=background");
     assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine?async=true&safe=true");
-    assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").mutation, "POST /api/tenders/:id/export");
+    assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").mutation, "GET /api/tenders/:id/download?type=zip");
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
   });
 });
