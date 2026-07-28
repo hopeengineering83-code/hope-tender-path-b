@@ -63,6 +63,11 @@ describe("durable extraction acceptance helper", () => {
     const golden = readFileSync("e2e/golden-tender-workflow.spec.ts", "utf8");
     assert.match(golden, /WAIT_FOR_SOURCE_EXTRACTION/);
     assert.match(golden, /EXTRACT_TEXT_QUEUED/);
+    assert.match(
+      golden,
+      /completedExtractionJson\.job\.output\?\.continuation\?\.reason\)\.toBe\("AI_ANALYZE_QUEUED"\)/,
+    );
+    assert.doesNotMatch(golden, /job\.output \?\? ""\)\.toContain/);
     assert.doesNotMatch(golden, /expect\(intakeJson\.nextAction\)\.toBe\("WAIT_FOR_AI_ANALYZE"\)/);
   });
 });

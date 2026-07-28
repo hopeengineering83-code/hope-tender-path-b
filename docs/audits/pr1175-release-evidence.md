@@ -179,6 +179,14 @@ This proves deployment identity and basic health only. No complete authenticated
   aligned. The manifest now checks that real owner and its focused suite passes
   20/20 locally. Build and Playwright were skipped; replacement exact-head CI
   remains required.
+- Run `30386332578` for anchor-manifest checkpoint `c46a9e78…` passed every
+  migration/schema/drift gate, release integrity, typecheck, lint, the complete
+  unit/database suite and the production build. Playwright completed 178 pass /
+  3 skipped / 1 fail. The sole failure treated the parsed `AiJob.output` DTO as
+  a string; the real extraction job was `SUCCEEDED`, and its structured
+  continuation carried `reason: "AI_ANALYZE_QUEUED"`. The golden acceptance
+  now asserts that exact structured field and rejects the stale string
+  substring contract. Replacement exact-head CI remains required.
 
 No isolated PostgreSQL, Playwright, DOCX/PDF/ZIP full-pipeline, audit-head
 Vercel preview, or real-account result is claimed. A local production build

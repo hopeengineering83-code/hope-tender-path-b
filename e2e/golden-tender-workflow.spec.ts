@@ -110,11 +110,15 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       );
       expect(completedExtraction.status(), await completedExtraction.text()).toBe(200);
       const completedExtractionJson = await completedExtraction.json() as {
-        job: { jobType: string; status: string; output?: string | null };
+        job: {
+          jobType: string;
+          status: string;
+          output?: { continuation?: { reason?: string | null } | null } | null;
+        };
       };
       expect(completedExtractionJson.job.jobType).toBe("EXTRACT_TEXT");
       expect(completedExtractionJson.job.status).toBe("SUCCEEDED");
-      expect(completedExtractionJson.job.output ?? "").toContain("AI_ANALYZE_QUEUED");
+      expect(completedExtractionJson.job.output?.continuation?.reason).toBe("AI_ANALYZE_QUEUED");
 
       const analyze = await page.request.post(`/api/tenders/${tenderId}/ai-analyze?force=true`);
       expect(analyze.status(), await analyze.text()).toBe(200);
