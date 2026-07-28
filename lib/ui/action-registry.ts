@@ -138,10 +138,10 @@ export const TENDER_ACTIONS = {
     availability: "NAVIGATION",
   },
   DOWNLOAD_FINAL_ZIP: {
-    anchor: "#final-package-manifest",
-    mutation: "POST /api/tenders/:id/export",
+    anchor: "#export-readiness",
+    mutation: "GET /api/tenders/:id/download?type=zip",
     owner: "ExportReadinessPanel",
-    label: "Prepare final ZIP",
+    label: "Download Final ZIP",
     verb: "download",
     surface: "export-readiness",
     iconName: "DownloadIcon",
