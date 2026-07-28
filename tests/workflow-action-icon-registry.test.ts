@@ -41,13 +41,14 @@ describe("canonical workflow action registry", () => {
     }
   });
 
-  it("marks AI Analyze, evidence matching, and Engine as recovery-only", () => {
+  it("marks only executable AI Analyze and Engine actions as recovery mutations", () => {
     assert.equal(getTenderAction("AI_ANALYZE").availability, "RECOVERY");
-    assert.equal(getTenderAction("MATCH_EVIDENCE").availability, "RECOVERY");
     assert.equal(getTenderAction("RUN_ENGINE").availability, "RECOVERY");
+    assert.equal(getTenderAction("MATCH_EVIDENCE").availability, "NAVIGATION");
+    assert.equal(getTenderAction("MATCH_EVIDENCE").mutation, null);
   });
 
-  it("keeps normal workflow actions available without manual Analyze, Match, or Engine clicks", () => {
+  it("keeps normal workflow actions available without nonexistent Match or Approval endpoints", () => {
     const normal = listTenderActions()
       .filter(([, action]) => action.availability === "NORMAL")
       .map(([actionId]) => actionId);
@@ -55,9 +56,17 @@ describe("canonical workflow action registry", () => {
       "UPLOAD_TENDER_FILES",
       "BUILD_SUBMISSION_PLAN",
       "GENERATE_REQUIRED_DOCUMENTS",
-      "FINAL_APPROVAL",
       "DOWNLOAD_FINAL_ZIP",
     ]);
+    assert.equal(getTenderAction("FINAL_APPROVAL").availability, "NAVIGATION");
+    assert.equal(getTenderAction("FINAL_APPROVAL").mutation, null);
+  });
+
+  it("binds executable registry actions to the canonical live route contracts", () => {
+    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/ai-analyze?mode=background");
+    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine?async=true&safe=true");
+    assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").mutation, "POST /api/tenders/:id/export");
+    assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
   });
 });
 
