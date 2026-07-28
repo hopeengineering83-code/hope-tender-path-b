@@ -12,7 +12,7 @@ Status: **IN PROGRESS — release acceptance not established**
 - PR state at audit start: open, draft, unmerged
 - Changed files: 656
 - Commits: 656
-- Published audit checkpoint: `ac8bd3b215e9eeb6ca76d51822d4e39513c1f99b`
+- Previous published audit checkpoint: `66ff075233571ec281c10aabafce3811855b35b8`
 
 ## GitHub checks observed
 
@@ -131,17 +131,34 @@ This proves deployment identity and basic health only. No complete authenticated
 | evidence authority/signature boundary | TypeScript clean; 126/126 focused/transitive assertions |
 | durable upload/extraction authority | failing-before 7/7; passing-after 7/7; 382/382 affected assertions across 92 suites; TypeScript, ESLint, release-integrity audits clean |
 | review-provenance critical schema | failing-before contract; 3/3 behavioral contract and 63/63 schema/migration/preview-regression assertions; TypeScript/ESLint clean |
+| complete support-record Review Inbox | failing-before focused contract; passing 4/4; 60/60 related privacy/RBAC/provenance/concurrency assertions; TypeScript/ESLint clean |
+
+## Child audit checkpoint CI
+
+- Run `30377357481` for checkpoint `66ff0752…` passed migrations, critical
+  schema, idempotency, zero drift, release integrity, typecheck and lint.
+- The isolated PostgreSQL stale-write concurrency test passed, as did all 8
+  real authenticated Legal/Financial/Compliance review-route assertions.
+- Unit/database tests ended 8,918 pass / 1 fail. The sole failure was a static
+  assertion requiring the Active Workboard to retain the governing
+  `release/consolidated-recovery-20260717` / PR #1175 identity.
+- Build and browser steps were skipped after that failure. The workboard
+  assertion passes locally after the documentation correction; a new exact
+  checkpoint run remains required.
 
 No isolated PostgreSQL, build, Playwright, DOCX/PDF/ZIP full-pipeline, audit-head
 Vercel preview, or real-account result is claimed. Local Node is 24.14 while
-the repository requires Node `>=22 <23`.
+the repository requires Node `>=22 <23`. `npm test` cannot start its `tsx`
+IPC server in this sandbox (`EPERM`); direct `node --import tsx --test`
+execution was used for the recorded focused suites. The explicit
+legal/financial/compliance PostgreSQL route suite correctly refused to run
+without `RUN_DB_INTEGRATION=true`.
 
 ## Release disposition
 
 **NOT READY FOR MERGE OR PRODUCTION.**
 
 Open critical/high findings include database-backed extraction concurrency,
-missing legal/financial/compliance Review Inbox coverage, ineffective review
-concurrency guards, incomplete/duplicated ZIP manifest authority, synthetic
-rather than full-pipeline file evidence, migration-test races, exact-preview
-schema acceptance, and incomplete CI evidence retention.
+incomplete/duplicated ZIP manifest
+authority, synthetic rather than full-pipeline file evidence, migration-test
+races, exact-preview schema acceptance, and incomplete CI evidence retention.

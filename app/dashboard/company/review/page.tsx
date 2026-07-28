@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 type ReviewTrust =
   | "REVIEWED"
   | "SOURCE_VERIFIED"
+  | "MANUAL_DRAFT"
   | "AI_DRAFT"
   | "REGEX_DRAFT"
   | "PROVENANCE_REQUIRED"
@@ -20,6 +21,12 @@ type ReviewRecord = {
 };
 type ExpertRecord = ReviewRecord & { fullName: string; secondary: string };
 type ProjectRecord = ReviewRecord & { name: string; secondary: string };
+type SupportReviewKind = "LEGAL" | "FINANCIAL" | "COMPLIANCE";
+type SupportRecord = ReviewRecord & {
+  kind: SupportReviewKind;
+  title: string;
+  secondary: string;
+};
 type RecordPage<T> = {
   items: T[];
   page: number;
@@ -47,8 +54,14 @@ type Diagnostics = {
     projectSourceDocuments: number;
     currentExperts: number;
     currentProjects: number;
+    currentLegalRecords: number;
+    currentFinancialRecords: number;
+    currentComplianceRecords: number;
     reviewedExperts: number;
     reviewedProjects: number;
+    reviewedLegalRecords: number;
+    reviewedFinancialRecords: number;
+    reviewedComplianceRecords: number;
     unsupportedReviewedExperts: number;
     unsupportedReviewedProjects: number;
     aiEnabled?: boolean;
@@ -57,6 +70,9 @@ type Diagnostics = {
   records: {
     experts: RecordPage<ExpertRecord>;
     projects: RecordPage<ProjectRecord>;
+    legal: RecordPage<SupportRecord>;
+    financial: RecordPage<SupportRecord>;
+    compliance: RecordPage<SupportRecord>;
   };
 };
 type ReimportResult = {
@@ -82,6 +98,7 @@ function severityClass(severity: Gap["severity"]) {
 function trustBadge(value: ReviewTrust) {
   if (value === "REVIEWED") return { label: "Human reviewed", cls: "bg-green-100 text-green-700" };
   if (value === "SOURCE_VERIFIED") return { label: "Source verified", cls: "bg-blue-100 text-blue-700" };
+  if (value === "MANUAL_DRAFT") return { label: "Manual draft", cls: "bg-slate-100 text-slate-700" };
   if (value === "PROVENANCE_REQUIRED") return { label: "Human review invalidated", cls: "bg-red-100 text-red-700" };
   if (value === "SOURCE_VERIFICATION_REQUIRED") return { label: "Source verification invalidated", cls: "bg-red-100 text-red-700" };
   if (value === "AI_DRAFT") return { label: "AI draft", cls: "bg-amber-100 text-amber-800" };
@@ -143,10 +160,79 @@ function PaginationControls(props: {
   );
 }
 
+function SupportReviewSection(props: {
+  kind: SupportReviewKind;
+  heading: string;
+  description: string;
+  page: RecordPage<SupportRecord>;
+  reviewingRecord: string | null;
+  onPage: (page: number) => void;
+  onAction: (kind: SupportReviewKind, record: SupportRecord) => void;
+}) {
+  return (
+    <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
+      <div>
+        <h2 className="text-lg font-semibold text-slate-900">{props.heading}</h2>
+        <p className="text-xs text-slate-500">{props.description}</p>
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        {props.page.items.map((record) => {
+          const badge = trustBadge(record.trustLevel);
+          const isReviewed = record.trustLevel === "REVIEWED";
+          const disabled = props.reviewingRecord === `${props.kind}:${record.id}` ||
+            (!isReviewed && !record.canReview);
+          return (
+            <article key={record.id} className="rounded-xl border p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-slate-900">{record.title}</p>
+                  <p className="text-sm text-slate-500">{record.secondary}</p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-xs font-medium ${badge.cls}`}>{badge.label}</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
+                {record.tags.map((tag, index) => (
+                  <span key={`${tag}-${index}`} className="rounded-full bg-slate-100 px-2 py-1">{tag}</span>
+                ))}
+              </div>
+              <details className="mt-3 text-xs text-slate-600">
+                <summary className="cursor-pointer font-medium">Evidence status</summary>
+                <p className="mt-2">{evidenceStatus(record)}</p>
+              </details>
+              <button
+                type="button"
+                onClick={() => props.onAction(props.kind, record)}
+                disabled={disabled}
+                className={`mt-4 rounded-lg px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+                  isReviewed ? "border border-slate-300 text-slate-700" : "bg-green-600 text-white"
+                }`}
+                title={!isReviewed && !record.canReview ? "Durable owned source evidence is required before human review." : undefined}
+              >
+                {props.reviewingRecord === `${props.kind}:${record.id}`
+                  ? "Saving…"
+                  : isReviewed
+                    ? "Return to draft"
+                    : "Human-review record"}
+              </button>
+            </article>
+          );
+        })}
+        {!props.page.items.length && <p className="text-sm text-slate-400">No {props.heading.toLowerCase()} found.</p>}
+      </div>
+      <div className="mt-4">
+        <PaginationControls {...props.page} onPage={props.onPage} />
+      </div>
+    </section>
+  );
+}
+
 export default function ReviewInboxPage() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [expertPage, setExpertPage] = useState(1);
   const [projectPage, setProjectPage] = useState(1);
+  const [legalPage, setLegalPage] = useState(1);
+  const [financialPage, setFinancialPage] = useState(1);
+  const [compliancePage, setCompliancePage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [repairing, setRepairing] = useState(false);
   const [error, setError] = useState("");
@@ -155,6 +241,7 @@ export default function ReviewInboxPage() {
   const [selectedProjects, setSelectedProjects] = useState<Set<string>>(new Set());
   const [batchingExperts, setBatchingExperts] = useState(false);
   const [batchingProjects, setBatchingProjects] = useState(false);
+  const [reviewingRecord, setReviewingRecord] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -163,6 +250,9 @@ export default function ReviewInboxPage() {
       const params = new URLSearchParams({
         expertPage: String(expertPage),
         projectPage: String(projectPage),
+        legalPage: String(legalPage),
+        financialPage: String(financialPage),
+        compliancePage: String(compliancePage),
       });
       const response = await fetch(`/api/company/knowledge/repair?${params}`, { cache: "no-store" });
       if (!response.ok) throw new Error("Failed to load privacy-safe review data");
@@ -173,7 +263,7 @@ export default function ReviewInboxPage() {
     } finally {
       setLoading(false);
     }
-  }, [expertPage, projectPage]);
+  }, [expertPage, projectPage, legalPage, financialPage, compliancePage]);
 
   useEffect(() => {
     void load();
@@ -244,6 +334,51 @@ export default function ReviewInboxPage() {
     } finally {
       if (kind === "experts") setBatchingExperts(false);
       else setBatchingProjects(false);
+    }
+  }
+
+  async function submitSupportReview(kind: SupportReviewKind, record: SupportRecord) {
+    const route = kind === "LEGAL"
+      ? "legal-records"
+      : kind === "FINANCIAL"
+        ? "financial-records"
+        : "compliance-records";
+    const action = record.trustLevel === "REVIEWED" ? "reject" : "approve";
+    setReviewingRecord(`${kind}:${record.id}`);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(`/api/company/${route}/${encodeURIComponent(record.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          ...(action === "reject" ? { notes: "Returned to draft from Company Vault Review Inbox." } : {}),
+        }),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        error?: string;
+        requestId?: string;
+        missingEvidenceFields?: string[];
+      };
+      if (!response.ok) {
+        const missing = data.missingEvidenceFields?.slice(0, 4).join(", ");
+        throw new Error(
+          `${data.error || "Record review failed"}${missing ? ` Missing evidence: ${missing}.` : ""}${
+            data.requestId ? ` Request ${data.requestId}.` : ""
+          }`,
+        );
+      }
+      await load();
+      setMessage(
+        action === "approve"
+          ? `${record.title} was human-reviewed with durable source evidence.`
+          : `${record.title} was returned to draft.`,
+      );
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : "Record review failed");
+    } finally {
+      setReviewingRecord(null);
     }
   }
 
@@ -433,6 +568,14 @@ export default function ReviewInboxPage() {
         </div>
         {diagnostics && <div className="mt-4"><PaginationControls {...diagnostics.records.projects} onPage={(page) => { setSelectedProjects(new Set()); setProjectPage(page); }} /></div>}
       </section>
+
+      {diagnostics && (
+        <>
+          <SupportReviewSection kind="LEGAL" heading="Legal records" description="Licenses and registrations require current, source-backed human review." page={diagnostics.records.legal} reviewingRecord={reviewingRecord} onPage={setLegalPage} onAction={(kind, record) => void submitSupportReview(kind, record)} />
+          <SupportReviewSection kind="FINANCIAL" heading="Financial records" description="Financial claims require current, source-backed human review." page={diagnostics.records.financial} reviewingRecord={reviewingRecord} onPage={setFinancialPage} onAction={(kind, record) => void submitSupportReview(kind, record)} />
+          <SupportReviewSection kind="COMPLIANCE" heading="Compliance records" description="Certificates and compliance claims require current, source-backed human review." page={diagnostics.records.compliance} reviewingRecord={reviewingRecord} onPage={setCompliancePage} onAction={(kind, record) => void submitSupportReview(kind, record)} />
+        </>
+      )}
     </div>
   );
 }

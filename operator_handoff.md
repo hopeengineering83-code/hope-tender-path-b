@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; extraction checkpoint published; preview critical-schema gate fixed locally | Publish the schema checkpoint, then continue Review Inbox/concurrency and generation/export authority passes |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; schema checkpoint published; complete support-record Review Inbox fixed locally | Publish the Review Inbox checkpoint, then continue generation/export authority passes |
 
 ### Lock rules
 
@@ -68,6 +68,17 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T16:23:58Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — complete Company Vault review authority.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** the canonical Review Inbox omitted Legal, Financial and Compliance records, while manual POST routes misleadingly stamped unsupported entries `REVIEWED` with an actor identity. Added bounded independently paginated DTOs and review controls for all three families; manual creation now persists `MANUAL_DRAFT` with no reviewer/timestamp, and only the existing durable source-backed review route can promote it.
+- **Concurrency disposition:** the earlier F003 stale-write finding was stale against the frozen head. All three detail routes bind writes to exact record and source revisions and return `409 CONCURRENT_UPDATE`. Exact checkpoint CI run `30377357481` passed the isolated PostgreSQL stale-write test and all 8 authenticated Legal/Financial/Compliance route assertions.
+- **Tests:** new contract failed before implementation and passes 4/4 after; 60/60 related privacy, RBAC, provenance and concurrency assertions pass; TypeScript and ESLint clean. The prior exact-checkpoint CI reached 8,918/8,919: its sole failure was the workboard’s missing governing PR branch identity, now fixed locally and passing in the 28/28 owning test. `npm test` cannot start `tsx` IPC under this sandbox/Node 24 (`EPERM`).
+- **Security/runtime:** no real-account test, database mutation or deployment was performed. Authenticated preview acceptance remains open.
+- **Next action:** publish this checkpoint after rechecking the governing head, then audit the final ZIP/generation authority roots.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
 
 ### 2026-07-28T16:14:00Z — Codex
 

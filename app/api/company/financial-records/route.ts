@@ -6,6 +6,7 @@ import { rateLimit, MUTATION_RATE_LIMIT, API_RATE_LIMIT } from "../../../../lib/
 import { extractRequestId } from "../../../../lib/request-id";
 import { companyRecordRuntimeError } from "../../../../lib/company-record-route-error";
 import { logAction } from "../../../../lib/audit";
+import { manualSupportRecordDraftFields } from "../../../../lib/vault-review-inbox";
 
 export const dynamic = "force-dynamic";
 
@@ -112,10 +113,7 @@ export async function POST(req: Request) {
         currency: body.currency ? str(body.currency, 10) : null,
         amount,
         notes: body.notes ? str(body.notes, 1000) : null,
-        trustLevel: "REVIEWED",
-        reviewedBy: actor.id,
-        reviewedAt: new Date(),
-        reviewNotes: "Manual financial record created by authenticated user.",
+        ...manualSupportRecordDraftFields("FINANCIAL"),
         sourceDocumentId,
       },
     });

@@ -29,25 +29,40 @@ This ledger records only findings supported by source or runtime evidence. A fin
 
 - Severity: HIGH
 - Pass: 1 / 4 / 5
-- Status: OPEN
+- Status: FIXED_LOCAL — database/runtime acceptance open
 - Canonical owner: Company Vault Review Inbox
 - Primary files: `app/dashboard/company/review/page.tsx`, `app/api/company/knowledge/repair/route.ts`
 - Reproduction: open `/dashboard/company/review`; only experts and projects have review queues and controls.
-- Root cause: diagnostics DTO, pagination, state and UI model only expert/project records even though legal/financial/compliance review APIs exist.
+- Root cause: diagnostics DTO, pagination, state and UI model only handled expert/project records even though legal/financial/compliance review APIs existed.
 - User impact: legally sensitive records require hidden/direct API use and have no visible source quote, page, provenance, approve/reject control or review outcome in the canonical inbox.
-- Required fix: add privacy-safe paginated legal, financial and compliance review DTOs and explicit human review controls to the single Review Inbox.
+- Fix: the canonical diagnostics endpoint now returns bounded, independently
+  paginated DTOs for all three support families; the single Review Inbox
+  exposes evidence state and routes approve/return-to-draft decisions through
+  the existing durable-provenance mutation routes. Raw extracted source text
+  is not returned.
+- Regression proof: the new focused contract failed before implementation and
+  passes 4/4 after; the related privacy, RBAC, provenance and concurrency set
+  passes 60/60. Authenticated preview acceptance remains open.
 
 ## PR1175-F003 — Legal/financial/compliance review writes have ineffective concurrency guards
 
 - Severity: HIGH
 - Pass: 2 / 3 / 5
-- Status: OPEN
+- Status: VERIFIED_CI
 - Canonical owner: vault review mutation service
 - Primary files: `app/api/company/legal-records/[id]/route.ts`, `app/api/company/financial-records/[id]/route.ts`, `app/api/company/compliance-records/[id]/route.ts`
-- Reproduction: read a record, modify it concurrently, then submit approval based on the stale read.
-- Root cause: `updateMany` filters only by `id` and `companyId`; checking `count === 1` does not detect a concurrent update. No original `updatedAt`, source identity, source byte hash or extraction revision is included in the write predicate.
-- Impact: a stale reviewer request can overwrite a concurrent edit and write a misleading approval audit event.
-- Required fix: optimistic concurrency using the exact read revision and source authority, with a 409 on mismatch; add two-client behavioral tests.
+- Reproduction target: read a record, modify it or its source concurrently,
+  then submit approval based on the stale read.
+- Current-head result: the earlier finding was stale. All three routes already
+  bind `updateMany` to the record `updatedAt`, source identity, source text,
+  source byte hash/length/integrity metadata and extraction metadata; a
+  mismatch returns `409 CONCURRENT_UPDATE` and does not write the audit event.
+- Regression proof: 3/3 static route predicates pass locally. Exact child
+  checkpoint CI run `30377357481` executed the isolated PostgreSQL two-writer
+  test with `RUN_DB_INTEGRATION=true`; stale record/source revisions were
+  rejected for all three families. The related real authenticated route suite
+  also passed 8/8. The overall run failed only on a workboard documentation
+  assertion (8,918/8,919 tests); that assertion is fixed locally.
 
 ## PR1175-F004 — Final ZIP manifest authority is incomplete and duplicated
 
@@ -135,3 +150,4 @@ This ledger records only findings supported by source or runtime evidence. A fin
 | PR1175-F017 | HIGH | 4/5 | OPEN | Mandatory FULL/Covered rows were shown as UNKNOWN elsewhere. One revision-bound selector across panels remains to be proved. |
 | PR1175-F018 | HIGH | 4/5 | OPEN | Required-document, Build Plan and PDF state disagreed across panels. Cross-route reconciliation remains open. |
 | PR1175-F019 | MEDIUM | 4/5 | OPEN | Repeated competing blocker panels/actions obscure one next action. Canonical lifecycle action ownership remains open. |
+| PR1175-F020 | HIGH | 3/4 | FIXED_LOCAL | Manual Legal/Financial/Compliance POST routes stamped unsupported entries `REVIEWED` with a reviewer identity even though durable provenance rejected them. Creation now persists explicit `MANUAL_DRAFT` with null reviewer/timestamp; only the source-backed review route can promote it. Database/runtime acceptance remains open. |

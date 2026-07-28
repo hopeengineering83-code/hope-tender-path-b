@@ -674,13 +674,14 @@ export function isDurablySourceVerified(record: ReviewRecordState): boolean {
 
 export function effectiveReviewTrustLevel(
   record: ReviewRecordState,
-): "REVIEWED" | "SOURCE_VERIFIED" | "AI_DRAFT" | "REGEX_DRAFT" | "PROVENANCE_REQUIRED" | "SOURCE_VERIFICATION_REQUIRED" {
+): "REVIEWED" | "SOURCE_VERIFIED" | "MANUAL_DRAFT" | "AI_DRAFT" | "REGEX_DRAFT" | "PROVENANCE_REQUIRED" | "SOURCE_VERIFICATION_REQUIRED" {
   if (record.trustLevel === "REVIEWED") {
     return isDurablyReviewed(record) ? "REVIEWED" : "PROVENANCE_REQUIRED";
   }
   if (record.trustLevel === "SOURCE_VERIFIED") {
     return isDurablySourceVerified(record) ? "SOURCE_VERIFIED" : "SOURCE_VERIFICATION_REQUIRED";
   }
+  if (record.trustLevel === "MANUAL_DRAFT") return "MANUAL_DRAFT";
   return record.trustLevel === "AI_DRAFT" ? "AI_DRAFT" : "REGEX_DRAFT";
 }
 

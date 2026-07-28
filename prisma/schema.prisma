@@ -268,7 +268,8 @@ model ProjectEvidence {
   @@index([projectId])
 }
 
-// trustLevel values: REGEX_DRAFT | AI_DRAFT | REVIEWED (see lib/vault-review-provenance.ts)
+// trustLevel values: MANUAL_DRAFT | REGEX_DRAFT | AI_DRAFT | SOURCE_VERIFIED | REVIEWED
+// (see lib/vault-review-provenance.ts)
 model LegalRecord {
   id              String    @id @default(uuid())
   companyId       String
@@ -305,7 +306,7 @@ model FinancialRecord {
   amount     Float?
   notes      String?
   metadata   String   @default("{}")
-  // Trust level — must be REVIEWED (with durable source provenance) before use in final generation
+  // MANUAL_DRAFT/AI_DRAFT may not be used; REVIEWED requires durable source provenance.
   trustLevel       String           @default("AI_DRAFT")
   reviewedBy       String?
   reviewedAt       DateTime?
@@ -330,7 +331,7 @@ model CompanyComplianceRecord {
   referenceNumber String?
   expiryDate      DateTime?
   metadata        String    @default("{}")
-  // Trust level — must be REVIEWED (with durable source provenance) before use in final generation
+  // MANUAL_DRAFT/AI_DRAFT may not be used; REVIEWED requires durable source provenance.
   trustLevel       String           @default("AI_DRAFT")
   reviewedBy       String?
   reviewedAt       DateTime?

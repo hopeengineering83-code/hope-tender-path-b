@@ -51,11 +51,16 @@ Company source upload
 → canonical `canUseVaultRecord` eligibility
 → matching/generation/export consumers.
 
-Current split:
+Current local result:
 
-- Review Inbox and diagnostics cover experts/projects.
-- Legal/financial/compliance APIs exist but are not surfaced by the canonical Review Inbox.
-- Three legal/financial/compliance write routes use ineffective `count === 1` concurrency checks without a read-revision predicate.
+- Review Inbox and diagnostics cover experts, projects, legal, financial and
+  compliance records through bounded paginated DTOs.
+- Manual support-record creation remains `MANUAL_DRAFT`; it does not stamp a
+  reviewer identity or approval timestamp.
+- Legal/financial/compliance approval uses the existing tenant-owned source,
+  exact record/source revision predicate and durable provenance builder.
+- Static concurrency predicates pass, and exact child-checkpoint CI executed
+  the isolated PostgreSQL two-writer and authenticated review-route suites.
 
 ## 3. Tender release authority
 

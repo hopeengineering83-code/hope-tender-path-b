@@ -3,7 +3,7 @@
 Governing source SHA: `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`
 Governing base SHA: `b3c9db5de89a2a665e61a83facbff0f276f9983c`
 Audit branch: `audit/pr1175-complete-five-pass-forensic-audit`
-Published audit checkpoint: `ac8bd3b215e9eeb6ca76d51822d4e39513c1f99b`
+Previous published audit checkpoint: `66ff075233571ec281c10aabafce3811855b35b8`
 Status: **IN PROGRESS — DO NOT MERGE**
 
 This ledger is intentionally fail-closed. `PARTIAL` means the category cannot yet be claimed as fully audited. Full coverage will not be claimed until every changed file and every transitive runtime dependency has a row and disposition.
@@ -28,11 +28,11 @@ current-head dispositions below.
 | Category | Status | Files/areas inspected | Findings / disposition |
 |---|---|---|---|
 | Tender intake/upload | FIXED LOCAL / RUNTIME OPEN | both tender upload handlers, package ledgers, `tender-extraction-service.ts`, job registry, UI worker wake-up | F001 fixed locally: verified source/package rows own exact hash-bound extraction jobs; request paths no longer extract or directly queue analysis. Isolated-DB concurrency/deletion and exact-preview proof remain open. |
-| Company Review Inbox | PARTIAL | `app/dashboard/company/review/page.tsx`, legacy redirect, diagnostics API | F002 open: legal/financial/compliance absent from canonical UI/DTO. |
+| Company Review Inbox | FIXED LOCAL / RUNTIME OPEN | `app/dashboard/company/review/page.tsx`, legacy redirect, diagnostics API, all three support review routes | F002 fixed locally: bounded paginated DTOs and explicit approve/return-to-draft actions now cover legal, financial and compliance records. |
 | Vault provenance policy | PARTIAL | `lib/vault-review-provenance.ts` | Durable byte/text/revision/field checks inspected; consumer sweep remains incomplete. |
-| Legal review API | REVIEWED WITH FINDING | `app/api/company/legal-records/[id]/route.ts` | F003 open: stale-write race. Tenant filter and durable provenance present. |
-| Financial review API | REVIEWED WITH FINDING | `app/api/company/financial-records/[id]/route.ts` | F003 open: stale-write race. |
-| Compliance review API | REVIEWED WITH FINDING | `app/api/company/compliance-records/[id]/route.ts` | F003 open: stale-write race. |
+| Legal review API | VERIFIED CI | list/create/detail routes + provenance consumer | Revision/source-bound optimistic write passed isolated PostgreSQL concurrency and authenticated route tests; unsupported manual creation now remains `MANUAL_DRAFT`. |
+| Financial review API | VERIFIED CI | list/create/detail routes + provenance consumer | Revision/source-bound optimistic write passed isolated PostgreSQL concurrency and authenticated route tests; unsupported manual creation now remains `MANUAL_DRAFT`. |
+| Compliance review API | VERIFIED CI | list/create/detail routes + provenance consumer | Revision/source-bound optimistic write passed isolated PostgreSQL concurrency and authenticated route tests; unsupported manual creation now remains `MANUAL_DRAFT`. |
 | Final ZIP production path | PARTIAL | download route, scope, assembly, byte-integrity read | F004 open: manifest omits envelope/format; duplicate owner exists. Exact-entry hash recomputation is present. |
 | Secondary ZIP workflow | PARTIAL | `lib/engine/workflow/zip-finalizer.ts` and consumers | Appears disconnected from production route and used by isolated tests; consumer/dead-code proof incomplete. |
 | Generated DOCX/PDF/ZIP tests | REVIEWED WITH FINDING | `tests/generated-output-binary-inspection.test.ts`, downloaded artifact | F005 open: synthetic isolated bytes, not production full pipeline. |
@@ -59,13 +59,14 @@ current-head dispositions below.
 |---|---|---|---|---|---|---|---|
 | `lib/tender-upload-first.ts` | Yes | Upload authority and source persistence | browser multipart request | Tender/TenderFile, workflow runs, extraction queue | auth, role, tenant, file bytes | failing-before/passing-after wiring contract + transitive suite | F001 FIXED_LOCAL |
 | `lib/tender-upload-package.ts` | Yes | Client/package batching limits | selected browser files | upload-first and append requests | package/file limits | source inspection | supports batching but does not remove request extraction |
-| `app/dashboard/company/review/page.tsx` | Yes | Canonical review UI | diagnostics API | batch review APIs | authenticated reviewer UX | source + screenshots | F002 OPEN |
+| `app/dashboard/company/review/page.tsx` | Yes | Canonical review UI | bounded diagnostics API | expert/project batch and support-record detail review APIs | authenticated reviewer UX | failing-before/passing-after contract + privacy suite | F002 FIXED_LOCAL |
 | `app/dashboard/company/review-board/page.tsx` | Yes | competing legacy route | old bookmarks | canonical Review Inbox | route authority | source inspection | redirect is appropriate |
-| `app/api/company/knowledge/repair/route.ts` | Yes | Review Inbox DTO | CompanyDocument/records | review UI | tenant/privacy DTO | source inspection | F002 OPEN |
+| `app/api/company/knowledge/repair/route.ts` | Yes | Review Inbox DTO | CompanyDocument/all five evidence families | review UI | tenant/privacy DTO | focused contract + privacy/RBAC/provenance suite | F002 FIXED_LOCAL |
 | `lib/vault-review-provenance.ts` | Yes | evidence eligibility authority | source bytes/text/fields | review/matching/generation/export | tenant-owned source and human review | source inspection | strong checks observed; full consumer sweep open |
-| `app/api/company/legal-records/[id]/route.ts` | Yes | legal review mutation | reviewer request | LegalRecord/audit | tenant/role | source inspection | F003 OPEN |
-| `app/api/company/financial-records/[id]/route.ts` | Yes | financial review mutation | reviewer request | FinancialRecord/audit | tenant/role | source inspection | F003 OPEN |
-| `app/api/company/compliance-records/[id]/route.ts` | Yes | compliance review mutation | reviewer request | ComplianceRecord/audit | tenant/role | source inspection | F003 OPEN |
+| `app/api/company/legal-records/[id]/route.ts` | Yes | legal review mutation | reviewer request | LegalRecord/audit | tenant/role/revision | 3/3 static + exact-CI PostgreSQL concurrency + 8/8 authenticated route suite | F003 VERIFIED_CI |
+| `app/api/company/financial-records/[id]/route.ts` | Yes | financial review mutation | reviewer request | FinancialRecord/audit | tenant/role/revision | 3/3 static + exact-CI PostgreSQL concurrency + 8/8 authenticated route suite | F003 VERIFIED_CI |
+| `app/api/company/compliance-records/[id]/route.ts` | Yes | compliance review mutation | reviewer request | ComplianceRecord/audit | tenant/role/revision | 3/3 static + exact-CI PostgreSQL concurrency + 8/8 authenticated route suite | F003 VERIFIED_CI |
+| `app/api/company/{legal,financial,compliance}-records/route.ts` | Yes | support-record creation | authenticated manager input | support-record draft | role/tenant/trust authority | new manual-draft contract | F020 FIXED_LOCAL |
 | `app/api/tenders/[id]/download/route.ts` | Yes | production file/ZIP export owner | release gates + generated bytes | user download + ExportPackage | role/tenant/final approval | source inspection | F004 OPEN; several fail-closed gates present |
 | `lib/engine/final-zip-assembly.ts` | Yes | production archive builder | scoped entries + exact bytes | ZIP buffer/manifest | path safety/integrity | source + artifact hash inspection | F004 OPEN |
 | `lib/engine/workflow/zip-finalizer.ts` | Yes | competing archive implementation | generated docs | test/workflow result | final approval/integrity | source inspection | ownership/dead-code proof open |
@@ -79,8 +80,8 @@ current-head dispositions below.
 
 | Pass | Status | Current result |
 |---|---|---|
-| 1 — static/character-sensitive | IN PROGRESS | Findings F002, F004, F007; broad file sweep incomplete. |
-| 2 — dataflow/database/concurrency | IN PROGRESS | F001/F013/F014 fixed locally; F003/F006 and database-backed extraction concurrency remain open. |
+| 1 — static/character-sensitive | IN PROGRESS | F002 fixed locally; F004/F007 and the broad file sweep remain open. |
+| 2 — dataflow/database/concurrency | IN PROGRESS | F001/F013/F014 fixed locally and F003 verified in exact-checkpoint CI; F006 and extraction concurrency remain open. |
 | 3 — authority/security/tenant isolation | IN PROGRESS | Tenant filters observed in reviewed routes; adversarial route sweep incomplete. |
 | 4 — full product workflow/authority | IN PROGRESS | Findings F001, F002, F004; real end-to-end execution not completed. |
 | 5 — falsification/runtime/release proof | IN PROGRESS | F015 critical-schema detection fixed locally; exact audit-head CI/preview and F005/F008/F009 remain open. |
@@ -99,9 +100,14 @@ current-head dispositions below.
   legal/financial/compliance review-provenance column. A missing
   `LegalRecord.trustLevel` produces a failing schema result before a
   migration-enabled deployment can serve traffic.
+- The canonical Review Inbox now includes legal, financial and compliance
+  records through bounded DTOs and durable review routes.
+- Unsupported manual support records remain `MANUAL_DRAFT`; creation cannot
+  fabricate human review authority.
 
 Local evidence: TypeScript, ESLint, release-integrity audits, 382/382 affected
-transitive assertions for the published extraction checkpoint, plus 63/63
-schema/migration/preview-regression assertions for the current unpublished
-schema checkpoint. Database integration is not claimed because no isolated
-PostgreSQL service is available in this workspace.
+transitive assertions for the extraction checkpoint, 63/63
+schema/migration/preview-regression assertions, and 60/60 related Review
+Inbox/privacy/RBAC/provenance/concurrency assertions. Database integration is
+not claimed because no isolated PostgreSQL service is available in this
+workspace.
