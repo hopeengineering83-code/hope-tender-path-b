@@ -42,10 +42,13 @@ describe("action registry matches production route owners", () => {
     assert.equal(getTenderAction("FINAL_APPROVAL").owner, "AuthorityReviewPanel");
   });
 
-  it("points Final ZIP preparation to the canonical export POST route", () => {
-    const route = read("app/api/tenders/[id]/export/route.ts");
-    assert.match(route, /export async function POST/);
-    assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").mutation, "POST /api/tenders/:id/export");
+  it("points Final ZIP to the one gated download owner", () => {
+    const route = read("app/api/tenders/[id]/download/route.ts");
+    const panel = read("components/export-readiness-panel.tsx");
+    assert.match(route, /export async function GET/);
+    assert.match(route, /type=zip/);
+    assert.match(panel, /download\?type=zip/);
+    assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").mutation, "GET /api/tenders/:id/download?type=zip");
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
   });
 
