@@ -134,6 +134,7 @@ This proves deployment identity and basic health only. No complete authenticated
 | complete support-record Review Inbox | failing-before focused contract; passing 4/4; 60/60 related privacy/RBAC/provenance/concurrency assertions; TypeScript/ESLint clean |
 | sole Final ZIP owner and complete manifest authority | failing-before 3/3; passing-after 3/3; 213/213 affected scope/assembly/Build Plan/PDF/package/static-safety/binary assertions; TypeScript/ESLint/release-integrity clean |
 | serialized migration execution ownership | failing-before ownership contract; passing 2/2; 73/73 related CI/migration/source assertions; TypeScript clean |
+| complete exact-head command evidence | failing-before 0/3; passing-after 3/3; recorder/verifier and related CI contracts 36/36; YAML parse, TypeScript, ESLint and release-integrity clean |
 
 ## Child audit checkpoint CI
 
@@ -162,6 +163,7 @@ without `RUN_DB_INTEGRATION=true`.
 
 Open critical/high findings include database-backed extraction concurrency,
 synthetic rather than full-pipeline file evidence, exact-preview schema
-acceptance, and incomplete CI evidence retention. Final ZIP authority and the
-migration-test race are fixed locally, but persisted authenticated runtime and
-exact-head CI acceptance have not yet been established.
+acceptance, and screenshot evidence inconsistency. Final ZIP authority, the
+migration-test race and CI evidence retention are fixed locally, but persisted
+authenticated runtime and exact-head CI/artifact acceptance have not yet been
+established.

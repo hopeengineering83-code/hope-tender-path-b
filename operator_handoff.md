@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; Final ZIP checkpoint published; migration test ownership fixed locally | Publish migration-race checkpoint, then continue runtime truth and release-evidence gaps |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; migration checkpoint published; fail-closed CI evidence fixed locally | Publish CI-evidence checkpoint, inspect exact run/artifact, then continue runtime-truth gaps |
 
 ### Lock rules
 
@@ -68,6 +68,16 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T16:55:46Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — fail-closed exact-head CI evidence.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** success artifacts retained only selected logs, omitted lint/tests/Playwright and permitted missing files with a warning. Added one streaming command recorder for 16 mandatory commands with exact source SHA, timestamps, duration and exit status in an NDJSON ledger; added a success-only completeness verifier that requires every non-empty log and exact-head successful entry; exact acceptance upload now fails on missing files and never publishes from a partial run.
+- **Tests:** completeness contract failed 3/3 before implementation and passes 3/3 after; command runner records real success/failure exits; verifier accepts a complete fixture and rejects a missing log; 36/36 related CI/migration contracts pass; workflow YAML parses; TypeScript, ESLint and release-integrity audits are clean.
+- **CI / deployment:** exact-head CI for `115d28b7…` is in progress as run `30380110604`; publishing this checkpoint will supersede it through normal concurrency. No deployment or real-account test was triggered.
+- **Next action:** publish after rechecking PR #1175, then inspect the resulting exact-head run and artifact before treating F008 as runtime-verified.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
 
 ### 2026-07-28T16:48:29Z — Codex
 

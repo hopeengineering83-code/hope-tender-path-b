@@ -129,7 +129,11 @@ Frozen SHA
 
 Current evidence gap:
 
-- Exact-head artifact preserves the build log and synthetic generated files but omits the configured migration/drift/release-integrity logs and all success logs for typecheck, lint, unit tests and Playwright.
+- The earlier downloaded artifact preserves the build log and synthetic
+  generated files but omits mandatory command proof. The local fix records all
+  16 mandatory commands in exact-head-bound logs plus an NDJSON exit/duration
+  ledger and refuses to publish a success artifact when any entry is absent.
+  Exact CI artifact inspection is still required before closure is claimed.
 - Screenshot detail index covers 37 page patterns × 3 viewports, but the summary contains a contradictory zero route-coverage count.
 
 ## 6. Review-provenance schema compatibility

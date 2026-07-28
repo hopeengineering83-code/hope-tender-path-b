@@ -132,12 +132,23 @@ This ledger records only findings supported by source or runtime evidence. A fin
 
 - Severity: HIGH
 - Pass: 5
-- Status: OPEN
+- Status: FIXED_LOCAL — exact CI artifact inspection pending
 - Primary file: `.github/workflows/ci.yml`
 - Evidence: downloaded artifact contains nine files and only `build-results/npm-build.log`; configured migration, idempotency, drift and release-integrity logs are absent.
 - Root cause: artifact collection allows missing files with `if-no-files-found: warn` and does not preserve typecheck, lint, unit-test or Playwright logs on success.
 - Impact: exact commands, exits, durations and test totals cannot be independently verified from the success artifact.
-- Required fix: always capture all mandatory command outputs and a machine-readable command ledger; fail the evidence-upload stage when any mandatory proof file is absent.
+- Fix: every mandatory post-install CI command now runs through one recorder
+  that streams output, writes a non-empty log and appends command arguments,
+  exact source SHA, run ID, timestamps, duration, exit code and signal to an
+  NDJSON ledger. A success-only verifier requires exactly one successful
+  exact-head entry and non-empty log for all 16 commands. Exact-head artifacts
+  are uploaded only after that verifier passes and use
+  `if-no-files-found: error`; failed runs retain their separate diagnostics.
+- Regression proof: the new completeness contract failed 3/3 before
+  implementation and passes 3/3 after. Recorder/verifier behavior and related
+  CI/migration contracts pass 36/36; YAML parses successfully; TypeScript,
+  ESLint and release-integrity audits are clean. The next exact-head success
+  artifact must still be downloaded and independently inspected.
 
 ## PR1175-F009 — Screenshot summary contains internally inconsistent coverage counters
 

@@ -38,7 +38,7 @@ current-head dispositions below.
 | Generated DOCX/PDF/ZIP tests | REVIEWED WITH FINDING | `tests/generated-output-binary-inspection.test.ts`, downloaded artifact | F005 open: synthetic isolated bytes, not production full pipeline. |
 | Golden path acceptance | REVIEWED WITH FINDING | `tests/golden-path-release-acceptance.test.ts` | Static fixture/scoring assertions only; not a real golden workflow. |
 | Export gate tests | PARTIAL | two screenshot-export-gates test files + CI migration owner | F006 fixed locally: no migration subprocess remains in parallel test bodies; F007 source-string proof remains open. |
-| CI workflow | PARTIAL | `.github/workflows/ci.yml`, downloaded exact-head artifact | F008 open: success evidence omits mandatory logs and totals. |
+| CI workflow | FIXED LOCAL / EXACT CI OPEN | `.github/workflows/ci.yml`, command recorder/verifier, downloaded prior artifact | F008 fixed locally: 16 exact-head commands require non-empty logs and a successful SHA-bound NDJSON ledger before success artifact upload. |
 | Screenshot audit | PARTIAL | downloaded index, route manifest, summary, Review Inbox screenshots | F009 open: summary counter contradiction; render coverage does not prove behavior. |
 | Vercel preview | PARTIAL | supplied screenshot deployment `aed98737…`, governing deployment `ec0eaa83…`, scoped runtime queries | Historical screenshot log lines have expired; screenshot binds a P2022 failure to `aed98737…`. Governing deployment has no retained error/500 logs but no authenticated acceptance traffic. |
 | PR/base graph | REVIEWED | current PR metadata and comparison | F010 from the donor audit is stale; this branch was created from the current frozen PR #1175 head. |
@@ -76,7 +76,9 @@ current-head dispositions below.
 | `tests/screenshot-export-gates-003-server.test.ts` | Yes | migration and export gate evidence | source strings/DB | CI result | DB behavior | failing-before/passing-after ownership contract | F006 FIXED_LOCAL / F007 OPEN |
 | `tests/screenshot-export-gates-003-structural.test.ts` | Yes | migration and export gate evidence | source strings/DB | CI result | DB behavior | 73/73 related assertions | F006 FIXED_LOCAL / F007 OPEN |
 | `tests/migration-test-ownership.test.ts` | New | migration execution ownership | CI workflow + migration suites | test-runner safety | shared migration state | failing-before 1/2, passing-after 2/2 | F006 FIXED_LOCAL |
-| `.github/workflows/ci.yml` | Yes | mandatory release proof | frozen SHA | check result/artifact | synthetic credentials/secrets | artifact inspection | F008 OPEN |
+| `.github/workflows/ci.yml` | Yes | mandatory release proof | frozen SHA | check result/artifact | synthetic credentials/secrets | failing-before/passing-after completeness + runner behavior | F008 FIXED_LOCAL / exact artifact open |
+| `scripts/run-evidence-command.mjs` | New | command output/exit/duration recorder | each mandatory CI command | log + NDJSON ledger | exact source identity | behavioral test | F008 FIXED_LOCAL |
+| `scripts/verify-ci-evidence.mjs` | New | fail-closed success-artifact gate | ledger + 16 logs | artifact eligibility | exact source identity | accept-complete/reject-omission test | F008 FIXED_LOCAL |
 
 ## Pass status
 
@@ -86,7 +88,7 @@ current-head dispositions below.
 | 2 — dataflow/database/concurrency | IN PROGRESS | F001/F006/F013/F014 fixed locally and F003 verified in exact-checkpoint CI; extraction concurrency remains open. |
 | 3 — authority/security/tenant isolation | IN PROGRESS | Tenant filters observed in reviewed routes; adversarial route sweep incomplete. |
 | 4 — full product workflow/authority | IN PROGRESS | F001/F002/F004 fixed locally; real end-to-end execution not completed. |
-| 5 — falsification/runtime/release proof | IN PROGRESS | F015 critical-schema detection fixed locally; exact audit-head CI/preview and F005/F008/F009 remain open. |
+| 5 — falsification/runtime/release proof | IN PROGRESS | F008/F015 fixed locally; exact audit-head CI/preview and F005/F009 remain open. |
 
 ## Current-head closure evidence
 

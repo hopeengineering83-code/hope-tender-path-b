@@ -59,6 +59,7 @@ jobs:
       E2E_TEST_PASSWORD: "CiPrimary-${{ github.run_id }}-A9!secure"
       E2E_SECOND_EMAIL: "e2e-secondary@example.test"
       E2E_SECOND_PASSWORD: "CiSecondary-${{ github.run_id }}-B8!secure"
+      EVIDENCE_SOURCE_SHA: "${{ github.event.pull_request.head.sha || github.sha }}"
 
     steps:
       - name: Checkout
@@ -83,73 +84,126 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Initialize exact-head command evidence
+        shell: bash
+        run: |
+          mkdir -p test-results build-results browser-results
+          rm -f test-results/command-ledger.ndjson
+
       - name: Reject install-time source mutation
-        run: git diff --exit-code
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name reject-install-source-mutation
+          --log test-results/reject-install-source-mutation.log
+          --
+          git diff --exit-code
 
       - name: Validate Prisma schema
-        run: npx prisma validate
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name prisma-validate
+          --log test-results/prisma-validate.log
+          --
+          npx prisma validate
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name prisma-generate
+          --log test-results/prisma-generate.log
+          --
+          npx prisma generate
 
       - name: Deploy complete migration history
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-results
-          npx prisma migrate deploy 2>&1 | tee test-results/migrate-deploy.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name migrate-deploy
+          --log test-results/migrate-deploy.log
+          --
+          npx prisma migrate deploy
 
       - name: Verify critical migrated schema
-        run: npm run db:check-critical-schema
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name critical-schema
+          --log test-results/critical-schema.log
+          --
+          npm run db:check-critical-schema
 
       - name: Verify retroactive initialization structure and history
-        run: npm run db:verify-retroactive-init
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name retroactive-init
+          --log test-results/retroactive-init.log
+          --
+          npm run db:verify-retroactive-init
 
       - name: Verify migration idempotency
-        shell: bash
-        run: |
-          set -o pipefail
-          npx prisma migrate deploy 2>&1 | tee test-results/migrate-idempotency.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name migrate-idempotency
+          --log test-results/migrate-idempotency.log
+          --
+          npx prisma migrate deploy
 
       - name: Verify Prisma zero drift
-        shell: bash
-        run: |
-          set -o pipefail
-          npx prisma migrate diff \
-            --from-schema-datasource prisma/schema.prisma \
-            --to-schema-datamodel prisma/schema.prisma \
-            --exit-code 2>&1 | tee test-results/prisma-zero-drift.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name prisma-zero-drift
+          --log test-results/prisma-zero-drift.log
+          --
+          npx prisma migrate diff
+          --from-schema-datasource prisma/schema.prisma
+          --to-schema-datamodel prisma/schema.prisma
+          --exit-code
 
       - name: Audit release integrity
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run audit:release-integrity 2>&1 | tee test-results/release-integrity-audit.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name release-integrity
+          --log test-results/release-integrity-audit.log
+          --
+          npm run audit:release-integrity
 
       - name: Typecheck
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run typecheck 2>&1 | tee test-results/typecheck.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name typecheck
+          --log test-results/typecheck.log
+          --
+          npm run typecheck
 
       - name: Lint
-        run: npm run lint
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name lint
+          --log test-results/lint.log
+          --
+          npm run lint
 
       - name: Unit and database integration tests
-        shell: bash
-        run: |
-          set -o pipefail
-          npm test 2>&1 | tee test-results/npm-test.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name unit-database-tests
+          --log test-results/npm-test.log
+          --
+          npm test
 
       - name: Build
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p build-results
-          npm run build 2>&1 | tee build-results/npm-build.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name build
+          --log build-results/npm-build.log
+          --
+          npm run build
 
       - name: Reject build-time source mutation
-        run: git diff --exit-code
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name reject-build-source-mutation
+          --log test-results/reject-build-source-mutation.log
+          --
+          git diff --exit-code
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
@@ -158,7 +212,6 @@ jobs:
         run: node scripts/seed-e2e-user.mjs
 
       - name: Browser smoke, authenticated intake, golden workflow, and cross-user isolation
-        shell: bash
         env:
           CSRF_MODE: "origin"
           CSRF_STRICT_DEV: "true"
@@ -172,28 +225,37 @@ jobs:
           E2E_GOLDEN_AUTH: "true"
           SMOKE_TEST_EMAIL: ${{ env.E2E_TEST_EMAIL }}
           SMOKE_TEST_PASSWORD: ${{ env.E2E_TEST_PASSWORD }}
-        run: |
-          set -o pipefail
-          mkdir -p browser-results
-          npm run test:e2e 2>&1 | tee browser-results/playwright.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name playwright
+          --log browser-results/playwright.log
+          --
+          npm run test:e2e
 
       - name: Reject test-time source mutation
         if: always()
-        run: git diff --exit-code
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name reject-test-source-mutation
+          --log test-results/reject-test-source-mutation.log
+          --
+          git diff --exit-code
+
+      - name: Verify exact-head evidence completeness
+        if: success()
+        run: node scripts/verify-ci-evidence.mjs
 
       - name: Upload credential-free exact-head acceptance evidence
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: exact-head-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             acceptance-evidence/
-            build-results/npm-build.log
-            test-results/release-integrity-audit.log
-            test-results/migrate-deploy.log
-            test-results/migrate-idempotency.log
-            test-results/prisma-zero-drift.log
-          if-no-files-found: warn
+            build-results/
+            test-results/
+            browser-results/
+          if-no-files-found: error
           retention-days: 14
 
       - name: Upload non-browser diagnostics and exact critical sources on failure
