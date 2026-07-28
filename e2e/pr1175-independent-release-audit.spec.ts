@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { primaryTest as test, expect } from "./auth-helper";
+import { waitForDurableTenderExtraction } from "./durable-tender-extraction";
 import type { Page } from "@playwright/test";
 
 const SEEDED_PRIMARY_TENDER_ID = "11111111-1111-4111-8111-111111111111";
@@ -265,11 +266,13 @@ test.describe("PR #1175 independent principal QA release audit", () => {
       await page.goto(`/dashboard/tenders/${tenderId}`, { waitUntil: "domcontentloaded" });
       await expect(page.locator("#tender-files").getByText("pr1175-independent-qa.txt").first()).toBeVisible();
 
-      const sourceFiles = await page.request.get(`/api/tenders/${tenderId}/source-files`);
-      expect(sourceFiles.status(), await sourceFiles.text()).toBe(200);
-      const sourceJson = (await sourceFiles.json()) as { files: Array<{ extractedTextLength: number }> };
-      expect(sourceJson.files.length).toBe(1);
-      expect(sourceJson.files[0]?.extractedTextLength).toBeGreaterThan(0);
+      const extraction = await waitForDurableTenderExtraction({
+        request: page.request,
+        tenderId,
+        expectedFileCount: 1,
+      });
+      expect(extraction.files).toHaveLength(1);
+      expect(extraction.files[0]?.extractedTextLength).toBeGreaterThan(0);
 
       const analyze = await page.request.post(`/api/tenders/${tenderId}/ai-analyze?force=true`);
       const analyzeBody = await analyze.text();

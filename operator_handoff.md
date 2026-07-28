@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; screenshot checkpoint published; requirement-coverage authority fixed locally | Publish F017 after frozen-head recheck, inspect exact CI/artifact, then continue Build Plan/action reconciliation |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; F017 published; stale synchronous-extraction Playwright expectations fixed locally | Publish F021 after frozen-head recheck, inspect replacement exact CI/artifact, then continue Build Plan/action reconciliation |
 
 ### Lock rules
 
@@ -68,6 +68,16 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T17:31:00Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — exact-CI authenticated upload acceptance.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** exact CI run `30381329357` passed migrations/schema/drift/release integrity/typecheck/lint/unit+database tests/build and 176 browser assertions, but three upload tests still expected text extraction and `AI_ANALYZE` directly in the upload response. That contradicted the intended durable extraction fix. Added one authenticated acceptance helper that wakes the user-scoped `EXTRACT_TEXT` worker and polls persisted source-file state; updated all three flows to expect `WAIT_FOR_SOURCE_EXTRACTION` / `EXTRACT_TEXT_QUEUED`; the golden flow also verifies the completed extraction job queued canonical analysis.
+- **Tests:** exact-CI failing-before is 3 stale Playwright failures (176 passed / 3 skipped); focused durable extraction/queue suite passes 35/35 locally; TypeScript, ESLint and release-integrity are clean.
+- **CI / deployment:** replacement exact-head CI is pending. No preview, deployment, production/database mutation or real-account test was triggered.
+- **Next action:** recheck PR #1175, publish, inspect replacement CI and its exact-head artifact, then continue F018 Build Plan/PDF reconciliation.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
 
 ### 2026-07-28T17:22:05Z — Codex
 

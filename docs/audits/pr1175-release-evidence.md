@@ -12,7 +12,7 @@ Status: **IN PROGRESS — release acceptance not established**
 - PR state at audit start: open, draft, unmerged
 - Changed files: 656
 - Commits: 656
-- Previous published audit checkpoint: `4046ca72b1afec6bf47e16980325f8ae9a553143`
+- Previous published audit checkpoint: `b0001ef399491d853900895fadb80f67d3015340`
 
 ## GitHub checks observed
 
@@ -139,6 +139,7 @@ This proves deployment identity and basic health only. No complete authenticated
 | complete exact-head command evidence | failing-before 0/3; passing-after 3/3; recorder/verifier and related CI contracts 36/36; YAML parse, TypeScript, ESLint and release-integrity clean |
 | screenshot summary consistency | failing-before 0/2; passing-after 3/3 behavioral contract; 9/9 related screenshot/repair assertions; both producer scripts parse; exact-preview artifact pending |
 | requirement coverage authority consistency | failing-before 0/4; passing-after 5/5 effective-status contract; 112/112 focused lifecycle/release/workflow assertions and 219/219 broader related assertions; TypeScript, ESLint and release-integrity clean; exact-preview acceptance pending |
+| durable extraction Playwright acceptance | exact CI run `30381329357` passed every pre-browser gate and 176 browser assertions, then failed three obsolete immediate-extraction expectations; shared durable-worker polling contract passes 35/35 locally with TypeScript, ESLint and release-integrity clean; replacement exact CI pending |
 
 ## Child audit checkpoint CI
 
@@ -152,6 +153,14 @@ This proves deployment identity and basic health only. No complete authenticated
 - Build and browser steps were skipped after that failure. The workboard
   assertion passes locally after the documentation correction; a new exact
   checkpoint run remains required.
+- Run `30381329357` for screenshot checkpoint `4046ca72…` passed migration
+  deploy, critical schema, retroactive initialization history, idempotency,
+  zero drift, release integrity, typecheck, lint, the complete unit/database
+  suite and production build. Playwright finished 176 passed / 3 skipped /
+  3 failed. All three failures expected upload-time extraction or an
+  `AI_ANALYZE` job, contradicting the now-canonical durable `EXTRACT_TEXT`
+  queue. F021 corrects those acceptance tests without restoring request-time
+  extraction; a replacement exact-head run is required.
 
 No isolated PostgreSQL, build, Playwright, DOCX/PDF/ZIP full-pipeline, audit-head
 Vercel preview, or real-account result is claimed. Local Node is 24.14 while
