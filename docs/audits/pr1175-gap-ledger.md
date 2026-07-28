@@ -154,10 +154,20 @@ This ledger records only findings supported by source or runtime evidence. A fin
 
 - Severity: MEDIUM
 - Pass: 5
-- Status: OPEN
+- Status: FIXED_LOCAL — exact preview screenshot artifact pending
 - Evidence: route screenshot artifact reports `routeCoveragePercent: 100` and no uncovered routes while `counts.routeCoverage` is `0`.
 - Impact: release evidence contains contradictory coverage fields and cannot be treated as authoritative without inspecting the raw route index.
-- Required fix: derive summary and detailed index from one canonical calculation and add schema/consistency assertions.
+- Fix: both screenshot artifacts now publish schema version 2 and one explicit
+  `coverage` object with `expected`, `covered`, `uncovered` and `percent`.
+  `findingCounts.missingRouteCoverage` is unambiguously the uncovered count.
+  Before any artifact is written, the producer recomputes all four dimensions
+  and verifies the exact viewport/pattern identity of every uncovered row.
+- Regression proof: the new contract failed 2/2 before implementation and
+  passes 3/3 after, including behavioral acceptance of a 2/3 (66.67%) summary
+  and rejection of contradictory percentage and uncovered-detail inputs.
+  Related screenshot/repair assertions pass 9/9 and both scripts pass
+  `node --check`. An exact-head preview screenshot run and artifact inspection
+  remain required before runtime closure.
 
 ## PR1175-F010 — Donor audit branch was behind its base-side history
 

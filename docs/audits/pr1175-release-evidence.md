@@ -12,7 +12,7 @@ Status: **IN PROGRESS — release acceptance not established**
 - PR state at audit start: open, draft, unmerged
 - Changed files: 656
 - Commits: 656
-- Previous published audit checkpoint: `41c802d2b518d89e7b122a81efafbc536a3dde7c`
+- Previous published audit checkpoint: `9502c578a9c4ccdd8e5973f70c81a0b47e00c075`
 
 ## GitHub checks observed
 
@@ -93,7 +93,9 @@ Disposition: these files prove isolated container validity and hash parity only.
 - 237 PNG files.
 - Detailed index: 37 discovered page patterns × desktop/tablet/mobile.
 - Detailed index reports covered representative routes and no horizontal overflow.
-- Summary reports 100% route coverage but also `counts.routeCoverage: 0`.
+- Historical summary reports 100% route coverage but also
+  `counts.routeCoverage: 0`; this is not accepted as authoritative compact
+  evidence.
 - Screenshots are navigation/rendering evidence; they do not prove mutations, persistence, tenant isolation, job recovery or final-file correctness.
 - Review Inbox screenshots visibly expose only Experts and Projects; no legal/financial/compliance review queue is present.
 
@@ -135,6 +137,7 @@ This proves deployment identity and basic health only. No complete authenticated
 | sole Final ZIP owner and complete manifest authority | failing-before 3/3; passing-after 3/3; 213/213 affected scope/assembly/Build Plan/PDF/package/static-safety/binary assertions; TypeScript/ESLint/release-integrity clean |
 | serialized migration execution ownership | failing-before ownership contract; passing 2/2; 73/73 related CI/migration/source assertions; TypeScript clean |
 | complete exact-head command evidence | failing-before 0/3; passing-after 3/3; recorder/verifier and related CI contracts 36/36; YAML parse, TypeScript, ESLint and release-integrity clean |
+| screenshot summary consistency | failing-before 0/2; passing-after 3/3 behavioral contract; 9/9 related screenshot/repair assertions; both producer scripts parse; exact-preview artifact pending |
 
 ## Child audit checkpoint CI
 

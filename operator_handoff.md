@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; migration checkpoint published; fail-closed CI evidence fixed locally | Publish CI-evidence checkpoint, inspect exact run/artifact, then continue runtime-truth gaps |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; CI-evidence checkpoint published; screenshot summary authority fixed locally | Publish screenshot-evidence checkpoint, inspect exact CI/artifact, then continue cross-panel runtime-truth gaps |
 
 ### Lock rules
 
@@ -68,6 +68,16 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T17:02:48Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — screenshot release-evidence consistency.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** the screenshot producer used route coverage both as a success percentage and as the count of missing findings, so a complete run emitted `routeCoveragePercent: 100` beside `counts.routeCoverage: 0`. Replaced those duplicate fields with one versioned `{expected, covered, uncovered, percent}` authority in both JSON artifacts and an explicit `findingCounts.missingRouteCoverage`. A pre-write gate recomputes all dimensions and compares exact viewport/pattern identities for uncovered rows.
+- **Tests:** new contract failed 2/2 before implementation and passes 3/3 after, including behavioral rejection of contradictory percentage and uncovered-route details; 9/9 related screenshot/repair assertions pass; both scripts pass `node --check`; TypeScript, ESLint and the complete release-integrity audit are clean.
+- **CI / deployment:** prior exact-head CI for `9502c578…` was in progress when this checkpoint began. No preview, deployment, database mutation or real-account test was triggered.
+- **Next action:** complete static validation, recheck governing PR #1175, publish, then inspect exact-head CI and continue the remaining cross-panel truth/runtime gaps.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
 
 ### 2026-07-28T16:55:46Z — Codex
 

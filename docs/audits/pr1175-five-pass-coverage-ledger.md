@@ -3,7 +3,7 @@
 Governing source SHA: `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`
 Governing base SHA: `b3c9db5de89a2a665e61a83facbff0f276f9983c`
 Audit branch: `audit/pr1175-complete-five-pass-forensic-audit`
-Previous published audit checkpoint: `41c802d2b518d89e7b122a81efafbc536a3dde7c`
+Previous published audit checkpoint: `9502c578a9c4ccdd8e5973f70c81a0b47e00c075`
 Status: **IN PROGRESS — DO NOT MERGE**
 
 This ledger is intentionally fail-closed. `PARTIAL` means the category cannot yet be claimed as fully audited. Full coverage will not be claimed until every changed file and every transitive runtime dependency has a row and disposition.
@@ -39,7 +39,7 @@ current-head dispositions below.
 | Golden path acceptance | REVIEWED WITH FINDING | `tests/golden-path-release-acceptance.test.ts` | Static fixture/scoring assertions only; not a real golden workflow. |
 | Export gate tests | PARTIAL | two screenshot-export-gates test files + CI migration owner | F006 fixed locally: no migration subprocess remains in parallel test bodies; F007 source-string proof remains open. |
 | CI workflow | FIXED LOCAL / EXACT CI OPEN | `.github/workflows/ci.yml`, command recorder/verifier, downloaded prior artifact | F008 fixed locally: 16 exact-head commands require non-empty logs and a successful SHA-bound NDJSON ledger before success artifact upload. |
-| Screenshot audit | PARTIAL | downloaded index, route manifest, summary, Review Inbox screenshots | F009 open: summary counter contradiction; render coverage does not prove behavior. |
+| Screenshot audit | FIXED LOCAL / EXACT PREVIEW OPEN | downloaded index, route manifest, summary, Review Inbox screenshots, summary producer and consistency gate | F009 fixed locally: one explicit versioned coverage object feeds both artifacts and rejects contradictory details before write. Render coverage still does not prove behavior; exact preview artifact remains open. |
 | Vercel preview | PARTIAL | supplied screenshot deployment `aed98737…`, governing deployment `ec0eaa83…`, scoped runtime queries | Historical screenshot log lines have expired; screenshot binds a P2022 failure to `aed98737…`. Governing deployment has no retained error/500 logs but no authenticated acceptance traffic. |
 | PR/base graph | REVIEWED | current PR metadata and comparison | F010 from the donor audit is stale; this branch was created from the current frozen PR #1175 head. |
 | Authentication/password reset | NOT STARTED | — | Required Pass 3 scope. |
@@ -79,6 +79,9 @@ current-head dispositions below.
 | `.github/workflows/ci.yml` | Yes | mandatory release proof | frozen SHA | check result/artifact | synthetic credentials/secrets | failing-before/passing-after completeness + runner behavior | F008 FIXED_LOCAL / exact artifact open |
 | `scripts/run-evidence-command.mjs` | New | command output/exit/duration recorder | each mandatory CI command | log + NDJSON ledger | exact source identity | behavioral test | F008 FIXED_LOCAL |
 | `scripts/verify-ci-evidence.mjs` | New | fail-closed success-artifact gate | ledger + 16 logs | artifact eligibility | exact source identity | accept-complete/reject-omission test | F008 FIXED_LOCAL |
+| `scripts/screenshot-route-manifest.mjs` | Yes | screenshot route discovery and coverage authority | route records × viewports | canonical coverage summary | release-evidence truth | failing-before/passing-after behavioral consistency contract | F009 FIXED_LOCAL |
+| `scripts/capture-production-pages.mjs` | Yes | screenshot artifact producer | discovered routes + browser records | versioned index/compact summary/HTML | preview credentials and release evidence | one pre-write consistency gate; 9/9 related assertions | F009 FIXED_LOCAL / exact artifact open |
+| `tests/screenshot-summary-consistency.test.ts` | New | prevents contradictory screenshot evidence | producer and summary authority | release artifact schema | exact evidence interpretation | failed 2/2 before, passes 3/3 after | F009 FIXED_LOCAL |
 
 ## Pass status
 
@@ -88,7 +91,7 @@ current-head dispositions below.
 | 2 — dataflow/database/concurrency | IN PROGRESS | F001/F006/F013/F014 fixed locally and F003 verified in exact-checkpoint CI; extraction concurrency remains open. |
 | 3 — authority/security/tenant isolation | IN PROGRESS | Tenant filters observed in reviewed routes; adversarial route sweep incomplete. |
 | 4 — full product workflow/authority | IN PROGRESS | F001/F002/F004 fixed locally; real end-to-end execution not completed. |
-| 5 — falsification/runtime/release proof | IN PROGRESS | F008/F015 fixed locally; exact audit-head CI/preview and F005/F009 remain open. |
+| 5 — falsification/runtime/release proof | IN PROGRESS | F008/F009/F015 fixed locally; exact audit-head CI/preview and F005 remain open. |
 
 ## Current-head closure evidence
 
@@ -111,6 +114,10 @@ current-head dispositions below.
 - Final ZIP scope and assembly have one production owner. The stored manifest
   now binds exact filename, plan order, envelope, format, byte length and
   SHA-256 to bytes reopened from the generated archive.
+- Screenshot evidence has one versioned coverage authority:
+  `{expected, covered, uncovered, percent}`. The producer refuses to write
+  artifacts if the compact counters or uncovered route identities disagree
+  with the detailed route/viewport index.
 
 Local evidence: TypeScript, ESLint, release-integrity audits, 382/382 affected
 transitive assertions for the extraction checkpoint, 63/63

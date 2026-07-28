@@ -134,7 +134,11 @@ Current evidence gap:
   16 mandatory commands in exact-head-bound logs plus an NDJSON exit/duration
   ledger and refuses to publish a success artifact when any entry is absent.
   Exact CI artifact inspection is still required before closure is claimed.
-- Screenshot detail index covers 37 page patterns × 3 viewports, but the summary contains a contradictory zero route-coverage count.
+- The historical screenshot detail index covers 37 page patterns × 3
+  viewports, but its compact summary overloaded route coverage as a missing
+  count. The local producer now derives both artifacts from one versioned
+  `{expected, covered, uncovered, percent}` summary and rejects contradictory
+  uncovered details before write. Exact-preview artifact proof remains open.
 
 ## 6. Review-provenance schema compatibility
 
