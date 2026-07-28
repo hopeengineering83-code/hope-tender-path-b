@@ -12,7 +12,7 @@ Status: **IN PROGRESS — release acceptance not established**
 - PR state at audit start: open, draft, unmerged
 - Changed files: 656
 - Commits: 656
-- Previous published audit checkpoint: `b0001ef399491d853900895fadb80f67d3015340`
+- Previous published audit checkpoint: `0eb7c818d2c6bebb3072ba933744fe0de165e392`
 
 ## GitHub checks observed
 
@@ -140,6 +140,7 @@ This proves deployment identity and basic health only. No complete authenticated
 | screenshot summary consistency | failing-before 0/2; passing-after 3/3 behavioral contract; 9/9 related screenshot/repair assertions; both producer scripts parse; exact-preview artifact pending |
 | requirement coverage authority consistency | failing-before 0/4; passing-after 5/5 effective-status contract; 112/112 focused lifecycle/release/workflow assertions and 219/219 broader related assertions; TypeScript, ESLint and release-integrity clean; exact-preview acceptance pending |
 | durable extraction Playwright acceptance | exact CI run `30381329357` passed every pre-browser gate and 176 browser assertions, then failed three obsolete immediate-extraction expectations; shared durable-worker polling contract passes 35/35 locally with TypeScript, ESLint and release-integrity clean; replacement exact CI pending |
+| canonical Build Plan review/confirmation | failing-before authority contract; passing-after 12/12 focused ownership/state assertions and 243/243 related Build Plan, role, workflow, grounding and readiness assertions; TypeScript, ESLint, release-integrity and production build clean; authenticated preview/database acceptance pending |
 
 ## Child audit checkpoint CI
 
@@ -161,9 +162,19 @@ This proves deployment identity and basic health only. No complete authenticated
   `AI_ANALYZE` job, contradicting the now-canonical durable `EXTRACT_TEXT`
   queue. F021 corrects those acceptance tests without restoring request-time
   extraction; a replacement exact-head run is required.
+- Run `30383347414` for durable-extraction checkpoint `0eb7c818…` passed every
+  pre-test migration, schema, drift, release-integrity, typecheck and lint
+  gate. Unit/database tests completed with 8,937 pass / 2 fail. Both failures
+  were obsolete source-location assertions after the canonical requirement
+  grounding refactor; corrected assertions now prove the transitive shared
+  selector and full containment/page-bound authority and pass locally with
+  their behavioral suites. Build and Playwright were skipped, so this run is
+  not release acceptance.
 
-No isolated PostgreSQL, build, Playwright, DOCX/PDF/ZIP full-pipeline, audit-head
-Vercel preview, or real-account result is claimed. Local Node is 24.14 while
+No isolated PostgreSQL, Playwright, DOCX/PDF/ZIP full-pipeline, audit-head
+Vercel preview, or real-account result is claimed. A local production build
+completed with format-valid non-secret test placeholders; it does not prove
+deployed environment configuration. Local Node is 24.14 while
 the repository requires Node `>=22 <23`. `npm test` cannot start its `tsx`
 IPC server in this sandbox (`EPERM`); direct `node --import tsx --test`
 execution was used for the recorded focused suites. The explicit
@@ -176,7 +187,7 @@ without `RUN_DB_INTEGRATION=true`.
 
 Open critical/high findings include database-backed extraction concurrency,
 synthetic rather than full-pipeline file evidence, exact-preview schema
-acceptance, and Build Plan/action reconciliation. Final ZIP authority, the
+acceptance, and lifecycle action consolidation. Build Plan authority, Final ZIP authority, the
 migration-test race, CI evidence retention, screenshot summary consistency and
 requirement-coverage authority are fixed locally, but persisted authenticated
 runtime and exact-head CI/artifact acceptance have not yet been established.

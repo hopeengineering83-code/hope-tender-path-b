@@ -225,9 +225,9 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
   if (!input.submissionPlanBuilt) {
     return {
       primary: "BUILD_SUBMISSION_PLAN",
-      label: "Build submission plan",
-      reason: "Extraction, analysis, Tender Details, and requirements are ready. Build the submission plan before generating documents.",
-      blockers: ["No submission plan"],
+      label: "Review and confirm Build Plan",
+      reason: "Extraction, analysis, Tender Details, and requirements are ready. Build the draft, review its complete ordered scope, and confirm it before generating documents.",
+      blockers: ["No current confirmed Build Plan"],
       tone: "amber",
     };
   }

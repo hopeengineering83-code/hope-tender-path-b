@@ -47,7 +47,7 @@ function buildWorkflowStages(): WorkflowStage[] {
     { stage: 3, label: "AI Analyze", actionLabel: "Run AI Analyze", actionName: "RUN_AI_ANALYZE" },
     { stage: 4, label: "Confirm Requirements", actionLabel: "Review Requirements", actionName: "REVIEW_MATCHES" },
     { stage: 5, label: "Confirm Metadata", actionLabel: "Edit Metadata", actionName: "EDIT_TENDER_METADATA" },
-    { stage: 6, label: "Verified Submission Plan", actionLabel: "Build Plan", actionName: "BUILD_SUBMISSION_PLAN" },
+    { stage: 6, label: "Confirmed Build Plan", actionLabel: "Build Plan", actionName: "BUILD_SUBMISSION_PLAN" },
     { stage: 7, label: "Match Evidence", actionLabel: "Match Evidence", actionName: "LINK_VAULT_EVIDENCE" },
     { stage: 8, label: "Generate Documents", actionLabel: "Generate", actionName: "GENERATE_REQUIRED_DOCUMENTS" },
     { stage: 9, label: "Validate and Approve", actionLabel: "Review Documents", actionName: "VALIDATE_DOCS" },
@@ -93,8 +93,10 @@ describe("Workflow Center API — every stage has server-derived actionKind", ()
     const mutationStages = stages.filter((s) => s.actionKind === "mutation");
     assert.ok(mutationStages.length > 0, "There must be at least one mutation stage");
 
-    // These stages MUST be mutations (they call POST routes)
-    const mustBeMutations = [3, 6, 7, 8, 9]; // AI Analyze, Build Plan, Match Evidence, Generate, Validate
+    // These stages MUST be mutations (they call POST routes directly).
+    // Stage 6 navigates to the role-gated Build Plan review/confirm owner;
+    // it no longer dispatches a hidden draft-only POST from the workflow link.
+    const mustBeMutations = [3, 7, 8, 9]; // AI Analyze, Match Evidence, Generate, Validate
     for (const stageNum of mustBeMutations) {
       const s = stages.find((s) => s.stage === stageNum);
       assert.ok(s, `Stage ${stageNum} must exist`);
@@ -105,7 +107,7 @@ describe("Workflow Center API — every stage has server-derived actionKind", ()
 
   it("readonly stages are classified as readonly", () => {
     // These stages MUST be readonly (scroll/navigate/download)
-    const mustBeReadonly = [1, 2, 4, 5, 10]; // Manage Files, Run OCR, Review Requirements, Edit Metadata, Export
+    const mustBeReadonly = [1, 2, 4, 5, 6, 10]; // Manage Files, Run OCR, Review Requirements, Edit Metadata, Build Plan navigation, Export
     for (const stageNum of mustBeReadonly) {
       const s = stages.find((s) => s.stage === stageNum);
       assert.ok(s, `Stage ${stageNum} must exist`);
@@ -198,7 +200,7 @@ describe("Recovery action dispatch — REVIEWER filtering simulation", () => {
 
   const allActions = [
     "RUN_AI_ANALYZE",          // mutation
-    "BUILD_SUBMISSION_PLAN",   // mutation
+    "BUILD_SUBMISSION_PLAN",   // readonly navigation to the role-gated owner
     "REPAIR_METADATA",         // mutation
     "VALIDATE_DOCS",           // mutation
     "GENERATE_REQUIRED_DOCUMENTS", // mutation
@@ -227,7 +229,7 @@ describe("Recovery action dispatch — REVIEWER filtering simulation", () => {
     const visible = canMutate ? allActions : allActions.filter((a) => !isMutationAction(a));
 
     // These readonly actions MUST be visible
-    const mustSee = ["UPLOAD_TENDER_DOCUMENT", "DOWNLOAD_FINAL_ZIP", "RE_CHECK", "EXPORT_READINESS", "REVIEW_MATCHES"];
+    const mustSee = ["UPLOAD_TENDER_DOCUMENT", "BUILD_SUBMISSION_PLAN", "DOWNLOAD_FINAL_ZIP", "RE_CHECK", "EXPORT_READINESS", "REVIEW_MATCHES"];
     for (const a of mustSee) {
       assert.ok(visible.includes(a),
         `REVIEWER must still see readonly action ${a}`);
@@ -243,7 +245,7 @@ describe("Recovery action dispatch — REVIEWER filtering simulation", () => {
 
 describe("Complete mutation action list — every mutation is hidden for REVIEWER", () => {
   // The user listed these specific mutations that MUST be hidden for REVIEWER:
-  // Execute, blocker repair buttons, AI Analyze, Build Plan, metadata repair/
+  // Execute, blocker repair buttons, AI Analyze, metadata repair/
   // re-extract, vault linking, generation, validation, finalize, supersede,
   // and export repairs.
 
@@ -251,7 +253,6 @@ describe("Complete mutation action list — every mutation is hidden for REVIEWE
     "RUN_AI_ANALYZE",            // AI Analyze
     "RETRY_AI_ANALYZE",          // AI Analyze retry
     "RESUME_AI_ANALYZE",         // AI Analyze resume
-    "BUILD_SUBMISSION_PLAN",     // Build Plan
     "REPAIR_METADATA",           // metadata repair
     "RE_EXTRACT_METADATA",       // metadata re-extract
     "REPAIR_SOURCE_REFERENCES",  // source grounding repair

@@ -311,7 +311,7 @@ test("workflow-center stage 5 (Tender Details) reflects the unified runtime mode
   );
 });
 
-test("workflow-center stage 6 (Verified Submission Plan) uses gate-aligned buildPlan.gateValid, not the count-based valid", () => {
+test("workflow-center stage 6 (Confirmed Build Plan) uses gate-aligned buildPlan.gateValid, not the count-based valid", () => {
   // buildPlan.valid is count-based (>=1 non-SUPERSEDED GeneratedDocument) and
   // explicitly does NOT agree with the generation gate.
   //

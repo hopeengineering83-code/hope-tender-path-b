@@ -175,7 +175,7 @@ test("category E: engine actions use distinct semantic icons", () => {
 test("category F: tender detail page imports and renders SubmissionPlanCompletenessPanel", () => {
   const source = readSource("app/dashboard/tenders/[id]/page.tsx");
   assert.match(source, /import \{ SubmissionPlanCompletenessPanel \} from "..\/..\/..\/..\/components\/submission-plan-completeness-panel"/);
-  assert.match(source, /<SubmissionPlanCompletenessPanel tenderId=\{tender\.id\} \/>/);
+  assert.match(source, /<SubmissionPlanCompletenessPanel tenderId=\{tender\.id\} canMutate=\{canMutate\} \/>/);
 });
 
 test("category F: metadata-completion-panel and metadata-truth-panel were deleted, not left as dead code", () => {

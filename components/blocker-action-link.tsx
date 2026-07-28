@@ -45,6 +45,7 @@ import {
   isMutationAction,
   renderRecoveryActionPath,
 } from "@/lib/recovery-command-actions";
+import { openParentDetailsAndScroll } from "@/lib/ui/tender-workflow-sync";
 import {
   ArrowRightIcon,
   BoltIcon,
@@ -97,7 +98,13 @@ export function BlockerActionLink({
     setBusy(true);
     try {
       if (spec.kind === "scroll" && spec.anchorId) {
-        onScrollAnchor?.(spec.anchorId, spec.message ?? `Open ${spec.label}.`);
+        if (onScrollAnchor) {
+          onScrollAnchor(spec.anchorId, spec.message ?? `Open ${spec.label}.`);
+        } else {
+          const target = document.getElementById(spec.anchorId);
+          if (!target) throw new Error(`Could not open ${spec.label}. Refresh the page and retry.`);
+          openParentDetailsAndScroll(target);
+        }
         return;
       }
       if (spec.kind === "navigate" && spec.path) {

@@ -172,9 +172,6 @@ export async function SubmissionPlanReconciliationPanel({ tenderId }: { tenderId
       )}
 
       <div className="mt-4 flex flex-wrap gap-2 text-xs">
-        {requiredCount === 0 && (
-          <BuildSubmissionPlanButton tenderId={tenderId} />
-        )}
         <Link href={`/api/tenders/${tenderId}/export-readiness`} className="rounded-lg border border-slate-300 bg-white px-3 py-2 font-medium text-slate-700 hover:bg-slate-50">Open export readiness JSON</Link>
         <span className="rounded-lg bg-white px-3 py-2 text-slate-600">Use the missing-file action above to create planned package files, then review and validate before export.</span>
       </div>

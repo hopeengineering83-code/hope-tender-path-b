@@ -3,6 +3,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { clientLogger } from "@/lib/ui/client-logger";
 import { subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
+import { DisclosureAnchorLink } from "./disclosure-anchor-link";
+import { ArrowRightIcon, CheckCircleIcon, WarningIcon } from "./icons";
 
 // This panel previously fetched /api/tenders/[id]/workflow-center and read
 // `json.plan` — a key that route has never returned in its consolidated form
@@ -87,13 +89,23 @@ export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
   const verified = summary.planState === "CONFIRMED_BUILD_PLAN" && !summary.requiresUserConfirmation;
   return (
     <div id="submission-plan" className={`mt-4 rounded-xl border p-4 ${verified ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"}`}>
-      <h3 className={`text-sm font-bold ${verified ? "text-green-900" : "text-amber-900"}`}>
-        Submission Plan: {summary.planState.replace(/_/g, " ")}
+      <h3 className={`flex items-center gap-1.5 text-sm font-bold ${verified ? "text-green-900" : "text-amber-900"}`}>
+        {verified ? <CheckCircleIcon /> : <WarningIcon />}
+        {verified ? "Confirmed Build Plan" : "Submission scope preview — not confirmed"}
       </h3>
       <p className="mt-1 text-xs text-slate-600">{planReason(summary)}</p>
-      <div className="mt-3 flex gap-4 text-[10px] font-bold uppercase">
-        <span className="text-slate-500">Required: {summary.totalRequired}</span>
-        <span className="text-slate-500">Generated: {summary.totalGenerated}</span>
+      <div className="mt-3 flex flex-wrap items-center gap-4 text-[10px] font-bold uppercase">
+        <span className="text-slate-500">{verified ? "Confirmed required" : "Scope files"}: {summary.totalRequired}</span>
+        <span className="text-slate-500">Current outputs: {summary.totalGenerated}</span>
+        {!verified && (
+          <DisclosureAnchorLink
+            href="#submission-plan-reconciliation"
+            className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[10px] font-semibold text-amber-800 hover:bg-amber-100"
+            title="Open the Build Plan review and confirmation action"
+          >
+            Review and confirm Build Plan <ArrowRightIcon />
+          </DisclosureAnchorLink>
+        )}
       </div>
     </div>
   );

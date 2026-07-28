@@ -61,7 +61,6 @@ describe("isMutationAction — classifies mutation actions", () => {
     "REVOKE_FALLBACK_APPROVAL",
     "REPAIR_SOURCE_REFERENCES",
     "REPAIR_SOURCE_GROUNDING",
-    "BUILD_SUBMISSION_PLAN",
     "RUN_ENGINE",
     "RUN_ENGINE_OR_APPROVE_ANALYSIS",
     "LINK_VAULT_EVIDENCE",
@@ -138,13 +137,13 @@ describe("isMutationAction — classifies mutation actions", () => {
 describe("isReadOnlyAction — inverse of isMutationAction", () => {
   it("returns true for read-only actions", () => {
     assert.equal(isReadOnlyAction("UPLOAD_TENDER_DOCUMENT"), true);
+    assert.equal(isReadOnlyAction("BUILD_SUBMISSION_PLAN"), true);
     assert.equal(isReadOnlyAction("DOWNLOAD_FINAL_ZIP"), true);
     assert.equal(isReadOnlyAction("RE_CHECK"), true);
   });
 
   it("returns false for mutation actions", () => {
     assert.equal(isReadOnlyAction("RUN_AI_ANALYZE"), false);
-    assert.equal(isReadOnlyAction("BUILD_SUBMISSION_PLAN"), false);
     assert.equal(isReadOnlyAction("VALIDATE_DOCS"), false);
   });
 });

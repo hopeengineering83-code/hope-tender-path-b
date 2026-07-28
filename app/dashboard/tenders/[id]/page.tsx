@@ -303,7 +303,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         >
           <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
           <SubmissionPlanReconciliationPanel tenderId={tender.id} />
-          <SubmissionPlanCompletenessPanel tenderId={tender.id} />
+          <SubmissionPlanCompletenessPanel tenderId={tender.id} canMutate={canMutate} />
           <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />
         </Disclosure>
       </WorkflowStage>

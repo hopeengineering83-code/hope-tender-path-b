@@ -38,7 +38,7 @@ function shortAction(action?: string): string {
   if (action === "RUN_ENGINE") return "Run Engine first.";
   if (action === "REVIEW_MATCHES") return "Review/select matching evidence.";
   if (action === "EDIT_TENDER_METADATA") return "Open Tender Detail and fill missing Tender Details.";
-  if (action === "BUILD_SUBMISSION_PLAN") return "Run Build Plan first.";
+  if (action === "BUILD_SUBMISSION_PLAN") return "Review and confirm the Build Plan first.";
   if (action === "RUN_OCR_OR_UPLOAD_CLEARER_SCAN") return "Run OCR or upload a clearer scan.";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Check Extraction Quality.";
   return "Resolve the readiness blockers first.";

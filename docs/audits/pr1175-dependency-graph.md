@@ -98,6 +98,26 @@ meaningful, page-valid and contained in the active tenant-owned tender file.
 The former direct support-level mutation fallback is removed, and the heatmap
 is now one row per requirement instead of one row per compliance link.
 
+Build Plan authority subgraph:
+
+```text
+tenant-owned tender + current requirement/fact revision
+→ GET /api/tenders/[id]/build-plan
+→ NOT_BUILT | DRAFT | CONFIRMED | STALE_CONFIRMED
+→ canonical reconciliation panel
+→ explicit POST build draft
+→ complete ordered draft review + acknowledgement
+→ strict POST confirmation
+→ content/revision-bound confirmed plan
+→ read-only truth/completeness consumers
+→ generation, PDF and ZIP gates
+```
+
+No page-load path creates a Build Plan or classifies generated documents.
+Generic blocker actions scroll to this owner rather than performing a hidden
+draft mutation. Role capability is enforced in both the visible controls and
+the route.
+
 ## 4. Generated files and final ZIP
 
 Confirmed plan item

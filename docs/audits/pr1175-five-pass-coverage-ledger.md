@@ -3,7 +3,7 @@
 Governing source SHA: `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`
 Governing base SHA: `b3c9db5de89a2a665e61a83facbff0f276f9983c`
 Audit branch: `audit/pr1175-complete-five-pass-forensic-audit`
-Previous published audit checkpoint: `b0001ef399491d853900895fadb80f67d3015340`
+Previous published audit checkpoint: `0eb7c818d2c6bebb3072ba933744fe0de165e392`
 Status: **IN PROGRESS — DO NOT MERGE**
 
 This ledger is intentionally fail-closed. `PARTIAL` means the category cannot yet be claimed as fully audited. Full coverage will not be claimed until every changed file and every transitive runtime dependency has a row and disposition.
@@ -42,6 +42,7 @@ current-head dispositions below.
 | Authenticated upload Playwright acceptance | FIXED LOCAL / EXACT CI OPEN | three upload-flow specs + shared durable extraction helper | F021 fixed locally: acceptance follows queued `EXTRACT_TEXT`, wakes the owned worker and polls persisted extraction instead of asserting request-time text. |
 | Screenshot audit | FIXED LOCAL / EXACT PREVIEW OPEN | downloaded index, route manifest, summary, Review Inbox screenshots, summary producer and consistency gate | F009 fixed locally: one explicit versioned coverage object feeds both artifacts and rejects contradictory details before write. Render coverage still does not prove behavior; exact preview artifact remains open. |
 | Requirement coverage authority | FIXED LOCAL / EXACT PREVIEW OPEN | confirmation mutation, coverage API, requirement/evidence/heatmap panels, final-package selector, release snapshot, lifecycle controls | F017 fixed locally: FULL/SUBSTANTIAL becomes effective coverage only with active source-file/page/exact-quote containment; untrusted strong rows are `NEEDS_TRACE`; heatmap cardinality is one row per requirement. |
+| Build Plan authority | FIXED LOCAL / EXACT PREVIEW OPEN | Build Plan read/build/confirm routes, reconciliation/truth/completeness panels, lifecycle action registries, role gates | F018 fixed locally: one reconciliation owner builds a reviewable draft and confirms it explicitly; status distinguishes absent, draft, confirmed and stale-confirmed state; page load and completeness no longer mutate or present unconfirmed scope as authority. |
 | Vercel preview | PARTIAL | supplied screenshot deployment `aed98737…`, governing deployment `ec0eaa83…`, scoped runtime queries | Historical screenshot log lines have expired; screenshot binds a P2022 failure to `aed98737…`. Governing deployment has no retained error/500 logs but no authenticated acceptance traffic. |
 | PR/base graph | REVIEWED | current PR metadata and comparison | F010 from the donor audit is stale; this branch was created from the current frozen PR #1175 head. |
 | Authentication/password reset | NOT STARTED | — | Required Pass 3 scope. |
@@ -91,6 +92,8 @@ current-head dispositions below.
 | `app/api/tenders/[id]/requirement-coverage/set-support-level/route.ts` | Removed | competing direct support mutator | client fallback | ComplianceMatrix | bypassed canonical confirmation policy | complete consumer sweep | removed; one mutation owner remains |
 | `components/{requirement-coverage-panel,evidence-coverage-panel,compliance-heatmap-panel}.tsx` | Yes | visible coverage/status consumers | canonical effective statuses | workflow actions and counts | avoids unsupported release claims | focused consistency + workflow suites | F017 FIXED_LOCAL |
 | `lib/engine/{tender-release-snapshot,tender-lifecycle-orchestrator}.ts` | Yes | server workflow/control authorities | canonical effective requirement status | next action, generation and export gates | fail-closed release state | 112/112 focused workflow/release assertions | F017 FIXED_LOCAL |
+| `app/api/tenders/[id]/build-plan/{route.ts,confirm/route.ts}` | Yes | canonical Build Plan read/build/confirm boundary | tenant-owned tender state and requirements | durable draft or confirmed plan | auth, role, tenant, content hash, runtime item validation | focused state/authority contract + related gate suites | F018 FIXED_LOCAL |
+| `components/{build-submission-plan-button,submission-plan-reconciliation-panel,submission-plan-completeness-panel,submission-plan-truth-panel}.tsx` | Yes | visible plan authority and downstream status | canonical Build Plan endpoint plus scope preview | explicit review/confirm and read-only completeness | mutation capability and no page-load writes | 12/12 focused + 243/243 related assertions | F018 FIXED_LOCAL |
 
 ## Pass status
 
@@ -99,7 +102,7 @@ current-head dispositions below.
 | 1 — static/character-sensitive | IN PROGRESS | F002/F004 fixed locally; F007 and the broad file sweep remain open. |
 | 2 — dataflow/database/concurrency | IN PROGRESS | F001/F006/F013/F014 fixed locally and F003 verified in exact-checkpoint CI; extraction concurrency remains open. |
 | 3 — authority/security/tenant isolation | IN PROGRESS | Tenant filters observed in reviewed routes; adversarial route sweep incomplete. |
-| 4 — full product workflow/authority | IN PROGRESS | F001/F002/F004/F017 fixed locally; real end-to-end execution not completed. |
+| 4 — full product workflow/authority | IN PROGRESS | F001/F002/F004/F017/F018 fixed locally; real end-to-end execution not completed. |
 | 5 — falsification/runtime/release proof | IN PROGRESS | F008/F009/F015 fixed locally; exact audit-head CI/preview and F005 remain open. |
 
 ## Current-head closure evidence
@@ -133,6 +136,11 @@ current-head dispositions below.
   trace is shown as `NEEDS_TRACE`; the heatmap no longer multiplies a
   requirement by its compliance rows; server snapshot and lifecycle gates
   consume the same selector.
+- Build Plan has one explicit action owner. The reconciliation panel builds a
+  draft, displays its complete ordered scope, requires acknowledgement, and
+  invokes the strict confirmation route. Completeness and truth surfaces are
+  read-only consumers; unconfirmed derived scope is labelled as a preview,
+  and reviewers cannot trigger plan/document mutations.
 
 Local evidence: TypeScript, ESLint, release-integrity audits, 382/382 affected
 transitive assertions for the extraction checkpoint, 63/63
@@ -141,4 +149,5 @@ Inbox/privacy/RBAC/provenance/concurrency assertions. The Final ZIP checkpoint
 adds 213/213 affected scope/assembly/Build Plan/PDF/package/static-safety/binary
 assertions. Migration ownership adds 73/73 related assertions. Database
 integration is not claimed because no isolated PostgreSQL service is available
-in this workspace.
+in this workspace. The Build Plan checkpoint adds 12/12 focused authority/state
+assertions and 243/243 related assertions plus a clean production build.

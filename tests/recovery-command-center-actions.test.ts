@@ -131,6 +131,7 @@ describe("Recovery Command Center — action registry coverage", () => {
       "extraction-quality",
       "extraction-quality-detail",
       "analysis-quality",
+      "submission-plan-reconciliation",
     ]);
     for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
       if (spec.kind !== "scroll") continue;
@@ -422,7 +423,6 @@ const EXECUTE_PATH_ROUTES = [
   { action: "VALIDATE_DOCS",               file: "app/api/tenders/[id]/validate/route.ts" },
   { action: "REPAIR_SOURCE_REFERENCES",    file: "app/api/tenders/[id]/repair-source-grounding/route.ts" },
   { action: "REPAIR_DOCUMENT_QUALITY",     file: "app/api/tenders/[id]/repair-export-gaps/route.ts" },
-  { action: "BUILD_SUBMISSION_PLAN",       file: "app/api/tenders/[id]/submission-plan/build/route.ts" },
   { action: "REPAIR_METADATA",             file: "app/api/tenders/[id]/repair-metadata/route.ts" },
   { action: "APPROVE_FALLBACK_WITH_NOTE",  file: "app/api/tenders/[id]/approve-analysis/route.ts" },
   { action: "RECONCILE_OUTSIDE_PLAN_DOCS", file: "app/api/tenders/[id]/supersede-outside-plan/route.ts" },
@@ -437,7 +437,6 @@ describe("Recovery Command Center — REVIEWER role parity on Execute-path route
 
   // Mutation routes must NOT allow REVIEWER — release-safety policy.
   const MUTATION_ACTIONS = new Set([
-    "BUILD_SUBMISSION_PLAN",
     "APPROVE_FALLBACK_WITH_NOTE",
     "AUTO_FINALIZE",
     "GENERATE_REQUIRED_DOCUMENTS",

@@ -7,9 +7,9 @@
 
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DocumentIcon, RefreshIcon, CheckCircleIcon, WarningIcon, ClockIcon, BanIcon, FolderIcon } from "./icons";
+import { RefreshIcon, CheckCircleIcon, WarningIcon, ClockIcon, BanIcon, FolderIcon } from "./icons";
 
 type Status =
   | "GENERATED"
@@ -88,10 +88,10 @@ function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
 
 function planStateLabel(state: PlanState): string {
   if (state === "CONFIRMED_BUILD_PLAN") return "Confirmed Build Plan";
-  if (state === "EXPLICIT_TENDER_PLAN") return "Explicit tender plan";
-  if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Derived draft — confirm";
-  if (state === "PLAN_NOT_BUILT") return "Plan not built";
-  if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "Requirements found — build plan";
+  if (state === "EXPLICIT_TENDER_PLAN") return "Unconfirmed tender scope";
+  if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Unconfirmed derived scope";
+  if (state === "PLAN_NOT_BUILT") return "No confirmed Build Plan";
+  if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "No confirmed Build Plan";
   return "No requirements yet";
 }
 
@@ -145,7 +145,7 @@ export function suggestOutsidePlanResolution(fileName: string): string {
   return "Review this document and decide: reclassify to match a plan requirement, mark not exportable, or exclude.";
 }
 
-export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string }) {
+export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
@@ -153,9 +153,6 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
   const [showHistorical, setShowHistorical] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
-  const [building, setBuilding] = useState(false);
-  const [classifying, setClassifying] = useState(false);
-  const autoRunDone = useRef(false);
 
   async function load() {
     setLoading(true);
@@ -200,129 +197,38 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
     }
   }
 
-  async function autoClassify(rows: Row[]) {
-    const outsidePlanIds = rows
-      .filter((r) => r.status === "OUTSIDE_PLAN" && r.documentId)
-      .map((r) => r.documentId as string);
-    if (outsidePlanIds.length === 0) return;
-
-    setClassifying(true);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/submission-plan/auto-classify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ docIds: outsidePlanIds }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error ?? `Auto-classify failed (${res.status})`);
-      const classified: number = json.classified ?? 0;
-      if (classified > 0) {
-        setActionMsg(`Auto-classified ${classified} outside-plan document(s) by type. Review the updated rows below.`);
-        await load();
-        router.refresh();
-      }
-    } catch {
-      // auto-classify is best-effort; don't overwrite a build success message
-    } finally {
-      setClassifying(false);
-    }
-  }
-
-  async function buildPlan(silent = false) {
-    setBuilding(true);
-    if (!silent) setActionMsg(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/submission-plan/build`, { method: "POST" });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error ?? `Build failed (${res.status})`);
-      const created: number = json.created ?? 0;
-      const skipped: number = json.skipped ?? 0;
-      const total: number = json.total ?? 0;
-      if (total === 0) {
-        setActionMsg("Plan built — no submission files were derived from the tender requirements. Add exact file names in the Tender Details, or run AI Analyze to extract them.");
-      } else if (created === 0 && skipped > 0) {
-        setActionMsg(`Plan up to date — all ${skipped} planned file(s) already exist. No new rows created.`);
-      } else {
-        setActionMsg(`Submission plan built — ${created} planned file(s) created, ${skipped} already existed.`);
-      }
-      await load();
-      router.refresh();
-    } catch (err) {
-      setActionMsg(err instanceof Error ? err.message : "Build plan failed");
-    } finally {
-      setBuilding(false);
-    }
-  }
-
   useEffect(() => { void load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tenderId]);
-
-  // Auto-run once after the first successful data load:
-  // 1. Build plan if requirements exist but plan hasn't been built yet.
-  // 2. Auto-classify any outside-plan documents by normalizing their document type.
-  useEffect(() => {
-    if (!data || autoRunDone.current) return;
-    autoRunDone.current = true;
-
-    const needsBuild = (data.summary.planState === "PLAN_NOT_BUILT" || data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") && data.summary.requirementCount > 0;
-    const outsidePlanRows = data.rows.filter((r) => r.status === "OUTSIDE_PLAN" && r.documentId);
-
-    async function runAuto() {
-      if (needsBuild) {
-        // Build plan first; after load() the outside-plan docs may change,
-        // so reload then classify from fresh state.
-        await buildPlan(true);
-        // After build, re-fetch to get the updated rows and classify what remains.
-        setLoading(true);
-        try {
-          const res = await fetch(`/api/tenders/${tenderId}/submission-plan`, { method: "GET" });
-          const json: Response | null = await res.json().catch(() => null);
-          if (res.ok && json) {
-            setData(json);
-            await autoClassify(json.rows);
-          }
-        } finally {
-          setLoading(false);
-        }
-      } else if (outsidePlanRows.length > 0) {
-        await autoClassify(outsidePlanRows.length > 0 ? data!.rows : []);
-      }
-    }
-
-    void runAuto();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
 
   if (loading && !data) {
     return <section aria-busy="true" aria-label="Submission plan completeness" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Loading submission plan completeness…</section>;
-  }
-  if (building && !data) {
-    return <section aria-busy="true" aria-label="Submission plan completeness" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Building submission plan…</section>;
   }
   if (error || !data) {
     return <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">Could not load submission plan: {error ?? "no data"}</section>;
   }
 
   const visibleRows = showHistorical ? data.rows : data.rows.filter((r) => r.status !== "SUPERSEDED");
+  const confirmed = data.summary.planState === "CONFIRMED_BUILD_PLAN" && !data.summary.requiresUserConfirmation;
 
   return (
     <section
       className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
       id="submission-plan-completeness"
-      aria-busy={loading || building || classifying}
+      aria-busy={loading || busyKey !== null}
       aria-label="Submission plan completeness"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Submission Plan Completeness</h3>
+          <h3 className="text-sm font-semibold text-slate-900">
+            {confirmed ? "Confirmed Build Plan completeness" : "Unconfirmed submission scope preview"}
+          </h3>
           <p className="mt-0.5 text-xs text-slate-500">
-            One row per required submission document with the exact status and recommended next action. Replaces the misleading &ldquo;Docs N/M&rdquo; counter with a full breakdown.
+            {confirmed
+              ? "One row per confirmed required file, with its current output status and next action."
+              : "Preview only: these rows come from tender instructions or a conservative derivation. They do not authorize generation or export until the Build Plan is reviewed and confirmed."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <button type="button" onClick={() => void buildPlan()} aria-label={building ? "Building submission plan" : classifying ? "Auto-classifying documents" : "Build submission plan"} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60" disabled={loading || building || classifying} title="Build the submission plan from extracted requirements">
-            <DocumentIcon /> {building ? "Building…" : classifying ? "Classifying…" : "Build Plan"}
-          </button>
-          <button type="button" onClick={() => void load()} aria-label={loading ? "Refreshing submission plan" : "Re-check submission plan"} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60" disabled={loading || building || classifying} title="Re-check the submission plan status">
+          <button type="button" onClick={() => void load()} aria-label={loading ? "Refreshing submission scope" : "Re-check submission scope"} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60" disabled={loading || busyKey !== null} title="Re-check the current confirmed plan and output status">
             <RefreshIcon /> {loading ? "Checking…" : "Re-check"}
           </button>
           {data.summary.totalSuperseded > 0 && (
@@ -340,11 +246,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4 md:grid-cols-7">
         <div className="rounded-xl bg-slate-50 px-2 py-2">
-          <p className="text-slate-500">Required</p>
+          <p className="text-slate-500">{confirmed ? "Confirmed required" : "Scope files"}</p>
           <p className="text-base font-bold text-slate-900">{data.summary.totalRequired}</p>
         </div>
         <div className="rounded-xl bg-emerald-50 px-2 py-2">
-          <p className="text-slate-500">Generated</p>
+          <p className="text-slate-500">Current outputs</p>
           <p className="text-base font-bold text-emerald-700">{data.summary.totalGenerated}</p>
         </div>
         <div className="rounded-xl bg-red-50 px-2 py-2">
@@ -379,7 +285,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
 
       <div className={`mt-3 rounded-lg border p-3 text-xs ${(data.summary.planState === "PLAN_NOT_BUILT" || data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") ? "border-red-200 bg-red-50 text-red-800" : data.summary.requiresUserConfirmation ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold">Plan state:</span>
+          <span className="font-semibold">Authority:</span>
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${toneClass(planStateTone(data.summary.planState))}`}>{planStateLabel(data.summary.planState)}</span>
           <span>Requirements: {data.summary.requirementCount}</span>
         </div>
@@ -419,7 +325,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           <tbody>
             {visibleRows.map((row, index) => {
               const badge = STATUS_BADGE[row.status];
-              const canAct = Boolean(row.documentId) && row.status !== "SUPERSEDED";
+              const canAct = canMutate && Boolean(row.documentId) && row.status !== "SUPERSEDED";
               const isOutsidePlan = row.status === "OUTSIDE_PLAN";
               return (
                 <tr key={row.key} className="border-t border-slate-100 align-top">
@@ -460,6 +366,10 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           </tbody>
         </table>
       </div>
+
+      {!canMutate && data.rows.some((row) => Boolean(row.documentId) && row.status !== "SUPERSEDED") && (
+        <p className="mt-3 text-xs text-slate-500">Read-only: changing submission-scope rows requires ADMIN or PROPOSAL_MANAGER.</p>
+      )}
     </section>
   );
 }
