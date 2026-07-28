@@ -134,3 +134,55 @@ export function coverageForManifest({ routeManifest, allRecords, viewports, base
   }
   return coverage;
 }
+
+export function summarizeRouteCoverage(routeCoverage) {
+  if (!Array.isArray(routeCoverage)) {
+    throw new TypeError("routeCoverage must be an array");
+  }
+
+  for (const [index, entry] of routeCoverage.entries()) {
+    if (!entry || typeof entry !== "object" || typeof entry.covered !== "boolean") {
+      throw new TypeError(`routeCoverage[${index}].covered must be a boolean`);
+    }
+  }
+
+  const expected = routeCoverage.length;
+  const covered = routeCoverage.filter((entry) => entry.covered).length;
+  const uncovered = expected - covered;
+  const percent = expected === 0
+    ? 0
+    : Number(((covered / expected) * 100).toFixed(2));
+
+  return { expected, covered, uncovered, percent };
+}
+
+export function assertScreenshotCoverageConsistency({ coverage, routeCoverage, uncoveredRoutes }) {
+  if (!coverage || typeof coverage !== "object") {
+    throw new TypeError("coverage summary must be an object");
+  }
+  if (!Array.isArray(uncoveredRoutes)) {
+    throw new TypeError("uncoveredRoutes must be an array");
+  }
+
+  const recalculated = summarizeRouteCoverage(routeCoverage);
+  for (const field of ["expected", "covered", "uncovered", "percent"]) {
+    if (coverage[field] !== recalculated[field]) {
+      throw new Error(
+        `Screenshot coverage ${field} is inconsistent: expected ${recalculated[field]}, received ${coverage[field]}`,
+      );
+    }
+  }
+
+  const coverageKey = (entry) => `${entry.viewport ?? ""}\u0000${entry.pattern ?? ""}`;
+  const detailedUncovered = routeCoverage
+    .filter((entry) => !entry.covered)
+    .map(coverageKey)
+    .sort();
+  const summarizedUncovered = uncoveredRoutes.map(coverageKey).sort();
+  if (
+    detailedUncovered.length !== summarizedUncovered.length ||
+    detailedUncovered.some((key, index) => key !== summarizedUncovered[index])
+  ) {
+    throw new Error("Screenshot uncovered route details are inconsistent with routeCoverage");
+  }
+}

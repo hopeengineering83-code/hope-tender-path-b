@@ -1,5 +1,5 @@
 import { prisma } from "../prisma";
-import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
 
 export type PostconditionCounts = {
   requirementCount: number;
@@ -37,8 +37,13 @@ export async function checkEnginePostconditions(tenderId: string): Promise<Postc
     }),
   ]);
 
-  const reviewedExperts = selectedExpertRows.filter((row) => isDurablyReviewed(row.expert)).length;
-  const reviewedProjects = selectedProjectRows.filter((row) => isDurablyReviewed(row.project)).length;
+  // canUseVaultRecord(..., "GENERATION"), not isDurablyReviewed alone — a
+  // selection consisting entirely of durably SOURCE_VERIFIED (machine-
+  // verified) experts/projects is genuinely usable for generation and must
+  // not trip NO_SELECTED_SOURCE_VERIFIED_EXPERTS_AFTER_ENGINE, which would
+  // falsely report the Engine run as partial/failed.
+  const reviewedExperts = selectedExpertRows.filter((row) => canUseVaultRecord(row.expert, "GENERATION")).length;
+  const reviewedProjects = selectedProjectRows.filter((row) => canUseVaultRecord(row.project, "GENERATION")).length;
 
   const blockers: string[] = [];
   if (requirementCount === 0) blockers.push("NO_REQUIREMENTS_PERSISTED");

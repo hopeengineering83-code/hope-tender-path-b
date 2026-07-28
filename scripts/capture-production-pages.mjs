@@ -2,7 +2,12 @@ import { chromium } from "@playwright/test";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { coverageForManifest, discoverPageManifest } from "./screenshot-route-manifest.mjs";
+import {
+  assertScreenshotCoverageConsistency,
+  coverageForManifest,
+  discoverPageManifest,
+  summarizeRouteCoverage,
+} from "./screenshot-route-manifest.mjs";
 
 const baseUrl = (process.env.SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 const email = process.env.SCREENSHOT_TEST_EMAIL || "";
@@ -344,9 +349,12 @@ try {
 
 const routeCoverage = coverageForManifest({ routeManifest, allRecords, viewports, baseUrl });
 const routeCoverageFindings = routeCoverage.filter((entry) => !entry.covered);
-const expectedCoverageCount = routeManifest.length * viewports.length;
-const coveredCoverageCount = expectedCoverageCount - routeCoverageFindings.length;
-const routeCoveragePercent = expectedCoverageCount === 0 ? 0 : Number(((coveredCoverageCount / expectedCoverageCount) * 100).toFixed(2));
+const coverageSummary = summarizeRouteCoverage(routeCoverage);
+assertScreenshotCoverageConsistency({
+  coverage: coverageSummary,
+  routeCoverage,
+  uncoveredRoutes: routeCoverageFindings,
+});
 
 const criticalFindings = allRecords.filter((record) =>
   record.loginRedirect ||
@@ -363,19 +371,18 @@ const warningFindings = allRecords.filter((record) =>
 );
 
 const summary = {
+  schemaVersion: 2,
   generatedAt: new Date().toISOString(),
   baseUrl,
   evidenceMode,
   sourceSha,
   totalScreenshots: allRecords.length,
   discoveredPagePatterns: routeManifest.length,
-  expectedPatternViewportCoverage: expectedCoverageCount,
-  coveredPatternViewportCoverage: coveredCoverageCount,
-  routeCoveragePercent,
+  coverage: coverageSummary,
   routeCountByViewport: Object.fromEntries(viewports.map((viewport) => [viewport.name, allRecords.filter((record) => record.viewport === viewport.name).length])),
   viewports,
   findingCounts: {
-    routeCoverage: routeCoverageFindings.length,
+    missingRouteCoverage: coverageSummary.uncovered,
     critical: criticalFindings.length,
     horizontalOverflow: overflowFindings.length,
     warning: warningFindings.length,
@@ -386,13 +393,14 @@ const summary = {
 };
 await fs.writeFile(path.join(outputRoot, "index.json"), JSON.stringify(summary, null, 2));
 await fs.writeFile(path.join(outputRoot, "audit-summary.json"), JSON.stringify({
+  schemaVersion: summary.schemaVersion,
   generatedAt: summary.generatedAt,
   baseUrl,
   evidenceMode,
   sourceSha,
   discoveredPagePatterns: routeManifest.length,
-  routeCoveragePercent,
-  counts: summary.findingCounts,
+  coverage: coverageSummary,
+  findingCounts: summary.findingCounts,
   uncoveredRoutes: routeCoverageFindings,
   critical: criticalFindings,
   horizontalOverflow: overflowFindings,
@@ -410,7 +418,7 @@ const rows = allRecords.map((record) => {
   const offenders = record.overflowElements.map((element) => `${element.tag}${element.id ? `#${element.id}` : ""} [${element.left},${element.right}] ${element.text}`).join(" | ");
   return `<tr><td>${escapeHtml(record.viewport)}</td><td><code>${escapeHtml(record.requestedRoute)}</code></td><td><code>${escapeHtml(record.finalPath)}</code></td><td>${escapeHtml(record.status)}</td><td>${escapeHtml(result)}</td><td>${escapeHtml(record.visibleActionCount)}</td><td>${escapeHtml(record.primaryActionLabels.join(" | "))}</td><td>${escapeHtml(browserSignals)}</td><td>${escapeHtml(offenders)}</td><td><a href="${escapeHtml(record.screenshot)}">${escapeHtml(record.screenshot)}</a></td><td>${escapeHtml(record.error)}</td></tr>`;
 }).join("\n");
-await fs.writeFile(path.join(outputRoot, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><title>Hope Tender Screenshot Index</title><style>body{font:14px system-ui;margin:24px;color:#0f172a}table{border-collapse:collapse;width:100%}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}th{background:#f1f5f9}code{font-size:12px}</style></head><body><h1>Hope Tender App Screenshot Index</h1><p>Mode: ${escapeHtml(evidenceMode)}. Source SHA: ${escapeHtml(sourceSha)}. Generated ${summary.generatedAt}. Repository page patterns: ${routeManifest.length}. Route/viewport coverage: ${coveredCoverageCount}/${expectedCoverageCount} (${routeCoveragePercent}%). Total screenshots: ${summary.totalScreenshots}. Missing route coverage: ${routeCoverageFindings.length}. Critical: ${criticalFindings.length}. Overflow: ${overflowFindings.length}. Warnings: ${warningFindings.length}.</p><table><thead><tr><th>Viewport</th><th>Requested route</th><th>Final route</th><th>HTTP</th><th>Result</th><th>Visible actions</th><th>Primary actions</th><th>Browser signals</th><th>Overflow offenders</th><th>Screenshot</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
+await fs.writeFile(path.join(outputRoot, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><title>Hope Tender Screenshot Index</title><style>body{font:14px system-ui;margin:24px;color:#0f172a}table{border-collapse:collapse;width:100%}th,td{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}th{background:#f1f5f9}code{font-size:12px}</style></head><body><h1>Hope Tender App Screenshot Index</h1><p>Mode: ${escapeHtml(evidenceMode)}. Source SHA: ${escapeHtml(sourceSha)}. Generated ${summary.generatedAt}. Repository page patterns: ${routeManifest.length}. Route/viewport coverage: ${coverageSummary.covered}/${coverageSummary.expected} (${coverageSummary.percent}%). Total screenshots: ${summary.totalScreenshots}. Missing route coverage: ${coverageSummary.uncovered}. Critical: ${criticalFindings.length}. Overflow: ${overflowFindings.length}. Warnings: ${warningFindings.length}.</p><table><thead><tr><th>Viewport</th><th>Requested route</th><th>Final route</th><th>HTTP</th><th>Result</th><th>Visible actions</th><th>Primary actions</th><th>Browser signals</th><th>Overflow offenders</th><th>Screenshot</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table></body></html>`);
 
 const filesForManifest = (await listFiles(outputRoot)).filter((file) => !file.endsWith("sha256-manifest.txt")).sort();
 const manifestLines = [];
@@ -419,6 +427,6 @@ await fs.writeFile(path.join(outputRoot, "sha256-manifest.txt"), `${manifestLine
 
 console.log(`Discovered ${routeManifest.length} repository page patterns`);
 console.log(`Captured ${allRecords.length} screenshots into ${outputRoot}`);
-console.log(`Route/viewport coverage: ${coveredCoverageCount}/${expectedCoverageCount} (${routeCoveragePercent}%)`);
-console.log(`Missing route coverage: ${routeCoverageFindings.length}; critical findings: ${criticalFindings.length}; horizontal overflow: ${overflowFindings.length}; warnings: ${warningFindings.length}`);
-if (routeCoverageFindings.length > 0 || criticalFindings.length > 0 || overflowFindings.length > 0 || warningFindings.length > 0) process.exitCode = 1;
+console.log(`Route/viewport coverage: ${coverageSummary.covered}/${coverageSummary.expected} (${coverageSummary.percent}%)`);
+console.log(`Missing route coverage: ${coverageSummary.uncovered}; critical findings: ${criticalFindings.length}; horizontal overflow: ${overflowFindings.length}; warnings: ${warningFindings.length}`);
+if (coverageSummary.uncovered > 0 || criticalFindings.length > 0 || overflowFindings.length > 0 || warningFindings.length > 0) process.exitCode = 1;

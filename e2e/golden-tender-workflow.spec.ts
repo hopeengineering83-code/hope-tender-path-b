@@ -1,4 +1,5 @@
 import { primaryTest as test, expect } from "./auth-helper";
+import { waitForDurableTenderExtraction } from "./durable-tender-extraction";
 const FULL = process.env.E2E_GOLDEN_AUTH === "true";
 const email = process.env.E2E_TEST_EMAIL ?? "e2e-release-integrity@example.test";
 const password = process.env.E2E_TEST_PASSWORD ?? "E2E-release-integrity-password-2026";
@@ -32,7 +33,7 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
   test.skip(!FULL, "Set E2E_GOLDEN_AUTH=true and seed the isolated E2E account");
   test.setTimeout(120_000);
 
-  test("upload-first → automatic analysis queue → AI Analyze fallback → readiness gate", async ({ page }) => {
+  test("upload-first → durable extraction → automatic analysis queue → AI fallback → readiness gate", async ({ page }) => {
     // The storage state is set by the global setup / project config.
     // Navigate directly to the dashboard — no login needed.
     await page.goto("/dashboard");
@@ -77,13 +78,13 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
     expect(intakeJson.success).toBe(true);
     expect(intakeJson.uploadedFiles).toBe(2);
     expect(intakeJson.tenderId).toBeTruthy();
-    expect(intakeJson.nextAction).toBe("WAIT_FOR_AI_ANALYZE");
+    expect(intakeJson.nextAction).toBe("WAIT_FOR_SOURCE_EXTRACTION");
     expect(intakeJson.processingJobId).toBeTruthy();
-    expect(intakeJson.pipelineStage).toBe("AI_ANALYZE_QUEUED");
+    expect(intakeJson.pipelineStage).toBe("EXTRACT_TEXT_QUEUED");
 
     const tenderId = intakeJson.tenderId;
     try {
-      // Upload-first now creates the durable, user-owned analysis job before
+      // Upload-first creates the durable, user-owned extraction job before
       // returning. The browser may wake the worker, but it is never the
       // orchestration authority and a lost tab cannot lose the queued work.
       const queuedJob = await page.request.get(`/api/ai-jobs/${intakeJson.processingJobId}`);
@@ -93,18 +94,31 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       };
       expect(queuedJobJson.job.id).toBe(intakeJson.processingJobId);
       expect(queuedJobJson.job.tenderId).toBe(tenderId);
-      expect(queuedJobJson.job.jobType).toBe("AI_ANALYZE");
+      expect(queuedJobJson.job.jobType).toBe("EXTRACT_TEXT");
       expect(["QUEUED", "RUNNING"]).toContain(queuedJobJson.job.status);
 
-      // Confirm the real contract for inspecting a tender's source files:
-      // GET /api/tenders/{tenderId} and inspect its files array (there is no
-      // /api/tenders/{id}/source-files endpoint that returns this shape for
-      // this purpose — see tender-pipeline.spec.ts for the same fix).
-      const beforeAnalyze = await page.request.get(`/api/tenders/${tenderId}`);
-      expect(beforeAnalyze.status(), await beforeAnalyze.text()).toBe(200);
-      const beforeJson = await beforeAnalyze.json() as { files: Array<{ id: string; extractedTextLength: number }> };
-      expect(beforeJson.files.length).toBe(2);
-      expect(beforeJson.files.every((file) => file.id && file.extractedTextLength > 0)).toBe(true);
+      const extraction = await waitForDurableTenderExtraction({
+        request: page.request,
+        tenderId,
+        expectedFileCount: 2,
+      });
+      expect(extraction.files).toHaveLength(2);
+      expect(extraction.workerJobIds.length).toBeGreaterThan(0);
+
+      const completedExtraction = await page.request.get(
+        `/api/ai-jobs/${extraction.workerJobIds.at(-1)}`,
+      );
+      expect(completedExtraction.status(), await completedExtraction.text()).toBe(200);
+      const completedExtractionJson = await completedExtraction.json() as {
+        job: {
+          jobType: string;
+          status: string;
+          output?: { continuation?: { reason?: string | null } | null } | null;
+        };
+      };
+      expect(completedExtractionJson.job.jobType).toBe("EXTRACT_TEXT");
+      expect(completedExtractionJson.job.status).toBe("SUCCEEDED");
+      expect(completedExtractionJson.job.output?.continuation?.reason).toBe("AI_ANALYZE_QUEUED");
 
       const analyze = await page.request.post(`/api/tenders/${tenderId}/ai-analyze?force=true`);
       expect(analyze.status(), await analyze.text()).toBe(200);

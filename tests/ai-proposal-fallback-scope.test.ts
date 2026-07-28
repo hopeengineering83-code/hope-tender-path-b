@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../lib/engine/ai-proposal-fallback";
+import { buildSourceVerificationProvenance, expertReviewFields } from "../lib/vault-review-provenance";
 
 function build(requirements: string[]) {
   return fallbackProposal({
@@ -46,27 +48,80 @@ describe("ai-proposal fallback is tender-scoped", () => {
 });
 
 describe("selectReviewedEvidenceForAIDraft", () => {
-  it("uses reviewed selected evidence when present", () => {
+  // Eligibility is decided by canUseVaultRecord(..., "GENERATION"), so a bare
+  // { trustLevel: "REVIEWED" } object is correctly NOT usable — it carries no
+  // provenance binding it to any owned, byte-verified source document. These
+  // fixtures therefore build real durable provenance; the assertions below
+  // still test the same thing they always did (selected wins over vault, vault
+  // is the fallback, drafts are never returned).
+  function usable(id: number) {
+    const companyId = "company-ai-proposal-fallback-scope";
+    const fullName = `Expert ${id}`;
+    const text = [
+      "CURRICULUM VITAE",
+      `Name of Key Expert: ${fullName}`,
+      `${fullName} is a Senior Consultant with 15 years of experience in General Consultancy Services.`,
+    ].join("\n");
+    const sourceDocument = {
+      id: `doc-${id}`,
+      companyId,
+      extractedText: text,
+      contentSha256: createHash("sha256").update(text).digest("hex"),
+      contentByteLength: Buffer.byteLength(text),
+      integrityStatus: "VERIFIED",
+      metadata: JSON.stringify({ extractionRevision: 1 }),
+    };
+    const fields = {
+      fullName,
+      title: "Senior Consultant",
+      yearsExperience: 15,
+      disciplines: JSON.stringify(["General Consultancy Services"]),
+      sectors: JSON.stringify([]),
+      certifications: JSON.stringify([]),
+    };
+    const provenance = buildSourceVerificationProvenance({
+      recordType: "EXPERT",
+      sourceDocument,
+      fields: expertReviewFields(fields),
+      verificationMethod: "HYBRID",
+    });
+    assert.equal(provenance.ok, true);
+    if (!provenance.ok) throw new Error("fixture provenance failed");
+    return {
+      ...fields,
+      id,
+      companyId,
+      trustLevel: "SOURCE_VERIFIED",
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNotes: provenance.serialized,
+      sourceDocumentId: sourceDocument.id,
+      sourceDocument,
+    };
+  }
+  const draft = (id: number, trustLevel: string) => ({ trustLevel, id });
+
+  it("uses usable selected evidence when present", () => {
     const out = selectReviewedEvidenceForAIDraft(
-      [{ trustLevel: "REVIEWED", id: 1 }, { trustLevel: "AI_DRAFT", id: 2 }],
-      [{ trustLevel: "REVIEWED", id: 3 }],
+      [usable(1), draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
+      [usable(3)],
     );
     assert.deepEqual(out.evidence.map((x) => x.id), [1]);
     assert.equal(out.usedReviewedVaultFallback, false);
   });
 
-  it("falls back to reviewed vault evidence when selected set has no reviewed rows", () => {
+  it("falls back to usable vault evidence when the selected set has none", () => {
     const out = selectReviewedEvidenceForAIDraft(
-      [{ trustLevel: "AI_DRAFT", id: 2 }],
-      [{ trustLevel: "REVIEWED", id: 3 }],
+      [draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
+      [usable(3)],
     );
     assert.deepEqual(out.evidence.map((x) => x.id), [3]);
     assert.equal(out.usedReviewedVaultFallback, true);
   });
 
-  it("never returns unreviewed rows when no reviewed evidence exists", () => {
+  it("never returns draft rows when no usable evidence exists", () => {
     const out = selectReviewedEvidenceForAIDraft(
-      [{ trustLevel: "AI_DRAFT", id: 2 }, { trustLevel: "REGEX_DRAFT", id: 4 }],
+      [draft(2, "AI_DRAFT"), draft(4, "REGEX_DRAFT")],
       [],
     );
     assert.deepEqual(out.evidence, []);

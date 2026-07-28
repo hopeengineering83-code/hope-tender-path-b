@@ -33,10 +33,10 @@ describe("Next Required Action icons", () => {
 
 describe("workflow actions have visible semantic icons and labels", () => {
   it("Build Plan uses DocumentIcon", () => {
-    const source = read("components/submission-plan-completeness-panel.tsx");
+    const source = read("components/build-submission-plan-button.tsx");
     assert.match(source, /<DocumentIcon \/>/);
-    assert.match(source, /"Build Plan"/);
-    assert.match(source, /title="Build the submission plan/);
+    assert.match(source, /Build plan draft/);
+    assert.match(source, /Confirm reviewed Build Plan/);
   });
 
   it("evidence actions use PaperclipIcon and LinkIcon remains exported", () => {
@@ -51,7 +51,7 @@ describe("workflow actions have visible semantic icons and labels", () => {
     // for engine "Run Safe Mode" on the engine-action surface).
     assert.match(read("components/generation-action-panel.tsx"), /DocumentGenerateIcon/);
     assert.doesNotMatch(read("components/generation-action-panel.tsx"), /BoltIcon/);
-    assert.match(read("components/submission-plan-completeness-panel.tsx"), /<CheckCircleIcon \/>/);
+    assert.match(read("components/build-submission-plan-button.tsx"), /<CheckCircleIcon \/>/);
     assert.match(read("components/authority-review-panel.tsx"), /<CheckCircleIcon \/>/);
     assert.match(read("components/export-readiness-panel.tsx"), /<DownloadIcon \/> Download Final ZIP/);
   });

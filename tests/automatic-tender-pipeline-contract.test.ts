@@ -6,11 +6,14 @@ const firstUpload = readFileSync("lib/tender-upload-first.ts", "utf8");
 const secureUpload = readFileSync("lib/secure-upload-handler.ts", "utf8");
 const intakePage = readFileSync("app/dashboard/tenders/new/page.tsx", "utf8");
 const generator = readFileSync("lib/engine/generate-elite.ts", "utf8");
+const extractionService = readFileSync("lib/ai-jobs/tender-extraction-service.ts", "utf8");
 
 describe("upload-and-continue tender pipeline contract", () => {
-  it("queues analysis for a complete single-batch package", () => {
-    assert.match(firstUpload, /queueAutomaticTenderPipeline/);
-    assert.match(firstUpload, /meaningfulUploads\.length > 0 && sourcePackageComplete && !deferAnalysis/);
+  it("queues durable extraction first and lets the worker continue analysis", () => {
+    assert.match(firstUpload, /enqueueTenderFileExtractionJob\(tx,/);
+    assert.doesNotMatch(firstUpload, /queueAutomaticTenderPipeline/);
+    assert.match(extractionService, /continueTenderPipelineAfterExtraction/);
+    assert.match(extractionService, /queueAutomaticTenderPipeline/);
     assert.match(firstUpload, /processingJobId/);
   });
 
@@ -23,6 +26,7 @@ describe("upload-and-continue tender pipeline contract", () => {
   it("wakes only the worker for a durable server-created job", () => {
     const clientPipeline = readFileSync("lib/ui/auto-pipeline.ts", "utf8");
     assert.match(clientPipeline, /response\.processingJobId/);
+    assert.match(clientPipeline, /\/api\/ai-jobs\/run-next\?jobType=EXTRACT_TEXT/);
     assert.match(clientPipeline, /\/api\/ai-jobs\/run-next\?jobType=AI_ANALYZE/);
     assert.doesNotMatch(clientPipeline, /\/api\/tenders\/\$\{.*\}\/ai-analyze/);
   });

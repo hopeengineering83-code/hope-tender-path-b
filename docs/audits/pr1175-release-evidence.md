@@ -6,13 +6,13 @@ Status: **IN PROGRESS — release acceptance not established**
 
 - PR: #1175
 - Source branch: `release/consolidated-recovery-20260717`
-- Frozen source SHA: `01aa15406e397facb1d1cd373417641914a02d73`
+- Frozen source SHA: `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`
 - PR-reported base SHA: `b3c9db5de89a2a665e61a83facbff0f276f9983c`
-- Audit branch: `audit/pr1175-five-pass-transitive-forensic-audit`
+- Audit branch: `audit/pr1175-complete-five-pass-forensic-audit`
 - PR state at audit start: open, draft, unmerged
-- Changed files: 629
-- Commits: 638
-- Comparison: diverged; source head is one commit behind the base-side history
+- Changed files: 656
+- Commits: 656
+- Previous published audit checkpoint: `0eb7c818d2c6bebb3072ba933744fe0de165e392`
 
 ## GitHub checks observed
 
@@ -93,11 +93,13 @@ Disposition: these files prove isolated container validity and hash parity only.
 - 237 PNG files.
 - Detailed index: 37 discovered page patterns × desktop/tablet/mobile.
 - Detailed index reports covered representative routes and no horizontal overflow.
-- Summary reports 100% route coverage but also `counts.routeCoverage: 0`.
+- Historical summary reports 100% route coverage but also
+  `counts.routeCoverage: 0`; this is not accepted as authoritative compact
+  evidence.
 - Screenshots are navigation/rendering evidence; they do not prove mutations, persistence, tenant isolation, job recovery or final-file correctness.
 - Review Inbox screenshots visibly expose only Experts and Projects; no legal/financial/compliance review queue is present.
 
-## Vercel preview identity
+## Historical donor Vercel preview identity
 
 - Deployment: `dpl_VKccUHESfqf7Kfuir7j8kcmvQ634`
 - Project: `hope-tender-path-b`
@@ -110,8 +112,109 @@ Disposition: these files prove isolated container validity and hash parity only.
 
 This proves deployment identity and basic health only. No complete authenticated production-owner workflow has yet been executed against the preview.
 
+## Current governing and screenshot deployments
+
+- Supplied screenshot deployment:
+  `dpl_DNyVb6zVZZgtxUyso5Z1c6apPwKN`, SHA `aed98737…`.
+- Current governing deployment:
+  `dpl_yYMggEEnQbJemQtmMHioee15eZnN`, SHA `ec0eaa83…`, READY.
+- The screenshot deployment visibly exposed P2022 for
+  `LegalRecord.trustLevel` and bid-strategy HTTP 500.
+- Vercel runtime-log retention no longer contains the historical screenshot
+  lines. This absence is not closure evidence.
+- The current governing deployment returned no error/fatal or HTTP 500 rows in
+  the inspected last-day window, but no authenticated real workflow was run.
+  This is also not closure evidence.
+
+## Current local command evidence
+
+| Checkpoint | Evidence |
+|---|---|
+| evidence authority/signature boundary | TypeScript clean; 126/126 focused/transitive assertions |
+| durable upload/extraction authority | failing-before 7/7; passing-after 7/7; 382/382 affected assertions across 92 suites; TypeScript, ESLint, release-integrity audits clean |
+| review-provenance critical schema | failing-before contract; 3/3 behavioral contract and 63/63 schema/migration/preview-regression assertions; TypeScript/ESLint clean |
+| complete support-record Review Inbox | failing-before focused contract; passing 4/4; 60/60 related privacy/RBAC/provenance/concurrency assertions; TypeScript/ESLint clean |
+| sole Final ZIP owner and complete manifest authority | failing-before 3/3; passing-after 3/3; 213/213 affected scope/assembly/Build Plan/PDF/package/static-safety/binary assertions; TypeScript/ESLint/release-integrity clean |
+| serialized migration execution ownership | failing-before ownership contract; passing 2/2; 73/73 related CI/migration/source assertions; TypeScript clean |
+| complete exact-head command evidence | failing-before 0/3; passing-after 3/3; recorder/verifier and related CI contracts 36/36; YAML parse, TypeScript, ESLint and release-integrity clean |
+| screenshot summary consistency | failing-before 0/2; passing-after 3/3 behavioral contract; 9/9 related screenshot/repair assertions; both producer scripts parse; exact-preview artifact pending |
+| requirement coverage authority consistency | failing-before 0/4; passing-after 5/5 effective-status contract; 112/112 focused lifecycle/release/workflow assertions and 219/219 broader related assertions; TypeScript, ESLint and release-integrity clean; exact-preview acceptance pending |
+| durable extraction Playwright acceptance | exact CI run `30381329357` passed every pre-browser gate and 176 browser assertions, then failed three obsolete immediate-extraction expectations; shared durable-worker polling contract passes 35/35 locally with TypeScript, ESLint and release-integrity clean; replacement exact CI pending |
+| canonical Build Plan review/confirmation | failing-before authority contract; passing-after 12/12 focused ownership/state assertions and 243/243 related Build Plan, role, workflow, grounding and readiness assertions; TypeScript, ESLint, release-integrity and production build clean; authenticated preview/database acceptance pending |
+
+## Child audit checkpoint CI
+
+- Run `30377357481` for checkpoint `66ff0752…` passed migrations, critical
+  schema, idempotency, zero drift, release integrity, typecheck and lint.
+- The isolated PostgreSQL stale-write concurrency test passed, as did all 8
+  real authenticated Legal/Financial/Compliance review-route assertions.
+- Unit/database tests ended 8,918 pass / 1 fail. The sole failure was a static
+  assertion requiring the Active Workboard to retain the governing
+  `release/consolidated-recovery-20260717` / PR #1175 identity.
+- Build and browser steps were skipped after that failure. The workboard
+  assertion passes locally after the documentation correction; a new exact
+  checkpoint run remains required.
+- Run `30381329357` for screenshot checkpoint `4046ca72…` passed migration
+  deploy, critical schema, retroactive initialization history, idempotency,
+  zero drift, release integrity, typecheck, lint, the complete unit/database
+  suite and production build. Playwright finished 176 passed / 3 skipped /
+  3 failed. All three failures expected upload-time extraction or an
+  `AI_ANALYZE` job, contradicting the now-canonical durable `EXTRACT_TEXT`
+  queue. F021 corrects those acceptance tests without restoring request-time
+  extraction; a replacement exact-head run is required.
+- Run `30383347414` for durable-extraction checkpoint `0eb7c818…` passed every
+  pre-test migration, schema, drift, release-integrity, typecheck and lint
+  gate. Unit/database tests completed with 8,937 pass / 2 fail. Both failures
+  were obsolete source-location assertions after the canonical requirement
+  grounding refactor; corrected assertions now prove the transitive shared
+  selector and full containment/page-bound authority and pass locally with
+  their behavioral suites. Build and Playwright were skipped, so this run is
+  not release acceptance.
+- Run `30385573397` for Build Plan checkpoint `21c18227…` passed migration
+  deployment, critical schema, retroactive initialization, idempotency, zero
+  drift, release integrity, typecheck and lint. Unit/database tests completed
+  with one failure: the workflow-anchor acceptance test did not include the
+  new canonical `SubmissionPlanReconciliationPanel` in its owning-source
+  manifest even though the registry, rendered page and component anchor were
+  aligned. The manifest now checks that real owner and its focused suite passes
+  20/20 locally. Build and Playwright were skipped; replacement exact-head CI
+  remains required.
+- Run `30386332578` for anchor-manifest checkpoint `c46a9e78…` passed every
+  migration/schema/drift gate, release integrity, typecheck, lint, the complete
+  unit/database suite and the production build. Playwright completed 178 pass /
+  3 skipped / 1 fail. The sole failure treated the parsed `AiJob.output` DTO as
+  a string; the real extraction job was `SUCCEEDED`, and its structured
+  continuation carried `reason: "AI_ANALYZE_QUEUED"`. The golden acceptance
+  now asserts that exact structured field and rejects the stale string
+  substring contract. Replacement exact-head CI remains required.
+- Run `30387667640` for structured-continuation checkpoint `07901d3f…`
+  passed all migration/schema/drift gates, release integrity, typecheck, lint,
+  the complete unit/database suite, production build, and 179 authenticated
+  Playwright assertions with 3 intentional skips. The final evidence verifier
+  then failed because Playwright's default `test-results` output directory
+  cleared the earlier command ledger and 14 pre-browser logs at startup. The
+  downloaded SHA-bound diagnostic artifact proves only the final `playwright`
+  and `reject-test-source-mutation` entries survived. Playwright transient
+  output now has a dedicated `browser-results/test-artifacts` directory, with
+  a regression preventing overlap with immutable command evidence.
+
+No isolated PostgreSQL, Playwright, DOCX/PDF/ZIP full-pipeline, audit-head
+Vercel preview, or real-account result is claimed. A local production build
+completed with format-valid non-secret test placeholders; it does not prove
+deployed environment configuration. Local Node is 24.14 while
+the repository requires Node `>=22 <23`. `npm test` cannot start its `tsx`
+IPC server in this sandbox (`EPERM`); direct `node --import tsx --test`
+execution was used for the recorded focused suites. The explicit
+legal/financial/compliance PostgreSQL route suite correctly refused to run
+without `RUN_DB_INTEGRATION=true`.
+
 ## Release disposition
 
 **NOT READY FOR MERGE OR PRODUCTION.**
 
-Open critical/high findings include request-bound extraction/OCR, missing legal/financial/compliance Review Inbox coverage, ineffective review concurrency guards, incomplete/duplicated ZIP manifest authority, synthetic rather than full-pipeline file evidence, migration-test races and incomplete CI evidence retention.
+Open critical/high findings include database-backed extraction concurrency,
+synthetic rather than full-pipeline file evidence, exact-preview schema
+acceptance, and lifecycle action consolidation. Build Plan authority, Final ZIP authority, the
+migration-test race, CI evidence retention, screenshot summary consistency and
+requirement-coverage authority are fixed locally, but persisted authenticated
+runtime and exact-head CI/artifact acceptance have not yet been established.

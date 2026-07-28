@@ -37,17 +37,27 @@ describe("requirement-coverage safe response boundary", () => {
   it("keeps auto-linked Vault evidence display-only and never fully covered", () => {
     assert.match(source, /evidenceSource: "VAULT_AUTO_LINK"/);
     assert.match(source, /supportLevel: "PARTIAL"/);
-    assert.match(source, /isReviewed: expert\.trustLevel === "REVIEWED"/);
-    assert.match(source, /isReviewed: project\.trustLevel === "REVIEWED"/);
-    assert.match(source, /hasOnlyAutoLinks/);
-    assert.match(source, /!hasOnlyAutoLinks/);
+    // isReviewed decides whether the UI offers a record as linkable evidence,
+    // so it must be the canonical generation authority rather than a raw
+    // trustLevel comparison — the latter marked every durably SOURCE_VERIFIED
+    // record unusable and hid the whole vault from an upload-only company.
+    assert.match(source, /isReviewed: canUseVaultRecord\(expert as ReviewRecordState, "GENERATION"\)/);
+    assert.match(source, /isReviewed: canUseVaultRecord\(project as ReviewRecordState, "GENERATION"\)/);
+    assert.match(source, /canonicalStatus\?\.displayStatus/);
+    assert.match(source, /canonicalStatus\?\.displayStatus === "FULLY_MET"/);
   });
 
   it("keeps source grounding required for full coverage", () => {
     assert.match(source, /sourcePageNumber/);
     assert.match(source, /sourceExactQuote/);
     assert.match(source, /sourceConfidence/);
-    assert.match(source, /&& hasSourceRef/);
+    assert.match(source, /canonicalStatus\?\.hasSourceTrace/);
+    const authority = readFileSync(
+      join(rootDir, "lib/engine/final-package-readiness-model.ts"),
+      "utf8",
+    );
+    assert.match(authority, /isGroundedEvidenceInActiveFiles/);
+    assert.match(authority, /displayStatus === "FULLY_MET"/);
   });
 
   it("keeps final-package readiness parity", () => {

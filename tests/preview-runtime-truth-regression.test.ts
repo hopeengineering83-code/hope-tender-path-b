@@ -97,8 +97,10 @@ describe("single workflow authority regressions from the latest preview", () => 
     const vault = readFileSync(new URL("../components/vault-evidence-search-panel.tsx", import.meta.url), "utf8");
     const readiness = readFileSync(new URL("../components/generation-readiness-panel.tsx", import.meta.url), "utf8");
 
-    assert.match(heatmap, /requirementId:\s*\{\s*not:\s*null\s*\}/);
-    assert.match(heatmap, /s === "FULL".*s === "SUBSTANTIAL"/);
+    assert.match(heatmap, /getFinalPackageReadinessModel/);
+    assert.match(heatmap, /canonicalStatusByRequirement/);
+    assert.match(heatmap, /requirements\.map\(\(requirement\)/);
+    assert.match(heatmap, /canonicalStatus\?\.displayStatus/);
     assert.match(vault, /canUseVaultRecord\(record,\s*"GENERATION"\)/);
     assert.match(vault, /Generation-eligible experts/);
     assert.match(readiness, /canMutate && item\.nextAction === "FINALIZE_REQUIRED_PDF"[\s\S]*FinalizeRequiredPdfButton[\s\S]*:\s*<Link/);

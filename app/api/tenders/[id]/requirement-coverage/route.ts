@@ -6,11 +6,13 @@ import { rateLimit, API_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
 import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../../../../../lib/vault-review-provenance";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
+type CoverageStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
 type EvidenceLink = {
   id: string;
   evidenceType: string;
@@ -32,6 +34,7 @@ type RequirementCoverageRow = {
   hasSourceRef: boolean;
   evidenceLinks: EvidenceLink[];
   supportLevel: SupportLevel;
+  coverageStatus: CoverageStatus;
   isFullyCovered: boolean;
   nextAction: string;
 };
@@ -82,10 +85,14 @@ function deriveSupportLevel(links: EvidenceLink[]): SupportLevel {
 function nextActionFor(row: {
   supportLevel: SupportLevel;
   hasSourceRef: boolean;
+  coverageStatus: CoverageStatus;
   requirementType: string;
   evidenceLinks: EvidenceLink[];
 }): string {
-  if (row.supportLevel === "NOT_APPLICABLE") return "Requirement marked not applicable by reviewer. Keep the audit note for export review.";
+  if (row.coverageStatus === "NEEDS_TRACE") {
+    return "Repair the requirement source trace: active tender file, valid page, and exact quote contained in that file are all required.";
+  }
+  if (row.supportLevel === "NOT_APPLICABLE") return "The N/A note remains in the audit trail but does not satisfy this tender requirement for final release.";
   if (row.supportLevel === "NONE" || row.evidenceLinks.length === 0) {
     if (row.requirementType === "EXPERT") return "Add a reviewed expert with this discipline to the vault and run Engine to match.";
     if (row.requirementType === "PROJECT_EXPERIENCE") return "Add a relevant project reference to the vault and run Engine to match.";
@@ -156,30 +163,41 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       }),
       company ? prisma.expert.findMany({
         where: { companyId: company.id, deletedAt: null },
-        select: { id: true, fullName: true, trustLevel: true },
+        select: { ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT, id: true },
         take: 50,
       }) : Promise.resolve([]),
       company ? prisma.project.findMany({
         where: { companyId: company.id, deletedAt: null },
-        select: { id: true, name: true, trustLevel: true },
+        select: { ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT, id: true },
         take: 50,
       }) : Promise.resolve([]),
     ]);
 
     const vaultEvidence: VaultEvidence[] = [
+      // isReviewed drives whether the UI offers this record as linkable
+      // evidence, so it must mean "generation can actually use this", not
+      // "the label is literally REVIEWED". The raw comparison marked every
+      // durably SOURCE_VERIFIED record unusable, hiding the entire vault from
+      // a company whose evidence comes only from its own uploaded documents.
       ...vaultExperts.map((expert) => ({
         id: expert.id,
         name: expert.fullName ?? "Expert",
         type: "EXPERT" as const,
-        isReviewed: expert.trustLevel === "REVIEWED",
+        isReviewed: canUseVaultRecord(expert as ReviewRecordState, "GENERATION"),
       })),
       ...vaultProjects.map((project) => ({
         id: project.id,
         name: project.name ?? "Project",
         type: "PROJECT" as const,
-        isReviewed: project.trustLevel === "REVIEWED",
+        isReviewed: canUseVaultRecord(project as ReviewRecordState, "GENERATION"),
       })),
     ];
+    const canonicalStatuses = new Map(
+      finalPackageModel.requirementEvidenceStatuses.map((status) => [
+        status.requirementId,
+        status,
+      ]),
+    );
 
     const rows: RequirementCoverageRow[] = requirements.map((requirement) => {
       const storedLinks: EvidenceLink[] = requirement.complianceMatrixRows.map((row) => ({
@@ -194,17 +212,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       const links = [...storedLinks, ...autoLinks];
       const effectiveLinks = links.filter((link) => !link.autoLinked || link.supportLevel !== "NONE");
       const supportLevel = deriveSupportLevel(effectiveLinks);
-      const hasSourceRef = Boolean(
-        requirement.sectionReference
-        || requirement.sourcePageNumber
-        || requirement.sourceExactQuote
-        || (requirement.sourceConfidence ?? 0) > 0,
-      );
-      const hasOnlyAutoLinks = storedLinks.length === 0 && autoLinks.length > 0;
-      const isFullyCovered = supportLevel === "NOT_APPLICABLE"
-        || (!hasOnlyAutoLinks
-          && (supportLevel === "FULL" || supportLevel === "SUBSTANTIAL")
-          && hasSourceRef);
+      const canonicalStatus = canonicalStatuses.get(requirement.id);
+      const coverageStatus: CoverageStatus = canonicalStatus?.displayStatus ?? "NOT_MET";
+      const hasSourceRef = canonicalStatus?.hasSourceTrace ?? false;
+      const isFullyCovered = canonicalStatus?.displayStatus === "FULLY_MET";
 
       return {
         id: requirement.id,
@@ -219,10 +230,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         hasSourceRef,
         evidenceLinks: links,
         supportLevel,
+        coverageStatus,
         isFullyCovered,
         nextAction: nextActionFor({
           supportLevel,
           hasSourceRef,
+          coverageStatus,
           requirementType: requirement.requirementType,
           evidenceLinks: effectiveLinks,
         }),
@@ -231,8 +244,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
     const totalMandatory = rows.length;
     const fullyCovered = rows.filter((row) => row.isFullyCovered).length;
-    const partiallyCovered = rows.filter((row) => row.supportLevel === "PARTIAL" || row.supportLevel === "SUBSTANTIAL").length;
-    const uncovered = rows.filter((row) => row.supportLevel === "NONE").length;
+    const partiallyCovered = rows.filter((row) => row.coverageStatus === "PARTIALLY_MET").length;
+    const needsTrace = rows.filter((row) => row.coverageStatus === "NEEDS_TRACE").length;
+    const uncovered = rows.filter((row) => row.coverageStatus === "NOT_MET").length;
     const missingSourceRef = rows.filter((row) => !row.hasSourceRef).length;
     const coverageRatio = totalMandatory > 0 ? fullyCovered / totalMandatory : 1;
 
@@ -241,6 +255,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       totalMandatory,
       fullyCovered,
       partiallyCovered,
+      needsTrace,
       uncovered,
       missingSourceRef,
       coverageRatio,

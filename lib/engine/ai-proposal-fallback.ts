@@ -1,3 +1,5 @@
+import { canUseVaultRecord, type ReviewRecordState } from "../vault-review-provenance";
+
 export function fallbackProposal(params: {
   tenderTitle: string;
   requirements: string[];
@@ -51,13 +53,26 @@ export function fallbackProposal(params: {
   ].filter(Boolean).join("\n");
 }
 
+/**
+ * Choose the evidence the interactive AI proposal draft may quote.
+ *
+ * Eligibility is delegated to canUseVaultRecord(..., "GENERATION") — the same
+ * authority every other generation path uses — rather than comparing
+ * trustLevel by hand. A raw `trustLevel === "REVIEWED"` test was wrong in both
+ * directions: it accepted a record stamped REVIEWED whose provenance no longer
+ * verifies, and it rejected a durably SOURCE_VERIFIED record, which for a
+ * company whose evidence comes only from its own uploaded documents meant this
+ * route silently produced a proposal with no expert or project evidence at all.
+ */
 export function selectReviewedEvidenceForAIDraft<T extends { trustLevel?: string | null }>(
   selected: T[],
   reviewedVault: T[],
 ): { evidence: T[]; usedReviewedVaultFallback: boolean } {
-  const reviewedSelected = selected.filter((row) => row.trustLevel === "REVIEWED");
-  if (reviewedSelected.length > 0) return { evidence: reviewedSelected, usedReviewedVaultFallback: false };
-  if (reviewedVault.length > 0) return { evidence: reviewedVault, usedReviewedVaultFallback: true };
+  const usable = (row: T) => canUseVaultRecord(row as unknown as ReviewRecordState, "GENERATION");
+  const usableSelected = selected.filter(usable);
+  if (usableSelected.length > 0) return { evidence: usableSelected, usedReviewedVaultFallback: false };
+  const usableVault = reviewedVault.filter(usable);
+  if (usableVault.length > 0) return { evidence: usableVault, usedReviewedVaultFallback: true };
   return { evidence: [], usedReviewedVaultFallback: false };
 }
 

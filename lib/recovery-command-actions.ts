@@ -135,10 +135,10 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     path: "/api/tenders/{tenderId}/repair-source-grounding",
   },
   BUILD_SUBMISSION_PLAN: {
-    label: "Build Submission Plan",
-    kind: "api",
-    method: "POST",
-    path: "/api/tenders/{tenderId}/submission-plan/build",
+    label: "Review and Confirm Build Plan",
+    kind: "scroll",
+    anchorId: "submission-plan-reconciliation",
+    message: "Open the canonical Build Plan panel to build a draft, review the complete ordered file scope, and confirm it.",
   },
   RUN_ENGINE: {
     label: "Run Engine",
@@ -322,16 +322,16 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
   },
   // Submission plan confirmation ─────────────────────────────────────────────
   CONFIRM_SUBMISSION_PLAN: {
-    label: "Confirm Submission Plan",
+    label: "Review and Confirm Build Plan",
     kind: "scroll",
-    anchorId: "generated-documents",
-    message: "Open the Generated Documents panel and confirm each required file in the submission plan.",
+    anchorId: "submission-plan-reconciliation",
+    message: "Open the canonical Build Plan panel, review the complete ordered file scope, and confirm it.",
   },
   REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN: {
-    label: "Review Requirements or Add Plan",
+    label: "Review Requirements and Build Plan",
     kind: "scroll",
-    anchorId: "generated-documents",
-    message: "Open the Generated Documents panel to review extracted requirements or manually add submission plan entries.",
+    anchorId: "submission-plan-reconciliation",
+    message: "Open the canonical Build Plan panel after reviewing tender requirements; build a draft and confirm the exact scope there.",
   },
   // Repair source grounding ──────────────────────────────────────────────────
   REPAIR_SOURCE_GROUNDING: {

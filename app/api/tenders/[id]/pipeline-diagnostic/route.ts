@@ -15,7 +15,7 @@ import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { isExtractionCorrupted } from "../../../../../lib/engine/extraction-quality-gate";
 import { assessTenderMetadataCompleteness } from "../../../../../lib/engine/tender-metadata-completeness";
 import { getFinalSubmissionReadiness } from "../../../../../lib/engine/final-submission-readiness";
-import { safeParseJsonArray } from "../../../../../lib/safe-json";
+import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
 
 export const dynamic = "force-dynamic";
 
@@ -44,9 +44,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       procuringEntityName: true,
       submissionMethod: true,
       deadline: true,
-      exactFileNaming: true,
-      exactFileOrder: true,
-      notes: true,
       // client fields for metadata completeness
       country: true,
       clientContactName: true,
@@ -166,8 +163,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     : 100;
 
   // ── Step 6: Build Plan ────────────────────────────────────────────────────
-  const planFiles = safeParseJsonArray(tender.exactFileNaming);
-  const hasPlan = planFiles.length > 0;
+  const currentBuildPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
+  const hasPlan = currentBuildPlan.ok;
+  const planFileCount = currentBuildPlan.ok ? currentBuildPlan.items.length : 0;
+  const buildPlanBlocker = currentBuildPlan.ok ? null : currentBuildPlan.blocker;
 
   // ── Step 7: Generated documents ───────────────────────────────────────────
   const activeDocs = tender.generatedDocuments;
@@ -234,7 +233,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         : [`${mandatoryReqs.length - tracedReqs.length} mandatory requirements lack source traceability`];
       return { step: "CONFIRM_REQUIREMENTS", label: "Confirm extracted requirements", reason: "Requirements have not been extracted or lack source traceability.", blockers };
     }
-    if (!hasPlan) return { step: "BUILD_PLAN", label: "Build submission plan", reason: "No submission plan has been built yet.", blockers: ["Submission plan is empty"] };
+    if (!hasPlan) return {
+      step: "BUILD_PLAN",
+      label: "Review and confirm Build Plan",
+      reason: "No current confirmed Build Plan authorizes generation.",
+      blockers: [buildPlanBlocker ?? "Build Plan is not confirmed"],
+    };
     if (!hasGeneratedDocs) return { step: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: "No documents have been generated yet.", blockers: [] };
     if (!validationPassed) return { step: "VALIDATE_DOCUMENTS", label: "Validate and review generated documents", reason: "One or more documents have not passed validation.", blockers: ["Documents need review before export"] };
     if (criticalGaps.length > 0) return { step: "VALIDATE_DOCUMENTS", label: "Resolve critical compliance gaps", reason: `${criticalGaps.length} unresolved critical compliance gap(s).`, blockers: criticalGaps.map((g) => `Critical gap: ${g.id}`) };
@@ -262,7 +266,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       aiAnalyze: { ok: aiAnalyzeOk, analyzed: aiAnalyzed, extractionStatus: analysisStatus ?? "NOT_RUN" },
       metadata: { ok: metadataOk, missingCritical: metadataReport.missingCritical.map((f) => f.field), notApplicable: metadataReport.notApplicableFields.map((f) => f.field), placeholders: metadataReport.placeholderCount, contaminated: tender.metadataContaminated },
       requirements: { ok: requirementsOk, total: tender.requirements.length, mandatory: mandatoryReqs.length, traced: tracedReqs.length, traceabilityPercent: traceabilityRatio },
-      buildPlan: { ok: hasPlan, planFileCount: planFiles.length },
+      buildPlan: { ok: hasPlan, planFileCount, blocker: buildPlanBlocker },
       generateDocs: { ok: hasGeneratedDocs, totalActive: activeDocs.length, generated: generatedCount },
       validation: { ok: validationPassed, totalDocs: activeDocs.filter((d) => d.generationStatus === "GENERATED").length },
       exportReadiness: { ok: exportReady, criticalGaps: criticalGaps.length, readinessScore: canonical?.summary.readinessScore ?? 0 },

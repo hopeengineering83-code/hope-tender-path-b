@@ -4,18 +4,18 @@ import { NextResponse } from "next/server";
 import { requireRole } from "./auth";
 import { logAction } from "./audit";
 import { ensureCompanyForUser } from "./company-workspace";
-import { assessExtractionQuality, assessExtractionQualityPerPage } from "./extraction-quality";
-import { extractTextFromBuffer, getFileTypeLabel, isMeaningfulExtraction } from "./extract-text";
+import { getFileTypeLabel } from "./extract-text";
 import { inferTenderMetadata } from "./engine/tender-metadata";
-import { enrichMetadataWithSourceEvidence } from "./engine/metadata-source-enrichment";
-import { buildCandidatesFromMetadata } from "./engine/candidate-pipeline";
-import { queueAutomaticTenderPipeline } from "./ai-jobs/automatic-tender-pipeline";
+import {
+  continueTenderPipelineAfterExtraction,
+  enqueueTenderFileExtractionJob,
+} from "./ai-jobs/tender-extraction-service";
 import { reportError, logger } from "./observability";
 import { prisma, prismaReady } from "./prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter, type StorageProvider } from "./storage";
-import { limitExtractedText, validateUploadBatch, validateUploadFile } from "./upload-security";
+import { validateUploadBatch, validateUploadFile } from "./upload-security";
 import {
   TENDER_PACKAGE_BATCH_OPERATION,
   TENDER_PACKAGE_INTAKE_OPERATION,
@@ -25,7 +25,6 @@ import {
   packageSessionJson,
   parseTenderPackageIntake,
   parseTenderPackageSessionResult,
-  recordTenderPackageAnalysisJob,
 } from "./tender-package-intake-session";
 
 type StoredTenderUpload = {
@@ -38,84 +37,7 @@ type StoredTenderUpload = {
   storageProvider: StorageProvider;
   integrity: PersistedByteIntegrity;
   fileTypeLabel: string;
-  extractedText: string;
-  meaningful: boolean;
-  extractionTruncated: boolean;
 };
-
-function deriveFileExtractionMetrics(extractedText: string): {
-  totalPages: number | null;
-  extractedPages: number | null;
-  ocrPages: number | null;
-  failedPages: number | null;
-  extractionScore: number;
-  extractionMethod: string | null;
-  pageStatusJson: string | null;
-  ocrModel: string | null;
-} {
-  const quality = assessExtractionQuality(extractedText);
-  // Fixed: the regex was looking for "[OCR text...]" but extract-text.ts emits
-  // "[PDF text extracted via Claude vision OCR...]". The old regex never matched,
-  // so ocrPages was always null from this path. Now matches the actual marker.
-  const ocrPageMarkers = (extractedText.match(/\[PDF text extracted via Claude vision OCR[^\]]*\]/gi) ?? []).length;
-  const failedPageMarkers = (extractedText.match(/\[Extraction failed for[^\]]*\]/gi) ?? []).length;
-  // Use assessExtractionQualityPerPage to derive totalPages — mirrors the
-  // secure-upload-handler path. For PDFs with [Page N] markers, returns the
-  // marker count. For DOCX/XLSX/PPTX/CSV (no markers), falls back to
-  // DOCUMENT_LEVEL mode and returns 1 (was null — blocked all non-PDF tenders
-  // from generation via hasUnknownPageCount). For empty/failed extraction,
-  // returns 0 → totalPages stays null (correctly blocks).
-  const perPageReport = assessExtractionQualityPerPage(extractedText);
-  const totalPages = perPageReport.totalDetectedPages > 0 ? perPageReport.totalDetectedPages : null;
-  const ocrPages = ocrPageMarkers > 0 ? ocrPageMarkers : null;
-  const failedPages = failedPageMarkers > 0 ? failedPageMarkers : null;
-  const extractedPages = totalPages === null ? null : Math.max(0, totalPages - (failedPages ?? 0));
-
-  let extractionMethod: string | null = null;
-  if (quality.hasExtractionFailure && quality.score < 20) extractionMethod = "failed";
-  else if (quality.hasOcrPlaceholder || (ocrPages ?? 0) > 0) {
-    extractionMethod = extractedPages !== null && ocrPages !== null && ocrPages < extractedPages ? "mixed" : "ocr";
-  } else if (extractedText.trim().length > 0) extractionMethod = "text";
-
-  // Persist per-page status JSON so the Extraction Quality dashboard reads
-  // stored truth instead of seeing PAGE_STATUS_INCOMPLETE on every fresh
-  // tender. Mirrors the secure-upload-handler path. Null when there are no
-  // pages (empty/failed extraction) — the dashboard will then correctly show
-  // "no pages detected" rather than a false "incomplete" warning.
-  const pageStatusJson = perPageReport.pages.length > 0 ? JSON.stringify(perPageReport.pages) : null;
-
-  // Extract the OCR model name from the marker prefix so the dashboard's
-  // "OCR engine" badge is honest. The marker format is:
-  //   [PDF text extracted via Claude vision OCR — N page(s). ocrReason=...]
-  // The model name is set by PDF_OCR_MODEL env (default claude-3-5-sonnet-latest)
-  // in lib/extract-text.ts. We can't read that env here without coupling, so
-  // we extract a stable label from the marker text itself.
-  let ocrModel: string | null = null;
-  if (ocrPageMarkers > 0) {
-    const markerMatch = extractedText.match(
-      /\[PDF text extracted via Claude vision OCR[^\]]*\]/i,
-    );
-    if (markerMatch) {
-      ocrModel = "claude-vision";
-    }
-  }
-  if (!ocrModel && quality.hasOcrPlaceholder) {
-    // OCR was attempted but failed (timeout / auth / rate-limit / empty output).
-    // Still record the model label so the UI shows which engine was used.
-    ocrModel = "claude-vision";
-  }
-
-  return {
-    totalPages,
-    extractedPages,
-    ocrPages,
-    failedPages,
-    extractionScore: quality.score,
-    extractionMethod,
-    pageStatusJson,
-    ocrModel,
-  };
-}
 
 async function cleanupStoredUploads(uploads: StoredTenderUpload[]): Promise<void> {
   const storage = getStorageAdapter();
@@ -149,6 +71,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
   await prismaReady;
 
   let storedUploads: StoredTenderUpload[] = [];
+  let sourceRowsPersisted = false;
   try {
     const form = await req.formData();
     const files = form.getAll("file").filter((entry): entry is File => entry instanceof File);
@@ -227,23 +150,57 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
             requestId,
           }, { status: 409 });
         }
+        let replayJobId = existingSession.analysisJobId;
+        let replayAnalysisRevision = existingSession.analysisRevision;
+        let replayStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null =
+          replayJobId ? "AI_ANALYZE_QUEUED" : null;
+        if (!replayJobId && existingSession.missingBatchIndexes.length === 0) {
+          const continuation = await continueTenderPipelineAfterExtraction({
+            userId: actor.id,
+            tenderId: ownedTender.id,
+            companyId: company.id,
+            intakeSessionId: intake.sessionId,
+            deferAnalysis,
+          }).catch(() => null);
+          if (continuation?.queued && continuation.jobId) {
+            replayJobId = continuation.jobId;
+            replayAnalysisRevision = continuation.analysisRevision ?? null;
+            replayStage = "AI_ANALYZE_QUEUED";
+          }
+        }
+        if (!replayJobId) {
+          const queuedExtraction = await prisma.aiJob.findFirst({
+            where: {
+              tenderId: ownedTender.id,
+              userId: actor.id,
+              jobType: "EXTRACT_TEXT",
+              status: { in: ["QUEUED", "RUNNING"] },
+            },
+            orderBy: { createdAt: "asc" },
+            select: { id: true },
+          });
+          if (queuedExtraction) {
+            replayJobId = queuedExtraction.id;
+            replayStage = "EXTRACT_TEXT_QUEUED";
+          }
+        }
         return NextResponse.json({
           success: true,
           replayed: true,
           tenderId: ownedTender.id,
           tender: ownedTender,
           uploadedFiles: intake.manifest[0].length,
-          processingJobId: existingSession.analysisJobId,
-          analysisRevision: existingSession.analysisRevision,
-          pipelineStage: existingSession.analysisJobId ? "AI_ANALYZE_QUEUED" : null,
+          processingJobId: replayJobId,
+          analysisRevision: replayAnalysisRevision,
+          pipelineStage: replayStage,
           pipelineDeferred: existingSession.missingBatchIndexes.length > 0,
           intakeSessionId: intake.sessionId,
           intakeSession: existingSession,
           nextAction: existingSession.missingBatchIndexes.length > 0
             ? "UPLOAD_REMAINING_SOURCE_FILES"
-            : existingSession.analysisJobId
+            : replayStage === "AI_ANALYZE_QUEUED"
               ? "WAIT_FOR_AI_ANALYZE"
-              : "RUN_AI_ANALYZE",
+              : "WAIT_FOR_SOURCE_EXTRACTION",
           message: "The existing tender package intake was recovered without creating a duplicate tender.",
           requestId,
         }, { status: 200 });
@@ -255,22 +212,21 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    // Per-file deadline — prevents a single slow OCR call from consuming the
-    // entire 60s Vercel budget. 45s leaves ~15s for storage + DB writes +
-    // response. Matches the admin-repair route's deadline pattern.
-    const uploadDeadline = Date.now() + 45_000;
-
     for (const file of files) {
-      // Check deadline before each file — if exceeded, skip remaining files
-      // and return a warning so the user knows not all files were processed.
-      if (Date.now() > uploadDeadline) {
-        warnings.push(`Time budget exceeded — remaining files skipped. Re-upload remaining files separately.`);
-        break;
-      }
       const buffer = Buffer.from(await file.arrayBuffer());
       const validation = await validateUploadFile(file, buffer);
       if (!validation.ok) {
         errors.push(`${validation.safeFileName}: ${validation.error ?? "File validation failed"}`);
+        continue;
+      }
+
+      const integrity = inspectActualFileBytes({
+        bytes: buffer,
+        filename: validation.safeFileName,
+        claimedMimeType: validation.normalizedMime,
+      });
+      if (integrity.integrityStatus !== "VERIFIED" || !integrity.contentSha256) {
+        errors.push(`${validation.safeFileName}: file byte integrity verification failed.`);
         continue;
       }
 
@@ -294,26 +250,6 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         continue;
       }
 
-      let extractedText = "";
-      let extractionTruncated = false;
-      try {
-        const extracted = limitExtractedText(
-          await extractTextFromBuffer(buffer, validation.normalizedMime, validation.safeFileName),
-        );
-        extractedText = extracted.text;
-        extractionTruncated = extracted.truncated;
-        if (extracted.truncated) warnings.push(`${validation.safeFileName}: extracted text was truncated to the safe analysis limit`);
-      } catch (extractionError) {
-        logger.warn("[upload-first] source extraction failed", {
-        requestId,
-        fileName: validation.safeFileName,
-        errorClass: extractionError instanceof Error
-          ? extractionError.constructor.name
-          : "UnknownError",
-      });
-      warnings.push(`${validation.safeFileName}: file stored, but text extraction failed. Run OCR or re-extraction.`);
-      }
-
       storedUploads.push({
         originalFileName: validation.safeFileName,
         fileName: validation.safeFileName,
@@ -322,13 +258,8 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         storagePath: stored.storagePath,
         fileContent: stored.fileContent ?? null,
         storageProvider: stored.provider,
-        // Byte integrity is pinned from the ACTUAL uploaded bytes (truth
-        // recorded even when not VERIFIED — export gates enforce at read).
-        integrity: inspectActualFileBytes({ bytes: buffer, filename: validation.safeFileName, claimedMimeType: validation.normalizedMime }),
+        integrity,
         fileTypeLabel: getFileTypeLabel(validation.normalizedMime, validation.safeFileName),
-        extractedText,
-        meaningful: isMeaningfulExtraction(extractedText),
-        extractionTruncated,
       });
     }
 
@@ -354,14 +285,10 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
       }, { status: 422 });
     }
 
-    const meaningfulUploads = storedUploads.filter((upload) => upload.meaningful);
-    const weaklyUsable = storedUploads.filter((upload) => !upload.meaningful && upload.extractedText.trim().length >= 80);
-    const effectiveUsable = meaningfulUploads.length > 0 ? meaningfulUploads : weaklyUsable;
-    const metadataSources = effectiveUsable.length > 0 ? effectiveUsable : storedUploads;
-    const combinedText = metadataSources
-      .map((upload) => `FILE: ${upload.originalFileName}\n${upload.extractedText}`)
-      .join("\n\n--- NEXT TENDER FILE ---\n\n");
-    const metadata = inferTenderMetadata(combinedText, metadataSources[0]?.originalFileName ?? "uploaded-tender");
+    // Request time owns only validation, secure byte persistence, and durable
+    // job creation. The background extraction worker will fill source-derived
+    // metadata after reading the exact verified bytes.
+    const metadata = inferTenderMetadata("", storedUploads[0]?.originalFileName ?? "uploaded-tender");
     const titleOverride = String(form.get("title") ?? "").trim();
     const referenceOverride = String(form.get("reference") ?? "").trim();
 
@@ -370,7 +297,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         data: {
           id: tenderId,
           title: titleOverride || metadata.title,
-          description: metadata.description,
+          description: null,
           reference: referenceOverride || metadata.reference,
           clientName: metadata.clientName,
           procuringEntityName: metadata.procuringEntityName,
@@ -386,7 +313,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
           deadline: metadata.deadline,
           submissionMethod: metadata.submissionMethod,
           submissionAddress: metadata.submissionAddress,
-          intakeSummary: metadata.intakeSummary,
+          intakeSummary: null,
           pageLimit: metadata.pageLimit ?? null,
           clientContactName: metadata.clientContactName,
           clientContactTitle: metadata.clientContactTitle,
@@ -403,20 +330,24 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
           numberOfCopiesRequired: metadata.numberOfCopiesRequired,
           technicalWeight: metadata.technicalWeight,
           financialWeight: metadata.financialWeight,
-          notes: `Created from ${storedUploads.length} validated tender source file(s). ${meaningfulUploads.length === 0 ? "Files were stored, but text extraction requires review or OCR before AI Analyze." : "Extracted Tender Details must be reviewed before final submission."}`,
+          notes: `Created from ${storedUploads.length} validated tender source file(s). Durable background extraction is queued; source-derived Tender Details remain unavailable until it completes.`,
           status: "DRAFT",
           stage: "TENDER_INTAKE",
           userId: actor.id,
         },
       });
 
-      const fileRecords: Array<{ id: string; originalFileName: string; totalPages: number | null }> = [];
+      const fileRecords: Array<{
+        id: string;
+        originalFileName: string;
+        contentSha256: string | null;
+      }> = [];
       for (const upload of storedUploads) {
-        const metrics = deriveFileExtractionMetrics(upload.extractedText);
         // Use the SHA-256 digest already pinned from the actual uploaded bytes
         // as the dedup key. contentHash is not a trust digest, but binding it
         // to real bytes makes retry reconciliation stable across storage modes.
         const contentHash = upload.integrity.contentSha256;
+        if (!contentHash) throw new Error("VERIFIED_SOURCE_HASH_MISSING");
         fileRecords.push(await tx.tenderFile.create({
           data: {
             tenderId,
@@ -428,18 +359,18 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
             fileContent: upload.fileContent,
             ...upload.integrity,
             classification: "Tender Document",
-            extractedText: upload.extractedText || null,
+            extractedText: null,
             contentHash,
-            totalPages: metrics.totalPages,
-            extractedPages: metrics.extractedPages,
-            ocrPages: metrics.ocrPages,
-            failedPages: metrics.failedPages,
-            extractionScore: metrics.extractionScore,
-            extractionMethod: metrics.extractionMethod,
-            pageStatusJson: metrics.pageStatusJson,
-            ocrModel: metrics.ocrModel,
+            totalPages: null,
+            extractedPages: null,
+            ocrPages: null,
+            failedPages: null,
+            extractionScore: null,
+            extractionMethod: null,
+            pageStatusJson: null,
+            ocrModel: null,
           },
-          select: { id: true, originalFileName: true, totalPages: true },
+          select: { id: true, originalFileName: true, contentSha256: true },
         }));
       }
 
@@ -480,96 +411,23 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
         });
       }
 
-      return { tender, fileRecords };
-    }, { timeout: 30_000 });
-
-  // Enrich source evidence: locate each critical field value in the uploaded
-  // files' extracted text and persist the fileId + page + quote so the
-  // canonical resolver can mark them as EXTRACTED_AND_GROUNDED. Without this,
-  // fresh tenders have zero grounded metadata until AI Analyze or
-  // repair-metadata is run. The file IDs are available now (after the
-  // transaction committed); we run a targeted update with only the evidence
-  // columns that were found.
-  const enrichmentFiles = persisted.fileRecords.map((fr, i) => ({
-    id: fr.id,
-    extractedText: storedUploads[i]?.extractedText ?? null,
-    deletionStatus: "ACTIVE" as const,
-    totalPages: fr.totalPages,
-    contentHash: null, // enrichment files don't carry the hash; candidate-pipeline handles null
-  }));
-  // Wrapped in try/catch (best-effort, non-fatal): if enrichment throws
-  // (e.g., a file with malformed text that defeats the normalized-index
-  // builder), the upload itself still succeeds — the tender and files are
-  // persisted, just without source evidence. Fields stay EXTRACTED_UNVERIFIED
-  // until AI Analyze or repair-metadata is run. This mirrors the try/catch
-  // pattern in metadata-override, ai-analyze, and re-extract-metadata.
-  try {
-    const enrichment = enrichMetadataWithSourceEvidence({
-      title: persisted.tender.title,
-      reference: persisted.tender.reference,
-      clientName: persisted.tender.clientName,
-      deadline: persisted.tender.deadline,
-      submissionMethod: persisted.tender.submissionMethod,
-      submissionAddress: persisted.tender.submissionAddress,
-      submissionEmails: persisted.tender.submissionEmails,
-      submissionEmailSubject: persisted.tender.submissionEmailSubject,
-      existingContactDetailsSourceJson: persisted.tender.contactDetailsSourceJson ?? null,
-    }, enrichmentFiles);
-    if (Object.keys(enrichment).length > 0) {
-      await prisma.tender.update({ where: { id: tenderId }, data: enrichment as Record<string, unknown> });
-    }
-
-    // ─── Candidate pipeline (Gap 3 — wire candidate model into extraction) ──
-    // Build TenderFactCandidate records for every extracted value, classify
-    // them (CANDIDATE/GROUNDED/REJECTED/NEEDS_REVIEW), and log the promotion
-    // decisions. The candidate pipeline is ADDITIVE — it does NOT change what
-    // gets written to the Tender table (the existing enrichment flow above
-    // already handles that). It only logs the candidate decisions for
-    // observability and surfaces rejected/needs-review candidates for the UI.
-    //
-    // When the TenderFactCandidate DB table is added in a future migration,
-    // the candidates will be persisted there. For now, they're logged as
-    // structured warnings so operators can see which values were promoted,
-    // which were rejected, and which need manual review.
-    try {
-      const candidatePipeline = buildCandidatesFromMetadata({
-        values: {
-          title: persisted.tender.title,
-          reference: persisted.tender.reference,
-          clientName: persisted.tender.clientName,
-          deadline: persisted.tender.deadline,
-          submissionMethod: persisted.tender.submissionMethod,
-          submissionAddress: persisted.tender.submissionAddress,
-          submissionEmailSubject: persisted.tender.submissionEmailSubject,
-        },
-        files: enrichmentFiles,
-        candidateType: "regex",
-        extractionSourcePrefix: "upload-first:inferTenderMetadata",
-      });
-      if (candidatePipeline.summary.rejected > 0 || candidatePipeline.summary.needsReview > 0) {
-        logger.warn(
-          `[upload-first] candidate pipeline for tender ${tenderId}: ` +
-          `${candidatePipeline.summary.autoConfirmed} auto-confirmed, ` +
-          `${candidatePipeline.summary.grounded} grounded, ` +
-          `${candidatePipeline.summary.needsReview} needs-review, ` +
-          `${candidatePipeline.summary.rejected} rejected, ` +
-          `${candidatePipeline.summary.deferred} deferred`,
-          {
-            rejected: candidatePipeline.rejected,
-            needsReview: candidatePipeline.needsReview,
-          },
-        );
+      const extractionJobs = [];
+      for (const fileRecord of fileRecords) {
+        if (!fileRecord.contentSha256) throw new Error("VERIFIED_SOURCE_HASH_MISSING");
+        extractionJobs.push(await enqueueTenderFileExtractionJob(tx, {
+          userId: actor.id,
+          companyId: company.id,
+          tenderId,
+          tenderFileId: fileRecord.id,
+          sourceContentSha256: fileRecord.contentSha256,
+          intakeSessionId: intake?.sessionId ?? null,
+          deferAnalysis,
+        }));
       }
-    } catch (candidateErr) {
-      // Best-effort — candidate pipeline failure must NOT fail the upload.
-      logger.warn(`[upload-first] candidate pipeline failed for tender ${tenderId}: ${candidateErr instanceof Error ? candidateErr.message : String(candidateErr)}`);
-    }
-  } catch {
-    // Best-effort, non-fatal. The tender and files are already persisted
-    // (transaction committed above); only the source-evidence enrichment
-    // is skipped. Fields stay EXTRACTED_UNVERIFIED until AI Analyze or
-    // repair-metadata is run.
-  }
+
+      return { tender, fileRecords, extractionJobs };
+    }, { timeout: 30_000 });
+    sourceRowsPersisted = true;
 
     for (const fileRecord of persisted.fileRecords) {
       const upload = storedUploads.find((item) => item.originalFileName === fileRecord.originalFileName);
@@ -583,85 +441,60 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
           tenderId,
           fileName: fileRecord.originalFileName,
           storageProvider: upload?.storageProvider ?? null,
-          extracted: upload?.meaningful ?? false,
-          extractedChars: upload?.extractedText.length ?? 0,
-          extractionTruncated: upload?.extractionTruncated ?? false,
+          extractionStatus: "QUEUED",
+          extractionOwner: "EXTRACT_TEXT",
         },
         requestId,
+      }).catch((error) => {
+        logger.warn("[upload-first] upload audit persistence failed", {
+          requestId,
+          tenderId,
+          fileId: fileRecord.id,
+          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        });
       });
     }
 
-    let processingJobId: string | null = null;
-    let analysisRevision: string | null = null;
-    let pipelineWarning: string | null = null;
     const sourcePackageComplete = !intake || intake.expectedBatches === 1;
-    if (meaningfulUploads.length > 0 && sourcePackageComplete && !deferAnalysis) {
-      try {
-        const pipeline = await queueAutomaticTenderPipeline({
-          tenderId,
-          userId: actor.id,
-          companyId: company.id,
-          source: "upload-first",
-        });
-        processingJobId = pipeline.jobId;
-        analysisRevision = pipeline.analysisRevision;
-        if (intake) {
-          await recordTenderPackageAnalysisJob({
-            prisma,
-            companyId: company.id,
-            tenderId,
-            sessionId: intake.sessionId,
-            jobId: pipeline.jobId,
-            analysisRevision: pipeline.analysisRevision,
-          });
-        }
-      } catch (error) {
-        pipelineWarning = "Tender intake completed, but automatic analysis could not be queued. Open the tender and retry AI Analyze.";
-        logger.error("[upload-first] automatic tender pipeline queue failed", {
-          requestId,
-          tenderId,
-          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-        });
-      }
-    }
+    const processingJobId = persisted.extractionJobs[0]?.id ?? null;
+    const processingStage = processingJobId ? "EXTRACT_TEXT_QUEUED" as const : null;
 
     return NextResponse.json({
       success: true,
       tenderId,
       tender: persisted.tender,
       uploadedFiles: storedUploads.length,
-      extractedFiles: meaningfulUploads.length,
+      extractedFiles: 0,
+      queuedExtractionFiles: persisted.extractionJobs.length,
       warnings,
       errors: [],
       engineSkipped: true,
       engineError: null,
       processingJobId,
-      analysisRevision,
-      pipelineStage: processingJobId ? "AI_ANALYZE_QUEUED" : null,
-      pipelineDeferred: deferAnalysis,
-      pipelineWarning,
+      analysisRevision: null,
+      pipelineStage: processingStage,
+      pipelineDeferred: !sourcePackageComplete || deferAnalysis,
+      pipelineWarning: processingJobId
+        ? null
+        : "Tender intake completed, but no extraction job was created. Retry the source upload.",
       intakeSessionId: intake?.sessionId ?? null,
       intakeSession: intake
         ? initialTenderPackageSessionResult(intake, storedUploads.length)
         : null,
-      nextAction: meaningfulUploads.length > 0
-        ? processingJobId
-          ? "WAIT_FOR_AI_ANALYZE"
-          : deferAnalysis
-            ? "UPLOAD_REMAINING_SOURCE_FILES"
-            : "RUN_AI_ANALYZE"
-        : "RUN_OCR_OR_REEXTRACT",
+      nextAction: !sourcePackageComplete
+        ? "UPLOAD_REMAINING_SOURCE_FILES"
+        : processingJobId
+          ? "WAIT_FOR_SOURCE_EXTRACTION"
+          : "RETRY_SOURCE_UPLOAD",
       message: processingJobId
-        ? "Tender and source files were created. Automatic AI analysis is queued."
-        : meaningfulUploads.length > 0 && deferAnalysis
-          ? "Tender and the first secure source batch were created. Automatic analysis will queue after the remaining package batches are stored."
-          : meaningfulUploads.length > 0
-            ? "Tender and source files were created, but automatic AI analysis must be retried."
-        : "Tender and source files were created, but OCR or re-extraction is required before AI Analyze.",
+        ? sourcePackageComplete
+          ? "Tender and verified source files were created. Durable background extraction is queued; analysis will follow automatically."
+          : "Tender and the first verified source batch were created. Extraction is queued; analysis will wait for the remaining package batches."
+        : "Tender and verified source files were created, but durable extraction must be retried.",
       requestId,
     }, { status: 201 });
   } catch (error) {
-    if (storedUploads.length > 0) await cleanupStoredUploads(storedUploads);
+    if (!sourceRowsPersisted && storedUploads.length > 0) await cleanupStoredUploads(storedUploads);
     logger.error(`[upload-first tender] failed (requestId=${requestId}):`, {
       detail: error,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",

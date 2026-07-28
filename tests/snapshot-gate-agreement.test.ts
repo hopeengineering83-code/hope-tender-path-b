@@ -47,6 +47,8 @@ describe("Snapshot ↔ Gate input-shape parity", () => {
 
 describe("Snapshot ↔ Gate Build Plan, requirement, and metadata alignment", () => {
   const snapshotSrc = read("lib/engine/tender-release-snapshot.ts");
+  const readinessModelSrc = read("lib/engine/final-package-readiness-model.ts");
+  const groundingSrc = read("lib/engine/evidence-grounding.ts");
 
   it("uses the strict shared Build Plan helpers while retaining display-only count state", () => {
     assert.match(snapshotSrc, /computeTenderBuildPlanHash/);
@@ -56,13 +58,13 @@ describe("Snapshot ↔ Gate Build Plan, requirement, and metadata alignment", ()
     assert.match(snapshotSrc, /gateValid:\s*buildPlanGateValid/);
   });
 
-  it("checks quote containment and source page bounds", () => {
-    assert.match(snapshotSrc, /fileText\.length > 0 && fileText\.includes\(normalizedQuote\)/);
-    assert.match(
-      snapshotSrc,
-      /requirement\.sourcePageNumber > sourceFile\.totalPages|r\.sourcePageNumber > file\.totalPages/,
-    );
-    assert.match(snapshotSrc, /totalPages:\s*true/);
+  it("delegates quote containment and source-page bounds to the shared grounding authority", () => {
+    assert.match(snapshotSrc, /mapRequirementsToEvidence\(/);
+    assert.match(snapshotSrc, /extractedText:\s*file\.extractedText/);
+    assert.match(snapshotSrc, /totalPages:\s*file\.totalPages/);
+    assert.match(readinessModelSrc, /isGroundedEvidenceInActiveFiles\(/);
+    assert.match(groundingSrc, /fileText\.length === 0 \|\| !fileText\.includes\(normalizedQuote\)/);
+    assert.match(groundingSrc, /page > file\.totalPages/);
   });
 
   it("uses the shared strict metadata-evidence validator", () => {

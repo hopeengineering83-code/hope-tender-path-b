@@ -5,8 +5,9 @@ import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { clientLogger } from "@/lib/ui/client-logger";
 import { PanelErrorFallback } from "./panel-error-fallback";
+import { getFinalPackageReadinessModel } from "../lib/engine/final-package-readiness-model";
 
-type HeatmapStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "UNKNOWN";
+type HeatmapStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
 
 type HeatmapRow = {
   id: string;
@@ -19,12 +20,11 @@ type HeatmapRow = {
   notes: string | null;
 };
 
-export function toHeatmapStatus(supportLevel: string): HeatmapStatus {
-  const s = (supportLevel ?? "").toUpperCase();
-  if (s === "SUPPORTED" || s === "FULL" || s === "SUBSTANTIAL") return "FULLY_MET";
-  if (s === "PARTIAL" || s === "EVIDENCE_PENDING_REVIEW") return "PARTIALLY_MET";
-  if (s === "UNSUPPORTED" || s === "NONE" || s === "NOT_COVERED") return "NOT_MET";
-  return "UNKNOWN";
+export function toHeatmapStatus(displayStatus: string): HeatmapStatus {
+  if (displayStatus === "FULLY_MET") return "FULLY_MET";
+  if (displayStatus === "PARTIALLY_MET") return "PARTIALLY_MET";
+  if (displayStatus === "NEEDS_TRACE") return "NEEDS_TRACE";
+  return "NOT_MET";
 }
 
 function riskLevel(status: HeatmapStatus, priority: string): "HIGH" | "MEDIUM" | "LOW" | "NONE" {
@@ -33,7 +33,7 @@ function riskLevel(status: HeatmapStatus, priority: string): "HIGH" | "MEDIUM" |
   if (status === "NOT_MET" && !isMandatory) return "MEDIUM";
   if (status === "PARTIALLY_MET" && isMandatory) return "MEDIUM";
   if (status === "PARTIALLY_MET" && !isMandatory) return "LOW";
-  if (status === "UNKNOWN" && isMandatory) return "MEDIUM";
+  if (status === "NEEDS_TRACE" && isMandatory) return "MEDIUM";
   return "NONE";
 }
 
@@ -41,7 +41,7 @@ const STATUS_STYLES: Record<HeatmapStatus, { row: string; badge: string; label: 
   FULLY_MET:     { row: "border-emerald-100 bg-emerald-50",  badge: "bg-emerald-100 text-emerald-700", label: "FULLY MET" },
   PARTIALLY_MET: { row: "border-amber-100 bg-amber-50",     badge: "bg-amber-100 text-amber-700",     label: "PARTIAL" },
   NOT_MET:       { row: "border-red-100 bg-red-50",         badge: "bg-red-100 text-red-700",          label: "NOT MET" },
-  UNKNOWN:       { row: "border-slate-100 bg-slate-50",     badge: "bg-slate-100 text-slate-500",     label: "UNKNOWN" },
+  NEEDS_TRACE:   { row: "border-orange-100 bg-orange-50",   badge: "bg-orange-100 text-orange-700",   label: "NEEDS SOURCE TRACE" },
 };
 
 const RISK_STYLES: Record<string, string> = {
@@ -92,47 +92,56 @@ export async function ComplianceHeatmapPanel({ tenderId }: { tenderId: string })
     const ownsTender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, select: { id: true } }).catch(() => null);
     if (!ownsTender) return null;
 
-    const matrixRows = await prisma.complianceMatrix.findMany({
-      // Orphaned historical rows have requirementId=NULL after a requirement
-      // refresh. They are audit history, not current compliance requirements,
-      // and must not inflate the active heatmap or render as "Requirement —".
-      where: { tenderId, requirementId: { not: null } },
+    const [requirements, finalPackageModel] = await Promise.all([
+      prisma.tenderRequirement.findMany({
+      where: { tenderId },
       orderBy: { createdAt: "asc" },
-      include: {
-        requirement: { select: { id: true, title: true, requirementType: true, priority: true } },
+      select: {
+        id: true,
+        title: true,
+        requirementType: true,
+        priority: true,
+        complianceMatrixRows: {
+          orderBy: { updatedAt: "desc" },
+          select: { evidenceSource: true, notes: true },
+        },
       },
-    }).catch(() => [] as Array<{
-      id: string;
-      requirementId: string | null;
-      evidenceType: string;
-      evidenceSource: string;
-      evidenceReference: string | null;
-      supportLevel: string;
-      notes: string | null;
-      requirement: { id: string; title: string; requirementType: string; priority: string } | null;
-    }>);
+    }),
+      getFinalPackageReadinessModel(prisma, tenderId, userId),
+    ]);
 
-    if (matrixRows.length === 0) return null;
-
-    const rows: HeatmapRow[] = matrixRows.filter((row) => row.requirement !== null).map((row) => {
-      const status = toHeatmapStatus(row.supportLevel);
-      const priority = row.requirement?.priority ?? "OPTIONAL";
+    if (requirements.length === 0) return null;
+    const canonicalStatusByRequirement = new Map(
+      finalPackageModel.requirementEvidenceStatuses.map((status) => [
+        status.requirementId,
+        status,
+      ]),
+    );
+    const rows: HeatmapRow[] = requirements.map((requirement) => {
+      const canonicalStatus = canonicalStatusByRequirement.get(requirement.id);
+      const status = toHeatmapStatus(canonicalStatus?.displayStatus ?? "NOT_MET");
+      const priority = requirement.priority ?? "OPTIONAL";
+      const evidenceSources = Array.from(new Set(
+        requirement.complianceMatrixRows.map((row) => row.evidenceSource).filter(Boolean),
+      ));
       return {
-        id: row.id,
-        title: row.requirement!.title,
-        requirementType: row.requirement!.requirementType,
+        id: requirement.id,
+        title: requirement.title,
+        requirementType: requirement.requirementType,
         priority,
         status,
         risk: riskLevel(status, priority),
-        evidenceSource: row.evidenceSource,
-        notes: row.notes,
+        evidenceSource: evidenceSources.join(", ") || "No linked evidence",
+        notes: canonicalStatus?.blockerReason
+          ?? requirement.complianceMatrixRows[0]?.notes
+          ?? null,
       };
     });
 
     const fullyMetRows = rows.filter((r) => r.status === "FULLY_MET");
     const partialRows = rows.filter((r) => r.status === "PARTIALLY_MET");
     const notMetRows = rows.filter((r) => r.status === "NOT_MET");
-    const unknownRows = rows.filter((r) => r.status === "UNKNOWN");
+    const needsTraceRows = rows.filter((r) => r.status === "NEEDS_TRACE");
     const highRiskRows = rows.filter((r) => r.risk === "HIGH");
     const visibleRiskRows = rows.filter((r) => r.risk === "HIGH" || r.status === "NOT_MET");
 
@@ -152,7 +161,7 @@ export async function ComplianceHeatmapPanel({ tenderId }: { tenderId: string })
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2"><p className="text-lg font-bold text-emerald-700">{fullyMetRows.length}</p><p className="text-emerald-600">Fully Met</p></div>
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-2 py-2"><p className="text-lg font-bold text-amber-700">{partialRows.length}</p><p className="text-amber-600">Partial</p></div>
           <div className="rounded-xl border border-red-200 bg-red-50 px-2 py-2"><p className="text-lg font-bold text-red-700">{notMetRows.length}</p><p className="text-red-600">Not Met</p></div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2"><p className="text-lg font-bold text-slate-500">{unknownRows.length}</p><p className="text-slate-400">Unknown</p></div>
+          <div className="rounded-xl border border-orange-200 bg-orange-50 px-2 py-2"><p className="text-lg font-bold text-orange-700">{needsTraceRows.length}</p><p className="text-orange-600">Needs Trace</p></div>
         </div>
 
         {visibleRiskRows.length > 0 && (
@@ -179,10 +188,10 @@ export async function ComplianceHeatmapPanel({ tenderId }: { tenderId: string })
             </details>
           )}
 
-          {unknownRows.length > 0 && (
-            <details className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <summary className="cursor-pointer text-sm font-semibold text-slate-700">Show unknown requirements ({unknownRows.length})</summary>
-              <div className="mt-3"><HeatmapRows rows={unknownRows.slice(0, 50)} /></div>
+          {needsTraceRows.length > 0 && (
+            <details className="rounded-xl border border-orange-200 bg-orange-50 p-3">
+              <summary className="cursor-pointer text-sm font-semibold text-orange-800">Show requirements needing source trace ({needsTraceRows.length})</summary>
+              <div className="mt-3"><HeatmapRows rows={needsTraceRows.slice(0, 50)} /></div>
             </details>
           )}
         </div>

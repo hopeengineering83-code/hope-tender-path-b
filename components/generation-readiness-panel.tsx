@@ -45,7 +45,7 @@ function buildActionLabel(action?: string): string {
   if (action === "EDIT_TENDER_METADATA") return "Fill missing Tender Details";
   if (action === "OPEN_COMPANY_READINESS") return "Open company readiness";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Check extraction quality";
-  if (action === "BUILD_SUBMISSION_PLAN") return "Build submission plan";
+  if (action === "BUILD_SUBMISSION_PLAN") return "Review and confirm Build Plan";
   if (action === "OPEN_ANALYSIS_QUALITY") return "Open analysis quality";
   if (action === "OPEN_MATCHING_QUALITY") return "Open matching quality";
   if (action === "RUN_ENGINE") return "Run engine";

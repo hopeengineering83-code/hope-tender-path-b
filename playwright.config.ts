@@ -36,6 +36,10 @@ const TABLET_AUTHENTICATED_SPECS = [
 
 export default defineConfig({
   testDir: "./e2e",
+  // Playwright clears outputDir before a run. Keep transient traces, videos,
+  // and screenshots away from test-results/, which stores the exact-head CI
+  // command ledger and the pre-browser migration/test/build logs.
+  outputDir: "./browser-results/test-artifacts",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,

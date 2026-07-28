@@ -18,6 +18,7 @@ export type UploadFirstResponse = {
   engineSkipped?: boolean;
   nextAction?: string;
   processingJobId?: string;
+  pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
   error?: string;
   code?: string;
   requestId?: string;
@@ -37,9 +38,14 @@ export type AutoPipelineResult = {
 export function decideTenderUploadAutoPipeline(
   response: UploadFirstResponse,
 ): string | null {
-  return response.processingJobId
-    ? "/api/ai-jobs/run-next?jobType=AI_ANALYZE"
-    : null;
+  if (!response.processingJobId) return null;
+  if (response.pipelineStage === "EXTRACT_TEXT_QUEUED") {
+    return "/api/ai-jobs/run-next?jobType=EXTRACT_TEXT";
+  }
+  if (response.pipelineStage === "AI_ANALYZE_QUEUED") {
+    return "/api/ai-jobs/run-next?jobType=AI_ANALYZE";
+  }
+  return null;
 }
 
 /**
@@ -64,11 +70,14 @@ export async function triggerTenderUploadAutoPipeline(
         credentials: "same-origin",
       });
       if (worker.ok) {
+        const extraction = response.pipelineStage === "EXTRACT_TEXT_QUEUED";
         return {
           fired: true,
           endpoint,
           status: "queued",
-          message: "Automatic AI analysis started. Later stages remain gated by promoted analysis and readiness checks.",
+          message: extraction
+            ? "Source extraction started. AI analysis will follow only after every verified source file is extracted."
+            : "Automatic AI analysis started. Later stages remain gated by promoted analysis and readiness checks.",
         };
       }
     } catch {
@@ -79,7 +88,9 @@ export async function triggerTenderUploadAutoPipeline(
       fired: false,
       endpoint,
       status: "queued",
-      message: "Automatic AI analysis is queued. The background worker will continue it.",
+      message: response.pipelineStage === "EXTRACT_TEXT_QUEUED"
+        ? "Source extraction is queued. The background worker will continue it before AI analysis."
+        : "Automatic AI analysis is queued. The background worker will continue it.",
     };
   }
 

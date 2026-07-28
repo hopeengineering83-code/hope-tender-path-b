@@ -170,6 +170,7 @@ export function TenderSourceFilesPanel({
           results?: UploadResult[];
           error?: string;
           processingJobId?: string | null;
+          pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
           intakeSession?: ActiveIntakeSession | null;
         };
         if (!response.ok || !Array.isArray(payload.results) || payload.results.some((result) => !result.fileRecord)) {
@@ -194,6 +195,7 @@ export function TenderSourceFilesPanel({
           await triggerTenderUploadAutoPipeline({
             tenderId,
             processingJobId: payload.processingJobId,
+            pipelineStage: payload.pipelineStage ?? null,
           });
         }
         setMessage({
@@ -220,6 +222,7 @@ export function TenderSourceFilesPanel({
      * the memoized callback. Set state for the badge AND this local for the
      * success message in one go. */
     let lastJobId: string | null = null;
+    let lastPipelineStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null = null;
 
     for (const file of incoming) {
       try {
@@ -229,7 +232,12 @@ export function TenderSourceFilesPanel({
         if (classification) body.append("classification", classification);
 
         const response = await fetch("/api/upload", { method: "POST", body });
-        const payload = await response.json().catch(() => ({})) as { results?: UploadResult[]; error?: string; processingJobId?: string | null };
+        const payload = await response.json().catch(() => ({})) as {
+          results?: UploadResult[];
+          error?: string;
+          processingJobId?: string | null;
+          pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+        };
         const result = payload.results?.[0];
         if (!response.ok || !result?.fileRecord) {
           errors.push(`${file.name}: ${result?.error ?? payload.error ?? "Upload failed"}`);
@@ -247,6 +255,7 @@ export function TenderSourceFilesPanel({
         // advertise a pipeline phase.
         if (payload.processingJobId) {
           lastJobId = payload.processingJobId;
+          lastPipelineStage = payload.pipelineStage ?? null;
           setPipelineStatus({ jobId: payload.processingJobId, phase: "queued" });
         }
       } catch {
@@ -255,6 +264,13 @@ export function TenderSourceFilesPanel({
     }
 
     setUploading(false);
+    if (lastJobId) {
+      await triggerTenderUploadAutoPipeline({
+        tenderId,
+        processingJobId: lastJobId,
+        pipelineStage: lastPipelineStage,
+      });
+    }
     if (errors.length > 0) {
       setMessage({ kind: "error", text: errors.join(" · ") });
     } else {

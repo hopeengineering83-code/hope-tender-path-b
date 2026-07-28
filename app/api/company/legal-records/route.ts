@@ -6,6 +6,7 @@ import { rateLimit, MUTATION_RATE_LIMIT, API_RATE_LIMIT } from "../../../../lib/
 import { extractRequestId } from "../../../../lib/request-id";
 import { companyRecordRuntimeError } from "../../../../lib/company-record-route-error";
 import { logAction } from "../../../../lib/audit";
+import { manualSupportRecordDraftFields } from "../../../../lib/vault-review-inbox";
 
 export const dynamic = "force-dynamic";
 
@@ -123,12 +124,9 @@ export async function POST(req: Request) {
       sourceDocumentId = doc.id;
     }
 
-    // Manual, single-record creation by an authenticated human is itself the
-    // review act (same precedent as Expert/Project manual creation) — no
-    // buildReviewProvenance evidence blob is required, but reviewNotes is a
-    // plain string (not the "vault-review-provenance:v2:" prefix), so
-    // isDurablyReviewed() correctly does NOT treat this as durable/export-
-    // grade evidence unless a real review with linked source text follows.
+    // Creation and evidence review are separate authority events. A manual
+    // entry remains an explicit draft until a reviewer approves its current,
+    // owned source bytes through the review route.
     const record = await prisma.legalRecord.create({
       data: {
         companyId: company.id,
@@ -139,10 +137,7 @@ export async function POST(req: Request) {
         status: str(body.status, 50) || "ACTIVE",
         issueDate,
         expiryDate,
-        trustLevel: "REVIEWED",
-        reviewedBy: actor.id,
-        reviewedAt: new Date(),
-        reviewNotes: "Manual legal record created by authenticated user.",
+        ...manualSupportRecordDraftFields("LEGAL"),
         sourceDocumentId,
       },
     });

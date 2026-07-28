@@ -3,6 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
 import { extractRequestId } from "../../../../../../lib/request-id";
+import { isGroundedEvidenceInActiveFiles } from "../../../../../../lib/engine/evidence-grounding";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -94,13 +95,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true, userId: true } });
   if (!tender) return NextResponse.json({ ok: false, error: "Tender not found" }, { status: 404 });
 
-  const requirement = await prisma.tenderRequirement.findFirst({ where: { id: body.requirementId, tenderId: id }, select: { id: true, title: true } });
+  const requirement = await prisma.tenderRequirement.findFirst({
+    where: { id: body.requirementId, tenderId: id },
+    select: {
+      id: true,
+      title: true,
+      sourceTenderFileId: true,
+      sourcePageNumber: true,
+      sourceExactQuote: true,
+    },
+  });
   if (!requirement) return NextResponse.json({ ok: false, error: "Requirement not found for this tender" }, { status: 404 });
 
   const requestedLevel = requestedSupportLevel(body.supportLevel);
 
   if (isManualReviewerConfirmation(body)) {
-    const evidenceReference = String(body.evidenceReference ?? `manual-${requirement.id}`).trim();
+    if (requestedLevel === "FULL" || requestedLevel === "SUBSTANTIAL") {
+      const activeFiles = await prisma.tenderFile.findMany({
+        where: { tenderId: id, deletionStatus: "ACTIVE" },
+        select: { id: true, extractedText: true, totalPages: true },
+      });
+      if (!isGroundedEvidenceInActiveFiles(
+        requirement.sourcePageNumber,
+        requirement.sourceExactQuote,
+        requirement.sourceTenderFileId,
+        activeFiles,
+      )) {
+        return NextResponse.json({
+          ok: false,
+          code: "REQUIREMENT_SOURCE_TRACE_REQUIRED",
+          error: "FULL or SUBSTANTIAL coverage requires an active tender source file, valid page, and exact quote contained in that source.",
+        }, { status: 422 });
+      }
+    }
+    const evidenceReference = `reviewer:${actor.id}:requirement:${requirement.id}`;
     const notes = body.notes ?? `Reviewer manually confirmed ${requestedLevel} coverage.`;
     const existing = await prisma.complianceMatrix.findFirst({
       where: { tenderId: id, requirementId: requirement.id, evidenceType: "MANUAL_REVIEWER_CONFIRMATION" },

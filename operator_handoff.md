@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `release/consolidated-recovery-20260717` (PR #1175) | Latest-preview runtime repair and single-authority workflow truth | AI job diagnostics, support-evidence loading, bid strategy, compliance/vault/plan/readiness panels, tests | Published; exact-head CI/preview proof required | Inspect exact-head CI/preview logs and retain the real-account security hold |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; F017 published; stale synchronous-extraction Playwright expectations fixed locally | Publish F021 after frozen-head recheck, inspect replacement exact CI/artifact, then continue Build Plan/action reconciliation |
 
 ### Lock rules
 
@@ -68,6 +68,115 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T17:31:00Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — exact-CI authenticated upload acceptance.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** exact CI run `30381329357` passed migrations/schema/drift/release integrity/typecheck/lint/unit+database tests/build and 176 browser assertions, but three upload tests still expected text extraction and `AI_ANALYZE` directly in the upload response. That contradicted the intended durable extraction fix. Added one authenticated acceptance helper that wakes the user-scoped `EXTRACT_TEXT` worker and polls persisted source-file state; updated all three flows to expect `WAIT_FOR_SOURCE_EXTRACTION` / `EXTRACT_TEXT_QUEUED`; the golden flow also verifies the completed extraction job queued canonical analysis.
+- **Tests:** exact-CI failing-before is 3 stale Playwright failures (176 passed / 3 skipped); focused durable extraction/queue suite passes 35/35 locally; TypeScript, ESLint and release-integrity are clean.
+- **CI / deployment:** replacement exact-head CI is pending. No preview, deployment, production/database mutation or real-account test was triggered.
+- **Next action:** recheck PR #1175, publish, inspect replacement CI and its exact-head artifact, then continue F018 Build Plan/PDF reconciliation.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
+
+### 2026-07-28T17:22:05Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — one effective requirement-coverage authority.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** manual FULL/SUBSTANTIAL could be stored without active source-file/page/exact-quote containment, a competing fallback route could write the same state, three panels interpreted rows independently, the heatmap multiplied requirements by compliance rows, and the release snapshot/lifecycle still counted raw strong rows. Strong manual confirmation now fails closed without contained source evidence; the duplicate mutator is removed; `mapRequirementsToEvidence` emits the effective `FULLY_MET`/`PARTIALLY_MET`/`NEEDS_TRACE`/`NOT_MET` status consumed by the API, all three panels, release snapshot and lifecycle controls; heatmap cardinality is one row per requirement.
+- **Tests:** new contract failed 4/4 before implementation and passes 5/5 after; 112/112 focused lifecycle/release/workflow assertions and 219/219 broader related assertions pass; TypeScript, ESLint and release-integrity are clean.
+- **CI / deployment:** no database mutation, preview, deployment or real-account test was triggered. Exact-preview proof remains open.
+- **Next action:** recheck governing PR #1175, publish this checkpoint, inspect exact-head CI/artifact, then continue F018 Build Plan reconciliation.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
+
+### 2026-07-28T17:02:48Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — screenshot release-evidence consistency.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** the screenshot producer used route coverage both as a success percentage and as the count of missing findings, so a complete run emitted `routeCoveragePercent: 100` beside `counts.routeCoverage: 0`. Replaced those duplicate fields with one versioned `{expected, covered, uncovered, percent}` authority in both JSON artifacts and an explicit `findingCounts.missingRouteCoverage`. A pre-write gate recomputes all dimensions and compares exact viewport/pattern identities for uncovered rows.
+- **Tests:** new contract failed 2/2 before implementation and passes 3/3 after, including behavioral rejection of contradictory percentage and uncovered-route details; 9/9 related screenshot/repair assertions pass; both scripts pass `node --check`; TypeScript, ESLint and the complete release-integrity audit are clean.
+- **CI / deployment:** prior exact-head CI for `9502c578…` was in progress when this checkpoint began. No preview, deployment, database mutation or real-account test was triggered.
+- **Next action:** complete static validation, recheck governing PR #1175, publish, then inspect exact-head CI and continue the remaining cross-panel truth/runtime gaps.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
+
+### 2026-07-28T16:55:46Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — fail-closed exact-head CI evidence.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** success artifacts retained only selected logs, omitted lint/tests/Playwright and permitted missing files with a warning. Added one streaming command recorder for 16 mandatory commands with exact source SHA, timestamps, duration and exit status in an NDJSON ledger; added a success-only completeness verifier that requires every non-empty log and exact-head successful entry; exact acceptance upload now fails on missing files and never publishes from a partial run.
+- **Tests:** completeness contract failed 3/3 before implementation and passes 3/3 after; command runner records real success/failure exits; verifier accepts a complete fixture and rejects a missing log; 36/36 related CI/migration contracts pass; workflow YAML parses; TypeScript, ESLint and release-integrity audits are clean.
+- **CI / deployment:** exact-head CI for `115d28b7…` is in progress as run `30380110604`; publishing this checkpoint will supersede it through normal concurrency. No deployment or real-account test was triggered.
+- **Next action:** publish after rechecking PR #1175, then inspect the resulting exact-head run and artifact before treating F008 as runtime-verified.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
+
+### 2026-07-28T16:48:29Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — deterministic migration test ownership.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** two parallel `node:test` files each spawned two `prisma migrate deploy` commands against the shared CI schema even though CI already performs deploy and idempotency checks sequentially before `npm test`. Removed all four in-test migration subprocesses; CI is now the one migration executor, while the suites retain their post-migration row-behavior assertions.
+- **Tests:** the ownership contract failed before implementation and passes 2/2 after; 73/73 related CI routing, migration, export-gate and release-integrity assertions pass; TypeScript is clean. Database execution is not claimed locally.
+- **CI / deployment:** exact-head CI for prior Final ZIP checkpoint `611b638d…` is in progress as run `30379756743`; no deployment or real-account test was triggered.
+- **Next action:** publish after rechecking governing PR #1175, then continue F007/F008 and the cross-panel runtime truth gaps.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
+
+### 2026-07-28T16:41:45Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — Final ZIP manifest authority and duplicate-code removal.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** production ZIP manifests discarded exact plan positions and omitted envelope/format, while a second test-only finalizer could let release tests pass without exercising the production owner. Removed that finalizer and reconnected its consumers to `assembleFinalSubmissionZip`; canonical scope now carries unique positive plan order, envelope and canonical format into a persisted manifest with exact filename, byte length and SHA-256. Assembly sorts by plan order, rejects duplicate positions and reopens/re-hashes every archive entry.
+- **Tests:** new authority contract failed 3/3 before implementation and passes 3/3 after; 213/213 affected scope, assembly, Build Plan, release-package, PDF-safety, static-safety and binary-inspection assertions pass; TypeScript, ESLint and release-integrity audits are clean. The binary fixture remains synthetic and is not represented as upload-to-export acceptance.
+- **Security/runtime:** no real-account test, database mutation, deployment or authenticated download was performed. Persisted `ExportPackage.manifestJson` acceptance remains open.
+- **Next action:** run lint/release-integrity and broader affected tests, recheck governing PR #1175, publish this checkpoint, then continue the remaining screenshot/workflow/release-evidence gaps.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
+
+### 2026-07-28T16:23:58Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — complete Company Vault review authority.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** the canonical Review Inbox omitted Legal, Financial and Compliance records, while manual POST routes misleadingly stamped unsupported entries `REVIEWED` with an actor identity. Added bounded independently paginated DTOs and review controls for all three families; manual creation now persists `MANUAL_DRAFT` with no reviewer/timestamp, and only the existing durable source-backed review route can promote it.
+- **Concurrency disposition:** the earlier F003 stale-write finding was stale against the frozen head. All three detail routes bind writes to exact record and source revisions and return `409 CONCURRENT_UPDATE`. Exact checkpoint CI run `30377357481` passed the isolated PostgreSQL stale-write test and all 8 authenticated Legal/Financial/Compliance route assertions.
+- **Tests:** new contract failed before implementation and passes 4/4 after; 60/60 related privacy, RBAC, provenance and concurrency assertions pass; TypeScript and ESLint clean. The prior exact-checkpoint CI reached 8,918/8,919: its sole failure was the workboard’s missing governing PR branch identity, now fixed locally and passing in the 28/28 owning test. `npm test` cannot start `tsx` IPC under this sandbox/Node 24 (`EPERM`).
+- **Security/runtime:** no real-account test, database mutation or deployment was performed. Authenticated preview acceptance remains open.
+- **Next action:** publish this checkpoint after rechecking the governing head, then audit the final ZIP/generation authority roots.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
+
+### 2026-07-28T16:14:00Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — preview schema/runtime truth.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Runtime evidence:** supplied screenshot deployment `dpl_DNyVb6zVZZgtxUyso5Z1c6apPwKN` is bound to `aed98737…`; its visible P2022 reports missing `LegalRecord.trustLevel`. Vercel no longer retains those historical lines. Governing deployment `dpl_yYMggEEnQbJemQtmMHioee15eZnN` is bound to `ec0eaa83…` and has no retained last-day error/500 rows, but no authenticated traffic proves the affected path.
+- **Root cause and fix:** the additive review-provenance migration and runtime fail-closed compatibility loader exist, but the deploy-time critical-schema gate did not require any Legal/Financial/Compliance review columns. Extracted one pure schema contract used by the production probe and added all three authority-bearing tables/column families; a missing column now fails the actual evaluator.
+- **Documentation:** consolidated evidence into the four exact mandated `docs/audits/pr1175-*` ledgers and removed the temporary duplicate root ledgers.
+- **Tests:** new contract failed before implementation; 3/3 behavioral schema assertions and 63/63 related schema/migration/preview assertions pass; TypeScript and ESLint clean. No database execution is claimed because this workspace has no isolated PostgreSQL service.
+- **Security:** no real-account test was run. Password rotation, session revocation, GitHub secret update and retained-artifact sanitization remain mandatory.
+- **Next action:** publish this fail-closed checkpoint, renew exact-head CI/deployment identity, then continue the Review Inbox/concurrency and generation/export authority roots.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
+
+### 2026-07-28T16:03:00Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — background extraction authority.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains draft and unmerged.
+- **Frozen source:** governing PR head rechecked unchanged at `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca` before this checkpoint.
+- **Root cause and fix:** both tender request paths performed extraction inline and bypassed the registered durable worker; company upload trusted request-time text; a dead duplicate extraction implementation remained. Upload now persists verified bytes/source/package state plus exact hash-bound `EXTRACT_TEXT` jobs, the canonical worker exclusively owns extraction/metadata/continuation, replay returns durable state, and Vault ingestion forces background re-extraction.
+- **Files changed:** both tender upload handlers; canonical and legacy AI job handlers; metadata/re-extraction/pipeline UI helpers; tender upload UI consumers; focused upload, integrity, extraction, package, sequencing, metadata, and provenance tests; all four five-pass ledgers; this handoff.
+- **Tests:** new wiring contract failed 7/7 before the fix and passes 7/7 after; `npx tsc --noEmit`, ESLint, and the complete release-integrity audit clean; affected transitive suite 382/382 across 92 suites.
+- **CI / deployment:** no claim yet for the audit-head CI, isolated PostgreSQL integration, or audit-head Vercel preview. Local Node 24.14 differs from required Node `>=22 <23`.
+- **Security:** real-account testing remains prohibited until the leaked app password is rotated, active sessions are revoked, the GitHub secret is updated, and retained artifacts are sanitized.
+- **Next action:** publish this checkpoint, then reproduce and repair the preview `LegalRecord.trustLevel` schema/runtime boundary without touching a shared or production database.
+- **Merge status:** **UNSAFE — DO NOT MERGE.**
+
+### 2026-07-28T15:34:40Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — work remains active.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / child draft pending first checkpoint commit; governing PR #1175 remains draft and unmerged.
+- **Frozen source:** PR #1175 head `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`; base `b3c9db5de89a2a665e61a83facbff0f276f9983c`; governing branch rechecked unchanged before editing.
+- **Scope completed locally:** restored truthful automatic evidence authority (`SOURCE_VERIFIED`, never fabricated `REVIEWED`); removed automatic signature/stamp mutation from generation and auto-finalize; added the four five-pass audit ledgers.
+- **Files changed:** `lib/company-auto-verification.ts`; generation/auto-finalize routes; removed `lib/engine/apply-signature-stamp.ts`; provenance/repair/signature tests; `five-pass-pr1175-*.md`; this handoff.
+- **Tests:** `npx tsc --noEmit` clean; 126/126 focused and transitive tests pass across provenance, matching, signature approval, auto-finalize, PDF finalization, and export format.
+- **CI / deployment:** governing exact-head CI and screenshot runs were green and exact-head Vercel deployment was READY before this audit; no audit-head CI/preview exists yet.
+- **Known risks:** request-bound OCR still bypasses the registered durable extraction worker; the supplied preview shows database migration and cross-panel truth contradictions; no local PostgreSQL service; local Node 24.14 differs from required Node `>=22 <23`; real-account security hold remains active.
+- **Next action:** publish/open the child draft PR, then reconnect both upload paths to deterministic background extraction and continue the remaining pass ledger.
+- **Merge status:** **UNSAFE — DO NOT MERGE.**
 
 <!-- Add newest entry at the top. -->
 

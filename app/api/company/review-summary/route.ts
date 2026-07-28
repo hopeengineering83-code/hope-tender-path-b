@@ -2,18 +2,20 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { getSession } from "../../../../lib/auth";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
-import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../../../../lib/vault-review-provenance";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../../../../lib/vault-review-provenance";
 
 // A raw trustLevel === "REVIEWED" flag is not sufficient on its own — it can
 // be stale or was never durably provenance-backed (missing
 // sourceDocumentId/reviewedBy/reviewedAt, or a quote that no longer matches
-// the source bytes). The same durable check the Engine's matching gate uses
-// (lib/engine/matching-eligibility.ts -> isDurablyReviewed) must gate this
-// summary too, or it can report records "reviewed" and "ready for final
-// generation" that the Engine and export gate will actually reject.
+// the source bytes). The same durable check the Engine's matching/generation
+// gates use (canUseVaultRecord(..., "GENERATION"), which accepts a durably
+// REVIEWED or durably SOURCE_VERIFIED record) must gate this summary too, or
+// it can report a vault of only source-verified evidence as "not reviewed"
+// and "not ready for final generation" when generation would actually
+// succeed.
 function countTrust(records: ReviewRecordState[]) {
   return {
-    reviewed: records.filter((r) => isDurablyReviewed(r)).length,
+    reviewed: records.filter((r) => canUseVaultRecord(r, "GENERATION")).length,
     aiDraft: records.filter((r) => r.trustLevel === "AI_DRAFT").length,
     regexDraft: records.filter((r) => r.trustLevel === "REGEX_DRAFT" || !r.trustLevel).length,
     total: records.length,
@@ -54,8 +56,8 @@ export async function GET() {
     pendingReview: expertCounts.aiDraft + expertCounts.regexDraft + projectCounts.aiDraft + projectCounts.regexDraft,
     readyForFinalGeneration: expertCounts.reviewed > 0 && projectCounts.reviewed > 0,
     warnings: [
-      expertCounts.reviewed === 0 ? "No REVIEWED experts are available for final generation." : null,
-      projectCounts.reviewed === 0 ? "No REVIEWED projects are available for final generation." : null,
+      expertCounts.reviewed === 0 ? "No REVIEWED or SOURCE_VERIFIED experts are available for final generation." : null,
+      projectCounts.reviewed === 0 ? "No REVIEWED or SOURCE_VERIFIED projects are available for final generation." : null,
       docsWithoutDrafts.length > 0 ? `${docsWithoutDrafts.length} extracted document(s) have no imported draft expert/project records.` : null,
       expertCounts.aiDraft + expertCounts.regexDraft > 0 ? `${expertCounts.aiDraft + expertCounts.regexDraft} expert record(s) still require review.` : null,
       projectCounts.aiDraft + projectCounts.regexDraft > 0 ? `${projectCounts.aiDraft + projectCounts.regexDraft} project record(s) still require review.` : null,

@@ -218,7 +218,7 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       title: "Build the submission plan",
       description: "No explicit submission plan was detected and no plan rows exist yet. Without a plan, generated documents cannot be validated against tender requirements.",
       severity: "MEDIUM",
-      nextAction: "Click 'Build submission plan' on the Submission Plan Completeness panel.",
+      nextAction: "Open Submission Plan Reconciliation, build the draft, review every ordered file, and confirm the Build Plan.",
     }));
   }
 

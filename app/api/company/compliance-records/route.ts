@@ -6,6 +6,7 @@ import { rateLimit, MUTATION_RATE_LIMIT, API_RATE_LIMIT } from "../../../../lib/
 import { extractRequestId } from "../../../../lib/request-id";
 import { companyRecordRuntimeError } from "../../../../lib/company-record-route-error";
 import { logAction } from "../../../../lib/audit";
+import { manualSupportRecordDraftFields } from "../../../../lib/vault-review-inbox";
 
 export const dynamic = "force-dynamic";
 
@@ -121,10 +122,7 @@ export async function POST(req: Request) {
         evidenceSummary: body.evidenceSummary ? str(body.evidenceSummary, 1000) : null,
         referenceNumber: body.referenceNumber ? str(body.referenceNumber, 100) : null,
         expiryDate,
-        trustLevel: "REVIEWED",
-        reviewedBy: actor.id,
-        reviewedAt: new Date(),
-        reviewNotes: "Manual compliance record created by authenticated user.",
+        ...manualSupportRecordDraftFields("COMPLIANCE"),
         sourceDocumentId,
       },
     });

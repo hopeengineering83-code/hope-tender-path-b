@@ -20,6 +20,7 @@ import {
   sourceByteIntegrityIsVerified,
   VAULT_REVIEW_CONSUMER_SELECT,
 } from "../../../../../lib/vault-review-provenance";
+import { buildSupportReviewInboxRecord } from "../../../../../lib/vault-review-inbox";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -27,7 +28,13 @@ export const dynamic = "force-dynamic";
 const RECORD_PAGE_SIZE = 10;
 
 type Gap = { severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"; title: string; detail: string };
-type Pagination = { expertPage: number; projectPage: number };
+type Pagination = {
+  expertPage: number;
+  projectPage: number;
+  legalPage: number;
+  financialPage: number;
+  compliancePage: number;
+};
 
 async function getCompany(userId: string) {
   return prisma.company.findUnique({ where: { userId }, select: { id: true, name: true } });
@@ -80,9 +87,27 @@ function pageInfo(page: number, total: number) {
 
 async function buildDiagnostics(
   companyId: string,
-  pagination: Pagination = { expertPage: 1, projectPage: 1 },
+  pagination: Pagination = {
+    expertPage: 1,
+    projectPage: 1,
+    legalPage: 1,
+    financialPage: 1,
+    compliancePage: 1,
+  },
 ) {
-  const [docs, expertStates, projectStates, expertPageItems, projectPageItems] = await Promise.all([
+  const [
+    docs,
+    expertStates,
+    projectStates,
+    expertPageItems,
+    projectPageItems,
+    legalStates,
+    financialStates,
+    complianceStates,
+    legalPageItems,
+    financialPageItems,
+    compliancePageItems,
+  ] = await Promise.all([
     prisma.companyDocument.findMany({
       where: { companyId },
       select: {
@@ -170,6 +195,39 @@ async function buildDiagnostics(
       skip: (pagination.projectPage - 1) * RECORD_PAGE_SIZE,
       take: RECORD_PAGE_SIZE,
     }),
+    prisma.legalRecord.findMany({
+      where: { companyId },
+      select: VAULT_REVIEW_CONSUMER_SELECT.LEGAL,
+    }),
+    prisma.financialRecord.findMany({
+      where: { companyId },
+      select: VAULT_REVIEW_CONSUMER_SELECT.FINANCIAL,
+    }),
+    prisma.companyComplianceRecord.findMany({
+      where: { companyId },
+      select: VAULT_REVIEW_CONSUMER_SELECT.COMPLIANCE,
+    }),
+    prisma.legalRecord.findMany({
+      where: { companyId },
+      select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.LEGAL },
+      orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
+      skip: (pagination.legalPage - 1) * RECORD_PAGE_SIZE,
+      take: RECORD_PAGE_SIZE,
+    }),
+    prisma.financialRecord.findMany({
+      where: { companyId },
+      select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.FINANCIAL },
+      orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
+      skip: (pagination.financialPage - 1) * RECORD_PAGE_SIZE,
+      take: RECORD_PAGE_SIZE,
+    }),
+    prisma.companyComplianceRecord.findMany({
+      where: { companyId },
+      select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.COMPLIANCE },
+      orderBy: [{ trustLevel: "asc" }, { createdAt: "desc" }],
+      skip: (pagination.compliancePage - 1) * RECORD_PAGE_SIZE,
+      take: RECORD_PAGE_SIZE,
+    }),
   ]);
 
   const expertReviewStates = expertStates.map((record) => ({
@@ -177,6 +235,18 @@ async function buildDiagnostics(
     sourceDocument: record.sourceDocument?.companyId === companyId ? record.sourceDocument : null,
   }));
   const projectReviewStates = projectStates.map((record) => ({
+    ...record,
+    sourceDocument: record.sourceDocument?.companyId === companyId ? record.sourceDocument : null,
+  }));
+  const legalReviewStates = legalStates.map((record) => ({
+    ...record,
+    sourceDocument: record.sourceDocument?.companyId === companyId ? record.sourceDocument : null,
+  }));
+  const financialReviewStates = financialStates.map((record) => ({
+    ...record,
+    sourceDocument: record.sourceDocument?.companyId === companyId ? record.sourceDocument : null,
+  }));
+  const complianceReviewStates = complianceStates.map((record) => ({
     ...record,
     sourceDocument: record.sourceDocument?.companyId === companyId ? record.sourceDocument : null,
   }));
@@ -216,6 +286,16 @@ async function buildDiagnostics(
   const aiDraftProjects = projectStates.filter((project) => project.trustLevel === "AI_DRAFT").length;
   const regexDraftProjects = projectStates.filter((project) => !project.trustLevel || project.trustLevel === "REGEX_DRAFT").length;
 
+  const reviewedLegalRecords = legalReviewStates.filter(isDurablyReviewed).length;
+  const sourceVerifiedLegalRecords = legalReviewStates.filter(isDurablySourceVerified).length;
+  const unsupportedReviewedLegalRecords = legalReviewStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
+  const reviewedFinancialRecords = financialReviewStates.filter(isDurablyReviewed).length;
+  const sourceVerifiedFinancialRecords = financialReviewStates.filter(isDurablySourceVerified).length;
+  const unsupportedReviewedFinancialRecords = financialReviewStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
+  const reviewedComplianceRecords = complianceReviewStates.filter(isDurablyReviewed).length;
+  const sourceVerifiedComplianceRecords = complianceReviewStates.filter(isDurablySourceVerified).length;
+  const unsupportedReviewedComplianceRecords = complianceReviewStates.filter((record) => record.trustLevel === "REVIEWED" && !isDurablyReviewed(record)).length;
+
   const expectedExperts = docs.map((document) => expectedExpertCount(document.extractedText)).find((count) => count && count > 0) ?? null;
   const expectedProjects = docs.map((document) => expectedProjectCount(document.extractedText)).find((count) => count && count > 0) ?? null;
 
@@ -225,12 +305,18 @@ async function buildDiagnostics(
   if (unverifiedDocuments > 0) gaps.push({ severity: "CRITICAL", title: "Source byte integrity is unverified", detail: `${unverifiedDocuments} document(s) cannot support evidence until their stored bytes have a verified SHA-256 digest.` });
   if (unsupportedReviewedExperts > 0) gaps.push({ severity: "CRITICAL", title: "Expert human reviews are stale", detail: `${unsupportedReviewedExperts} expert record(s) are blocked until current source evidence is human-reviewed again.` });
   if (unsupportedReviewedProjects > 0) gaps.push({ severity: "CRITICAL", title: "Project human reviews are stale", detail: `${unsupportedReviewedProjects} project record(s) are blocked until current source evidence is human-reviewed again.` });
+  if (unsupportedReviewedLegalRecords > 0) gaps.push({ severity: "CRITICAL", title: "Legal-record human reviews are stale", detail: `${unsupportedReviewedLegalRecords} legal record(s) are blocked until current source evidence is human-reviewed again.` });
+  if (unsupportedReviewedFinancialRecords > 0) gaps.push({ severity: "CRITICAL", title: "Financial-record human reviews are stale", detail: `${unsupportedReviewedFinancialRecords} financial record(s) are blocked until current source evidence is human-reviewed again.` });
+  if (unsupportedReviewedComplianceRecords > 0) gaps.push({ severity: "CRITICAL", title: "Compliance-record human reviews are stale", detail: `${unsupportedReviewedComplianceRecords} compliance record(s) are blocked until current source evidence is human-reviewed again.` });
   if (unsupportedSourceVerifiedExperts > 0) gaps.push({ severity: "HIGH", title: "Expert source verification is stale", detail: `${unsupportedSourceVerifiedExperts} expert record(s) changed source bytes, extraction revision, source span, or bound fields and require automatic re-verification.` });
   if (unsupportedSourceVerifiedProjects > 0) gaps.push({ severity: "HIGH", title: "Project source verification is stale", detail: `${unsupportedSourceVerifiedProjects} project record(s) changed source bytes, extraction revision, source span, or bound fields and require automatic re-verification.` });
   if (expertSourceDocuments === 0 && expertStates.length > 0) gaps.push({ severity: "HIGH", title: "No expert evidence source detected", detail: "Upload a CV or mixed document containing the exact expert claim." });
   if (projectSourceDocuments === 0 && projectStates.length > 0) gaps.push({ severity: "HIGH", title: "No project evidence source detected", detail: "Upload a project reference or mixed document containing the exact project claim." });
   if (expertStates.length > 0 && reviewedExperts === 0) gaps.push({ severity: "MEDIUM", title: "Experts await human review", detail: `${sourceVerifiedExperts} source-verified and ${expertStates.length - sourceVerifiedExperts} draft/stale expert record(s) exist. Final-package eligibility requires genuine human review.` });
   if (projectStates.length > 0 && reviewedProjects === 0) gaps.push({ severity: "MEDIUM", title: "Projects await human review", detail: `${sourceVerifiedProjects} source-verified and ${projectStates.length - sourceVerifiedProjects} draft/stale project record(s) exist. Final-package eligibility requires genuine human review.` });
+  if (legalStates.length > 0 && reviewedLegalRecords === 0) gaps.push({ severity: "MEDIUM", title: "Legal records await human review", detail: `${sourceVerifiedLegalRecords} source-verified and ${legalStates.length - sourceVerifiedLegalRecords} draft/stale legal record(s) exist.` });
+  if (financialStates.length > 0 && reviewedFinancialRecords === 0) gaps.push({ severity: "MEDIUM", title: "Financial records await human review", detail: `${sourceVerifiedFinancialRecords} source-verified and ${financialStates.length - sourceVerifiedFinancialRecords} draft/stale financial record(s) exist.` });
+  if (complianceStates.length > 0 && reviewedComplianceRecords === 0) gaps.push({ severity: "MEDIUM", title: "Compliance records await human review", detail: `${sourceVerifiedComplianceRecords} source-verified and ${complianceStates.length - sourceVerifiedComplianceRecords} draft/stale compliance record(s) exist.` });
   if (expectedExperts && expertStates.length < expectedExperts) gaps.push({ severity: "MEDIUM", title: "Fewer experts than expected", detail: `Expected about ${expectedExperts} experts, but ${expertStates.length} records exist.` });
   if (expectedProjects && projectStates.length < expectedProjects) gaps.push({ severity: "MEDIUM", title: "Fewer projects than expected", detail: `Expected about ${expectedProjects} projects, but ${projectStates.length} records exist.` });
 
@@ -262,10 +348,26 @@ async function buildDiagnostics(
       missingEvidenceFields: evidence.ok ? [] : evidence.missingFields.slice(0, 6),
     };
   });
+  const legalRecords = legalPageItems.map((record) => buildSupportReviewInboxRecord("LEGAL", record));
+  const financialRecords = financialPageItems.map((record) => buildSupportReviewInboxRecord("FINANCIAL", record));
+  const complianceRecords = compliancePageItems.map((record) => buildSupportReviewInboxRecord("COMPLIANCE", record));
 
   return {
     importVersion: "company-vault-ingestion-v2-source-verification",
-    fingerprint: `${docs.length}:${extractedDocuments}:${expertStates.length}:${projectStates.length}:${sourceVerifiedExperts}:${sourceVerifiedProjects}`,
+    fingerprint: [
+      docs.length,
+      extractedDocuments,
+      expertStates.length,
+      projectStates.length,
+      legalStates.length,
+      financialStates.length,
+      complianceStates.length,
+      sourceVerifiedExperts,
+      sourceVerifiedProjects,
+      sourceVerifiedLegalRecords,
+      sourceVerifiedFinancialRecords,
+      sourceVerifiedComplianceRecords,
+    ].join(":"),
     documents: documentDiagnostics,
     totals: {
       documents: docs.length,
@@ -274,6 +376,9 @@ async function buildDiagnostics(
       projectSourceDocuments,
       currentExperts: expertStates.length,
       currentProjects: projectStates.length,
+      currentLegalRecords: legalStates.length,
+      currentFinancialRecords: financialStates.length,
+      currentComplianceRecords: complianceStates.length,
       autoImportedExperts: aiDraftExperts + regexDraftExperts,
       autoImportedProjects: aiDraftProjects + regexDraftProjects,
       parsedExpertDrafts: aiDraftExperts + regexDraftExperts,
@@ -282,10 +387,19 @@ async function buildDiagnostics(
       expectedProjects,
       reviewedExperts,
       reviewedProjects,
+      reviewedLegalRecords,
+      reviewedFinancialRecords,
+      reviewedComplianceRecords,
       sourceVerifiedExperts,
       sourceVerifiedProjects,
+      sourceVerifiedLegalRecords,
+      sourceVerifiedFinancialRecords,
+      sourceVerifiedComplianceRecords,
       unsupportedReviewedExperts,
       unsupportedReviewedProjects,
+      unsupportedReviewedLegalRecords,
+      unsupportedReviewedFinancialRecords,
+      unsupportedReviewedComplianceRecords,
       unsupportedSourceVerifiedExperts,
       unsupportedSourceVerifiedProjects,
       aiDraftExperts,
@@ -298,6 +412,9 @@ async function buildDiagnostics(
     records: {
       experts: { items: experts, ...pageInfo(pagination.expertPage, expertStates.length) },
       projects: { items: projects, ...pageInfo(pagination.projectPage, projectStates.length) },
+      legal: { items: legalRecords, ...pageInfo(pagination.legalPage, legalStates.length) },
+      financial: { items: financialRecords, ...pageInfo(pagination.financialPage, financialStates.length) },
+      compliance: { items: complianceRecords, ...pageInfo(pagination.compliancePage, complianceStates.length) },
     },
   };
 }
@@ -314,6 +431,9 @@ export async function GET(req: Request) {
   const diagnostics = await buildDiagnostics(company.id, {
     expertPage: requestedPage(searchParams, "expertPage"),
     projectPage: requestedPage(searchParams, "projectPage"),
+    legalPage: requestedPage(searchParams, "legalPage"),
+    financialPage: requestedPage(searchParams, "financialPage"),
+    compliancePage: requestedPage(searchParams, "compliancePage"),
   });
   return NextResponse.json({ diagnostics });
 }

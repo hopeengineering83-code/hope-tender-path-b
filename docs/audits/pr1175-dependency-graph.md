@@ -1,7 +1,8 @@
 # PR #1175 Transitive Dependency Graph
 
-Frozen source SHA: `01aa15406e397facb1d1cd373417641914a02d73`  
-Audit status: **IN PROGRESS**
+Governing source SHA: `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`
+Audit branch: `audit/pr1175-complete-five-pass-forensic-audit`
+Audit status: **IN PROGRESS — DO NOT MERGE**
 
 This document records the end-to-end authority graph being audited. It is not a claim that every node is closed.
 
@@ -17,26 +18,21 @@ This document records the end-to-end authority graph being audited. It is not a 
 → file signature/MIME validation
 → storage adapter `putFile`
 → persisted-byte integrity inspection
-→ **current defect: synchronous `extractTextFromBuffer`/OCR in request**
-→ inferred tender metadata
-→ `Tender` + `TenderFile` transaction
-→ package `TenderWorkflowRun` rows
-→ source evidence enrichment/candidate pipeline
-→ audit log
-→ `queueAutomaticTenderPipeline`
-→ AI analysis job
+→ `Tender` + `TenderFile` + package `TenderWorkflowRun` rows
+→ exact source-hash-bound `EXTRACT_TEXT` job
+→ canonical extraction worker
+→ optimistic extraction persistence and truncation disclosure
+→ current-source metadata/enrichment
+→ all-active-file/package readiness recheck
+→ canonical AI analysis job
 → analysis revision
 → requirements and facts
 → submission plan
 → matching/generation continuation.
 
-Required target graph:
-
-request validation/hash/storage/minimal rows
-→ deterministic `SOURCE_EXTRACTION` job keyed by company+tender+source hash+extraction revision+stage+purpose
-→ per-file/per-page checkpoints
-→ extraction terminal state
-→ exact-once continuation into current analysis revision.
+The request-bound extraction root is fixed locally. Deletion/cancellation,
+two-worker concurrency, and exact-preview continuation still require
+isolated-database/runtime proof.
 
 ## 2. Company Vault review authority
 
@@ -55,11 +51,16 @@ Company source upload
 → canonical `canUseVaultRecord` eligibility
 → matching/generation/export consumers.
 
-Current split:
+Current local result:
 
-- Review Inbox and diagnostics cover experts/projects.
-- Legal/financial/compliance APIs exist but are not surfaced by the canonical Review Inbox.
-- Three legal/financial/compliance write routes use ineffective `count === 1` concurrency checks without a read-revision predicate.
+- Review Inbox and diagnostics cover experts, projects, legal, financial and
+  compliance records through bounded paginated DTOs.
+- Manual support-record creation remains `MANUAL_DRAFT`; it does not stamp a
+  reviewer identity or approval timestamp.
+- Legal/financial/compliance approval uses the existing tenant-owned source,
+  exact record/source revision predicate and durable provenance builder.
+- Static concurrency predicates pass, and exact child-checkpoint CI executed
+  the isolated PostgreSQL two-writer and authenticated review-route suites.
 
 ## 3. Tender release authority
 
@@ -78,6 +79,44 @@ Tender sources + source hashes
 → download/PDF/ZIP owners.
 
 Audit rule: every dependent success must be invalidated when an upstream controlling revision changes.
+
+Requirement coverage subgraph:
+
+```text
+active TenderFile bytes/text/page count
+→ TenderRequirement source file/page/exact quote
+→ ComplianceMatrix support level
+→ mapRequirementsToEvidence
+→ FULLY_MET | PARTIALLY_MET | NEEDS_TRACE | NOT_MET
+→ requirement coverage API + three coverage panels
+→ release snapshot + lifecycle next action
+→ generation/export eligibility
+```
+
+FULL/SUBSTANTIAL alone is no longer release coverage. The exact quote must be
+meaningful, page-valid and contained in the active tenant-owned tender file.
+The former direct support-level mutation fallback is removed, and the heatmap
+is now one row per requirement instead of one row per compliance link.
+
+Build Plan authority subgraph:
+
+```text
+tenant-owned tender + current requirement/fact revision
+→ GET /api/tenders/[id]/build-plan
+→ NOT_BUILT | DRAFT | CONFIRMED | STALE_CONFIRMED
+→ canonical reconciliation panel
+→ explicit POST build draft
+→ complete ordered draft review + acknowledgement
+→ strict POST confirmation
+→ content/revision-bound confirmed plan
+→ read-only truth/completeness consumers
+→ generation, PDF and ZIP gates
+```
+
+No page-load path creates a Build Plan or classifies generated documents.
+Generic blocker actions scroll to this owner rather than performing a hidden
+draft mutation. Role capability is enforced in both the visible controls and
+the route.
 
 ## 4. Generated files and final ZIP
 
@@ -98,11 +137,17 @@ Confirmed plan item
 → `ExportPackage` manifest and package hash
 → response.
 
-Current authority conflict:
+Current disposition:
 
-- Production download route uses `lib/engine/final-zip-assembly.ts`.
-- `lib/engine/workflow/zip-finalizer.ts` is a separate implementation used by isolated binary tests.
-- Production manifest lacks envelope and format fields required to prove submission-plan compliance.
+- The production download route and every affected binary/behavioral test use
+  `lib/engine/final-zip-assembly.ts`; the disconnected workflow finalizer is
+  removed.
+- `buildFinalZipEntries` supplies exact plan order, envelope and canonical
+  plan format. Assembly rejects duplicate plan positions and persists those
+  fields with filename, byte length and SHA-256.
+- The generated archive is reopened and every entry is verified against that
+  manifest. Authenticated isolated-database proof of the persisted
+  `ExportPackage` row remains open.
 
 ## 5. CI and release proof
 
@@ -122,5 +167,35 @@ Frozen SHA
 
 Current evidence gap:
 
-- Exact-head artifact preserves the build log and synthetic generated files but omits the configured migration/drift/release-integrity logs and all success logs for typecheck, lint, unit tests and Playwright.
-- Screenshot detail index covers 37 page patterns × 3 viewports, but the summary contains a contradictory zero route-coverage count.
+- The earlier downloaded artifact preserves the build log and synthetic
+  generated files but omits mandatory command proof. The local fix records all
+  16 mandatory commands in exact-head-bound logs plus an NDJSON exit/duration
+  ledger and refuses to publish a success artifact when any entry is absent.
+  Exact CI artifact inspection is still required before closure is claimed.
+- The historical screenshot detail index covers 37 page patterns × 3
+  viewports, but its compact summary overloaded route coverage as a missing
+  count. The local producer now derives both artifacts from one versioned
+  `{expected, covered, uncovered, percent}` summary and rejects contradictory
+  uncovered details before write. Exact-preview artifact proof remains open.
+
+## 6. Review-provenance schema compatibility
+
+```text
+Prisma schema review fields
+→ additive migration 20260727130000
+→ migrate-deploy-safe
+→ check-critical-schema information_schema query
+→ pure critical-schema evaluator
+→ fail deployment on a missing authority-bearing column
+→ runtime compatibility loader excludes support evidence fail-closed
+→ engine/generation/bid-strategy consumers
+→ sanitized public job diagnostic
+```
+
+The prior critical-schema script did not enumerate the
+`LegalRecord`/`FinancialRecord`/`CompanyComplianceRecord` review columns, so
+its success could not disprove the screenshot P2022. The canonical contract
+now requires all three tables and their `trustLevel`, reviewer, review notes,
+and source-document fields. Applying migrations to an isolated preview
+database remains an infrastructure prerequisite; compatibility code is not a
+substitute for that migration.

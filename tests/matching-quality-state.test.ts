@@ -8,7 +8,49 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { assessMatchingQuality } from "../lib/matching-quality";
+import { buildReviewProvenance, expertReviewFields } from "../lib/vault-review-provenance";
+
+// A durable REVIEWED fixture — genuinely bound to a real, byte-verified
+// source document with a matching quote, not just a bare trustLevel
+// string. assessMatchingQuality now delegates to canUseVaultRecord(), the
+// same durable-provenance authority the Engine and generate-elite.ts use,
+// so a naive `{ trustLevel: "REVIEWED" }` object (missing
+// sourceDocumentId/reviewedBy/reviewedAt/reviewNotes) would correctly fail
+// closed here just like everywhere else in the app.
+function durableReviewedExpert(fullName: string) {
+  const companyId = "company-matching-quality-state";
+  const sourceText = `CURRICULUM VITAE\nName of Key Expert: ${fullName}\n${fullName} is a Senior Consultant with 15 years of experience in General Consultancy Services, proposed for the technical team.`;
+  const sourceDocument = {
+    id: `doc-${fullName.replace(/\s+/g, "-").toLowerCase()}`,
+    companyId,
+    extractedText: sourceText,
+    contentSha256: createHash("sha256").update(sourceText, "utf8").digest("hex"),
+    contentByteLength: Buffer.byteLength(sourceText),
+    integrityStatus: "VERIFIED",
+  };
+  const record = {
+    id: `expert-${fullName.replace(/\s+/g, "-").toLowerCase()}`,
+    companyId,
+    fullName,
+    trustLevel: "REVIEWED",
+    sourceDocumentId: sourceDocument.id,
+    reviewedBy: "user-matching-quality-state",
+    reviewedAt: new Date("2026-01-01T00:00:00.000Z"),
+    sourceDocument,
+  };
+  const provenance = buildReviewProvenance({
+    recordType: "EXPERT",
+    sourceDocument,
+    fields: expertReviewFields(record),
+    reviewerId: record.reviewedBy,
+    reviewedAt: record.reviewedAt,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("fixture provenance failed");
+  return { ...record, reviewNotes: provenance.serialized };
+}
 
 describe("matching-quality state machine", () => {
   it("MATCHING_NOT_REQUIRED when tender has no expert/project requirements", () => {
@@ -53,7 +95,13 @@ describe("matching-quality state machine", () => {
     const r = assessMatchingQuality({
       requirements: [{ requirementType: "EXPERT" }],
       expertMatches: [
-        { score: 0.4, isSelected: false, expert: { trustLevel: "DRAFT", fullName: "Draft Expert" } },
+        {
+          score: 0.4, isSelected: false,
+          expert: {
+            trustLevel: "AI_DRAFT", fullName: "Draft Expert", companyId: "company-matching-quality-state",
+            sourceDocumentId: null, reviewedBy: null, reviewedAt: null, reviewNotes: null,
+          },
+        },
       ],
       projectMatches: [],
       vaultReviewedExperts: 0,
@@ -66,7 +114,7 @@ describe("matching-quality state machine", () => {
     const r = assessMatchingQuality({
       requirements: [{ requirementType: "EXPERT" }],
       expertMatches: [
-        { score: 0.82, isSelected: true, expert: { trustLevel: "REVIEWED", fullName: "Jane Doe" } },
+        { score: 0.82, isSelected: true, expert: durableReviewedExpert("Jane Doe") },
       ],
       projectMatches: [],
       vaultReviewedExperts: 1,

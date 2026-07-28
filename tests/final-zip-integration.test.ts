@@ -36,6 +36,22 @@ const contents = generatedDocs.map((doc) => ({
   bytes: Buffer.from(`approved final bytes for ${doc.exactFileName}`),
 }));
 
+function entry(
+  name: string,
+  generatedDocId: string,
+  order = 1,
+  envelope: "TECHNICAL" | "FINANCIAL" | "ADMIN" = "TECHNICAL",
+) {
+  return {
+    name,
+    source: "GENERATED_DOC" as const,
+    generatedDocId,
+    order,
+    envelope,
+    format: name.toLowerCase().endsWith(".xlsx") ? "XLSX" as const : "DOCX" as const,
+  };
+}
+
 describe("final ZIP integration", () => {
   it("creates a valid reopened archive with exact names, order, and no internal extras", async () => {
     const scope = buildFinalZipEntries({ tender: tenderScope, generatedDocs });
@@ -76,8 +92,8 @@ describe("final ZIP integration", () => {
   it("rejects duplicate filenames instead of silently overwriting", async () => {
     await assert.rejects(
       assembleFinalSubmissionZip([
-        { name: "Proposal.docx", source: "GENERATED_DOC", generatedDocId: "technical" },
-        { name: "proposal.docx", source: "GENERATED_DOC", generatedDocId: "admin" },
+        entry("Proposal.docx", "technical"),
+        entry("proposal.docx", "admin", 2, "ADMIN"),
       ], contents),
       /Duplicate filename/i,
     );
@@ -86,8 +102,8 @@ describe("final ZIP integration", () => {
   it("rejects one generated document being included more than once", async () => {
     await assert.rejects(
       assembleFinalSubmissionZip([
-        { name: "Proposal.docx", source: "GENERATED_DOC", generatedDocId: "technical" },
-        { name: "Proposal-Copy.docx", source: "GENERATED_DOC", generatedDocId: "technical" },
+        entry("Proposal.docx", "technical"),
+        entry("Proposal-Copy.docx", "technical", 2),
       ], contents),
       /included more than once/i,
     );
@@ -97,7 +113,7 @@ describe("final ZIP integration", () => {
     for (const unsafeName of ["../secret.docx", "/absolute.docx", "folder//blank.docx", "C:/drive.docx"]) {
       await assert.rejects(
         assembleFinalSubmissionZip([
-          { name: unsafeName, source: "GENERATED_DOC", generatedDocId: "technical" },
+          entry(unsafeName, "technical"),
         ], contents),
         /unsafe path|absolute path/i,
       );
@@ -107,13 +123,13 @@ describe("final ZIP integration", () => {
   it("rejects missing or empty document bytes", async () => {
     await assert.rejects(
       assembleFinalSubmissionZip([
-        { name: "Missing.docx", source: "GENERATED_DOC", generatedDocId: "missing" },
+        entry("Missing.docx", "missing"),
       ], contents),
       /no document bytes/i,
     );
     await assert.rejects(
       assembleFinalSubmissionZip([
-        { name: "Empty.docx", source: "GENERATED_DOC", generatedDocId: "empty" },
+        entry("Empty.docx", "empty"),
       ], [{ generatedDocId: "empty", bytes: Buffer.alloc(0) }]),
       /no document bytes/i,
     );

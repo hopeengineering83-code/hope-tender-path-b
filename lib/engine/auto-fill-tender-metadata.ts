@@ -29,10 +29,20 @@ type TenderFileForAutoFill = {
 
 type TenderForAutoFill = {
   id: string;
+  title?: string | null;
+  description?: string | null;
+  intakeSummary?: string | null;
   clientName?: string | null;
+  procuringEntityName?: string | null;
+  donorAgency?: string | null;
+  implementingAgency?: string | null;
+  clientWebsite?: string | null;
+  submissionEmailSubject?: string | null;
   reference?: string | null;
   category?: string | null;
   country?: string | null;
+  budget?: number | null;
+  currency?: string | null;
   deadline?: Date | null;
   submissionMethod?: string | null;
   submissionAddress?: string | null;
@@ -41,6 +51,7 @@ type TenderForAutoFill = {
   clientContactTitle?: string | null;
   clientContactEmail?: string | null;
   clientContactPhone?: string | null;
+  clientAddress?: string | null;
   preBidMeetingDate?: Date | null;
   preBidMeetingLocation?: string | null;
   validityDays?: number | null;
@@ -50,6 +61,8 @@ type TenderForAutoFill = {
   numberOfCopiesRequired?: number | null;
   mandatorySiteVisit?: boolean | null;
   evaluationMethodology?: string | null;
+  technicalWeight?: number | null;
+  financialWeight?: number | null;
   files: TenderFileForAutoFill[];
 };
 
@@ -108,9 +121,27 @@ export async function autoFillTenderMetadata(
     filled.push(field);
   }
 
+  if (
+    draft.title &&
+    (!tender.title || tender.title.trim() === "" || tender.title.startsWith("[REVIEW NEEDED]"))
+  ) {
+    patch.title = draft.title;
+    filled.push("title");
+  } else {
+    skipped.push("title");
+  }
+  tryFill("description", tender.description, draft.description);
+  tryFill("intakeSummary", tender.intakeSummary, draft.intakeSummary);
   tryFill("clientName", tender.clientName, draft.clientName, isValidClientName);
+  tryFill("procuringEntityName", tender.procuringEntityName, draft.procuringEntityName);
+  tryFill("donorAgency", tender.donorAgency, draft.donorAgency);
+  tryFill("implementingAgency", tender.implementingAgency, draft.implementingAgency);
+  tryFill("clientWebsite", tender.clientWebsite, draft.clientWebsite);
+  tryFill("submissionEmailSubject", tender.submissionEmailSubject, draft.submissionEmailSubject);
   tryFill("reference", tender.reference, draft.reference);
   tryFill("country", tender.country, draft.country);
+  tryFill("budget", tender.budget, draft.budget);
+  tryFill("currency", tender.currency, draft.currency);
   tryFill("deadline", tender.deadline, draft.deadline);
   tryFill("submissionMethod", tender.submissionMethod, draft.submissionMethod);
   tryFill("submissionAddress", tender.submissionAddress, draft.submissionAddress);
@@ -118,6 +149,7 @@ export async function autoFillTenderMetadata(
   tryFill("clientContactTitle", tender.clientContactTitle, draft.clientContactTitle);
   tryFill("clientContactEmail", tender.clientContactEmail, draft.clientContactEmail);
   tryFill("clientContactPhone", tender.clientContactPhone, draft.clientContactPhone);
+  tryFill("clientAddress", tender.clientAddress, draft.clientAddress);
   // Auto-fill pre-bid meeting date and location when extracted from the tender document
   if ((tender.preBidMeetingDate === null || tender.preBidMeetingDate === undefined) && draft.preBidMeetingDate) {
     patch["preBidMeetingDate"] = draft.preBidMeetingDate;
@@ -139,6 +171,8 @@ export async function autoFillTenderMetadata(
   tryFill("bidBondAmount", tender.bidBondAmount, draft.bidBondAmount);
   tryFill("bidBondCurrency", tender.bidBondCurrency, draft.bidBondCurrency);
   tryFill("numberOfCopiesRequired", tender.numberOfCopiesRequired, draft.numberOfCopiesRequired);
+  tryFill("technicalWeight", tender.technicalWeight, draft.technicalWeight);
+  tryFill("financialWeight", tender.financialWeight, draft.financialWeight);
   // mandatorySiteVisit is a boolean — write only when the current DB value is null
   // (booleans bypass isEmptyOrPlaceholder, which is string-only).
   if (tender.mandatorySiteVisit === null || tender.mandatorySiteVisit === undefined) {

@@ -99,7 +99,7 @@ describe("release integrity upgrade", () => {
   });
 
   it("includes specific missing TenderFile columns in critical schema check", () => {
-    const check = read("scripts/check-critical-schema.mjs");
+    const check = read("scripts/critical-schema-contract.mjs");
     assert.match(check, /"lastDeletionError"/);
     assert.match(check, /"deletedAt"/);
   });

@@ -5,8 +5,7 @@ import { resolve } from "node:path";
 import JSZip from "jszip";
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { PDFDocument, StandardFonts } from "pdf-lib";
-import { finalizeApprovedDocumentsZip } from "../lib/engine/workflow/zip-finalizer";
-import { inspectActualFileBytes } from "../lib/engine/persisted-byte-integrity";
+import { assembleFinalSubmissionZip } from "../lib/engine/final-zip-assembly";
 import { computeFileHash } from "../lib/engine/generated-file-integrity";
 
 const EVIDENCE_DIRECTORY = resolve("acceptance-evidence/generated-files");
@@ -44,39 +43,6 @@ async function buildInspectablePdf(): Promise<Buffer> {
   return Buffer.from(await pdf.save());
 }
 
-function readyDocument(args: {
-  id: string;
-  filename: string;
-  format: "DOCX" | "PDF";
-  bytes: Buffer;
-  order: number;
-}) {
-  const claimedMimeType = args.format === "PDF"
-    ? "application/pdf"
-    : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-  const integrity = inspectActualFileBytes({
-    bytes: args.bytes,
-    filename: args.filename,
-    claimedMimeType,
-  });
-  assert.equal(integrity.integrityStatus, "VERIFIED");
-
-  return {
-    id: args.id,
-    name: args.filename,
-    exactFileName: args.filename,
-    exactOrder: args.order,
-    documentType: "TECHNICAL_PROPOSAL",
-    format: args.format,
-    generationStatus: "GENERATED",
-    validationStatus: "VALIDATED",
-    reviewStatus: "READY_FOR_EXPORT",
-    fileContent: args.bytes.toString("base64"),
-    storagePath: null,
-    ...integrity,
-  } as any;
-}
-
 describe("generated Word/PDF/ZIP binary inspection", () => {
   it("opens valid Word and PDF files, then verifies every final ZIP entry and manifest digest", async () => {
     const docxBytes = await buildInspectableDocx();
@@ -94,48 +60,64 @@ describe("generated Word/PDF/ZIP binary inspection", () => {
     const [page] = openedPdf.getPages();
     assert.ok(page.getWidth() > 500 && page.getHeight() > 800);
 
-    const documents = [
-      readyDocument({ id: "docx-1", filename: "Technical-Proposal.docx", format: "DOCX", bytes: docxBytes, order: 1 }),
-      readyDocument({ id: "pdf-1", filename: "Technical-Proposal.pdf", format: "PDF", bytes: pdfBytes, order: 2 }),
+    const entries = [
+      {
+        generatedDocId: "docx-1",
+        name: "Technical-Proposal.docx",
+        source: "GENERATED_DOC" as const,
+        order: 1,
+        envelope: "TECHNICAL" as const,
+        format: "DOCX" as const,
+      },
+      {
+        generatedDocId: "pdf-1",
+        name: "Technical-Proposal.pdf",
+        source: "GENERATED_DOC" as const,
+        order: 2,
+        envelope: "TECHNICAL" as const,
+        format: "PDF" as const,
+      },
     ];
-    const finalized = await finalizeApprovedDocumentsZip(documents);
-    assert.equal(finalized.ok, true, JSON.stringify(finalized));
+    const finalized = await assembleFinalSubmissionZip(entries, [
+      { generatedDocId: "docx-1", bytes: docxBytes },
+      { generatedDocId: "pdf-1", bytes: pdfBytes },
+    ]);
     assert.deepEqual(finalized.fileList, ["Technical-Proposal.docx", "Technical-Proposal.pdf"]);
-    assert.equal(finalized.manifest?.length, 2);
+    assert.equal(finalized.manifest.length, 2);
 
-    const reopenedZip = await JSZip.loadAsync(finalized.buffer!);
+    const reopenedZip = await JSZip.loadAsync(finalized.buffer);
     const actualNames = Object.keys(reopenedZip.files).filter((name) => !reopenedZip.files[name].dir).sort();
-    assert.deepEqual(actualNames, [...finalized.fileList!].sort());
+    assert.deepEqual(actualNames, [...finalized.fileList].sort());
 
     const sourceBytes = new Map([
       ["Technical-Proposal.docx", docxBytes],
       ["Technical-Proposal.pdf", pdfBytes],
     ]);
-    for (const item of finalized.manifest ?? []) {
+    for (const item of finalized.manifest) {
       const expected = sourceBytes.get(item.filename);
       assert.ok(expected, `manifest contains unexpected file ${item.filename}`);
       const entry = reopenedZip.file(item.filename);
       assert.ok(entry, `ZIP entry ${item.filename} must exist`);
       const actual = await entry!.async("nodebuffer");
       assert.deepEqual(actual, expected);
-      assert.equal(item.byteSize, actual.length);
+      assert.equal(item.byteLength, actual.length);
       assert.equal(item.sha256, computeFileHash(actual));
-      assert.equal(item.valid, true);
-      assert.equal(item.required, true);
+      assert.equal(item.envelope, "TECHNICAL");
+      assert.match(item.format, /^(DOCX|PDF)$/);
     }
 
     await mkdir(EVIDENCE_DIRECTORY, { recursive: true });
     await Promise.all([
       writeFile(resolve(EVIDENCE_DIRECTORY, "Technical-Proposal.docx"), docxBytes),
       writeFile(resolve(EVIDENCE_DIRECTORY, "Technical-Proposal.pdf"), pdfBytes),
-      writeFile(resolve(EVIDENCE_DIRECTORY, "Final-Submission-Package.zip"), finalized.buffer!),
+      writeFile(resolve(EVIDENCE_DIRECTORY, "Final-Submission-Package.zip"), finalized.buffer),
       writeFile(
         resolve(EVIDENCE_DIRECTORY, "manifest.json"),
         JSON.stringify({
           inspectedAt: new Date().toISOString(),
           files: finalized.manifest,
-          zipSha256: computeFileHash(finalized.buffer!),
-          zipByteSize: finalized.buffer!.length,
+          zipSha256: computeFileHash(finalized.buffer),
+          zipByteSize: finalized.buffer.length,
         }, null, 2),
         "utf8",
       ),

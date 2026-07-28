@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { buildReviewProvenance, expertReviewFields, projectReviewFields } from "../lib/vault-review-provenance";
 import {
   buildFinalZipManifestFromModel,
   deriveRequiredPackageDocuments,
@@ -20,9 +22,63 @@ function req(id: string, priority = "MANDATORY", rows: any[] = [], source = true
     requirementType: "TECHNICAL",
     sourceTenderFileId: source ? "file" : null,
     sourcePageNumber: source ? 1 : null,
-    sourceExactQuote: source ? "quote" : null,
+    sourceExactQuote: source ? "meaningful source quote" : null,
     complianceMatrixRows: rows,
   };
+}
+
+const activeFiles = [{
+  id: "file",
+  extractedText: "Tender instructions include this meaningful source quote for testing.",
+  totalPages: 2,
+}];
+// getFinalPackageReadinessModel now delegates expert/project match evidence
+// to canUseVaultRecord() (EXPORT purpose) — a bare `{ trustLevel: "REVIEWED" }`
+// object correctly fails closed without real bound-and-verified provenance.
+function durableReviewedExpert(id: string) {
+  const companyId = "company-final-package-readiness";
+  const fullName = `Expert ${id}`;
+  const sourceText = `CURRICULUM VITAE\nName of Key Expert: ${fullName}\n${fullName} is a Senior Consultant with 15 years of experience in General Consultancy Services.`;
+  const sourceDocument = {
+    id: `doc-expert-${id}`, companyId, extractedText: sourceText,
+    contentSha256: createHash("sha256").update(sourceText, "utf8").digest("hex"),
+    contentByteLength: Buffer.byteLength(sourceText), integrityStatus: "VERIFIED",
+  };
+  const record = {
+    id: `expert-${id}`, companyId, fullName, trustLevel: "REVIEWED",
+    sourceDocumentId: sourceDocument.id, reviewedBy: "user-final-package-readiness",
+    reviewedAt: new Date("2026-01-01T00:00:00.000Z"), sourceDocument,
+  };
+  const provenance = buildReviewProvenance({
+    recordType: "EXPERT", sourceDocument, fields: expertReviewFields(record),
+    reviewerId: record.reviewedBy, reviewedAt: record.reviewedAt,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("fixture provenance failed");
+  return { ...record, reviewNotes: provenance.serialized };
+}
+
+function durableReviewedProject(id: string) {
+  const companyId = "company-final-package-readiness";
+  const name = `Project ${id}`;
+  const sourceText = `PROJECT REFERENCE SHEET\nProject Name: ${name}\n${name} is a general consultancy assignment delivered for a public-sector client.`;
+  const sourceDocument = {
+    id: `doc-project-${id}`, companyId, extractedText: sourceText,
+    contentSha256: createHash("sha256").update(sourceText, "utf8").digest("hex"),
+    contentByteLength: Buffer.byteLength(sourceText), integrityStatus: "VERIFIED",
+  };
+  const record = {
+    id: `project-${id}`, companyId, name, trustLevel: "REVIEWED",
+    sourceDocumentId: sourceDocument.id, reviewedBy: "user-final-package-readiness",
+    reviewedAt: new Date("2026-01-01T00:00:00.000Z"), sourceDocument,
+  };
+  const provenance = buildReviewProvenance({
+    recordType: "PROJECT", sourceDocument, fields: projectReviewFields(record),
+    reviewerId: record.reviewedBy, reviewedAt: record.reviewedAt,
+  });
+  assert.equal(provenance.ok, true);
+  if (!provenance.ok) throw new Error("fixture provenance failed");
+  return { ...record, reviewNotes: provenance.serialized };
 }
 
 function doc(overrides: Record<string, unknown> = {}) {
@@ -44,7 +100,7 @@ test("evidence coverage explains trusted traced coverage and mandatory missing i
   const requirements = Array.from({ length: 8 }, (_, i) => req(String(i + 1), i < 3 ? "MANDATORY" : "OPTIONAL", [{ supportLevel: i < 3 ? "FULL" : "WEAK" }], i < 3));
   requirements[1].sourceExactQuote = null;
   requirements[2].sourceExactQuote = null;
-  const statuses = mapRequirementsToEvidence(requirements);
+  const statuses = mapRequirementsToEvidence(requirements, [], [], activeFiles);
   assert.equal(statuses.filter((s) => s.hasTrustedTrace).length, 1);
   assert.deepEqual(statuses.filter((s) => s.mandatory && !s.hasTrustedTrace).map((s) => s.requirementId), ["2", "3"]);
   assert.equal(statuses.filter((s) => s.strongestEvidenceLevel === "WEAK").length, 5);
@@ -52,19 +108,24 @@ test("evidence coverage explains trusted traced coverage and mandatory missing i
 });
 
 test("selected weak evidence does not count as strong evidence", () => {
-  const statuses = mapRequirementsToEvidence([req("1", "MANDATORY", [{ supportLevel: "WEAK" }])]);
+  const statuses = mapRequirementsToEvidence(
+    [req("1", "MANDATORY", [{ supportLevel: "WEAK" }])],
+    [],
+    [],
+    activeFiles,
+  );
   assert.equal(statuses[0].strongestEvidenceLevel, "WEAK");
   assert.notEqual(statuses[0].strongestEvidenceLevel, "FULL");
 });
 
 test("reviewed expert/project evidence is counted separately from match score inputs", () => {
-  const statuses = mapRequirementsToEvidence([req("1")], [{ isSelected: true, score: 30, expert: { trustLevel: "REVIEWED" } }], [{ isSelected: true, score: 40, project: { trustLevel: "REVIEWED" } }]);
+  const statuses = mapRequirementsToEvidence([req("1")], [{ isSelected: true, score: 30, expert: durableReviewedExpert("a") }], [{ isSelected: true, score: 40, project: durableReviewedProject("a") }]);
   assert.equal(statuses[0].hasReviewedExpert, true);
   assert.equal(statuses[0].hasReviewedProject, true);
 });
 
 test("5 reviewed selected projects below 90 stays explainable instead of false failure", async () => {
-  const projectMatches = Array.from({ length: 5 }, (_, i) => ({ id: `p${i}`, isSelected: true, score: 70, project: { trustLevel: "REVIEWED" } }));
+  const projectMatches = Array.from({ length: 5 }, (_, i) => ({ id: `p${i}`, isSelected: true, score: 70, project: durableReviewedProject(`p${i}`) }));
   const model = await getFinalPackageReadinessModel({
     tender: { findFirst: async () => ({ id: "t", requirements: [], generatedDocuments: [], expertMatches: [], projectMatches }) },
   }, "t", "u");
