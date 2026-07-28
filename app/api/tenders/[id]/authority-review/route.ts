@@ -68,14 +68,65 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         exactFileName: document.exactFileName ?? null,
       }));
 
-    const tenderRequiredSections = finalPackage.documents.required.map((document) => document.displayName);
-    const result = runAuthorityReview(documents, manifestEntries, tenderRequiredSections);
-
     const canonicalBlockers = [
       ...finalPackage.requirements.blockers,
       ...finalPackage.documents.blockers,
       ...finalPackage.export.blockers,
     ];
+
+    // Authority Review is a document-level examination, not an early-stage
+    // readiness score. It is unavailable until a confirmed Build Plan exists
+    // and every required item has a generated, validated document. Returning
+    // an explicit unavailable state avoids presenting a misleading 0/100 or
+    // 10/100 score before there is anything legitimate to review.
+    const requiredDocumentCount = finalPackage.documents.required.length;
+    const authorityReviewAvailable = finalPackage.buildPlan.confirmed
+      && requiredDocumentCount > 0
+      && finalPackage.documents.missingRequired.length === 0
+      && finalPackage.documents.valid.length >= requiredDocumentCount
+      && documents.length > 0;
+
+    if (!authorityReviewAvailable) {
+      const unavailableReason = !finalPackage.buildPlan.confirmed
+        ? "Confirm the Build Plan before Authority Review."
+        : requiredDocumentCount === 0
+          ? "Build the tender-controlled document plan before Authority Review."
+          : finalPackage.documents.missingRequired.length > 0 || documents.length === 0
+            ? "Generate every required document before Authority Review."
+            : "Validate every required document before Authority Review.";
+      const envelope = buildPublicReadinessEnvelope({
+        ok: false,
+        blockers: canonicalBlockers.map((blocker) => ({
+          code: blocker.code,
+          message: blocker.reason,
+          nextAction: blocker.nextAction,
+        })),
+        warnings: [],
+        requiredDocumentsTotal: requiredDocumentCount,
+        generatedDocumentsTotal: finalPackage.documents.generated.length,
+        exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+      });
+      return NextResponse.json({
+        success: true,
+        available: false,
+        unavailableReason,
+        ...envelope,
+        tenderId: id,
+        authorityReview: null,
+        buildPlan: finalPackage.buildPlan,
+        finalPackageBlockers: canonicalBlockers,
+        finalPackageFacts: {
+          requiredDocumentsTotal: requiredDocumentCount,
+          generatedDocumentsTotal: finalPackage.documents.generated.length,
+          validDocumentsTotal: finalPackage.documents.valid.length,
+          exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+        },
+      });
+    }
+
+    const tenderRequiredSections = finalPackage.documents.required.map((document) => document.displayName);
+    const result = runAuthorityReview(documents, manifestEntries, tenderRequiredSections);
+
     const publicBlockers = [
       ...canonicalBlockers.map((blocker) => ({
         code: blocker.code,
@@ -105,18 +156,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // result.recommendedFixes was computed by runAuthorityReview from its own
     // internal status (document-level blockers only) BEFORE canonicalBlockers
     // and finalPackage.buildPlan.confirmed are folded into the outer `ok`
-    // gate below. When those add a blocker runAuthorityReview never saw (e.g.
-    // no confirmed Build Plan, zero documents generated), its "All authority
-    // review checks pass. Document is ready for final export." fix can leak
-    // through even though the tender is actually BLOCKED — confirmed by a
-    // real screenshot showing that exact contradiction. Strip it whenever the
-    // outer gate disagrees with the inner status.
+    // gate below. When those add a blocker runAuthorityReview never saw, strip
+    // any contradictory ready-for-export recommendation.
     const recommendedFixes = ok
       ? result.recommendedFixes
       : result.recommendedFixes.filter((fix) => fix !== "All authority review checks pass. Document is ready for final export.");
 
     return NextResponse.json({
       success: true,
+      available: true,
+      unavailableReason: null,
       ...envelope,
       tenderId: id,
       authorityReview: {
@@ -129,6 +178,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       finalPackageFacts: {
         requiredDocumentsTotal: finalPackage.documents.required.length,
         generatedDocumentsTotal: finalPackage.documents.generated.length,
+        validDocumentsTotal: finalPackage.documents.valid.length,
         exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
       },
     });
