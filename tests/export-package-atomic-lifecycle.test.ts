@@ -7,16 +7,12 @@ const downloadRoute = readFileSync("app/api/tenders/[id]/download/route.ts", "ut
 const persistence = readFileSync("lib/engine/export-package-persistence.ts", "utf8");
 
 describe("export package atomic lifecycle authority", () => {
-  it("keeps the legacy export-preparation state transition atomic", () => {
-    const start = preparationRoute.indexOf("const exportPackage = await prisma.$transaction");
-    const end = preparationRoute.indexOf("await logAction", start);
-    assert.ok(start >= 0 && end > start, "export preparation transaction must exist before the audit event");
-    const transaction = preparationRoute.slice(start, end);
-    assert.match(transaction, /tx\.exportPackage\.updateMany/);
-    assert.match(transaction, /tx\.exportPackage\.create/);
-    assert.match(transaction, /tx\.tender\.update/);
-    assert.match(transaction, /where:\s*\{\s*id,\s*userId\s*\}/);
-    assert.equal((transaction.match(/prisma\.\$transaction/g) ?? []).length, 1);
+  it("keeps POST export as a non-mutating readiness preflight", () => {
+    assert.match(preparationRoute, /readyToDownload:\s*true/);
+    assert.match(preparationRoute, /downloadUrl/);
+    assert.match(preparationRoute, /persistedPackageCreated:\s*false/);
+    assert.doesNotMatch(preparationRoute, /exportPackage\.(?:create|update|updateMany)/);
+    assert.doesNotMatch(preparationRoute, /status:\s*"EXPORTED"/);
   });
 
   it("routes the live Final ZIP download through the executable atomic persistence service", () => {
