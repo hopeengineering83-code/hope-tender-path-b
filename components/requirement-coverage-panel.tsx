@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronDownIcon, RefreshIcon, WarningIcon, CheckIcon, CrossIcon } from "./icons";
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
+type CoverageStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
 
 type EvidenceLink = {
   id: string;
@@ -28,6 +29,7 @@ type RequirementCoverageRow = {
   hasSourceRef: boolean;
   evidenceLinks: EvidenceLink[];
   supportLevel: SupportLevel;
+  coverageStatus: CoverageStatus;
   isFullyCovered: boolean;
   nextAction: string;
 };
@@ -36,6 +38,7 @@ type CoverageData = {
   totalMandatory: number;
   fullyCovered: number;
   partiallyCovered: number;
+  needsTrace: number;
   uncovered: number;
   missingSourceRef: number;
   coverageRatio: number;
@@ -48,6 +51,13 @@ const SUPPORT_LEVEL_CONFIG: Record<SupportLevel, { label: string; color: string;
   PARTIAL: { label: "Partial", color: "bg-amber-100 text-amber-800 border-amber-300", dot: "bg-amber-500" },
   NONE: { label: "Not covered", color: "bg-red-100 text-red-800 border-red-300", dot: "bg-red-500" },
   NOT_APPLICABLE: { label: "N/A", color: "bg-gray-100 text-gray-600 border-gray-300", dot: "bg-gray-400" },
+};
+
+const COVERAGE_STATUS_CONFIG: Record<CoverageStatus, { label: string; color: string; dot: string }> = {
+  FULLY_MET: { label: "Covered", color: "bg-green-100 text-green-800 border-green-300", dot: "bg-green-500" },
+  PARTIALLY_MET: { label: "Partial", color: "bg-amber-100 text-amber-800 border-amber-300", dot: "bg-amber-500" },
+  NEEDS_TRACE: { label: "Needs source trace", color: "bg-orange-100 text-orange-800 border-orange-300", dot: "bg-orange-500" },
+  NOT_MET: { label: "Not covered", color: "bg-red-100 text-red-800 border-red-300", dot: "bg-red-500" },
 };
 
 const REQ_TYPE_LABELS: Record<string, string> = {
@@ -230,24 +240,21 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
         body: JSON.stringify({
           requirementId,
           evidenceType: "MANUAL_REVIEWER_CONFIRMATION",
-          evidenceReference: `manual-${action}-${Date.now()}`,
           supportLevel,
           notes,
         }),
       });
       const json = await res.json() as { ok?: boolean; error?: string; code?: string };
       if (!res.ok || !json.ok) {
-        // Fallback: try direct compliance matrix update
-        const res2 = await fetch(`/api/tenders/${tenderId}/requirement-coverage/set-support-level`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ requirementId, supportLevel, notes }),
-        });
-        const json2 = await res2.json() as { ok?: boolean; error?: string };
-        if (!res2.ok || !json2.ok) {
-          setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: json.error ?? json2.error ?? "Failed to update coverage", success: null } }));
-          return;
-        }
+        setCoverageActionStates((prev) => ({
+          ...prev,
+          [key]: {
+            pending: false,
+            error: json.error ?? "Failed to update coverage",
+            success: null,
+          },
+        }));
+        return;
       }
       setCoverageActionStates((prev) => ({ ...prev, [key]: { pending: false, error: null, success: `Set to ${supportLevel}` } }));
       void load();
@@ -309,8 +316,8 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
 
   const coveragePct = Math.round(data.coverageRatio * 100);
   const filteredRows = data.rows.filter((r) => {
-    if (filter === "UNCOVERED") return r.supportLevel === "NONE";
-    if (filter === "PARTIAL") return r.supportLevel === "PARTIAL" || r.supportLevel === "SUBSTANTIAL";
+    if (filter === "UNCOVERED") return r.coverageStatus === "NOT_MET";
+    if (filter === "PARTIAL") return r.coverageStatus === "PARTIALLY_MET" || r.coverageStatus === "NEEDS_TRACE";
     if (filter === "COVERED") return r.isFullyCovered;
     return true;
   });
@@ -388,12 +395,13 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
       )}
 
       {/* Summary bar */}
-      <div className="grid grid-cols-5 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs">
+      <div className="grid grid-cols-3 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs sm:grid-cols-6">
         {[
           { label: "Mandatory", value: data.totalMandatory, color: "text-gray-800" },
           { label: "Traced", value: data.totalMandatory - data.missingSourceRef, color: "text-blue-700" },
           { label: "Covered", value: data.fullyCovered, color: "text-green-700" },
           { label: "Partial", value: data.partiallyCovered, color: "text-amber-700" },
+          { label: "Needs trace", value: data.needsTrace, color: data.needsTrace > 0 ? "text-orange-700" : "text-gray-400" },
           { label: "Uncovered", value: data.uncovered, color: data.uncovered > 0 ? "text-red-600" : "text-gray-400" },
         ].map((cell) => (
           <div key={cell.label} className="bg-white py-2">
@@ -431,7 +439,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
           )}
 
           {filteredRows.map((row) => {
-            const cfg = SUPPORT_LEVEL_CONFIG[row.supportLevel] ?? SUPPORT_LEVEL_CONFIG.NONE;
+            const cfg = COVERAGE_STATUS_CONFIG[row.coverageStatus] ?? COVERAGE_STATUS_CONFIG.NOT_MET;
             const isOpen = expandedRows.has(row.id);
             return (
               <div key={row.id} className="px-5 py-3">
@@ -579,7 +587,7 @@ export default function RequirementCoveragePanel({ tenderId, canMutate = false }
                     </div>
 
                     {/* Coverage confirmation actions for PARTIAL/NONE mandatory requirements */}
-                    {row.priority === "MANDATORY" && (row.supportLevel === "PARTIAL" || row.supportLevel === "NONE") && (
+                    {row.priority === "MANDATORY" && row.hasSourceRef && (row.supportLevel === "PARTIAL" || row.supportLevel === "NONE") && (
                       <div className="rounded border border-slate-100 bg-slate-50 px-3 py-2">
                         <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">Confirm coverage level</p>
                         <div className="flex flex-wrap gap-1.5">

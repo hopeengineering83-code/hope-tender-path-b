@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; CI-evidence checkpoint published; screenshot summary authority fixed locally | Publish screenshot-evidence checkpoint, inspect exact CI/artifact, then continue cross-panel runtime-truth gaps |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; screenshot checkpoint published; requirement-coverage authority fixed locally | Publish F017 after frozen-head recheck, inspect exact CI/artifact, then continue Build Plan/action reconciliation |
 
 ### Lock rules
 
@@ -68,6 +68,16 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T17:22:05Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — one effective requirement-coverage authority.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** manual FULL/SUBSTANTIAL could be stored without active source-file/page/exact-quote containment, a competing fallback route could write the same state, three panels interpreted rows independently, the heatmap multiplied requirements by compliance rows, and the release snapshot/lifecycle still counted raw strong rows. Strong manual confirmation now fails closed without contained source evidence; the duplicate mutator is removed; `mapRequirementsToEvidence` emits the effective `FULLY_MET`/`PARTIALLY_MET`/`NEEDS_TRACE`/`NOT_MET` status consumed by the API, all three panels, release snapshot and lifecycle controls; heatmap cardinality is one row per requirement.
+- **Tests:** new contract failed 4/4 before implementation and passes 5/5 after; 112/112 focused lifecycle/release/workflow assertions and 219/219 broader related assertions pass; TypeScript, ESLint and release-integrity are clean.
+- **CI / deployment:** no database mutation, preview, deployment or real-account test was triggered. Exact-preview proof remains open.
+- **Next action:** recheck governing PR #1175, publish this checkpoint, inspect exact-head CI/artifact, then continue F018 Build Plan reconciliation.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
 
 ### 2026-07-28T17:02:48Z — Codex
 

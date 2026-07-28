@@ -12,7 +12,7 @@ Status: **IN PROGRESS — release acceptance not established**
 - PR state at audit start: open, draft, unmerged
 - Changed files: 656
 - Commits: 656
-- Previous published audit checkpoint: `9502c578a9c4ccdd8e5973f70c81a0b47e00c075`
+- Previous published audit checkpoint: `4046ca72b1afec6bf47e16980325f8ae9a553143`
 
 ## GitHub checks observed
 
@@ -138,6 +138,7 @@ This proves deployment identity and basic health only. No complete authenticated
 | serialized migration execution ownership | failing-before ownership contract; passing 2/2; 73/73 related CI/migration/source assertions; TypeScript clean |
 | complete exact-head command evidence | failing-before 0/3; passing-after 3/3; recorder/verifier and related CI contracts 36/36; YAML parse, TypeScript, ESLint and release-integrity clean |
 | screenshot summary consistency | failing-before 0/2; passing-after 3/3 behavioral contract; 9/9 related screenshot/repair assertions; both producer scripts parse; exact-preview artifact pending |
+| requirement coverage authority consistency | failing-before 0/4; passing-after 5/5 effective-status contract; 112/112 focused lifecycle/release/workflow assertions and 219/219 broader related assertions; TypeScript, ESLint and release-integrity clean; exact-preview acceptance pending |
 
 ## Child audit checkpoint CI
 
@@ -166,7 +167,7 @@ without `RUN_DB_INTEGRATION=true`.
 
 Open critical/high findings include database-backed extraction concurrency,
 synthetic rather than full-pipeline file evidence, exact-preview schema
-acceptance, and screenshot evidence inconsistency. Final ZIP authority, the
-migration-test race and CI evidence retention are fixed locally, but persisted
-authenticated runtime and exact-head CI/artifact acceptance have not yet been
-established.
+acceptance, and Build Plan/action reconciliation. Final ZIP authority, the
+migration-test race, CI evidence retention, screenshot summary consistency and
+requirement-coverage authority are fixed locally, but persisted authenticated
+runtime and exact-head CI/artifact acceptance have not yet been established.

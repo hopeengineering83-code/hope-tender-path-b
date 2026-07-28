@@ -12,28 +12,23 @@ import { normalizeSupportLevel } from "../lib/engine/requirement-evidence-profil
 import { clientLogger } from "@/lib/ui/client-logger";
 import { PanelErrorFallback } from "./panel-error-fallback";
 import { ArrowRightIcon } from "./icons";
+import { getFinalPackageReadinessModel } from "../lib/engine/final-package-readiness-model";
 
-function coverageBadge(state: "COVERED" | "PARTIAL" | "UNCOVERED") {
+type CoverageState = "COVERED" | "PARTIAL" | "UNCOVERED" | "NEEDS_TRACE";
+
+function coverageBadge(state: CoverageState) {
   if (state === "COVERED") return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">Covered</span>;
   if (state === "PARTIAL") return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Partial</span>;
+  if (state === "NEEDS_TRACE") return <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-700">Needs source trace</span>;
   return <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">Uncovered</span>;
 }
 
 function evidenceBadge(level: string) {
   const normalized = normalizeSupportLevel(level);
-  if (normalized === "FULL" || normalized === "SUBSTANTIAL" || normalized === "NOT_APPLICABLE") return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">{normalized}</span>;
+  if (normalized === "FULL" || normalized === "SUBSTANTIAL") return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">{normalized}</span>;
   if (normalized === "PARTIAL") return <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">PARTIAL</span>;
+  if (normalized === "NOT_APPLICABLE") return <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">N/A — not release coverage</span>;
   return <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">NONE</span>;
-}
-
-function matrixCoverageLevel(rows: Array<{ supportLevel: string }>): "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE" {
-  if (rows.length === 0) return "NONE";
-  const levels = rows.map((row) => normalizeSupportLevel(row.supportLevel));
-  if (levels.some((level) => level === "FULL")) return "FULL";
-  if (levels.some((level) => level === "SUBSTANTIAL")) return "SUBSTANTIAL";
-  if (levels.some((level) => level === "NOT_APPLICABLE")) return "NOT_APPLICABLE";
-  if (levels.some((level) => level === "PARTIAL")) return "PARTIAL";
-  return "NONE";
 }
 
 function reviewBadge(status: string, autoLinked?: boolean) {
@@ -53,7 +48,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
   const ownsTender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, select: { id: true } }).catch(() => null);
   if (!ownsTender) return null;
 
-  const [requirements, expertMatches, projectMatches, sectionMaps] = await Promise.all([
+  const [requirements, expertMatches, projectMatches, sectionMaps, finalPackageModel] = await Promise.all([
     prisma.tenderRequirement.findMany({
       where: { tenderId },
       orderBy: { createdAt: "asc" },
@@ -85,6 +80,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
       orderBy: { createdAt: "asc" },
       select: { id: true, sectionId: true, sectionTitle: true, requirementIds: true, expertIds: true, projectIds: true, reviewerStatus: true, wordCount: true, content: true },
     }).catch(() => []),
+    getFinalPackageReadinessModel(prisma, tenderId, userId),
   ]);
 
   if (requirements.length === 0) return null;
@@ -119,18 +115,24 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
   const reviewedExperts = expertMatches.filter((m) => m.expert?.trustLevel === "REVIEWED");
   const reviewedProjects = projectMatches.filter((m) => m.project?.trustLevel === "REVIEWED");
   const complianceEvidenceCount = mandatoryReqs.reduce((sum, req) => sum + req.complianceMatrixRows.length, 0);
+  const canonicalStatusByRequirement = new Map(
+    finalPackageModel.requirementEvidenceStatuses.map((status) => [
+      status.requirementId,
+      status,
+    ]),
+  );
 
-  function getCoverageState(req: (typeof mandatoryReqs)[number]): "COVERED" | "PARTIAL" | "UNCOVERED" {
-    const sections = reqSections.get(req.id) ?? [];
-    const confirmedSections = sections.filter((s) => s.reviewerStatus === "CONFIRMED" || s.reviewerStatus === "APPROVED");
-    const matrixLevel = matrixCoverageLevel(req.complianceMatrixRows);
-    if (confirmedSections.length > 0 || matrixLevel === "FULL" || matrixLevel === "SUBSTANTIAL" || matrixLevel === "NOT_APPLICABLE") return "COVERED";
-    if (sections.length > 0 || matrixLevel === "PARTIAL") return "PARTIAL";
+  function getCoverageState(req: (typeof mandatoryReqs)[number]): CoverageState {
+    const displayStatus = canonicalStatusByRequirement.get(req.id)?.displayStatus;
+    if (displayStatus === "FULLY_MET") return "COVERED";
+    if (displayStatus === "PARTIALLY_MET") return "PARTIAL";
+    if (displayStatus === "NEEDS_TRACE") return "NEEDS_TRACE";
     return "UNCOVERED";
   }
 
   const coveredCount = mandatoryReqs.filter((r) => getCoverageState(r) === "COVERED").length;
   const partialCount = mandatoryReqs.filter((r) => getCoverageState(r) === "PARTIAL").length;
+  const needsTraceCount = mandatoryReqs.filter((r) => getCoverageState(r) === "NEEDS_TRACE").length;
   const uncoveredCount = mandatoryReqs.filter((r) => getCoverageState(r) === "UNCOVERED").length;
 
   return (
@@ -140,8 +142,8 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence Coverage</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Requirement <ArrowRightIcon /> evidence mapping</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Shows which mandatory requirements are covered by section evidence maps. Uncovered requirements
-            may indicate missing evidence, unconfirmed sections, or generation that hasn&apos;t run yet.
+            Uses the same active-source and compliance authority as final release. Section maps remain
+            visible context but do not independently mark a requirement covered.
           </p>
         </div>
         <div className="flex gap-3 text-center">
@@ -152,6 +154,10 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
           <div className="rounded-xl border bg-amber-50 px-4 py-2">
             <p className="text-xs text-amber-600">Partial</p>
             <p className="text-xl font-bold text-amber-700">{partialCount}</p>
+          </div>
+          <div className="rounded-xl border bg-orange-50 px-4 py-2">
+            <p className="text-xs text-orange-600">Needs trace</p>
+            <p className="text-xl font-bold text-orange-700">{needsTraceCount}</p>
           </div>
           <div className="rounded-xl border bg-red-50 px-4 py-2">
             <p className="text-xs text-red-600">Uncovered</p>
@@ -181,7 +187,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
 
       {autoLinkedCount > 0 && (
         <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-          <strong>{autoLinkedCount} section link(s) were auto-inferred from generated section text.</strong> They count as partial coverage until a reviewer confirms the section evidence.
+          <strong>{autoLinkedCount} section link(s) were auto-inferred from generated section text.</strong> They are informational until a traced compliance-matrix decision is recorded.
         </div>
       )}
 
@@ -193,7 +199,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
               const sections = reqSections.get(req.id) ?? [];
               const state = getCoverageState(req);
               return (
-                <div key={req.id} className={`rounded-xl border p-3 ${state === "COVERED" ? "border-emerald-100 bg-emerald-50" : state === "PARTIAL" ? "border-amber-100 bg-amber-50" : "border-red-100 bg-red-50"}`}>
+                <div key={req.id} className={`rounded-xl border p-3 ${state === "COVERED" ? "border-emerald-100 bg-emerald-50" : state === "PARTIAL" ? "border-amber-100 bg-amber-50" : state === "NEEDS_TRACE" ? "border-orange-100 bg-orange-50" : "border-red-100 bg-red-50"}`}>
                   <div className="flex flex-wrap items-start gap-2 justify-between">
                     <p className="text-sm font-medium text-slate-900 flex-1">{req.title}</p>
                     <div className="flex items-center gap-1.5 flex-shrink-0">

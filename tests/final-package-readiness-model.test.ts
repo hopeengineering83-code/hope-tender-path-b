@@ -20,10 +20,16 @@ function req(id: string, priority = "MANDATORY", rows: any[] = [], source = true
     requirementType: "TECHNICAL",
     sourceTenderFileId: source ? "file" : null,
     sourcePageNumber: source ? 1 : null,
-    sourceExactQuote: source ? "quote" : null,
+    sourceExactQuote: source ? "meaningful source quote" : null,
     complianceMatrixRows: rows,
   };
 }
+
+const activeFiles = [{
+  id: "file",
+  extractedText: "Tender instructions include this meaningful source quote for testing.",
+  totalPages: 2,
+}];
 
 function doc(overrides: Record<string, unknown> = {}) {
   return {
@@ -44,7 +50,7 @@ test("evidence coverage explains trusted traced coverage and mandatory missing i
   const requirements = Array.from({ length: 8 }, (_, i) => req(String(i + 1), i < 3 ? "MANDATORY" : "OPTIONAL", [{ supportLevel: i < 3 ? "FULL" : "WEAK" }], i < 3));
   requirements[1].sourceExactQuote = null;
   requirements[2].sourceExactQuote = null;
-  const statuses = mapRequirementsToEvidence(requirements);
+  const statuses = mapRequirementsToEvidence(requirements, [], [], activeFiles);
   assert.equal(statuses.filter((s) => s.hasTrustedTrace).length, 1);
   assert.deepEqual(statuses.filter((s) => s.mandatory && !s.hasTrustedTrace).map((s) => s.requirementId), ["2", "3"]);
   assert.equal(statuses.filter((s) => s.strongestEvidenceLevel === "WEAK").length, 5);
@@ -52,7 +58,12 @@ test("evidence coverage explains trusted traced coverage and mandatory missing i
 });
 
 test("selected weak evidence does not count as strong evidence", () => {
-  const statuses = mapRequirementsToEvidence([req("1", "MANDATORY", [{ supportLevel: "WEAK" }])]);
+  const statuses = mapRequirementsToEvidence(
+    [req("1", "MANDATORY", [{ supportLevel: "WEAK" }])],
+    [],
+    [],
+    activeFiles,
+  );
   assert.equal(statuses[0].strongestEvidenceLevel, "WEAK");
   assert.notEqual(statuses[0].strongestEvidenceLevel, "FULL");
 });

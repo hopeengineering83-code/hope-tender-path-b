@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { resolveCanonicalFieldState, type CanonicalFieldStateResult } from "./canonical-field-state";
 import { resolveTenderAnalysisState, type AnalysisState } from "./analysis-state-resolver";
 import { assessExtractionQuality } from "../extraction-quality";
-import { isGroundedEvidence } from "./evidence-grounding";
+import { mapRequirementsToEvidence } from "./final-package-readiness-model";
 import { buildPageLedger, type PageLedger } from "./page-ledger";
 import { classifyTender, type TenderClassification } from "./tender-classification";
 import { buildReleaseSnapshotEligibility } from "./release-snapshot-eligibility";
@@ -109,12 +109,6 @@ export type TenderReleaseSnapshot = {
 };
 
 const WEAK_EXTRACTION_SCORE_THRESHOLD = 70;
-const MIN_MEANINGFUL_QUOTE_CHARS = 10;
-const STRONG_SUPPORT = new Set(["FULL", "SUBSTANTIAL", "COMPLIANT", "STRONG"]);
-
-function normalizeEvidenceText(value: string | null | undefined): string {
-  return (value ?? "").toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim();
-}
 
 function firstBlocker(values: string[]): string | null {
   return values.length > 0 ? values[0] : null;
@@ -210,6 +204,7 @@ export async function getTenderReleaseSnapshot(
       requirements: {
         select: {
           id: true,
+          title: true,
           priority: true,
           requirementType: true,
           sourceTenderFileId: true,
@@ -483,29 +478,19 @@ export async function getTenderReleaseSnapshot(
   const mandatory = tender.requirements.filter(
     (requirement) => (requirement.priority ?? "").toUpperCase() === "MANDATORY",
   );
-  const activeFileById = new Map(activeFiles.map((file) => [file.id, file]));
-  const groundedMandatory = mandatory.filter((requirement) => {
-    const quote = (requirement.sourceExactQuote ?? "").trim();
-    if (
-      !requirement.sourceTenderFileId ||
-      !activeTenderFileIds.has(requirement.sourceTenderFileId) ||
-      !isGroundedEvidence(requirement.sourcePageNumber, quote) ||
-      quote.length < MIN_MEANINGFUL_QUOTE_CHARS
-    ) return false;
-
-    const sourceFile = activeFileById.get(requirement.sourceTenderFileId);
-    if (!sourceFile) return false;
-    if (
-      typeof requirement.sourcePageNumber === "number" &&
-      typeof sourceFile.totalPages === "number" &&
-      sourceFile.totalPages > 0 &&
-      requirement.sourcePageNumber > sourceFile.totalPages
-    ) return false;
-
-    const fileText = normalizeEvidenceText(sourceFile.extractedText);
-    const normalizedQuote = normalizeEvidenceText(quote);
-    return fileText.length > 0 && fileText.includes(normalizedQuote);
-  }).length;
+  const requirementEvidenceStatuses = mapRequirementsToEvidence(
+    tender.requirements,
+    tender.expertMatches,
+    tender.projectMatches,
+    activeFiles.map((file) => ({
+      id: file.id,
+      extractedText: file.extractedText,
+      totalPages: file.totalPages,
+    })),
+  );
+  const groundedMandatory = requirementEvidenceStatuses.filter(
+    (status) => status.mandatory && status.hasSourceTrace,
+  ).length;
 
   const requirementsBlocker =
     tender.requirements.length === 0
@@ -521,10 +506,8 @@ export async function getTenderReleaseSnapshot(
     blocker: requirementsBlocker,
   };
 
-  const covered = mandatory.filter((requirement) =>
-    requirement.complianceMatrixRows.some((row) =>
-      STRONG_SUPPORT.has((row.supportLevel ?? "").toUpperCase()),
-    ),
+  const covered = requirementEvidenceStatuses.filter(
+    (status) => status.mandatory && status.displayStatus === "FULLY_MET",
   ).length;
   const evidence: SnapshotEvidenceState = {
     total: mandatory.length,

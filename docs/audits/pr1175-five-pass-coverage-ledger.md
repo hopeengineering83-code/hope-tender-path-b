@@ -3,7 +3,7 @@
 Governing source SHA: `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`
 Governing base SHA: `b3c9db5de89a2a665e61a83facbff0f276f9983c`
 Audit branch: `audit/pr1175-complete-five-pass-forensic-audit`
-Previous published audit checkpoint: `9502c578a9c4ccdd8e5973f70c81a0b47e00c075`
+Previous published audit checkpoint: `4046ca72b1afec6bf47e16980325f8ae9a553143`
 Status: **IN PROGRESS — DO NOT MERGE**
 
 This ledger is intentionally fail-closed. `PARTIAL` means the category cannot yet be claimed as fully audited. Full coverage will not be claimed until every changed file and every transitive runtime dependency has a row and disposition.
@@ -40,6 +40,7 @@ current-head dispositions below.
 | Export gate tests | PARTIAL | two screenshot-export-gates test files + CI migration owner | F006 fixed locally: no migration subprocess remains in parallel test bodies; F007 source-string proof remains open. |
 | CI workflow | FIXED LOCAL / EXACT CI OPEN | `.github/workflows/ci.yml`, command recorder/verifier, downloaded prior artifact | F008 fixed locally: 16 exact-head commands require non-empty logs and a successful SHA-bound NDJSON ledger before success artifact upload. |
 | Screenshot audit | FIXED LOCAL / EXACT PREVIEW OPEN | downloaded index, route manifest, summary, Review Inbox screenshots, summary producer and consistency gate | F009 fixed locally: one explicit versioned coverage object feeds both artifacts and rejects contradictory details before write. Render coverage still does not prove behavior; exact preview artifact remains open. |
+| Requirement coverage authority | FIXED LOCAL / EXACT PREVIEW OPEN | confirmation mutation, coverage API, requirement/evidence/heatmap panels, final-package selector, release snapshot, lifecycle controls | F017 fixed locally: FULL/SUBSTANTIAL becomes effective coverage only with active source-file/page/exact-quote containment; untrusted strong rows are `NEEDS_TRACE`; heatmap cardinality is one row per requirement. |
 | Vercel preview | PARTIAL | supplied screenshot deployment `aed98737…`, governing deployment `ec0eaa83…`, scoped runtime queries | Historical screenshot log lines have expired; screenshot binds a P2022 failure to `aed98737…`. Governing deployment has no retained error/500 logs but no authenticated acceptance traffic. |
 | PR/base graph | REVIEWED | current PR metadata and comparison | F010 from the donor audit is stale; this branch was created from the current frozen PR #1175 head. |
 | Authentication/password reset | NOT STARTED | — | Required Pass 3 scope. |
@@ -82,6 +83,11 @@ current-head dispositions below.
 | `scripts/screenshot-route-manifest.mjs` | Yes | screenshot route discovery and coverage authority | route records × viewports | canonical coverage summary | release-evidence truth | failing-before/passing-after behavioral consistency contract | F009 FIXED_LOCAL |
 | `scripts/capture-production-pages.mjs` | Yes | screenshot artifact producer | discovered routes + browser records | versioned index/compact summary/HTML | preview credentials and release evidence | one pre-write consistency gate; 9/9 related assertions | F009 FIXED_LOCAL / exact artifact open |
 | `tests/screenshot-summary-consistency.test.ts` | New | prevents contradictory screenshot evidence | producer and summary authority | release artifact schema | exact evidence interpretation | failed 2/2 before, passes 3/3 after | F009 FIXED_LOCAL |
+| `lib/engine/final-package-readiness-model.ts` | Yes | effective requirement-evidence selector | requirements, evidence rows, active tender files | release snapshot, lifecycle, APIs and panels | source containment and release authority | failing-before/passing-after consistency contract + 219 related assertions | F017 FIXED_LOCAL |
+| `app/api/tenders/[id]/requirement-coverage/{route.ts,confirm/route.ts}` | Yes | coverage read/write boundary | tenant-owned requirement and active source files | canonical coverage DTO and audited confirmation | tenant, actor, active-file/page/quote grounding | focused source/behavior contract | F017 FIXED_LOCAL |
+| `app/api/tenders/[id]/requirement-coverage/set-support-level/route.ts` | Removed | competing direct support mutator | client fallback | ComplianceMatrix | bypassed canonical confirmation policy | complete consumer sweep | removed; one mutation owner remains |
+| `components/{requirement-coverage-panel,evidence-coverage-panel,compliance-heatmap-panel}.tsx` | Yes | visible coverage/status consumers | canonical effective statuses | workflow actions and counts | avoids unsupported release claims | focused consistency + workflow suites | F017 FIXED_LOCAL |
+| `lib/engine/{tender-release-snapshot,tender-lifecycle-orchestrator}.ts` | Yes | server workflow/control authorities | canonical effective requirement status | next action, generation and export gates | fail-closed release state | 112/112 focused workflow/release assertions | F017 FIXED_LOCAL |
 
 ## Pass status
 
@@ -90,7 +96,7 @@ current-head dispositions below.
 | 1 — static/character-sensitive | IN PROGRESS | F002/F004 fixed locally; F007 and the broad file sweep remain open. |
 | 2 — dataflow/database/concurrency | IN PROGRESS | F001/F006/F013/F014 fixed locally and F003 verified in exact-checkpoint CI; extraction concurrency remains open. |
 | 3 — authority/security/tenant isolation | IN PROGRESS | Tenant filters observed in reviewed routes; adversarial route sweep incomplete. |
-| 4 — full product workflow/authority | IN PROGRESS | F001/F002/F004 fixed locally; real end-to-end execution not completed. |
+| 4 — full product workflow/authority | IN PROGRESS | F001/F002/F004/F017 fixed locally; real end-to-end execution not completed. |
 | 5 — falsification/runtime/release proof | IN PROGRESS | F008/F009/F015 fixed locally; exact audit-head CI/preview and F005 remain open. |
 
 ## Current-head closure evidence
@@ -118,6 +124,12 @@ current-head dispositions below.
   `{expected, covered, uncovered, percent}`. The producer refuses to write
   artifacts if the compact counters or uncovered route identities disagree
   with the detailed route/viewport index.
+- Requirement coverage has one effective release meaning. A row is
+  `FULLY_MET` only when FULL/SUBSTANTIAL support is paired with active
+  source-file, valid page and meaningful exact-quote containment. Missing
+  trace is shown as `NEEDS_TRACE`; the heatmap no longer multiplies a
+  requirement by its compliance rows; server snapshot and lifecycle gates
+  consume the same selector.
 
 Local evidence: TypeScript, ESLint, release-integrity audits, 382/382 affected
 transitive assertions for the extraction checkpoint, 63/63

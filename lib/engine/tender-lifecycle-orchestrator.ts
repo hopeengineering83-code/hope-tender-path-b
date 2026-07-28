@@ -44,10 +44,9 @@ import {
 } from "./submission-plan-completeness";
 import {
   computeEvidenceCoverage,
-  isStrongSupportLevel,
-  normalizeSupportLevel,
   type EvidenceCoverageReport,
 } from "./requirement-evidence-profile";
+import { mapRequirementsToEvidence } from "./final-package-readiness-model";
 import {
   buildProviderDiagnosticsSnapshot,
 } from "../ai-provider-health";
@@ -365,7 +364,11 @@ export async function computeTenderLifecycle(
         },
       }),
       client.tenderFile.findMany({
-        where: { tenderId, ...(userId ? { tender: { userId } } : {}) },
+        where: {
+          tenderId,
+          deletionStatus: "ACTIVE",
+          ...(userId ? { tender: { userId } } : {}),
+        },
         select: {
           id: true,
           fileName: true,
@@ -569,17 +572,25 @@ export async function computeTenderLifecycle(
 
   // ── Source references ──────────────────────────────────────────────────────
   const mandatoryReqs = requirements.filter((r) => r.priority === "MANDATORY");
+  const requirementEvidenceStatuses = mapRequirementsToEvidence(
+    requirements,
+    [],
+    [],
+    effectiveFiles.map((file) => ({
+      id: file.id,
+      extractedText: file.extractedText,
+      totalPages: file.totalPages,
+    })),
+  );
+  const canonicalStatusByRequirementId = new Map(
+    requirementEvidenceStatuses.map((status) => [status.requirementId, status]),
+  );
   const ungroundedMandatory = mandatoryReqs.filter(
-    (r) =>
-      !r.sectionReference &&
-      !r.sourceTenderFileId &&
-      !r.sourcePageNumber &&
-      !r.sourceExactQuote &&
-      (r.sourceConfidence ?? 0) <= 0,
+    (requirement) => !canonicalStatusByRequirementId.get(requirement.id)?.hasSourceTrace,
   );
 
   // ── Evidence coverage ──────────────────────────────────────────────────────
-  const evidenceStatus = computeEvidenceCoverage(
+  const rawEvidenceStatus = computeEvidenceCoverage(
     requirements.map((r) => ({
       id: r.id,
       title: r.title,
@@ -589,6 +600,28 @@ export async function computeTenderLifecycle(
       complianceMatrixRows: r.complianceMatrixRows,
     })),
   );
+  const canonicalStrongCount = requirementEvidenceStatuses.filter(
+    (status) => status.displayStatus === "FULLY_MET",
+  ).length;
+  const canonicalMandatoryStrongCount = requirementEvidenceStatuses.filter(
+    (status) => status.mandatory && status.displayStatus === "FULLY_MET",
+  ).length;
+  const evidenceStatus: EvidenceCoverageReport = {
+    ...rawEvidenceStatus,
+    profiles: rawEvidenceStatus.profiles.map((profile) => ({
+      ...profile,
+      hasStrongEvidence:
+        canonicalStatusByRequirementId.get(profile.requirementId)?.displayStatus === "FULLY_MET",
+    })),
+    requirementsWithStrongEvidence: canonicalStrongCount,
+    strongCoveragePercent: requirements.length === 0
+      ? 0
+      : Math.round((canonicalStrongCount / requirements.length) * 100),
+    fullyCoveredMandatory: canonicalMandatoryStrongCount,
+    coverageRatio: mandatoryReqs.length === 0
+      ? 0
+      : canonicalMandatoryStrongCount / mandatoryReqs.length,
+  };
 
   // ── Submission plan completeness ───────────────────────────────────────────
   const tenderLike = {
@@ -639,8 +672,9 @@ export async function computeTenderLifecycle(
   // This deliberately does NOT read tender.readinessScore. That DB column is a
   // legacy workflow-progress hint and can drift from the canonical gates. The
   // lifecycle can only show READY when the explicit gate signals below are clear.
-  const mandatoryEvidenceReady = mandatoryReqs.every((r) =>
-    (r.complianceMatrixRows ?? []).some((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel))),
+  const mandatoryEvidenceReady = mandatoryReqs.every(
+    (requirement) =>
+      canonicalStatusByRequirementId.get(requirement.id)?.displayStatus === "FULLY_MET",
   );
   const finalExportReady =
     analysisSource === "AI" &&

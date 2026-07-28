@@ -14,6 +14,10 @@ import {
   type SubmissionEnvelope,
   type SubmissionPlanFile,
 } from "./submission-plan";
+import {
+  isGroundedEvidenceInActiveFiles,
+  type GroundingActiveFile,
+} from "./evidence-grounding";
 
 export type FinalPackageBlocker = {
   area: "requirements" | "evidence" | "documents" | "export";
@@ -34,9 +38,11 @@ export type RequirementEvidenceStatus = {
   mandatory: boolean;
   selectedEvidenceCount: number;
   strongestEvidenceLevel: RequirementEvidenceLevel;
+  hasSourceTrace: boolean;
   hasTrustedTrace: boolean;
   hasReviewedExpert: boolean;
   hasReviewedProject: boolean;
+  displayStatus: "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
   blockerReason: string | null;
 };
 
@@ -276,11 +282,16 @@ function strongestSupportLevel(rows: Array<{ supportLevel?: string | null }>): R
     .sort((left, right) => evidenceRank(right) - evidenceRank(left))[0] ?? "NONE";
 }
 
-function hasRequirementSourceTrace(requirement: RequirementLike): boolean {
-  return hasText(requirement.sourceTenderFileId)
-    && typeof requirement.sourcePageNumber === "number"
-    && requirement.sourcePageNumber > 0
-    && hasText(requirement.sourceExactQuote);
+function hasRequirementSourceTrace(
+  requirement: RequirementLike,
+  activeFiles: ReadonlyArray<GroundingActiveFile>,
+): boolean {
+  return isGroundedEvidenceInActiveFiles(
+    requirement.sourcePageNumber,
+    requirement.sourceExactQuote,
+    requirement.sourceTenderFileId,
+    activeFiles,
+  );
 }
 
 function selectedReviewedExperts(matches: MatchLike[]): number {
@@ -388,6 +399,7 @@ export function mapRequirementsToEvidence(
   requirements: RequirementLike[],
   expertMatches: MatchLike[] = [],
   projectMatches: MatchLike[] = [],
+  activeFiles: ReadonlyArray<GroundingActiveFile> = [],
 ): RequirementEvidenceStatus[] {
   const hasReviewedExpert = selectedReviewedExperts(expertMatches) > 0;
   const hasReviewedProject = selectedReviewedProjects(projectMatches) > 0;
@@ -396,15 +408,24 @@ export function mapRequirementsToEvidence(
     const links = requirement.complianceMatrixRows ?? [];
     const strongestEvidenceLevel = strongestSupportLevel(links);
     const mandatory = isMandatoryRequirement(requirement);
-    const hasTrustedTrace = hasRequirementSourceTrace(requirement)
+    const hasSourceTrace = hasRequirementSourceTrace(requirement, activeFiles);
+    const hasTrustedTrace = hasSourceTrace
       && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL");
-    const blockerReason = hasTrustedTrace
+    const hasStrongEvidence = evidenceRank(strongestEvidenceLevel) >= evidenceRank("SUBSTANTIAL");
+    const displayStatus = !hasTrustedTrace && evidenceRank(strongestEvidenceLevel) >= evidenceRank("PARTIAL")
+      ? "NEEDS_TRACE"
+      : hasTrustedTrace && hasStrongEvidence
+        ? "FULLY_MET"
+        : hasTrustedTrace && strongestEvidenceLevel === "PARTIAL"
+          ? "PARTIALLY_MET"
+          : "NOT_MET";
+    const blockerReason = displayStatus === "FULLY_MET"
       ? null
       : links.length === 0
         ? "No selected or linked evidence is traced to this requirement."
-        : !hasRequirementSourceTrace(requirement)
-          ? "Requirement lacks source file, page, and exact quote trace, so linked evidence is not trusted."
-          : "Linked evidence is weaker than PARTIAL.";
+        : !hasTrustedTrace
+          ? "Requirement lacks active source-file, page, and exact-quote containment, so linked evidence is not trusted."
+          : "Linked evidence is only PARTIAL; FULL or SUBSTANTIAL support is required.";
 
     return {
       requirementId: requirement.id,
@@ -412,9 +433,11 @@ export function mapRequirementsToEvidence(
       mandatory,
       selectedEvidenceCount: links.length,
       strongestEvidenceLevel,
+      hasSourceTrace,
       hasTrustedTrace,
       hasReviewedExpert,
       hasReviewedProject,
+      displayStatus,
       blockerReason,
     };
   });
@@ -693,7 +716,7 @@ function buildRequirementBlockers(
   statuses: RequirementEvidenceStatus[],
 ): FinalPackageBlocker[] {
   return statuses
-    .filter((status) => status.mandatory && !status.hasTrustedTrace)
+    .filter((status) => status.mandatory && status.displayStatus !== "FULLY_MET")
     .map((status) => ({
       area: "requirements" as const,
       code: "MANDATORY_REQUIREMENT_EVIDENCE_NOT_TRUSTED",
@@ -753,6 +776,10 @@ export async function getFinalPackageReadinessModel(
         category: true,
         analysisExtractionStatus: true,
         requirements: { include: { complianceMatrixRows: true } },
+        files: {
+          where: { deletionStatus: "ACTIVE" },
+          select: { id: true, extractedText: true, totalPages: true },
+        },
         generatedDocuments: { orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] },
         expertMatches: { include: { expert: { select: { trustLevel: true } } } },
         projectMatches: { include: { project: { select: { trustLevel: true } } } },
@@ -782,6 +809,7 @@ export async function getFinalPackageReadinessModel(
     tender.requirements,
     tender.expertMatches,
     tender.projectMatches,
+    tender.files,
   );
   const planned = buildPlanAuthority.confirmed
     ? derivePlannedPackageDocumentsFromFiles(
@@ -874,12 +902,12 @@ export async function getFinalPackageReadinessModel(
     requirements: {
       total: requirementEvidenceStatuses.length,
       mandatory: requirementEvidenceStatuses.filter((item) => item.mandatory).length,
-      traced: requirementEvidenceStatuses.filter((item) => item.hasTrustedTrace).length,
+      traced: requirementEvidenceStatuses.filter((item) => item.hasSourceTrace).length,
       mandatoryTraced: requirementEvidenceStatuses.filter(
-        (item) => item.mandatory && item.hasTrustedTrace,
+        (item) => item.mandatory && item.hasSourceTrace,
       ).length,
       strongEvidence: requirementEvidenceStatuses.filter(
-        (item) => item.strongestEvidenceLevel === "FULL",
+        (item) => item.displayStatus === "FULLY_MET",
       ).length,
       weakEvidence: requirementEvidenceStatuses.filter(
         (item) => ["WEAK", "PARTIAL"].includes(item.strongestEvidenceLevel),
@@ -888,7 +916,7 @@ export async function getFinalPackageReadinessModel(
         (item) => item.strongestEvidenceLevel === "NONE",
       ).length,
       coverageRatio: requirementEvidenceStatuses.length
-        ? requirementEvidenceStatuses.filter((item) => item.hasTrustedTrace).length
+        ? requirementEvidenceStatuses.filter((item) => item.displayStatus === "FULLY_MET").length
           / requirementEvidenceStatuses.length
         : 0,
       blockers: requirementBlockers,
@@ -905,10 +933,12 @@ export async function getFinalPackageReadinessModel(
         0,
       ),
       strong: requirementEvidenceStatuses.filter(
-        (item) => item.strongestEvidenceLevel === "FULL",
+        (item) => item.displayStatus === "FULLY_MET"
+          && item.strongestEvidenceLevel === "FULL",
       ).length,
       substantial: requirementEvidenceStatuses.filter(
-        (item) => item.strongestEvidenceLevel === "SUBSTANTIAL",
+        (item) => item.displayStatus === "FULLY_MET"
+          && item.strongestEvidenceLevel === "SUBSTANTIAL",
       ).length,
       weak: requirementEvidenceStatuses.filter(
         (item) => ["WEAK", "PARTIAL"].includes(item.strongestEvidenceLevel),

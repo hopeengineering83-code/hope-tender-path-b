@@ -39,15 +39,21 @@ describe("requirement-coverage safe response boundary", () => {
     assert.match(source, /supportLevel: "PARTIAL"/);
     assert.match(source, /isReviewed: expert\.trustLevel === "REVIEWED"/);
     assert.match(source, /isReviewed: project\.trustLevel === "REVIEWED"/);
-    assert.match(source, /hasOnlyAutoLinks/);
-    assert.match(source, /!hasOnlyAutoLinks/);
+    assert.match(source, /canonicalStatus\?\.displayStatus/);
+    assert.match(source, /canonicalStatus\?\.displayStatus === "FULLY_MET"/);
   });
 
   it("keeps source grounding required for full coverage", () => {
     assert.match(source, /sourcePageNumber/);
     assert.match(source, /sourceExactQuote/);
     assert.match(source, /sourceConfidence/);
-    assert.match(source, /&& hasSourceRef/);
+    assert.match(source, /canonicalStatus\?\.hasSourceTrace/);
+    const authority = readFileSync(
+      join(rootDir, "lib/engine/final-package-readiness-model.ts"),
+      "utf8",
+    );
+    assert.match(authority, /isGroundedEvidenceInActiveFiles/);
+    assert.match(authority, /displayStatus === "FULLY_MET"/);
   });
 
   it("keeps final-package readiness parity", () => {

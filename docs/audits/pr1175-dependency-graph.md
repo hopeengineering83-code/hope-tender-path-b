@@ -80,6 +80,24 @@ Tender sources + source hashes
 
 Audit rule: every dependent success must be invalidated when an upstream controlling revision changes.
 
+Requirement coverage subgraph:
+
+```text
+active TenderFile bytes/text/page count
+→ TenderRequirement source file/page/exact quote
+→ ComplianceMatrix support level
+→ mapRequirementsToEvidence
+→ FULLY_MET | PARTIALLY_MET | NEEDS_TRACE | NOT_MET
+→ requirement coverage API + three coverage panels
+→ release snapshot + lifecycle next action
+→ generation/export eligibility
+```
+
+FULL/SUBSTANTIAL alone is no longer release coverage. The exact quote must be
+meaningful, page-valid and contained in the active tenant-owned tender file.
+The former direct support-level mutation fallback is removed, and the heatmap
+is now one row per requirement instead of one row per compliance link.
+
 ## 4. Generated files and final ZIP
 
 Confirmed plan item
