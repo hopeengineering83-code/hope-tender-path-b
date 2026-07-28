@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; schema checkpoint published; complete support-record Review Inbox fixed locally | Publish the Review Inbox checkpoint, then continue generation/export authority passes |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271, auditing `release/consolidated-recovery-20260717` / PR #1175 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; Review Inbox checkpoint published; sole Final ZIP owner fixed locally | Publish Final ZIP checkpoint, then continue remaining generation/export and release-evidence gaps |
 
 ### Lock rules
 
@@ -68,6 +68,16 @@ Never claim a fix is complete unless the stated tests passed.
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-07-28T16:41:45Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — Final ZIP manifest authority and duplicate-code removal.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Root cause and fix:** production ZIP manifests discarded exact plan positions and omitted envelope/format, while a second test-only finalizer could let release tests pass without exercising the production owner. Removed that finalizer and reconnected its consumers to `assembleFinalSubmissionZip`; canonical scope now carries unique positive plan order, envelope and canonical format into a persisted manifest with exact filename, byte length and SHA-256. Assembly sorts by plan order, rejects duplicate positions and reopens/re-hashes every archive entry.
+- **Tests:** new authority contract failed 3/3 before implementation and passes 3/3 after; 213/213 affected scope, assembly, Build Plan, release-package, PDF-safety, static-safety and binary-inspection assertions pass; TypeScript, ESLint and release-integrity audits are clean. The binary fixture remains synthetic and is not represented as upload-to-export acceptance.
+- **Security/runtime:** no real-account test, database mutation, deployment or authenticated download was performed. Persisted `ExportPackage.manifestJson` acceptance remains open.
+- **Next action:** run lint/release-integrity and broader affected tests, recheck governing PR #1175, publish this checkpoint, then continue the remaining screenshot/workflow/release-evidence gaps.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
 
 ### 2026-07-28T16:23:58Z — Codex
 

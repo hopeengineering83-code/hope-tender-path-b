@@ -99,11 +99,17 @@ Confirmed plan item
 → `ExportPackage` manifest and package hash
 → response.
 
-Current authority conflict:
+Current disposition:
 
-- Production download route uses `lib/engine/final-zip-assembly.ts`.
-- `lib/engine/workflow/zip-finalizer.ts` is a separate implementation used by isolated binary tests.
-- Production manifest lacks envelope and format fields required to prove submission-plan compliance.
+- The production download route and every affected binary/behavioral test use
+  `lib/engine/final-zip-assembly.ts`; the disconnected workflow finalizer is
+  removed.
+- `buildFinalZipEntries` supplies exact plan order, envelope and canonical
+  plan format. Assembly rejects duplicate plan positions and persists those
+  fields with filename, byte length and SHA-256.
+- The generated archive is reopened and every entry is verified against that
+  manifest. Authenticated isolated-database proof of the persisted
+  `ExportPackage` row remains open.
 
 ## 5. CI and release proof
 

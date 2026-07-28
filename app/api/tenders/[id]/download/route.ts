@@ -497,7 +497,14 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
 
   const scope = buildFinalZipEntries({
     tender: { exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, requirements: tender.requirements.map((r: any) => ({ exactFileName: r.exactFileName ?? null })) },
-    generatedDocs: scopedDocs.map((d) => ({ id: d.id, name: d.name, exactFileName: d.exactFileName, exactOrder: d.exactOrder ?? null, documentType: d.documentType ?? null })),
+    generatedDocs: scopedDocs.map((d) => ({
+      id: d.id,
+      name: d.name,
+      exactFileName: d.exactFileName,
+      exactOrder: d.exactOrder ?? null,
+      documentType: d.documentType ?? null,
+      format: d.format,
+    })),
   });
 
   const byId = new Map(scopedDocs.map((d) => [d.id, d]));

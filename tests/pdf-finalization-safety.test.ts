@@ -262,7 +262,14 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
     it("assembleFinalSubmissionZip lists the exact PDF filename and the manifest matches the archive", async () => {
       const pdfBytes = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF");
       const result = await assembleFinalSubmissionZip(
-        [{ name: "Technical Proposal.pdf", generatedDocId: "d1" } as never],
+        [{
+          name: "Technical Proposal.pdf",
+          source: "GENERATED_DOC",
+          generatedDocId: "d1",
+          order: 1,
+          envelope: "TECHNICAL",
+          format: "PDF",
+        }],
         [{ generatedDocId: "d1", bytes: pdfBytes }],
       );
       assert.deepEqual(result.fileList, ["Technical Proposal.pdf"]);

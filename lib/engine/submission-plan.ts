@@ -146,6 +146,18 @@ function inferFormat(fileName: string, fallback?: string | null): SubmissionPlan
   return "DOCX";
 }
 
+/**
+ * Canonical format inference shared by the submission-plan producer and the
+ * final-package manifest. Keeping one classifier prevents the plan and the
+ * exported ZIP from recording contradictory formats for the same filename.
+ */
+export function inferSubmissionPlanFormat(
+  fileName: string,
+  fallback?: string | null,
+): SubmissionPlanFormat {
+  return inferFormat(fileName, fallback);
+}
+
 function fileNameWithExtension(fileName: string, format: SubmissionPlanFormat): string {
   const trimmed = fileName.trim();
   if (/\.[a-z0-9]{2,5}$/i.test(trimmed)) return trimmed;

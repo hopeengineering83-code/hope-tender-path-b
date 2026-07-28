@@ -68,11 +68,23 @@ This ledger records only findings supported by source or runtime evidence. A fin
 
 - Severity: HIGH
 - Pass: 1 / 4 / 5
-- Status: OPEN
-- Primary files: `lib/engine/final-zip-assembly.ts`, `app/api/tenders/[id]/download/route.ts`, `lib/engine/workflow/zip-finalizer.ts`
+- Status: FIXED_LOCAL — authenticated persisted-package/runtime acceptance open
+- Primary files: `lib/engine/final-zip-assembly.ts`, `lib/engine/final-zip-scope.ts`, `app/api/tenders/[id]/download/route.ts`
 - Root cause: production manifest entries contain filename/order/hash/byte length but omit envelope and format; a separate workflow ZIP finalizer is exercised by binary tests but is not the production download owner.
 - Impact: stored manifest cannot fully prove tender envelope/format compliance; tests can pass against a disconnected implementation.
-- Required fix: one ZIP owner, one manifest schema including exact filename, plan order, envelope, format, byte length and SHA-256; reopen archive and verify every entry against that manifest.
+- Fix: removed the disconnected workflow finalizer and moved every affected
+  binary/behavioral test to `assembleFinalSubmissionZip`. Canonical scope
+  entries now carry a unique positive exact plan order, inferred submission
+  envelope and canonical plan format. The persisted production manifest
+  records those fields with exact filename, byte length and SHA-256; assembly
+  sorts by plan order, rejects duplicate plan positions, reopens the archive
+  and recomputes each entry's length and hash.
+- Regression proof: the new authority contract failed 3/3 before
+  implementation and passes 3/3 after. The broader affected scope, assembly,
+  Build Plan, PDF, release-package, static-safety and binary-inspection set
+  passes 213/213; TypeScript, ESLint and release-integrity audits are clean.
+  An authenticated isolated-database download proving the persisted
+  `ExportPackage.manifestJson` remains open.
 
 ## PR1175-F005 — Exact-head generated-file evidence is synthetic, not full-pipeline acceptance
 
@@ -81,7 +93,10 @@ This ledger records only findings supported by source or runtime evidence. A fin
 - Status: OPEN
 - Evidence: downloaded exact-head artifact `exact-head-acceptance-01aa154...`
 - Observed: DOCX contains two paragraphs with no TOC, heading hierarchy, header, footer or branding; PDF is one synthetic page; ZIP contains only those two synthetic files.
-- Root cause: `tests/generated-output-binary-inspection.test.ts` constructs bytes directly and calls the secondary ZIP finalizer.
+- Root cause: `tests/generated-output-binary-inspection.test.ts` constructs
+  bytes directly. It now calls the canonical production assembler, but still
+  bypasses upload, persisted analysis, planning, matching, review and the
+  authenticated download route.
 - Impact: artifact proves isolated file parsing/hash parity only, not upload → extraction → analysis → plan → matching → generation → review → PDF → ZIP.
 - Required fix: realistic fixtures and an authenticated persisted full-pipeline test using production owners.
 

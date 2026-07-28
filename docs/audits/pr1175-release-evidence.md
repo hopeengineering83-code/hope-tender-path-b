@@ -12,7 +12,7 @@ Status: **IN PROGRESS — release acceptance not established**
 - PR state at audit start: open, draft, unmerged
 - Changed files: 656
 - Commits: 656
-- Previous published audit checkpoint: `66ff075233571ec281c10aabafce3811855b35b8`
+- Previous published audit checkpoint: `41c802d2b518d89e7b122a81efafbc536a3dde7c`
 
 ## GitHub checks observed
 
@@ -132,6 +132,7 @@ This proves deployment identity and basic health only. No complete authenticated
 | durable upload/extraction authority | failing-before 7/7; passing-after 7/7; 382/382 affected assertions across 92 suites; TypeScript, ESLint, release-integrity audits clean |
 | review-provenance critical schema | failing-before contract; 3/3 behavioral contract and 63/63 schema/migration/preview-regression assertions; TypeScript/ESLint clean |
 | complete support-record Review Inbox | failing-before focused contract; passing 4/4; 60/60 related privacy/RBAC/provenance/concurrency assertions; TypeScript/ESLint clean |
+| sole Final ZIP owner and complete manifest authority | failing-before 3/3; passing-after 3/3; 213/213 affected scope/assembly/Build Plan/PDF/package/static-safety/binary assertions; TypeScript/ESLint/release-integrity clean |
 
 ## Child audit checkpoint CI
 
@@ -159,6 +160,7 @@ without `RUN_DB_INTEGRATION=true`.
 **NOT READY FOR MERGE OR PRODUCTION.**
 
 Open critical/high findings include database-backed extraction concurrency,
-incomplete/duplicated ZIP manifest
-authority, synthetic rather than full-pipeline file evidence, migration-test
-races, exact-preview schema acceptance, and incomplete CI evidence retention.
+synthetic rather than full-pipeline file evidence, migration-test races,
+exact-preview schema acceptance, and incomplete CI evidence retention. Final
+ZIP authority is fixed locally, but persisted authenticated runtime acceptance
+has not yet been established.
