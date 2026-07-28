@@ -39,11 +39,12 @@ test("only indispensable unresolved delivery facts block", () => {
   }
 });
 
-test("one mutation owner and one final ZIP owner are enforced", () => {
+test("one mutation owner and one final ZIP preparation owner are enforced", () => {
   assert.doesNotThrow(assertUniqueMutationOwners);
-  const zipActions = Object.values(TENDER_ACTIONS).filter((action) => action.mutation?.includes("/export/zip"));
+  const zipActions = Object.values(TENDER_ACTIONS).filter((action) => action.mutation === "POST /api/tenders/:id/export");
   assert.equal(zipActions.length, 1);
-  assert.equal(zipActions[0]?.owner, "OutputsWorkspace");
+  assert.equal(zipActions[0]?.owner, "ExportReadinessPanel");
+  assert.equal(zipActions[0]?.label, "Prepare final ZIP");
 });
 
 test("semantic icons have no collisions", () => {
