@@ -1,8 +1,10 @@
 import { after, before, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
+import { Document, Packer, Paragraph, TextRun } from "docx";
 import { prisma, prismaReady } from "../lib/prisma";
 import { persistVerifiedExportPackageDownload } from "../lib/engine/export-package-persistence";
+import { assembleFinalSubmissionZip } from "../lib/engine/final-zip-assembly";
 
 if (process.env.RUN_DB_INTEGRATION !== "true") {
   console.error("FATAL: RUN_DB_INTEGRATION=true is required for this test suite.");
@@ -50,6 +52,42 @@ describe("verified export package persistence", () => {
     await prisma.exportPackage.deleteMany({ where: { tenderId } });
     await prisma.tender.deleteMany({ where: { id: tenderId } });
     await prisma.user.deleteMany({ where: { id: { in: [userId, otherUserId] } } });
+  });
+
+  it("assembles real DOCX bytes, verifies the ZIP, and persists the exact archive identity", async () => {
+    const docxBytes = await Packer.toBuffer(new Document({
+      sections: [{ children: [
+        new Paragraph({ children: [new TextRun({ text: "Technical Proposal", bold: true })] }),
+        new Paragraph("Source-grounded technical submission content."),
+      ] }],
+    }));
+    const assembled = await assembleFinalSubmissionZip([
+      {
+        name: "Technical-Proposal.docx",
+        source: "GENERATED_DOC",
+        generatedDocId: "doc-technical",
+        order: 1,
+        envelope: "TECHNICAL",
+        format: "DOCX",
+      },
+    ], [{ generatedDocId: "doc-technical", bytes: docxBytes }]);
+    assert.equal(assembled.buffer[0], 0x50);
+    assert.equal(assembled.buffer[1], 0x4b);
+    assert.equal(assembled.manifest[0]?.sha256, createHash("sha256").update(docxBytes).digest("hex"));
+
+    const result = await persistVerifiedExportPackageDownload(prisma, {
+      tenderId,
+      userId,
+      fileListJson: JSON.stringify(assembled.fileList),
+      manifestJson: JSON.stringify(assembled.manifest),
+      packageSha256: assembled.packageSha256,
+      packageByteLength: assembled.buffer.length,
+    });
+    assert.equal(result.packageSha256, createHash("sha256").update(assembled.buffer).digest("hex"));
+    assert.equal(result.packageByteLength, assembled.buffer.length);
+    assert.deepEqual(JSON.parse(result.manifestJson ?? "[]"), assembled.manifest);
+    const tender = await prisma.tender.findUniqueOrThrow({ where: { id: tenderId }, select: { status: true, stage: true } });
+    assert.deepEqual(tender, { status: "EXPORTED", stage: "EXPORT" });
   });
 
   it("atomically persists a verified snapshot and moves the owned tender to EXPORTED", async () => {
