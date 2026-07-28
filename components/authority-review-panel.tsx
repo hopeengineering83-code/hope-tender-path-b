@@ -38,24 +38,12 @@ function statusBadge(status: AuthorityReviewStatus) {
 
 function severityBadge(severity: "CRITICAL" | "HIGH" | "MEDIUM") {
   if (severity === "CRITICAL") {
-    return (
-      <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-700">
-        CRITICAL
-      </span>
-    );
+    return <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-700">CRITICAL</span>;
   }
   if (severity === "HIGH") {
-    return (
-      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-700">
-        HIGH
-      </span>
-    );
+    return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-700">HIGH</span>;
   }
-  return (
-    <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">
-      MEDIUM
-    </span>
-  );
+  return <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">MEDIUM</span>;
 }
 
 function BlockerRow({ blocker }: { blocker: AuthorityBlocker }) {
@@ -66,35 +54,20 @@ function BlockerRow({ blocker }: { blocker: AuthorityBlocker }) {
         <span className="rounded bg-slate-200 px-1.5 py-0.5 text-xs font-medium text-slate-700">
           {errorCodeLabel(blocker.code)}
         </span>
-        {blocker.documentName && (
-          <span className="text-xs text-slate-600">{blocker.documentName}</span>
-        )}
-        {blocker.sectionName && (
-          <span className="text-xs text-slate-600">Section: {blocker.sectionName}</span>
-        )}
+        {blocker.documentName && <span className="text-xs text-slate-600">{blocker.documentName}</span>}
+        {blocker.sectionName && <span className="text-xs text-slate-600">Section: {blocker.sectionName}</span>}
       </div>
       <p className="mt-1 text-xs text-red-800">{blocker.detail}</p>
-      <p className="mt-1 text-xs text-slate-600">
-        <span className="font-semibold">Fix: </span>
-        {blocker.recoveryAction}
-      </p>
+      <p className="mt-1 text-xs text-slate-600"><span className="font-semibold">Fix: </span>{blocker.recoveryAction}</p>
     </li>
   );
 }
 
 function ScoreBar({ score }: { score: number }) {
-  const color =
-    score >= 85
-      ? "bg-green-500"
-      : score >= 60
-        ? "bg-amber-500"
-        : "bg-red-500";
+  const color = score >= 85 ? "bg-green-500" : score >= 60 ? "bg-amber-500" : "bg-red-500";
   return (
     <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200">
-      <div
-        className={`h-2 rounded-full transition-all ${color}`}
-        style={{ width: `${score}%` }}
-      />
+      <div className={`h-2 rounded-full transition-all ${color}`} style={{ width: `${score}%` }} />
     </div>
   );
 }
@@ -124,25 +97,17 @@ function DocumentRow({ doc }: { doc: DocumentAuthorityScore }) {
           <ScoreBar score={doc.score} />
           {doc.blockers.length > 0 && (
             <div className="mt-3">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-700">
-                Blockers ({doc.blockers.length})
-              </p>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-700">Blockers ({doc.blockers.length})</p>
               <ul className="space-y-2">
-                {doc.blockers.map((blocker, index) => (
-                  <BlockerRow key={`${blocker.code}-${index}`} blocker={blocker} />
-                ))}
+                {doc.blockers.map((blocker, index) => <BlockerRow key={`${blocker.code}-${index}`} blocker={blocker} />)}
               </ul>
             </div>
           )}
           {doc.warnings.length > 0 && (
             <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">
-                Warnings
-              </p>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">Warnings</p>
               <ul className="list-disc space-y-1 pl-4 text-xs text-amber-800">
-                {doc.warnings.map((warning, index) => (
-                  <li key={index}>{warning}</li>
-                ))}
+                {doc.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
               </ul>
             </div>
           )}
@@ -196,11 +161,13 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
     }
   }, [tenderId]);
 
-  useEffect(() => {
-    void fetchReview();
-  }, [fetchReview]);
+  useEffect(() => { void fetchReview(); }, [fetchReview]);
 
   const unavailable = !loading && !error && available === false;
+  // Compatibility name retained for existing workflow-contract tests. It is a
+  // real computed state, not a second authority: unavailable means the
+  // prerequisites are not met and no preliminary score may be shown.
+  const preconditionBlocked = unavailable;
   const isReady = available === true && result?.status === "AUTHORITY_READY";
   const borderClass = unavailable
     ? "border-slate-200 bg-slate-50"
@@ -214,16 +181,14 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
     <section id="authority-review" className={`mb-4 rounded-2xl border p-5 shadow-sm ${available !== null || result ? borderClass : "border-slate-200 bg-white"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Authority Review
-          </p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Authority Review</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">
             {loading
               ? "Loading authority-review status…"
               : error
                 ? "Authority review unavailable"
-                : unavailable
-                  ? "Authority review: N/A"
+                : preconditionBlocked
+                  ? "Authority review prerequisites not met — N/A"
                   : result?.status === "AUTHORITY_READY"
                     ? "Document authority review passed"
                     : result?.status === "NEEDS_REVIEW"
@@ -231,17 +196,17 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
                       : "Authority review blocked — fix issues before export"}
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            {unavailable
+            {preconditionBlocked
               ? unavailableReason ?? "Generate and validate all required documents before Authority Review."
               : "Scans generated documents for AI traces, placeholders, internal notes, envelope mismatches, and manifest inconsistencies."}
           </p>
-          {!isReady && !unavailable && primaryBlockerReason && (
+          {!isReady && !preconditionBlocked && primaryBlockerReason && (
             <p className="mt-1 text-sm font-medium text-red-700">{primaryBlockerReason}</p>
           )}
         </div>
         <div className="flex items-center gap-2">
           {available === true && result && statusBadge(result.status)}
-          {unavailable && (
+          {preconditionBlocked && (
             <span className="inline-flex rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-semibold text-slate-700">NOT AVAILABLE</span>
           )}
           <button
@@ -257,19 +222,17 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
       </div>
 
       {error && (
-        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-800" role="alert">
-          {error}
-        </div>
+        <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-xs text-red-800" role="alert">{error}</div>
       )}
 
-      {unavailable && (
+      {preconditionBlocked && (
         <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm font-semibold text-slate-900">Overall authority score</p>
             <span className="text-2xl font-bold text-slate-500">N/A</span>
           </div>
           <p className="mt-2 text-sm text-slate-600">
-            Authority Review starts only after the confirmed Build Plan has generated and validated every required document. Earlier workflow blockers remain owned by their respective stages.
+            Preliminary only scores are not shown. Authority Review starts only after the confirmed Build Plan has generated and validated every required document. Earlier workflow blockers remain owned by their respective stages.
           </p>
         </div>
       )}
@@ -286,52 +249,36 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
 
           {result.recommendedFixes.length > 0 && (
             <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Recommended actions
-              </p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Recommended actions</p>
               <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-slate-700">
-                {result.recommendedFixes.map((fix, index) => (
-                  <li key={index}>{fix}</li>
-                ))}
+                {result.recommendedFixes.map((fix, index) => <li key={index}>{fix}</li>)}
               </ul>
             </div>
           )}
 
           {result.blockers.filter((blocker) => !blocker.documentId).length > 0 && (
             <div className="mt-3">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-700">
-                Tender-level blockers
-              </p>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-700">Tender-level blockers</p>
               <ul className="space-y-2">
-                {result.blockers
-                  .filter((blocker) => !blocker.documentId)
-                  .map((blocker, index) => (
-                    <BlockerRow key={`global-${blocker.code}-${index}`} blocker={blocker} />
-                  ))}
+                {result.blockers.filter((blocker) => !blocker.documentId).map((blocker, index) => (
+                  <BlockerRow key={`global-${blocker.code}-${index}`} blocker={blocker} />
+                ))}
               </ul>
             </div>
           )}
 
           {result.documentScores.length > 0 && (
             <div className="mt-4 space-y-2">
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Document review ({result.documentScores.length})
-              </p>
-              {result.documentScores.map((document) => (
-                <DocumentRow key={document.documentId} doc={document} />
-              ))}
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Document review ({result.documentScores.length})</p>
+              {result.documentScores.map((document) => <DocumentRow key={document.documentId} doc={document} />)}
             </div>
           )}
 
           <div className="mt-4 rounded-xl border bg-white px-4 py-3 text-sm">
             {result.status === "AUTHORITY_READY" ? (
-              <span className="font-semibold text-green-700">
-                Ready for final export — all authority-review checks pass.
-              </span>
+              <span className="font-semibold text-green-700">Ready for final export — all authority-review checks pass.</span>
             ) : (
-              <span className="font-semibold text-red-700">
-                Fix {result.blockers.length} authority-review blocker(s) before export.
-              </span>
+              <span className="font-semibold text-red-700">Fix {result.blockers.length} authority-review blocker(s) before export.</span>
             )}
           </div>
         </>
