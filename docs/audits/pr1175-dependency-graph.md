@@ -1,7 +1,8 @@
 # PR #1175 Transitive Dependency Graph
 
-Frozen source SHA: `01aa15406e397facb1d1cd373417641914a02d73`  
-Audit status: **IN PROGRESS**
+Governing source SHA: `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`
+Audit branch: `audit/pr1175-complete-five-pass-forensic-audit`
+Audit status: **IN PROGRESS — DO NOT MERGE**
 
 This document records the end-to-end authority graph being audited. It is not a claim that every node is closed.
 
@@ -17,26 +18,21 @@ This document records the end-to-end authority graph being audited. It is not a 
 → file signature/MIME validation
 → storage adapter `putFile`
 → persisted-byte integrity inspection
-→ **current defect: synchronous `extractTextFromBuffer`/OCR in request**
-→ inferred tender metadata
-→ `Tender` + `TenderFile` transaction
-→ package `TenderWorkflowRun` rows
-→ source evidence enrichment/candidate pipeline
-→ audit log
-→ `queueAutomaticTenderPipeline`
-→ AI analysis job
+→ `Tender` + `TenderFile` + package `TenderWorkflowRun` rows
+→ exact source-hash-bound `EXTRACT_TEXT` job
+→ canonical extraction worker
+→ optimistic extraction persistence and truncation disclosure
+→ current-source metadata/enrichment
+→ all-active-file/package readiness recheck
+→ canonical AI analysis job
 → analysis revision
 → requirements and facts
 → submission plan
 → matching/generation continuation.
 
-Required target graph:
-
-request validation/hash/storage/minimal rows
-→ deterministic `SOURCE_EXTRACTION` job keyed by company+tender+source hash+extraction revision+stage+purpose
-→ per-file/per-page checkpoints
-→ extraction terminal state
-→ exact-once continuation into current analysis revision.
+The request-bound extraction root is fixed locally. Deletion/cancellation,
+two-worker concurrency, and exact-preview continuation still require
+isolated-database/runtime proof.
 
 ## 2. Company Vault review authority
 
@@ -124,3 +120,25 @@ Current evidence gap:
 
 - Exact-head artifact preserves the build log and synthetic generated files but omits the configured migration/drift/release-integrity logs and all success logs for typecheck, lint, unit tests and Playwright.
 - Screenshot detail index covers 37 page patterns × 3 viewports, but the summary contains a contradictory zero route-coverage count.
+
+## 6. Review-provenance schema compatibility
+
+```text
+Prisma schema review fields
+→ additive migration 20260727130000
+→ migrate-deploy-safe
+→ check-critical-schema information_schema query
+→ pure critical-schema evaluator
+→ fail deployment on a missing authority-bearing column
+→ runtime compatibility loader excludes support evidence fail-closed
+→ engine/generation/bid-strategy consumers
+→ sanitized public job diagnostic
+```
+
+The prior critical-schema script did not enumerate the
+`LegalRecord`/`FinancialRecord`/`CompanyComplianceRecord` review columns, so
+its success could not disprove the screenshot P2022. The canonical contract
+now requires all three tables and their `trustLevel`, reviewer, review notes,
+and source-document fields. Applying migrations to an isolated preview
+database remains an infrastructure prerequisite; compatibility code is not a
+substitute for that migration.

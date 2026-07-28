@@ -44,7 +44,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; authority checkpoint published; durable extraction root fixed locally | Publish the extraction checkpoint, then investigate the exact preview schema/runtime failure |
+| Codex | `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271 | Five-pass current-head forensic audit of PR #1175 | source/review authority, signature approval, upload/extraction queue, generation/export truth, audit ledgers | Active; extraction checkpoint published; preview critical-schema gate fixed locally | Publish the schema checkpoint, then continue Review Inbox/concurrency and generation/export authority passes |
 
 ### Lock rules
 
@@ -69,7 +69,19 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Session Log
 
-### 2026-07-28T18:20:00Z — Codex
+### 2026-07-28T16:14:00Z — Codex
+
+- **Mode:** five-pass forensic audit checkpoint — preview schema/runtime truth.
+- **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains frozen, draft and unmerged.
+- **Runtime evidence:** supplied screenshot deployment `dpl_DNyVb6zVZZgtxUyso5Z1c6apPwKN` is bound to `aed98737…`; its visible P2022 reports missing `LegalRecord.trustLevel`. Vercel no longer retains those historical lines. Governing deployment `dpl_yYMggEEnQbJemQtmMHioee15eZnN` is bound to `ec0eaa83…` and has no retained last-day error/500 rows, but no authenticated traffic proves the affected path.
+- **Root cause and fix:** the additive review-provenance migration and runtime fail-closed compatibility loader exist, but the deploy-time critical-schema gate did not require any Legal/Financial/Compliance review columns. Extracted one pure schema contract used by the production probe and added all three authority-bearing tables/column families; a missing column now fails the actual evaluator.
+- **Documentation:** consolidated evidence into the four exact mandated `docs/audits/pr1175-*` ledgers and removed the temporary duplicate root ledgers.
+- **Tests:** new contract failed before implementation; 3/3 behavioral schema assertions and 63/63 related schema/migration/preview assertions pass; TypeScript and ESLint clean. No database execution is claimed because this workspace has no isolated PostgreSQL service.
+- **Security:** no real-account test was run. Password rotation, session revocation, GitHub secret update and retained-artifact sanitization remain mandatory.
+- **Next action:** publish this fail-closed checkpoint, renew exact-head CI/deployment identity, then continue the Review Inbox/concurrency and generation/export authority roots.
+- **Merge status:** **UNSAFE — DO NOT MERGE OR DEPLOY.**
+
+### 2026-07-28T16:03:00Z — Codex
 
 - **Mode:** five-pass forensic audit checkpoint — background extraction authority.
 - **Branch / PR:** `audit/pr1175-complete-five-pass-forensic-audit` / draft PR #1271; governing PR #1175 remains draft and unmerged.

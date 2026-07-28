@@ -135,7 +135,7 @@ describe("P1-8 — check-critical-schema includes critical tables", () => {
 
   for (const table of requiredNewTables) {
     it(`REQUIRED_TABLES includes ${table}`, () => {
-      const src = read("scripts/check-critical-schema.mjs");
+      const src = read("scripts/critical-schema-contract.mjs");
       assert.match(src, new RegExp(`"${table}"`), `REQUIRED_TABLES must include ${table}`);
     });
   }

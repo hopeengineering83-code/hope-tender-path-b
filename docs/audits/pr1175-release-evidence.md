@@ -6,13 +6,13 @@ Status: **IN PROGRESS — release acceptance not established**
 
 - PR: #1175
 - Source branch: `release/consolidated-recovery-20260717`
-- Frozen source SHA: `01aa15406e397facb1d1cd373417641914a02d73`
+- Frozen source SHA: `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`
 - PR-reported base SHA: `b3c9db5de89a2a665e61a83facbff0f276f9983c`
-- Audit branch: `audit/pr1175-five-pass-transitive-forensic-audit`
+- Audit branch: `audit/pr1175-complete-five-pass-forensic-audit`
 - PR state at audit start: open, draft, unmerged
-- Changed files: 629
-- Commits: 638
-- Comparison: diverged; source head is one commit behind the base-side history
+- Changed files: 656
+- Commits: 656
+- Published audit checkpoint: `ac8bd3b215e9eeb6ca76d51822d4e39513c1f99b`
 
 ## GitHub checks observed
 
@@ -97,7 +97,7 @@ Disposition: these files prove isolated container validity and hash parity only.
 - Screenshots are navigation/rendering evidence; they do not prove mutations, persistence, tenant isolation, job recovery or final-file correctness.
 - Review Inbox screenshots visibly expose only Experts and Projects; no legal/financial/compliance review queue is present.
 
-## Vercel preview identity
+## Historical donor Vercel preview identity
 
 - Deployment: `dpl_VKccUHESfqf7Kfuir7j8kcmvQ634`
 - Project: `hope-tender-path-b`
@@ -110,8 +110,38 @@ Disposition: these files prove isolated container validity and hash parity only.
 
 This proves deployment identity and basic health only. No complete authenticated production-owner workflow has yet been executed against the preview.
 
+## Current governing and screenshot deployments
+
+- Supplied screenshot deployment:
+  `dpl_DNyVb6zVZZgtxUyso5Z1c6apPwKN`, SHA `aed98737…`.
+- Current governing deployment:
+  `dpl_yYMggEEnQbJemQtmMHioee15eZnN`, SHA `ec0eaa83…`, READY.
+- The screenshot deployment visibly exposed P2022 for
+  `LegalRecord.trustLevel` and bid-strategy HTTP 500.
+- Vercel runtime-log retention no longer contains the historical screenshot
+  lines. This absence is not closure evidence.
+- The current governing deployment returned no error/fatal or HTTP 500 rows in
+  the inspected last-day window, but no authenticated real workflow was run.
+  This is also not closure evidence.
+
+## Current local command evidence
+
+| Checkpoint | Evidence |
+|---|---|
+| evidence authority/signature boundary | TypeScript clean; 126/126 focused/transitive assertions |
+| durable upload/extraction authority | failing-before 7/7; passing-after 7/7; 382/382 affected assertions across 92 suites; TypeScript, ESLint, release-integrity audits clean |
+| review-provenance critical schema | failing-before contract; 3/3 behavioral contract and 63/63 schema/migration/preview-regression assertions; TypeScript/ESLint clean |
+
+No isolated PostgreSQL, build, Playwright, DOCX/PDF/ZIP full-pipeline, audit-head
+Vercel preview, or real-account result is claimed. Local Node is 24.14 while
+the repository requires Node `>=22 <23`.
+
 ## Release disposition
 
 **NOT READY FOR MERGE OR PRODUCTION.**
 
-Open critical/high findings include request-bound extraction/OCR, missing legal/financial/compliance Review Inbox coverage, ineffective review concurrency guards, incomplete/duplicated ZIP manifest authority, synthetic rather than full-pipeline file evidence, migration-test races and incomplete CI evidence retention.
+Open critical/high findings include database-backed extraction concurrency,
+missing legal/financial/compliance Review Inbox coverage, ineffective review
+concurrency guards, incomplete/duplicated ZIP manifest authority, synthetic
+rather than full-pipeline file evidence, migration-test races, exact-preview
+schema acceptance, and incomplete CI evidence retention.

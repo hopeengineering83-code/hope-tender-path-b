@@ -1,7 +1,7 @@
 # PR #1175 Five-Pass Gap Ledger
 
-Audit branch: `audit/pr1175-five-pass-transitive-forensic-audit`  
-Frozen source SHA: `01aa15406e397facb1d1cd373417641914a02d73`  
+Audit branch: `audit/pr1175-complete-five-pass-forensic-audit`
+Frozen governing SHA: `ec0eaa83af3d3616bf935b9a3f950af734bcc6ca`
 Base SHA reported by PR: `b3c9db5de89a2a665e61a83facbff0f276f9983c`  
 Status: **IN PROGRESS — do not merge**
 
@@ -11,14 +11,19 @@ This ledger records only findings supported by source or runtime evidence. A fin
 
 - Severity: CRITICAL
 - Pass: 2 / 4 / 5
-- Status: OPEN
+- Status: FIXED_LOCAL — database/runtime acceptance open
 - Canonical owner: tender source-ingestion job pipeline
 - Primary files: `lib/tender-upload-first.ts`, `app/api/tenders/upload-first/route.ts`, tender file append/upload routes, extraction job handlers
 - Reproduction: upload a multi-file package containing files whose extraction approaches the request budget.
-- Root cause: the request stores each file and immediately awaits `extractTextFromBuffer`; a hard 45-second request deadline can skip remaining files. The subsequent all-files count check deletes already stored files and rejects the intake.
+- Root cause: the request stored each file and immediately awaited `extractTextFromBuffer`, while the registered durable extraction producer had no production caller. Company upload similarly trusted request-time extracted text.
 - User impact: valid large tender packages can time out, be rolled back, require manual re-upload, or never obtain a durable resumable extraction identity.
-- Required fix: upload request must validate, hash, store, persist minimal source rows, invalidate dependents, enqueue/reuse deterministic per-source extraction jobs, and return. Extraction/OCR must checkpoint and resume in workers.
-- Regression proof required: interrupted request, two workers, replayed first batch, partial batch, stale lease, retry after success, revision change during extraction.
+- Fix: request handlers persist verified bytes/source/package state and exact
+  content-hash-bound extraction jobs. The canonical worker exclusively owns
+  extraction, metadata enrichment and continuation; company ingestion forces
+  background re-extraction.
+- Regression proof: new wiring contract failed 7/7 before and passes 7/7 after;
+  affected transitive suite 382/382. Two-worker deletion/cancellation and exact
+  preview runtime proof remain open.
 
 ## PR1175-F002 — Review Inbox omits legal, financial and compliance records
 
@@ -105,11 +110,28 @@ This ledger records only findings supported by source or runtime evidence. A fin
 - Impact: release evidence contains contradictory coverage fields and cannot be treated as authoritative without inspecting the raw route index.
 - Required fix: derive summary and detailed index from one canonical calculation and add schema/consistency assertions.
 
-## PR1175-F010 — PR branch is behind its base-side history
+## PR1175-F010 — Donor audit branch was behind its base-side history
 
 - Severity: MEDIUM
 - Pass: 1 / 5
-- Status: OPEN
-- Evidence: commit comparison reports the PR head 638 commits ahead and one commit behind, with merge base `7bb55fab7d81bfa9accd7a77b0d3a63c3f37bfde`.
-- Impact: exact-head success does not test the eventual integration result containing the base-only commit.
-- Required fix: identify and audit the base-only commit, reconcile it without discarding PR work, then rerun all affected passes on the resulting frozen SHA.
+- Status: CLOSED_AS_STALE
+- Evidence: that comparison described the obsolete donor audit. The current
+  audit branch was created directly from the re-fetched PR #1175 head
+  `ec0eaa83…`, which was rechecked unchanged before both published
+  checkpoints.
+- Required continuing control: stop and compare every intervening commit if
+  the governing head moves.
+
+## Current-head findings added after the donor audit
+
+| ID | Severity | Pass | Status | Root cause / disposition |
+|---|---|---|---|---|
+| PR1175-F011 | CRITICAL | 3 | VERIFIED_LOCAL | Automatic ingestion fabricated `REVIEWED` plus `SYSTEM_AUTO_VERIFIED`. Canonical transition now produces `SOURCE_VERIFIED` with null human identity and repairs legacy fabricated rows. |
+| PR1175-F012 | CRITICAL | 3/4 | VERIFIED_LOCAL | Generation automatically inserted signature/stamp assets. Both invocation paths and the competing mutator were removed; uploaded assets are not legal approval. |
+| PR1175-F013 | HIGH | 1/2 | VERIFIED_LOCAL | A second unreachable `EXTRACT_TEXT` implementation remained in the legacy handler. It is removed; handler registration binds to the canonical service. |
+| PR1175-F014 | HIGH | 2/4 | FIXED_LOCAL | Company upload trusted request-time text. It now persists pending extraction and queues `VAULT_INGEST` with `reExtractAll: true`; DB integration remains open. |
+| PR1175-F015 | CRITICAL | 2/5 | FIXED_LOCAL / RUNTIME OPEN | Screenshot deployment queried `LegalRecord.trustLevel` before its database had the additive migration. Runtime evidence consumers fail closed through the compatibility loader, and the deploy-time critical-schema evaluator now requires every authority-bearing column. Isolated-preview migration and exact runtime proof remain open. |
+| PR1175-F016 | HIGH | 5 | OPEN | Supplied preview showed bid-strategy HTTP 500. Later code routes support-record loads through the compatibility boundary, but no retained authenticated runtime request proves closure. |
+| PR1175-F017 | HIGH | 4/5 | OPEN | Mandatory FULL/Covered rows were shown as UNKNOWN elsewhere. One revision-bound selector across panels remains to be proved. |
+| PR1175-F018 | HIGH | 4/5 | OPEN | Required-document, Build Plan and PDF state disagreed across panels. Cross-route reconciliation remains open. |
+| PR1175-F019 | MEDIUM | 4/5 | OPEN | Repeated competing blocker panels/actions obscure one next action. Canonical lifecycle action ownership remains open. |
