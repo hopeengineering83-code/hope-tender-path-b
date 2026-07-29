@@ -40,8 +40,8 @@ type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; err
  * extraction pass over every usable document could otherwise risk the
  * upload request's timeout). This badge tells the user their newly
  * uploaded document has been queued for re-ingestion, so they know not to
- * expect it in the Review Board instantly, without needing a live-polling
- * progress indicator — refreshing the Review Board after a short wait
+ * expect it in the Review Inbox instantly, without needing a live-polling
+ * progress indicator — refreshing the Review Inbox after a short wait
  * shows the new drafts once the job completes.
  */
 type VaultPipelineStatus = {
@@ -352,17 +352,17 @@ export default function CompanyPage() {
           // Surface the auto-pipeline status. Ingestion now runs in the
           // background, so this badge tells the user their newly uploaded
           // document has been queued for re-ingestion — check back in the
-          // Review Board shortly, rather than the old "already done" message.
+          // Review Inbox shortly, rather than the old "already done" message.
           if (data.companyImport && data.companyImport.status === "QUEUED") {
             setVaultPipeline({
               phase: "queued",
-              message: "Document stored. Vault re-ingestion queued — new drafts will appear in the Review Board shortly.",
+              message: "Document stored. Vault re-ingestion queued — new drafts will appear in the Review Inbox shortly.",
               at: Date.now(),
             });
           } else if (data.companyImport && data.companyImport.status === "FAILED") {
             setVaultPipeline({
               phase: "failed",
-              message: "Document stored, but vault re-ingest could not be queued. Open the Review Board to repair manually.",
+              message: "Document stored, but vault re-ingest could not be queued. Open the Review Inbox to repair manually.",
               at: Date.now(),
             });
           }

@@ -29,6 +29,10 @@ describe("Company Vault Review Inbox contract", () => {
   it("has one canonical review route and redirects the legacy review board", () => {
     const inbox = read("app/dashboard/company/review/page.tsx");
     const legacy = read("app/dashboard/company/review-board/page.tsx");
+    const subnav = read("components/company-subnav.tsx");
+    const generationReadiness = read("components/generation-readiness-panel.tsx");
+    const planBImport = read("app/dashboard/company/plan-b-import/page.tsx");
+    const deepReasoning = read("lib/engine/deep-reasoning-readiness.ts");
 
     assert.match(inbox, /Review Inbox/);
     assert.match(inbox, /SOURCE_VERIFIED/);
@@ -36,6 +40,12 @@ describe("Company Vault Review Inbox contract", () => {
     assert.match(inbox, /Source verified/);
     assert.match(legacy, /redirect\("\/dashboard\/company\/review"\)/);
     assert.doesNotMatch(legacy, /fetch\s*\(|method:\s*"PATCH"|method:\s*"POST"/);
+    assert.equal((subnav.match(/href: "\/dashboard\/company\/review"/g) ?? []).length, 1);
+    assert.match(subnav, /href: "\/dashboard\/company\/review", label: "Review Inbox"/);
+    assert.doesNotMatch(subnav, /href: "\/dashboard\/company\/review-board"|label: "Diagnostics"/);
+    assert.doesNotMatch(generationReadiness, /\/dashboard\/company\/review-board|Open review board/);
+    assert.doesNotMatch(planBImport, /\/dashboard\/company\/review-board|>Review Board</);
+    assert.doesNotMatch(deepReasoning, /\/dashboard\/company\/review-board/);
   });
 
   it("returns bounded paginated records without raw source narratives", () => {

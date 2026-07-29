@@ -27,7 +27,7 @@ function actionHref(tenderId: string, action?: string): string {
   if (action === "OPEN_MATCHING_QUALITY") return `/dashboard/tenders/${tenderId}#matching-quality`;
   if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
   if (action === "REVIEW_MATCHES") return `/dashboard/tenders/${tenderId}#proposal-evidence-readiness`;
-  if (action === "OPEN_KNOWLEDGE_REVIEW") return "/dashboard/company/review-board";
+  if (action === "OPEN_KNOWLEDGE_REVIEW") return "/dashboard/company/review";
   if (action === "OPEN_COMPLIANCE_REVIEW") return "/dashboard/compliance";
   if (action === "RESOLVE_COMPLIANCE_GAPS") return "/dashboard/compliance";
   if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return `/dashboard/tenders/${tenderId}#run-engine-action`;
@@ -50,7 +50,7 @@ function buildActionLabel(action?: string): string {
   if (action === "OPEN_MATCHING_QUALITY") return "Open matching quality";
   if (action === "RUN_ENGINE") return "Run engine";
   if (action === "REVIEW_MATCHES") return "Review matches";
-  if (action === "OPEN_KNOWLEDGE_REVIEW") return "Open review board";
+  if (action === "OPEN_KNOWLEDGE_REVIEW") return "Open Review Inbox";
   if (action === "OPEN_COMPLIANCE_REVIEW" || action === "RESOLVE_COMPLIANCE_GAPS") return "Open compliance";
   if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return "Retry AI Analyze or approve fallback";
   if (action === "RETRY_AI_ANALYZE") return "Retry AI Analyze";

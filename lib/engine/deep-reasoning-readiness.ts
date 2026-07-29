@@ -127,12 +127,12 @@ export function assessDeepReasoningReadiness(input: ReadinessInput): ReadinessAs
     experts: {
       status: expertStatus,
       detail: expertDetail,
-      suggestion: expertStatus === "ok" ? null : "Open /dashboard/company/review-board and promote expert records from DRAFT → REVIEWED. Aim for at least 3 reviewed experts so the alignment Claude call has enough candidates to score.",
+      suggestion: expertStatus === "ok" ? null : "Open /dashboard/company/review and promote expert records from DRAFT → REVIEWED. Aim for at least 3 reviewed experts so the alignment call has enough candidates to score.",
     },
     projects: {
       status: projectStatus,
       detail: projectDetail,
-      suggestion: projectStatus === "ok" ? null : "Open /dashboard/company/review-board and promote project records from DRAFT → REVIEWED. Aim for at least 3 reviewed projects so the throughline enforcer + alignment have substantive evidence.",
+      suggestion: projectStatus === "ok" ? null : "Open /dashboard/company/review and promote project records from DRAFT → REVIEWED. Aim for at least 3 reviewed projects so the throughline enforcer and alignment have substantive evidence.",
     },
     "legal-records": {
       status: legalStatus,

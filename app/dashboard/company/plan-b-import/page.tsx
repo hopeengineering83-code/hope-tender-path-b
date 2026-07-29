@@ -114,7 +114,7 @@ export default function PlanBImportPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Link href="/dashboard/company/review-board" className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50">Review Board</Link>
+          <Link href="/dashboard/company/review" className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50">Review Inbox</Link>
           <Link href="/dashboard/company" className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50">Knowledge Vault</Link>
         </div>
       </div>

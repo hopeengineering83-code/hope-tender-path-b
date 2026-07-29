@@ -48,7 +48,7 @@ async function loadCandidateDocuments(companyId: string): Promise<ReviewSourceDo
 
 // Finds an owned, byte-verified document whose extracted text genuinely
 // contains every one of the record's claimed field values (the same
-// quote-containment check the Review Board's approve action and
+// quote-containment check the Review Inbox's approve action and
 // autoVerifyCompanyKnowledge already require) — never a guess, never a
 // looser match than the durable-provenance gate itself uses.
 function findMatchingDocument(
@@ -187,7 +187,7 @@ async function remapComplianceRecords(companyId: string, userId: string, documen
 // untouched (still a draft, still blocked from REVIEWED/SOURCE_VERIFIED).
 // Linking sourceDocumentId does not by itself change trustLevel — the caller
 // is expected to run source verification (autoVerifyCompanyKnowledge) and/or
-// let a human complete review in the Review Board next, exactly the same as
+// let a human complete review in the Review Inbox next, exactly the same as
 // any other evidence-linked draft.
 export async function remapUnlinkedVaultSources(companyId: string): Promise<VaultSourceRemapResult> {
   const empty: VaultSourceRemapResult = { expertsLinked: 0, projectsLinked: 0, legalRecordsLinked: 0, financialRecordsLinked: 0, complianceRecordsLinked: 0 };
