@@ -69,6 +69,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Session Log
 
+### 2026-07-29 UTC — Codex (GPT-5.6 Sol), exact-head falsification follow-up
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; #1274 was already closed and incorporated before this session.
+- **Scope:** refetched GitHub and deployment state; revalidated all four live open PR manifests; downloaded and inspected the exact `d9b87fe4…` CI artifact; repaired the route-audit hydration race and the System Safety Center's anonymous server-error race.
+- **Files changed:** `app/dashboard/admin/safety-center/page.tsx`, `e2e/pr1175-independent-release-audit.spec.ts`, `docs/audits/open-pr-unique-code-ledger-20260728.md`, and `operator_handoff.md`.
+- **Checks:** `git diff --check`; `npm run typecheck`; zero-warning focused ESLint; `node --import tsx --test tests/pr1175-final-gap-repair.test.ts` (6/6). The previous exact-head artifact had 8,930/8,930 unit/PostgreSQL tests and a nominal 178 passed / 3 skipped Playwright result, but its log disclosed one first-attempt flaky runtime-error failure; it is explicitly not accepted as final proof.
+- **CI/deployment:** new exact-head CI and Git-triggered preview pending after push. The intended `hope-tender-path-b` deployment for `d9b87fe4…` succeeded; duplicate Vercel project `repo` failed and remains an external configuration blocker. No production deployment or migration was performed.
+- **Risks/assumptions:** local browser reproduction is blocked because the configured external PostgreSQL endpoint is unreachable from this environment. Provider-backed persisted preview acceptance and runtime-log inspection remain blocked by absent approved synthetic preview credentials and Vercel log access.
+- **Next action:** push this exact repair head, require clean first-attempt CI/Playwright evidence, then inspect the matching preview before considering documentation-only PR closure.
+- **Merge status:** unsafe for merge/release approval; #1175 remains draft and unmerged.
+
 ### 2026-07-29 12:30 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175.

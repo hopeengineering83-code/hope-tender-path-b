@@ -4,6 +4,27 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+## 2026-07-29 exact-head evidence falsification follow-up
+
+The successful `d9b87fe4…` CI artifact was downloaded and inspected rather
+than treating its green conclusion as sufficient proof. Its Playwright log
+reported **one flaky first-attempt failure**: the all-routes audit reused one
+page for consecutive hard navigations, interrupted streamed React hydration,
+and recorded React error 418 plus repeated `parentNode` errors against the AI
+readiness checkpoint. The retry passed, which made the command exit zero, but
+the first-attempt runtime errors violate the zero-runtime-error acceptance
+standard. The audit now uses a fresh authenticated page per route, isolating
+runtime evidence and preventing the next route from interrupting the prior
+route's hydration.
+
+The same artifact also showed anonymous probes of the System Safety Center
+logging an `Unauthorized` server exception. Next may render the page and its
+parent layout concurrently, so the page's throwing API-style `requireRole`
+guard could lose the race to the layout redirect. The page now performs its
+own session and ADMIN lookup and uses explicit page redirects before running
+release diagnostics. These changes require a new exact-head CI and preview;
+the prior green artifact is no longer the final release proof.
+
 ## 2026-07-29 12:30 UTC live-state refresh
 
 GitHub was refetched after the controlled consolidation completed. PR #1175

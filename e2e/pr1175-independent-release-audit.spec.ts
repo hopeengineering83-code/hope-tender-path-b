@@ -165,25 +165,33 @@ test.describe("PR #1175 independent principal QA release audit", () => {
 
   test("every authenticated route renders without hidden runtime failures or disconnected controls", async ({ page }) => {
     test.setTimeout(300_000);
-    const monitor = attachRuntimeEvidence(page);
 
     for (const [label, route] of ROUTES) {
-      monitor.reset();
-      const response = await page.goto(route, { waitUntil: "domcontentloaded" });
-      expect.soft(response?.status(), `${label}: route response`).toBeLessThan(400);
-      await expect.soft(page, `${label}: must remain authenticated`).not.toHaveURL(/\/login/);
-      await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
-      await page.waitForTimeout(150);
+      // A fresh page per route prevents a following hard navigation from
+      // interrupting the previous route's streamed React hydration. Besides
+      // removing that test-created race, this attributes every runtime event
+      // to exactly one route and still shares the authenticated context.
+      const routePage = await page.context().newPage();
+      const monitor = attachRuntimeEvidence(routePage);
+      try {
+        const response = await routePage.goto(route, { waitUntil: "domcontentloaded" });
+        expect.soft(response?.status(), `${label}: route response`).toBeLessThan(400);
+        await expect.soft(routePage, `${label}: must remain authenticated`).not.toHaveURL(/\/login/);
+        await routePage.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => undefined);
+        await routePage.waitForTimeout(150);
 
-      expect.soft(await page.locator("main").count(), `${label}: page must expose a main landmark`).toBeGreaterThan(0);
-      expect.soft(await page.locator("h1:visible,h2:visible").count(), `${label}: page must expose a visible heading`).toBeGreaterThan(0);
-      expect.soft(await unnamedVisibleControls(page), `${label}: every visible control must have an accessible name`).toEqual([]);
-      expect.soft(await deadVisibleLinks(page), `${label}: visible links must have real destinations`).toEqual([]);
-      expect.soft(await duplicateIds(page), `${label}: DOM ids must be unique`).toEqual([]);
-      expect.soft(monitor.evidence.consoleErrors, `${label}: browser console`).toEqual([]);
-      expect.soft(monitor.evidence.pageErrors, `${label}: uncaught page errors`).toEqual([]);
-      expect.soft(monitor.evidence.failedRequests, `${label}: failed same-origin requests`).toEqual([]);
-      expect.soft(monitor.evidence.serverErrors, `${label}: 5xx same-origin responses`).toEqual([]);
+        expect.soft(await routePage.locator("main").count(), `${label}: page must expose a main landmark`).toBeGreaterThan(0);
+        expect.soft(await routePage.locator("h1:visible,h2:visible").count(), `${label}: page must expose a visible heading`).toBeGreaterThan(0);
+        expect.soft(await unnamedVisibleControls(routePage), `${label}: every visible control must have an accessible name`).toEqual([]);
+        expect.soft(await deadVisibleLinks(routePage), `${label}: visible links must have real destinations`).toEqual([]);
+        expect.soft(await duplicateIds(routePage), `${label}: DOM ids must be unique`).toEqual([]);
+        expect.soft(monitor.evidence.consoleErrors, `${label}: browser console`).toEqual([]);
+        expect.soft(monitor.evidence.pageErrors, `${label}: uncaught page errors`).toEqual([]);
+        expect.soft(monitor.evidence.failedRequests, `${label}: failed same-origin requests`).toEqual([]);
+        expect.soft(monitor.evidence.serverErrors, `${label}: 5xx same-origin responses`).toEqual([]);
+      } finally {
+        await routePage.close();
+      }
     }
   });
 
