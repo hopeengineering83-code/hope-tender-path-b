@@ -4,6 +4,14 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+Live refetch: **2026-07-29 11:42 UTC**. GitHub still reported six open PRs.
+The frozen heads were #1175 `b8f15162595e5a984169d97719942cf6906599bd`
+(base `integration/controlled-recovery` at `b3c9db5de89a2a665e61a83facbff0f276f9983c`)
+and #1274 `130f1c130aa63c2d17a5b5758f43ee0a9e991082` (base exactly the
+frozen #1175 head). #1274 therefore required no parent reconciliation before
+repair. GitHub reported both draft and mergeable; #1175's required CI was green,
+while #1274 had one failed job containing exactly two obsolete assertions.
+
 This ledger distinguishes ancestry, unique safe code, conflicting policy, stale audit evidence, and non-product changes. No donor is incorporated wholesale merely because it is open.
 
 | PR | Relationship to frozen #1175 | Unique-code disposition |
@@ -17,6 +25,24 @@ This ledger distinguishes ancestry, unique safe code, conflicting policy, stale 
 | #1266 | Documentation-only supplementary audit | Findings were revalidated individually. Closed findings are not replayed; remaining valid findings are repaired in #1274 or recorded as external acceptance work. |
 | #1270 | Handoff-only PR against `main` | No application/schema/test feature code. Not an eligible donor for #1175. |
 | #1274 | Current repair child | Adds revalidated gaps not already safely incorporated: live route/action ownership, migration-first development startup, production support-record eligibility tests, one real atomic Final ZIP persistence owner, truthful Authority Review availability, and #1273 dead-authority cleanup. |
+
+## 2026-07-29 exact failure disposition
+
+The two failures in `runtime-idempotency-route-security.test.ts` inspected the
+source of POST `/api/tenders/:id/export` and demanded that it create a READY
+package and supersede older packages. They contradicted the live owner model:
+POST export is readiness preflight; GET download constructs the real ZIP and
+calls `persistVerifiedExportPackageDownload`. The obsolete assertions were
+removed rather than forcing a second package creator into production.
+
+The executable PostgreSQL suite remains the load-bearing replacement. It now
+proves that the download persistence owner serializes identical requests,
+rejects a foreign tenant, rejects invalid integrity metadata without mutating a
+READY row, supersedes an older different-hash READY snapshot in the same
+transaction, persists the exact ZIP hash/length/manifest, and transitions the
+owned tender to EXPORTED. The incorporation SHA is the commit containing this
+ledger update on #1274; it must not be described as part of #1175 until that
+commit is actually incorporated there.
 
 ## Policy conflicts resolved
 

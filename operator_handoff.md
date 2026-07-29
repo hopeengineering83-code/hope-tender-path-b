@@ -180,6 +180,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-29 11:49 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `fix/pr1175-final-open-pr-audit-consolidation` / draft #1274; governing draft #1175 remained untouched, draft and unmerged.
+- **Scope / files changed:** repaired the two exact #1274 CI failures without restoring POST-export package ownership. `lib/engine/export-package-persistence.ts` now supersedes older different-hash READY snapshots inside the locked persistence transaction. PostgreSQL coverage verifies supersession and invalid-input non-mutation; obsolete POST-export source assertions were removed; the open-PR ledger records the frozen live GitHub state and disposition. Changed: `lib/engine/export-package-persistence.ts`, `tests/export-package-persistence-postgres.test.ts`, `tests/export-package-atomic-lifecycle.test.ts`, `tests/runtime-idempotency-route-security.test.ts`, `docs/audits/open-pr-unique-code-ledger-20260728.md`, and this handoff.
+- **Tests run:** `npx prisma validate` pass; `npx prisma generate` pass; targeted non-DB tests 56/56 pass; `npm run audit:release-integrity` pass (418 routes, 1390 files); `npm run typecheck` pass; `npm run lint` pass with zero warnings. The targeted PostgreSQL suite could not reach the configured Neon database from this container, so its seven cases were cancelled in the setup hook and require CI/disposable-PostgreSQL execution.
+- **GitHub/Vercel:** refetched through GitHub API. Six PRs were open (#1175, #1274, #1273, #1270, #1267, #1266). Frozen #1175=`b8f15162595e5a984169d97719942cf6906599bd`; frozen #1274=`130f1c130aa63c2d17a5b5758f43ee0a9e991082`. Two GitHub deployment records existed for the #1175 SHA (`hope-tender-path-b` and duplicate `repo`); no Vercel token was available for direct runtime-log inspection.
+- **Risks / assumptions:** full suite, disposable migrations, build, Playwright, generated-byte proof, exact-head preview workflow and runtime logs remain pending; do not incorporate into #1175 or close donor PRs until #1274 CI is fully green and these proofs complete. External credential rotation/session revocation/automation-secret/artifact sanitation/owner UAT/duplicate-Vercel-project holds remain open.
+- **Next action:** push the #1274 repair, wait for exact-head CI, and investigate any failure before considering incorporation.
+- **Merge status:** unsafe / not ready for #1175 incorporation; required database and exact-head release proof remain outstanding.
+
 ### 2026-07-27 16:44 UTC — Codex, latest-preview runtime and workflow-truth repair
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175 (keep draft). The user referenced PR #1275, but GitHub returns no such PR in `hopeengineering83-code/hope-tender-path-b`; the latest-preview footer and active branch both resolve to PR #1175.

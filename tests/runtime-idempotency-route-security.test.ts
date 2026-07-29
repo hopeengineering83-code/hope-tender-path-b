@@ -330,30 +330,14 @@ describe("15. Additional route authorization", () => {
   });
 });
 
-// ─── 16. Export package idempotency ─────────────────────────────────────────
+// Export-package lifecycle behavior is database-backed in
+// export-package-persistence-postgres.test.ts. Keeping source-shape assertions
+// here previously forced package mutation back into POST /export, competing
+// with the live Final ZIP byte owner.
 
-describe("16. Export package idempotency", () => {
-  it("export route supersedes old READY packages before creating new one", () => {
-    const src = read("app/api/tenders/[id]/export/route.ts");
-    assert.ok(src.includes("updateMany"), "must update old packages");
-    assert.ok(src.includes('status: "SUPERSEDED"'), "must supersede old READY packages");
-    assert.ok(src.includes('status: "READY"'), "must create new READY package");
-    assert.ok(src.includes("$transaction"), "must use transaction for atomicity");
-  });
+// ─── 16. Download revalidation completeness ─────────────────────────────────
 
-  it("export route never creates package when readiness fails", () => {
-    const src = read("app/api/tenders/[id]/export/route.ts");
-    // The readiness check must come BEFORE the package creation
-    const readinessIdx = src.indexOf("checkFullExportReadiness");
-    const createIdx = src.indexOf("exportPackage.create");
-    assert.ok(readinessIdx > 0 && createIdx > 0, "must have both readiness check and package creation");
-    assert.ok(readinessIdx < createIdx, "readiness check must come BEFORE package creation");
-  });
-});
-
-// ─── 17. Download revalidation completeness ─────────────────────────────────
-
-describe("17. Download revalidation completeness", () => {
+describe("16. Download revalidation completeness", () => {
   it("download route does not serve stored packages (always builds fresh)", () => {
     const src = read("app/api/tenders/[id]/download/route.ts");
     // The download route should NOT query ExportPackage to serve a stored ZIP

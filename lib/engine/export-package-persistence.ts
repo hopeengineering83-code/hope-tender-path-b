@@ -49,6 +49,16 @@ export async function persistVerifiedExportPackageDownload(
     });
 
     const verifiedAt = input.verifiedAt ?? new Date();
+    if (!existing) {
+      await tx.exportPackage.updateMany({
+        where: {
+          tenderId: input.tenderId,
+          status: "READY",
+        },
+        data: { status: "SUPERSEDED" },
+      });
+    }
+
     const exportPackage = existing
       ? await tx.exportPackage.update({
           where: { id: existing.id },

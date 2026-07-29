@@ -27,6 +27,8 @@ describe("export package atomic lifecycle authority", () => {
     assert.match(persistence, /FOR UPDATE/);
     assert.match(persistence, /WHERE "id" = \$\{input\.tenderId\} AND "userId" = \$\{input\.userId\}/);
     assert.match(persistence, /tx\.exportPackage\.findFirst/);
+    assert.match(persistence, /tx\.exportPackage\.updateMany/);
+    assert.match(persistence, /status:\s*"SUPERSEDED"/);
     assert.match(persistence, /tx\.exportPackage\.create/);
     assert.match(persistence, /tx\.tender\.update/);
     assert.match(persistence, /status:\s*"EXPORTED",\s*stage:\s*"EXPORT"/);

@@ -119,6 +119,24 @@ describe("verified export package persistence", () => {
     assert.notEqual(rows[0]?.packageSha256, rows[1]?.packageSha256);
     assert.ok(rows.some((row) => row.manifestJson?.includes("TECHNICAL")));
     assert.ok(rows.some((row) => row.manifestJson?.includes("FINANCIAL")));
+    assert.deepEqual(rows.map((row) => row.status), ["SUPERSEDED", "READY"]);
+  });
+
+  it("does not supersede or mutate a READY package when persistence input is invalid", async () => {
+    const readyBefore = await prisma.exportPackage.findFirstOrThrow({
+      where: { tenderId, status: "READY" },
+      orderBy: { createdAt: "desc" },
+    });
+    await assert.rejects(
+      persistVerifiedExportPackageDownload(prisma, {
+        ...snapshot("not-a-hash", "blocked"),
+        packageByteLength: 0,
+      }),
+      /INVALID_EXPORT_PACKAGE_SHA256|INVALID_EXPORT_PACKAGE_BYTE_LENGTH/,
+    );
+    const readyAfter = await prisma.exportPackage.findUniqueOrThrow({ where: { id: readyBefore.id } });
+    assert.equal(readyAfter.status, "READY");
+    assert.equal(readyAfter.downloadCount, readyBefore.downloadCount);
   });
 
   it("rejects a foreign tenant without writing package or lifecycle state", async () => {
