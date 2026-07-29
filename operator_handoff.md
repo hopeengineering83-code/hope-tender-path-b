@@ -69,6 +69,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Session Log
 
+### 2026-07-29 12:30 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175.
+- **Scope:** refetched GitHub PR, check and deployment authority after #1274 consolidation; revalidated every remaining open PR changed-file/commit manifest; recorded the post-consolidation closure precondition in `docs/audits/open-pr-unique-code-ledger-20260728.md`.
+- **Files changed:** `docs/audits/open-pr-unique-code-ledger-20260728.md`, `operator_handoff.md` only; no application, schema, migration or test behavior changed.
+- **Checks:** current #1175/#1274 ancestry and tree equality; live open-PR API manifests; exact-head GitHub check runs; exact-head GitHub deployment/status API; `git diff --check`. The pre-existing exact-head `0611690b…` CI reported 43 migrations, zero drift, 8,930 unit/PostgreSQL tests, production build, and 179 passed / 3 skipped Playwright tests. A new exact-head run is required after this documentation commit.
+- **CI/deployment:** intended exact-head `hope-tender-path-b` preview succeeded; duplicate `repo` Vercel project failed and remains an external configuration blocker. No production deployment or migration was performed.
+- **Risks/assumptions:** no approved synthetic preview credential or `VERCEL_TOKEN` is configured, so the provider-backed persisted preview workflow and retained runtime-log inspection remain unproved. Existing real-account credential hold remains in force.
+- **Next action:** wait for exact-head CI/preview on this documentation commit; then complete synthetic persisted preview/runtime acceptance when credentials are supplied. Do not close #1266/#1267/#1270 until that mandated acceptance succeeds.
+- **Merge status:** unsafe for merge/release approval; #1175 remains draft and unmerged.
+
 ### 2026-07-29 12:05 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `fix/pr1175-final-open-pr-audit-consolidation` / draft #1274; governing draft #1175 remained untouched, draft, and unmerged during this checkpoint.

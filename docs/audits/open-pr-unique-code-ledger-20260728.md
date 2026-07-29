@@ -4,6 +4,27 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+## 2026-07-29 12:30 UTC live-state refresh
+
+GitHub was refetched after the controlled consolidation completed. PR #1175
+was still open, draft and unmerged at `0611690b1486402df6fb5431b055b219390517e7`;
+PR #1274 was closed and reported that same head SHA, so its complete verified
+tree was incorporated into #1175. The only other open PRs were #1266, #1267
+and #1270. Their live commit and changed-file manifests remained exactly the
+documentation/handoff-only dispositions recorded below; none had gained a
+schema, migration, production importer, executable test or unique application
+change.
+
+The exact `0611690b…` GitHub CI and screenshot checks were green. GitHub's
+deployment API reported a successful exact-head preview for the intended
+`hope-tender-path-b` project and a second failed deployment for the duplicate
+`repo` project. The latter remains an external configuration blocker. The
+remaining documentation-only PRs were deliberately left open: the governing
+instruction permits closure only after complete exact-preview persisted
+workflow and runtime-log acceptance, and those checks still require an
+approved synthetic preview credential and Vercel log access. This is a closure
+precondition, not unique donor code.
+
 Live refetch: **2026-07-29 12:00 UTC**. GitHub reported five open PRs:
 `#1175`, `#1266`, `#1267`, `#1270`, and `#1274` (the earlier donor
 `#1273` had already been closed after incorporation into `#1274`).
