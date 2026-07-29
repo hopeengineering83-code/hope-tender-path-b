@@ -3,23 +3,44 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import JSZip from "jszip";
-import { Document, Packer, Paragraph, TextRun } from "docx";
+import { Packer } from "docx";
 import { PDFDocument, StandardFonts } from "pdf-lib";
 import { assembleFinalSubmissionZip } from "../lib/engine/final-zip-assembly";
 import { computeFileHash } from "../lib/engine/generated-file-integrity";
+import {
+  buildProfessionalDocument,
+  markdownToDocx,
+} from "../lib/engine/generate-elite";
 
 const EVIDENCE_DIRECTORY = resolve("acceptance-evidence/generated-files");
+const SYNTHETIC_BRAND_LOGO = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=",
+  "base64",
+);
 
 async function buildInspectableDocx(): Promise<Buffer> {
-  const document = new Document({
-    sections: [{
-      children: [
-        new Paragraph({
-          children: [new TextRun({ text: "Tender Technical Proposal — binary inspection", bold: true })],
-        }),
-        new Paragraph("This document is generated as a valid Office Open XML package."),
-      ],
-    }],
+  const document = buildProfessionalDocument({
+    tenderTitle: "Synthetic source-grounded tender",
+    clientName: "Synthetic Procuring Entity",
+    companyName: "Synthetic Evidence Company",
+    reference: "SYNTHETIC-RFP-2026-001",
+    contactFooter: "Synthetic address | synthetic@example.invalid",
+    logo: {
+      data: SYNTHETIC_BRAND_LOGO,
+      type: "png",
+      width: 64,
+      height: 64,
+    },
+    children: markdownToDocx([
+      "# Technical Proposal",
+      "",
+      "## Table of Contents",
+      "",
+      "## Delivery Methodology",
+      "",
+      "### Source-grounded approach",
+      "This synthetic acceptance document exercises the production DOCX renderer without asserting any real company or tender facts.",
+    ].join("\n")),
   });
   return Buffer.from(await Packer.toBuffer(document));
 }
@@ -51,9 +72,27 @@ describe("generated Word/PDF/ZIP binary inspection", () => {
     const officePackage = await JSZip.loadAsync(docxBytes);
     assert.ok(officePackage.file("[Content_Types].xml"));
     assert.ok(officePackage.file("word/document.xml"));
+    assert.ok(officePackage.file("word/header1.xml"));
+    assert.ok(officePackage.file("word/footer1.xml"));
+    const embeddedMedia = Object.keys(officePackage.files).filter((path) => path.startsWith("word/media/"));
+    assert.ok(embeddedMedia.length > 0, "production DOCX must contain the supplied synthetic brand asset");
     const documentXml = await officePackage.file("word/document.xml")!.async("string");
-    assert.match(documentXml, /Tender Technical Proposal/);
-    assert.match(documentXml, /Office Open XML package/);
+    const relationshipsXml = await officePackage.file("word/_rels/document.xml.rels")!.async("string");
+    const footerXml = await officePackage.file("word/footer1.xml")!.async("string");
+    const settingsXml = await officePackage.file("word/settings.xml")!.async("string");
+    assert.match(documentXml, /Technical Proposal/);
+    assert.match(documentXml, /Source-grounded approach/);
+    assert.match(documentXml, /w:pStyle w:val="Heading1"/);
+    assert.match(documentXml, /w:pStyle w:val="Heading2"/);
+    assert.match(documentXml, /w:pStyle w:val="Heading3"/);
+    assert.match(documentXml, /TOC (?=[^<]*\\h)(?=[^<]*\\o (?:&quot;|")1-3(?:&quot;|"))/);
+    assert.match(documentXml, /Company logo/);
+    assert.match(relationshipsXml, /relationships\/header/);
+    assert.match(relationshipsXml, /relationships\/footer/);
+    assert.match(relationshipsXml, /relationships\/image/);
+    assert.match(footerXml, /Confidential bid document/);
+    assert.match(footerXml, /PAGE/);
+    assert.match(settingsXml, /<w:updateFields(?:\s+w:val="true")?\s*\/>/);
 
     const openedPdf = await PDFDocument.load(pdfBytes, { updateMetadata: false });
     assert.equal(openedPdf.getPageCount(), 1);

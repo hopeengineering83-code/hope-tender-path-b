@@ -4,6 +4,40 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+## 2026-07-29 generated-byte evidence falsification
+
+GitHub, the open-PR list and deployment state were refetched after #1175
+advanced to `cc1de672d4ba8a90f140333117d23a836ff3056d`. The complete #1274 head
+`0611690b1486402df6fb5431b055b219390517e7` is an ancestor of that head;
+`git cherry` reported no #1274-only patch. The remaining open PRs were #1266,
+#1267 and #1270 plus governing #1175, and their changed-file manifests remained
+documentation/handoff-only as classified below.
+
+The credential-free exact-head CI artifact was downloaded and its claimed
+DOCX/PDF/ZIP outputs were reopened independently. The recorded hashes and byte
+lengths recomputed correctly, the PDF had genuine PDF bytes, and the Final ZIP
+contained byte-identical copies in the recorded order. However, the DOCX
+artifact had been created by an ad hoc minimal test builder rather than the
+production renderer. It contained no heading styles, native TOC field,
+header, footer or brand media, so it could not prove the required production
+document characteristics despite being a valid Office ZIP.
+
+`tests/generated-output-binary-inspection.test.ts` now constructs its synthetic
+acceptance document through the production `buildProfessionalDocument` and
+`markdownToDocx` functions. Before writing release evidence it requires Heading
+1-3 styles, an updating native Word TOC, header/footer/image relationships, a
+page-number footer and an embedded synthetic Company Vault brand asset. The
+fixture explicitly labels every identity and fact synthetic; it does not invent
+or imply real tender/company evidence.
+
+This repairs the byte-proof harness, not the remaining preview acceptance hold.
+The intended preview `/api/version` and `/api/health` both returned HTTP 200 and
+identified the exact `cc1de672…` release, but no approved synthetic preview
+credential or Vercel log token is available for the required persisted,
+provider-backed workflow and retained-log inspection. The duplicate `repo`
+Vercel project also still reports a failed deployment. Those items remain
+external blockers and no completion or release-readiness claim is made.
+
 ## 2026-07-29 exact-head evidence falsification follow-up
 
 The successful `d9b87fe4…` CI artifact was downloaded and inspected rather
