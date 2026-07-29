@@ -69,6 +69,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Session Log
 
+### 2026-07-29 12:05 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `fix/pr1175-final-open-pr-audit-consolidation` / draft #1274; governing draft #1175 remained untouched, draft, and unmerged during this checkpoint.
+- **Scope / files changed:** refetched GitHub and deployment state, independently froze #1175 at `b8f15162595e5a984169d97719942cf6906599bd` and #1274 at `04886d157bd159dce8caf67cfc6748bead73951c`, compared every remaining open PR and commit/file delta against both heads, inspected the exact #1274 CI logs and evidence artifact, and updated `docs/audits/open-pr-unique-code-ledger-20260728.md` plus this handoff with the reproducible disposition and exact test evidence. No application, schema, migration, or test code changed in this checkpoint.
+- **Tests / evidence:** GitHub Actions run `30448924162` on exact #1274 head passed clean install and source-mutation checks; all 43 migrations plus idempotency, critical schema, retroactive bootstrap structure/history, and zero drift; release integrity (418 routes / 1,390 files); typecheck; lint with zero warnings; 8,930/8,930 unit and PostgreSQL tests; production build; and 179 Playwright passes with three documented skips. Artifact: `exact-head-acceptance-04886d157bd159dce8caf67cfc6748bead73951c`.
+- **GitHub / Vercel:** five PRs were open at refetch (#1175, #1266, #1267, #1270, #1274). The intended #1175 preview for the frozen parent SHA was successful; duplicate project `repo` failed. No `VERCEL_TOKEN` was available for direct retained-log inspection, and #1274 had no GitHub deployment record.
+- **Risks / next action:** exact #1274 is eligible for controlled incorporation, but completion is not claimed. Incorporate into #1175, wait for and inspect exact new-head CI and the normal Git preview, then perform remaining synthetic runtime/generated-byte acceptance before closing redundant PRs. External credential rotation, session revocation, automation-secret replacement, artifact sanitation, owner UAT, and duplicate-Vercel-project cleanup remain open.
+- **Merge status:** #1274 exact head verified by CI and safe to incorporate into the governing draft; #1175 remains **not release-approved** pending exact incorporated-head and preview acceptance.
+
 ### 2026-07-28T17:31:00Z — Codex
 
 - **Mode:** five-pass forensic audit checkpoint — exact-CI authenticated upload acceptance.
