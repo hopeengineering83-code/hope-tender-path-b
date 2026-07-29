@@ -74,6 +74,32 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-29T18:30Z — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175.
+- **Scope:** independently refetched GitHub and Vercel authority after the final
+  consolidation. Confirmed #1175 is the only open PR, #1274 is closed and fully
+  ancestral, all three exact-head GitHub workflows are green, and the intended
+  preview identifies the exact governing SHA. Updated only the exact-head audit
+  record and this handoff; no product, schema, migration, dependency, test, or
+  workflow-authority code changed.
+- **Files changed:**
+  `docs/audits/pr1175-exact-head-independent-recheck-20260729.md` and
+  `operator_handoff.md`.
+- **Checks:** GitHub PR/check/artifact API refetch; git ancestry; Vercel project,
+  deployment and exact-SHA identity refetch; live `/api/version` and
+  `/api/health` (HTTP 200); deployment-scoped 24-hour runtime-log query (12
+  records, no error/fatal/500/P2022/P2002/Prisma/timeout/stuck/duplicate match).
+- **Risks / assumptions:** no approved synthetic preview credentials are
+  available, so the complete provider-backed persisted preview workflow is not
+  independently rerun. Real-account use remains prohibited pending password
+  rotation, session revocation, automation-secret replacement and artifact
+  sanitation. Owner UAT, duplicate Vercel project cleanup, and compatible
+  residual dependency remediation remain external blockers.
+- **Next action:** let exact-head CI and the normal Git-triggered preview verify
+  this documentation-only commit; keep PR #1175 draft and unmerged.
+- **Merge status:** not reviewed for merge; release completion is not claimed.
+
 ### 2026-07-29T17:15Z — Codex
 
 - **Branch / PR:** `codex/pr1175-live-state-reconciliation-20260729` / child PR pending, targeting `release/consolidated-recovery-20260717`; governing PR #1175 remains draft and unmerged at frozen parent `272b5823c6e118ac7e56f9c38e8f1b8c959b93d5`.
