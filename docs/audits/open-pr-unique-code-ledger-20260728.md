@@ -4,6 +4,52 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+## 2026-07-29 final live-state and exact-head evidence refresh
+
+GitHub was refetched after the prior audit-event repair. PR #1175 remains open,
+draft and unmerged at `5796df77fd5d50489df8c28ee9cd22e54767c707`, based on
+`b3c9db5de89a2a665e61a83facbff0f276f9983c`. The complete closed #1274 head
+`0611690b1486402df6fb5431b055b219390517e7` is an ancestor. The only other
+open PRs are #1266, #1267 and #1270, whose file- and commit-level dispositions
+remain unchanged below; no new product, schema, migration or executable test
+change appeared in any of them.
+
+Both exact-head CI runs and the exact-head route/screenshot workflow are now
+green. The downloaded `exact-head-acceptance-5796df77...` artifact records all
+43 migrations deployed, an idempotent second deployment, zero Prisma drift,
+critical-schema and retroactive-init verification, release-integrity, clean
+typecheck and lint, **8,930/8,930** unit/PostgreSQL tests, a production build,
+and **179 passed / 3 skipped / 0 failed** Playwright checks. Install, build and
+test source-mutation checks also passed. The separate route manifest covers
+**111/111** route/viewport combinations with zero critical findings, warnings
+or horizontal overflow.
+
+The intended Git-triggered Vercel preview returned HTTP 200 from `/api/version`
+and `/api/health` and reported the exact full release SHA. Storage was durable
+and critical tables were present. The duplicate `repo` project still failed.
+No `VERCEL_TOKEN`, retained-log access or approved synthetic preview credential
+is available in this environment, so retained runtime-log certification and a
+complete provider-backed persisted preview workflow remain external acceptance
+holds. The real-account credential hold also remains in force. Consequently,
+#1266, #1267 and #1270 are not closed and completion/release readiness is not
+claimed.
+
+The generated-byte artifact was independently reopened. DOCX, PDF and ZIP
+lengths and SHA-256 values recomputed exactly; the DOCX is produced by the live
+production renderer and contains Word heading styles, an updating TOC field,
+header/footer relationships, page numbering and a synthetic embedded brand
+asset; the PDF has genuine `%PDF` bytes; and ZIP entries are byte-identical to
+the manifest in the recorded order. This is deterministic synthetic byte proof,
+not a substitute for the still-blocked provider-backed preview acceptance.
+
+Local clean-install, Prisma validation/generation, release-integrity,
+workflow-consistency, typecheck, lint and non-database focused tests were also
+rerun. The configured disposable Neon database endpoint was unreachable from
+this container, so the local PostgreSQL persistence test was cancelled at its
+setup hook; this is an environment limitation and is not represented as a
+passing local database run. The exact-head GitHub PostgreSQL result above is the
+current database-backed evidence.
+
 ## 2026-07-29 exact-head audit-event falsification
 
 The successful exact-head CI artifact for
