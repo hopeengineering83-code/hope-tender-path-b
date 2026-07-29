@@ -448,8 +448,9 @@ describe("module existence", () => {
   const modules = [
     "lib/extraction/tender-source-ingestion.ts",
     "lib/extraction/tender-file-classifier.ts",
+    // tender-table-extractor.ts was deleted: it had no production importer,
+    // and tender-text-extractor.ts already returns the tables it duplicated.
     "lib/extraction/tender-text-extractor.ts",
-    "lib/extraction/tender-table-extractor.ts",
     "lib/extraction/tender-source-evidence-ledger.ts",
     "lib/extraction/tender-chunk-builder.ts",
     "lib/extraction/tender-extraction-quality.ts",

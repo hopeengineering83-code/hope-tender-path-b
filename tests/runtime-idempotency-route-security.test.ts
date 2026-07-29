@@ -2,9 +2,9 @@
  * Runtime idempotency, route security, and revision safety tests.
  *
  * Tests:
- *   1. Operation lock helper exists and exports correct functions.
- *   2. Lock TTL is 10 minutes (not infinite).
- *   3. withTenderOperationLock wraps async operations.
+ *   1. The canonical per-tender operation guard is the one the routes use.
+ *   2. Its idempotency key is deterministic (a retry converges, not duplicates).
+ *   3. It is race-safe at the database level, not just in application code.
  *   4. Package revision helper computes composite hash.
  *   5. verifySourceFilesNotDeleted checks for active files.
  *   6. Download route revalidates source files before ZIP.
@@ -21,47 +21,58 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-// ─── 1-3. Operation lock helper ─────────────────────────────────────────────
+// ─── 1-3. Canonical per-tender operation guard ──────────────────────────────
+//
+// This block used to assert against lib/engine/tender-operation-lock.ts, a
+// 266-line module that nothing in app/ or lib/ ever imported. It was a second
+// implementation of per-tender operation serialisation built on the very same
+// TenderWorkflowRun table and the same
+// @@unique([companyId, tenderId, operation, idempotencyKey]) constraint the
+// live runner uses. Because every assertion was a readFileSync + substring
+// match, the suite stayed green while the module was unreachable — it proved
+// the file's text, not the app's behaviour. The dead module is deleted; these
+// assertions now target lib/engine/tender-workflow-runner.ts, which the
+// workflow routes actually call.
 
-describe("1-3. Operation lock helper", () => {
-  it("lib/engine/tender-operation-lock.ts exists and exports required functions", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.ok(src.includes("export async function acquireTenderOperationLock"), "must export acquireTenderOperationLock");
-    assert.ok(src.includes("export async function releaseTenderOperationLock"), "must export releaseTenderOperationLock");
-    assert.ok(src.includes("export async function withTenderOperationLock"), "must export withTenderOperationLock");
-    assert.ok(src.includes("export async function isOperationRunning"), "must export isOperationRunning");
+describe("1-3. Canonical per-tender operation guard", () => {
+  const runner = read("lib/engine/tender-workflow-runner.ts");
+
+  it("is a single implementation that production actually imports", () => {
+    assert.match(runner, /export function deriveIdempotencyKey/);
+    assert.match(read("app/api/tenders/[id]/workflow-status/route.ts"), /tender-workflow-runner/);
+    // No second, competing serialisation module may reappear alongside it.
+    assert.equal(
+      existsSync("lib/engine/tender-operation-lock.ts"),
+      false,
+      "a second operation-serialisation authority on the same table must not exist",
+    );
   });
 
-  it("lock TTL is 10 minutes (not infinite)", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.ok(src.includes("LOCK_TTL_MS"), "must define LOCK_TTL_MS");
-    assert.ok(src.includes("10 * 60 * 1000"), "TTL must be 10 minutes");
+  it("derives a deterministic idempotency key, so a retry converges instead of duplicating", () => {
+    // A wall-clock component would make every retry a fresh row, defeating the
+    // unique constraint that provides the actual guard.
+    const codeOnly = runner.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(codeOnly, /idempotencyKey[^\n]*Date\.now\(\)/);
+    assert.match(runner, /computeStableHash\(\{[\s\S]*?tenantId[\s\S]*?tenderId[\s\S]*?operation/);
   });
 
-  it("supports all 7 operation types", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    const ops = ["AI_ANALYZE", "BUILD_PLAN", "GENERATE_DOCUMENTS", "VALIDATE_DOCUMENTS", "APPROVE_DOCUMENTS", "EXPORT_PACKAGE", "DOWNLOAD_PACKAGE"];
-    for (const op of ops) {
-      assert.ok(src.includes(`"${op}"`), `must support operation: ${op}`);
-    }
+  it("is race-safe in the database, not only in application code", () => {
+    assert.match(runner, /companyId_tenderId_operation_idempotencyKey/);
+    const schema = read("prisma/schema.prisma");
+    assert.match(
+      schema,
+      /@@unique\(\[companyId, tenderId, operation, idempotencyKey\]/,
+      "the guard must rest on a real unique constraint",
+    );
   });
 
-  it("uses TenderWorkflowRun for DB-backed locking (not in-memory)", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.ok(src.includes("tenderWorkflowRun"), "must use TenderWorkflowRun model");
-    assert.ok(src.includes("P2002"), "must handle P2002 unique constraint for race safety");
-    assert.ok(src.includes("STALE_LOCK_EXPIRED"), "must expire stale locks");
-  });
-
-  it("withTenderOperationLock releases lock on success AND failure", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.ok(src.includes('status: "SUCCEEDED"'), "must release with SUCCEEDED on success");
-    assert.ok(src.includes('status: "FAILED"'), "must release with FAILED on error");
-    assert.ok(src.includes("throw error"), "must re-throw error after releasing lock");
+  it("records a terminal status for both success and failure", () => {
+    assert.match(runner, /"SUCCEEDED"/);
+    assert.match(runner, /"FAILED"/);
   });
 });
 

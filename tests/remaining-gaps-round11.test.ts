@@ -4,27 +4,39 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-describe("round 11 — T1: worker.ts atomic job claiming", () => {
-  const src = read("lib/ai-jobs/worker.ts");
+// Retargeted from lib/ai-jobs/worker.ts, which was deleted. That module was a
+// second job-worker implementation with no production importer: the live drain
+// path is app/api/ai-jobs/run-next/route.ts -> lib/job-claim-policy.ts, and
+// the claim itself is lib/ai-jobs.ts claimNextJob(). Asserting SKIP LOCKED in
+// the dead module proved nothing about how jobs are actually claimed.
+//
+// claimNextJob uses a different but equally race-safe technique: a
+// compare-and-swap. Two workers may both read the same QUEUED row, but the
+// conditional updateMany only matches while status is still QUEUED, so exactly
+// one sees count > 0 and the loser returns null instead of double-running it.
+describe("round 11 — T1: the live job claim is race-safe", () => {
+  const src = read("lib/ai-jobs.ts");
 
-  it("uses UPDATE...FOR UPDATE SKIP LOCKED for atomic job claiming", () => {
-    assert.ok(src.includes("FOR UPDATE SKIP LOCKED"), "must use FOR UPDATE SKIP LOCKED (was non-atomic findMany+update)");
-    assert.ok(src.includes("RETURNING id"), "must RETURNING the claimed jobs (atomic claim)");
+  it("claims with a conditional update guarded on the still-QUEUED status", () => {
+    assert.ok(src.includes("export async function claimNextJob"), "claimNextJob is the live claim");
+    assert.match(
+      src,
+      /updateMany\(\{\s*where:\s*\{\s*id:\s*candidate\.id,\s*status:\s*"QUEUED"\s*\}/,
+      "the update must be conditional on the row still being QUEUED",
+    );
   });
 
-  it("removes the old non-atomic findMany + separate update", () => {
-    assert.ok(
-      !src.includes('prisma.aiJob.findMany({\n    where: {\n      jobType: "AI_ANALYZE"'),
-      "old non-atomic findMany must be removed",
-    );
-    assert.ok(
-      !src.includes("// Mark job as RUNNING\n      await prisma.aiJob.update"),
-      "old separate RUNNING update must be removed (atomic claim does it)",
-    );
+  it("treats a lost race as 'not claimed' rather than running the job twice", () => {
+    assert.match(src, /if \(updated\.count === 0\) return null;/);
+  });
+
+  it("has no second, competing worker implementation", () => {
+    assert.equal(existsSync("lib/ai-jobs/worker.ts"), false, "a duplicate job worker must not exist");
+    assert.match(read("app/api/ai-jobs/run-next/route.ts"), /claimJobForCaller/);
   });
 });
 
@@ -80,17 +92,24 @@ describe("round 11 — T4: attach-original old blob cleanup", () => {
   });
 });
 
-describe("round 11 — F1: worker.ts retry storm fix", () => {
-  const src = read("lib/ai-jobs/worker.ts");
+// Retargeted from the deleted lib/ai-jobs/worker.ts to the live classifier in
+// lib/ai.ts. The property that matters is unchanged: an error the classifier
+// does not recognise must NOT be treated as retryable, or an unknown permanent
+// failure becomes a retry storm.
+describe("round 11 — F1: unknown errors are not retried", () => {
+  it("isTransientChunkError falls through to false for unrecognised errors", async () => {
+    const { isTransientChunkError } = await import("../lib/ai");
+    assert.equal(isTransientChunkError(new Error("totally unrecognised failure")), false);
+    assert.equal(isTransientChunkError(null), false);
+    assert.equal(isTransientChunkError({}), false);
+  });
 
-  it("defaults unknown errors to NON-transient (no retry)", () => {
+  it("still recognises genuinely transient conditions as retryable", async () => {
+    const { isTransientChunkError } = await import("../lib/ai");
+    const transient = [new Error("429 Too Many Requests"), new Error("ETIMEDOUT"), new Error("503 Service Unavailable")];
     assert.ok(
-      src.includes("Default: NON-transient"),
-      "must default to non-transient (was true → retry storm on unknown errors)",
-    );
-    assert.ok(
-      src.includes("return false;"),
-      "must return false for unknown errors (was return true)",
+      transient.some((err) => isTransientChunkError(err)),
+      "the classifier must still retry real transient failures",
     );
   });
 });

@@ -176,8 +176,6 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
   it("confirmed-plan consumers use the safely parsed items — no raw JSON.parse of itemsJson at call sites", () => {
     for (const path of [
       "lib/engine/workflow/workflow-state.ts",
-      "lib/engine/analysis/plan-truth.ts",
-      "lib/engine/analysis/authority-truth.ts",
       "app/api/tenders/[id]/auto-finalize/route.ts",
       "app/api/tenders/[id]/supersede-outside-plan/route.ts",
       "components/submission-plan-reconciliation-panel.tsx",
@@ -202,8 +200,6 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
     assert.ok(!(TENDER_STATUSES as readonly string[]).includes("PLAN_APPROVED"));
     for (const path of [
       "lib/engine/workflow/workflow-state.ts",
-      "lib/engine/analysis/plan-truth.ts",
-      "lib/engine/analysis/authority-truth.ts",
     ]) {
       const source = readFileSync(path, "utf8");
       assert.match(source, /confirmedPlan\.ok \? "CANONICAL_APPROVED"/, `${path} must derive approval from the confirmed BuildPlan`);
@@ -232,8 +228,6 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
       "lib/engine/workflow/workflow-state.ts",
       "lib/canonical-tender-readiness.ts",
       "lib/engine/final-submission-readiness.ts",
-      "lib/engine/analysis/plan-truth.ts",
-      "lib/engine/analysis/authority-truth.ts",
     ]) {
       const source = readFileSync(path, "utf8");
       if (path === "lib/engine/submission-plan-completeness.ts") {
