@@ -4,6 +4,42 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+## 2026-07-29 independent exact-head refresh and PR #1267 correction
+
+GitHub and the Git-triggered Vercel deployment records were refetched at
+`14350b494112d8710131bf4781b88e40e2d7bb2d`. PR #1175 remains open, draft and
+unmerged; its complete #1274 head
+`0611690b1486402df6fb5431b055b219390517e7` is an ancestor. Both exact-head CI
+runs and the exact-head route/screenshot run are green. The intended preview
+reports the exact release SHA from `/api/health` and the short SHA from
+`/api/version`; the duplicate `repo` deployment still fails. No Vercel log
+credential or approved synthetic preview credential is available, so retained
+runtime-log certification and the provider-backed persisted preview workflow
+remain external acceptance holds.
+
+The current open list is #1175, #1270, #1267 and #1266. A commit-level review
+corrects the earlier shorthand description of #1267. GitHub's current PR file
+view exposes only its audit note after the target branch advanced, but its
+unique commit `93f354be7e87f5c7b0fa5c7908f349c9ad9df254` was made from
+`227669cf9092092745411644c60b71aca6bf0d40` and contains six paths. Every path
+has the following explicit disposition:
+
+| #1267 path | Unique change | Production caller / product effect | Disposition |
+|---|---|---|---|
+| `docs/audits/pr1175-current-head-restart-20260727.md` | Historical restart note for an obsolete head | None | Not copied. Its still-relevant findings are represented in the current canonical ledgers and exact-head evidence. |
+| `app/api/company/review-summary/route.ts` | Replaces durable provenance validation with raw `trustLevel === "REVIEWED"` counting | Company review-summary API; would overstate generation-ready evidence | Rejected as policy-unsafe. Current code retains `isDurablyReviewed` and revision/source/quote integrity. |
+| `app/dashboard/company/page.tsx` | Removes the canonical ingestion-readiness fetch and derives reviewed totals from looser local rows | Company Vault summary; would contradict Engine eligibility | Rejected as a competing, weaker readiness authority. |
+| `tests/company-review-summary-durable-review-count.test.ts` | Deletes API durable-review regression coverage | Guards the production review-summary consumer | Rejected; the load-bearing test remains in #1175. |
+| `tests/company-vault-summary-durable-review-count.test.ts` | Deletes UI canonical-readiness regression coverage | Guards Company Vault/Engine count agreement | Rejected; the load-bearing test remains in #1175. |
+| `tests/run-next-terminal-error-message.test.ts` | Reverts the extraction-job fixture to an obsolete missing-file contract and expected category | Durable worker safe-error persistence | Rejected as stale against the current hash/company-bound extraction handler. Current coverage exercises the live handler contract without leaking identifiers. |
+
+PR #1270 remains an eleven-line handoff-only record of a now-false lack of
+GitHub access, and #1266 remains one supplementary audit document frozen at an
+obsolete SHA. Neither has a production importer, schema/migration effect or
+executable product change. They are not closed in this pass because the user's
+closure precondition still requires the unavailable retained-log and complete
+persisted preview acceptance. No open-PR commit was merged or cherry-picked.
+
 ## 2026-07-29 generated-byte evidence falsification
 
 GitHub, the open-PR list and deployment state were refetched after #1175
