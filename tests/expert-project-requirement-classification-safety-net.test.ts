@@ -34,7 +34,10 @@ describe("inferType is exported and correctly classifies expert/project requirem
         : inferType(text);
     assert.equal(classify("EXPERT", "generic wording"), "EXPERT");
     assert.equal(classify("PROJECT_EXPERIENCE", "generic wording"), "PROJECT_EXPERIENCE");
-    assert.equal(classify("TECHNICAL", "submit CVs for the proposed key experts"), "EXPERT");
+    assert.equal(
+      classify("TECHNICAL", "Bidders must submit CVs for the lead expert and senior expert on the team."),
+      "EXPERT",
+    );
   });
 });
 
