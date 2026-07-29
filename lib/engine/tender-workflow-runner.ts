@@ -337,8 +337,7 @@ async function auditWorkflow(prisma: PrismaClient, userId: string, result: Tende
       errorCode,
       timestamp: new Date().toISOString(),
     },
-  });
-  void prisma;
+  }, prisma);
 }
 
 export function resultFromRunRow(row: WorkflowRunRow): TenderWorkflowResult {

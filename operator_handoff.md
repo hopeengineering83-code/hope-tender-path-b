@@ -69,6 +69,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Session Log
 
+### 2026-07-29 15:04 UTC — Codex (GPT-5.6 Sol), audit-event falsification
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from exact remote head `28516828cd2e9e79f11892bdd2fadf6f2f41e8ab`. #1274 was already closed and completely ancestor-incorporated. #1175 remains draft and unmerged.
+- **Scope:** refetched all live PR/check/deployment authority; inspected the exact-head CI and screenshot artifacts rather than relying on green conclusions; found repeated `P2003` warnings showing the persisted workflow tests passed while their audit writes failed. Root cause: `runTenderWorkflow` used its injected Prisma client for workflow rows but `auditWorkflow` discarded it and `logAction` wrote through the global singleton.
+- **Files changed:** `lib/audit.ts`, `lib/engine/tender-workflow-runner.ts`, `tests/production-workflow-engine.test.ts`, `docs/audits/open-pr-unique-code-ledger-20260728.md`, and `operator_handoff.md`. `logAction` now retains the global default but accepts the workflow's explicit audit client; tests assert exact success/failure audit metadata. No schema, migration or gate changed.
+- **Checks:** Prisma client generation passed; focused production workflow/integrity suite passed 16/16; typecheck passed; focused ESLint passed with zero warnings; `git diff --check` passed. Full exact-head CI, build, Playwright and preview checks are required after push.
+- **CI/deployment:** pre-fix exact-head CI was green (8,930 tests and 178 passed / 4 skipped Playwright), but its disclosed audit-write failures invalidate audit-event proof. The intended pre-fix preview was healthy and identified the exact SHA; the duplicate `repo` project failed. No production deployment or migration was performed.
+- **Risks/assumptions:** approved synthetic preview credentials and Vercel retained-log access remain unavailable; provider-backed persisted preview acceptance, runtime-log certification, owner UAT and external credential-remediation holds remain open.
+- **Next action:** commit/push this evidence repair, require full exact-head CI and Git-triggered preview, inspect their artifacts for zero audit-write warnings, then continue the blocked preview/runtime acceptance. Do not close #1266/#1267/#1270 until the user's acceptance preconditions are met.
+- **Merge status:** unsafe for release approval; keep #1175 draft and unmerged.
+
 ### 2026-07-29 UTC — Codex (GPT-5.6 Sol), generated-byte proof falsification
 
 - **Branch / PR:** `codex/pr1175-final-release-audit-20260729`, based on exact draft #1175 head `cc1de672d4ba8a90f140333117d23a836ff3056d`; child PR pending. Governing #1175 remains draft and unmerged.

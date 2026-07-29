@@ -4,6 +4,29 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+## 2026-07-29 exact-head audit-event falsification
+
+The successful exact-head CI artifact for
+`28516828cd2e9e79f11892bdd2fadf6f2f41e8ab` was inspected below the aggregate
+test result. Its PostgreSQL test log contained repeated `P2003` audit-write
+warnings from `tests/production-workflow-engine.test.ts`: the workflow runner
+used the injected Prisma client for workflow state but discarded it for audit
+persistence, causing `logAction` to write through the global singleton. The
+mock-based workflow assertions therefore passed without proving the required
+audit event, while the shared test database rejected the fixture's nonexistent
+actor foreign key.
+
+`logAction` now accepts an optional narrowly typed audit client and retains the
+global singleton as its default for all existing callers. The workflow runner
+passes its own client explicitly, keeping workflow and audit persistence on the
+same configured database boundary without moving the best-effort audit write
+inside the business transaction. The production workflow test captures that
+client's audit writes and asserts actor, tender, tenant, operation, output IDs,
+success/failure status, blocker/warning counts and safe failure code. This is a
+release-evidence repair discovered by falsification; no gate, schema, migration
+or open-PR disposition changed. A new exact-head CI and preview are required
+after incorporation before the prior green result can be treated as current.
+
 ## 2026-07-29 independent exact-head refresh and PR #1267 correction
 
 GitHub and the Git-triggered Vercel deployment records were refetched at

@@ -79,6 +79,8 @@ export type AuditAction =
   | "ADMIN_REPAIR_EXECUTED"
   | "VALIDATE_DOCUMENTS";
 
+type AuditLogClient = Pick<typeof prisma, "auditLog">;
+
 export async function logAction(opts: {
   userId?: string;
   action: AuditAction;
@@ -87,12 +89,12 @@ export async function logAction(opts: {
   description: string;
   metadata?: Record<string, unknown>;
   requestId?: string;
-}) {
+}, db: AuditLogClient = prisma) {
   try {
     const meta = opts.requestId
       ? { ...opts.metadata, requestId: opts.requestId }
       : (opts.metadata ?? {});
-    await prisma.auditLog.create({
+    await db.auditLog.create({
       data: {
         userId: opts.userId ?? null,
         action: opts.action,
