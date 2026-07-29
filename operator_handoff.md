@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-29 UTC — Codex (dependency-security falsification)
+
+- **Branch / PR:** `codex/pr1175-release-proof-20260729` / draft #1276; governing draft #1175 frozen at `d514027ca9dd46e904726f50e250c74586f507fa`.
+- **Scope / files:** refetched every open PR and GitHub deployment; revalidated #1274 ancestry and open-PR dispositions; patched compatible current dependency advisories in `package.json` and `package-lock.json`; updated `scripts/audit-release-integrity.mjs` so the release audit enforces the new PostCSS pin; refreshed `docs/audits/open-pr-unique-code-ledger-20260728.md` and this handoff. No workflow, schema, migration, gate or production deployment changed.
+- **Tests:** clean `npm ci`; Prisma validate/generate; release-integrity and workflow-consistency audits; typecheck; lint with zero warnings; production build with a synthetic provider value; clean install/build mutation guards. Falsification found and repaired the release audit's stale PostCSS 8.5.10 expectation. The configured Neon endpoint was unreachable; the full PostgreSQL run was stopped after repeated setup failures and is not claimed. The reconciled dependency head requires new exact-head CI after push.
+- **Security:** Next.js 15.5.22 and PostCSS 8.5.18 close the compatible current advisory ranges. `npm audit --omit=dev` still reports Next's nested Sharp 0.34.5, and the development audit reports minimatch/brace-expansion through ESLint; npm offers no compatible non-major remediation. These remain explicit blockers rather than forcing an unverified framework/toolchain major change.
+- **CI / deployment:** parent #1175 exact-head CI and route/screenshot checks remain green; intended exact-SHA Vercel preview is successful; duplicate `repo` project remains failed. #1276 was externally closed before this commit reached GitHub and was reopened draft so its unincorporated head can receive exact-head CI. No `VERCEL_TOKEN`, retained logs or approved synthetic preview account are available.
+- **Risks / next action:** wait for the dependency-patched #1276 exact-head CI, then independently validate its artifact. Do not incorporate or close PRs until the remaining preview/runtime, external credential/UAT, duplicate-project and dependency-advisory holds are resolved.
+- **Merge status:** unsafe; #1175 and #1276 remain draft and unmerged.
+
+
 ### 2026-07-28 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `codex/pr1175-auto-verification-audit-blocked` / no GitHub PR created or verified. The local `make_pr` integration recorded title/body metadata only and returned no PR number or URL.

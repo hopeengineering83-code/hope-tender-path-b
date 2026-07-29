@@ -4,6 +4,55 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+## 2026-07-29 dependency-security falsification and live-state refresh
+
+GitHub was refetched again before this pass. PR #1175 remains open, draft and
+unmerged at `d514027ca9dd46e904726f50e250c74586f507fa`; the complete closed
+#1274 head remains its ancestor. The only other open PR is the
+documentation/security child #1276; #1266, #1267 and #1270 have been closed
+after their useful documentation was incorporated into #1175. No donor gained unique application,
+schema or migration code. #1276 adds this exact-head evidence and the compatible
+dependency repairs below; it does not change workflow authority or a database
+contract.
+
+A clean `npm ci` falsified the earlier security evidence by reporting newly
+published high-severity advisories. The production-relevant compatible repairs
+are Next.js `15.5.19` to `15.5.22` and the repository PostCSS override `8.5.10`
+to `8.5.18`. This closes the disclosed Next.js Server Action, SSRF, cache and
+PostCSS source-map/path traversal ranges without a framework major upgrade.
+The lockfile now resolves those patched versions reproducibly.
+
+`npm audit --omit=dev` still reports the Next.js dependency on Sharp 0.34.5
+because the current advisory requires Sharp 0.35 or later, while the Next.js
+15.5 line pins the older optional package. The audit tool offers only a
+framework-major/downgrade-shaped remediation and adding a top-level Sharp does
+not replace Next's nested package, so that ineffective change was rejected.
+The remaining development-only minimatch/brace-expansion advisory likewise has
+no non-major ESLint remediation offered by npm. Neither residual is represented
+as fixed; both require a separately validated framework/toolchain upgrade or an
+upstream compatible patch.
+
+Local verification on the dependency-patched child passed clean installation,
+install/build source-mutation guards, Prisma validation and generation,
+release-integrity, workflow-consistency, typecheck, zero-warning lint and a
+production build using a synthetic provider value. Falsification found the
+release-integrity audit still hard-coded the superseded PostCSS 8.5.10 pin; the
+audit now pins the actual patched 8.5.18 resolution and passes. The configured
+Neon test endpoint was unreachable, so the full PostgreSQL run was stopped
+after repeated setup failures and is not counted as a local pass. The parent exact-head GitHub
+run remains the database evidence: 8,930/8,930 tests and 179 passed / 3 skipped
+Playwright checks. #1276's pre-dependency documentation head also passed CI,
+but the dependency commit requires its own exact-head CI before incorporation.
+
+GitHub deployment records still show the intended #1175 exact-SHA preview as
+successful and the duplicate `repo` project as failed. This environment still
+has no Vercel token, retained-log access or approved synthetic preview account.
+Provider-backed persisted preview acceptance, runtime-log certification,
+external credential rotation/session revocation/secret replacement, owner UAT,
+duplicate-project remediation and the two unresolved dependency advisory
+families remain explicit release blockers. No completion or production-ready
+claim is made, and no open PR is closed in this pass.
+
 ## 2026-07-29 final live-state and exact-head evidence refresh
 
 GitHub was refetched after the prior audit-event repair. PR #1175 remains open,
