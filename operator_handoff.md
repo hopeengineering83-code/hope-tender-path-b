@@ -74,6 +74,46 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-29T19:37Z — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr1175-final-independent-acceptance-20260729` / child
+  PR targeting `release/consolidated-recovery-20260717`; governing draft #1175
+  frozen at `893beb326d1c43fa1f5dfd52563c7609dd5a10de` before this repair.
+- **Scope:** independently refetched GitHub/Vercel, revalidated #1274 ancestry
+  and the one-open-PR ledger, reproduced the full migration/unit/browser matrix,
+  and repaired a flaky release audit that treated the redirect-only legacy
+  Company Review Board bookmark as a second rendered authority. The audit now
+  tests rendered canonical routes separately and behaviorally proves the legacy
+  URL converges on the single Review Inbox.
+- **Files changed:** `e2e/pr1175-independent-release-audit.spec.ts`,
+  `docs/audits/pr1175-exact-head-independent-recheck-20260729.md`, and
+  `operator_handoff.md`. No product route, schema, migration, gate, dependency,
+  or workflow authority changed.
+- **Local checks:** clean `npm ci` and mutation hash; Prisma validate/generate;
+  all 43 migrations on disposable PostgreSQL 16; critical schema;
+  retroactive-bootstrap parity; migration idempotency; zero drift;
+  release-integrity (418 routes / 1,390 files); workflow consistency;
+  typecheck; zero-warning lint; production build and mutation hash;
+  8,930/8,930 unit/PostgreSQL assertions; focused affected Playwright with
+  retries disabled (5 passed / 1 environment skip); complete Playwright with
+  retries disabled (179 passed / 4 environment skips / 0 failed / 0 flaky).
+- **Remote/artifact evidence:** exact-parent GitHub checks green; intended
+  exact-SHA Vercel preview `READY`; duplicate `repo` deployment `ERROR`; live
+  version/health HTTP 200 at the exact parent SHA; 111/111 screenshot audit with
+  zero findings; DOCX/PDF/ZIP containers and recorded hashes independently
+  recomputed. A fresh runtime-log request timed out without bytes and is not
+  claimed as new log evidence.
+- **Risks / assumptions:** no approved synthetic preview credential exists, so
+  provider-backed persisted preview acceptance remains blocked. Real-account
+  password rotation, session revocation, automation-secret replacement,
+  credential-artifact sanitation, owner UAT, duplicate-project remediation,
+  and compatible residual dependency remediation remain external holds.
+- **Next action:** publish the child for exact-head CI, incorporate only after it
+  is green, then rerun exact #1175 head/preview identity checks; keep #1175 draft
+  and unmerged.
+- **Merge status:** not reviewed for release merge; release completion is not
+  claimed.
+
 ### 2026-07-29T18:30Z — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175.
