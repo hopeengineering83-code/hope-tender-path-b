@@ -74,6 +74,27 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-29T17:15Z — Codex
+
+- **Branch / PR:** `codex/pr1175-live-state-reconciliation-20260729` / child PR pending, targeting `release/consolidated-recovery-20260717`; governing PR #1175 remains draft and unmerged at frozen parent `272b5823c6e118ac7e56f9c38e8f1b8c959b93d5`.
+- **Scope / files:** refetched GitHub PR/check/deployment authority; proved closed #1274 head `0611690b…` is an ancestor of #1175; preserved documentation-only #1277 commit and corrected its live publication disposition in `docs/audits/pr1175-exact-head-independent-recheck-20260729.md`; updated this handoff. No product, schema, migration, dependency, route, workflow-authority, or test code changed.
+- **Local checks:** clean `npm ci` passed with no tracked-file mutation (npm reports three unresolved high-severity advisories); `npx prisma validate`; `npx prisma generate`; `npm run audit:release-integrity` (418 routes / 1,390 files); `npm run audit:workflow-state-consistency` (pass in warning-only mode with three recorded heuristic warnings); `npx tsc --noEmit`; `npm run lint -- --max-warnings 0`; production `npm run build` with synthetic build-only secrets; post-build tracked-file mutation check — all passed. A first build invocation without the required synthetic provider variable failed closed as designed and was rerun correctly.
+- **Remote evidence:** exact-parent GitHub runs `30471518423`, `30471523601`, and `30471524083` are successful; intended Vercel deployment `5661364922` is successful at exact SHA, while duplicate-project deployment `5661315682` remains failed.
+- **Risks / assumptions:** this documentation-only child does not supersede the required exact-head verification after incorporation. Full provider-backed synthetic preview acceptance and runtime-log inspection remain blocked by unavailable approved synthetic credentials and `VERCEL_TOKEN`; credential rotation/session revocation/automation-secret replacement/artifact sanitation, owner UAT, duplicate Vercel-project remediation, and compatible dependency remediation remain external holds.
+- **Next action:** incorporate this documentation-only child into #1175, rerun exact-head CI/preview identity checks, then close redundant documentation PR #1277 with an evidence comment; do not merge #1175.
+- **Merge status:** safe as documentation evidence only; release merge remains unsafe/blocked by the stated external holds.
+
+### 2026-07-29 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr1175-exact-head-release-proof`; documentation-only follow-up prepared against draft PR #1175. PR #1175 was not modified, merged, approved, retargeted, or closed.
+- **Scope:** independently refetched GitHub deployment/check state and falsified the frozen #1175 head `272b5823c6e118ac7e56f9c38e8f1b8c959b93d5`; confirmed #1274 head `0611690b1486402df6fb5431b055b219390517e7` is incorporated and #1175 is the only open PR; recorded evidence in `docs/audits/pr1175-exact-head-independent-recheck-20260729.md`.
+- **Files changed:** `docs/audits/pr1175-exact-head-independent-recheck-20260729.md`, `operator_handoff.md` only.
+- **Tests:** clean `npm ci` plus install mutation hash passed; Prisma validate/generate passed; release-integrity passed (418 routes / 1,390 files); workflow-state audit passed with three known warning-only wording heuristics; TypeScript passed; ESLint passed with zero warnings; production build with synthetic build-only configuration plus build mutation hash passed. A local DB-enabled full-suite attempt was stopped because the configured remote Neon test database was unreachable; no migration was run against it. Exact-head GitHub workflows remained successful with 8,930 tests, build, Playwright, disposable migration, and screenshot evidence.
+- **CI / deployment:** exact-head GitHub runs `30471518423`, `30471523601`, and `30471524083` are successful. The intended Git-triggered preview is healthy and identifies the exact SHA; the duplicate `repo` Vercel project still fails.
+- **Risks / assumptions:** no approved synthetic preview credentials, no Vercel token/log access, and no disposable local PostgreSQL service were available. Real-account testing remains prohibited. Credential rotation/session revocation/automation-secret replacement/artifact sanitation, owner UAT, duplicate-project repair, provider-backed persisted preview acceptance, runtime-log certification, and remaining compatible dependency remediation remain external holds.
+- **Next action:** an authorized owner should satisfy the external holds and rerun the complete synthetic persisted preview workflow and runtime-log audit before considering merge.
+- **Merge status:** **unsafe**; keep #1175 draft and unmerged.
+
 ### 2026-07-29 UTC — Codex (dependency-security falsification)
 
 - **Branch / PR:** `codex/pr1175-release-proof-20260729` / draft #1276; governing draft #1175 frozen at `d514027ca9dd46e904726f50e250c74586f507fa`.
