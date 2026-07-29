@@ -22,7 +22,6 @@ const ROUTES: Array<[label: string, path: string]> = [
   ["legacy data import", "/dashboard/company/plan-b-import"],
   ["company readiness", "/dashboard/company/readiness"],
   ["company diagnostics", "/dashboard/company/review"],
-  ["company review board", "/dashboard/company/review-board"],
   ["matching", "/dashboard/matching"],
   ["compliance", "/dashboard/compliance"],
   ["documents", "/dashboard/documents"],
@@ -193,6 +192,15 @@ test.describe("PR #1175 independent principal QA release audit", () => {
         await routePage.close();
       }
     }
+  });
+
+  test("legacy Company Vault review bookmarks converge on the single Review Inbox authority", async ({ page }) => {
+    const response = await page.goto("/dashboard/company/review-board", { waitUntil: "domcontentloaded" });
+
+    expect(response?.status()).toBeLessThan(400);
+    await expect(page).toHaveURL(/\/dashboard\/company\/review$/);
+    await expect(page.locator("main")).toBeVisible();
+    await expect(page.locator("h1:visible,h2:visible").first()).toBeVisible();
   });
 
   test("desktop and mobile navigation expose the same ADMIN destinations and the drawer is keyboard-safe", async ({ page }) => {

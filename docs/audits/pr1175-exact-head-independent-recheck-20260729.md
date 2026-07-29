@@ -1,5 +1,59 @@
 # PR #1175 exact-head independent recheck — 2026-07-29
 
+## 2026-07-29 final independent acceptance and redirect-owner falsification
+
+GitHub and Vercel were refetched from live APIs before this pass. Governing PR
+#1175 was the only open pull request, remained draft and unmerged, and pointed
+to `893beb326d1c43fa1f5dfd52563c7609dd5a10de`. Closed PR #1274's complete head
+`0611690b1486402df6fb5431b055b219390517e7` was still an ancestor. The intended
+Vercel deployment `dpl_7E3YL33F3soDj5idEq5sQoix2Hfa` was `READY` at that exact
+SHA, while the duplicate `repo` project deployment remained `ERROR`.
+
+An independent disposable local PostgreSQL 16 database accepted all 43 ordered
+migrations. Critical-schema verification, retroactive-bootstrap verification,
+a second idempotent migration deployment, and Prisma zero-drift comparison all
+passed. The full unit/PostgreSQL suite passed 8,930/8,930 assertions. Clean
+installation, install/build tracked-source mutation checks, Prisma validation
+and generation, release-integrity (418 routes / 1,390 files), workflow-state
+consistency, typecheck, zero-warning lint, and the production build also
+passed. The dependency audit independently reproduced the documented residual
+three high-severity advisories; npm still proposes an unsafe framework-major or
+downgrade-shaped remediation, so no forced dependency change was made.
+
+Falsification did find one release-proof defect. The first complete local
+Playwright run passed only after retry because the route audit classified
+`/dashboard/company/review-board` as a rendered page even though production
+intentionally implements it as a redirect-only compatibility bookmark to the
+single `/dashboard/company/review` Review Inbox authority. The audit could
+inspect the redirect's transient empty document and report no heading or main
+landmark. The compatibility URL is now excluded from the rendered-owner list
+and has a dedicated behavioral assertion proving it converges on the canonical
+Review Inbox with a visible main landmark and heading. The affected file passed
+with retries disabled, and the complete Playwright suite then passed with
+retries disabled: 179 passed, four environment-conditional skips, zero failed,
+and zero flaky.
+
+The exact-parent GitHub acceptance artifact was independently reopened. DOCX,
+PDF, Final ZIP, and manifest byte lengths and SHA-256 values recomputed exactly;
+both containers opened; the DOCX contained Heading 1-3 styles, TOC field,
+header/footer relationships, page-number footer, and synthetic brand media;
+and the Final ZIP entry order and bytes matched the manifest. The 111/111
+route/viewport screenshot artifact reported zero critical findings, warnings,
+uncovered routes, or horizontal overflow, and the desktop, tablet Review Inbox,
+and mobile tender captures were visually inspected without a critical layout
+finding.
+
+Live `/api/version` and `/api/health` returned HTTP 200 and identified
+`893beb326d1c43fa1f5dfd52563c7609dd5a10de`; health reported the critical tables
+and durable private Blob storage ready. A new deployment-scoped runtime-log
+query timed out without bytes, so this pass does not replace the retained-log
+evidence recorded for the exact parent. No approved synthetic preview account
+credential is available, so the complete provider-backed persisted preview
+workflow remains blocked. The real-account credential hold, owner UAT,
+duplicate Vercel project repair, retained credential-artifact sanitation, and
+compatible residual dependency remediation remain external holds. Completion
+and production readiness are not claimed; #1175 must remain draft and unmerged.
+
 ## Frozen live authority
 
 - At the start of the independent recheck, governing PR #1175 was the only open pull request. It remains draft and unmerged and points to `release/consolidated-recovery-20260717` at `272b5823c6e118ac7e56f9c38e8f1b8c959b93d5`.
