@@ -14,17 +14,11 @@ describe("round 13 — schema and migration-managed unique constraints", () => {
   const sql = read(migrationPath);
 
   it("ProposalVersion has a Prisma-expressible tender/version unique constraint", () => {
-    assert.ok(
-      schema.includes("@@unique([tenderId, version]) // Prevents duplicate version numbers"),
-      "ProposalVersion must prevent duplicate version numbers",
-    );
+    assert.ok(schema.includes("@@unique([tenderId, version]) // Prevents duplicate version numbers"));
   });
 
   it("GeneratedDocument documents and migrates its partial unique filename authority", () => {
-    assert.match(
-      schema,
-      /Partial unique index on \(tenderId, exactFileName\)[\s\S]*migration-managed because Prisma cannot express the WHERE clause/,
-    );
+    assert.match(schema, /Partial unique index on \(tenderId, exactFileName\)[\s\S]*migration-managed because Prisma cannot express the WHERE clause/);
     assert.doesNotMatch(schema, /@@unique\(\[tenderId, exactFileName\]\)/);
     assert.match(sql, /CREATE UNIQUE INDEX "GeneratedDocument_tenderId_exactFileName_key"/);
     assert.match(sql, /ON "GeneratedDocument"\("tenderId", "exactFileName"\)/);
@@ -33,10 +27,7 @@ describe("round 13 — schema and migration-managed unique constraints", () => {
 
   it("TenderFile declares contentHash and documents its partial unique migration authority", () => {
     assert.match(schema, /contentHash\s+String\?/);
-    assert.match(
-      schema,
-      /Partial unique index on \(tenderId, contentHash\)[\s\S]*migration-managed so[\s\S]*NULL legacy hashes remain compatible/,
-    );
+    assert.match(schema, /Partial unique index on \(tenderId, contentHash\)[\s\S]*migration-managed so[\s\S]*NULL legacy hashes remain compatible/);
     assert.doesNotMatch(schema, /@@unique\(\[tenderId, contentHash\]\)/);
     assert.match(sql, /CREATE UNIQUE INDEX "TenderFile_tenderId_contentHash_key"/);
     assert.match(sql, /WHERE "contentHash" IS NOT NULL AND "contentHash" != ''/);
@@ -45,16 +36,16 @@ describe("round 13 — schema and migration-managed unique constraints", () => {
 
 describe("round 13 — migration file", () => {
   it("exists with dedup and partial unique-index SQL", () => {
-    assert.ok(existsSync(migrationPath), "migration file must exist");
+    assert.ok(existsSync(migrationPath));
     const sql = read(migrationPath);
-    assert.ok(sql.includes("ProposalVersion_tenderId_version_key"), "must create ProposalVersion unique index");
-    assert.ok(sql.includes('DISTINCT ON ("tenderId", "version")'), "must dedup ProposalVersion before adding constraint");
-    assert.ok(sql.includes("GeneratedDocument_tenderId_exactFileName_key"), "must create GeneratedDocument unique index");
-    assert.ok(sql.includes('WHERE "exactFileName" IS NOT NULL'), "must use partial index for non-null exactFileName");
-    assert.ok(sql.includes('ADD COLUMN "contentHash"'), "must add contentHash column");
-    assert.ok(sql.includes("TenderFile_tenderId_contentHash_key"), "must create TenderFile unique index");
-    assert.ok(sql.includes("md5(COALESCE"), "must backfill contentHash with md5");
-    assert.ok(sql.includes('WHERE "contentHash" IS NOT NULL AND "contentHash" != \'\''), "must exclude empty legacy hashes");
+    assert.ok(sql.includes("ProposalVersion_tenderId_version_key"));
+    assert.ok(sql.includes('DISTINCT ON ("tenderId", "version")'));
+    assert.ok(sql.includes("GeneratedDocument_tenderId_exactFileName_key"));
+    assert.ok(sql.includes('WHERE "exactFileName" IS NOT NULL'));
+    assert.ok(sql.includes('ADD COLUMN "contentHash"'));
+    assert.ok(sql.includes("TenderFile_tenderId_contentHash_key"));
+    assert.ok(sql.includes("md5(COALESCE"));
+    assert.ok(sql.includes('WHERE "contentHash" IS NOT NULL AND "contentHash" != \'\''));
   });
 });
 
@@ -62,19 +53,21 @@ describe("round 13 — contentHash computation in upload", () => {
   const source = read("lib/tender-upload-first.ts");
 
   it("computes contentHash from the actual-byte SHA-256 integrity digest at upload time", () => {
-    assert.ok(source.includes("upload.integrity.contentSha256"), "must bind contentHash to the actual uploaded bytes");
-    assert.ok(source.includes("contentHash,"), "must store contentHash in the TenderFile create");
+    assert.ok(source.includes("upload.integrity.contentSha256"));
+    assert.ok(source.includes("contentHash,"));
   });
 });
 
-describe("round 13 — T6: export route tender status in transaction", () => {
-  const source = read("app/api/tenders/[id]/export/route.ts");
+describe("round 13 — T6: live Final ZIP lifecycle state is transaction-bound", () => {
+  const download = read("app/api/tenders/[id]/download/route.ts");
+  const persistence = read("lib/engine/export-package-persistence.ts");
 
-  it("wraps tender status update in a transaction", () => {
-    assert.ok(
-      source.includes("prisma.$transaction(async (tx) => {") && source.includes("tx.tender.update"),
-      "must use $transaction with tx.tender.update",
-    );
+  it("the live route delegates verified ZIP persistence to one transaction owner", () => {
+    assert.match(download, /persistVerifiedExportPackageDownload/);
+    assert.match(persistence, /prisma\.\$transaction\(async \(tx\) => \{/);
+    assert.match(persistence, /tx\.exportPackage\.(?:create|update)/);
+    assert.match(persistence, /tx\.tender\.update/);
+    assert.match(persistence, /status:\s*"EXPORTED",\s*stage:\s*"EXPORT"/);
   });
 });
 
