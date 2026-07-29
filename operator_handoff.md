@@ -69,6 +69,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Session Log
 
+### 2026-07-29 UTC — Codex (GPT-5.6 Sol), generated-byte proof falsification
+
+- **Branch / PR:** `codex/pr1175-final-release-audit-20260729`, based on exact draft #1175 head `cc1de672d4ba8a90f140333117d23a836ff3056d`; child PR pending. Governing #1175 remains draft and unmerged.
+- **Scope:** refetched GitHub/open-PR/check/deployment authority; proved final #1274 ancestry in #1175; downloaded the exact-head CI/screenshot artifacts; independently reopened and rehashed generated DOCX/PDF/ZIP bytes; found that the evidence DOCX used a minimal ad hoc builder and lacked headings, native TOC, headers, footers and brand media; repaired the evidence test to use the production DOCX renderer and require those structures.
+- **Files changed:** `tests/generated-output-binary-inspection.test.ts`, `docs/audits/open-pr-unique-code-ledger-20260728.md`, and `operator_handoff.md`. No production route, gate, schema or migration changed.
+- **Checks:** focused binary/Company Vault logo/native Word TOC suite passed 5/5; focused ESLint passed with zero warnings; typecheck passed; regenerated DOCX/ZIP integrity and SHA-256 checks passed; the regenerated DOCX contains Heading 1-3 styles, a native updating TOC, header/footer relationships, a page-number footer and embedded synthetic brand media.
+- **CI/deployment:** pre-fix exact-head CI reported 8,930/8,930 unit/PostgreSQL tests and 178 passed / 4 skipped Playwright; intended exact-head preview returned healthy `/api/version` and `/api/health`. New child exact-head CI is required. Duplicate Vercel project `repo` remains failed. No production deployment or production migration was performed.
+- **Risks/assumptions:** the CI browser log used deterministic fallback after handled provider exhaustion, so it is not provider-backed acceptance. Approved synthetic preview credentials and Vercel retained-log access remain unavailable. Real-account credential rotation/session revocation/secret replacement/artifact sanitation and owner UAT remain external holds.
+- **Next action:** commit and publish the isolated child, require exact-head CI, incorporate only after it is green, then rerun exact #1175 proof. Do not close documentation-only PRs until the mandated persisted preview/runtime acceptance succeeds.
+- **Merge status:** unsafe for release approval; #1175 must remain draft and unmerged.
+
 ### 2026-07-29 UTC — Codex (GPT-5.6 Sol), exact-head falsification follow-up
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; #1274 was already closed and incorporated before this session.
