@@ -76,7 +76,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     ];
 
     const requiredDocuments = finalPackage.documents.required;
-    const requiredDocumentCount = requiredDocuments.length;
+    const requiredDocumentCount = finalPackage.documents.required.length;
     const generatedRequiredDocumentCount = requiredDocuments.filter((document) => Boolean(document.generatedDocumentId)).length;
     const validRequiredDocumentCount = requiredDocuments.filter((document) =>
       document.status === "valid" || document.status === "approved" || document.status === "export_ready"
