@@ -9,7 +9,7 @@ function build(requirements: string[]) {
     tenderTitle: "Sample Tender",
     requirements,
     companyName: "Hope",
-    companyProfile: "Reviewed profile.",
+    companyProfile: "Source-verified profile.",
     serviceLines: "Design, Supervision",
     expertLines: ["Dr A | Team Lead"],
     projectLines: ["Project X | Client Y"],
@@ -41,19 +41,13 @@ describe("ai-proposal fallback is tender-scoped", () => {
     assert.ok(out.includes("## Evidence-Backed Differentiators"));
   });
 
-  it("does not expose raw provider error details in fallback body", () => {
+  it("does not expose raw provider error details", () => {
     const out = build(["MANDATORY FORM: Signed declaration"]);
     assert.ok(!out.includes("provider timeout"));
   });
 });
 
 describe("selectReviewedEvidenceForAIDraft", () => {
-  // Eligibility is decided by canUseVaultRecord(..., "GENERATION"), so a bare
-  // { trustLevel: "REVIEWED" } object is correctly NOT usable — it carries no
-  // provenance binding it to any owned, byte-verified source document. These
-  // fixtures therefore build real durable provenance; the assertions below
-  // still test the same thing they always did (selected wins over vault, vault
-  // is the fallback, drafts are never returned).
   function usable(id: number) {
     const companyId = "company-ai-proposal-fallback-scope";
     const fullName = `Expert ${id}`;
@@ -101,29 +95,37 @@ describe("selectReviewedEvidenceForAIDraft", () => {
   }
   const draft = (id: number, trustLevel: string) => ({ trustLevel, id });
 
-  it("uses selected evidence when present", () => {
+  it("uses verified selected evidence when present", () => {
     const out = selectReviewedEvidenceForAIDraft(
       [usable(1), draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
       [usable(3)],
     );
-    // All selected records are usable (auto-approved)
-    assert.ok(out.evidence.length >= 1);
+    assert.equal(out.evidence.length, 1);
     assert.equal(out.usedReviewedVaultFallback, false);
   });
 
-  it("falls back to vault evidence when no selected set exists", () => {
+  it("falls back to verified Vault evidence when selected rows are drafts", () => {
     const out = selectReviewedEvidenceForAIDraft(
       [draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
       [usable(3)],
     );
-    // Draft records are auto-approved — selected is used directly
-    assert.ok(out.evidence.length >= 1);
-    assert.equal(out.usedReviewedVaultFallback, false);
+    assert.equal(out.evidence.length, 1);
+    assert.equal(out.usedReviewedVaultFallback, true);
   });
 
-  it("returns all vault rows (auto-approved)", () => {
-    const draftExpert = { id: "draft-1", fullName: "Draft Only", title: null, yearsExperience: null, disciplines: [], sectors: [], certifications: [], profile: "", sourceSnippet: "", sourceDocumentId: "src-1", sourceAuthority: 1, trustLevel: "AI_DRAFT", reviewedBy: null, reviewedAt: null, reviewNotes: null, sourceDocument: null, companyId: "company-1" };
-    const selection = selectReviewedEvidenceForAIDraft([], [draftExpert as any]);
-    assert.ok(selection.evidence.length >= 0, "all vault records are auto-approved");
+  it("returns no evidence when only unsupported drafts exist", () => {
+    const draftExpert = {
+      id: "draft-1",
+      fullName: "Draft Only",
+      trustLevel: "AI_DRAFT",
+      sourceDocumentId: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNotes: null,
+      companyId: "company-1",
+    };
+    const selection = selectReviewedEvidenceForAIDraft([], [draftExpert as never]);
+    assert.deepEqual(selection.evidence, []);
+    assert.equal(selection.usedReviewedVaultFallback, false);
   });
 });
