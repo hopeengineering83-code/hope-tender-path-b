@@ -31,6 +31,7 @@ import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
 import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
+import { SelectionApprovalPanel, type MatchCandidate } from "../../../../components/selection-approval-panel";
 import { AuthorityReviewPanel } from "../../../../components/authority-review-panel";
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
@@ -285,6 +286,28 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
       <WorkflowStage number={3} title="Evidence and matching" description="Create and review tender-specific expert, project, and compliance evidence links.">
         <MatchingQualityPanel tenderId={tender.id} />
+        <SelectionApprovalPanel
+          tenderId={tender.id}
+          canMutate={canMutate}
+          experts={tender.expertMatches.map((m): MatchCandidate => ({
+            matchId: m.id,
+            name: m.expert.fullName,
+            title: m.expert.title,
+            score: m.score,
+            rationale: m.rationale,
+            isSelected: m.isSelected,
+            trustLevel: m.expert.trustLevel,
+          }))}
+          projects={tender.projectMatches.map((m): MatchCandidate => ({
+            matchId: m.id,
+            name: m.project.name,
+            title: m.project.clientName,
+            score: m.score,
+            rationale: m.rationale,
+            isSelected: m.isSelected,
+            trustLevel: m.project.trustLevel,
+          }))}
+        />
         <ScoreBreakdownPanel tenderId={tender.id} />
         {canMutate && <AIRematchButton tenderId={tender.id} />}
         <EvidenceCoveragePanel tenderId={tender.id} />
