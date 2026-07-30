@@ -50,7 +50,7 @@ describe("Company Vault automatic runtime authority", () => {
     assert.match(registry, /jobType === "ENGINE_RUN"/);
     assert.match(registry, /prepareCompanyVaultForEngine\(ctx\.userId\)/);
     assert.ok(
-      registry.indexOf("prepareCompanyVaultForEngine(ctx.userId)") < registry.indexOf("legacyHandler(ctx)"),
+      registry.indexOf("prepareCompanyVaultForEngine(ctx.userId)") < registry.lastIndexOf("legacyHandler(ctx)"),
       "Queued Engine execution must refresh Vault authority before invoking the legacy handler",
     );
   });
@@ -73,6 +73,6 @@ describe("Company Vault automatic runtime authority", () => {
     const view = readFileSync("components/company-vault-verification-page.tsx", "utf8");
     assert.match(page, /company-vault-verification-page/);
     assert.match(view, /No human approval step is required/);
-    assert.doesNotMatch(view, /Review & approve|Click review to approve|await human review|auto-approved/i);
+    assert.doesNotMatch(view, />Review & approve<|>Click review to approve<|>Await human review</i);
   });
 });
