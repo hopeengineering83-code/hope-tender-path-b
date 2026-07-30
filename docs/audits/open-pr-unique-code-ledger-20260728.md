@@ -6,6 +6,30 @@ Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidati
 
 ## 2026-07-30 principal live-state refresh
 
+### 2026-07-30 01:40 UTC exact-head follow-up
+
+GitHub was refetched after the principal documentation was incorporated into
+#1175. The governing draft is now `0c28bf03d37bb24cc8f45fd3e7c2453c00d5c2c3`.
+PR #1280 remains open only because it is the documentation-only child whose
+three-file patch was incorporated as `0c28bf03`; it changes only this ledger,
+`docs/audits/pr1175-principal-release-recheck-20260730.md`, and
+`operator_handoff.md`. It has no production importer or caller, schema,
+migration, dependency, executable test, workflow authority, tenant boundary,
+or unique product behavior. Its disposition is **incorporated and redundant**;
+it may be closed only after the governing exact head and this follow-up's
+eventual documentation-only incorporation head satisfy the required checks.
+
+Exact-head GitHub runs `30505634865`, `30505637154`, and `30505637135` all
+passed for `0c28bf03`: 43 disposable-PostgreSQL migrations, critical schema,
+retroactive bootstrap, migration idempotency, zero drift, release integrity,
+typecheck, zero-warning lint, 8,930/8,930 unit and PostgreSQL assertions,
+production build, 179 Playwright passes with four documented conditional
+skips, and 111/111 route/viewport screenshot cases with zero critical,
+warning, uncovered-route, or horizontal-overflow findings. The intended
+Git-triggered preview `dpl_5hD9SdNUZwhJ7AsxRqnJHd6cN6bP` is READY and reports
+the exact SHA from `/api/health`; the duplicate `repo` deployment remains in
+ERROR and is an external configuration hold.
+
 GitHub and Vercel were refetched independently. Before this child audit PR was
 opened, PR #1175 was the only open pull request; it remains draft and unmerged at
 `1e113fa529718b9052e762efd15fbf51144ccaca`. Closed #1274 head

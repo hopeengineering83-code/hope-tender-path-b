@@ -1,5 +1,47 @@
 # PR #1175 Principal Release Recheck — 2026-07-30
 
+## Exact-head follow-up after incorporation
+
+The documentation in this report was incorporated into the governing branch
+as `0c28bf03d37bb24cc8f45fd3e7c2453c00d5c2c3`. PR #1280 is consequently the
+only open child of #1175 and has no unique content remaining: its three changed
+files are documentation and handoff records already represented by the
+incorporation commit. It introduces no application, schema, migration,
+dependency, test, gate, or workflow-authority change.
+
+All three exact-head GitHub runs subsequently passed: push CI `30505634865`,
+PR CI `30505637154`, and route/screenshot audit `30505637135`. Both CI runs
+record 8,930 passing assertions with no failures or skips; the push run records
+179 Playwright passes and four documented environment-conditional skips. The
+route audit covered 111/111 repository route/viewport combinations and found
+zero critical issues, warnings, uncovered routes, or horizontal overflow.
+
+The normal preview `dpl_5hD9SdNUZwhJ7AsxRqnJHd6cN6bP` is READY for the exact
+full SHA. `/api/version` and `/api/health` return HTTP 200; health reports the
+full SHA, critical tables, and durable private Blob storage. A fresh 100-event
+query found no P2022, P2002, raw Prisma error, unhandled 500, timeout, stuck or
+duplicate job, database URL, or PostgreSQL credential pattern. The duplicate
+Vercel project `repo` still produced an exact-SHA ERROR deployment and remains
+an external configuration blocker.
+
+The generated artifact was independently reopened. `Technical-Proposal.docx`
+is a valid Office archive with Word XML, header/footer relationships, an
+updating TOC field, and a synthetic PNG brand asset (12,091 bytes,
+SHA-256 `08e13b00196ce3de0f374186054633acf711b6b5d552e6899a35fa354f943a89`).
+`Technical-Proposal.pdf` starts with `%PDF-1.7` (984 bytes, SHA-256
+`d30b536e8b977c8b49a368d2a773aa28f2c19798433de9151fe326376af4fad3`).
+`Final-Submission-Package.zip` opens successfully and contains exactly the
+DOCX followed by the PDF; both entry lengths and hashes match the manifest
+(10,415 bytes, SHA-256
+`8e336f4bba2e7e7969c1e80b4f384d718a657be11e4c30e4921450645c704e5d`).
+
+This remains release evidence, not a release-completion claim. Approved
+synthetic preview credentials are absent, so provider-backed persisted preview
+acceptance and its post-workflow log audit were not run. Credential rotation,
+session revocation, automation-secret replacement, retained-artifact
+sanitation, owner UAT, duplicate-project remediation, and compatible
+Sharp/libvips remediation remain external holds.
+
 ## Frozen authority
 
 - Governing PR: #1175, open, draft, and unmerged.
