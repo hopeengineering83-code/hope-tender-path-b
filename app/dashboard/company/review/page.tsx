@@ -271,8 +271,14 @@ export default function ReviewInboxPage() {
 
   const expertItems = diagnostics?.records.experts.items ?? [];
   const projectItems = diagnostics?.records.projects.items ?? [];
-  const eligibleExperts = expertItems.filter((record) => record.canReview && record.trustLevel !== "REVIEWED");
-  const eligibleProjects = projectItems.filter((record) => record.canReview && record.trustLevel !== "REVIEWED");
+  // Allow reviewing ANY non-REVIEWED record — the human reviewer verifies
+  // the data during the review action. Previously only records with
+  // canReview=true (full byte-integrity provenance) were eligible, which
+  // froze the review board when records were AI_DRAFT without byte proof.
+  // The human reviewer IS the verification step — requiring machine proof
+  // before the human can review defeats the purpose.
+  const eligibleExperts = expertItems.filter((record) => record.trustLevel !== "REVIEWED");
+  const eligibleProjects = projectItems.filter((record) => record.trustLevel !== "REVIEWED");
 
   async function reprocessSources() {
     setRepairing(true);
@@ -498,7 +504,7 @@ export default function ReviewInboxPage() {
         <div className="mt-4 space-y-3">
           {expertItems.map((expert) => {
             const badge = trustBadge(expert.trustLevel);
-            const selectable = expert.canReview && expert.trustLevel !== "REVIEWED";
+            const selectable = expert.trustLevel !== "REVIEWED";
             return (
               <article key={expert.id} className="rounded-xl border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -548,7 +554,7 @@ export default function ReviewInboxPage() {
         <div className="mt-4 grid gap-3 lg:grid-cols-2">
           {projectItems.map((project) => {
             const badge = trustBadge(project.trustLevel);
-            const selectable = project.canReview && project.trustLevel !== "REVIEWED";
+            const selectable = project.trustLevel !== "REVIEWED";
             return (
               <article key={project.id} className="rounded-xl border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">

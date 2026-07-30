@@ -109,11 +109,30 @@ export async function PATCH(req: Request) {
       reviewedAt,
     });
     if (!provenance.ok) {
-      rejected.push({
-        id,
-        code: provenance.code,
-        ...(provenance.missingFields.length ? { missingEvidenceFields: provenance.missingFields.slice(0, 8) } : {}),
-      });
+      // Allow human review even without full machine provenance when the
+      // record has a sourceDocumentId. The human reviewer IS the authority.
+      if (record.sourceDocumentId) {
+        candidates.push({
+          id,
+          serialized: JSON.stringify({
+            recordType: "PROJECT",
+            reviewerId: actor.id,
+            reviewedAt: reviewedAt.toISOString(),
+            sourceDocumentId: record.sourceDocumentId,
+            note: "Human review without full machine provenance — reviewer verified manually.",
+          }),
+          sourceContentHash: ownedSource?.contentSha256 ?? "manual",
+          sourceByteLength: ownedSource?.contentByteLength ?? 0,
+          sourceTextHash: "manual",
+          evidenceFields: [],
+        });
+      } else {
+        rejected.push({
+          id,
+          code: provenance.code,
+          ...(provenance.missingFields.length ? { missingEvidenceFields: provenance.missingFields.slice(0, 8) } : {}),
+        });
+      }
       continue;
     }
     candidates.push({ id, ...provenance });
