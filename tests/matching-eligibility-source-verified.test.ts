@@ -1,28 +1,20 @@
-// Real bug found while investigating "Background Engine run completed, but
-// matching is blocked": checkMatchingEligibility (lib/engine/matching-eligibility.ts)
-// hard-rejected any record whose trustLevel wasn't literally "REVIEWED"
-// BEFORE ever calling canUseVaultRecord() — but canUseVaultRecord's own
-// MATCHING-purpose contract explicitly accepts a durably SOURCE_VERIFIED
-// record too (isDurablyReviewed(record) || isDurablySourceVerified(record)).
-// SOURCE_VERIFIED is a real, machine-verified trust level that
-// autoVerifyCompanyKnowledge() promotes AI_DRAFT/REGEX_DRAFT records to once
-// their evidence is bound to a genuine owned document — not a lesser or
-// speculative state. Every SOURCE_VERIFIED expert/project was therefore
-// scored zero and excluded from every tender match, regardless of how
-// thoroughly its evidence was verified, which is exactly the contradiction
-// this repo's screenshots showed: Company Vault reporting verified evidence
-// while the Engine reported zero eligible matches for the same company.
-//
-// This proves the fix: a durably SOURCE_VERIFIED record (reviewedBy/
-// reviewedAt correctly null, per isDurablySourceVerified's own contract) IS
-// eligible for matching, while a record merely labeled SOURCE_VERIFIED
-// without genuine matching provenance is still rejected fail-closed.
+// A durably SOURCE_VERIFIED record is eligible for matching without a human
+// approval click. A record merely carrying the label, or whose source/evidence
+// changed after verification, remains fail-closed.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { buildSourceVerificationProvenance, expertReviewFields, projectReviewFields } from "../lib/vault-review-provenance";
-import { isEligibleForMatching, checkMatchingEligibility, enforceMatchingEligibility } from "../lib/engine/matching-eligibility";
+import {
+  buildSourceVerificationProvenance,
+  expertReviewFields,
+  projectReviewFields,
+} from "../lib/vault-review-provenance";
+import {
+  isEligibleForMatching,
+  checkMatchingEligibility,
+  enforceMatchingEligibility,
+} from "../lib/engine/matching-eligibility";
 
 function durableSourceVerifiedExpert() {
   const companyId = "company-source-verified";
@@ -99,32 +91,42 @@ function durableSourceVerifiedProject() {
   return { ...record, reviewNotes: provenance.serialized };
 }
 
-describe("checkMatchingEligibility accepts durably SOURCE_VERIFIED evidence, not only human REVIEWED", () => {
-  it("a durably SOURCE_VERIFIED expert (reviewedBy/reviewedAt correctly null) IS eligible for matching", () => {
-    assert.equal(
-      isEligibleForMatching(durableSourceVerifiedExpert()),
-      true,
-      "a machine-verified expert bound to real, current source evidence must be usable by the Engine",
-    );
+describe("matching accepts durable SOURCE_VERIFIED evidence without human approval", () => {
+  it("accepts a durably SOURCE_VERIFIED expert", () => {
+    assert.equal(isEligibleForMatching(durableSourceVerifiedExpert()), true);
   });
 
-  it("a durably SOURCE_VERIFIED project IS eligible for matching", () => {
+  it("accepts a durably SOURCE_VERIFIED project", () => {
     assert.equal(isEligibleForMatching(durableSourceVerifiedProject()), true);
   });
 
-  it("enforceMatchingEligibility preserves score for a durably SOURCE_VERIFIED record", () => {
-    const score = enforceMatchingEligibility(0.82, durableSourceVerifiedExpert());
-    assert.equal(score, 0.82);
+  it("preserves the score for durable source-backed evidence", () => {
+    assert.equal(enforceMatchingEligibility(0.82, durableSourceVerifiedExpert()), 0.82);
   });
 
-  it("checkMatchingEligibility reports eligible:true (not NOT_REVIEWED) for SOURCE_VERIFIED evidence", () => {
-    const result = checkMatchingEligibility(durableSourceVerifiedExpert());
-    assert.equal(result.eligible, true);
+  it("does not misclassify durable machine verification as missing human review", () => {
+    assert.deepEqual(checkMatchingEligibility(durableSourceVerifiedExpert()), { eligible: true });
   });
 
-  it("accepts all SOURCE_VERIFIED records (auto-approved)", () => { assert.ok(true); });
+  it("rejects a SOURCE_VERIFIED label without durable provenance", () => {
+    const record = { ...durableSourceVerifiedExpert(), reviewNotes: null };
+    assert.equal(isEligibleForMatching(record), false);
+    assert.equal(enforceMatchingEligibility(0.82, record), 0);
+  });
 
-  it("accepts records with stale provenance (auto-approved)", () => { assert.ok(true); });
+  it("rejects stale provenance after a claimed field changes", () => {
+    const record = {
+      ...durableSourceVerifiedExpert(),
+      certifications: JSON.stringify(["PMP"]),
+    };
+    assert.equal(isEligibleForMatching(record), false);
+  });
 
-  it("accepts records with reviewedBy set (auto-approved)", () => { assert.ok(true); });
+  it("rejects source verification carrying fabricated human review metadata", () => {
+    const record = {
+      ...durableSourceVerifiedExpert(),
+      reviewedBy: "SYSTEM_AUTO_VERIFIED",
+    };
+    assert.equal(isEligibleForMatching(record), false);
+  });
 });
