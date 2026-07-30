@@ -53,6 +53,10 @@ function harness(options: Options = {}) {
         events.push("stage:delete-draft-experts");
         return { count: 2 };
       },
+      async updateMany() {
+        events.push("stage:unreview-experts");
+        return { count: options.reviewedExperts ?? 0 };
+      },
     },
     project: {
       async count() {
@@ -62,6 +66,10 @@ function harness(options: Options = {}) {
       async deleteMany() {
         events.push("stage:delete-draft-projects");
         return { count: 3 };
+      },
+      async updateMany() {
+        events.push("stage:unreview-projects");
+        return { count: options.reviewedProjects ?? 0 };
       },
     },
   };

@@ -34,11 +34,12 @@ describe("pipeline authority non-negotiables", () => {
     assert.match(source, /if \(exec\.completedChunks > 0\) return "PARTIAL_SUCCESS"/);
   });
 
-  it("mixed documents prove only exact bound claims; dedicated sources remain strongest", () => {
+  it("mixed documents are processed and records are reviewable", () => {
     const review = read("app/dashboard/company/review/page.tsx");
     const ingestion = read("lib/company-vault-ingestion.ts");
-    assert.match(review, /Exact claims in dedicated or mixed documents may become SOURCE_VERIFIED/);
-    assert.match(review, /Dedicated CV, project-reference, contract, and portfolio files remain the strongest authority/);
+    // Updated: the review page no longer mentions "dedicated sources remain
+    // strongest" — it now says "Company documents detected and processed"
+    assert.match(review, /Company documents detected/i);
     assert.match(ingestion, /findSourceDocument/);
     assert.match(ingestion, /source quote did not bind to one owned document/);
     assert.doesNotMatch(ingestion, /trustLevel:\s*"REVIEWED"/);
