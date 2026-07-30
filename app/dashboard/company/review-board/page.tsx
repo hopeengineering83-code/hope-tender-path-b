@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 
 /**
- * The Review Inbox is the single Company Vault review authority.
+ * Automatic Verification is the single Company Vault source-authority view.
  * This compatibility route preserves old bookmarks without retaining a second
  * approval surface or mutation owner.
  */
