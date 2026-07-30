@@ -1,101 +1,49 @@
-## fix(tender-analysis): keep requirements and drafting resilient to missing metadata
+## fix: automatic Company Vault verification before Run Engine
 
-**Main SHA:** ccdb24dae44c611e990a6afb5dcf084a708eef7d
+### Scope
 
-### Three-Pass Audit
+Remove the manual approval bureaucracy between Company Vault and Run Engine without treating unsupported records as verified.
 
-**PASS 1:** Inspected main branch, extraction pipeline (`lib/engine/analysis.ts`), AI Analyze route (`app/api/tenders/[id]/ai-analyze/route.ts`), page ledger, requirement routes, classification (`lib/engine/tender-classification.ts`), company evidence matching paths, BuildPlan input paths, and current tests.
+### Runtime authority
 
-**PASS 2:** Traced the full workflow:
-- Upload → extraction → page ledger → AI Analyze → requirements → classification → company evidence matching → draft proposal/BuildPlan inputs
-- Identified metadata blocking points in `lib/engine/build-plan.ts`, `bid-strategy/route.ts`, and `generate/route.ts`
-- Confirmed core extraction engine (`analysis.ts`) and AI orchestrator do NOT block on missing metadata
+- Run Engine remaps missing Company Vault source links before both foreground execution and background enqueue.
+- The background worker repeats the same preflight when the queued Engine job actually starts.
+- Current exact claims proven against an owned, byte-integrity-verified source are promoted to `SOURCE_VERIFIED` automatically.
+- Current `SOURCE_VERIFIED` evidence and current authenticated `REVIEWED` evidence are equally eligible for matching, generation, export, and Final ZIP.
+- Draft, source-less, stale, altered, expired, or unmatched evidence remains fail-closed.
+- Automatic verification never fabricates `REVIEWED`, a reviewer identity, or human-review timestamps.
 
-**PASS 3:** Verified no overlap with Tool A files or PR #954 files. Red-team checked partial extraction, corrupted PDF handling, missing metadata scenarios, requirement gaps, manual requirements, tenant isolation.
+### Product workflow
 
-### Exact Ownership Exclusions
+- The active Company Vault authority screen is **Automatic Verification**, not a mandatory Review Board.
+- Legacy Review Board bookmarks redirect to Automatic Verification.
+- The repair action reimports stored source bytes, re-runs extraction/OCR, rebuilds records, remaps source links, and promotes only evidence that verifies successfully.
+- Human review remains available only as an optional authenticated audit trail or correction workflow.
 
-**NOT MODIFIED (Tool A):**
-- `app/api/tenders/[id]/metadata-override/route.ts`
-- `lib/engine/canonical-field-state.ts`
-- `lib/engine/tender-policy-registry.ts`
-- `lib/engine/final-submission-readiness.ts`
+### Engine and export behavior
 
-**NOT MODIFIED (PR #954):**
-- `app/api/tenders/[id]/generate-missing-plan-files/route.ts`
-- `app/api/tenders/[id]/regenerate-cvs/route.ts`
-- `lib/engine/generate-elite.ts`
-- `tests/generated-document-unique-constraint.test.ts`
-- `operator_handoff.md`
-- `worklog.md`
+- Company Vault verification completes before synchronous matching.
+- Company Vault verification completes before asynchronous enqueue and repeats at worker execution time.
+- The duplicate human-only Vault export gate is removed.
+- Tender extraction, requirements, Build Plan, metadata, evidence coverage, document validation, technical/financial separation, signature/stamp, byte integrity, and Final ZIP controls remain enforced.
 
-**PR #937 remains frozen.**
+### Evidence matching result
 
-### Extraction/Page-Ledger Findings
+Matching shows the tender requirement, eligible source evidence, reason, confidence, and unresolved evidence gaps. It does not require a human approval click when the record is already durably source-verified, and it does not invent company experience, experts, qualifications, or project facts.
 
-- Core extraction (`lib/engine/analysis.ts`) works from extracted text, not metadata — COMPLIANT
-- AI analysis preflight depends on source quality and page completeness, not metadata — COMPLIANT
-- Missing page blocking, corruption blocking, and quality blocking are correct per spec
+### Verification
 
-### Requirement Extraction Behavior
+The regression suite covers:
 
-- Requirements extracted from text via regex patterns (EXPERT, PROJECT_EXPERIENCE, DECLARATION, ANNEX, SCHEDULE, FORM, FINANCIAL, ELIGIBILITY, COMPANY_PROFILE, FORMAT, SUBMISSION_RULE, METHODOLOGY, TECHNICAL)
-- Priority inferred: MANDATORY, SCORED, INFORMATIONAL
-- Low confidence requirements marked NEEDS_REVIEW, never dropped
+1. automatic source-verified promotion without fabricated human review;
+2. rejection of unsupported `AI_DRAFT` and `REGEX_DRAFT` records;
+3. fail-closed behavior after source bytes, extraction revision, or current claimed values change;
+4. foreground and queued Engine preflight ordering;
+5. removal of the duplicate human-only release gate;
+6. Automatic Verification UI and compatibility redirects;
+7. source-byte reimport repair;
+8. proposal drafting from only current durable evidence.
 
-### Manual Requirement Behavior
+### Status
 
-- New route: `POST /api/tenders/[id]/requirements` — create manual requirement
-- New route: `GET /api/tenders/[id]/requirements` — list requirements with manual flag
-- New route: `PATCH /api/tenders/[id]/requirements/[requirementId]` — edit manual requirements
-- Role-based access: ADMIN, PROPOSAL_MANAGER only for create/edit
-- REVIEWER, VIEWER can read but NOT add/edit
-- Tenant-isolated, auditable, preserves through re-analysis
-
-### Tender Classification Result
-
-- `lib/engine/tender-classification.ts` works from extracted text
-- Types: RFP, RFQ, EOI, REOI, ITB, RFT, prequalification, consultancy, works, goods, framework, mixed, unknown
-- Procurement: technical-only, financial-only, technical-financial, separate-envelopes, single-envelope, email, portal, physical, mixed, unknown
-- Services: architecture, urban-planning, roads-transport, water-sanitation, geotechnical, structural, mep, interior-design, supervision, feasibility, environmental-social, project-management, multidisciplinary, goods-supply, unknown
-- "unknown" preserved, never forced
-
-### Company Matching Result
-
-- Evidence matching uses real company documents (profile, services, projects, experts/CVs, legal, certificates, financial)
-- Matching shows: requirement, evidence source, reason, confidence, gaps, human review needed
-- No invented experience, experts, or qualifications
-
-### Draft-Proposal Readiness Result
-
-- BuildPlan draft creation now uses `phase: "draft"` — metadata gaps are NON-BLOCKING
-- Final submission retains strict evidence validation (Tool A domain)
-- Bid-strategy metadata gaps downgraded from blockers to warnings
-- Generate route draft mode bypasses missing submission email blocker
-
-### Test Commands and Outcomes
-
-**NOT RUN** — Tests require isolated PostgreSQL and full environment setup. The following test scenarios are designed:
-
-1. Clean consultancy RFP with no reference number — analysis succeeds
-2. Works tender with no email — requirements, matching, draft readiness succeed
-3. EOI with no deadline — analysis succeeds; deadline labelled "not stated"
-4. Two-envelope tender — requirements classify both envelopes
-5. Scanned PDF — extraction and OCR state truthful
-6. Corrupted-text PDF — AI analysis blocked, no provider call
-7. Human-entered required document — auditable, in draft planning, not source-grounded
-8. Re-analysis preserves reviewed manual requirements
-9. Company matching returns gaps, not invented evidence
-10. Reviewer/Viewer cannot add/edit manual requirements
-11. Cross-user access rejected without existence leakage
-12. Desktop and tablet (800×1280) workflows usable
-
-### Remaining Dependencies
-
-- Tool A must verify final-submission gates still enforce strict metadata evidence
-- Full test suite execution pending environment setup
-- Browser/tablet E2E tests require Playwright configuration
-
-### Explicit Statement
-
-**No merge, deployment, Vercel configuration change, production database mutation, or modification of PR #954 was performed.**
+The pull request remains draft and unmerged until the exact head passes migrations, integrity verification, typecheck, lint, tests, build, and authenticated isolation checks.
