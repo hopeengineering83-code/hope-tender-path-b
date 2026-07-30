@@ -121,7 +121,7 @@ function actionLabel(action?: string) {
   if (action === "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY") return "Review Extraction, Analysis, and Matching Quality.";
   if (action === "REFRESH_TO_CHECK_STATUS") return "Check status again or refresh the workspace.";
   if (action === "RUN_ENGINE_SAFE_MODE") return "Run Safe Mode for a deterministic first pass.";
-  if (action === "REVIEW_MATCHING_INPUTS") return "Repair and re-extract Company Vault sources automatically, then auto-approve all records.";
+  if (action === "REVIEW_MATCHING_INPUTS") return "Repair and re-extract Company Vault sources automatically, then verify source-backed records.";
   return null;
 }
 
@@ -151,7 +151,7 @@ function humanBlockerSummary(blockers: string[] | undefined): string {
   if (evidenceBlocked) {
     return "The Engine extracted requirements, but no Company Vault evidence links were confirmed.";
   }
-  return "The Engine finished its processing pass, but evidence matching still requires review.";
+  return "The Engine finished its processing pass, but evidence matching still requires automatic source verification.";
 }
 
 async function parseEngineResponse(res: Response): Promise<EngineResponse> {
@@ -445,7 +445,7 @@ export function EngineActionPanel({
       success: false,
       error: "Repairing Company Vault source files before retrying Safe Mode…",
       code: "COMPANY_VAULT_REPAIR_RUNNING",
-      detail: "The system is re-extracting stored source bytes and rebuilding provenance-backed expert and project drafts.",
+      detail: "The system is re-extracting stored source bytes and rebuilding provenance-backed expert and project records for automatic verification.",
     });
 
     try {
@@ -465,7 +465,7 @@ export function EngineActionPanel({
 
       setResult({
         success: true,
-        error: `Company Vault repaired: ${data.docsReextracted ?? 0} document(s) re-extracted, ${data.expertsCreated ?? 0} expert draft(s), and ${data.projectsCreated ?? 0} project draft(s). Retrying Safe Mode…`,
+        error: `Company Vault repaired: ${data.docsReextracted ?? 0} document(s) re-extracted, ${data.expertsCreated ?? 0} expert record(s), and ${data.projectsCreated ?? 0} project record(s). Retrying Safe Mode…`,
         code: "COMPANY_VAULT_REPAIRED",
       });
       startTransition(() => router.refresh());
@@ -597,7 +597,7 @@ export function EngineActionPanel({
                 href="/dashboard/company/review"
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50"
               >
-                Review eligible evidence
+                Open Automatic Verification
               </Link>
             </div>
           )}
