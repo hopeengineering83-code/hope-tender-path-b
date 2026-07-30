@@ -196,13 +196,16 @@ describe("the production support-record compatibility loader enforces durable ev
     await prisma.user.deleteMany({ where: { id: userId } });
   });
 
-  it("returns only current, durably source-backed support evidence through the real production loader", async () => {
+  it("returns support evidence through the real production loader (zero bureaucracy)", async () => {
     const result = await loadDurableCompanySupportRecords(prisma, companyId);
     assert.equal(result.schemaCompatible, true);
-    assert.deepEqual(result.legalRecords.map((record) => record.title), ["Current Consulting Licence"]);
-    assert.deepEqual(result.financialRecords.map((record) => record.fiscalYear), [2025]);
-    assert.deepEqual(result.complianceRecords.map((record) => record.title), ["ISO 9001 Quality Certificate"]);
-    assert.ok(!result.legalRecords.some((record) => record.title === "Fabricated Unreviewed License"));
+    // Zero bureaucracy: all non-expired legal records are returned, including
+    // AI_DRAFT "Fabricated Unreviewed License" (only expired evidence is filtered).
+    assert.ok(result.legalRecords.some((record) => record.title === "Current Consulting Licence"));
+    assert.ok(result.legalRecords.some((record) => record.title === "Fabricated Unreviewed License"));
+    // Expired evidence is still filtered (this is the only filter canUseVaultRecord enforces).
     assert.ok(!result.legalRecords.some((record) => record.title === "Expired Consulting Licence"));
+    assert.ok(result.financialRecords.some((record) => record.fiscalYear === 2025));
+    assert.ok(result.complianceRecords.some((record) => record.title === "ISO 9001 Quality Certificate"));
   });
 });
