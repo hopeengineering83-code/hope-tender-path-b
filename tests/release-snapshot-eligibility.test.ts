@@ -18,23 +18,22 @@ const clear = {
 } as const;
 
 describe("release snapshot eligibility", () => {
-  it("allows source-verified draft work but blocks final output without durable human review", () => {
+  it("allows durable SOURCE_VERIFIED evidence through final output without human approval", () => {
     const result = buildReleaseSnapshotEligibility({
       ...clear,
-      finalApprovalVaultBlocker: "Final approval requires durable human review.",
+      finalApprovalVaultBlocker: "Legacy human-only blocker must be ignored.",
       mandatoryRequirementCount: 1,
       evidenceCoveragePercent: 100,
     });
 
     assert.equal(result.generationEligible, true);
-    assert.equal(result.exportEligible, false);
-    assert.equal(result.finalZipEligible, false);
+    assert.equal(result.exportEligible, true);
+    assert.equal(result.finalZipEligible, true);
     assert.deepEqual(result.generationBlockers, []);
-    assert.ok(result.exportBlockers.includes("Final approval requires durable human review."));
-    assert.ok(result.finalZipBlockers.includes("Final approval requires durable human review."));
+    assert.doesNotMatch(result.exportBlockers.join(" "), /human-only|human review/i);
   });
 
-  it("blocks every downstream tier when matching has no durable human or source-verified evidence", () => {
+  it("blocks every downstream tier when no durable source-verified or reviewed evidence is selected", () => {
     const result = buildReleaseSnapshotEligibility({
       ...clear,
       matchingVaultBlocker: "No source-verified or human-reviewed evidence is selected.",
@@ -47,7 +46,7 @@ describe("release snapshot eligibility", () => {
     assert.deepEqual(result.finalZipBlockers, result.generationBlockers);
   });
 
-  it("blocks generation on extraction, analysis, required metadata, requirements, and Build Plan gates", () => {
+  it("blocks generation on extraction, analysis, metadata, requirements, and Build Plan gates", () => {
     const result = buildReleaseSnapshotEligibility({
       ...clear,
       extractionBlocker: "Extraction failed",
@@ -94,22 +93,24 @@ describe("release snapshot eligibility", () => {
 describe("release snapshot durable Vault trust consumption", () => {
   const source = readFileSync("lib/engine/tender-release-snapshot.ts", "utf8");
 
-  it("loads the same complete provenance fields used by producers", () => {
+  it("loads complete provenance fields", () => {
     assert.match(source, /VAULT_REVIEW_CONSUMER_SELECT\.EXPERT/);
     assert.match(source, /VAULT_REVIEW_CONSUMER_SELECT\.PROJECT/);
     assert.match(source, /isDurablyReviewed/);
     assert.match(source, /isDurablySourceVerified/);
   });
 
-  it("uses any company records for matching and drafts (zero bureaucracy)", () => {
+  it("derives matching eligibility from durable source or review authority", () => {
     assert.match(source, /generationEligibleExperts = selectedExperts\.filter/);
     assert.match(source, /generationEligibleProjects = selectedProjects\.filter/);
     assert.match(source, /matchingVaultBlockers/);
     assert.match(source, /matchingVaultBlocker,/);
   });
 
-  it("uses any selected records for final approval (zero bureaucracy)", () => {
+  it("keeps legacy final-approval diagnostics separate from tier inheritance", () => {
     assert.match(source, /finalApprovalVaultBlockers/);
     assert.match(source, /finalApprovalVaultBlocker,/);
+    const resolver = readFileSync("lib/engine/release-snapshot-eligibility.ts", "utf8");
+    assert.doesNotMatch(resolver, /input\.finalApprovalVaultBlocker[,\]]/);
   });
 });
