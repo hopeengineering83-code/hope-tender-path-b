@@ -7,7 +7,11 @@ export type ReleaseSnapshotEligibilityInput = {
   buildPlanGateBlocker: string | null;
   /** Matching/draft blocker: neither current SOURCE_VERIFIED nor human REVIEWED evidence is selected. */
   matchingVaultBlocker: string | null;
-  /** Final-output blocker: selected evidence is not selected. */
+  /**
+   * Deprecated compatibility input. Vault evidence authority is already
+   * enforced by matchingVaultBlocker and the safe runtime-authority resolver.
+   * This value must not create a second human-only approval gate.
+   */
   finalApprovalVaultBlocker: string | null;
   mandatoryRequirementCount: number;
   evidenceCoveragePercent: number;
@@ -28,9 +32,10 @@ function compactUnique(values: Array<string | null | undefined>): string[] {
 }
 
 /**
- * Pure release-snapshot eligibility resolver and the sole tier-inheritance
- * owner. Source-verified evidence may satisfy matching and draft generation;
- * final export and Final ZIP additionally are auto-approved.
+ * Sole tier-inheritance owner. Current, source-backed Company Vault evidence
+ * has one authority contract across all tiers: durable SOURCE_VERIFIED and
+ * durable human REVIEWED evidence are equally eligible. Human review remains
+ * an optional audit action, not an additional export prerequisite.
  */
 export function buildReleaseSnapshotEligibility(
   input: ReleaseSnapshotEligibilityInput,
@@ -52,7 +57,6 @@ export function buildReleaseSnapshotEligibility(
   const exportBlockers = compactUnique([
     ...generationBlockers,
     input.metadataFinalBlocker,
-    input.finalApprovalVaultBlocker,
     evidenceBlocker,
   ]);
 
