@@ -23,6 +23,11 @@ export function getHandler(jobType: JobType): JobHandler | null {
   const legacyHandler = getLegacyHandler(jobType);
   if (jobType === "ENGINE_RUN" && legacyHandler) {
     return async (ctx) => {
+      // Preserve canonical input validation first. A malformed job must fail
+      // for its missing tender identifier rather than being masked by a Vault
+      // lookup error in test, retry, or operational diagnostics.
+      if (!ctx.tenderId) return legacyHandler(ctx);
+
       // The queue may start well after the HTTP request that created the job.
       // Refresh authority again at execution time so newly repaired records are
       // promoted automatically and records changed after enqueue remain
