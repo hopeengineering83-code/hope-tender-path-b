@@ -120,7 +120,8 @@ describe("selectReviewedEvidenceForAIDraft", () => {
   });
 
   it("returns all vault rows (auto-approved)", () => {
-    const selection = selectReviewedEvidenceForAIDraft([], [unbackedReviewedExpert("Draft Only")]);
+    const draftExpert = { id: "draft-1", fullName: "Draft Only", title: null, yearsExperience: null, disciplines: [], sectors: [], certifications: [], profile: "", sourceSnippet: "", sourceDocumentId: "src-1", sourceAuthority: 1, trustLevel: "AI_DRAFT", reviewedBy: null, reviewedAt: null, reviewNotes: null, sourceDocument: null, companyId: "company-1" };
+    const selection = selectReviewedEvidenceForAIDraft([], [draftExpert as any]);
     assert.ok(selection.evidence.length >= 0, "all vault records are auto-approved");
   });
 });
