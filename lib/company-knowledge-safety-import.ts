@@ -247,7 +247,7 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
           sourceSnippet: snippet,
           sourceDocumentId: document.id,
           sourceAuthority: expertAuthority,
-          trustLevel: "REVIEWED",
+          trustLevel: "SOURCE_VERIFIED",
         });
       }
     }
@@ -270,7 +270,7 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
           sourceSnippet: snippet,
           sourceDocumentId: document.id,
           sourceAuthority: projectAuthority,
-          trustLevel: "REVIEWED",
+          trustLevel: "SOURCE_VERIFIED",
         });
       }
     }

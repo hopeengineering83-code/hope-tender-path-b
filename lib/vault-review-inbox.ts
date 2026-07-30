@@ -120,6 +120,6 @@ export function manualSupportRecordDraftFields(kind: SupportReviewKind) {
     trustLevel: "MANUAL_DRAFT" as const,
     reviewedBy: null,
     reviewedAt: null,
-    reviewNotes: `Manual ${kind.toLowerCase()} record auto-approved from company documents.`,
+    reviewNotes: `Manual ${kind.toLowerCase()} record awaiting source-backed human review.`,
   };
 }

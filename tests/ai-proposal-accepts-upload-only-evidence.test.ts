@@ -132,28 +132,26 @@ describe("selectReviewedEvidenceForAIDraft delegates to the canonical generation
     assert.equal(selection.evidence.length, 1);
   });
 
-  it("accepts a REVIEWED-labelled record (auto-approved)", () => {
+  it("rejects a REVIEWED-labelled record with no durable provenance", () => {
     const selection = selectReviewedEvidenceForAIDraft([unbackedReviewedExpert("Carol Unbacked")], []);
-    assert.equal(selection.evidence.length, 1, "auto-approved records are usable as evidence");
+    assert.equal(selection.evidence.length, 0, "an unbacked claim must never be quoted as evidence");
   });
 
-  it("uses vault records directly when no selected record exists", () => {
+  it("falls back to usable vault records when no selected record is usable", () => {
     const selection = selectReviewedEvidenceForAIDraft<{ trustLevel?: string | null }>(
       [unbackedReviewedExpert("Carol Unbacked")],
       [sourceVerifiedExpert("Dana Vault")],
     );
-    // Selected records are always usable (auto-approved) — no fallback needed
+    assert.equal(selection.usedReviewedVaultFallback, true);
     assert.equal(selection.evidence.length, 1);
-    assert.equal(selection.usedReviewedVaultFallback, false);
   });
 
-  it("returns all vault records (no authority filter needed)", () => {
+  it("filters the vault fallback by the same authority, not blindly", () => {
     const selection = selectReviewedEvidenceForAIDraft(
       [unbackedReviewedExpert("Carol Unbacked")],
       [unbackedReviewedExpert("Eve AlsoUnbacked")],
     );
-    // Selected records are always usable — vault fallback not needed
-    assert.equal(selection.evidence.length, 1);
+    assert.equal(selection.evidence.length, 0, "an unusable vault must not become usable by being a fallback");
     assert.equal(selection.usedReviewedVaultFallback, false);
   });
 });

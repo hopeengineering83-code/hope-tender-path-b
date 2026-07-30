@@ -91,8 +91,46 @@ describe("matching-quality state machine", () => {
     assert.ok(r.score <= 30, `Expected <= 30 with no vault, got ${r.score}`);
   });
 
-  it("MATCHES_AVAILABLE when matches exist (all auto-approved)", () => {
-    // All records are auto-approved — matches are always usable
-    assert.ok(true);
+  it("MATCHES_WEAK when matches exist but none reviewed", () => {
+    const r = assessMatchingQuality({
+      requirements: [{ requirementType: "EXPERT" }],
+      expertMatches: [
+        {
+          score: 0.4, isSelected: false,
+          expert: {
+            trustLevel: "AI_DRAFT", fullName: "Draft Expert", companyId: "company-matching-quality-state",
+            sourceDocumentId: null, reviewedBy: null, reviewedAt: null, reviewNotes: null,
+          },
+        },
+      ],
+      projectMatches: [],
+      vaultReviewedExperts: 0,
+      vaultReviewedProjects: 0,
+    });
+    assert.equal(r.state, "MATCHES_WEAK");
+  });
+
+  it("MATCHES_REVIEWED when at least one reviewed match is available", () => {
+    const r = assessMatchingQuality({
+      requirements: [{ requirementType: "EXPERT" }],
+      expertMatches: [
+        { score: 0.82, isSelected: true, expert: durableReviewedExpert("Jane Doe") },
+      ],
+      projectMatches: [],
+      vaultReviewedExperts: 1,
+    });
+    assert.equal(r.state, "MATCHES_REVIEWED");
+  });
+
+  it("report includes vaultReviewed counts so the UI can render them", () => {
+    const r = assessMatchingQuality({
+      requirements: [{ requirementType: "EXPERT" }],
+      expertMatches: [],
+      projectMatches: [],
+      vaultReviewedExperts: 28,
+      vaultReviewedProjects: 112,
+    });
+    assert.equal(r.vaultReviewedExperts, 28);
+    assert.equal(r.vaultReviewedProjects, 112);
   });
 });

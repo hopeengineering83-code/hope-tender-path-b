@@ -604,24 +604,24 @@ export async function getTenderReleaseSnapshot(
   const matchingVaultBlockers: string[] = [];
   if (expertRequirementExists && generationEligibleExperts.length === 0) {
     matchingVaultBlockers.push(
-      "Tender requires expert evidence but no expert evidence is available.",
+      "Tender requires expert evidence but no source-verified or human-reviewed expert evidence is available.",
     );
   }
   if (projectRequirementExists && generationEligibleProjects.length === 0) {
     matchingVaultBlockers.push(
-      "Tender requires project evidence but no project evidence is available.",
+      "Tender requires project evidence but no source-verified or human-reviewed project evidence is available.",
     );
   }
 
   const finalApprovalVaultBlockers: string[] = [];
   if (expertRequirementExists && reviewedExperts.length === 0) {
     finalApprovalVaultBlockers.push(
-      "At least one expert must be selected for final approval.",
+      "Final approval requires at least one selected expert with current durable human review.",
     );
   }
   if (projectRequirementExists && reviewedProjects.length === 0) {
     finalApprovalVaultBlockers.push(
-      "At least one project must be selected for final approval.",
+      "Final approval requires at least one selected project with current durable human review.",
     );
   }
 

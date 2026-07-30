@@ -122,9 +122,33 @@ describe("checkMatchingEligibility accepts durably SOURCE_VERIFIED evidence, not
     assert.equal(result.eligible, true);
   });
 
-  it("accepts all SOURCE_VERIFIED records (auto-approved)", () => { assert.ok(true); });
+  it("a record merely labeled SOURCE_VERIFIED with no reviewNotes provenance is still rejected fail-closed", () => {
+    const record = {
+      id: "expert-fake-verified",
+      companyId: "company-source-verified",
+      fullName: "Fake Verified",
+      trustLevel: "SOURCE_VERIFIED",
+      sourceDocumentId: "doc-1",
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNotes: null,
+    };
+    const result = checkMatchingEligibility(record);
+    assert.equal(result.eligible, false);
+    if (!result.eligible) {
+      assert.ok(result.reason, "must give a specific rejection reason");
+    }
+  });
 
-  it("accepts records with stale provenance (auto-approved)", () => { assert.ok(true); });
+  it("a SOURCE_VERIFIED record with a stale provenance mismatch (edited field after verification) is rejected", () => {
+    const base = durableSourceVerifiedExpert();
+    const edited = { ...base, yearsExperience: 99 }; // current value no longer matches the stamped provenance
+    assert.equal(isEligibleForMatching(edited), false, "an edited SOURCE_VERIFIED record must not stay silently eligible");
+  });
 
-  it("accepts records with reviewedBy set (auto-approved)", () => { assert.ok(true); });
+  it("a SOURCE_VERIFIED record incorrectly carrying reviewedBy/reviewedAt is rejected (isDurablySourceVerified requires both null)", () => {
+    const base = durableSourceVerifiedExpert();
+    const malformed = { ...base, reviewedBy: "someone", reviewedAt: new Date() };
+    assert.equal(isEligibleForMatching(malformed), false);
+  });
 });

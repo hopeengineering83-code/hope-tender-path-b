@@ -186,21 +186,18 @@ export async function PATCH(
       })
     : null;
 
-  // Allow machine-verified review even without full machine provenance.
-  const durableProvenance = provenance?.ok ? provenance : {
-    ok: true as const,
-    serialized: JSON.stringify({
-      recordType: "PROJECT",
-      reviewerId: actor.id,
-      reviewedAt: reviewedAt.toISOString(),
-      sourceDocumentId: record.sourceDocumentId,
-      note: "Auto-approved — record extracted from company documents.",
-    }),
-    sourceContentHash: "manual",
-    sourceByteLength: 0,
-    sourceTextHash: "manual",
-    evidenceFields: [],
-  };
+  // Fail-closed: approval requires a durable provenance bound to current
+  // owned source bytes and current record fields. Without that, the record
+  // cannot be honestly marked REVIEWED — return 422 so the UI surfaces the
+  // missing-evidence state instead of fabricating a review stamp.
+  if (isApprove && !provenance?.ok) {
+    return NextResponse.json({
+      error: "Cannot approve project: source document is missing, not owned by this company, or its current bytes do not match the recorded evidence fields.",
+      code: "MISSING_DURABLE_PROVENANCE",
+      requestId,
+    }, { status: 422 });
+  }
+  const durableProvenance = provenance;
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.project.updateMany({
@@ -210,7 +207,7 @@ export async function PATCH(
               trustLevel: "REVIEWED",
               reviewedBy: actor.id,
               reviewedAt,
-              reviewNotes: durableProvenance!.serialized,
+              reviewNotes: durableProvenance && durableProvenance.ok ? durableProvenance.serialized : null,
               updatedAt: new Date(),
             }
           : {
@@ -237,7 +234,7 @@ export async function PATCH(
             recordRef: publicVaultIdentifier(id),
             action: body.action,
             ...(isApprove ? { reviewerId: actor.id, reviewedAt: reviewedAt.toISOString() } : {}),
-            ...(durableProvenance ? {
+            ...(durableProvenance && durableProvenance.ok ? {
               sourceContentHash: durableProvenance.sourceContentHash,
               sourceByteLength: durableProvenance.sourceByteLength,
               sourceTextHash: durableProvenance.sourceTextHash,

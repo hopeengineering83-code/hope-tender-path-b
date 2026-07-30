@@ -85,7 +85,7 @@ function expertCandidate(draft: AIExpertDraft, document: VaultDocument): Company
     sourceSnippet: draft.sourceQuote,
     sourceDocumentId: document.id,
     sourceAuthority: sourceAuthority(document, "EXPERT"),
-    trustLevel: "REVIEWED",
+    trustLevel: "AI_DRAFT",
   };
 }
 
@@ -102,7 +102,7 @@ function projectCandidate(draft: AIProjectDraft, document: VaultDocument): Compa
     sourceSnippet: draft.sourceQuote,
     sourceDocumentId: document.id,
     sourceAuthority: sourceAuthority(document, "PROJECT"),
-    trustLevel: "REVIEWED",
+    trustLevel: "AI_DRAFT",
   };
 }
 

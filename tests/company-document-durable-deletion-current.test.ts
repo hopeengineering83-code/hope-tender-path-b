@@ -53,10 +53,6 @@ function harness(options: Options = {}) {
         events.push("stage:delete-draft-experts");
         return { count: 2 };
       },
-      async updateMany() {
-        events.push("stage:unreview-experts");
-        return { count: options.reviewedExperts ?? 0 };
-      },
     },
     project: {
       async count() {
@@ -66,10 +62,6 @@ function harness(options: Options = {}) {
       async deleteMany() {
         events.push("stage:delete-draft-projects");
         return { count: 3 };
-      },
-      async updateMany() {
-        events.push("stage:unreview-projects");
-        return { count: options.reviewedProjects ?? 0 };
       },
     },
   };
@@ -135,15 +127,21 @@ async function remove(h: ReturnType<typeof harness>) {
 }
 
 describe("durable company document deletion", () => {
-  it("un-reviews dependent records and proceeds with deletion when reviewed provenance depends on the source", async () => {
-    // Updated: instead of blocking deletion, the system now un-reviews
-    // dependent records and allows the document to be deleted.
+  it("blocks before tombstoning or storage mutation when reviewed provenance depends on the source", async () => {
     const h = harness({ reviewedExperts: 1, reviewedProjects: 2 });
     const result = await remove(h);
 
-    assert.equal(result.ok, true);
-    // The deletion should proceed (staged + finalized)
-    assert.ok(h.events.includes("stage:tombstone") || h.events.includes("finalize:delete-row") || result.ok);
+    assert.deepEqual(result, {
+      ok: false,
+      code: "REVIEWED_PROVENANCE_DEPENDENCY",
+      status: 409,
+      retryable: false,
+      reviewedExperts: 1,
+      reviewedProjects: 2,
+    });
+    assert.ok(!h.events.includes("stage:tombstone"));
+    assert.ok(!h.events.includes("storage:delete"));
+    assert.ok(!h.events.includes("finalize:delete-row"));
   });
 
   it("does not touch storage when the database cannot commit the tombstone", async () => {

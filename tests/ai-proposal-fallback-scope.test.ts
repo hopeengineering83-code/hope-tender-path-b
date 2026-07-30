@@ -101,29 +101,30 @@ describe("selectReviewedEvidenceForAIDraft", () => {
   }
   const draft = (id: number, trustLevel: string) => ({ trustLevel, id });
 
-  it("uses selected evidence when present", () => {
+  it("uses usable selected evidence when present", () => {
     const out = selectReviewedEvidenceForAIDraft(
       [usable(1), draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
       [usable(3)],
     );
-    // All selected records are usable (auto-approved)
-    assert.ok(out.evidence.length >= 1);
+    assert.deepEqual(out.evidence.map((x) => x.id), [1]);
     assert.equal(out.usedReviewedVaultFallback, false);
   });
 
-  it("falls back to vault evidence when no selected set exists", () => {
+  it("falls back to usable vault evidence when the selected set has none", () => {
     const out = selectReviewedEvidenceForAIDraft(
       [draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
       [usable(3)],
     );
-    // Draft records are auto-approved — selected is used directly
-    assert.ok(out.evidence.length >= 1);
-    assert.equal(out.usedReviewedVaultFallback, false);
+    assert.deepEqual(out.evidence.map((x) => x.id), [3]);
+    assert.equal(out.usedReviewedVaultFallback, true);
   });
 
-  it("returns all vault rows (auto-approved)", () => {
-    const draftExpert = { id: "draft-1", fullName: "Draft Only", title: null, yearsExperience: null, disciplines: [], sectors: [], certifications: [], profile: "", sourceSnippet: "", sourceDocumentId: "src-1", sourceAuthority: 1, trustLevel: "AI_DRAFT", reviewedBy: null, reviewedAt: null, reviewNotes: null, sourceDocument: null, companyId: "company-1" };
-    const selection = selectReviewedEvidenceForAIDraft([], [draftExpert as any]);
-    assert.ok(selection.evidence.length >= 0, "all vault records are auto-approved");
+  it("never returns draft rows when no usable evidence exists", () => {
+    const out = selectReviewedEvidenceForAIDraft(
+      [draft(2, "AI_DRAFT"), draft(4, "REGEX_DRAFT")],
+      [],
+    );
+    assert.deepEqual(out.evidence, []);
+    assert.equal(out.usedReviewedVaultFallback, false);
   });
 });

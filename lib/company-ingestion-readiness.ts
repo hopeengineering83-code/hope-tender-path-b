@@ -78,8 +78,12 @@ function isGenerationEligibleRecord(record: ReadinessRecord): boolean {
   if (typeof record.durableGenerationEligibility === "boolean") {
     return record.durableGenerationEligibility;
   }
-  // All records are auto-approved and generation-eligible
-  return true;
+  // Fallback for unit-test snapshots without runtime authority shape:
+  // accept REVIEWED or SOURCE_VERIFIED trust levels (the same contract
+  // enforced by canUseVaultRecord at runtime). AI_DRAFT / REGEX_DRAFT /
+  // MANUAL_DRAFT records are NOT generation-eligible — they require either
+  // durable human review or durable source verification first.
+  return record.trustLevel === "REVIEWED" || record.trustLevel === "SOURCE_VERIFIED";
 }
 
 function isHumanReviewedRecord(record: ReadinessRecord): boolean {
@@ -130,13 +134,13 @@ export function assessCompanyIngestionReadiness(
   if (pendingDocuments > 0 && usefulDocuments === 0 && eligibleExperts === 0 && eligibleProjects === 0) {
     blockers.push("Company knowledge extraction is still pending. Reprocess the company documents before matching or generation.");
   }
-  if (requireEligibleExperts && eligibleExperts === 0) blockers.push("No experts are available.");
-  if (requireEligibleProjects && eligibleProjects === 0) blockers.push("No projects are available.");
+  if (requireEligibleExperts && eligibleExperts === 0) blockers.push("No source-verified or human-reviewed experts are available.");
+  if (requireEligibleProjects && eligibleProjects === 0) blockers.push("No source-verified or human-reviewed projects are available.");
 
   if (eligibleExperts === 0) warnings.push("No reviewed expert evidence is available yet. Review extracted expert records in the Review Board to enable expert-required tenders.");
   if (eligibleProjects === 0) warnings.push("No reviewed project evidence is available yet. Review extracted project records in the Review Board to enable project-experience tenders.");
-  if (sourceVerifiedExperts > 0 && humanReviewedExperts === 0) warnings.push(`${sourceVerifiedExperts} expert record(s) may support matching and draft generation and are ready for final export.`);
-  if (sourceVerifiedProjects > 0 && humanReviewedProjects === 0) warnings.push(`${sourceVerifiedProjects} project record(s) may support matching and draft generation and are ready for final export.`);
+  if (sourceVerifiedExperts > 0 && humanReviewedExperts === 0) warnings.push(`${sourceVerifiedExperts} expert record(s) may support matching and draft generation but still require human review for final export.`);
+  if (sourceVerifiedProjects > 0 && humanReviewedProjects === 0) warnings.push(`${sourceVerifiedProjects} project record(s) may support matching and draft generation but still require human review for final export.`);
   if (failedDocuments > 0) warnings.push(`${failedDocuments} company document(s) have failed extraction status and should be reprocessed or replaced.`);
   if (missingExperts > 0) warnings.push(`Expert completeness gap: ${missingExperts} expected expert record(s) are not present in the Company Vault.`);
   if (missingProjects > 0) warnings.push(`Project completeness gap: ${missingProjects} expected project record(s) are not present in the Company Vault.`);

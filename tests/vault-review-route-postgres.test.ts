@@ -290,11 +290,7 @@ describe("vault batch review routes — real authenticated PostgreSQL", () => {
     assert.equal(metadata.reviewedAt, reviewed.reviewedAt?.toISOString());
   });
 
-  it("allows human review of unverified source bytes (human reviewer is the authority)", async () => {
-    // Previously this test expected 422 rejection when source bytes were
-    // unverified. The fix allows human review with minimal provenance when
-    // sourceDocumentId exists — the human reviewer IS the authority, not
-    // the machine byte-integrity proof.
+  it("rejects unverified source bytes without changing the record or writing an audit row", async () => {
     const owner = await createWorkspace("PROPOSAL_MANAGER");
     userIds.push(owner.user.id);
     const source = await createSourceDocument(owner.company.id, false);
@@ -309,19 +305,19 @@ describe("vault batch review routes — real authenticated PostgreSQL", () => {
     });
 
     const response = await callBatch(expertRoute, "experts", owner.user.id, [expert.id]);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 422);
     const body = await response.json() as {
       updated: number;
       rejected: Array<{ id: string; code: string }>;
     };
-    assert.equal(body.updated, 1);
-    assert.equal(body.rejected.length, 0);
-    const reviewed = await prisma.expert.findUniqueOrThrow({ where: { id: expert.id } });
-    assert.equal(reviewed.trustLevel, "REVIEWED");
-    assert.ok(reviewed.reviewedAt);
+    assert.equal(body.updated, 0);
+    assert.deepEqual(body.rejected, [{ id: expert.id, code: "PROVENANCE_REQUIRED" }]);
+    const unchanged = await prisma.expert.findUniqueOrThrow({ where: { id: expert.id } });
+    assert.equal(unchanged.trustLevel, "REGEX_DRAFT");
+    assert.equal(unchanged.reviewedAt, null);
     assert.equal(await prisma.auditLog.count({
       where: { userId: owner.user.id, action: "EXPERT_REVIEW", entityId: expert.id },
-    }), 1);
+    }), 0);
   });
 
   it("single expert approval creates durable provenance and audit atomically", async () => {
@@ -358,9 +354,7 @@ describe("vault batch review routes — real authenticated PostgreSQL", () => {
     assert.equal(await prisma.auditLog.count({ where: { userId: owner.user.id, action: "EXPERT_REVIEW", entityId: expert.id } }), 1);
   });
 
-  it("single project approval allows human review of unverified bytes", async () => {
-    // Updated: human review is allowed without machine byte-integrity proof
-    // when sourceDocumentId exists.
+  it("single project approval rejects unverified bytes with zero writes", async () => {
     const owner = await createWorkspace("PROPOSAL_MANAGER");
     userIds.push(owner.user.id);
     const source = await createSourceDocument(owner.company.id, false);
@@ -383,10 +377,11 @@ describe("vault batch review routes — real authenticated PostgreSQL", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "approve" }),
     }), { params: Promise.resolve({ id: project.id }) });
-    // The single-approval route may still enforce provenance — if so it
-    // returns 422. The batch route was fixed to allow human review without
-    // provenance. This test documents the single-route behavior.
-    assert.ok(response.status === 200 || response.status === 422, `Expected 200 or 422, got ${response.status}`);
+    assert.equal(response.status, 422);
+    const unchanged = await prisma.project.findUniqueOrThrow({ where: { id: project.id } });
+    assert.equal(unchanged.trustLevel, "REGEX_DRAFT");
+    assert.equal(unchanged.reviewedAt, null);
+    assert.equal(await prisma.auditLog.count({ where: { userId: owner.user.id, action: "PROJECT_REVIEW", entityId: project.id } }), 0);
   });
 
   it("single approval returns not found for a foreign-company record", async () => {

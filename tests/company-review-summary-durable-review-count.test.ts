@@ -104,8 +104,28 @@ describe("GET /api/company/review-summary counts only durably reviewed experts/p
     await prisma.user.deleteMany({ where: { id: userId } });
   });
 
-  it("counts all REVIEWED-flagged experts (auto-approved)", () => {
-    // All REVIEWED records are counted — no provenance check
-    assert.ok(true);
+  it("does not count a REVIEWED-flagged expert with no durable provenance as reviewed", async () => {
+    // Mirrors exactly what the live preview screenshot showed: trustLevel
+    // is REVIEWED, but sourceDocumentId/reviewedBy/reviewedAt/reviewNotes
+    // were never actually populated by a genuine review action.
+    await prisma.expert.create({
+      data: { companyId, fullName: "Stale Reviewed Expert", trustLevel: "REVIEWED" },
+    });
+    await prisma.project.create({
+      data: { companyId, name: "Stale Reviewed Project", trustLevel: "REVIEWED" },
+    });
+
+    const response = await route.GET();
+    assert.equal(response.status, 200);
+    const body = await response.json() as {
+      experts: { reviewed: number; total: number };
+      projects: { reviewed: number; total: number };
+      readyForFinalGeneration: boolean;
+    };
+    assert.equal(body.experts.total, 1);
+    assert.equal(body.experts.reviewed, 0, "a trustLevel=REVIEWED expert with no durable provenance must not count as reviewed");
+    assert.equal(body.projects.total, 1);
+    assert.equal(body.projects.reviewed, 0, "a trustLevel=REVIEWED project with no durable provenance must not count as reviewed");
+    assert.equal(body.readyForFinalGeneration, false);
   });
 });

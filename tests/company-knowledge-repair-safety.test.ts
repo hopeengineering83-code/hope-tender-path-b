@@ -23,9 +23,15 @@ describe("company knowledge repair safety and diagnostics", () => {
     assert.doesNotMatch(repairRoute, /dedicated source docs optional/);
   });
 
-  it("allows all records (auto-approved, no blocking)", () => {
-    // All records are auto-approved — no blocking for unverified bytes
-    assert.ok(true);
+  it("blocks unverified bytes and stale human or machine provenance", () => {
+    assert.match(repairRoute, /Source byte integrity is unverified/);
+    assert.match(repairRoute, /Expert human reviews are stale/);
+    assert.match(repairRoute, /Project human reviews are stale/);
+    assert.match(repairRoute, /Expert source verification is stale/);
+    assert.match(repairRoute, /Project source verification is stale/);
+    assert.match(repairRoute, /isDurablyReviewed/);
+    assert.match(repairRoute, /isDurablySourceVerified/);
+    assert.match(repairRoute, /sourceByteIntegrityIsVerified/);
   });
 
   it("sanitizes provider errors before storing extraction warnings", () => {
