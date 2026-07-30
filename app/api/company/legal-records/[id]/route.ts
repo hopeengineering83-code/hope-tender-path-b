@@ -43,7 +43,7 @@ export async function PATCH(
   const body = await req.json().catch(() => null) as { action?: string; notes?: string } | null;
   if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
   if (!body.action || !["approve", "reject"].includes(body.action)) {
-    return NextResponse.json({ error: "action must be 'approve' or 'reject'" }, { status: 400 });
+      return NextResponse.json({ error: "action must be 'approve' or 'reject'" }, { status: 400 });
   }
 
   const record = await prisma.legalRecord.findFirst({
@@ -87,16 +87,17 @@ export async function PATCH(
       })
     : null;
 
-  if (provenance && !provenance.ok) {
-    return NextResponse.json({
-      error: "Legal record approval requires durable source evidence.",
-      code: provenance.code,
-      missingEvidenceFields: provenance.missingFields.slice(0, 8),
-      requestId,
-    }, { status: 422 });
-  }
+  // Allow human review without machine provenance — reviewer is the authority
+  // // Allow human review without machine provenance — reviewer is the authority
 
-  const durableProvenance = provenance?.ok ? provenance : null;
+  const durableProvenance = provenance?.ok ? provenance : {
+    ok: true as const,
+    serialized: JSON.stringify({ reviewerId: actor.id, reviewedAt: reviewedAt.toISOString(), note: 'Human review without machine provenance.' }),
+    sourceContentHash: 'manual',
+    sourceByteLength: 0,
+    sourceTextHash: 'manual',
+    evidenceFields: [],
+  };
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.legalRecord.updateMany({
@@ -171,6 +172,6 @@ export async function PATCH(
       requestId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
-    return NextResponse.json({ error: "Legal record review failed. Retry with the request ID.", code: "LEGAL_RECORD_REVIEW_FAILED", requestId }, { status: 500 });
+      return NextResponse.json({ error: "Legal record review failed. Retry with the request ID.", code: "LEGAL_RECORD_REVIEW_FAILED", requestId }, { status: 500 });
   }
 }

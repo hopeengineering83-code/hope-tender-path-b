@@ -132,8 +132,8 @@ export function assessCompanyIngestionReadiness(
   if (requireEligibleExperts && eligibleExperts === 0) blockers.push("No source-verified or human-reviewed experts are available.");
   if (requireEligibleProjects && eligibleProjects === 0) blockers.push("No source-verified or human-reviewed projects are available.");
 
-  if (eligibleExperts === 0) warnings.push("No durable expert evidence is available. Expert-required tenders remain blocked until a relevant CV claim is source-verified or human-reviewed.");
-  if (eligibleProjects === 0) warnings.push("No durable project evidence is available. Project-experience tenders remain blocked until a relevant project claim is source-verified or human-reviewed.");
+  if (eligibleExperts === 0) warnings.push("No reviewed expert evidence is available yet. Review extracted expert records in the Review Board to enable expert-required tenders.");
+  if (eligibleProjects === 0) warnings.push("No reviewed project evidence is available yet. Review extracted project records in the Review Board to enable project-experience tenders.");
   if (sourceVerifiedExperts > 0 && humanReviewedExperts === 0) warnings.push(`${sourceVerifiedExperts} expert record(s) may support matching and draft generation but still require human review for final export.`);
   if (sourceVerifiedProjects > 0 && humanReviewedProjects === 0) warnings.push(`${sourceVerifiedProjects} project record(s) may support matching and draft generation but still require human review for final export.`);
   if (failedDocuments > 0) warnings.push(`${failedDocuments} company document(s) have failed extraction status and should be reprocessed or replaced.`);

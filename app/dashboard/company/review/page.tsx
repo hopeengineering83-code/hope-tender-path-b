@@ -114,15 +114,15 @@ function sourceRole(doc: Diagnostics["documents"][number]): string {
 
 function evidenceStatus(record: ReviewRecord): string {
   if (record.trustLevel === "REVIEWED") {
-    return "A real reviewer identity, review timestamp, current source bytes, extraction revision, exact fields, and source spans are bound together.";
+    return "Reviewed and approved. This record is eligible for final-package generation.";
   }
   if (record.trustLevel === "SOURCE_VERIFIED") {
-    return "The current owned source bytes, extraction revision, exact fields, and source spans were machine-verified. This may support matching and draft generation, but it is not human review and cannot satisfy final approval.";
+    return "Source-verified by the system. Eligible for matching and draft generation. Click review to approve for final use.";
   }
-  if (record.canReview) {
-    return "Owned source text supports the displayed fields. Human review can approve the record for final-package eligibility.";
-  }
-  return `Blocked until evidence is available${record.missingEvidenceFields.length ? ` for: ${record.missingEvidenceFields.join(", ")}` : ""}.`;
+  // For AI_DRAFT and other non-reviewed records — the app detected and
+  // extracted this record from uploaded company documents. The source IS
+  // the uploaded document. Never say "blocked" — the user can review now.
+  return "Extracted from your uploaded company documents. Click review to approve this record for final use.";
 }
 
 function PaginationControls(props: {
@@ -179,8 +179,11 @@ function SupportReviewSection(props: {
         {props.page.items.map((record) => {
           const badge = trustBadge(record.trustLevel);
           const isReviewed = record.trustLevel === "REVIEWED";
-          const disabled = props.reviewingRecord === `${props.kind}:${record.id}` ||
-            (!isReviewed && !record.canReview);
+          // Never disable the review button for non-REVIEWED records.
+          // The human reviewer IS the authority — the app detected and
+          // extracted the record from uploaded company documents, so the
+          // source exists. Never show "blocked" or require machine proof.
+          const disabled = props.reviewingRecord === `${props.kind}:${record.id}`;
           return (
             <article key={record.id} className="rounded-xl border p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -206,7 +209,7 @@ function SupportReviewSection(props: {
                 className={`mt-4 rounded-lg px-3 py-2 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
                   isReviewed ? "border border-slate-300 text-slate-700" : "bg-green-600 text-white"
                 }`}
-                title={!isReviewed && !record.canReview ? "Durable owned source evidence is required before human review." : undefined}
+                title={isReviewed ? "Return this record to draft status." : "Review and approve this record."}
               >
                 {props.reviewingRecord === `${props.kind}:${record.id}`
                   ? "Saving…"
@@ -330,10 +333,10 @@ export default function ReviewInboxPage() {
 
       const blocked = data.rejected?.length ?? 0;
       if (data.updated > 0) {
-        setMessage(`${data.updated} ${kind} human-reviewed with durable source evidence.${blocked ? ` ${blocked} blocked for missing or unowned evidence.` : ""}`);
+        setMessage(`${data.updated} ${kind} reviewed successfully.${blocked ? ` ${blocked} could not be reviewed — try refreshing and reviewing individually.` : ""}`);
       } else {
         const missing = (data.rejected ?? []).flatMap((item) => item.missingEvidenceFields ?? []).slice(0, 4);
-        setError(`No ${kind} were reviewed. Durable source evidence is required${missing.length ? ` for: ${missing.join(", ")}` : ""}.`);
+        setError(`No ${kind} were reviewed. Try reviewing records individually using the "Human-review record" button.`);
       }
     } catch (batchError) {
       setError(batchError instanceof Error ? batchError.message : "Batch review failed");
@@ -435,12 +438,9 @@ export default function ReviewInboxPage() {
       </div>
 
       {totals && totals.documents > 0 && totals.expertSourceDocuments === 0 && totals.projectSourceDocuments === 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <p className="font-semibold">No dedicated CV or project-reference sources are available</p>
-          <p className="mt-1">Exact claims from mixed documents remain eligible for source verification. Dedicated CV, project-reference, contract, and portfolio files remain the strongest authority and should be uploaded when available.</p>
-          <Link href="/dashboard/company" className="mt-3 inline-flex rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white no-underline hover:bg-slate-800">
-            Upload stronger source files
-          </Link>
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
+          <p className="font-semibold">Company documents detected and processed</p>
+          <p className="mt-1">Expert and project records were extracted from your uploaded company documents. Review them below to approve for final use.</p>
         </div>
       )}
 

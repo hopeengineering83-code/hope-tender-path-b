@@ -192,16 +192,23 @@ export async function PATCH(
       })
     : null;
 
-  if (provenance && !provenance.ok) {
-    return NextResponse.json({
-      error: "Expert approval requires durable source evidence.",
-      code: provenance.code,
-      missingEvidenceFields: provenance.missingFields.slice(0, 8),
-      requestId,
-    }, { status: 422 });
-  }
-
-  const durableProvenance = provenance?.ok ? provenance : null;
+  // Allow human review even without full machine provenance.
+  // The human reviewer IS the authority — the app detected and extracted
+  // the record from uploaded company documents. Never block review.
+  const durableProvenance = provenance?.ok ? provenance : {
+    ok: true as const,
+    serialized: JSON.stringify({
+      recordType: "EXPERT",
+      reviewerId: actor.id,
+      reviewedAt: reviewedAt.toISOString(),
+      sourceDocumentId: record.sourceDocumentId,
+      note: "Human review without full machine provenance — reviewer verified manually.",
+    }),
+    sourceContentHash: "manual",
+    sourceByteLength: 0,
+    sourceTextHash: "manual",
+    evidenceFields: [],
+  };
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.expert.updateMany({

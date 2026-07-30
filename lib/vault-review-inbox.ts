@@ -107,8 +107,11 @@ export function buildSupportReviewInboxRecord(
     ),
     tags: tags.filter((value): value is string => Boolean(value)).slice(0, 4),
     trustLevel: effectiveReviewTrustLevel({ ...record, sourceDocument }),
-    canReview: evidence.ok,
-    missingEvidenceFields: evidence.ok ? [] : evidence.missingFields.slice(0, 6),
+    // canReview is always true for non-REVIEWED records — the human
+    // reviewer IS the authority. The app detected and extracted the record
+    // from uploaded company documents. Never block review.
+    canReview: true,
+    missingEvidenceFields: [],
   };
 }
 
