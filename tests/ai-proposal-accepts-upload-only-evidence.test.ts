@@ -1,22 +1,3 @@
-// The interactive AI proposal route had the same authority bug that blocked
-// export, in three stacked layers, and it failed silently rather than loudly:
-//
-//   1. the company vault fallback query filtered `trustLevel: "REVIEWED"` at
-//      the database level, so durably SOURCE_VERIFIED records never reached
-//      the resolver at all;
-//   2. selectReviewedEvidenceForAIDraft() then filtered
-//      `row.trustLevel === "REVIEWED"` again;
-//   3. the route additionally ran two naive `trustLevel === "REVIEWED"`
-//      filters whose results were immediately overwritten by the selection —
-//      dead code carrying the same wrong rule.
-//
-// For a company whose evidence comes only from its own uploaded documents,
-// every record is SOURCE_VERIFIED, so all three returned nothing and the
-// route generated a proposal containing no expert or project evidence at all,
-// logging a warning and continuing. Eligibility is now decided once, by
-// canUseVaultRecord(..., "GENERATION"), the same authority the rest of
-// generation uses.
-
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
@@ -26,7 +7,10 @@ import {
   buildSourceVerificationProvenance,
   expertReviewFields,
 } from "../lib/vault-review-provenance";
-import { selectReviewedEvidenceForAIDraft } from "../lib/engine/ai-proposal-fallback";
+import {
+  fallbackProposal,
+  selectReviewedEvidenceForAIDraft,
+} from "../lib/engine/ai-proposal-fallback";
 
 const companyId = "company-ai-proposal";
 
@@ -58,7 +42,6 @@ function baseFields(fullName: string) {
   };
 }
 
-/** What autoVerifyCompanyKnowledge persists for an uploaded document. */
 function sourceVerifiedExpert(fullName: string) {
   const sourceDocument = sourceFor(fullName);
   const fields = baseFields(fullName);
@@ -107,7 +90,6 @@ function humanReviewedExpert(fullName: string) {
   };
 }
 
-/** trustLevel says REVIEWED but nothing backs it. */
 function unbackedReviewedExpert(fullName: string) {
   return {
     ...baseFields(fullName),
@@ -120,53 +102,69 @@ function unbackedReviewedExpert(fullName: string) {
   };
 }
 
-describe("selectReviewedEvidenceForAIDraft delegates to the canonical generation authority", () => {
-  it("accepts a durably SOURCE_VERIFIED selected record", () => {
+describe("selectReviewedEvidenceForAIDraft uses canonical generation authority", () => {
+  it("accepts durably SOURCE_VERIFIED evidence without a human click", () => {
     const selection = selectReviewedEvidenceForAIDraft([sourceVerifiedExpert("Alice Upload")], []);
-    assert.equal(selection.evidence.length, 1, "upload-only evidence must reach the AI draft");
+    assert.equal(selection.evidence.length, 1);
     assert.equal(selection.usedReviewedVaultFallback, false);
   });
 
-  it("accepts a durably human-REVIEWED selected record too", () => {
+  it("also accepts genuine authenticated human-reviewed evidence", () => {
     const selection = selectReviewedEvidenceForAIDraft([humanReviewedExpert("Bob Reviewed")], []);
     assert.equal(selection.evidence.length, 1);
   });
 
-  it("accepts a REVIEWED-labelled record (auto-approved)", () => {
+  it("rejects a REVIEWED label without durable provenance", () => {
     const selection = selectReviewedEvidenceForAIDraft([unbackedReviewedExpert("Carol Unbacked")], []);
-    assert.equal(selection.evidence.length, 1, "auto-approved records are usable as evidence");
+    assert.deepEqual(selection.evidence, []);
   });
 
-  it("uses vault records directly when no selected record exists", () => {
-    const selection = selectReviewedEvidenceForAIDraft<{ trustLevel?: string | null }>(
+  it("falls back from unusable selected records to source-verified Vault evidence", () => {
+    const selection = selectReviewedEvidenceForAIDraft(
       [unbackedReviewedExpert("Carol Unbacked")],
       [sourceVerifiedExpert("Dana Vault")],
     );
-    // Selected records are always usable (auto-approved) — no fallback needed
     assert.equal(selection.evidence.length, 1);
-    assert.equal(selection.usedReviewedVaultFallback, false);
+    assert.equal(selection.usedReviewedVaultFallback, true);
   });
 
-  it("returns all vault records (no authority filter needed)", () => {
+  it("returns no evidence when both selected and Vault records are unsupported", () => {
     const selection = selectReviewedEvidenceForAIDraft(
       [unbackedReviewedExpert("Carol Unbacked")],
-      [unbackedReviewedExpert("Eve AlsoUnbacked")],
+      [unbackedReviewedExpert("Eve Also Unbacked")],
     );
-    // Selected records are always usable — vault fallback not needed
-    assert.equal(selection.evidence.length, 1);
+    assert.deepEqual(selection.evidence, []);
     assert.equal(selection.usedReviewedVaultFallback, false);
   });
 });
 
-describe("the ai-proposal route no longer carries its own competing eligibility rule", () => {
+describe("proposal fallback copy reflects automatic source verification", () => {
+  it("does not state that human review is mandatory", () => {
+    const draft = fallbackProposal({
+      tenderTitle: "Sample Tender",
+      requirements: ["Provide expert CVs and similar projects"],
+      companyName: "Hope",
+      companyProfile: "Profile",
+      serviceLines: "Engineering",
+      expertLines: [],
+      projectLines: [],
+      differentiators: [],
+      submissionRules: [],
+    });
+    assert.match(draft, /source-verified/i);
+    assert.doesNotMatch(draft, /must be reviewed and confirmed|must be reviewed and selected/i);
+  });
+});
+
+describe("the ai-proposal route has no competing trust-level rule", () => {
   const route = readFileSync("app/api/tenders/[id]/ai-proposal/route.ts", "utf8");
 
-  it("has no naive trustLevel comparison left", () => {
+  it("has no naive trustLevel comparison", () => {
     assert.doesNotMatch(route, /trustLevel === "REVIEWED"/);
     assert.doesNotMatch(route, /trustLevel !== "REVIEWED"/);
   });
 
-  it("loads the provenance and source document the authority needs", () => {
+  it("loads provenance and source documents", () => {
     assert.match(route, /trustLevel: \{ in: \["REVIEWED", "SOURCE_VERIFIED"\] \}/);
     assert.match(route, /sourceDocument: true/);
   });
