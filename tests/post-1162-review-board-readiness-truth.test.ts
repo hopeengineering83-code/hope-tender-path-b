@@ -18,7 +18,8 @@ describe("single Company Vault Automatic Verification truth", () => {
     assert.match(verificationPage, /SOURCE_VERIFIED/);
     assert.match(verificationPage, /REVIEWED/);
     assert.match(verificationPage, /equally eligible for matching, generation, export, and Final ZIP/);
-    assert.doesNotMatch(verificationPage, /human approval.*required/i);
+    assert.match(verificationPage, /No human approval step is required/);
+    assert.doesNotMatch(verificationPage, />Human approval is required<|>Human approval required</i);
   });
 
   it("exposes loading, error, and success state accessibly", () => {
