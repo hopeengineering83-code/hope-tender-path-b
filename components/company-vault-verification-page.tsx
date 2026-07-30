@@ -61,11 +61,14 @@ export default function CompanyVaultVerificationPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch("/api/company/knowledge/repair", { method: "POST" });
+      // Re-import owns the strong repair path: it re-reads stored file bytes,
+      // re-runs extraction/OCR, rebuilds records, remaps sources, and lets the
+      // ingestion worker promote only evidence that verifies successfully.
+      const response = await fetch("/api/company/reimport", { method: "POST" });
       const data = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Automatic source verification could not be queued.");
       void fetch("/api/ai-jobs/run-next?jobType=VAULT_INGEST", { method: "POST" }).catch(() => {});
-      setMessage("Automatic Company Vault reprocessing was queued. Run Engine also performs this verification preflight before matching.");
+      setMessage("Source-byte reprocessing and automatic verification were queued. Run Engine also refreshes source authority before matching.");
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : "Automatic source verification could not be queued.");
     } finally {
