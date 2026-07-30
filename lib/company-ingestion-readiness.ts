@@ -1,11 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
-  canUseVaultRecord,
   isDurablyReviewed,
   isDurablySourceVerified,
   VAULT_REVIEW_CONSUMER_SELECT,
 } from "./vault-review-provenance";
+import { canUseVaultRecordSafely } from "./vault-runtime-authority";
 
 function hasUsefulText(text: string | null | undefined): boolean {
   return (text ?? "").replace(/\s+/g, " ").trim().length >= 80;
@@ -41,9 +41,9 @@ export type IngestionReadinessSnapshot = {
 
 export type IngestionReadinessOptions = {
   requireDocuments?: boolean;
-  /** Backward-compatible name: requires durable evidence eligible for matching/draft generation. */
+  /** Backward-compatible name: requires durable evidence eligible for all runtime tiers. */
   requireReviewedExperts?: boolean;
-  /** Backward-compatible name: requires durable evidence eligible for matching/draft generation. */
+  /** Backward-compatible name: requires durable evidence eligible for all runtime tiers. */
   requireReviewedProjects?: boolean;
 };
 
@@ -78,8 +78,7 @@ function isGenerationEligibleRecord(record: ReadinessRecord): boolean {
   if (typeof record.durableGenerationEligibility === "boolean") {
     return record.durableGenerationEligibility;
   }
-  // All records are auto-approved and generation-eligible
-  return true;
+  return record.trustLevel === "REVIEWED" || record.trustLevel === "SOURCE_VERIFIED";
 }
 
 function isHumanReviewedRecord(record: ReadinessRecord): boolean {
@@ -130,13 +129,11 @@ export function assessCompanyIngestionReadiness(
   if (pendingDocuments > 0 && usefulDocuments === 0 && eligibleExperts === 0 && eligibleProjects === 0) {
     blockers.push("Company knowledge extraction is still pending. Reprocess the company documents before matching or generation.");
   }
-  if (requireEligibleExperts && eligibleExperts === 0) blockers.push("No experts are available.");
-  if (requireEligibleProjects && eligibleProjects === 0) blockers.push("No projects are available.");
+  if (requireEligibleExperts && eligibleExperts === 0) blockers.push("No verified, source-backed experts are available.");
+  if (requireEligibleProjects && eligibleProjects === 0) blockers.push("No verified, source-backed projects are available.");
 
-  if (eligibleExperts === 0) warnings.push("No reviewed expert evidence is available yet. Review extracted expert records in the Review Board to enable expert-required tenders.");
-  if (eligibleProjects === 0) warnings.push("No reviewed project evidence is available yet. Review extracted project records in the Review Board to enable project-experience tenders.");
-  if (sourceVerifiedExperts > 0 && humanReviewedExperts === 0) warnings.push(`${sourceVerifiedExperts} expert record(s) may support matching and draft generation and are ready for final export.`);
-  if (sourceVerifiedProjects > 0 && humanReviewedProjects === 0) warnings.push(`${sourceVerifiedProjects} project record(s) may support matching and draft generation and are ready for final export.`);
+  if (eligibleExperts === 0) warnings.push("No verified expert evidence is available yet. Upload or reprocess source documents so eligible records can be promoted automatically.");
+  if (eligibleProjects === 0) warnings.push("No verified project evidence is available yet. Upload or reprocess source documents so eligible records can be promoted automatically.");
   if (failedDocuments > 0) warnings.push(`${failedDocuments} company document(s) have failed extraction status and should be reprocessed or replaced.`);
   if (missingExperts > 0) warnings.push(`Expert completeness gap: ${missingExperts} expected expert record(s) are not present in the Company Vault.`);
   if (missingProjects > 0) warnings.push(`Project completeness gap: ${missingProjects} expected project record(s) are not present in the Company Vault.`);
@@ -201,13 +198,13 @@ export async function getCompanyIngestionReadiness(
 
   const experts: ReadinessExpert[] = expertRecords.map((record) => ({
     trustLevel: record.trustLevel,
-    durableGenerationEligibility: hasRuntimeAuthorityShape(record) ? canUseVaultRecord(record, "GENERATION") : undefined,
+    durableGenerationEligibility: hasRuntimeAuthorityShape(record) ? canUseVaultRecordSafely(record, "GENERATION") : undefined,
     durableHumanReview: hasRuntimeAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
     durableSourceVerification: hasRuntimeAuthorityShape(record) ? isDurablySourceVerified(record) : undefined,
   }));
   const projects: ReadinessProject[] = projectRecords.map((record) => ({
     trustLevel: record.trustLevel,
-    durableGenerationEligibility: hasRuntimeAuthorityShape(record) ? canUseVaultRecord(record, "GENERATION") : undefined,
+    durableGenerationEligibility: hasRuntimeAuthorityShape(record) ? canUseVaultRecordSafely(record, "GENERATION") : undefined,
     durableHumanReview: hasRuntimeAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
     durableSourceVerification: hasRuntimeAuthorityShape(record) ? isDurablySourceVerified(record) : undefined,
   }));
