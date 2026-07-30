@@ -11,17 +11,15 @@ describe("latest preview — extraction truth has one meaning", () => {
     assert.match(source, /quality \$\{quality\}\/100/);
     assert.doesNotMatch(source, /\$\{Math\.round\(file\.extractionScore\)\}% extraction/);
   });
-
-  // "snapshot diagnostics" contract retired -- was pinned to
-  // extraction-snapshot-panel.tsx, which nothing imports or renders. The
-  // Coverage/quality distinction it duplicated is the sibling test above,
-  // against the live, rendered tender-source-files-panel.tsx.
 });
 
 describe("latest preview — Engine outcome is canonical and provenance-aware", () => {
-  it("runtime Vault counts all records as generation-eligible (auto-approved)", () => {
-    // All records are auto-approved — no distinction needed
-    assert.ok(true);
+  it("runtime Vault eligibility uses durable source or review authority", () => {
+    const provenance = read("lib/vault-review-provenance.ts");
+    const matching = read("lib/engine/matching-eligibility.ts");
+    assert.match(provenance, /isDurablyReviewed\(record\) \|\| isDurablySourceVerified\(record\)/);
+    assert.match(matching, /canUseVaultRecordSafely/);
+    assert.doesNotMatch(provenance, /all non-expired company records are usable/i);
   });
 
   it("postconditions do not emit both zero-row and no-selection blockers for the same evidence class", () => {
