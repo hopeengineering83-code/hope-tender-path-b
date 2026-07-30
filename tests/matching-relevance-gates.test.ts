@@ -224,7 +224,7 @@ describe("matching relevance gates — water supply tender", () => {
     assert.equal(result.projectMatches.filter((match) => match.isSelected).length, 0);
   });
 
-  it("rejects source-less records before relevance scoring", () => {
+  it("keeps source-less diagnostic rows fail-closed", () => {
     const ungrounded = makeProject("p-ungrounded", "Water Project", "Water Supply", "Borehole and WASH", ["water"]);
     ungrounded.sourceDocumentId = null;
     const result = buildMatches(waterRequirements, {
@@ -233,6 +233,9 @@ describe("matching relevance gates — water supply tender", () => {
       experts: [],
       projects: [ungrounded],
     }, "Water Supply", "Borehole water supply");
-    assert.equal(result.projectMatches.length, 0);
+    const diagnostic = result.projectMatches.find((match) => match.projectId === "p-ungrounded");
+    assert.ok(diagnostic);
+    assert.equal(diagnostic.isSelected, false);
+    assert.equal(diagnostic.score, 0);
   });
 });
