@@ -19,8 +19,8 @@ const sourceDocument = {
   metadata: JSON.stringify({ extractionRevision: 2 }),
 };
 
-describe("Company Vault support-record Review Inbox", () => {
-  it("maps legal, financial and compliance records to bounded review DTOs", () => {
+describe("Company Vault support-record automatic verification", () => {
+  it("maps legal, financial, and compliance records to bounded evidence-aware DTOs", () => {
     const records = [
       buildSupportReviewInboxRecord("LEGAL", {
         id: "legal-1",
@@ -73,6 +73,7 @@ describe("Company Vault support-record Review Inbox", () => {
 
     assert.deepEqual(records.map((record) => record.kind), ["LEGAL", "FINANCIAL", "COMPLIANCE"]);
     assert.ok(records.every((record) => record.canReview));
+    assert.ok(records.every((record) => record.missingEvidenceFields.length === 0));
     assert.ok(records.every((record) => !("sourceDocument" in record)));
     assert.ok(records.every((record) => !("extractedText" in record)));
     assert.match(records[0]!.secondary, /GC-7788/);
@@ -80,29 +81,26 @@ describe("Company Vault support-record Review Inbox", () => {
     assert.match(records[2]!.secondary, /ISO-12345/);
   });
 
-  it("keeps unsupported manual entries as explicitly manual drafts", () => {
+  it("keeps unsupported manual entries as drafts awaiting automatic verification", () => {
     assert.deepEqual(manualSupportRecordDraftFields("LEGAL"), {
       trustLevel: "MANUAL_DRAFT",
       reviewedBy: null,
       reviewedAt: null,
-      reviewNotes: "Manual legal record auto-approved from company documents.",
+      reviewNotes: "Manual legal record awaiting automatic source verification or optional human audit.",
     });
   });
 
-  it("wires all three support families through the single paginated Review Inbox", () => {
+  it("wires support families through bounded Company Vault diagnostics", () => {
     const route = readFileSync("app/api/company/knowledge/repair/route.ts", "utf8");
-    const page = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
     for (const family of ["legal", "financial", "compliance"]) {
       assert.match(route, new RegExp(`${family}Page`));
-      assert.match(page, new RegExp(`${family}Page`));
     }
     for (const kind of ["LEGAL", "FINANCIAL", "COMPLIANCE"]) {
       assert.match(route, new RegExp(`buildSupportReviewInboxRecord\\("${kind}"`));
-      assert.match(page, new RegExp(`kind="${kind}"`));
     }
   });
 
-  it("manual support-record POST routes cannot stamp REVIEWED or reviewer identity", () => {
+  it("manual support-record POST routes cannot fabricate REVIEWED or reviewer identity", () => {
     for (const path of [
       "app/api/company/legal-records/route.ts",
       "app/api/company/financial-records/route.ts",
