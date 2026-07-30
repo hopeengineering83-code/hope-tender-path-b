@@ -18,7 +18,9 @@ test("blocked Engine exposes an explicit Vault recovery action without becoming 
 test("Review Inbox reprocesses stored source bytes before rebuilding records", () => {
   assert.match(review, /fetch\("\/api\/company\/reimport", \{ method: "POST" \}\)/);
   assert.match(review, /Reprocess sources/);
-  assert.match(review, /Upload stronger source files/);
+  // "Upload stronger source files" was removed — replaced with a positive
+  // message about detected company documents
+  assert.doesNotMatch(review, /Upload stronger source files/);
   assert.doesNotMatch(review, /fetch\("\/api\/company\/knowledge\/repair", \{ method: "POST" \}\)/);
 });
 
