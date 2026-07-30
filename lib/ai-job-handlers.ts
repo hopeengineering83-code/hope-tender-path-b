@@ -13,10 +13,25 @@ import {
   type JobHandler,
 } from "./ai-job-handlers-legacy";
 import { runTenderFileExtractionJob } from "./ai-jobs/tender-extraction-service";
+import { prepareCompanyVaultForEngine } from "./engine/prepare-company-vault";
 
 export function getHandler(jobType: JobType): JobHandler | null {
   if (jobType === "EXTRACT_TEXT") {
     return runTenderFileExtractionJob as JobHandler;
   }
-  return getLegacyHandler(jobType);
+
+  const legacyHandler = getLegacyHandler(jobType);
+  if (jobType === "ENGINE_RUN" && legacyHandler) {
+    return async (ctx) => {
+      // The queue may start well after the HTTP request that created the job.
+      // Refresh authority again at execution time so newly repaired records are
+      // promoted automatically and records changed after enqueue remain
+      // fail-closed rather than using stale verification.
+      const preflight = await prepareCompanyVaultForEngine(ctx.userId);
+      if (!preflight) throw new Error("Company Vault profile required before Engine execution");
+      return legacyHandler(ctx);
+    };
+  }
+
+  return legacyHandler;
 }
