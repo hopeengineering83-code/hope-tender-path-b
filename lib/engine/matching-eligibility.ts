@@ -1,8 +1,8 @@
 import {
-  canUseVaultRecord,
   type ReviewRecordState,
   type ReviewSourceDocument,
 } from "../vault-review-provenance";
+import { canUseVaultRecordSafely } from "../vault-runtime-authority";
 
 export type MatchingEligibilityRecord = {
   id: string;
@@ -44,7 +44,7 @@ export function checkMatchingEligibility(record: MatchingEligibilityRecord): Eli
   // evidence authority. A current human REVIEWED record and a current machine
   // SOURCE_VERIFIED record are equally eligible; drafts and stale/tampered
   // records remain fail-closed.
-  if (record.companyId && (record.fullName || record.name) && canUseVaultRecord(record as ReviewRecordState, "MATCHING")) {
+  if (record.companyId && (record.fullName || record.name) && canUseVaultRecordSafely(record as ReviewRecordState, "MATCHING")) {
     return { eligible: true };
   }
 
