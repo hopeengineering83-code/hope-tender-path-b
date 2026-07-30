@@ -1,14 +1,6 @@
-// Legal/Financial/Compliance records had NO trustLevel/review/provenance
-// concept at all before this fix — every record (manual create AND Plan-B
-// bulk import) was fed directly into generation evidence
-// (lib/engine/generate-elite.ts) with zero gating, unlike Expert/Project
-// which require a durable, evidence-backed trustLevel === "REVIEWED".
-//
-// This proves the extended lib/vault-review-provenance.ts evidence contract
-// for the three new record types: buildReviewProvenance's quote-containment
-// check against a real linked source document, and recordIsExpired's
-// fail-closed date gating (evidence for a lapsed license/certificate must
-// never be presented as current).
+// Legal, financial, and compliance records use the same durable evidence
+// contract as experts and projects. Human review is optional, but no runtime
+// consumer may use source-less, stale, altered, expired, or unmatched records.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -40,7 +32,7 @@ describe("legalReviewFields / financialReviewFields / complianceReviewFields evi
     integrityStatus: "VERIFIED",
   };
 
-  it("passes when the legal record's claimed fields genuinely appear in the linked document's text", () => {
+  it("passes when the legal record's claimed fields genuinely appear in the linked source", () => {
     const provenance = buildReviewProvenance({
       recordType: "LEGAL",
       sourceDocument: legalDoc,
@@ -70,7 +62,7 @@ describe("legalReviewFields / financialReviewFields / complianceReviewFields evi
     assert.equal(provenance.ok ? null : provenance.code, "SOURCE_DOCUMENT_REQUIRED");
   });
 
-  it("fails closed when the claimed reference number does not actually appear in the linked document", () => {
+  it("fails closed when the claimed reference number is absent", () => {
     const provenance = buildReviewProvenance({
       recordType: "LEGAL",
       sourceDocument: legalDoc,
@@ -98,7 +90,7 @@ describe("legalReviewFields / financialReviewFields / complianceReviewFields evi
     integrityStatus: "VERIFIED",
   };
 
-  it("passes for a financial record whose fiscalYear/recordType/currency/amount genuinely appear in the source text", () => {
+  it("passes for source-grounded financial values", () => {
     const provenance = buildReviewProvenance({
       recordType: "FINANCIAL",
       sourceDocument: financialDoc,
@@ -114,7 +106,7 @@ describe("legalReviewFields / financialReviewFields / complianceReviewFields evi
     assert.equal(provenance.ok, true);
   });
 
-  it("fails closed when the claimed amount was never actually stated in the source text", () => {
+  it("fails closed when the claimed amount is absent", () => {
     const provenance = buildReviewProvenance({
       recordType: "FINANCIAL",
       sourceDocument: financialDoc,
@@ -142,7 +134,7 @@ describe("legalReviewFields / financialReviewFields / complianceReviewFields evi
     integrityStatus: "VERIFIED",
   };
 
-  it("passes for a compliance record whose title/complianceType/referenceNumber genuinely appear in the source text", () => {
+  it("passes for source-grounded compliance values", () => {
     const provenance = buildReviewProvenance({
       recordType: "COMPLIANCE",
       sourceDocument: complianceDoc,
@@ -157,7 +149,7 @@ describe("legalReviewFields / financialReviewFields / complianceReviewFields evi
     assert.equal(provenance.ok, true);
   });
 
-  it("fails closed for a fabricated compliance certificate title", () => {
+  it("fails closed for a fabricated compliance title", () => {
     const provenance = buildReviewProvenance({
       recordType: "COMPLIANCE",
       sourceDocument: complianceDoc,
@@ -173,7 +165,7 @@ describe("legalReviewFields / financialReviewFields / complianceReviewFields evi
 });
 
 describe("recordIsExpired — fail-closed expiry gating", () => {
-  it("treats a null/undefined expiryDate as never expired", () => {
+  it("treats null or undefined expiryDate as not expired", () => {
     assert.equal(recordIsExpired(null), false);
     assert.equal(recordIsExpired(undefined), false);
   });
@@ -187,14 +179,14 @@ describe("recordIsExpired — fail-closed expiry gating", () => {
     assert.equal(recordIsExpired("2099-01-01"), false);
   });
 
-  it("supports an explicit asOf reference (for deterministic tests)", () => {
+  it("supports an explicit asOf reference", () => {
     assert.equal(recordIsExpired("2025-06-01", new Date("2025-01-01")), false);
     assert.equal(recordIsExpired("2025-06-01", new Date("2025-12-01")), true);
   });
 });
 
-describe("canUseVaultRecord — expired evidence must never be usable, regardless of trustLevel", () => {
-  it("blocks a durably-REVIEWED-looking record once its expiryDate has passed", () => {
+describe("canUseVaultRecord — automatic does not mean unverified", () => {
+  it("blocks expired evidence regardless of trust label", () => {
     const expiredButReviewed = {
       companyId: "company-1",
       trustLevel: "REVIEWED",
@@ -204,21 +196,18 @@ describe("canUseVaultRecord — expired evidence must never be usable, regardles
       sourceDocumentId: null,
       expiryDate: "2020-01-01",
     } as unknown as Parameters<typeof canUseVaultRecord>[0];
-    // Expired evidence is the only thing canUseVaultRecord blocks (zero
-    // bureaucracy for everything else).
     assert.equal(canUseVaultRecord(expiredButReviewed, "GENERATION"), false);
     assert.equal(canUseVaultRecord(expiredButReviewed, "EXPORT"), false);
     assert.equal(canUseVaultRecord(expiredButReviewed, "MATCHING"), false);
   });
 
-  it("does not block a record with no expiryDate field at all (e.g. FinancialRecord)", () => {
-    const noExpiryConcept = {
+  it("rejects an unverified AI draft even when the record type has no expiry field", () => {
+    const unverifiedDraft = {
       companyId: "company-1",
       trustLevel: "AI_DRAFT",
     } as unknown as Parameters<typeof canUseVaultRecord>[0];
-    // Zero bureaucracy: AI_DRAFT with no expiryDate is usable for all purposes.
-    assert.equal(canUseVaultRecord(noExpiryConcept, "EXPORT"), true);
-    assert.equal(canUseVaultRecord(noExpiryConcept, "MATCHING"), true);
-    assert.equal(canUseVaultRecord(noExpiryConcept, "GENERATION"), true);
+    assert.equal(canUseVaultRecord(unverifiedDraft, "EXPORT"), false);
+    assert.equal(canUseVaultRecord(unverifiedDraft, "MATCHING"), false);
+    assert.equal(canUseVaultRecord(unverifiedDraft, "GENERATION"), false);
   });
 });
