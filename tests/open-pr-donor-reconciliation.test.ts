@@ -7,8 +7,8 @@ const read = (path: string) => readFileSync(path, "utf8");
 describe("open-PR donor UI reconciliation", () => {
   it("keeps Review Inbox blockers explanatory and actionable", () => {
     const source = read("app/dashboard/company/review/page.tsx");
-    assert.match(source, /No experts on this page are eligible for human review/);
-    assert.match(source, /No projects on this page are eligible for human review/);
+    assert.match(source, /No experts on this page are eligible for review/);
+    assert.match(source, /No projects on this page are eligible for review/);
     assert.match(source, /No source-verified experts on this page are eligible/);
     assert.match(source, /No source-verified projects on this page are eligible/);
     assert.match(source, /disabled:cursor-not-allowed/);

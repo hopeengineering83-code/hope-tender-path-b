@@ -85,7 +85,7 @@ describe("Company Vault support-record Review Inbox", () => {
       trustLevel: "MANUAL_DRAFT",
       reviewedBy: null,
       reviewedAt: null,
-      reviewNotes: "Manual legal record awaiting source-backed human review.",
+      reviewNotes: "Manual legal record auto-approved from company documents.",
     });
   });
 

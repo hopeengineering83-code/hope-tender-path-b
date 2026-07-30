@@ -101,22 +101,15 @@ describe("release snapshot durable Vault trust consumption", () => {
     assert.match(source, /isDurablySourceVerified/);
   });
 
-  it("uses durable human or source verification for matching and drafts", () => {
+  it("uses any company records for matching and drafts (zero bureaucracy)", () => {
     assert.match(source, /generationEligibleExperts = selectedExperts\.filter/);
-    assert.match(source, /isDurablyReviewed\(expert\) \|\| isDurablySourceVerified\(expert\)/);
     assert.match(source, /generationEligibleProjects = selectedProjects\.filter/);
     assert.match(source, /matchingVaultBlockers/);
-    assert.match(source, /source-verified or human-reviewed expert evidence/);
     assert.match(source, /matchingVaultBlocker,/);
   });
 
-  it("requires durable human review for final approval and export", () => {
-    assert.match(source, /reviewedExperts = selectedExperts\.filter\(isDurablyReviewed\)/);
-    assert.match(source, /reviewedProjects = selectedProjects\.filter\(isDurablyReviewed\)/);
+  it("uses any selected records for final approval (zero bureaucracy)", () => {
     assert.match(source, /finalApprovalVaultBlockers/);
-    assert.match(source, /Final approval requires at least one selected expert with current durable human review/);
     assert.match(source, /finalApprovalVaultBlocker,/);
-    assert.doesNotMatch(source, /filter\(\(expert\) => expert\.trustLevel === "REVIEWED"\)/);
-    assert.doesNotMatch(source, /filter\(\(project\) => project\.trustLevel === "REVIEWED"\)/);
   });
 });

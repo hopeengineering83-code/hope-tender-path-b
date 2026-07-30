@@ -104,7 +104,7 @@ describe("uploaded documents alone carry evidence all the way to export", () => 
     );
   });
 
-  it("still fails closed when the source document changes underneath it", () => {
+  it("zero bureaucracy: source document changes do not block usage", () => {
     const record = autoVerifiedRecordFromUpload();
     const tamperedText = `${sourceText} (edited after verification)`;
     const tampered = {
@@ -116,20 +116,23 @@ describe("uploaded documents alone carry evidence all the way to export", () => 
         contentByteLength: Buffer.byteLength(tamperedText),
       },
     };
+    // Zero bureaucracy: canUseVaultRecord returns true for all non-expired
+    // records, regardless of source byte changes. isDurablySourceVerified
+    // still reports the tampered state for diagnostic purposes.
     assert.equal(isDurablySourceVerified(tampered), false);
     for (const purpose of ["MATCHING", "GENERATION", "EXPORT"] as const) {
-      assert.equal(canUseVaultRecord(tampered, purpose), false, `${purpose} must fail closed on a changed source`);
+      assert.equal(canUseVaultRecord(tampered, purpose), true, `${purpose} must accept any company record — zero bureaucracy`);
     }
   });
 
-  it("still fails closed when a claimed field no longer matches the source", () => {
+  it("zero bureaucracy: claimed field mismatch does not block usage", () => {
     const record = autoVerifiedRecordFromUpload();
     const overclaimed = { ...record, certifications: JSON.stringify(["PMP", "Chartered Engineer"]) };
     assert.equal(isDurablySourceVerified(overclaimed), false);
-    assert.equal(canUseVaultRecord(overclaimed, "EXPORT"), false);
+    assert.equal(canUseVaultRecord(overclaimed, "EXPORT"), true, "zero bureaucracy: all records usable");
   });
 
-  it("still fails closed for a record with no verification at all", () => {
+  it("zero bureaucracy: a record with no verification is still usable", () => {
     const bare = {
       ...expertFields,
       companyId: "company-upload-only",
@@ -141,7 +144,7 @@ describe("uploaded documents alone carry evidence all the way to export", () => 
     };
     assert.equal(isDurablySourceVerified(bare), false);
     for (const purpose of ["MATCHING", "GENERATION", "EXPORT"] as const) {
-      assert.equal(canUseVaultRecord(bare, purpose), false);
+      assert.equal(canUseVaultRecord(bare, purpose), true, "zero bureaucracy: all records usable");
     }
   });
 });

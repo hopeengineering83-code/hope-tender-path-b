@@ -169,7 +169,8 @@ test("company readiness allows a useful company profile and reports review warni
     financialRecords: 1,
   }));
   assert.equal(report.ingestionReady, true);
-  assert.equal(report.totals.reviewedExperts, 1);
+  // Zero bureaucracy: reviewedExperts counts ALL eligible records (REVIEWED + DRAFT).
+  assert.equal(report.totals.reviewedExperts, 2);
   assert.equal(report.totals.reviewedProjects, 1);
   assert.equal(report.totals.expectedExperts, 12);
   assert.equal(report.totals.expectedProjects, 24);
@@ -220,7 +221,7 @@ test("tender generation readiness does not over-block when reviewed matches can 
   assert.ok(readiness.warnings.some((warning) => warning.code === "PROJECT_AUTO_PROMOTION_AVAILABLE"));
 });
 
-test("tender generation readiness blocks when only unreviewed selected evidence exists", async () => {
+test("tender generation readiness passes with any selected evidence (zero bureaucracy)", async () => {
   const readiness = await getTenderGenerationReadiness(fakeClient({
     documents: [usefulDocument],
     experts: [{ trustLevel: "DRAFT" }],
@@ -236,9 +237,10 @@ test("tender generation readiness blocks when only unreviewed selected evidence 
     },
   }), "user-1", "tender-1");
   assert.ok(readiness);
-  assert.equal(readiness.ready, false);
-  assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_EXPERTS_UNREVIEWED"));
-  assert.ok(readiness.blockers.some((blocker) => blocker.code === "ALL_PROJECTS_UNREVIEWED"));
+  // Zero bureaucracy: any selected evidence is usable. No ALL_EXPERTS_UNREVIEWED blocker.
+  assert.equal(readiness.ready, true);
+  assert.ok(!readiness.blockers.some((blocker) => blocker.code === "ALL_EXPERTS_UNREVIEWED"));
+  assert.ok(!readiness.blockers.some((blocker) => blocker.code === "ALL_PROJECTS_UNREVIEWED"));
 });
 
 test("tender generation readiness passes when company, requirements, and reviewed selected evidence are present", async () => {

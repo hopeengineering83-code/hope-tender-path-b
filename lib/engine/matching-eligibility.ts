@@ -32,6 +32,10 @@ export type EligibilityResult =
   | { eligible: true }
   | { eligible: false; reason: EligibilityRejectionCode; detail: string };
 
+// Rejection codes retained for backwards compatibility with the UI's
+// eligible-record filtering — but in zero-bureaucracy mode these are never
+// actually returned for company records. Only expired legal/compliance
+// evidence is rejected (canUseVaultRecord returns false for that).
 export type EligibilityRejectionCode =
   | "NOT_REVIEWED"
   | "NO_SOURCE_DOCUMENT"
@@ -40,41 +44,18 @@ export type EligibilityRejectionCode =
   | "NO_DURABLE_PROVENANCE";
 
 export function checkMatchingEligibility(record: MatchingEligibilityRecord): EligibilityResult {
-  // canUseVaultRecord's MATCHING purpose accepts BOTH a durably human-REVIEWED
-  // record and a durably machine-SOURCE_VERIFIED one (see
-  // vault-review-provenance.ts's canUseVaultRecord) — a record that has been
-  // auto-verified against its own owned, byte-verified source document is
-  // genuinely eligible evidence for matching even before a human has looked
-  // at it. Checking this FIRST (rather than hard-rejecting anything that
-  // isn't literally trustLevel==="REVIEWED" before ever reaching this check,
-  // as a prior version of this function did) is what actually determines
-  // eligibility; everything below only exists to give a specific rejection
-  // reason for the UI when it's false.
-  if (record.companyId && (record.fullName || record.name) && canUseVaultRecord(record as ReviewRecordState, "MATCHING")) {
+  // Zero bureaucracy: the engine accesses ALL company documents directly.
+  // Any record that was extracted from an uploaded company document is
+  // eligible for matching, regardless of trustLevel, sourceDocumentId,
+  // reviewedBy, or reviewedAt. canUseVaultRecord only rejects expired
+  // legal/compliance evidence — everything else is eligible.
+  if (canUseVaultRecord(record as ReviewRecordState, "MATCHING")) {
     return { eligible: true };
-  }
-
-  if (record.trustLevel !== "REVIEWED" && record.trustLevel !== "SOURCE_VERIFIED") {
-    return { eligible: false, reason: "NOT_REVIEWED", detail: `trustLevel is "${record.trustLevel ?? "null"}", must be "REVIEWED" or "SOURCE_VERIFIED"` };
-  }
-  if (!record.sourceDocumentId?.trim()) {
-    return { eligible: false, reason: "NO_SOURCE_DOCUMENT", detail: "sourceDocumentId is missing" };
-  }
-  // reviewedBy/reviewedAt are only required for a human REVIEWED record —
-  // SOURCE_VERIFIED records are machine-verified and correctly leave both
-  // null (see autoVerifyCompanyKnowledge / isDurablySourceVerified).
-  if (record.trustLevel === "REVIEWED") {
-    if (!record.reviewedBy?.trim()) {
-      return { eligible: false, reason: "NO_REVIEWER", detail: "reviewedBy is missing" };
-    }
-    if (!record.reviewedAt || (typeof record.reviewedAt === "string" && !record.reviewedAt.trim())) {
-      return { eligible: false, reason: "NO_REVIEW_TIMESTAMP", detail: "reviewedAt is missing" };
-    }
   }
   return {
     eligible: false,
     reason: "NO_DURABLE_PROVENANCE",
-    detail: "review state is not bound to current verified source bytes and current record values",
+    detail: "record is expired or otherwise not usable",
   };
 }
 

@@ -36,7 +36,7 @@ describe("Company Vault Review Inbox contract", () => {
 
     assert.match(inbox, /Review Inbox/);
     assert.match(inbox, /SOURCE_VERIFIED/);
-    assert.match(inbox, /Human reviewed/);
+    assert.match(inbox, /Reviewed/);
     assert.match(inbox, /Source verified/);
     assert.match(legacy, /redirect\("\/dashboard\/company\/review"\)/);
     assert.doesNotMatch(legacy, /fetch\s*\(|method:\s*"PATCH"|method:\s*"POST"/);
@@ -62,7 +62,7 @@ describe("Company Vault Review Inbox contract", () => {
     assert.match(inbox, /Evidence status/);
   });
 
-  it("treats stale human and machine trust as blocked", () => {
+  it("reports unsupported review and source-verification state for diagnostics", () => {
     const api = read("app/api/company/knowledge/repair/route.ts");
     const inbox = read("app/dashboard/company/review/page.tsx");
 
@@ -71,7 +71,7 @@ describe("Company Vault Review Inbox contract", () => {
     assert.match(api, /unsupportedSourceVerifiedExperts/);
     assert.match(api, /unsupportedSourceVerifiedProjects/);
     assert.match(api, /effectiveReviewTrustLevel/);
-    assert.match(inbox, /Human review invalidated/);
+    assert.match(inbox, /Review invalidated/);
     assert.match(inbox, /Source verification invalidated/);
   });
 

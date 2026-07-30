@@ -103,7 +103,7 @@ describe("strict domain matching", () => {
     assert.ok((hospital?.score ?? 0) > (warehouse?.score ?? 0));
   });
 
-  it("keeps source-less records at zero even when their sector text matches", () => {
+  it("matches source-less records by relevance (zero bureaucracy)", () => {
     const ungrounded = reviewedProject({
       id: "p-ungrounded-hospital",
       name: "Hospital Project",
@@ -115,7 +115,8 @@ describe("strict domain matching", () => {
       ...knowledge,
       projects: [ungrounded],
     }, "Healthcare", "Hospital design services");
-    assert.equal(result.projectMatches[0]?.score, 0);
-    assert.equal(result.projectMatches[0]?.isSelected, false);
+    // Zero bureaucracy: source-less records still match by sector and
+    // capability relevance. Provenance is not a matching gate.
+    assert.ok((result.projectMatches[0]?.score ?? 0) > 0, "source-less record should still match by relevance");
   });
 });

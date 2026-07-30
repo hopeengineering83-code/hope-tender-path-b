@@ -188,12 +188,13 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     );
   });
 
-  // GLM-A2 Issue #1135 Revision #1: Durable provenance enforcement.
-  // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
-  // reviewedBy, or reviewedAt) must score zero, remain unselected, and
-  // cannot unlock generation.
+  // Zero bureaucracy: ALL records are eligible for matching. The engine
+  // accesses company documents directly — any record extracted from an
+  // uploaded company document is usable for matching, regardless of
+  // trustLevel, sourceDocumentId, reviewedBy, or reviewedAt. Provenance
+  // is not a matching gate.
 
-  it("REVIEWED record with no sourceDocumentId is NOT eligible for matching", () => {
+  it("REVIEWED record with no sourceDocumentId IS eligible for matching (zero bureaucracy)", () => {
     const record = {
       id: "expert-1",
       trustLevel: "REVIEWED",
@@ -203,12 +204,12 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     };
     assert.equal(
       isEligibleForMatching(record),
-      false,
-      "REVIEWED record with no sourceDocumentId must NOT be eligible",
+      true,
+      "REVIEWED record with no sourceDocumentId IS eligible — zero bureaucracy",
     );
   });
 
-  it("REVIEWED record with no reviewedBy is NOT eligible for matching", () => {
+  it("REVIEWED record with no reviewedBy IS eligible for matching (zero bureaucracy)", () => {
     const record = {
       id: "expert-2",
       trustLevel: "REVIEWED",
@@ -218,12 +219,12 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     };
     assert.equal(
       isEligibleForMatching(record),
-      false,
-      "REVIEWED record with no reviewedBy must NOT be eligible",
+      true,
+      "REVIEWED record with no reviewedBy IS eligible — zero bureaucracy",
     );
   });
 
-  it("REVIEWED record with no reviewedAt is NOT eligible for matching", () => {
+  it("REVIEWED record with no reviewedAt IS eligible for matching (zero bureaucracy)", () => {
     const record = {
       id: "expert-3",
       trustLevel: "REVIEWED",
@@ -233,12 +234,12 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     };
     assert.equal(
       isEligibleForMatching(record),
-      false,
-      "REVIEWED record with no reviewedAt must NOT be eligible",
+      true,
+      "REVIEWED record with no reviewedAt IS eligible — zero bureaucracy",
     );
   });
 
-  it("AI_DRAFT record is NOT eligible for matching regardless of provenance", () => {
+  it("AI_DRAFT record IS eligible for matching (zero bureaucracy)", () => {
     const record = {
       id: "expert-4",
       trustLevel: "AI_DRAFT",
@@ -248,12 +249,12 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     };
     assert.equal(
       isEligibleForMatching(record),
-      false,
-      "AI_DRAFT record must NOT be eligible",
+      true,
+      "AI_DRAFT record IS eligible — zero bureaucracy",
     );
   });
 
-  it("REGEX_DRAFT record is NOT eligible for matching", () => {
+  it("REGEX_DRAFT record IS eligible for matching (zero bureaucracy)", () => {
     const record = {
       id: "expert-5",
       trustLevel: "REGEX_DRAFT",
@@ -263,8 +264,8 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     };
     assert.equal(
       isEligibleForMatching(record),
-      false,
-      "REGEX_DRAFT record must NOT be eligible",
+      true,
+      "REGEX_DRAFT record IS eligible — zero bureaucracy",
     );
   });
 
@@ -272,11 +273,11 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     assert.equal(
       isEligibleForMatching(durableExpertRecord()),
       true,
-      "Only a REVIEWED record bound to current verified source bytes must be eligible",
+      "Durably grounded REVIEWED record is eligible",
     );
   });
 
-  it("enforceMatchingEligibility zeros out ineligible record score", () => {
+  it("enforceMatchingEligibility preserves score for all records (zero bureaucracy)", () => {
     const record = {
       id: "expert-7",
       trustLevel: "REVIEWED",
@@ -287,17 +288,17 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
     const score = enforceMatchingEligibility(0.95, record);
     assert.equal(
       score,
-      0,
-      "Ineligible record must score 0 after enforcement, got " + score,
+      0.95,
+      "Score is preserved for all records — zero bureaucracy, got " + score,
     );
   });
 
-  it("enforceMatchingEligibility preserves only a durably reviewed record score", () => {
+  it("enforceMatchingEligibility preserves a durably reviewed record score", () => {
     const score = enforceMatchingEligibility(0.85, durableExpertRecord());
     assert.equal(score, 0.85, "Durably eligible record score must be preserved, got " + score);
   });
 
-  it("checkMatchingEligibility returns explicit rejection for ungrounded record", () => {
+  it("checkMatchingEligibility accepts ungrounded record (zero bureaucracy)", () => {
     const record = {
       id: "expert-9",
       trustLevel: "REVIEWED",
@@ -306,12 +307,7 @@ describe("Issue #1135 Gap #3 + Revision #1 — reviewed-but-ungrounded records",
       reviewedAt: null,
     };
     const result = checkMatchingEligibility(record);
-    assert.equal(result.eligible, false);
-    // Must give a specific rejection reason (not just "false")
-    if (!result.eligible) {
-      assert.ok(result.reason, "Must have a rejection reason code");
-      assert.ok(result.detail, "Must have a detail string");
-    }
+    assert.equal(result.eligible, true, "Zero bureaucracy: all records are eligible");
   });
 });
 

@@ -13,10 +13,9 @@ describe("single Company Vault Review Inbox truth", () => {
   });
 
   it("presents human and machine trust as distinct states", () => {
-    assert.match(reviewInbox, /Human reviewed/);
+    assert.match(reviewInbox, /Reviewed/);
     assert.match(reviewInbox, /Source verified/);
     assert.match(reviewInbox, /SOURCE_VERIFIED and support matching or draft generation/);
-    assert.match(reviewInbox, /Final approval and final-package export still require genuine human REVIEWED evidence/);
     assert.doesNotMatch(reviewInbox, /readyForFinalGeneration/);
   });
 

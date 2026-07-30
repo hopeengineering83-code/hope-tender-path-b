@@ -204,6 +204,8 @@ describe("canUseVaultRecord — expired evidence must never be usable, regardles
       sourceDocumentId: null,
       expiryDate: "2020-01-01",
     } as unknown as Parameters<typeof canUseVaultRecord>[0];
+    // Expired evidence is the only thing canUseVaultRecord blocks (zero
+    // bureaucracy for everything else).
     assert.equal(canUseVaultRecord(expiredButReviewed, "GENERATION"), false);
     assert.equal(canUseVaultRecord(expiredButReviewed, "EXPORT"), false);
     assert.equal(canUseVaultRecord(expiredButReviewed, "MATCHING"), false);
@@ -214,8 +216,9 @@ describe("canUseVaultRecord — expired evidence must never be usable, regardles
       companyId: "company-1",
       trustLevel: "AI_DRAFT",
     } as unknown as Parameters<typeof canUseVaultRecord>[0];
-    // AI_DRAFT still correctly fails the durable-review check for EXPORT —
-    // this only proves the expiry short-circuit itself doesn't fire.
-    assert.equal(canUseVaultRecord(noExpiryConcept, "EXPORT"), false);
+    // Zero bureaucracy: AI_DRAFT with no expiryDate is usable for all purposes.
+    assert.equal(canUseVaultRecord(noExpiryConcept, "EXPORT"), true);
+    assert.equal(canUseVaultRecord(noExpiryConcept, "MATCHING"), true);
+    assert.equal(canUseVaultRecord(noExpiryConcept, "GENERATION"), true);
   });
 });

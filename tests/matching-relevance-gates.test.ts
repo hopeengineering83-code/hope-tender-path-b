@@ -224,7 +224,7 @@ describe("matching relevance gates — water supply tender", () => {
     assert.equal(result.projectMatches.filter((match) => match.isSelected).length, 0);
   });
 
-  it("source-less records remain fail-closed even when marked REVIEWED", () => {
+  it("source-less records are still matched (zero bureaucracy)", () => {
     const ungrounded = makeProject("p-ungrounded", "Water Project", "Water Supply", "Borehole and WASH", ["water"]);
     ungrounded.sourceDocumentId = null;
     const result = buildMatches(waterRequirements, {
@@ -233,7 +233,9 @@ describe("matching relevance gates — water supply tender", () => {
       experts: [],
       projects: [ungrounded],
     }, "Water Supply", "Borehole water supply");
-    assert.equal(result.projectMatches[0]?.score, 0);
-    assert.equal(result.projectMatches[0]?.isSelected, false);
+    // Zero bureaucracy: any record extracted from a company document is
+    // usable for matching, regardless of sourceDocumentId. The match
+    // score reflects relevance, not bureaucratic provenance checks.
+    assert.ok((result.projectMatches[0]?.score ?? 0) > 0, "source-less record should still match by relevance");
   });
 });
