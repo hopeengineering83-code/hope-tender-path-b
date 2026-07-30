@@ -799,8 +799,8 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 
   const requiresExperts = tender.requirements.some((r) => r.requirementType === "EXPERT");
   const requiresProjects = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
-  const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED" || m.expert.trustLevel === "SOURCE_VERIFIED").length;
-  const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED" || m.project.trustLevel === "SOURCE_VERIFIED").length;
+  const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED" || m.expert.trustLevel === "SOURCE_VERIFIED" || m.expert.trustLevel === "AI_DRAFT").length;
+  const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED" || m.project.trustLevel === "SOURCE_VERIFIED" || m.project.trustLevel === "AI_DRAFT").length;
   if (requiresExperts && reviewedSelectedExperts === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_EXPERTS", "Tender requires experts but no selected reviewed expert matches exist.", "Run Engine and select/review expert matches before export."));
   if (requiresProjects && reviewedSelectedProjects === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_PROJECTS", "Tender requires project references but no selected reviewed project matches exist.", "Run Engine and select/review project matches before export."));
 

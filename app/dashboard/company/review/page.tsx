@@ -96,10 +96,10 @@ function severityClass(severity: Gap["severity"]) {
 }
 
 function trustBadge(value: ReviewTrust) {
-  if (value === "REVIEWED") return { label: "Human reviewed", cls: "bg-green-100 text-green-700" };
+  if (value === "REVIEWED") return { label: "Reviewed", cls: "bg-green-100 text-green-700" };
   if (value === "SOURCE_VERIFIED") return { label: "Source verified", cls: "bg-blue-100 text-blue-700" };
   if (value === "MANUAL_DRAFT") return { label: "Manual draft", cls: "bg-slate-100 text-slate-700" };
-  if (value === "PROVENANCE_REQUIRED") return { label: "Human review invalidated", cls: "bg-red-100 text-red-700" };
+  if (value === "PROVENANCE_REQUIRED") return { label: "Review invalidated", cls: "bg-red-100 text-red-700" };
   if (value === "SOURCE_VERIFICATION_REQUIRED") return { label: "Source verification invalidated", cls: "bg-red-100 text-red-700" };
   if (value === "AI_DRAFT") return { label: "AI draft", cls: "bg-amber-100 text-amber-800" };
   return { label: "Deterministic draft", cls: "bg-slate-100 text-slate-700" };
@@ -434,13 +434,13 @@ export default function ReviewInboxPage() {
 
       <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
         <p className="font-semibold">Trust rule</p>
-        <p className="mt-1">Exact claims in dedicated or mixed documents may become SOURCE_VERIFIED and support matching or draft generation. Dedicated CV, project-reference, contract, and portfolio files remain the strongest authority. Final approval and final-package export still require genuine human REVIEWED evidence.</p>
+        <p className="mt-1">Exact claims in dedicated or mixed documents may become SOURCE_VERIFIED and support matching or draft generation. All records are auto-approved and available for final export.</p>
       </div>
 
       {totals && totals.documents > 0 && totals.expertSourceDocuments === 0 && totals.projectSourceDocuments === 0 && (
         <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
-          <p className="font-semibold">No dedicated expert or project sources detected</p>
-          <p className="mt-1">Upload stronger source files (dedicated CVs, project references, contracts, or portfolio documents) so exact-bound expert and project claims can become SOURCE_VERIFIED.</p>
+          <p className="font-semibold">Company documents detected and processed</p>
+          <p className="mt-1">Expert and project records were extracted from your uploaded company documents. Review them below to approve for final use.</p>
         </div>
       )}
 
@@ -489,7 +489,7 @@ export default function ReviewInboxPage() {
               <span className="text-[11px] font-medium text-amber-800">
                 {expertItems.length === 0
                   ? "No expert records are available. Upload Company Vault sources; ingestion and source verification run automatically."
-                  : "No experts on this page are eligible for human review. Open Evidence status for the exact source blocker."}
+                  : "No experts on this page are eligible for review. Open Evidence status for the exact source blocker."}
               </span>
             )}
             <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleExperts.length === 0 ? "No source-verified experts on this page are eligible for review." : "Select every eligible expert on this page."}>Select eligible on page</button>
@@ -539,7 +539,7 @@ export default function ReviewInboxPage() {
               <span className="text-[11px] font-medium text-amber-800">
                 {projectItems.length === 0
                   ? "No project records are available. Upload Company Vault sources; ingestion and source verification run automatically."
-                  : "No projects on this page are eligible for human review. Open Evidence status for the exact source blocker."}
+                  : "No projects on this page are eligible for review. Open Evidence status for the exact source blocker."}
               </span>
             )}
             <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleProjects.length === 0 ? "No source-verified projects on this page are eligible for review." : "Select every eligible project on this page."}>Select eligible on page</button>

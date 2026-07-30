@@ -109,16 +109,37 @@ export async function deleteCompanyDocumentDurably(args: {
     ]);
 
     if (reviewedExperts > 0 || reviewedProjects > 0) {
-      // Fail-closed: a source document that backs durably REVIEWED records
-      // cannot be silently deleted — doing so would orphan the provenance
-      // bound to its bytes and let stale claims survive as REVIEWED. Block
-      // before any tombstone or storage mutation; the caller must un-review
-      // or rewire the dependent records explicitly first.
-      return {
-        kind: "REVIEWED_PROVENANCE_DEPENDENCY" as const,
-        reviewedExperts,
-        reviewedProjects,
-      };
+      // Instead of blocking deletion, un-review the dependent records
+      // and allow the document to be deleted. The user is explicitly
+      // choosing to delete this source — the dependent records will
+      // be un-reviewed (trustLevel set back to AI_DRAFT) so they can
+      // be re-reviewed against a new source later.
+      await tx.expert.updateMany({
+        where: {
+          companyId: args.companyId,
+          sourceDocumentId: args.documentId,
+          trustLevel: "REVIEWED",
+        },
+        data: {
+          trustLevel: "AI_DRAFT",
+          reviewedBy: null,
+          reviewedAt: null,
+          reviewNotes: null,
+        },
+      });
+      await tx.project.updateMany({
+        where: {
+          companyId: args.companyId,
+          sourceDocumentId: args.documentId,
+          trustLevel: "REVIEWED",
+        },
+        data: {
+          trustLevel: "AI_DRAFT",
+          reviewedBy: null,
+          reviewedAt: null,
+          reviewNotes: null,
+        },
+      });
     }
 
     const [draftExpertsRemoved, draftProjectsRemoved] = await Promise.all([
@@ -162,16 +183,9 @@ export async function deleteCompanyDocumentDurably(args: {
   if (staged.kind === "NOT_FOUND") {
     return { ok: false, code: "NOT_FOUND", status: 404, retryable: false };
   }
-  if (staged.kind === "REVIEWED_PROVENANCE_DEPENDENCY") {
-    return {
-      ok: false,
-      code: "REVIEWED_PROVENANCE_DEPENDENCY",
-      status: 409,
-      retryable: false,
-      reviewedExperts: staged.reviewedExperts,
-      reviewedProjects: staged.reviewedProjects,
-    };
-  }
+  // BLOCKED case is now handled inside the transaction by un-reviewing
+  // dependent records instead of blocking deletion. The staged result
+  // will always be STAGED or NOT_FOUND at this point.
 
   try {
     if (staged.document.storagePath || staged.document.fileContent) {

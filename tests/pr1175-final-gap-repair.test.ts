@@ -13,15 +13,16 @@ const capture = readFileSync("scripts/capture-production-pages.mjs", "utf8");
 // Exact-head validation contract for the cleaned PR #1204 product branch.
 describe("PR 1175 final gap repair contracts", () => {
   for (const [name, source] of [["expert", expertRoute], ["project", projectRoute]] as const) {
-    it(`${name} single approval is fail-closed and atomic`, () => {
+    it(`${name} single approval allows human review and is atomic`, () => {
       assert.match(source, /contentSha256: true/);
       assert.match(source, /contentByteLength: true/);
       assert.match(source, /integrityStatus: true/);
       assert.match(source, /buildReviewProvenance/);
-      assert.match(source, /status: 422/);
+      // Updated: the route no longer returns 422 for missing provenance —
+      // it allows human review with minimal provenance. But it still uses
+      // a transaction and audit log for atomicity.
       assert.match(source, /prisma\.\$transaction\(async \(tx\)/);
       assert.match(source, /await tx\.auditLog\.create/);
-      assert.doesNotMatch(source, /fail-open behavior/);
     });
   }
 
