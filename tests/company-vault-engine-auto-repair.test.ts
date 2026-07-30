@@ -14,6 +14,13 @@ test("blocked Engine exposes an explicit Vault recovery action without becoming 
   assert.match(engine, /Repair Vault & Retry Safe Mode/);
   assert.match(engine, /extraParams: \{ safe: "true", skipAiRematch: "true" \}/);
   assert.match(engine, /href="\/dashboard\/company"/);
+  assert.match(engine, /Open Automatic Verification/);
+});
+
+test("Engine recovery copy requests automatic source verification, not approval", () => {
+  assert.match(engine, /verify source-backed records/);
+  assert.match(engine, /requires automatic source verification/);
+  assert.doesNotMatch(engine, /auto-approve all records|evidence matching still requires review|Review eligible evidence/i);
 });
 
 test("Automatic Verification reprocesses stored source bytes before rebuilding records", () => {
