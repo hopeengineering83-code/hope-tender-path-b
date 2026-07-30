@@ -25,21 +25,19 @@ describe("pipeline authority non-negotiables", () => {
   });
 
   it("partial analysis remains terminally non-successful", () => {
-    // AI_ANALYZE's implementation lives in ai-job-handlers-legacy.ts —
-    // lib/ai-job-handlers.ts now only re-exports it and locally overrides
-    // EXTRACT_TEXT's getHandler branch.
     const source = read("lib/ai-job-handlers-legacy.ts");
     assert.match(source, /Partial \/ fallback \/ provider-exhausted/);
     assert.match(source, /do NOT create or\s*\n\s*\/\/ unlock GeneratedDocument rows/);
     assert.match(source, /if \(exec\.completedChunks > 0\) return "PARTIAL_SUCCESS"/);
   });
 
-  it("mixed documents are processed and records are reviewable", () => {
-    const review = read("app/dashboard/company/review/page.tsx");
+  it("mixed documents are processed and the active Vault page exposes automatic verification", () => {
+    const routePage = read("app/dashboard/company/review/page.tsx");
+    const verificationPage = read("components/company-vault-verification-page.tsx");
     const ingestion = read("lib/company-vault-ingestion.ts");
-    // Updated: the review page no longer mentions "dedicated sources remain
-    // strongest" — it now says "Company documents detected and processed"
-    assert.match(review, /Company documents detected/i);
+    assert.match(routePage, /company-vault-verification-page/);
+    assert.match(verificationPage, /Automatic Verification/);
+    assert.match(verificationPage, /No human approval step is required/);
     assert.match(ingestion, /findSourceDocument/);
     assert.match(ingestion, /source quote did not bind to one owned document/);
     assert.doesNotMatch(ingestion, /trustLevel:\s*"REVIEWED"/);
