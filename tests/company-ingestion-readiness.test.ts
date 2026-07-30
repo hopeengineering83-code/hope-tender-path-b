@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { assessCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
 
 describe("assessCompanyIngestionReadiness", () => {
-  it("does not require expert/project evidence when the tender does not request it", () => {
+  it("does not require expert or project evidence when the tender does not request it", () => {
     const readiness = assessCompanyIngestionReadiness({
       docs: [{ extractedText: "General company profile with detailed service lines covering engineering, design, project management, construction supervision, and advisory services for healthcare facilities and urban planning projects in Ethiopia." }],
       experts: [],
@@ -17,7 +17,7 @@ describe("assessCompanyIngestionReadiness", () => {
     assert.equal(readiness.blockers.length, 0);
   });
 
-  it("does not block when only AI draft exists (auto-approved)", () => {
+  it("blocks when only an unverified AI draft exists", () => {
     const readiness = assessCompanyIngestionReadiness({
       docs: [{ extractedText: "Company profile with expert details." }],
       experts: [{ trustLevel: "AI_DRAFT" }],
@@ -26,10 +26,11 @@ describe("assessCompanyIngestionReadiness", () => {
       requireReviewedExperts: true,
       requireReviewedProjects: false,
     });
-    assert.equal(readiness.blockers.length, 0);
+    assert.equal(readiness.ingestionReady, false);
+    assert.match(readiness.blockers.join(" "), /No verified, source-backed experts/i);
   });
 
-  it("allows all evidence for matching and draft generation", () => {
+  it("allows SOURCE_VERIFIED evidence without a human approval step", () => {
     const readiness = assessCompanyIngestionReadiness({
       docs: [{ extractedText: "The tender requires one structural engineer and one comparable project reference." }],
       experts: [{ trustLevel: "SOURCE_VERIFIED" }],
@@ -39,5 +40,6 @@ describe("assessCompanyIngestionReadiness", () => {
       requireReviewedProjects: true,
     });
     assert.equal(readiness.ingestionReady, true);
+    assert.equal(readiness.blockers.length, 0);
   });
 });
