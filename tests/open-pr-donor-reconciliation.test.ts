@@ -5,13 +5,14 @@ import { readFileSync } from "node:fs";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("open-PR donor UI reconciliation", () => {
-  it("keeps Review Inbox blockers explanatory and actionable", () => {
-    const source = read("app/dashboard/company/review/page.tsx");
-    assert.match(source, /No experts on this page are eligible for review/);
-    assert.match(source, /No projects on this page are eligible for review/);
-    assert.match(source, /No source-verified experts on this page are eligible/);
-    assert.match(source, /No source-verified projects on this page are eligible/);
-    assert.match(source, /disabled:cursor-not-allowed/);
+  it("keeps Automatic Verification gaps explanatory and actionable", () => {
+    const routePage = read("app/dashboard/company/review/page.tsx");
+    const source = read("components/company-vault-verification-page.tsx");
+    assert.match(routePage, /company-vault-verification-page/);
+    assert.match(source, /Automatic source verification required/);
+    assert.match(source, /draft, stale, altered, expired, source-less, or unmatched records remain blocked/);
+    assert.match(source, /Reprocess and verify/);
+    assert.match(source, /disabled:opacity-50/);
   });
 
   it("prevents compliance controls and tables from widening mobile pages", () => {
