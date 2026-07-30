@@ -107,11 +107,11 @@ export function buildSupportReviewInboxRecord(
     ),
     tags: tags.filter((value): value is string => Boolean(value)).slice(0, 4),
     trustLevel: effectiveReviewTrustLevel({ ...record, sourceDocument }),
-    // canReview is always true for non-REVIEWED records — the human
-    // reviewer IS the authority. The app detected and extracted the record
-    // from uploaded company documents. Never block review.
-    canReview: true,
-    missingEvidenceFields: [],
+    // Human review is an optional authenticated audit/override action. It may
+    // only be recorded when the same source evidence can be proven; it is not
+    // a prerequisite for Run Engine or export.
+    canReview: evidence.ok && record.trustLevel !== "REVIEWED",
+    missingEvidenceFields: evidence.ok ? [] : evidence.missingFields,
   };
 }
 
@@ -120,6 +120,6 @@ export function manualSupportRecordDraftFields(kind: SupportReviewKind) {
     trustLevel: "MANUAL_DRAFT" as const,
     reviewedBy: null,
     reviewedAt: null,
-    reviewNotes: `Manual ${kind.toLowerCase()} record auto-approved from company documents.`,
+    reviewNotes: `Manual ${kind.toLowerCase()} record awaiting automatic source verification or optional human audit.`,
   };
 }
