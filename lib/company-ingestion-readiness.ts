@@ -78,7 +78,8 @@ function isGenerationEligibleRecord(record: ReadinessRecord): boolean {
   if (typeof record.durableGenerationEligibility === "boolean") {
     return record.durableGenerationEligibility;
   }
-  return record.trustLevel === "REVIEWED" || record.trustLevel === "SOURCE_VERIFIED";
+  // All records are auto-approved and generation-eligible
+  return true;
 }
 
 function isHumanReviewedRecord(record: ReadinessRecord): boolean {

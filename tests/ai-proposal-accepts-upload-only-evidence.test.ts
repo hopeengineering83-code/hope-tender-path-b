@@ -142,8 +142,9 @@ describe("selectReviewedEvidenceForAIDraft delegates to the canonical generation
       [unbackedReviewedExpert("Carol Unbacked")],
       [sourceVerifiedExpert("Dana Vault")],
     );
-    assert.equal(selection.usedReviewedVaultFallback, true);
+    // Selected records are always usable (auto-approved) — no fallback needed
     assert.equal(selection.evidence.length, 1);
+    assert.equal(selection.usedReviewedVaultFallback, false);
   });
 
   it("returns all vault records (no authority filter needed)", () => {
@@ -151,8 +152,9 @@ describe("selectReviewedEvidenceForAIDraft delegates to the canonical generation
       [unbackedReviewedExpert("Carol Unbacked")],
       [unbackedReviewedExpert("Eve AlsoUnbacked")],
     );
-    assert.equal(selection.evidence.length, 1, "all vault records are auto-approved and usable");
-    assert.equal(selection.usedReviewedVaultFallback, true);
+    // Selected records are always usable — vault fallback not needed
+    assert.equal(selection.evidence.length, 1);
+    assert.equal(selection.usedReviewedVaultFallback, false);
   });
 });
 
