@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-07-30 01:15 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr1175-final-release-audit-20260730` / child audit PR targeting `release/consolidated-recovery-20260717`; governing draft #1175 frozen at `1e113fa529718b9052e762efd15fbf51144ccaca`.
+- **Scope / files changed:** independently refetched GitHub and Vercel; confirmed #1175 was the only open PR before this documentation-only child was opened and that closed #1274 is fully ancestral; repeated the five-pass ancestry, schema, security, concurrency, workflow-owner, browser, preview, and generated-byte falsification. Added `docs/audits/pr1175-principal-release-recheck-20260730.md`, refreshed `docs/audits/open-pr-unique-code-ledger-20260728.md`, and added this handoff entry. No application, schema, migration, dependency, test, gate, or workflow authority changed.
+- **Tests:** clean install/source-mutation check; Prisma validate/generate; all 43 migrations on isolated PostgreSQL 16; critical schema; retroactive bootstrap; idempotency; zero drift; release-integrity (418 routes / 1,390 files); workflow consistency; typecheck; zero-warning lint; 8,930/8,930 unit/PostgreSQL assertions; production build/source-mutation check; 179 Playwright passed / 4 documented conditional skips; fresh DOCX/PDF/ZIP container, structure, byte-length, order, and SHA-256 proof.
+- **CI / deployment:** exact governing head GitHub runs `30502385737`, `30502388446`, and `30502388414` are successful. Intended preview `dpl_4UUnQvdQeoNaJK8tqewsp5mprg65` is READY and exact-SHA `/api/version` and `/api/health` returned HTTP 200. A fresh 100-event query contained no prohibited runtime-error/credential pattern; normal build-time Prisma generation messages were not misclassified as runtime errors. Duplicate Vercel project `repo` still fails.
+- **Risks / assumptions:** approved synthetic preview credentials remain unavailable, so the complete provider-backed persisted preview workflow and post-workflow log audit were not rerun. Real-account testing remains prohibited pending password rotation, session revocation, automation-secret replacement, and artifact sanitation. Owner UAT, duplicate-project remediation, and compatible Sharp/libvips remediation remain external holds. `npm audit --omit=dev` still reports two inherited high-severity findings.
+- **Next action:** keep #1175 draft and unmerged; an authorized owner must clear the external credential/UAT/project/dependency holds and run the complete provider-backed synthetic preview acceptance.
+- **Merge status:** unsafe while the documented external security and acceptance holds remain open.
+
 ### 2026-07-30 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; audited product head `c3c2f834a438d9848fd383fdec1cddef6e82b382`.

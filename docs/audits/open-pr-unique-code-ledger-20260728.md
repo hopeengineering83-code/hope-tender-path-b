@@ -4,6 +4,19 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+## 2026-07-30 principal live-state refresh
+
+GitHub and Vercel were refetched independently. Before this child audit PR was
+opened, PR #1175 was the only open pull request; it remains draft and unmerged at
+`1e113fa529718b9052e762efd15fbf51144ccaca`. Closed #1274 head
+`0611690b1486402df6fb5431b055b219390517e7` is exactly the merge base and an
+ancestor of #1175, so its complete verified consolidation is present. No open
+donor remains to classify or close. The fresh five-pass recheck, local
+PostgreSQL/browser results, generated-byte hashes, preview identity, and
+external holds are recorded in
+`docs/audits/pr1175-principal-release-recheck-20260730.md`. No new product,
+schema, migration, dependency, test, or workflow-authority change was required.
+
 ## 2026-07-29 dependency-security falsification and live-state refresh
 
 GitHub was refetched again before this pass. PR #1175 remains open, draft and
