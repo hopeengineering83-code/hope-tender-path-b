@@ -12,6 +12,7 @@ import {
 } from "./ai-jobs/tender-extraction-service";
 import { reportError, logger } from "./observability";
 import { prisma, prismaReady } from "./prisma";
+import { enqueueAiAnalyzeServerSide } from "./engine/server-side-ai-enqueue";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "./rate-limit";
 import { extractRequestId } from "./request-id";
 import { getStorageAdapter, type StorageProvider } from "./storage";
@@ -472,6 +473,7 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
       engineError: null,
       processingJobId,
       analysisRevision: null,
+      serverEnqueue: null,
       pipelineStage: processingStage,
       pipelineDeferred: !sourcePackageComplete || deferAnalysis,
       pipelineWarning: processingJobId

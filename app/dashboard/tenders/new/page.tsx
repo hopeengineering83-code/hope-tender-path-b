@@ -9,9 +9,9 @@ import {
   partitionTenderUploadPackage,
   validateTenderPackageSelection,
 } from "../../../../lib/tender-upload-package";
-import {
-  triggerTenderUploadAutoPipeline,
-} from "../../../../lib/ui/auto-pipeline";
+// Note: triggerTenderUploadAutoPipeline is no longer called from the client.
+// The server enqueues AI_ANALYZE in the upload-first handler — the job
+// persists and runs even if the browser is closed.
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Infrastructure", "Urban Planning", "Environmental", "Feasibility Study", "NGO/Donor-Funded", "Other"];
 const CURRENCIES = ["USD", "EUR", "GBP", "ZAR", "AUD", "CAD", "AED", "SAR", "KWD", "EGP", "ETB", "NGN"];
@@ -217,25 +217,22 @@ export default function NewTenderPage() {
         }
       }
 
-      const pipeline = await triggerTenderUploadAutoPipeline({
-        ...data,
-        processingJobId: failed === 0 ? processingJobId ?? undefined : undefined,
-        pipelineStage: failed === 0 ? pipelineStage : null,
-        nextAction: failed === 0 ? data.nextAction : "RECONCILE_SOURCE_FILES",
-      });
+      // The server enqueues AI_ANALYZE durably — no client-side trigger needed.
+      // The job persists in the AiJob table and runs even if the browser is closed.
+      const pipelineStatus = data.processingJobId ? "queued" : "skipped";
 
       if (batches.length > 1) {
         const query = new URLSearchParams({
           packageIntake: "1",
           packageFailed: String(failed),
-          pipeline: pipeline.status,
+          pipeline: pipelineStatus,
           intakeSession: data.intakeSessionId ?? intakeSessionId,
           ...(resumeBatchIndex !== null ? { resumeBatch: String(resumeBatchIndex) } : {}),
         });
         setUploadProgress({ completed: processed, total: files.length, phase: "adding" });
         router.push(`/dashboard/tenders/${data.tenderId}?${query.toString()}`);
       } else {
-        router.push(`/dashboard/tenders/${data.tenderId}?pipeline=${pipeline.status}`);
+        router.push(`/dashboard/tenders/${data.tenderId}?pipeline=${pipelineStatus}`);
       }
     } catch {
       setUploadError("Network error. The tender was not confirmed as created. Check the tender list before retrying.");
