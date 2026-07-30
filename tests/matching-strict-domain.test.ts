@@ -103,7 +103,7 @@ describe("strict domain matching", () => {
     assert.ok((hospital?.score ?? 0) > (warehouse?.score ?? 0));
   });
 
-  it("rejects source-less records even when their domain is relevant", () => {
+  it("keeps source-less domain-relevant diagnostics fail-closed", () => {
     const ungrounded = reviewedProject({
       id: "p-ungrounded-hospital",
       name: "Hospital Project",
@@ -115,6 +115,9 @@ describe("strict domain matching", () => {
       ...knowledge,
       projects: [ungrounded],
     }, "Healthcare", "Hospital design services");
-    assert.equal(result.projectMatches.length, 0);
+    const diagnostic = result.projectMatches.find((match) => match.projectId === "p-ungrounded-hospital");
+    assert.ok(diagnostic);
+    assert.equal(diagnostic.isSelected, false);
+    assert.equal(diagnostic.score, 0);
   });
 });
