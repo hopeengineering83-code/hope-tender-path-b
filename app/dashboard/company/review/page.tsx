@@ -487,8 +487,11 @@ export default function ReviewInboxPage() {
               </span>
             )}
             <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleExperts.length === 0 ? "No source-verified experts on this page are eligible for human review." : "Select every eligible expert on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => { setSelectedExperts(new Set(eligibleExperts.map((item) => item.id))); void submitBatch("experts"); }} disabled={eligibleExperts.length === 0 || batchingExperts} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50" title={eligibleExperts.length === 0 ? "No eligible experts to review." : "Select all eligible experts and review them in one click."}>
+              {batchingExperts ? "Reviewing…" : `Review all eligible (${eligibleExperts.length})`}
+            </button>
             <button type="button" onClick={() => void submitBatch("experts")} disabled={selectedExperts.size === 0 || batchingExperts} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-50" title={selectedExperts.size === 0 ? "Select at least one source-verified expert." : "Human-review the selected experts against their durable source evidence."}>
-              {batchingExperts ? "Reviewing…" : `Human-review selected (${selectedExperts.size})`}
+              {batchingExperts ? "Reviewing…" : `Review selected (${selectedExperts.size})`}
             </button>
           </div>
         </div>
@@ -534,8 +537,11 @@ export default function ReviewInboxPage() {
               </span>
             )}
             <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleProjects.length === 0 ? "No source-verified projects on this page are eligible for human review." : "Select every eligible project on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => { setSelectedProjects(new Set(eligibleProjects.map((item) => item.id))); void submitBatch("projects"); }} disabled={eligibleProjects.length === 0 || batchingProjects} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50" title={eligibleProjects.length === 0 ? "No eligible projects to review." : "Select all eligible projects and review them in one click."}>
+              {batchingProjects ? "Reviewing…" : `Review all eligible (${eligibleProjects.length})`}
+            </button>
             <button type="button" onClick={() => void submitBatch("projects")} disabled={selectedProjects.size === 0 || batchingProjects} className="rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white disabled:cursor-not-allowed disabled:opacity-50" title={selectedProjects.size === 0 ? "Select at least one source-verified project." : "Human-review the selected projects against their durable source evidence."}>
-              {batchingProjects ? "Reviewing…" : `Human-review selected (${selectedProjects.size})`}
+              {batchingProjects ? "Reviewing…" : `Review selected (${selectedProjects.size})`}
             </button>
           </div>
         </div>

@@ -59,3 +59,4 @@ test-results-e2e/
 # — both are uploaded as workflow artifacts, never committed.
 browser-results/
 acceptance-evidence/
+.env*
