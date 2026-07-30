@@ -10,9 +10,8 @@ import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/e
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-jobs";
 import { checkEnginePostconditions } from "../../../../../lib/engine/engine-postconditions";
+import { prepareCompanyVaultForEngine } from "../../../../../lib/engine/prepare-company-vault";
 
-// Vercel route timeout — engine runs analyze + extract + match. Default
-// 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
@@ -32,20 +31,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }
   const userId = actor.id;
 
-  // Persistent AI throttling — prevents abuse across serverless instances.
   const rl = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
+    const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
     return NextResponse.json({
       error: "Rate limit exceeded — too many engine requests. Please wait before retrying.",
       code: "RATE_LIMITED",
-      retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000),
+      retryAfter,
       diagnosticId,
-    }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+    }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
   }
 
   try {
     await prismaReady;
-
     const { id } = await params;
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
@@ -73,15 +71,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
-    // Nullify any contaminated stored metadata before the run so the sanitizer
-    // — not the engine — owns data hygiene.
     const invalidFields = listInvalidStoredFields(tender);
     if (invalidFields.length > 0) {
-      const patch = computeStoredMetadataPatch(tender);
-      await prisma.tender.update({ where: { id: tender.id }, data: patch });
+      await prisma.tender.update({ where: { id: tender.id }, data: computeStoredMetadataPatch(tender) });
     }
 
-    // Shared, non-bypassable extraction gate.
     const effectiveExtractionFiles = tender.files.map((file) => {
       const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
       return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
@@ -109,29 +103,44 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const engineAnalysisStatus = tender.analysisExtractionStatus;
     if (engineAnalysisStatus === "OCR_REQUIRED") {
-      return NextResponse.json({ error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.", code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN", hint: "The tender's AI analysis was not completed due to corrupted extraction. Re-extract or run OCR, then re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
+      return NextResponse.json({ error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.", code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN", hint: "Re-extract or run OCR, then re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
     }
-    if (engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
-      return NextResponse.json({ error: "Engine run blocked: AI Analyze ran on a weak extraction. Re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze ran on weak extraction — requirements and metadata may be incomplete. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
-    }
-    if (engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
-      return NextResponse.json({ error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
+    if (engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
+      return NextResponse.json({ error: "Engine run blocked: tender analysis was produced from weak extraction. Re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
     }
 
-    // ─── Async/background mode ──────────────────────────────────────────
-    // The "Run Engine (Safe Mode)" / "Run in background" buttons
-    // (components/engine-action-panel.tsx executeEngineRunAsync) call this
-    // same route with ?async=true expecting a 202 + jobId to poll, exactly
-    // like AI Analyze's ?mode=background path. This branch was previously
-    // MISSING entirely — every "background" run silently fell back to the
-    // synchronous 60s-capped path below with no jobId in the response, so
-    // the client's `if (!enqueueRes.ok || !enqueueData.jobId)` guard always
-    // fired and passed the raw synchronous result straight to the UI. That
-    // raw shape has no `error` field on a partial-success response, so the
-    // panel rendered the generic "Engine failed." fallback for what was
-    // often a legitimate partial success (e.g. AI rematch skipped for a
-    // deadline) — and large vaults never actually escaped the 60s cap this
-    // was supposed to provide.
+    let vaultPreflight: Awaited<ReturnType<typeof prepareCompanyVaultForEngine>>;
+    try {
+      vaultPreflight = await prepareCompanyVaultForEngine(userId);
+    } catch (error) {
+      logger.error("[engine route] Company Vault automatic verification failed", {
+        diagnosticId,
+        tenderId: id,
+        errorName: error instanceof Error ? error.constructor.name : typeof error,
+      });
+      return NextResponse.json({
+        error: "Run Engine could not refresh the Company Vault automatically.",
+        code: "COMPANY_VAULT_AUTO_PROMOTION_FAILED",
+        nextAction: "RETRY_AFTER_DATABASE_CHECK",
+        diagnosticId,
+      }, { status: 503 });
+    }
+    if (!vaultPreflight) {
+      return NextResponse.json({
+        error: "Engine run blocked: create the Company Vault profile first.",
+        code: "COMPANY_VAULT_REQUIRED",
+        nextAction: "OPEN_COMPANY_VAULT",
+        diagnosticId,
+      }, { status: 422 });
+    }
+    logger.info("[engine route] Company Vault automatic verification completed", {
+      diagnosticId,
+      tenderId: id,
+      companyId: vaultPreflight.companyId,
+      sourceRemap: vaultPreflight.sourceRemap,
+      sourceVerification: vaultPreflight.sourceVerification,
+    });
+
     const reqUrl = new URL(req.url);
     if (reqUrl.searchParams.get("async") === "true") {
       const safe = reqUrl.searchParams.get("safe") === "true";
@@ -161,16 +170,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       analysisMethod?: string;
       evidenceMatchingBlocker?: { code: string; message: string } | null;
     };
-
-    // ─── Postcondition validation — same check as the async ENGINE_RUN job ──
-    // Previously ONLY the background job handler (lib/ai-job-handlers.ts)
-    // verified real postconditions (zero requirements persisted, zero
-    // evidence rows, zero expert/project matches) after the engine ran; this
-    // synchronous path used a narrower success criterion (only whether the
-    // AI rematch itself failed), so a sync run that produced zero usable
-    // output for any other reason still reported success:true. Both paths
-    // must use the same success criteria: never report success when
-    // required postconditions are missing.
     const postconditions = await checkEnginePostconditions(id);
     if (!postconditions.ok) {
       logger.warn(`[engine route] Postcondition check failed after synchronous run: ${postconditions.blockers.join(", ")}`, { diagnosticId, tenderId: id });
