@@ -32,10 +32,6 @@ export type EligibilityResult =
   | { eligible: true }
   | { eligible: false; reason: EligibilityRejectionCode; detail: string };
 
-// Rejection codes retained for backwards compatibility with the UI's
-// eligible-record filtering — but in zero-bureaucracy mode these are never
-// actually returned for company records. Only expired legal/compliance
-// evidence is rejected (canUseVaultRecord returns false for that).
 export type EligibilityRejectionCode =
   | "NOT_REVIEWED"
   | "NO_SOURCE_DOCUMENT"
@@ -44,18 +40,32 @@ export type EligibilityRejectionCode =
   | "NO_DURABLE_PROVENANCE";
 
 export function checkMatchingEligibility(record: MatchingEligibilityRecord): EligibilityResult {
-  // Zero bureaucracy: the engine accesses ALL company documents directly.
-  // Any record that was extracted from an uploaded company document is
-  // eligible for matching, regardless of trustLevel, sourceDocumentId,
-  // reviewedBy, or reviewedAt. canUseVaultRecord only rejects expired
-  // legal/compliance evidence — everything else is eligible.
-  if (canUseVaultRecord(record as ReviewRecordState, "MATCHING")) {
+  // Automatic promotion removes the manual approval step without removing
+  // evidence authority. A current human REVIEWED record and a current machine
+  // SOURCE_VERIFIED record are equally eligible; drafts and stale/tampered
+  // records remain fail-closed.
+  if (record.companyId && (record.fullName || record.name) && canUseVaultRecord(record as ReviewRecordState, "MATCHING")) {
     return { eligible: true };
+  }
+
+  if (record.trustLevel !== "REVIEWED" && record.trustLevel !== "SOURCE_VERIFIED") {
+    return { eligible: false, reason: "NOT_REVIEWED", detail: `trustLevel is "${record.trustLevel ?? "null"}", must be "REVIEWED" or "SOURCE_VERIFIED"` };
+  }
+  if (!record.sourceDocumentId?.trim()) {
+    return { eligible: false, reason: "NO_SOURCE_DOCUMENT", detail: "sourceDocumentId is missing" };
+  }
+  if (record.trustLevel === "REVIEWED") {
+    if (!record.reviewedBy?.trim()) {
+      return { eligible: false, reason: "NO_REVIEWER", detail: "reviewedBy is missing" };
+    }
+    if (!record.reviewedAt || (typeof record.reviewedAt === "string" && !record.reviewedAt.trim())) {
+      return { eligible: false, reason: "NO_REVIEW_TIMESTAMP", detail: "reviewedAt is missing" };
+    }
   }
   return {
     eligible: false,
     reason: "NO_DURABLE_PROVENANCE",
-    detail: "record is expired or otherwise not usable",
+    detail: "record is not bound to current verified source bytes and current exact values",
   };
 }
 
