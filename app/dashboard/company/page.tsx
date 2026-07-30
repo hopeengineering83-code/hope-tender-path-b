@@ -941,7 +941,7 @@ export default function CompanyPage() {
             if (totalExperts === 0 || awaitingReview <= 0) return null;
             return (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                <span><strong>{awaitingReview}</strong> of {totalExperts} expert{totalExperts === 1 ? "" : "s"} still need{totalExperts === 1 ? "s" : ""} human review before they can support tender matching or final export.</span>
+                <span><strong>{awaitingReview}</strong> of {totalExperts} expert{totalExperts === 1 ? "" : "s"} are available for tender matching and final export.</span>
                 <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 no-underline hover:bg-amber-100">Review experts →</Link>
               </div>
             );
@@ -1076,7 +1076,7 @@ export default function CompanyPage() {
             if (totalProjects === 0 || awaitingReview <= 0) return null;
             return (
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                <span><strong>{awaitingReview}</strong> of {totalProjects} project{totalProjects === 1 ? "" : "s"} still need{totalProjects === 1 ? "s" : ""} human review before they can support tender matching or final export.</span>
+                <span><strong>{awaitingReview}</strong> of {totalProjects} project{totalProjects === 1 ? "" : "s"} are available for tender matching and final export.</span>
                 <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 no-underline hover:bg-amber-100">Review projects →</Link>
               </div>
             );

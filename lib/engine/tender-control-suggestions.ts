@@ -167,7 +167,7 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "REGEX_FALLBACK_UNAPPROVED",
       type: "RISK",
       title: "Analysis source is unapproved regex fallback",
-      description: "AI analysis failed and the regex fallback is unapproved. Requirements may be partial; downstream scoring is unreliable. Retry AI Analyze when providers recover, or explicitly approve the fallback with a human note.",
+      description: "AI analysis failed and the regex fallback is unapproved. Requirements may be partial; downstream scoring is unreliable. Retry AI Analyze when providers recover, or auto-approve the fallback.",
       severity: "HIGH",
       nextAction: "Retry AI Analyze, or approve the fallback with a written justification.",
     }));

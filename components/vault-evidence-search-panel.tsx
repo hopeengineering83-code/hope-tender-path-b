@@ -229,7 +229,7 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
         </div>
 
         <div className="rounded-b-2xl border-t bg-slate-50 px-6 py-3">
-          <p className="text-xs text-slate-500">Only source-verified or provenance-backed human-reviewed vault items are eligible for proposal generation. <Link href="/dashboard/company/review" className="text-blue-600 hover:underline">Manage vault records</Link></p>
+          <p className="text-xs text-slate-500">All vault records are eligible for proposal generation. <Link href="/dashboard/company/review" className="text-blue-600 hover:underline">Manage vault records</Link></p>
         </div>
       </section>
     );

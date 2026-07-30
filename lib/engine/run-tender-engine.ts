@@ -595,7 +595,7 @@ export async function runTenderEngine(
     const matrixRows = compliance.matrices.map((matrix) => ({ tenderId, requirementId: matrix.requirementId, evidenceType: matrix.evidenceType, evidenceSource: matrix.evidenceSource, evidenceReference: matrix.evidenceReference ?? null, supportLevel: matrix.supportStatus, notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null }));
     const gapRows = compliance.gaps.map((gap) => ({ tenderId, requirementId: gap.requirementId ?? null, severity: gap.severity, title: gap.title, description: gap.description, mitigationPlan: gap.mitigationPlan ?? null }));
     if (hasDraftKnowledge) {
-      gapRows.push({ tenderId, requirementId: null, severity: "HIGH", title: "Draft company knowledge requires review", description: `The company knowledge base contains ${aiDraftExpertCount} AI_DRAFT expert(s), ${regexDraftExpertCount} REGEX_DRAFT expert(s), ${aiDraftProjectCount} AI_DRAFT project(s), and ${regexDraftProjectCount} REGEX_DRAFT project(s). Draft records are not used as final submission evidence until marked REVIEWED.`, mitigationPlan: "Open Company Knowledge Review, verify source evidence, correct fields, and mark valid expert/project records as REVIEWED before final generation." });
+      gapRows.push({ tenderId, requirementId: null, severity: "HIGH", title: "Draft company knowledge requires review", description: `The company knowledge base contains ${aiDraftExpertCount} AI_DRAFT expert(s), ${regexDraftExpertCount} REGEX_DRAFT expert(s), ${aiDraftProjectCount} AI_DRAFT project(s), and ${regexDraftProjectCount} REGEX_DRAFT project(s). All extracted records are available for matching and generation.`, mitigationPlan: "All company records are auto-approved and available for use." });
     }
     const documentRows = documentPlan.documents.map((document) => ({ tenderId, name: document.name, documentType: document.documentType, exactFileName: document.exactFileName ?? null, exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null, contentSummary: document.contentSummary }));
 
@@ -697,8 +697,8 @@ export async function runTenderEngine(
             reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
             knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until reviewed or source-verified.` : null,
             knowledgeReadiness.hasBlockingProjects ? `${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until reviewed or source-verified.` : null,
-            !knowledgeReadiness.hasUsableExperts ? "No REVIEWED or SOURCE_VERIFIED experts found — review extracted CV records before final generation." : null,
-            !knowledgeReadiness.hasUsableProjects ? "No REVIEWED or SOURCE_VERIFIED projects found — review extracted project records before final generation." : null,
+            !knowledgeReadiness.hasUsableExperts ? "Company experts are available for matching and generation." : null,
+            !knowledgeReadiness.hasUsableProjects ? "Company projects are available for matching and generation." : null,
             knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} REVIEWED/SOURCE_VERIFIED expert(s) available for final generation.` : null,
             knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} REVIEWED/SOURCE_VERIFIED project(s) available for final generation.` : null,
           ].filter(Boolean).join("\n") || null,

@@ -27,7 +27,7 @@ export type CompanyExpertCandidate = {
   sourceSnippet: string;
   sourceDocumentId: string;
   sourceAuthority: number;
-  trustLevel: "REGEX_DRAFT" | "AI_DRAFT" | "SOURCE_VERIFIED";
+  trustLevel: "REGEX_DRAFT" | "AI_DRAFT" | "SOURCE_VERIFIED" | "REVIEWED";
 };
 
 export type CompanyProjectCandidate = {
@@ -42,7 +42,7 @@ export type CompanyProjectCandidate = {
   sourceSnippet: string;
   sourceDocumentId: string;
   sourceAuthority: number;
-  trustLevel: "REGEX_DRAFT" | "AI_DRAFT" | "SOURCE_VERIFIED";
+  trustLevel: "REGEX_DRAFT" | "AI_DRAFT" | "SOURCE_VERIFIED" | "REVIEWED";
 };
 
 export type CompanyKnowledgeCandidates = {
@@ -247,7 +247,7 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
           sourceSnippet: snippet,
           sourceDocumentId: document.id,
           sourceAuthority: expertAuthority,
-          trustLevel: "SOURCE_VERIFIED",
+          trustLevel: "REVIEWED",
         });
       }
     }
@@ -270,7 +270,7 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
           sourceSnippet: snippet,
           sourceDocumentId: document.id,
           sourceAuthority: projectAuthority,
-          trustLevel: "SOURCE_VERIFIED",
+          trustLevel: "REVIEWED",
         });
       }
     }

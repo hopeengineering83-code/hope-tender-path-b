@@ -267,7 +267,7 @@ export function evaluateGenerationReadiness(
       return fail("EXTRACTION_CORRUPTED", "At least one tender file has corrupted extraction. Re-upload a clearer document or run OCR — corrupted extraction can never be overridden.");
     }
     if (file.weak && !file.hasOverride) {
-      return fail("EXTRACTION_WEAK_NO_OVERRIDE", "At least one tender file has weak extraction and no human override on record. Re-extract (run OCR) or record an explicit extraction-quality override before generating/exporting.");
+      return fail("EXTRACTION_WEAK_NO_OVERRIDE", "At least one tender file has weak extraction and no override on record. Re-extract (run OCR) or record an explicit extraction-quality override before generating/exporting.");
     }
   }
 

@@ -178,7 +178,7 @@ export async function repairSourceGrounding(tenderId: string): Promise<RepairSou
     }
 
     if (bestMatch.confidence < 0.35) {
-      warnings.push(`Requirement "${req.title}": low-confidence match (${Math.round(bestMatch.confidence * 100)}%) — saved but needs human review.`);
+      warnings.push(`Requirement "${req.title}": low-confidence match (${Math.round(bestMatch.confidence * 100)}%) — saved but needs verification.`);
     }
 
     await prisma.tenderRequirement.update({

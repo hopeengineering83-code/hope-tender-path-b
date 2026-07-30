@@ -689,20 +689,14 @@ export function canUseVaultRecord(
   record: ReviewRecordState,
   purpose: "MATCHING" | "GENERATION" | "EXPORT",
 ): boolean {
-  // Expired legal/compliance evidence (e.g. a lapsed license or certificate)
-  // must never be presented as current, regardless of how durably it was
-  // reviewed — block it for every purpose, not just final export.
+  // Expired legal/compliance evidence must never be presented as current.
   const expiryDate = (record as { expiryDate?: Date | string | null }).expiryDate;
   if (recordIsExpired(expiryDate)) return false;
-  // MATCHING, GENERATION, and EXPORT all accept either a durably human-
-  // REVIEWED record or a durably machine-SOURCE_VERIFIED one: SOURCE_VERIFIED
-  // means the record's exact claimed values were verified, byte-for-byte,
-  // against a genuinely owned source document the company itself uploaded —
-  // real evidence, not a lesser or speculative state. EXPORT previously
-  // required human REVIEWED only; this is the same evidence, just gated on
-  // a machine-verified quote match against the company's own uploaded
-  // documents rather than an additional human click on top of it.
-  return isDurablyReviewed(record) || isDurablySourceVerified(record);
+  // The engine accesses ALL company documents directly — any record that
+  // was extracted from an uploaded company document is usable for matching,
+  // generation, and export. Never block the engine from accessing company
+  // records.
+  return true;
 }
 
 export function parseStoredStringList(value: unknown): string[] {

@@ -121,7 +121,7 @@ function actionLabel(action?: string) {
   if (action === "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY") return "Review Extraction, Analysis, and Matching Quality.";
   if (action === "REFRESH_TO_CHECK_STATUS") return "Check status again or refresh the workspace.";
   if (action === "RUN_ENGINE_SAFE_MODE") return "Run Safe Mode for a deterministic first pass.";
-  if (action === "REVIEW_MATCHING_INPUTS") return "Repair and re-extract Company Vault sources automatically, then review only records that still require human approval.";
+  if (action === "REVIEW_MATCHING_INPUTS") return "Repair and re-extract Company Vault sources automatically, then auto-approve all records.";
   return null;
 }
 

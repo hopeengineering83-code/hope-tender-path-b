@@ -142,7 +142,7 @@ export async function GET(
         stageStatusFromCanonical(ds["MATCH_EVIDENCE"], "WAITING_ON_PRIOR_STEP"),
         decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "MANDATORY_NO_COMPLIANCE_ROWS", "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
-          : "Review automatically matched source-verified or human-reviewed company evidence.",
+          : "Review automatically matched company evidence.",
         evidenceRecoveryRequired ? "MATCH_EVIDENCE" : "REVIEW_EVIDENCE",
       ),
       stage(

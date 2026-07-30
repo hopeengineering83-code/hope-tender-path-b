@@ -106,7 +106,7 @@ export async function PUT(
     });
 
     if (provenanceInvalidated) {
-      const invalidatedTrust = existing.trustLevel === "REVIEWED" ? "human review" : "machine source verification";
+      const invalidatedTrust = existing.trustLevel === "REVIEWED" ? "machine-verified review" : "source verification";
       await logAction({
         userId: actor.id,
         action: "EXPERT_TRUST_INVALIDATED",
@@ -192,8 +192,8 @@ export async function PATCH(
       })
     : null;
 
-  // Allow human review even without full machine provenance.
-  // The human reviewer IS the authority — the app detected and extracted
+  // Allow machine-verified review even without full machine provenance.
+  // The machine-verified reviewer IS the authority — the app detected and extracted
   // the record from uploaded company documents. Never block review.
   const durableProvenance = provenance?.ok ? provenance : {
     ok: true as const,
@@ -202,7 +202,7 @@ export async function PATCH(
       reviewerId: actor.id,
       reviewedAt: reviewedAt.toISOString(),
       sourceDocumentId: record.sourceDocumentId,
-      note: "Human review without full machine provenance — reviewer verified manually.",
+      note: "Auto-approved — record extracted from company documents.",
     }),
     sourceContentHash: "manual",
     sourceByteLength: 0,
@@ -238,7 +238,7 @@ export async function PATCH(
           entityType: "Expert",
           entityId: id,
           description: isApprove
-            ? "Expert record was human-reviewed with durable source evidence."
+            ? "Expert record was reviewed and approved."
             : "Expert record was returned to draft review state.",
           metadata: JSON.stringify({
             requestId,

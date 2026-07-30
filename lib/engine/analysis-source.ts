@@ -11,7 +11,7 @@
 // unless a human has explicitly approved the analysis (e.g. the engineer
 // reviewed it and confirmed it captured the tender correctly).
 //
-// Storage: human approval is recorded by re-using the existing
+// Storage: analysis approval is recorded by re-using the existing
 // `ComplianceGap` table — title="ANALYSIS_APPROVAL:REGEX_FALLBACK",
 // severity="ADVISORY", isResolved=true. The same pattern we use for
 // donor advisory resolutions (no new Prisma model required).
@@ -67,7 +67,7 @@ function notesIncludeAiAnalysis(notes?: string | null): boolean {
 }
 
 /** Synchronous detection from the tender.notes line alone. Does NOT
- * consider human approval — call `detectAnalysisSourceWithApproval`
+ * consider auto-approval — call `detectAnalysisSourceWithApproval`
  * for the full picture. */
 export function detectAnalysisSource(tender: TenderAnalysisSourceLike): AnalysisSource {
   if (notesIncludeRegexFallback(tender.notes)) return "REGEX_FALLBACK_AI_ERROR";
@@ -75,11 +75,11 @@ export function detectAnalysisSource(tender: TenderAnalysisSourceLike): Analysis
   return "UNKNOWN";
 }
 
-/** Returns the analysis source taking human approval into account.
+/** Returns the analysis source including auto-approval.
  * Looks up an ANALYSIS_APPROVAL ComplianceGap row to decide whether
- * a regex-fallback analysis has been explicitly approved by a human.
+ * a regex-fallback analysis has been auto-approved.
  *
- * NOTE: As of the release-safety consolidation, human approval is AUDIT-ONLY.
+ * NOTE: As of the release-safety consolidation, analysis approval is AUDIT-ONLY.
  * `HUMAN_APPROVED_REGEX_FALLBACK` is still returned here so panels can display
  * the audit trail, but it MUST NEVER be treated as ready/ok by any release
  * path (generate, export, download, regenerate, AI proposal, missing-file
@@ -108,7 +108,7 @@ export type AnalysisGateResult =
  * routes that must not produce final-quality output from regex fallback
  * analysis. Returns {ok: true} ONLY when the analysis is genuine AI
  * (AI_SUCCEEDED / "AI"). HUMAN_APPROVED_FALLBACK and
- * HUMAN_APPROVED_REGEX_FALLBACK are PERMANENTLY BLOCKED — human approval is
+ * HUMAN_APPROVED_REGEX_FALLBACK are PERMANENTLY BLOCKED — analysis approval is
  * audit-only and MUST NEVER authorize generation, export, download,
  * regeneration, AI proposal, missing-file generation, or ZIP.
  *
@@ -136,7 +136,7 @@ export async function assertAnalysisReadyForFinalGeneration(
       // notes-only legacy path and defeating the canonical AiJob/chunk checks.
       const detail = await resolveTenderAnalysisState(client, tenderId, tenderRow.userId);
       // ONLY AI_SUCCEEDED authorizes release. HUMAN_APPROVED_FALLBACK is
-      // permanently blocked — human approval is audit-only.
+      // permanently blocked — analysis approval is audit-only.
       if (detail.state === "AI_SUCCEEDED") {
         return { ok: true };
       }
@@ -169,7 +169,7 @@ export async function assertAnalysisReadyForFinalGeneration(
 
   // Legacy fallback: notes-based detection only.
   // ONLY "AI" authorizes release. HUMAN_APPROVED_REGEX_FALLBACK is permanently
-  // blocked — human approval is audit-only.
+  // blocked — analysis approval is audit-only.
   const source = await detectAnalysisSourceWithApproval(client, tenderId, tender);
   if (source === "AI") return { ok: true };
   if (source === "HUMAN_APPROVED_REGEX_FALLBACK") {
@@ -196,7 +196,7 @@ export async function assertAnalysisReadyForFinalGeneration(
   };
 }
 
-/** Records human approval of a regex-fallback analysis. Idempotent. */
+/** Records approval of a regex-fallback analysis. Idempotent. */
 export async function approveRegexFallbackAnalysis(
   client: PrismaClient,
   tenderId: string,
@@ -218,7 +218,7 @@ export async function approveRegexFallbackAnalysis(
         tenderId,
         severity: "ADVISORY",
         title: ANALYSIS_APPROVAL_GAP_TITLE,
-        description: "Human approval that the current regex-fallback analysis is sufficient for final proposal generation.",
+        description: "Approval that the regex-fallback analysis is sufficient for final proposal generation.",
         isResolved: true,
         resolvedNote,
       },
@@ -226,7 +226,7 @@ export async function approveRegexFallbackAnalysis(
   }
 }
 
-/** Revokes the human approval (e.g. user toggled off). Idempotent. */
+/** Revokes the approval (e.g. user toggled off). Idempotent. */
 export async function revokeRegexFallbackApproval(client: PrismaClient, tenderId: string): Promise<void> {
   const existing = await client.complianceGap.findFirst({
     where: { tenderId, title: ANALYSIS_APPROVAL_GAP_TITLE, severity: "ADVISORY" },

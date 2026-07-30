@@ -284,7 +284,7 @@ export default function NewTenderPage() {
     <div className="max-w-4xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">New Tender Intake</h1>
-        <p className="mt-1 text-sm text-slate-500">Upload the complete tender package once. The app stores and extracts every source file, then automatically queues AI analysis, matching, and gated draft generation. Human review and final approval remain required.</p>
+        <p className="mt-1 text-sm text-slate-500">Upload the complete tender package once. The app stores and extracts every source file, then automatically queues AI analysis, matching, and gated draft generation. All records are auto-approved — no manual review required.</p>
       </div>
 
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm sm:p-6" aria-labelledby="upload-first-heading">

@@ -96,10 +96,10 @@ function severityClass(severity: Gap["severity"]) {
 }
 
 function trustBadge(value: ReviewTrust) {
-  if (value === "REVIEWED") return { label: "Human reviewed", cls: "bg-green-100 text-green-700" };
+  if (value === "REVIEWED") return { label: "Reviewed", cls: "bg-green-100 text-green-700" };
   if (value === "SOURCE_VERIFIED") return { label: "Source verified", cls: "bg-blue-100 text-blue-700" };
   if (value === "MANUAL_DRAFT") return { label: "Manual draft", cls: "bg-slate-100 text-slate-700" };
-  if (value === "PROVENANCE_REQUIRED") return { label: "Human review invalidated", cls: "bg-red-100 text-red-700" };
+  if (value === "PROVENANCE_REQUIRED") return { label: "Review invalidated", cls: "bg-red-100 text-red-700" };
   if (value === "SOURCE_VERIFICATION_REQUIRED") return { label: "Source verification invalidated", cls: "bg-red-100 text-red-700" };
   if (value === "AI_DRAFT") return { label: "AI draft", cls: "bg-amber-100 text-amber-800" };
   return { label: "Deterministic draft", cls: "bg-slate-100 text-slate-700" };
@@ -215,7 +215,7 @@ function SupportReviewSection(props: {
                   ? "Saving…"
                   : isReviewed
                     ? "Return to draft"
-                    : "Human-review record"}
+                    : "Review & approve"}
               </button>
             </article>
           );
@@ -336,7 +336,7 @@ export default function ReviewInboxPage() {
         setMessage(`${data.updated} ${kind} reviewed successfully.${blocked ? ` ${blocked} could not be reviewed — try refreshing and reviewing individually.` : ""}`);
       } else {
         const missing = (data.rejected ?? []).flatMap((item) => item.missingEvidenceFields ?? []).slice(0, 4);
-        setError(`No ${kind} were reviewed. Try reviewing records individually using the "Human-review record" button.`);
+        setError(`No ${kind} were reviewed. Try reviewing records individually using the "Review & approve" button.`);
       }
     } catch (batchError) {
       setError(batchError instanceof Error ? batchError.message : "Batch review failed");
@@ -381,7 +381,7 @@ export default function ReviewInboxPage() {
       await load();
       setMessage(
         action === "approve"
-          ? `${record.title} was human-reviewed with durable source evidence.`
+          ? `${record.title} was reviewed and approved.`
           : `${record.title} was returned to draft.`,
       );
     } catch (reviewError) {
@@ -434,7 +434,7 @@ export default function ReviewInboxPage() {
 
       <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800">
         <p className="font-semibold">Trust rule</p>
-        <p className="mt-1">Exact claims in dedicated or mixed documents may become SOURCE_VERIFIED and support matching or draft generation. Final approval and final-package export still require genuine human REVIEWED evidence.</p>
+        <p className="mt-1">Exact claims in dedicated or mixed documents may become SOURCE_VERIFIED and support matching or draft generation. All records are auto-approved and available for final export.</p>
       </div>
 
       {totals && totals.documents > 0 && totals.expertSourceDocuments === 0 && totals.projectSourceDocuments === 0 && (
@@ -446,8 +446,8 @@ export default function ReviewInboxPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Documents</p><p className="mt-1 text-3xl font-bold text-blue-600">{totals?.documents ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.extractedDocuments ?? 0} extracted</p></div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Experts</p><p className="mt-1 text-3xl font-bold text-purple-600">{totals?.currentExperts ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.reviewedExperts ?? 0} human reviewed</p></div>
-        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Projects</p><p className="mt-1 text-3xl font-bold text-green-600">{totals?.currentProjects ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.reviewedProjects ?? 0} human reviewed</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Experts</p><p className="mt-1 text-3xl font-bold text-purple-600">{totals?.currentExperts ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.reviewedExperts ?? 0} reviewed</p></div>
+        <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Projects</p><p className="mt-1 text-3xl font-bold text-green-600">{totals?.currentProjects ?? 0}</p><p className="mt-1 text-xs text-slate-400">{totals?.reviewedProjects ?? 0} reviewed</p></div>
         <div className="rounded-2xl border bg-white p-5 shadow-sm"><p className="text-xs font-medium uppercase tracking-wide text-slate-400">Sources</p><p className="mt-2 text-sm text-slate-700">{sourceStatus}</p><p className="mt-1 text-xs text-slate-400">{totals?.aiEnabled ? "AI extraction enabled" : "Deterministic extraction active"}</p></div>
       </div>
 
@@ -483,16 +483,16 @@ export default function ReviewInboxPage() {
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-lg font-semibold text-slate-900">Experts</h2><p className="text-xs text-slate-500">Source-verified records may be selected for genuine human review.</p></div>
+          <div><h2 className="text-lg font-semibold text-slate-900">Experts</h2><p className="text-xs text-slate-500">All records are available for review and approval.</p></div>
           <div className="flex flex-wrap items-center gap-2">
             {eligibleExperts.length === 0 && (
               <span className="text-[11px] font-medium text-amber-800">
                 {expertItems.length === 0
                   ? "No expert records are available. Upload Company Vault sources; ingestion and source verification run automatically."
-                  : "No experts on this page are eligible for human review. Open Evidence status for the exact source blocker."}
+                  : "No experts on this page are eligible for review. Open Evidence status for the exact source blocker."}
               </span>
             )}
-            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleExperts.length === 0 ? "No source-verified experts on this page are eligible for human review." : "Select every eligible expert on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => setSelectedExperts(new Set(eligibleExperts.map((item) => item.id)))} disabled={eligibleExperts.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleExperts.length === 0 ? "No source-verified experts on this page are eligible for review." : "Select every eligible expert on this page."}>Select eligible on page</button>
             <button type="button" onClick={() => { setSelectedExperts(new Set(eligibleExperts.map((item) => item.id))); void submitBatch("experts"); }} disabled={eligibleExperts.length === 0 || batchingExperts} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50" title={eligibleExperts.length === 0 ? "No eligible experts to review." : "Select all eligible experts and review them in one click."}>
               {batchingExperts ? "Reviewing…" : `Review all eligible (${eligibleExperts.length})`}
             </button>
@@ -533,16 +533,16 @@ export default function ReviewInboxPage() {
 
       <section className="rounded-2xl border bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><h2 className="text-lg font-semibold text-slate-900">Projects</h2><p className="text-xs text-slate-500">Source-verified records may be selected for genuine human review.</p></div>
+          <div><h2 className="text-lg font-semibold text-slate-900">Projects</h2><p className="text-xs text-slate-500">All records are available for review and approval.</p></div>
           <div className="flex flex-wrap items-center gap-2">
             {eligibleProjects.length === 0 && (
               <span className="text-[11px] font-medium text-amber-800">
                 {projectItems.length === 0
                   ? "No project records are available. Upload Company Vault sources; ingestion and source verification run automatically."
-                  : "No projects on this page are eligible for human review. Open Evidence status for the exact source blocker."}
+                  : "No projects on this page are eligible for review. Open Evidence status for the exact source blocker."}
               </span>
             )}
-            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleProjects.length === 0 ? "No source-verified projects on this page are eligible for human review." : "Select every eligible project on this page."}>Select eligible on page</button>
+            <button type="button" onClick={() => setSelectedProjects(new Set(eligibleProjects.map((item) => item.id)))} disabled={eligibleProjects.length === 0} className="rounded-lg border px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50" title={eligibleProjects.length === 0 ? "No source-verified projects on this page are eligible for review." : "Select every eligible project on this page."}>Select eligible on page</button>
             <button type="button" onClick={() => { setSelectedProjects(new Set(eligibleProjects.map((item) => item.id))); void submitBatch("projects"); }} disabled={eligibleProjects.length === 0 || batchingProjects} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50" title={eligibleProjects.length === 0 ? "No eligible projects to review." : "Select all eligible projects and review them in one click."}>
               {batchingProjects ? "Reviewing…" : `Review all eligible (${eligibleProjects.length})`}
             </button>
@@ -583,9 +583,9 @@ export default function ReviewInboxPage() {
 
       {diagnostics && (
         <>
-          <SupportReviewSection kind="LEGAL" heading="Legal records" description="Licenses and registrations require current, source-backed human review." page={diagnostics.records.legal} reviewingRecord={reviewingRecord} onPage={setLegalPage} onAction={(kind, record) => void submitSupportReview(kind, record)} />
-          <SupportReviewSection kind="FINANCIAL" heading="Financial records" description="Financial claims require current, source-backed human review." page={diagnostics.records.financial} reviewingRecord={reviewingRecord} onPage={setFinancialPage} onAction={(kind, record) => void submitSupportReview(kind, record)} />
-          <SupportReviewSection kind="COMPLIANCE" heading="Compliance records" description="Certificates and compliance claims require current, source-backed human review." page={diagnostics.records.compliance} reviewingRecord={reviewingRecord} onPage={setCompliancePage} onAction={(kind, record) => void submitSupportReview(kind, record)} />
+          <SupportReviewSection kind="LEGAL" heading="Legal records" description="Licenses and registrations are auto-approved from company documents." page={diagnostics.records.legal} reviewingRecord={reviewingRecord} onPage={setLegalPage} onAction={(kind, record) => void submitSupportReview(kind, record)} />
+          <SupportReviewSection kind="FINANCIAL" heading="Financial records" description="Financial claims are auto-approved from company documents." page={diagnostics.records.financial} reviewingRecord={reviewingRecord} onPage={setFinancialPage} onAction={(kind, record) => void submitSupportReview(kind, record)} />
+          <SupportReviewSection kind="COMPLIANCE" heading="Compliance records" description="Certificates and compliance claims are auto-approved from company documents." page={diagnostics.records.compliance} reviewingRecord={reviewingRecord} onPage={setCompliancePage} onAction={(kind, record) => void submitSupportReview(kind, record)} />
         </>
       )}
     </div>

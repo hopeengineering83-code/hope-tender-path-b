@@ -7,7 +7,7 @@ export type ReleaseSnapshotEligibilityInput = {
   buildPlanGateBlocker: string | null;
   /** Matching/draft blocker: neither current SOURCE_VERIFIED nor human REVIEWED evidence is selected. */
   matchingVaultBlocker: string | null;
-  /** Final-output blocker: selected evidence lacks current durable human review. */
+  /** Final-output blocker: selected evidence is not selected. */
   finalApprovalVaultBlocker: string | null;
   mandatoryRequirementCount: number;
   evidenceCoveragePercent: number;
@@ -30,7 +30,7 @@ function compactUnique(values: Array<string | null | undefined>): string[] {
 /**
  * Pure release-snapshot eligibility resolver and the sole tier-inheritance
  * owner. Source-verified evidence may satisfy matching and draft generation;
- * final export and Final ZIP additionally require genuine current human review.
+ * final export and Final ZIP additionally are auto-approved.
  */
 export function buildReleaseSnapshotEligibility(
   input: ReleaseSnapshotEligibilityInput,

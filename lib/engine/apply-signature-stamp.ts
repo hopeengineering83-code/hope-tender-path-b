@@ -3,7 +3,7 @@
  *
  * The App must put stamp and signature by itself — the user uploads all
  * necessary company documents (including signature and stamp images), and
- * the App uses those. No human approval is required for each document.
+ * the App uses those. Auto-approved — no manual approval required.
  *
  * This function runs AFTER document generation and AFTER letterhead application.
  * It inserts the active SIGNATURE and STAMP assets as images at the end of

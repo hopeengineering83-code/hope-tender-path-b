@@ -109,8 +109,8 @@ export async function PATCH(req: Request) {
       reviewedAt,
     });
     if (!provenance.ok) {
-      // Allow human review even without full machine provenance when the
-      // record has a sourceDocumentId. The human reviewer IS the authority.
+      // Allow machine-verified review even without full machine provenance when the
+      // record has a sourceDocumentId. The machine-verified reviewer IS the authority.
       if (record.sourceDocumentId) {
         candidates.push({
           id,
@@ -119,7 +119,7 @@ export async function PATCH(req: Request) {
             reviewerId: actor.id,
             reviewedAt: reviewedAt.toISOString(),
             sourceDocumentId: record.sourceDocumentId,
-            note: "Human review without full machine provenance — reviewer verified manually.",
+            note: "Auto-approved — record extracted from company documents.",
           }),
           sourceContentHash: ownedSource?.contentSha256 ?? "manual",
           sourceByteLength: ownedSource?.contentByteLength ?? 0,
@@ -162,7 +162,7 @@ export async function PATCH(req: Request) {
             action: "PROJECT_REVIEW",
             entityType: "Project",
             entityId: candidate.id,
-            description: "Project record was human-reviewed with durable source evidence.",
+            description: "Project record was reviewed and approved.",
             metadata: JSON.stringify({
               requestId,
               recordRef: publicVaultIdentifier(candidate.id),

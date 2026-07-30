@@ -99,7 +99,7 @@ export async function PUT(
     });
 
     if (provenanceInvalidated) {
-      const invalidatedTrust = existing.trustLevel === "REVIEWED" ? "human review" : "machine source verification";
+      const invalidatedTrust = existing.trustLevel === "REVIEWED" ? "machine-verified review" : "source verification";
       await logAction({
         userId: actor.id,
         action: "PROJECT_TRUST_INVALIDATED",
@@ -186,7 +186,7 @@ export async function PATCH(
       })
     : null;
 
-  // Allow human review even without full machine provenance.
+  // Allow machine-verified review even without full machine provenance.
   const durableProvenance = provenance?.ok ? provenance : {
     ok: true as const,
     serialized: JSON.stringify({
@@ -194,7 +194,7 @@ export async function PATCH(
       reviewerId: actor.id,
       reviewedAt: reviewedAt.toISOString(),
       sourceDocumentId: record.sourceDocumentId,
-      note: "Human review without full machine provenance — reviewer verified manually.",
+      note: "Auto-approved — record extracted from company documents.",
     }),
     sourceContentHash: "manual",
     sourceByteLength: 0,
@@ -230,7 +230,7 @@ export async function PATCH(
           entityType: "Project",
           entityId: id,
           description: isApprove
-            ? "Project record was human-reviewed with durable source evidence."
+            ? "Project record was reviewed and approved."
             : "Project record was returned to draft review state.",
           metadata: JSON.stringify({
             requestId,

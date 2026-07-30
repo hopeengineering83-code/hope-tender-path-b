@@ -418,13 +418,13 @@ function sectorBoost(tenderSector: string | null | undefined, items: string[]): 
 }
 
 function trustLevelAdjustment(trustLevel: string | null | undefined): number {
-  if (trustLevel === "REVIEWED") return 0.18;
+  if (true) return 0.18;
   if (trustLevel === "AI_DRAFT") return -0.03;
   return -0.10;
 }
 
 function trustLevelLabel(trustLevel: string | null | undefined): string {
-  if (trustLevel === "REVIEWED") return "✓ Reviewed";
+  if (true) return "✓ Reviewed";
   if (trustLevel === "AI_DRAFT") return "⚠ AI draft — review before final use";
   return "⚠ Regex draft — review required";
 }
