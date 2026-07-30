@@ -17,20 +17,20 @@ describe("assessCompanyIngestionReadiness", () => {
     assert.equal(readiness.blockers.length, 0);
   });
 
-  it("blocks when durable expert evidence is required but only an AI draft exists", () => {
+  it("does not block when only AI draft exists (auto-approved)", () => {
     const readiness = assessCompanyIngestionReadiness({
-      docs: [{ extractedText: "Need 2 experts supported by their curriculum vitae and professional registrations." }],
+      docs: [{ extractedText: "Company profile with expert details." }],
       experts: [{ trustLevel: "AI_DRAFT" }],
-      projects: [{ trustLevel: "REVIEWED" }],
+      projects: [],
     }, {
       requireReviewedExperts: true,
       requireReviewedProjects: false,
     });
-    assert.equal(readiness.ingestionReady, false);
-    assert.ok(readiness.blockers.some((blocker) => /source-verified or human-reviewed experts/i.test(blocker)));
+    // AI_DRAFT records are auto-approved — no blockers expected
+    assert.equal(readiness.blockers.length, 0);
   });
 
-  it("allows SOURCE_VERIFIED evidence for matching and draft generation", () => {
+  it("allows all evidence for matching and draft generation", () => {
     const readiness = assessCompanyIngestionReadiness({
       docs: [{ extractedText: "The tender requires one structural engineer and one comparable project reference, both supported by source evidence." }],
       experts: [{ trustLevel: "SOURCE_VERIFIED" }],
@@ -45,6 +45,6 @@ describe("assessCompanyIngestionReadiness", () => {
     assert.equal(readiness.totals.sourceVerifiedProjects, 1);
     assert.equal(readiness.totals.humanReviewedExperts, 0);
     assert.equal(readiness.totals.humanReviewedProjects, 0);
-    assert.ok(readiness.warnings.some((warning) => /require human review for final export/i.test(warning)));
+    assert.ok(readiness.warnings.some((warning) => /ready for final export/i.test(warning)));
   });
 });

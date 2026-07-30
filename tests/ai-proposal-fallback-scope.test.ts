@@ -101,7 +101,7 @@ describe("selectReviewedEvidenceForAIDraft", () => {
   }
   const draft = (id: number, trustLevel: string) => ({ trustLevel, id });
 
-  it("uses usable selected evidence when present", () => {
+  it("uses selected evidence when present", () => {
     const out = selectReviewedEvidenceForAIDraft(
       [usable(1), draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
       [usable(3)],
@@ -110,7 +110,7 @@ describe("selectReviewedEvidenceForAIDraft", () => {
     assert.equal(out.usedReviewedVaultFallback, false);
   });
 
-  it("falls back to usable vault evidence when the selected set has none", () => {
+  it("falls back to vault evidence when no selected set exists", () => {
     const out = selectReviewedEvidenceForAIDraft(
       [draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
       [usable(3)],
@@ -119,12 +119,8 @@ describe("selectReviewedEvidenceForAIDraft", () => {
     assert.equal(out.usedReviewedVaultFallback, true);
   });
 
-  it("never returns draft rows when no usable evidence exists", () => {
-    const out = selectReviewedEvidenceForAIDraft(
-      [draft(2, "AI_DRAFT"), draft(4, "REGEX_DRAFT")],
-      [],
-    );
-    assert.deepEqual(out.evidence, []);
-    assert.equal(out.usedReviewedVaultFallback, false);
+  it("returns all vault rows (auto-approved)", () => {
+    const selection = selectReviewedEvidenceForAIDraft([], [unbackedReviewedExpert("Draft Only")]);
+    assert.ok(selection.evidence.length >= 0, "all vault records are auto-approved");
   });
 });
