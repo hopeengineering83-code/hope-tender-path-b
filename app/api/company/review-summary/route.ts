@@ -4,20 +4,13 @@ import { getSession } from "../../../../lib/auth";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../../../../lib/vault-review-provenance";
 
-// A raw trustLevel === "REVIEWED" flag is not sufficient on its own — it can
-// be stale or was never durably provenance-backed (missing
-// sourceDocumentId/reviewedBy/reviewedAt, or a quote that no longer matches
-// the source bytes). The same durable check the Engine's matching/generation
-// gates use (canUseVaultRecord(..., "GENERATION"), which accepts a durably
-// REVIEWED or durably SOURCE_VERIFIED record) must gate this summary too, or
-// it can report a vault of only source-verified evidence as "not reviewed"
-// and "not ready for final generation" when generation would actually
-// succeed.
+// Raw trust labels are not runtime authority. The same durable source/review
+// contract used by matching, generation, and export owns this summary.
 function countTrust(records: ReviewRecordState[]) {
   return {
-    reviewed: records.filter((r) => canUseVaultRecord(r, "GENERATION")).length,
-    aiDraft: records.filter((r) => r.trustLevel === "AI_DRAFT").length,
-    regexDraft: records.filter((r) => r.trustLevel === "REGEX_DRAFT" || !r.trustLevel).length,
+    verified: records.filter((record) => canUseVaultRecord(record, "GENERATION")).length,
+    aiDraft: records.filter((record) => record.trustLevel === "AI_DRAFT").length,
+    regexDraft: records.filter((record) => record.trustLevel === "REGEX_DRAFT" || !record.trustLevel).length,
     total: records.length,
   };
 }
@@ -36,12 +29,14 @@ export async function GET() {
 
   const expertCounts = countTrust(experts);
   const projectCounts = countTrust(projects);
-  const extractedDocs = docs.filter((d) => (d.extractedText ?? "").length >= 100);
-  const docsWithoutDrafts = extractedDocs.filter((d) => {
-    const hasExpert = experts.some((e) => e.sourceDocumentId === d.id);
-    const hasProject = projects.some((p) => p.sourceDocumentId === d.id);
+  const extractedDocs = docs.filter((document) => (document.extractedText ?? "").length >= 100);
+  const docsWithoutDrafts = extractedDocs.filter((document) => {
+    const hasExpert = experts.some((expert) => expert.sourceDocumentId === document.id);
+    const hasProject = projects.some((project) => project.sourceDocumentId === document.id);
     return !hasExpert && !hasProject;
   });
+  const pendingVerification =
+    expertCounts.aiDraft + expertCounts.regexDraft + projectCounts.aiDraft + projectCounts.regexDraft;
 
   return NextResponse.json({
     companyId: company.id,
@@ -49,18 +44,33 @@ export async function GET() {
       total: docs.length,
       extracted: extractedDocs.length,
       extractedWithoutDraftRecords: docsWithoutDrafts.length,
-      extractedWithoutDraftRecordsList: docsWithoutDrafts.slice(0, 20).map((d) => ({ id: d.id, fileName: d.originalFileName, category: d.category, extractedChars: d.extractedText?.length ?? 0 })),
+      extractedWithoutDraftRecordsList: docsWithoutDrafts.slice(0, 20).map((document) => ({
+        id: document.id,
+        fileName: document.originalFileName,
+        category: document.category,
+        extractedChars: document.extractedText?.length ?? 0,
+      })),
     },
-    experts: expertCounts,
-    projects: projectCounts,
-    pendingReview: expertCounts.aiDraft + expertCounts.regexDraft + projectCounts.aiDraft + projectCounts.regexDraft,
-    readyForFinalGeneration: expertCounts.reviewed > 0 && projectCounts.reviewed > 0,
+    experts: {
+      ...expertCounts,
+      // Compatibility alias for older clients. This count means durably usable
+      // evidence, not mandatory human review.
+      reviewed: expertCounts.verified,
+    },
+    projects: {
+      ...projectCounts,
+      reviewed: projectCounts.verified,
+    },
+    pendingVerification,
+    // Deprecated compatibility alias. No human approval workflow is implied.
+    pendingReview: pendingVerification,
+    readyForFinalGeneration: expertCounts.verified > 0 && projectCounts.verified > 0,
     warnings: [
-      expertCounts.reviewed === 0 ? "No REVIEWED or SOURCE_VERIFIED experts are available for final generation." : null,
-      projectCounts.reviewed === 0 ? "No REVIEWED or SOURCE_VERIFIED projects are available for final generation." : null,
-      docsWithoutDrafts.length > 0 ? `${docsWithoutDrafts.length} extracted document(s) have no imported draft expert/project records.` : null,
-      expertCounts.aiDraft + expertCounts.regexDraft > 0 ? `${expertCounts.aiDraft + expertCounts.regexDraft} expert record(s) still require review.` : null,
-      projectCounts.aiDraft + projectCounts.regexDraft > 0 ? `${projectCounts.aiDraft + projectCounts.regexDraft} project record(s) still require review.` : null,
+      expertCounts.verified === 0 ? "No source-verified expert evidence is available for generation yet." : null,
+      projectCounts.verified === 0 ? "No source-verified project evidence is available for generation yet." : null,
+      docsWithoutDrafts.length > 0 ? `${docsWithoutDrafts.length} extracted document(s) have no imported expert/project records.` : null,
+      expertCounts.aiDraft + expertCounts.regexDraft > 0 ? `${expertCounts.aiDraft + expertCounts.regexDraft} expert record(s) are awaiting automatic source verification.` : null,
+      projectCounts.aiDraft + projectCounts.regexDraft > 0 ? `${projectCounts.aiDraft + projectCounts.regexDraft} project record(s) are awaiting automatic source verification.` : null,
     ].filter(Boolean),
   });
 }
