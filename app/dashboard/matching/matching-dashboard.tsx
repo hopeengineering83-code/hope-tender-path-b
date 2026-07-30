@@ -28,7 +28,7 @@ function TrustBadge({ level }: { level?: string | null }) {
   if (level === "REVIEWED") {
     return <span className="inline-flex items-center gap-1 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-semibold text-green-700"><CheckIcon /> REVIEWED</span>;
   }
-  if (level === "AI_DRAFT") return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">AI DRAFT</span>;
+  if (level === "AI_DRAFT") return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">AI DRAFT</span>;
   return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-600">DRAFT — review needed</span>;
 }
 

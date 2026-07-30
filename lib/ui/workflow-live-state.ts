@@ -104,7 +104,7 @@ export const WORKFLOW_LIVE_STATES: Record<WorkflowLiveState, WorkflowLiveStateSp
     label: "Generating",
     description: "Required documents are being generated from approved evidence.",
     badgeClassName:
-      "border-amber-200 bg-amber-50 text-amber-700",
+      "border-amber-200 bg-amber-50 text-amber-800",
     terminal: false,
     requiresUserAction: false,
   },

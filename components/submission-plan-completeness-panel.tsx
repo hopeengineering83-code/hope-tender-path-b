@@ -81,7 +81,7 @@ const STATUS_BADGE: Record<Status, { label: string; tone: "ok" | "warn" | "bad" 
 
 function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
   if (tone === "ok") return "bg-emerald-100 text-emerald-700";
-  if (tone === "warn") return "bg-amber-100 text-amber-700";
+  if (tone === "warn") return "bg-amber-100 text-amber-800";
   if (tone === "bad") return "bg-red-100 text-red-700";
   return "bg-slate-100 text-slate-500";
 }
@@ -259,11 +259,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
         </div>
         <div className="rounded-xl bg-amber-50 px-2 py-2">
           <p className="text-slate-500">Originals</p>
-          <p className="text-base font-bold text-amber-700">{data.summary.totalOfficialOriginalsRequired}</p>
+          <p className="text-base font-bold text-amber-800">{data.summary.totalOfficialOriginalsRequired}</p>
         </div>
         <div className="rounded-xl bg-amber-50 px-2 py-2">
           <p className="text-slate-500">Outside plan</p>
-          <p className={`text-base font-bold ${data.summary.totalOutsidePlan > 0 ? "text-amber-700" : "text-emerald-700"}`}>{data.summary.totalOutsidePlan}</p>
+          <p className={`text-base font-bold ${data.summary.totalOutsidePlan > 0 ? "text-amber-800" : "text-emerald-700"}`}>{data.summary.totalOutsidePlan}</p>
         </div>
         <div className="rounded-xl bg-red-50 px-2 py-2">
           <p className="text-slate-500">Quality failed</p>

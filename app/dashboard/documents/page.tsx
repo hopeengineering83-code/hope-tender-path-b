@@ -51,7 +51,7 @@ const VAL_COLORS: Record<string, string> = {
 const REV_COLORS: Record<string, string> = {
   APPROVED: "bg-green-100 text-green-700",
   REJECTED: "bg-red-100 text-red-600",
-  NEEDS_REVISION: "bg-amber-100 text-amber-700",
+  NEEDS_REVISION: "bg-amber-100 text-amber-800",
   PENDING: "bg-slate-100 text-slate-400",
 };
 

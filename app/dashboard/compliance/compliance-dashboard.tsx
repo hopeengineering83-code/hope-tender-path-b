@@ -20,12 +20,12 @@ type Tender = {
 
 const SEV: Record<string,string> = {
   CRITICAL:"bg-red-100 text-red-700 border-red-200",HIGH:"bg-orange-100 text-orange-700 border-orange-200",
-  MEDIUM:"bg-amber-100 text-amber-700 border-amber-200",LOW:"bg-slate-100 text-slate-600 border-slate-200",
+  MEDIUM:"bg-amber-100 text-amber-800 border-amber-200",LOW:"bg-slate-100 text-slate-600 border-slate-200",
 };
 const SUPP: Record<string,string> = {
   SUPPORTED:"bg-green-100 text-green-700",
   EVIDENCE_PENDING_REVIEW:"bg-blue-100 text-blue-700",
-  PARTIAL:"bg-amber-100 text-amber-700",
+  PARTIAL:"bg-amber-100 text-amber-800",
   UNSUPPORTED:"bg-red-100 text-red-700",
 };
 
@@ -275,7 +275,7 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                       <p className="text-xs text-slate-400 mt-0.5">{rows.length} evidence entries · {supported}/{rows.length} supported</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${supported === rows.length ? "bg-green-100 text-green-700" : supported > 0 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${supported === rows.length ? "bg-green-100 text-green-700" : supported > 0 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-700"}`}>
                         {Math.round((supported / rows.length) * 100)}% supported
                       </span>
                       <ChevronIcon open={isOpen} />

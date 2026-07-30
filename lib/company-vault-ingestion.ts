@@ -1,4 +1,5 @@
 import { prisma, prismaReady } from "./prisma";
+import { shouldScanForExperts, shouldScanForProjects } from "./company-document-classifier";
 import {
   extractCompanyKnowledgeWithAI,
   isCompanyKnowledgeAIEnabled,

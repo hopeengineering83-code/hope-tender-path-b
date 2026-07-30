@@ -199,7 +199,7 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
                   <li key={i} className="rounded-lg border border-amber-100 bg-amber-50 p-2.5 text-xs">
                     <div className="flex items-start gap-2">
                       <span className={`mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${severityBadgeClassesCompact(severityToUISeverity(risk.severity))}`}>{risk.severity}</span>
-                      <div><p className="font-medium text-amber-900">{risk.title}</p><p className="mt-0.5 text-amber-700">{risk.detail}</p></div>
+                      <div><p className="font-medium text-amber-900">{risk.title}</p><p className="mt-0.5 text-amber-800">{risk.detail}</p></div>
                     </div>
                   </li>
                 ))}
