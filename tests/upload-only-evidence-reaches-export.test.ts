@@ -1,27 +1,6 @@
-// End-to-end authority proof for the owner's stated operating model:
-//
-//   "After uploading company documents the App must review by itself,
-//    no human review is allowed."
-//
-// Two separate passes each got one half of this right and, combined
-// naively, produced an app that silently could not export:
-//
-//   * One pass made autoVerifyCompanyKnowledge() stamp uploaded records as
-//     trustLevel="REVIEWED", reviewedBy="SYSTEM_AUTO_VERIFIED" — no human
-//     needed, but it fabricates a human-review record that no human made.
-//   * A later audit pass correctly refused to fabricate that review and
-//     reverted auto-verification to the honest trustLevel="SOURCE_VERIFIED",
-//     reviewedBy=null — but left canUseVaultRecord()'s EXPORT purpose
-//     requiring isDurablyReviewed(). Since only a human can produce a
-//     durable REVIEWED record, every upload-only company was permanently
-//     blocked at Final ZIP export with no way forward except the human
-//     click the owner had explicitly ruled out.
-//
-// The resolution keeps the honest label AND makes it sufficient: a durably
-// SOURCE_VERIFIED record is real evidence — the record's exact claimed field
-// values were matched, byte-for-byte, against a source document the company
-// itself uploaded and that still hashes to what was verified. This test pins
-// the whole chain so neither half can regress alone.
+// End-to-end authority proof for the owner's operating model:
+// uploaded company documents are verified automatically, without fabricating
+// human approval, and current source-backed records can reach final export.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -61,8 +40,6 @@ const expertFields = {
   certifications: JSON.stringify(["PMP"]),
 };
 
-// The exact record shape autoVerifyCompanyKnowledge() persists for an
-// uploaded document, with no human involvement anywhere.
 function autoVerifiedRecordFromUpload() {
   const provenance = buildSourceVerificationProvenance({
     recordType: "EXPERT",
@@ -84,27 +61,23 @@ function autoVerifiedRecordFromUpload() {
   };
 }
 
-describe("uploaded documents alone carry evidence all the way to export", () => {
+describe("uploaded documents carry verified evidence to export without human approval", () => {
   it("auto-verification is honest: no human review is claimed", () => {
     const record = autoVerifiedRecordFromUpload();
     assert.equal(record.reviewedBy, null, "no human reviewer may be invented");
     assert.equal(record.reviewedAt, null, "no human review timestamp may be invented");
     assert.equal(isDurablyReviewed(record), false, "this is machine verification, not human review");
-    assert.equal(isDurablySourceVerified(record), true, "but it IS durably bound to owned source bytes");
+    assert.equal(isDurablySourceVerified(record), true, "the record is durably bound to owned source bytes");
   });
 
-  it("is usable for matching, generation, AND final export with no human click", () => {
+  it("is usable for matching, generation, and final export without a human click", () => {
     const record = autoVerifiedRecordFromUpload();
     assert.equal(canUseVaultRecord(record, "MATCHING"), true);
     assert.equal(canUseVaultRecord(record, "GENERATION"), true);
-    assert.equal(
-      canUseVaultRecord(record, "EXPORT"),
-      true,
-      "EXPORT must accept durable SOURCE_VERIFIED, or an upload-only company can never ship a Final ZIP",
-    );
+    assert.equal(canUseVaultRecord(record, "EXPORT"), true);
   });
 
-  it("zero bureaucracy: source document changes do not block usage", () => {
+  it("fails closed when source bytes or extraction text change", () => {
     const record = autoVerifiedRecordFromUpload();
     const tamperedText = `${sourceText} (edited after verification)`;
     const tampered = {
@@ -116,23 +89,20 @@ describe("uploaded documents alone carry evidence all the way to export", () => 
         contentByteLength: Buffer.byteLength(tamperedText),
       },
     };
-    // Zero bureaucracy: canUseVaultRecord returns true for all non-expired
-    // records, regardless of source byte changes. isDurablySourceVerified
-    // still reports the tampered state for diagnostic purposes.
     assert.equal(isDurablySourceVerified(tampered), false);
     for (const purpose of ["MATCHING", "GENERATION", "EXPORT"] as const) {
-      assert.equal(canUseVaultRecord(tampered, purpose), true, `${purpose} must accept any company record — zero bureaucracy`);
+      assert.equal(canUseVaultRecord(tampered, purpose), false, `${purpose} must reject changed source evidence`);
     }
   });
 
-  it("zero bureaucracy: claimed field mismatch does not block usage", () => {
+  it("fails closed when a claimed field no longer matches the verified record", () => {
     const record = autoVerifiedRecordFromUpload();
     const overclaimed = { ...record, certifications: JSON.stringify(["PMP", "Chartered Engineer"]) };
     assert.equal(isDurablySourceVerified(overclaimed), false);
-    assert.equal(canUseVaultRecord(overclaimed, "EXPORT"), true, "zero bureaucracy: all records usable");
+    assert.equal(canUseVaultRecord(overclaimed, "EXPORT"), false);
   });
 
-  it("zero bureaucracy: a record with no verification is still usable", () => {
+  it("fails closed when no durable source verification exists", () => {
     const bare = {
       ...expertFields,
       companyId: "company-upload-only",
@@ -144,7 +114,7 @@ describe("uploaded documents alone carry evidence all the way to export", () => 
     };
     assert.equal(isDurablySourceVerified(bare), false);
     for (const purpose of ["MATCHING", "GENERATION", "EXPORT"] as const) {
-      assert.equal(canUseVaultRecord(bare, purpose), true, "zero bureaucracy: all records usable");
+      assert.equal(canUseVaultRecord(bare as never, purpose), false);
     }
   });
 });
