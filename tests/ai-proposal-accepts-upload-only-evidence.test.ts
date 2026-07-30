@@ -102,25 +102,39 @@ function unbackedReviewedExpert(fullName: string) {
   };
 }
 
+type ProposalEvidenceFixture =
+  | ReturnType<typeof sourceVerifiedExpert>
+  | ReturnType<typeof humanReviewedExpert>
+  | ReturnType<typeof unbackedReviewedExpert>;
+
 describe("selectReviewedEvidenceForAIDraft uses canonical generation authority", () => {
   it("accepts durably SOURCE_VERIFIED evidence without a human click", () => {
-    const selection = selectReviewedEvidenceForAIDraft([sourceVerifiedExpert("Alice Upload")], []);
+    const selection = selectReviewedEvidenceForAIDraft<ProposalEvidenceFixture>(
+      [sourceVerifiedExpert("Alice Upload")],
+      [],
+    );
     assert.equal(selection.evidence.length, 1);
     assert.equal(selection.usedReviewedVaultFallback, false);
   });
 
   it("also accepts genuine authenticated human-reviewed evidence", () => {
-    const selection = selectReviewedEvidenceForAIDraft([humanReviewedExpert("Bob Reviewed")], []);
+    const selection = selectReviewedEvidenceForAIDraft<ProposalEvidenceFixture>(
+      [humanReviewedExpert("Bob Reviewed")],
+      [],
+    );
     assert.equal(selection.evidence.length, 1);
   });
 
   it("rejects a REVIEWED label without durable provenance", () => {
-    const selection = selectReviewedEvidenceForAIDraft([unbackedReviewedExpert("Carol Unbacked")], []);
+    const selection = selectReviewedEvidenceForAIDraft<ProposalEvidenceFixture>(
+      [unbackedReviewedExpert("Carol Unbacked")],
+      [],
+    );
     assert.deepEqual(selection.evidence, []);
   });
 
   it("falls back from unusable selected records to source-verified Vault evidence", () => {
-    const selection = selectReviewedEvidenceForAIDraft(
+    const selection = selectReviewedEvidenceForAIDraft<ProposalEvidenceFixture>(
       [unbackedReviewedExpert("Carol Unbacked")],
       [sourceVerifiedExpert("Dana Vault")],
     );
@@ -129,7 +143,7 @@ describe("selectReviewedEvidenceForAIDraft uses canonical generation authority",
   });
 
   it("returns no evidence when both selected and Vault records are unsupported", () => {
-    const selection = selectReviewedEvidenceForAIDraft(
+    const selection = selectReviewedEvidenceForAIDraft<ProposalEvidenceFixture>(
       [unbackedReviewedExpert("Carol Unbacked")],
       [unbackedReviewedExpert("Eve Also Unbacked")],
     );
