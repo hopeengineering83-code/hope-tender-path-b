@@ -262,10 +262,6 @@ function sourceExtractionRevision(sourceDocument: Pick<ReviewSourceDocument, "me
         return `legacy-reextract:${metadata.reExtractedAt.trim()}`;
       }
     } catch (e) {
-      // Legacy metadata is treated as the first extraction revision.
-      // Surface the failure so corrupted metadata rows are observable (a
-      // series of these suggests a serialization bug, not a one-off glitch).
-      // Previously bare `catch {}` — legacy metadata failures were invisible.
       logger.warn("[vault-review-provenance] failed to parse source-document metadata — treating as first extraction revision", {
         detail: e,
       });
@@ -497,9 +493,6 @@ function parseStoredReviewProvenance(reviewNotes: string | null | undefined): St
       ? parsed as StoredReviewProvenance
       : null;
   } catch (e) {
-    // StoredReviewProvenance parse failed — return null so caller treats
-    // the row as unparseable. Surface the failure so corrupted provenance
-    // records are observable.
     logger.warn("[vault-review-provenance] failed to parse StoredReviewProvenance — returning null", {
       detail: e,
     });
@@ -533,8 +526,6 @@ function parseStoredSourceVerification(reviewNotes: string | null | undefined): 
       ? parsed as StoredSourceVerificationProvenance
       : null;
   } catch (e) {
-    // StoredSourceVerificationProvenance parse failed — return null.
-    // Surface the failure so corrupted provenance records are observable.
     logger.warn("[vault-review-provenance] failed to parse StoredSourceVerificationProvenance — returning null", {
       detail: e,
     });
@@ -689,14 +680,9 @@ export function canUseVaultRecord(
   record: ReviewRecordState,
   purpose: "MATCHING" | "GENERATION" | "EXPORT",
 ): boolean {
-  // Expired legal/compliance evidence must never be presented as current.
   const expiryDate = (record as { expiryDate?: Date | string | null }).expiryDate;
   if (recordIsExpired(expiryDate)) return false;
-  // The engine accesses ALL company documents directly — any record that
-  // was extracted from an uploaded company document is usable for matching,
-  // generation, and export. Never block the engine from accessing company
-  // records.
-  return true;
+  return isDurablyReviewed(record) || isDurablySourceVerified(record);
 }
 
 export function parseStoredStringList(value: unknown): string[] {
@@ -706,8 +692,6 @@ export function parseStoredStringList(value: unknown): string[] {
     const parsed = JSON.parse(value) as unknown;
     return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
   } catch (e) {
-    // JSON.parse fallback for string array extraction — return [].
-    // Surface the failure so malformed stringified arrays are observable.
     logger.warn("[vault-review-provenance] failed to parse string array — returning []", {
       detail: e,
     });
@@ -753,11 +737,6 @@ export function projectReviewFields(record: {
   ];
 }
 
-// Dates are matched against source text as literal ISO (YYYY-MM-DD) strings,
-// the same exact-match design already accepted for numeric fields
-// (yearsExperience, contractValue) above — the source document's extracted
-// text must contain the date in this normalized form for the evidence check
-// to pass.
 function dateOnlyValue(value: Date | string | null | undefined): string | null {
   if (!value) return null;
   const parsed = value instanceof Date ? value : new Date(value);
@@ -789,10 +768,6 @@ export function legalReviewFields(record: {
   ];
 }
 
-// notes/evidenceSummary are intentionally excluded below, same as Expert's
-// free-text "profile" field is excluded from expertReviewFields — long
-// free-text is unlikely to appear verbatim in source text, so requiring an
-// exact-quote match on it would make the gate impractically strict.
 export function financialReviewFields(record: {
   fiscalYear: number;
   recordType: string;
@@ -856,9 +831,6 @@ export function redactVaultText(value: string | null | undefined, maxLength = 22
     .replace(/(?:[A-Za-z]:\\|\/(?:var|home|tmp|workspace|storage|uploads?)\/)[^\s,;]+/g, "[redacted path]")
     .replace(/\b(?:blob|s3|gs):\/\/[^\s,;]+/gi, "[redacted path]")
     .trim();
-
-  if (redacted.length > boundedLength) {
-    redacted = redacted.slice(0, boundedLength - 1).trimEnd() + "…";
-  }
+  if (redacted.length > boundedLength) redacted = `${redacted.slice(0, boundedLength - 1).trimEnd()}…`;
   return redacted;
 }
