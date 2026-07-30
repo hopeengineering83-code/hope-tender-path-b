@@ -10,7 +10,9 @@ const expertDetailRoute = readFileSync("app/api/company/experts/[id]/route.ts", 
 const projectsRoute = readFileSync("app/api/company/projects/route.ts", "utf8");
 const projectDetailRoute = readFileSync("app/api/company/projects/[id]/route.ts", "utf8");
 const reviewPage = readFileSync("app/dashboard/company/review/page.tsx", "utf8");
+const verificationPage = readFileSync("components/company-vault-verification-page.tsx", "utf8");
 const reviewBoardPage = readFileSync("app/dashboard/company/review-board/page.tsx", "utf8");
+const repairRoute = readFileSync("app/api/company/knowledge/repair/route.ts", "utf8");
 const financialRecordsRoute = readFileSync("app/api/company/financial-records/route.ts", "utf8");
 const complianceRecordsRoute = readFileSync("app/api/company/compliance-records/route.ts", "utf8");
 const legalRecordsRoute = readFileSync("app/api/company/legal-records/route.ts", "utf8");
@@ -86,19 +88,22 @@ describe("company documents public DTO privacy", () => {
     assert.doesNotMatch(projectsRoute, /select: \{[^}]*summary: true/);
   });
 
-  it("redirects the legacy Review Board to the single privacy-safe Review Inbox", () => {
+  it("redirects the legacy Review Board to the single privacy-safe Automatic Verification view", () => {
     assert.match(reviewBoardPage, /redirect\("\/dashboard\/company\/review"\)/);
     assert.doesNotMatch(reviewBoardPage, /fetch\(/);
-    assert.match(reviewBoardPage, /single Company Vault review authority/);
+    assert.match(reviewBoardPage, /Automatic Verification is the single Company Vault source-authority view/);
+    assert.match(reviewPage, /company-vault-verification-page/);
+    assert.match(verificationPage, /Automatic Verification/);
   });
 
-  it("Company Review uses one bounded server-paginated diagnostics endpoint", () => {
-    assert.doesNotMatch(reviewPage, /fetch\("\/api\/company"[,)]/);
-    assert.match(reviewPage, /fetch\(`\/api\/company\/knowledge\/repair\?\$\{params\}`/);
-    assert.match(reviewPage, /expertPage: String\(expertPage\)/);
-    assert.match(reviewPage, /projectPage: String\(projectPage\)/);
-    assert.match(reviewPage, /Only bounded, privacy-safe source labels are displayed\./);
-    assert.doesNotMatch(reviewPage, /originalFileName|storagePath|extractedText/);
+  it("Automatic Verification uses one bounded server-default diagnostics endpoint", () => {
+    assert.match(reviewPage, /company-vault-verification-page/);
+    assert.equal((verificationPage.match(/fetch\("\/api\/company\/knowledge\/repair"/g) ?? []).length, 1);
+    assert.match(repairRoute, /const RECORD_PAGE_SIZE = 10/);
+    assert.match(repairRoute, /take:\s*RECORD_PAGE_SIZE/g);
+    assert.match(repairRoute, /redactVaultText/);
+    assert.match(repairRoute, /safeVaultFileLabel/);
+    assert.doesNotMatch(verificationPage, /originalFileName|storagePath|extractedText|sourceSnippet/);
   });
 
   it("keeps storage paths server-side while exposing only storage booleans", () => {
