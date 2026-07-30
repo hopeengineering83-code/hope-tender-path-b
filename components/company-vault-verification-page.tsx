@@ -20,13 +20,15 @@ type Diagnostics = {
 };
 
 function automaticGapCopy(gap: { severity: string; title: string; detail: string }) {
-  const humanOnly = /human review|review board|await human|re-reviewed/i.test(`${gap.title} ${gap.detail}`);
-  if (!humanOnly) return gap;
+  const legacyPolicy = /human review|review board|await human|re-reviewed|auto-approved|draft\/stale.*ready for use|records? available for use/i.test(
+    `${gap.title} ${gap.detail}`,
+  );
+  if (!legacyPolicy) return gap;
   return {
     ...gap,
     severity: gap.severity === "CRITICAL" ? "HIGH" : gap.severity,
     title: "Automatic source verification required",
-    detail: "Run Engine or Reprocess sources will remap the source and verify the current exact values automatically. The record remains fail-closed only when source proof is missing, stale, altered, expired, or unmatched.",
+    detail: "Run Engine or Reprocess and verify will remap the source and verify current exact values automatically. Source-verified records are usable immediately; draft, stale, altered, expired, source-less, or unmatched records remain blocked until verification succeeds.",
   };
 }
 
@@ -109,7 +111,7 @@ export default function CompanyVaultVerificationPage() {
 
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm text-blue-900">
         <h2 className="font-semibold">Runtime authority</h2>
-        <p className="mt-1 leading-6">Current `SOURCE_VERIFIED` evidence and current authenticated `REVIEWED` evidence are equally eligible for matching, generation, export, and Final ZIP. Draft, source-less, stale, altered, expired, or unmatched evidence remains blocked.</p>
+        <p className="mt-1 leading-6">Current SOURCE_VERIFIED evidence and current authenticated REVIEWED evidence are equally eligible for matching, generation, export, and Final ZIP. Draft, source-less, stale, altered, expired, or unmatched evidence remains blocked.</p>
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
