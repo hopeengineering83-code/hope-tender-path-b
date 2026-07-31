@@ -66,8 +66,7 @@ async function invalidateSelectionDependents(
   tenderId: string,
   reason: string,
 ) {
-  const now = new Date();
-  const [buildPlans, submissionPlans, generatedDocuments, exportPackages, sectionMaps, planState] = await Promise.all([
+  const [buildPlans, generatedDocuments, exportPackages, sectionMaps, planState] = await Promise.all([
     tx.buildPlan.updateMany({
       where: { tenderId, status: { not: "SUPERSEDED" } },
       data: {
@@ -77,17 +76,6 @@ async function invalidateSelectionDependents(
         confirmedById: null,
         confirmedRevision: null,
         confirmedContentHash: null,
-      },
-    }),
-    tx.submissionPlanRevision.updateMany({
-      where: {
-        tenderId,
-        status: { notIn: ["SUPERSEDED", "INVALIDATED"] },
-      },
-      data: {
-        status: "INVALIDATED",
-        invalidatedAt: now,
-        invalidationReason: reason,
       },
     }),
     tx.generatedDocument.updateMany({
@@ -129,7 +117,6 @@ async function invalidateSelectionDependents(
 
   return {
     buildPlans: buildPlans.count,
-    submissionPlans: submissionPlans.count,
     generatedDocuments: generatedDocuments.count,
     exportPackages: exportPackages.count,
     sectionMaps: sectionMaps.count,
@@ -138,12 +125,12 @@ async function invalidateSelectionDependents(
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
   const { id: tenderId } = await params;
@@ -185,19 +172,14 @@ export async function GET(
     }),
   ]);
 
-  const combineMatches = <T extends { isSelected: boolean; score: number }>(selected: T[], unselected: T[]): T[] => {
-    return [...selected, ...unselected]
-      .sort((a, b) => {
-        if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
-        return b.score - a.score;
-      });
-  };
-
-  const expertMatches = combineMatches(selectedExperts, unselectedExperts);
-  const projectMatches = combineMatches(selectedProjects, unselectedProjects);
+  const combineMatches = <T extends { isSelected: boolean; score: number }>(selected: T[], unselected: T[]): T[] =>
+    [...selected, ...unselected].sort((a, b) => {
+      if (a.isSelected !== b.isSelected) return a.isSelected ? -1 : 1;
+      return b.score - a.score;
+    });
 
   return NextResponse.json({
-    expertMatches: expertMatches.map((match) => ({
+    expertMatches: combineMatches(selectedExperts, unselectedExperts).map((match) => ({
       id: match.id,
       score: match.score,
       rationale: match.rationale,
@@ -205,7 +187,7 @@ export async function GET(
       revision: match.updatedAt.toISOString(),
       expert: match.expert,
     })),
-    projectMatches: projectMatches.map((match) => ({
+    projectMatches: combineMatches(selectedProjects, unselectedProjects).map((match) => ({
       id: match.id,
       score: match.score,
       rationale: match.rationale,
@@ -222,7 +204,7 @@ export async function PUT(
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   const rl = rateLimit(`matches:${actor.id}`, MUTATION_RATE_LIMIT);
   if (!rl.allowed) {
@@ -305,7 +287,6 @@ export async function PUT(
           revision: match.updatedAt.toISOString(),
           invalidated: {
             buildPlans: 0,
-            submissionPlans: 0,
             generatedDocuments: 0,
             exportPackages: 0,
             sectionMaps: 0,
@@ -372,7 +353,6 @@ export async function PUT(
             affectedOutputs: invalidated,
             invalidationRules: [
               "SUPERSEDE_BUILD_PLAN",
-              "INVALIDATE_SUBMISSION_PLAN_REVISION",
               "SUPERSEDE_GENERATED_DOCUMENTS",
               "STALE_EXPORT_PACKAGES",
               "SUPERSEDE_SECTION_EVIDENCE_MAP",
@@ -430,11 +410,11 @@ export async function PUT(
   } catch (error) {
     if (error instanceof MatchDecisionConflict) {
       const publicMessage = error.code === "MATCH_NOT_FOUND"
-      ? "The selected evidence row was not found."
-      : error.code === "MATCH_REVISION_CONFLICT"
-        ? "The Engine selection changed after this page was loaded. Refresh and review the current selection before recording an exception."
-        : "This record is not currently source-verified and cannot be selected.";
-    return NextResponse.json({ error: publicMessage, code: error.code }, {
+        ? "The selected evidence row was not found."
+        : error.code === "MATCH_REVISION_CONFLICT"
+          ? "The Engine selection changed after this page was loaded. Refresh and review the current selection before recording an exception."
+          : "This record is not currently source-verified and cannot be selected.";
+      return NextResponse.json({ error: publicMessage, code: error.code }, {
         status: error.code === "MATCH_NOT_FOUND" ? 404 : error.code === "MATCH_REVISION_CONFLICT" ? 409 : 422,
       });
     }
