@@ -91,7 +91,7 @@ export function BuildVersionBadge() {
         aria-expanded={open}
       >
         <span className={`font-medium ${envColor}`}>{environmentLabel}</span>
-        <span> · {identityAvailable ? <>commit <code>{effectiveSha}</code></> : "commit unavailable"}</span>{" "}
+        <span> · {identityAvailable ? <>commit <code>{effectiveSha}</code></> : "verifying…"}</span>{" "}
         <ChevronDownIcon className={open ? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"} />
       </button>
       {open && (
@@ -102,7 +102,7 @@ export function BuildVersionBadge() {
             <p><span className="font-medium">Built:</span> {new Date(CLIENT_TIME).toLocaleString()}</p>
           )}
           {!identityAvailable && (
-            <p className="text-amber-700">
+            <p className="text-amber-800">
               Commit identity is not configured. Vercel should provide VERCEL_GIT_COMMIT_SHA; non-Vercel builds should provide GIT_COMMIT_SHA.
             </p>
           )}

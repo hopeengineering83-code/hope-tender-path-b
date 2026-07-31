@@ -577,6 +577,17 @@ export function EngineActionPanel({
 
           {(result.nextAction === "REVIEW_MATCHING_INPUTS" || result.code === "ENGINE_COMPLETED_WITH_BLOCKERS") && (
             <div className="mt-3 flex flex-wrap gap-2">
+              <Link href="/dashboard/company/review" className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-slate-800">
+                Review Company Vault <ArrowRightIcon />
+              </Link>
+              <Link href="/dashboard/company/review-board" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50">
+                Open Review Board
+              </Link>
+            </div>
+          )}
+
+          {(result.nextAction === "REVIEW_MATCHING_INPUTS" || result.code === "ENGINE_COMPLETED_WITH_BLOCKERS") && (
+            <div className="mt-3 flex flex-wrap gap-2">
               {canMutate && (
                 <button
                   type="button"

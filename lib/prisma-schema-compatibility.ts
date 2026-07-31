@@ -51,30 +51,22 @@ export function isReviewProvenanceSchemaUnavailable(error: unknown): boolean {
 }
 
 export function publicJobFailureMessage(error: unknown, correlationId: string): string {
-  const prefix = `JOB_EXECUTION_FAILED (ref: ${correlationId})`;
+  const ref = `Reference: ${correlationId}`;
   if (isReviewProvenanceSchemaUnavailable(error)) {
-    return `${prefix}: DATABASE_SCHEMA_UPDATE_REQUIRED: This preview database is behind the application version. An administrator must apply the pending migrations to an isolated preview database, then retry.`;
+    return `This preview requires a database update. ${ref}`;
   }
 
   const message = error instanceof Error ? error.message : String(error);
   if (/\b(?:TenderFile|Tender|Company|AiJob)\b.+\bnot found\b/i.test(message)) {
-    return `${prefix}: REQUIRED_INPUT_NOT_FOUND: A required source record no longer exists. Refresh the page, confirm the source file is still attached, and retry.`;
+    return `A required source record no longer exists. Refresh the page, confirm the source file is still attached, and retry. ${ref}`;
   }
   if (/payload|request entity too large|too many|oversiz|max(?:imum)?\s+(?:size|length|characters?)/i.test(message)) {
-    return `${prefix}: INPUT_SIZE_LIMIT: The submitted input exceeds the supported size. Remove duplicate source files or split the package, then retry.`;
+    return `The submitted input exceeds the supported size. Remove duplicate source files or split the package, then retry. ${ref}`;
   }
-  // Job handlers throw bare, static, all-caps precondition codes for
-  // structural failures with no dynamic content (e.g. EXTRACT_TEXT_INPUT_INVALID,
-  // EXTRACT_TEXT_SOURCE_HASH_INVALID, GENERATION_IN_PROGRESS,
-  // ENGINE_CONTINUATION_OWNERSHIP_NOT_RESOLVED). Because the shape excludes
-  // anything with a colon, lowercase text, or an interpolated value, the code
-  // itself is always safe to surface — reusing it here gives a genuinely
-  // useful diagnostic category instead of collapsing every precondition
-  // failure into the same generic message.
   if (/^[A-Z][A-Z0-9_]*$/.test(message.trim())) {
-    return `${prefix}: ${message.trim()}: The background job's input or current state did not satisfy a required precondition. Retry once the underlying issue is resolved; contact an administrator if it persists.`;
+    return `The background job's input or current state did not satisfy a required precondition. Retry once the underlying issue is resolved; contact an administrator if it persists. ${ref}`;
   }
-  return `${prefix}: INTERNAL_JOB_ERROR: The background job failed. Retry once; if it fails again, share the reference with an administrator.`;
+  return `The background job could not complete. Retry once; if it fails again, share the reference with an administrator. ${ref}`;
 }
 
 export async function loadDurableCompanySupportRecords(
