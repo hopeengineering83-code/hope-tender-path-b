@@ -38,13 +38,15 @@ describe("automatic Build Plan authority", () => {
     assert.doesNotMatch(compatibilityRoute, /Build Plan confirmed after source-grounded validation/);
   });
 
-  it("background and direct Engine paths finish automatic plan verification", () => {
+  it("the durable Engine worker, not the HTTP request, completes automatic plan verification", () => {
     const legacyCall = jobHandlers.indexOf("const result = await legacyHandler(ctx)");
     const automaticCall = jobHandlers.indexOf("buildAndVerifyBuildPlan", legacyCall);
     assert.ok(legacyCall >= 0 && automaticCall > legacyCall, "automatic Build Plan must run after Engine persistence");
     assert.match(jobHandlers, /build-plan\.complete/);
-    assert.match(engineRoute, /postconditions\.ok[\s\S]*?buildAndVerifyBuildPlan/);
-    assert.match(engineRoute, /automaticBuildPlan/);
+    assert.match(jobHandlers, /automaticBuildPlan/);
+    assert.match(engineRoute, /enqueueEngineJobForCurrentSources/);
+    assert.match(engineRoute, /status:\s*202/);
+    assert.doesNotMatch(engineRoute, /buildAndVerifyBuildPlan/);
   });
 
   it("removes the human review checkbox and confirmation action", () => {
