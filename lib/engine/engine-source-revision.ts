@@ -12,19 +12,21 @@ function sortById<T extends { id: string }>(rows: T[]): T[] {
 export type EngineSourceRevision = {
   sourceRevision: string;
   tenderFileCount: number;
+  requirementCount: number;
   vaultDocumentCount: number;
   evidenceRecordCount: number;
 };
 
 /**
  * Computes the canonical Engine input revision from current tender source
- * bytes and the complete tenant-owned Company Vault evidence revision set.
+ * bytes, promoted source-grounded requirements, and the complete tenant-owned
+ * Company Vault evidence revision set.
  *
  * The value is deliberately deterministic: duplicate requests for unchanged
  * source state converge on the same idempotency key, while any file-byte,
- * extraction, trust, provenance, deletion, expiry, or record revision change
- * produces a different revision. Workers recompute this value before and after
- * execution so stale jobs cannot promote authoritative output.
+ * extraction, requirement, trust, provenance, deletion, expiry, or record
+ * revision change produces a different revision. Workers recompute this value
+ * before and after execution so stale jobs cannot promote authoritative output.
  */
 export async function computeEngineSourceRevision(
   client: PrismaClient,
@@ -49,6 +51,27 @@ export async function computeEngineSourceRevision(
             extractionMethod: true,
             extractionScore: true,
             deletionStatus: true,
+          },
+        },
+        requirements: {
+          select: {
+            id: true,
+            updatedAt: true,
+            code: true,
+            title: true,
+            description: true,
+            requirementType: true,
+            priority: true,
+            requiredQuantity: true,
+            exactFileName: true,
+            exactOrder: true,
+            restrictions: true,
+            sourceTenderFileId: true,
+            sourcePageNumber: true,
+            sourceSectionHeading: true,
+            sourceExactQuote: true,
+            sourceExtractionMethod: true,
+            sourceConfidence: true,
           },
         },
       },
@@ -147,7 +170,7 @@ export async function computeEngineSourceRevision(
   ]);
 
   const payload = {
-    version: 1,
+    version: 2,
     tender: {
       id: tender.id,
       updatedAt: iso(tender.updatedAt),
@@ -161,6 +184,10 @@ export async function computeEngineSourceRevision(
         extractionMethod: file.extractionMethod,
         extractionScore: file.extractionScore,
         deletionStatus: file.deletionStatus,
+      })),
+      requirements: sortById(tender.requirements).map((requirement) => ({
+        ...requirement,
+        updatedAt: iso(requirement.updatedAt),
       })),
     },
     company: {
@@ -213,6 +240,7 @@ export async function computeEngineSourceRevision(
   return {
     sourceRevision,
     tenderFileCount: tender.files.length,
+    requirementCount: tender.requirements.length,
     vaultDocumentCount: documents.length,
     evidenceRecordCount:
       experts.length + projects.length + legalRecords.length + financialRecords.length + complianceRecords.length,
