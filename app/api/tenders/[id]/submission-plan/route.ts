@@ -82,9 +82,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     // export-readiness and admin audit routes that intentionally inspect bytes.
     const qualityFailedIds = new Set<string>();
 
-    // AUTHORITATIVE: when a current confirmed Build Plan exists, completeness
-    // is computed against ITS items so this panel can never disagree with the
-    // plan the generation/export gates enforce.
+    // AUTHORITATIVE: when a current source-verified Build Plan exists,
+    // completeness is computed against ITS items so this panel can never
+    // disagree with the plan the generation/export gates enforce.
     const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
     const report = resolveSubmissionPlanCompleteness({
       tender,
@@ -92,6 +92,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       qualityFailedIds,
       confirmedPlanItems: confirmedPlan.ok ? confirmedPlan.items : null,
     });
+    const automaticPlanPending = !confirmedPlan.ok;
 
     return NextResponse.json({
       success: true,
@@ -108,10 +109,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         requirementCount: report.requirementCount,
         hasExplicitScope: report.hasExplicitScope,
         planState: report.planState,
-        requiresUserConfirmation: report.requiresUserConfirmation,
+        // Retained as a compatibility field. The current workflow never needs
+        // a generic human confirmation; missing/stale plans are rebuilt and
+        // source-verified automatically by the Engine or recovery action.
+        requiresUserConfirmation: false,
+        automaticPlanPending,
+        automaticPlanBlocker: confirmedPlan.ok ? null : confirmedPlan.blocker,
       },
       rows: report.rows,
-      warnings: report.warnings,
+      warnings: report.warnings.map((warning) =>
+        warning
+          .replace(/Build and confirm it before generation or export\./g, "The Engine will build and source-verify it automatically before generation or export.")
+          .replace(/Confirm tender-issued file names\/order before final export/g, "The server will verify tender-issued file names/order before final export"),
+      ),
     });
   } catch (error) {
     logger.error("submission-plan route failed", {
