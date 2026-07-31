@@ -39,10 +39,13 @@ describe("Engine background-run availability", () => {
     assert.match(panel, /persisted job is[\s\S]*already durable/);
   });
 
-  it("registers the ENGINE_RUN worker and revalidates source authority", () => {
-    assert.match(worker, /ENGINE_RUN/);
-    assert.match(worker, /sourceRevision/);
-    assert.match(worker, /ENGINE_SOURCE_REVISION_CHANGED/);
-    assert.match(worker, /checkEnginePostconditions/);
+  it("registers the ENGINE_RUN worker and revalidates source authority before and after execution", () => {
+    assert.match(worker, /jobType === "ENGINE_RUN"/);
+    assert.match(worker, /assertCurrentEngineSourceRevision/);
+    assert.match(worker, /ENGINE_SOURCE_REVISION_STALE/);
+    assert.match(worker, /checkpoint: "before"/);
+    assert.match(worker, /checkpoint: "after"/);
+    assert.match(worker, /reconcileAutomaticRequirementCoverage/);
+    assert.match(worker, /buildAndVerifyBuildPlan/);
   });
 });
