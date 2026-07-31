@@ -29,7 +29,7 @@ describe("canonical workflow action registry", () => {
     assert.doesNotThrow(() => assertNoWorkflowActionIconCollisions());
   });
 
-  it("defines every normal and recovery action with an explicit owner and target", () => {
+  it("defines every normal, recovery, and navigation action explicitly", () => {
     for (const [actionId, action] of listTenderActions()) {
       assert.ok(action.owner, `${actionId} is missing a mutation/navigation owner`);
       assert.match(action.anchor, /^#/);
@@ -41,9 +41,9 @@ describe("canonical workflow action registry", () => {
     }
   });
 
-  it("marks only executable AI Analyze and Engine actions as recovery mutations", () => {
+  it("keeps AI Analyze as recovery and the durable Engine as a normal workflow action", () => {
     assert.equal(getTenderAction("AI_ANALYZE").availability, "RECOVERY");
-    assert.equal(getTenderAction("RUN_ENGINE").availability, "RECOVERY");
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
     assert.equal(getTenderAction("MATCH_EVIDENCE").availability, "NAVIGATION");
     assert.equal(getTenderAction("MATCH_EVIDENCE").mutation, null);
   });
@@ -54,6 +54,7 @@ describe("canonical workflow action registry", () => {
       .map(([actionId]) => actionId);
     assert.deepEqual(normal, [
       "UPLOAD_TENDER_FILES",
+      "RUN_ENGINE",
       "BUILD_SUBMISSION_PLAN",
       "GENERATE_REQUIRED_DOCUMENTS",
       "DOWNLOAD_FINAL_ZIP",
@@ -64,7 +65,8 @@ describe("canonical workflow action registry", () => {
 
   it("binds executable registry actions to the canonical live route contracts", () => {
     assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/ai-analyze?mode=background");
-    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine?async=true&safe=true");
+    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
+    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").mutation, "POST /api/tenders/:id/build-plan");
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").mutation, "GET /api/tenders/:id/download?type=zip");
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
   });
