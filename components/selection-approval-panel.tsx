@@ -20,10 +20,30 @@ export type SelectionApprovalPanelProps = {
   canMutate: boolean;
 };
 
+type AuthoritativeMatch = {
+  id: string;
+  isSelected: boolean;
+  revision: string;
+};
+
+type MatchStateResponse = {
+  expertMatches?: AuthoritativeMatch[];
+  projectMatches?: AuthoritativeMatch[];
+};
+
+type DecisionResponse = {
+  error?: string;
+  code?: string;
+  planRebuild?: {
+    status?: string;
+    message?: string;
+  };
+};
+
 /**
  * Displays the Engine's persisted evidence selection and permits an authorized
- * user to make an explicit exception. It is intentionally not an approval
- * gate: deterministic selections continue to downstream generation without a
+ * user to make an explicit, revision-bound exception. It is intentionally not
+ * an approval gate: deterministic selections continue automatically without a
  * browser-local confirmation step.
  *
  * The historical export name is retained to avoid a broad compatibility-only
@@ -33,6 +53,7 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
 
   const selectedExperts = experts.filter((expert) => expert.isSelected);
   const selectedProjects = projects.filter((project) => project.isSelected);
@@ -43,26 +64,69 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
     matchId: string,
     matchType: "expert" | "project",
     isSelected: boolean,
+    displayName: string,
   ) => {
+    if (!canMutate || busy) return;
+
+    const rationale = window.prompt(
+      `${isSelected ? "Select" : "Deselect"} ${displayName} only for a material exception. Document the source-grounded reason (minimum 12 characters):`,
+    )?.replace(/\s+/g, " ").trim();
+    if (!rationale) return;
+    if (rationale.length < 12) {
+      setError("A material evidence-selection exception requires a rationale of at least 12 characters.");
+      return;
+    }
+
     setBusy(true);
     setError(null);
+    setStatus("Checking the current Engine selection revision…");
     try {
+      const currentResponse = await fetch(`/api/tenders/${tenderId}/matches`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      const currentState = await currentResponse.json().catch(() => ({})) as MatchStateResponse & { error?: string };
+      if (!currentResponse.ok) {
+        throw new Error(currentState.error || "Failed to read the current Engine selection.");
+      }
+
+      const currentMatch = (matchType === "expert"
+        ? currentState.expertMatches
+        : currentState.projectMatches)?.find((match) => match.id === matchId);
+      if (!currentMatch?.revision) {
+        throw new Error("The selected evidence row is no longer current. Refresh and review the latest Engine selection.");
+      }
+
+      setStatus("Persisting the scoped decision and rebuilding dependent plan authority…");
       const response = await fetch(`/api/tenders/${tenderId}/matches`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ matchId, matchType, isSelected }),
+        body: JSON.stringify({
+          matchId,
+          matchType,
+          isSelected,
+          rationale,
+          expectedRevision: currentMatch.revision,
+        }),
       });
+      const data = await response.json().catch(() => ({})) as DecisionResponse;
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to update selection");
+        throw new Error(data.error || "Failed to persist the scoped evidence-selection decision.");
+      }
+
+      if (data.planRebuild?.status === "SAFE_BLOCKED") {
+        setStatus(data.planRebuild.message || "The decision was saved, but dependent artifacts remain safely invalidated until automatic plan rebuilding succeeds.");
+      } else {
+        setStatus("Decision recorded. The source-bound Build Plan was rebuilt automatically.");
       }
       router.refresh();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Selection update failed");
+      setError(cause instanceof Error ? cause.message : "Selection decision failed");
+      setStatus(null);
     } finally {
       setBusy(false);
     }
-  }, [tenderId, router]);
+  }, [tenderId, router, canMutate, busy]);
 
   const hasMatches = experts.length > 0 || projects.length > 0;
   const hasSelected = selectedExperts.length > 0 || selectedProjects.length > 0;
@@ -76,7 +140,7 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
           <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Engine-selected evidence</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Best-matched experts and projects</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            The Engine scored and persisted the strongest eligible candidates for this tender. Downstream processing continues automatically; authorized users may adjust a selection only when a documented exception is required.
+            The Engine scored and persisted the strongest eligible candidates. Downstream processing continues automatically. A manual change is permitted only as a documented, revision-bound material exception and automatically invalidates and rebuilds dependent plan authority.
           </p>
         </div>
         <div className="flex gap-3 text-xs lg:justify-end">
@@ -92,6 +156,12 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
       {error && (
         <div role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
+        </div>
+      )}
+      {status && (
+        <div role="status" aria-live="polite" className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-800">
+          {busy && <span aria-hidden="true" className="mr-2 inline-block animate-spin">◌</span>}
+          {status}
         </div>
       )}
 
@@ -113,9 +183,10 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
                   type="checkbox"
                   checked={expert.isSelected}
                   disabled={!canMutate || busy}
-                  onChange={(event) => void toggleMatch(expert.matchId, "expert", event.target.checked)}
+                  onChange={(event) => void toggleMatch(expert.matchId, "expert", event.target.checked, expert.name)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                  aria-label={`Select ${expert.name}`}
+                  aria-label={`Record material selection exception for ${expert.name}`}
+                  title="Manual changes require a documented material exception; ordinary Engine selection is automatic"
                 />
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-slate-900">{expert.name}</p>
@@ -156,9 +227,10 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
                   type="checkbox"
                   checked={project.isSelected}
                   disabled={!canMutate || busy}
-                  onChange={(event) => void toggleMatch(project.matchId, "project", event.target.checked)}
+                  onChange={(event) => void toggleMatch(project.matchId, "project", event.target.checked, project.name)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                  aria-label={`Select ${project.name}`}
+                  aria-label={`Record material selection exception for ${project.name}`}
+                  title="Manual changes require a documented material exception; ordinary Engine selection is automatic"
                 />
                 <div className="min-w-0 flex-1">
                   <p className="font-medium text-slate-900">{project.name}</p>
