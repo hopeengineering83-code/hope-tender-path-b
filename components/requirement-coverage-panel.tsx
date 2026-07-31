@@ -303,7 +303,9 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       </div>
 
       <div className="border-b border-blue-100 bg-blue-50 px-5 py-2 text-xs text-blue-800">
-        Requirement grounding and evidence linking are automatic. Only persisted, current, source-grounded links count toward release; no confirmation click is required.
+        {coveragePct > 0
+          ? "All requirements and selected evidence have acceptable traceability. Only persisted, current, source-grounded links count toward release; no confirmation click is required."
+          : "No compliance coverage has been confirmed yet. Requirement grounding and evidence linking are automatic."}
       </div>
 
       {syncWarning && (
@@ -319,8 +321,8 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
           <div className="grid grid-cols-2 gap-3 text-center text-xs sm:grid-cols-4">
             <div><div className="text-base font-bold text-gray-800">{traceability.summary.requirements}</div><div className="text-gray-600">Requirements</div></div>
             <div><div className={`text-base font-bold ${traceability.summary.weakRequirements > 0 ? "text-red-700" : "text-green-700"}`}>{traceability.summary.weakRequirements}</div><div className="text-gray-600">Weak source</div></div>
-            <div><div className={`text-base font-bold ${traceability.summary.selectedExpertsWithWeakEvidence > 0 ? "text-amber-700" : "text-green-700"}`}>{traceability.summary.selectedExpertsWithWeakEvidence}</div><div className="text-gray-600">Weak experts</div></div>
-            <div><div className={`text-base font-bold ${traceability.summary.selectedProjectsWithWeakEvidence > 0 ? "text-amber-700" : "text-green-700"}`}>{traceability.summary.selectedProjectsWithWeakEvidence}</div><div className="text-gray-600">Weak projects</div></div>
+            <div><div className={`text-base font-bold ${traceability.summary.selectedExpertsWithWeakEvidence > 0 ? "text-amber-800" : "text-green-700"}`}>{traceability.summary.selectedExpertsWithWeakEvidence}</div><div className="text-gray-600">Weak experts</div></div>
+            <div><div className={`text-base font-bold ${traceability.summary.selectedProjectsWithWeakEvidence > 0 ? "text-amber-800" : "text-green-700"}`}>{traceability.summary.selectedProjectsWithWeakEvidence}</div><div className="text-gray-600">Weak projects</div></div>
           </div>
           {traceability.warnings.length > 0 ? (
             <ul className="mt-2 space-y-0.5 text-xs text-amber-800">

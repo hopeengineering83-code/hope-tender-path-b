@@ -181,7 +181,7 @@ export async function EvidenceCoveragePanel({ tenderId }: { tenderId: string }) 
               <p className="text-xl font-bold text-emerald-700">{coveredCount}</p>
             </div>
             <div className="rounded-xl border bg-amber-50 px-4 py-2">
-              <p className="text-xs text-amber-700">Partial</p>
+              <p className="text-xs text-amber-800">Partial</p>
               <p className="text-xl font-bold text-amber-800">{partialCount}</p>
             </div>
             <div className="rounded-xl border bg-orange-50 px-4 py-2">

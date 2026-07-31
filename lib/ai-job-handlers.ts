@@ -1,4 +1,5 @@
 // Canonical AI job-handler registry.
+import { checkEnginePostconditions } from "./engine/engine-postconditions";
 //
 // The historical handler set remains in ai-job-handlers-legacy.ts for the
 // non-extraction workflows. EXTRACT_TEXT is deliberately owned by the
@@ -61,6 +62,7 @@ export function getHandler(jobType: JobType): JobHandler | null {
   if (jobType === "AI_ANALYZE" && legacyHandler) {
     return async (ctx) => {
       const result = await legacyHandler(ctx);
+      const postconditions = await checkEnginePostconditions(ctx.tenderId!);
       if (
         !ctx.tenderId ||
         ctx.input.autoContinue !== true ||
@@ -129,6 +131,7 @@ export function getHandler(jobType: JobType): JobHandler | null {
           status: "FAILED",
         });
         throw new Error("ENGINE_SOURCE_REVISION_REQUIRED");
+      // ENGINE_SOURCE_REVISION_CHANGED is handled by assertCurrentEngineSourceRevision
       }
 
       // The queue may start well after the HTTP request that created the job.
@@ -148,6 +151,7 @@ export function getHandler(jobType: JobType): JobHandler | null {
       });
 
       const result = await legacyHandler(ctx);
+      const postconditions = await checkEnginePostconditions(ctx.tenderId!);
 
       // Requirement source repair and Vault evidence linking are part of the
       // Engine transaction chain. No confirmation panel or second Run Engine

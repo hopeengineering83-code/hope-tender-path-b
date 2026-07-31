@@ -318,17 +318,20 @@ describe("Fix 13 — Engine response is partial/honest when AI matching fails", 
     assert.match(src, /Object\.assign\(tenderResult/, "must attach honesty fields to the return value");
   });
 
-  it("engine route propagates partial/blockers/nextAction in the response", () => {
+  it("engine route enqueues only and returns 202 with real persisted jobId", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
-    assert.match(src, /partial: isPartial/);
-    // blockers now combines the engine's own evidenceMatchingBlocker-derived
-    // blockers with any postcondition-check blockers (sync/async success
-    // criteria parity) — see combinedBlockers.
-    assert.match(src, /blockers: combinedBlockers/);
-    assert.match(src, /const combinedBlockers = \[\.\.\.\(engineMeta\.blockers \?\? \[\]\)/);
-    assert.match(src, /nextAction: engineMeta\.nextAction/);
-    // ok must be false when partial is true (honesty).
-    assert.match(src, /ok: !isPartial/);
+    // Production contract: enqueue-only. The route must NOT run the engine
+    // synchronously. It must return 202 with a real persisted jobId.
+    assert.match(src, /status: 202/);
+    assert.match(src, /jobId: enqueueResult\.id/);
+    assert.match(src, /persistedStatus/);
+    assert.match(src, /statusEndpoint/);
+    assert.match(src, /idempotencyKey/);
+    assert.match(src, /sourceRevision/);
+    assert.match(src, /vaultVerification/);
+    // Must NOT contain sync execution patterns.
+    assert.doesNotMatch(src, /partial: isPartial/);
+    assert.doesNotMatch(src, /ok: !isPartial/);
   });
 });
 
@@ -392,11 +395,11 @@ describe("Fix 16 — No raw provider/org/prompt error leaks", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
     // The catch block uses actionableEngineError (sanitized).
     assert.match(src, /actionableEngineError/);
-    // The success response includes blockers (array of safe messages — engine
-    // blockers plus postcondition check codes, e.g. "NO_REQUIREMENTS_PERSISTED")
-    // not raw errors.
-    assert.match(src, /blockers: combinedBlockers/);
-    assert.match(src, /postconditions\.blockers/);
+    // The error response must not include raw error text.
+    assert.match(src, /diagnosticId/);
+    // Must not expose raw Prisma, SQL, or provider errors.
+    assert.doesNotMatch(src, /errorMessage.*error\.message/);
+    assert.doesNotMatch(src, /PrismaClient|P2021|P2022/);
   });
 });
 

@@ -182,7 +182,7 @@ export async function GET(
 
     const rows: RequirementCoverageRow[] = requirements.map((requirement) => {
       // Only persisted links are shown or counted. The former in-memory
-      // VAULT_AUTO_LINK suggestion was never release authority and caused the
+      // A previous automatic-link suggestion was never release authority and caused the
       // exact contradiction visible in the supplied screenshots.
       const evidenceLinks: EvidenceLink[] = requirement.complianceMatrixRows.map((row) => {
         const automatic = parseAutomaticRequirementEvidence(row.notes);
