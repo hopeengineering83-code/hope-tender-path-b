@@ -37,18 +37,18 @@ describe("Company Vault automatic runtime authority", () => {
     assert.equal(result.finalZipEligible, true);
   });
 
-  it("commits Vault verification before durable Engine enqueue and revalidates in the worker", () => {
+  it("commits Vault verification before the canonical durable enqueue authority", () => {
     const route = readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8");
+    const enqueue = readFileSync("lib/engine/enqueue-engine-job.ts", "utf8");
     const registry = readFileSync("lib/ai-job-handlers.ts", "utf8");
     const preflight = route.indexOf("prepareCompanyVaultForEngine(userId)");
-    const revision = route.indexOf("computeEngineSourceRevision(prisma");
-    const enqueueTransaction = route.indexOf("const enqueueResult = await prisma.$transaction");
-    const createJob = route.indexOf("tx.aiJob.create");
+    const enqueueCall = route.indexOf("enqueueEngineJobForCurrentSources(prisma");
 
     assert.ok(preflight >= 0, "Engine route must call the Company Vault preflight");
-    assert.ok(revision > preflight, "source revision must be computed after Vault promotion commits");
-    assert.ok(enqueueTransaction > revision, "enqueue must use the post-promotion source revision");
-    assert.ok(createJob > enqueueTransaction, "job visibility must occur inside the enqueue transaction");
+    assert.ok(enqueueCall > preflight, "durable enqueue must use post-promotion authority");
+    assert.match(enqueue, /computeEngineSourceRevision/);
+    assert.match(enqueue, /pg_advisory_xact_lock/);
+    assert.match(enqueue, /tx\.aiJob\.create/);
     assert.doesNotMatch(route, /runTenderEngine/);
     assert.doesNotMatch(route, /searchParams\.get\("async"\)\s*===\s*"true"/);
 
@@ -60,6 +60,15 @@ describe("Company Vault automatic runtime authority", () => {
       registry.indexOf("prepareCompanyVaultForEngine(ctx.userId)") < registry.lastIndexOf("legacyHandler(ctx)"),
       "Queued Engine execution must refresh Vault authority before invoking the actual Engine handler",
     );
+  });
+
+  it("continues a successful automatic analysis without another Run Engine click", () => {
+    const registry = readFileSync("lib/ai-job-handlers.ts", "utf8");
+    assert.match(registry, /jobType === "AI_ANALYZE"/);
+    assert.match(registry, /ctx\.input\.autoContinue !== true/);
+    assert.match(registry, /result\.terminalStatus !== "SUCCEEDED"/);
+    assert.match(registry, /AUTOMATIC_POST_ANALYSIS_CONTINUATION/);
+    assert.match(registry, /automaticEngineJob/);
   });
 
   it("keeps automatic promotion source-backed and fail-closed globally", () => {
