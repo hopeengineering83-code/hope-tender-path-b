@@ -145,7 +145,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       })).id;
       return NextResponse.json({
         jobId,
-        status: active ? "RUNNING" : "QUEUED",
+        status: "QUEUED",
+        reusedActiveJob: Boolean(active),
         diagnosticId,
         vaultVerification: "DEFERRED_TO_WORKER",
       }, { status: 202 });
