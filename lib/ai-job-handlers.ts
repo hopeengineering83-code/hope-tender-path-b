@@ -15,7 +15,7 @@ import {
 import { runTenderFileExtractionJob } from "./ai-jobs/tender-extraction-service";
 import { prepareCompanyVaultForEngine } from "./engine/prepare-company-vault";
 import { buildAndVerifyBuildPlan } from "./engine/automatic-build-plan";
-import { reconcileAutomaticRequirementCoverage } from "./engine/automatic-requirement-coverage";
+import { reconcileAutomaticRequirementCoverage } from "./engine/reconcile-automatic-requirement-coverage";
 import { prisma } from "./prisma";
 
 export function getHandler(jobType: JobType): JobHandler | null {
