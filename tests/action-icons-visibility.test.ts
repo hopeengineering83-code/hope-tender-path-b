@@ -15,8 +15,6 @@ function stripComments(source: string): string {
 
 const OPERATIONAL_COMPONENTS = [
   "engine-action-panel.tsx",
-  // tender-recovery-command-center.tsx removed -- deleted as unrendered dead
-  // code (nothing imports or renders it).
   "generation-action-panel.tsx",
   "document-validator-panel.tsx",
   "export-readiness-panel.tsx",
@@ -34,20 +32,16 @@ describe("operational components use SVG icons", () => {
     });
   }
 
-  it("generation and engine actions retain distinct icons and visible labels", () => {
+  it("generation and Engine actions retain distinct icons and visible labels", () => {
     const generation = readComponent("generation-action-panel.tsx");
     const engine = readComponent("engine-action-panel.tsx");
-    // Generate Docs now uses DocumentGenerateIcon (the icon literally named
-    // for this action) so it no longer competes with the engine's BoltIcon.
-    // BoltIcon stays canonical for "Run Safe Mode" on the engine-action surface.
     assert.match(generation, /DocumentGenerateIcon/);
     assert.match(generation, /Generate Docs/);
-    assert.match(engine, /<BoltIcon/);
-    assert.match(engine, /Run Safe Mode — Recommended/);
-    assert.match(engine, /<ClockIcon/);
-    assert.match(engine, /Run Full AI in Background/);
-    // Generation must NOT use BoltIcon — that icon is reserved for engine
-    // actions on the engine-action surface.
+    assert.match(engine, /<BoltIcon \/> Start or resume Engine/);
+    assert.match(engine, /<ClockIcon \/> Processing/);
+    assert.match(engine, /<ClockIcon \/> Repairing Vault/);
+    assert.doesNotMatch(engine, /Run Safe Mode/);
+    assert.doesNotMatch(engine, /Full AI/);
     assert.doesNotMatch(generation, /BoltIcon/);
   });
 
@@ -64,15 +58,6 @@ describe("operational components use SVG icons", () => {
     assert.match(readComponent("generation-action-panel.tsx"), /blockedReason/);
   });
 });
-
-// "Recovery Command Center diagnostic icons" describe block removed --
-// components/tender-recovery-command-center.tsx was deleted as unrendered
-// dead code (nothing imports or renders it). Its Execute/Retry/Resume/
-// Review/Link button set had no single live equivalent to redirect to — each
-// underlying action now lives on its own live panel (e.g. Retry AI Analyze
-// on ai-analyze-panel.tsx, final ZIP download ownership on
-// export-readiness-panel.tsx, covered by their own icon tests elsewhere in
-// this suite).
 
 describe("document, share, and export affordances", () => {
   it("document validation states use SVG icons", () => {
@@ -107,11 +92,4 @@ describe("icon registry contract", () => {
     for (const icon of required) assert.match(source, new RegExp(`export function ${icon}`));
     assert.match(source, /stroke: "currentColor"/);
   });
-
-  // "does not introduce user-facing metadata wording in recovery
-  // diagnostics" test removed -- components/tender-recovery-command-center.tsx
-  // was deleted as unrendered dead code (nothing imports or renders it); the
-  // no-user-facing-metadata property for the live recovery/next-action
-  // surface is already covered by tests/ui-workflow-polish.test.ts against
-  // components/next-action-panel.tsx.
 });
