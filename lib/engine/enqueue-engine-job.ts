@@ -107,7 +107,12 @@ export async function enqueueEngineJobForCurrentSources(
       select: { id: true, status: true },
     });
     return { ...created, reusedActiveJob: false };
-  }, { isolationLevel: "Serializable" });
+  }, {
+    // The advisory lock is the serialization authority. READ COMMITTED gives
+    // each statement a fresh snapshot after a waiting transaction acquires the
+    // lock, so it can see and reuse the job committed by the prior request.
+    isolationLevel: "ReadCommitted",
+  });
 
   return { job, revision, idempotencyKey };
 }
