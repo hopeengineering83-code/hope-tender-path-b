@@ -247,7 +247,7 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
           sourceSnippet: snippet,
           sourceDocumentId: document.id,
           sourceAuthority: expertAuthority,
-          trustLevel: "REVIEWED",
+          trustLevel: "REGEX_DRAFT",
         });
       }
     }
@@ -270,7 +270,7 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
           sourceSnippet: snippet,
           sourceDocumentId: document.id,
           sourceAuthority: projectAuthority,
-          trustLevel: "REVIEWED",
+          trustLevel: "REGEX_DRAFT",
         });
       }
     }
@@ -329,7 +329,7 @@ async function persistOnce(
         disciplines: JSON.stringify(candidate.disciplines),
         sectors: JSON.stringify(candidate.sectors),
         certifications: JSON.stringify(candidate.certifications),
-        profile: `[${candidate.trustLevel} — REVIEW REQUIRED before final approval]\n\n${candidate.profile}\n\nSource snippet:\n${candidate.sourceSnippet}`,
+        profile: `[${candidate.trustLevel} — AUTOMATIC SOURCE VERIFICATION PENDING]\n\n${candidate.profile}\n\nSource snippet:\n${candidate.sourceSnippet}`,
         trustLevel: candidate.trustLevel,
         reviewedBy: null,
         reviewedAt: null,
@@ -362,7 +362,7 @@ async function persistOnce(
         country: candidate.country,
         sector: candidate.sector,
         serviceAreas: JSON.stringify(candidate.serviceAreas),
-        summary: `[${candidate.trustLevel} — REVIEW REQUIRED before final approval]\n\n${candidate.summary}\n\nSource snippet:\n${candidate.sourceSnippet}`,
+        summary: `[${candidate.trustLevel} — AUTOMATIC SOURCE VERIFICATION PENDING]\n\n${candidate.summary}\n\nSource snippet:\n${candidate.sourceSnippet}`,
         contractValue: candidate.contractValue,
         currency: candidate.currency,
         trustLevel: candidate.trustLevel,
