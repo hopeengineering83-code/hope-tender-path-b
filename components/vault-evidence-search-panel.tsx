@@ -224,7 +224,7 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
           )}
 
           {(pendingExpertCount > 0 || pendingProjectCount > 0) && (
-            <p className="text-xs text-amber-700">{pendingExpertCount + pendingProjectCount} vault item(s) lack current source-verification or durable human-review provenance and are excluded from generation. <Link href="/dashboard/company/review" className="text-blue-600 hover:underline">Review now</Link></p>
+            <p className="text-xs text-amber-800">{pendingExpertCount + pendingProjectCount} vault item(s) lack current source-verification or durable human-review provenance and are excluded from generation. <Link href="/dashboard/company/review" className="text-blue-600 hover:underline">Review now</Link></p>
           )}
         </div>
 

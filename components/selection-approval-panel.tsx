@@ -139,7 +139,7 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
                 <div className="flex flex-col items-end gap-1">
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                     expert.score >= 0.75 ? "bg-green-100 text-green-700" :
-                    expert.score >= 0.5 ? "bg-amber-100 text-amber-700" :
+                    expert.score >= 0.5 ? "bg-amber-100 text-amber-800" :
                     "bg-slate-100 text-slate-600"
                   }`}>
                     {Math.round(expert.score * 100)}%
@@ -183,7 +183,7 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
                 <div className="flex flex-col items-end gap-1">
                   <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                     project.score >= 0.75 ? "bg-green-100 text-green-700" :
-                    project.score >= 0.5 ? "bg-amber-100 text-amber-700" :
+                    project.score >= 0.5 ? "bg-amber-100 text-amber-800" :
                     "bg-slate-100 text-slate-600"
                   }`}>
                     {Math.round(project.score * 100)}%

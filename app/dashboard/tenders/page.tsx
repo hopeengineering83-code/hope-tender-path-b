@@ -100,7 +100,7 @@ const STAGE_COLORS: Record<PipelineStage, string> = {
   TENDER_INTAKE: "bg-slate-100 text-slate-600",
   ANALYSIS_COMPLETE: "bg-blue-100 text-blue-700",
   PLAN_CONFIRMED: "bg-violet-100 text-violet-700",
-  DOCUMENTS_GENERATED: "bg-amber-100 text-amber-700",
+  DOCUMENTS_GENERATED: "bg-amber-100 text-amber-800",
   EXPORT_READY: "bg-emerald-100 text-emerald-700",
   EXPORTED: "bg-green-100 text-green-700",
 };
@@ -251,7 +251,7 @@ export default async function TendersPage({
               <p className="text-xs text-slate-500 mt-0.5">In Progress</p>
             </div>
             <div className="p-4 text-center">
-              <p className="text-2xl font-bold text-amber-700">{kpi.generated}</p>
+              <p className="text-2xl font-bold text-amber-800">{kpi.generated}</p>
               <p className="text-xs text-slate-500 mt-0.5">Generated</p>
             </div>
             <div className="p-4 text-center bg-emerald-50">
@@ -266,7 +266,7 @@ export default async function TendersPage({
                 </>
               ) : (
                 <>
-                  <p className={`text-2xl font-bold ${kpi.urgentDeadlines > 0 ? "text-amber-700" : "text-slate-400"}`}>{kpi.urgentDeadlines}</p>
+                  <p className={`text-2xl font-bold ${kpi.urgentDeadlines > 0 ? "text-amber-800" : "text-slate-400"}`}>{kpi.urgentDeadlines}</p>
                   <p className={`text-xs mt-0.5 ${kpi.urgentDeadlines > 0 ? "text-amber-600" : "text-slate-400"}`}>Due &le;7d</p>
                 </>
               )}
@@ -383,7 +383,7 @@ export default async function TendersPage({
                           const src = parseAnalysisSource(tender.notes);
                           if (!src) return null;
                           if (src === "REGEX") return <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
-                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
+                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-800" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
                           // "AI" badge is the analysis SOURCE, not a readiness/Clear verdict.
                           // Neutral slate color to avoid implying export readiness.
                           return <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-600" title="Analysis source: AI. NOT a canonical Clear verdict — per-tender verification required.">AI</span>;
@@ -441,7 +441,7 @@ export default async function TendersPage({
                           const src = parseAnalysisSource(tender.notes);
                           if (!src) return null;
                           if (src === "REGEX") return <span className="rounded bg-red-100 px-1 py-0.5 text-[10px] font-semibold text-red-700" title="Analysis by regex fallback — AI providers failed. Re-run AI Analyze.">REGEX</span>;
-                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-700" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
+                          if (src === "PARTIAL") return <span className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold text-amber-800" title="Partial AI analysis — some chunks failed.">PARTIAL</span>;
                           // "AI" badge is the analysis SOURCE, not a readiness/Clear verdict.
                           // Neutral slate color to avoid implying export readiness.
                           return <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-600" title="Analysis source: AI. NOT a canonical Clear verdict — per-tender verification required.">AI</span>;

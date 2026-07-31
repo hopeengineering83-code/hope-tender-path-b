@@ -24,7 +24,7 @@ function statusBadge(status: AuthorityReviewStatus) {
   }
   if (status === "NEEDS_REVIEW") {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
         <WarningIcon /> NEEDS REVIEW
       </span>
     );
@@ -41,7 +41,7 @@ function severityBadge(severity: "CRITICAL" | "HIGH" | "MEDIUM") {
     return <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-700">CRITICAL</span>;
   }
   if (severity === "HIGH") {
-    return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-700">HIGH</span>;
+    return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-800">HIGH</span>;
   }
   return <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">MEDIUM</span>;
 }
@@ -105,7 +105,7 @@ function DocumentRow({ doc }: { doc: DocumentAuthorityScore }) {
           )}
           {doc.warnings.length > 0 && (
             <div className="mt-3">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700">Warnings</p>
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-800">Warnings</p>
               <ul className="list-disc space-y-1 pl-4 text-xs text-amber-800">
                 {doc.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
               </ul>

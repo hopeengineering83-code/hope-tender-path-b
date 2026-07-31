@@ -39,14 +39,14 @@ function riskLevel(status: HeatmapStatus, priority: string): "HIGH" | "MEDIUM" |
 
 const STATUS_STYLES: Record<HeatmapStatus, { row: string; badge: string; label: string }> = {
   FULLY_MET:     { row: "border-emerald-100 bg-emerald-50",  badge: "bg-emerald-100 text-emerald-700", label: "FULLY MET" },
-  PARTIALLY_MET: { row: "border-amber-100 bg-amber-50",     badge: "bg-amber-100 text-amber-700",     label: "PARTIAL" },
+  PARTIALLY_MET: { row: "border-amber-100 bg-amber-50",     badge: "bg-amber-100 text-amber-800",     label: "PARTIAL" },
   NOT_MET:       { row: "border-red-100 bg-red-50",         badge: "bg-red-100 text-red-700",          label: "NOT MET" },
   NEEDS_TRACE:   { row: "border-orange-100 bg-orange-50",   badge: "bg-orange-100 text-orange-700",   label: "NEEDS SOURCE TRACE" },
 };
 
 const RISK_STYLES: Record<string, string> = {
   HIGH:   "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-700",
+  MEDIUM: "bg-amber-100 text-amber-800",
   LOW:    "bg-slate-100 text-slate-600",
   NONE:   "bg-emerald-100 text-emerald-700",
 };
@@ -159,7 +159,7 @@ export async function ComplianceHeatmapPanel({ tenderId }: { tenderId: string })
         <div className="mb-4 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-5">
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-2 py-2"><p className="text-lg font-bold text-slate-900">{rows.length}</p><p className="text-slate-500">Total</p></div>
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-2 py-2"><p className="text-lg font-bold text-emerald-700">{fullyMetRows.length}</p><p className="text-emerald-600">Fully Met</p></div>
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-2 py-2"><p className="text-lg font-bold text-amber-700">{partialRows.length}</p><p className="text-amber-600">Partial</p></div>
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-2 py-2"><p className="text-lg font-bold text-amber-800">{partialRows.length}</p><p className="text-amber-600">Partial</p></div>
           <div className="rounded-xl border border-red-200 bg-red-50 px-2 py-2"><p className="text-lg font-bold text-red-700">{notMetRows.length}</p><p className="text-red-600">Not Met</p></div>
           <div className="rounded-xl border border-orange-200 bg-orange-50 px-2 py-2"><p className="text-lg font-bold text-orange-700">{needsTraceRows.length}</p><p className="text-orange-600">Needs Trace</p></div>
         </div>
@@ -176,7 +176,7 @@ export async function ComplianceHeatmapPanel({ tenderId }: { tenderId: string })
             <details className="rounded-xl border border-amber-200 bg-amber-50 p-3">
               <summary className="cursor-pointer text-sm font-semibold text-amber-800">Show partial requirements ({partialRows.length})</summary>
               <div className="mt-3"><HeatmapRows rows={partialRows.slice(0, 50)} /></div>
-              {partialRows.length > 50 && <p className="mt-2 text-xs text-amber-700">Showing first 50 partial rows. Use compliance review filters for the full list.</p>}
+              {partialRows.length > 50 && <p className="mt-2 text-xs text-amber-800">Showing first 50 partial rows. Use compliance review filters for the full list.</p>}
             </details>
           )}
 

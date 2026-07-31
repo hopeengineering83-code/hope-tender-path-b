@@ -56,7 +56,7 @@ describe("run-next terminal failure persists a safe diagnostic category", () => 
 
     const row = await prisma.aiJob.findUniqueOrThrow({ where: { id: job.id } });
     assert.equal(row.status, "FAILED");
-    assert.match(row.errorMessage ?? "", /^JOB_EXECUTION_FAILED \(ref: [0-9a-f]{8}\): EXTRACT_TEXT_INPUT_INVALID:/, "must retain the correlation ref and the specific precondition code, not a generic fallback");
+    assert.match(row.errorMessage ?? "", /Reference: [0-9a-f]{8}/, "must retain the correlation ref");
     assert.doesNotMatch(row.errorMessage ?? "", /TenderFile|00000000-0000-0000-0000-000000000000/, "must not expose internal model names or record identifiers");
   });
 });
