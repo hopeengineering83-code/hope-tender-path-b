@@ -1,12 +1,4 @@
-// Build Plan UI authority regressions.
-//
-// The preview previously exposed three contradictory facts at once:
-// - "Submission Plan: EXPLICIT TENDER PLAN"
-// - "No current confirmed Build Plan"
-// - two separate "Build Plan" buttons, both of which created only a DRAFT
-//
-// These checks keep one explicit build/review/confirm owner and ensure
-// unconfirmed derived/tender scope is labelled as a preview, never authority.
+// Build Plan UI authority regressions for automatic source verification.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -14,24 +6,26 @@ import { readFileSync } from "node:fs";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
-describe("Build Plan has one explicit action owner", () => {
+describe("Build Plan has one automatic action owner", () => {
   const action = read("components/build-submission-plan-button.tsx");
   const completeness = read("components/submission-plan-completeness-panel.tsx");
   const reconciliation = read("components/submission-plan-reconciliation-panel.tsx");
 
-  it("uses the canonical draft route and the confirmation route", () => {
+  it("uses the canonical automatic build-and-verify route", () => {
     assert.match(action, /\/api\/tenders\/\$\{tenderId\}\/build-plan`/);
-    assert.match(action, /\/api\/tenders\/\$\{tenderId\}\/build-plan\/confirm`/);
+    assert.doesNotMatch(action, /\/build-plan\/confirm/);
     assert.doesNotMatch(action, /submission-plan\/build/);
+    assert.match(action, /Build and verify plan/);
+    assert.match(action, /Rebuild and verify plan/);
   });
 
-  it("shows the complete ordered draft and requires review acknowledgement before confirmation", () => {
-    assert.match(action, /draftItems\.map/);
+  it("shows the complete ordered plan without a human acknowledgement gate", () => {
+    assert.match(action, /items\.map/);
     assert.match(action, /exactOrder/);
     assert.match(action, /exactFileName/);
-    assert.match(action, /checked=\{reviewed\}/);
-    assert.match(action, /disabled=\{!reviewed \|\| running \|\| isPending\}/);
-    assert.match(action, /Confirm reviewed Build Plan/);
+    assert.doesNotMatch(action, /checked=\{reviewed\}/);
+    assert.doesNotMatch(action, /Confirm reviewed Build Plan/);
+    assert.match(action, /No manual confirmation is required/);
   });
 
   it("keeps the action in reconciliation and removes the competing completeness action", () => {
@@ -40,7 +34,7 @@ describe("Build Plan has one explicit action owner", () => {
     assert.doesNotMatch(completeness, /Build Plan<\/button>/);
   });
 
-  it("routes generic blocker actions to the owner instead of posting a hidden draft mutation", () => {
+  it("routes generic blocker actions to the owner instead of posting a hidden mutation", () => {
     const recovery = read("lib/recovery-command-actions.ts");
     const actionBlock = recovery.slice(
       recovery.indexOf("BUILD_SUBMISSION_PLAN:"),
@@ -49,23 +43,12 @@ describe("Build Plan has one explicit action owner", () => {
     assert.match(actionBlock, /kind: "scroll"/);
     assert.match(actionBlock, /anchorId: "submission-plan-reconciliation"/);
     assert.doesNotMatch(actionBlock, /method: "POST"/);
-    assert.doesNotMatch(actionBlock, /submission-plan\/build/);
-    for (const actionName of ["CONFIRM_SUBMISSION_PLAN", "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN"]) {
-      const start = recovery.indexOf(`${actionName}:`);
-      const end = recovery.indexOf("\n  },", start);
-      const block = recovery.slice(start, end);
-      assert.match(block, /anchorId: "submission-plan-reconciliation"/);
-      assert.doesNotMatch(block, /anchorId: "generated-documents"/);
-    }
 
     const stages = read("lib/tender-workflow-stages.ts");
-    assert.match(
-      stages,
-      /stage: 6,\s*label: "Confirmed Build Plan",\s*targets: \["#submission-plan-reconciliation"/,
-    );
+    assert.match(stages, /stage: 6,\s*label: "Confirmed Build Plan",\s*targets: \["#submission-plan-reconciliation"/);
   });
 
-  it("opens scroll targets even when a caller does not supply a custom scroll callback", () => {
+  it("opens scroll targets without a custom callback", () => {
     const blockerLink = read("components/blocker-action-link.tsx");
     assert.match(blockerLink, /document\.getElementById\(spec\.anchorId\)/);
     assert.match(blockerLink, /openParentDetailsAndScroll\(target\)/);
@@ -78,17 +61,17 @@ describe("Build Plan has one explicit action owner", () => {
   });
 });
 
-describe("unconfirmed submission scope is never presented as plan authority", () => {
+describe("automatic submission scope is presented truthfully", () => {
   const truth = read("components/submission-plan-truth-panel.tsx");
   const completeness = read("components/submission-plan-completeness-panel.tsx");
 
-  it("labels unconfirmed data as a preview and links to the canonical owner", () => {
-    assert.match(truth, /Submission scope preview — not confirmed/);
+  it("labels pending authority as automatic, not human-confirmed", () => {
+    assert.match(truth, /Automatic Build Plan pending/);
     assert.match(truth, /href="#submission-plan-reconciliation"/);
-    assert.match(truth, /Review and confirm Build Plan/);
+    assert.doesNotMatch(truth, /Review and confirm Build Plan/);
   });
 
-  it("renames explicit and derived fallback states as unconfirmed scope", () => {
+  it("keeps derived scope visibly non-authoritative until automatic verification", () => {
     assert.match(completeness, /Unconfirmed tender scope/);
     assert.match(completeness, /Unconfirmed derived scope/);
     assert.match(completeness, /Unconfirmed submission scope preview/);
@@ -103,7 +86,7 @@ describe("unconfirmed submission scope is never presented as plan authority", ()
   });
 });
 
-describe("canonical Build Plan status endpoint distinguishes draft from authority", () => {
+describe("canonical Build Plan status endpoint distinguishes authority states", () => {
   const route = read("app/api/tenders/[id]/build-plan/route.ts");
 
   it("returns NOT_BUILT, DRAFT, CONFIRMED, and STALE_CONFIRMED explicitly", () => {
@@ -116,9 +99,10 @@ describe("canonical Build Plan status endpoint distinguishes draft from authorit
     assert.match(route, /getCurrentConfirmedBuildPlan/);
     assert.match(route, /authorizesGeneration: true/);
     assert.match(route, /authorizesGeneration: false/);
+    assert.match(route, /buildAndVerifyBuildPlan/);
   });
 
-  it("keeps diagnostics and the public status DTO on the confirmed-plan authority", () => {
+  it("keeps diagnostics and public status on the confirmed-plan authority", () => {
     const diagnostic = read("app/api/tenders/[id]/pipeline-diagnostic/route.ts");
     assert.match(diagnostic, /getCurrentConfirmedBuildPlan/);
     assert.doesNotMatch(diagnostic, /const planFiles = safeParseJsonArray\(tender\.exactFileNaming\)/);
