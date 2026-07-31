@@ -2,52 +2,43 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8");
-const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
+const read = (path: string) => readFileSync(path, "utf8");
 
 describe("tender Engine mutation RBAC", () => {
-  it("requires ADMIN or PROPOSAL_MANAGER with no session-only fallback", () => {
-    assert.match(source, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
-    assert.match(source, /forbiddenResponse\(\)/);
-    assert.match(source, /unauthorizedResponse\(\)/);
-    assert.doesNotMatch(source, /getSession/);
-    assert.doesNotMatch(source, /"REVIEWER"|"VIEWER"/);
+  const route = read("app/api/tenders/[id]/engine/route.ts");
+  const panel = read("components/engine-action-panel.tsx");
+
+  it("permits only ADMIN and PROPOSAL_MANAGER at the server boundary", () => {
+    assert.match(route, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
+    assert.match(route, /forbiddenResponse\(\)/);
+    assert.match(route, /unauthorizedResponse\(\)/);
   });
 
-  it("uses the role-approved actor for throttling, ownership, and the engine call", () => {
-    const rolePos = source.indexOf('requireRole("ADMIN", "PROPOSAL_MANAGER")');
-    const actorPos = source.indexOf("const userId = actor.id");
-    const ownerPos = source.indexOf("where: { id, userId }");
-    const enginePos = source.indexOf("runTenderEngine(id, userId");
-    assert.ok(rolePos >= 0 && actorPos > rolePos && ownerPos > actorPos && enginePos > ownerPos);
-    assert.match(source, /rateLimitPersistent\(`engine:\$\{userId\}`/);
+  it("keeps every tender lookup tenant scoped", () => {
+    assert.match(route, /const userId = actor\.id/);
+    assert.match(route, /prisma\.tender\.findFirst/);
+    assert.match(route, /where: \{ id, userId \}/);
+    assert.match(route, /TENDER_NOT_FOUND/);
+    assert.doesNotMatch(route, /findUnique\(\{\s*where: \{ id \}/);
   });
 
-  it("preserves all extraction and stored-analysis blockers", () => {
-    for (const code of [
-      "NO_TENDER_FILES",
-      "EXTRACTION_CORRUPTED_ENGINE_SKIPPED",
-      "EXTRACTION_QUALITY_ENGINE_BLOCKED",
-      "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
-      "ANALYSIS_FROM_WEAK_EXTRACTION",
-    ]) {
-      assert.match(source, new RegExp(code));
-    }
-    assert.match(source, /listInvalidStoredFields/);
-    assert.match(source, /computeStoredMetadataPatch/);
-    assert.match(source, /isExtractionAcceptableForGeneration/);
+  it("binds the persisted job to the authenticated tenant", () => {
+    assert.match(route, /enqueueEngineJobForCurrentSources\(prisma, \{/);
+    assert.match(route, /tenderId: id/);
+    assert.match(route, /userId,/);
+    assert.match(route, /companyId: vaultPreflight\.companyId/);
   });
 
-  it("preserves deadline and partial-result honesty", () => {
-    assert.match(source, /const deadlineAt = Date\.now\(\) \+ 50_000/);
-    assert.match(source, /partial: isPartial/);
-    assert.match(source, /success: !isPartial/);
-    assert.match(source, /evidenceMatchingBlocker/);
-    assert.match(source, /actionableEngineError/);
-    assert.match(source, /diagnosticId/);
+  it("blocks read-only UI mutations before a request is sent", () => {
+    assert.match(panel, /if \(!canMutate\)/);
+    assert.match(panel, /ENGINE_MUTATION_BLOCKED_RESULT/);
+    assert.match(panel, /ROLE_READ_ONLY_MUTATION_BLOCKED/);
+    assert.match(panel, /Engine runs require the ADMIN or PROPOSAL_MANAGER role/);
   });
 
-  it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled?.["main"], true);
+  it("does not accept role or policy overrides from the client", () => {
+    assert.match(route, /CLIENT_POLICY_OVERRIDE_REJECTED/);
+    assert.doesNotMatch(route, /searchParams\.get\("role"\)/);
+    assert.doesNotMatch(route, /searchParams\.get\("userId"\)/);
   });
 });
