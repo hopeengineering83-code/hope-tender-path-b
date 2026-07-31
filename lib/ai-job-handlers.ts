@@ -7,13 +7,15 @@
 
 export * from "./ai-job-handlers-legacy";
 
-import type { JobType } from "./ai-jobs";
+import { recordStep, type JobType } from "./ai-jobs";
 import {
   getHandler as getLegacyHandler,
   type JobHandler,
 } from "./ai-job-handlers-legacy";
 import { runTenderFileExtractionJob } from "./ai-jobs/tender-extraction-service";
 import { prepareCompanyVaultForEngine } from "./engine/prepare-company-vault";
+import { buildAndVerifyBuildPlan } from "./engine/automatic-build-plan";
+import { prisma } from "./prisma";
 
 export function getHandler(jobType: JobType): JobHandler | null {
   if (jobType === "EXTRACT_TEXT") {
@@ -34,7 +36,50 @@ export function getHandler(jobType: JobType): JobHandler | null {
       // fail-closed rather than using stale verification.
       const preflight = await prepareCompanyVaultForEngine(ctx.userId);
       if (!preflight) throw new Error("Company Vault profile required before Engine execution");
-      return legacyHandler(ctx);
+
+      const result = await legacyHandler(ctx);
+
+      // Build Plan creation is part of Engine completion, not a later human
+      // approval stage. The service re-derives current tender-controlled scope,
+      // validates source grounding, binds revision/hash, and commits the same
+      // fail-closed CONFIRMED authority consumed by generation/export.
+      await recordStep(ctx.jobId, {
+        stepName: "build-plan.automatic",
+        message: "Deriving and source-verifying the submission Build Plan",
+        status: "RUNNING",
+      });
+      const buildPlan = await buildAndVerifyBuildPlan(prisma, ctx.tenderId, ctx.userId, {
+        reuseCurrent: false,
+      });
+      if (!buildPlan.ok) {
+        await recordStep(ctx.jobId, {
+          stepName: "build-plan.blocked",
+          message: `${buildPlan.code}: ${buildPlan.message}`,
+          status: "FAILED",
+        });
+        throw new Error(
+          `Automatic Build Plan verification blocked (${buildPlan.code}): ${[
+            buildPlan.message,
+            ...(buildPlan.blockers ?? []),
+          ].join(" ")}`,
+        );
+      }
+      await recordStep(ctx.jobId, {
+        stepName: "build-plan.complete",
+        message: `Build Plan revision ${buildPlan.revision} automatically source-verified`,
+        status: "SUCCEEDED",
+      });
+
+      return {
+        ...result,
+        automaticBuildPlan: {
+          status: buildPlan.status,
+          revision: buildPlan.revision,
+          contentHash: buildPlan.contentHash,
+          confirmationMode: buildPlan.confirmationMode,
+          authorizesGeneration: true,
+        },
+      };
     };
   }
 
