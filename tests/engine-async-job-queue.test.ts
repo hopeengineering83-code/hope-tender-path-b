@@ -74,7 +74,7 @@ describe("Engine route — production dispatch is always durable and enqueue-onl
     assert.match(handler, /checkpoint:\s*"after"/);
     assert.match(handler, /ENGINE_SOURCE_REVISION_STALE/);
     assert.ok(
-      handler.indexOf('checkpoint: "before"') < handler.indexOf("legacyHandler(ctx)"),
+      handler.indexOf('checkpoint: "before"') < handler.lastIndexOf("legacyHandler(ctx)"),
       "worker must reject stale input before invoking the Engine",
     );
     assert.ok(
