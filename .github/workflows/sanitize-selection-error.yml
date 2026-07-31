@@ -20,7 +20,7 @@ jobs:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
 
-      - name: Replace exact unsafe response pattern
+      - name: Replace exact unsafe response token
         shell: bash
         run: |
           python3 <<'PY'
@@ -28,26 +28,16 @@ jobs:
 
           path = Path('app/api/tenders/[id]/matches/route.ts')
           source = path.read_text()
-          old = '''    if (error instanceof MatchDecisionConflict) {
-              return NextResponse.json({ error: error.message, code: error.code }, {
-                status: error.code === "MATCH_NOT_FOUND" ? 404 : error.code === "MATCH_REVISION_CONFLICT" ? 409 : 422,
-              });
-            }
-          '''
-          new = '''    if (error instanceof MatchDecisionConflict) {
-              const publicMessage = error.code === "MATCH_NOT_FOUND"
+          unsafe = '      return NextResponse.json({ error: error.message, code: error.code }, {'
+          replacement = '''      const publicMessage = error.code === "MATCH_NOT_FOUND"
                 ? "The selected evidence row was not found."
                 : error.code === "MATCH_REVISION_CONFLICT"
                   ? "The Engine selection changed after this page was loaded. Refresh and review the current selection before recording an exception."
                   : "This record is not currently source-verified and cannot be selected.";
-              return NextResponse.json({ error: publicMessage, code: error.code }, {
-                status: error.code === "MATCH_NOT_FOUND" ? 404 : error.code === "MATCH_REVISION_CONFLICT" ? 409 : 422,
-              });
-            }
-          '''
-          if old not in source:
-              raise SystemExit('Expected unsafe response pattern was not found; refusing broad mutation.')
-          path.write_text(source.replace(old, new, 1))
+              return NextResponse.json({ error: publicMessage, code: error.code }, {'''
+          if source.count(unsafe) != 1:
+              raise SystemExit(f'Expected exactly one unsafe response token, found {source.count(unsafe)}; refusing broad mutation.')
+          path.write_text(source.replace(unsafe, replacement, 1))
           PY
 
       - name: Verify raw error pattern is absent
