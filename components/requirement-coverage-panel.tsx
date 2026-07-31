@@ -114,6 +114,7 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 export default function RequirementCoveragePanel({ tenderId }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const serverPanelsRefreshed = useRef(false);
+  const hasLoaded = useRef(false);
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [synchronizing, setSynchronizing] = useState(false);
@@ -127,7 +128,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   const [traceOpen, setTraceOpen] = useState(false);
 
   const syncAndLoad = useCallback(async () => {
-    setLoading((current) => current || data === null);
+    setLoading(!hasLoaded.current);
     setSynchronizing(true);
     setError(null);
     setSyncWarning(null);
@@ -169,9 +170,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to load coverage");
     } finally {
+      hasLoaded.current = true;
       setLoading(false);
     }
-  }, [data, router, tenderId]);
+  }, [router, tenderId]);
 
   useEffect(() => {
     void syncAndLoad();
