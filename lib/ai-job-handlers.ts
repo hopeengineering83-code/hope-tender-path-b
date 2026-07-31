@@ -10,6 +10,7 @@ export * from "./ai-job-handlers-legacy";
 import { recordStep, type JobType } from "./ai-jobs";
 import {
   getHandler as getLegacyHandler,
+  isTerminalHandlerResult,
   type JobHandler,
 } from "./ai-job-handlers-legacy";
 import { runTenderFileExtractionJob } from "./ai-jobs/tender-extraction-service";
@@ -17,6 +18,7 @@ import { prepareCompanyVaultForEngine } from "./engine/prepare-company-vault";
 import { buildAndVerifyBuildPlan } from "./engine/automatic-build-plan";
 import { reconcileAutomaticRequirementCoverage } from "./engine/reconcile-automatic-requirement-coverage";
 import { computeEngineSourceRevision } from "./engine/engine-source-revision";
+import { enqueueEngineJobForCurrentSources } from "./engine/enqueue-engine-job";
 import { prisma } from "./prisma";
 
 async function assertCurrentEngineSourceRevision(input: {
@@ -55,6 +57,61 @@ export function getHandler(jobType: JobType): JobHandler | null {
   }
 
   const legacyHandler = getLegacyHandler(jobType);
+
+  if (jobType === "AI_ANALYZE" && legacyHandler) {
+    return async (ctx) => {
+      const result = await legacyHandler(ctx);
+      if (
+        !ctx.tenderId ||
+        ctx.input.autoContinue !== true ||
+        !isTerminalHandlerResult(result) ||
+        result.terminalStatus !== "SUCCEEDED"
+      ) {
+        return result;
+      }
+
+      await recordStep(ctx.jobId, {
+        stepName: "engine.auto-enqueue.preflight",
+        message: "AI analysis promoted; verifying Company Vault authority for automatic Engine continuation",
+        status: "RUNNING",
+      });
+      const preflight = await prepareCompanyVaultForEngine(ctx.userId);
+      if (!preflight) {
+        throw new Error("COMPANY_VAULT_REQUIRED_FOR_AUTOMATIC_ENGINE_CONTINUATION");
+      }
+
+      const enqueue = await enqueueEngineJobForCurrentSources(prisma, {
+        userId: ctx.userId,
+        tenderId: ctx.tenderId,
+        companyId: preflight.companyId,
+        purpose: "AUTOMATIC_POST_ANALYSIS_CONTINUATION",
+      });
+      if (!enqueue) {
+        throw new Error("ENGINE_SOURCE_REVISION_UNAVAILABLE_AFTER_ANALYSIS");
+      }
+
+      await recordStep(ctx.jobId, {
+        stepName: "engine.auto-enqueue.complete",
+        message: `Engine job ${enqueue.job.id} persisted for source revision ${enqueue.revision.sourceRevision.slice(0, 12)}`,
+        status: "SUCCEEDED",
+      });
+
+      return {
+        ...result,
+        output: {
+          ...result.output,
+          automaticEngineJob: {
+            jobId: enqueue.job.id,
+            status: enqueue.job.status,
+            reusedActiveJob: enqueue.job.reusedActiveJob,
+            sourceRevision: enqueue.revision.sourceRevision,
+            idempotencyKey: enqueue.idempotencyKey,
+          },
+        },
+      };
+    };
+  }
+
   if (jobType === "ENGINE_RUN" && legacyHandler) {
     return async (ctx) => {
       // Preserve canonical input validation first. A malformed job must fail
