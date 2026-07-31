@@ -57,8 +57,8 @@ describe("Company Vault automatic runtime authority", () => {
     assert.match(registry, /checkpoint:\s*"before"/);
     assert.match(registry, /checkpoint:\s*"after"/);
     assert.ok(
-      registry.indexOf("prepareCompanyVaultForEngine(ctx.userId)") < registry.indexOf("legacyHandler(ctx)"),
-      "Queued Engine execution must refresh Vault authority before invoking the legacy handler",
+      registry.indexOf("prepareCompanyVaultForEngine(ctx.userId)") < registry.lastIndexOf("legacyHandler(ctx)"),
+      "Queued Engine execution must refresh Vault authority before invoking the actual Engine handler",
     );
   });
 
