@@ -18,12 +18,26 @@ describe("action registry matches production route owners", () => {
     assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/ai-analyze?mode=background");
   });
 
-  it("uses the real safe background Engine contract", () => {
+  it("uses the one durable server-controlled Engine contract", () => {
     const route = read("app/api/tenders/[id]/engine/route.ts");
+    const panel = read("components/engine-action-panel.tsx");
     assert.match(route, /export async function POST/);
-    assert.match(route, /searchParams\.get\("async"\)\s*===\s*"true"/);
-    assert.match(route, /searchParams\.get\("safe"\)\s*===\s*"true"/);
-    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine?async=true&safe=true");
+    assert.match(route, /enqueueEngineJobForCurrentSources/);
+    assert.match(route, /CLIENT_POLICY_OVERRIDE_REJECTED/);
+    assert.match(panel, /Start or resume Engine/);
+    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
+    assert.equal(getTenderAction("RUN_ENGINE").owner, "EngineActionPanel");
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
+  });
+
+  it("uses the automatic Build Plan route and live button owner", () => {
+    const route = read("app/api/tenders/[id]/build-plan/route.ts");
+    const button = read("components/build-submission-plan-button.tsx");
+    assert.match(route, /export async function POST/);
+    assert.match(button, /Build and verify plan/);
+    assert.match(button, /No manual confirmation is required/);
+    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").mutation, "POST /api/tenders/:id/build-plan");
+    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").owner, "BuildSubmissionPlanButton");
   });
 
   it("does not invent a POST matching endpoint", () => {
@@ -52,10 +66,11 @@ describe("action registry matches production route owners", () => {
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
   });
 
-  it("contains no known nonexistent workflow mutation paths", () => {
+  it("contains no known nonexistent or client-policy workflow paths", () => {
     const mutations = listTenderActions().flatMap(([, action]) => action.mutation ? [action.mutation] : []);
     const joined = mutations.join("\n");
     assert.doesNotMatch(joined, /ai-analyze\?async=true/);
+    assert.doesNotMatch(joined, /engine\?.*(?:safe|skip|maxChars|provider)/);
     assert.doesNotMatch(joined, /\/api\/tenders\/:id\/match(?:\s|$)/);
     assert.doesNotMatch(joined, /\/api\/tenders\/:id\/approval(?:\s|$)/);
     assert.doesNotMatch(joined, /\/api\/tenders\/:id\/export\/zip/);
