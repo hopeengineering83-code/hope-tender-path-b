@@ -8,10 +8,7 @@ import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../..
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prepareCompanyVaultForEngine } from "../../../../../lib/engine/prepare-company-vault";
-import {
-  computeEngineSourceRevision,
-  engineIdempotencyKey,
-} from "../../../../../lib/engine/engine-source-revision";
+import { enqueueEngineJobForCurrentSources } from "../../../../../lib/engine/enqueue-engine-job";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -214,80 +211,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
-    const revision = await computeEngineSourceRevision(prisma, {
-      tenderId: id,
-      userId,
-      companyId: vaultPreflight.companyId,
-    });
-    if (!revision) {
-      return NextResponse.json({
-        error: "Engine source revision could not be established.",
-        code: "ENGINE_SOURCE_REVISION_UNAVAILABLE",
-        nextAction: "RETRY_AFTER_DATABASE_CHECK",
-        diagnosticId,
-      }, { status: 503 });
-    }
-
-    const idempotencyKey = engineIdempotencyKey({
-      userId,
-      tenderId: id,
-      sourceRevision: revision.sourceRevision,
-    });
-
-    const enqueueResult = await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${idempotencyKey}))`;
-
-      await tx.aiJob.updateMany({
-        where: {
-          tenderId: id,
-          userId,
-          jobType: "ENGINE_RUN",
-          status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS"] },
-          OR: [
-            { analysisInputHash: null },
-            { analysisInputHash: { not: revision.sourceRevision } },
-          ],
-        },
-        data: {
-          status: "CANCELED",
-          errorMessage: "Superseded by a newer Engine source revision.",
-          finishedAt: new Date(),
-          leaseOwner: null,
-          leaseExpiresAt: null,
-        },
-      });
-
-      const active = await tx.aiJob.findFirst({
-        where: {
-          tenderId: id,
-          userId,
-          jobType: "ENGINE_RUN",
-          analysisInputHash: revision.sourceRevision,
-          status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS"] },
-        },
-        orderBy: { createdAt: "desc" },
-        select: { id: true, status: true },
-      });
-      if (active) return { ...active, reusedActiveJob: true };
-
-      const created = await tx.aiJob.create({
-        data: {
-          userId,
-          tenderId: id,
-          jobType: "ENGINE_RUN",
-          status: "QUEUED",
-          analysisInputHash: revision.sourceRevision,
-          input: JSON.stringify({
-            sourceRevision: revision.sourceRevision,
-            idempotencyKey,
-            purpose: "INTERNAL_ARTIFACT_PREPARATION",
-            executionPolicy: "SERVER_CONTROLLED",
-          }),
-        },
-        select: { id: true, status: true },
-      });
-      return { ...created, reusedActiveJob: false };
-    }, { isolationLevel: "Serializable" });
+    const enqueue = await enqueueEngineJobForCurrentSources(prisma, {
+    tenderId: id,
+    userId,
+    companyId: vaultPreflight.companyId,
+    purpose: "INTERNAL_ARTIFACT_PREPARATION",
+  });
+  if (!enqueue) {
+    return NextResponse.json({
+      error: "Engine source revision could not be established.",
+      code: "ENGINE_SOURCE_REVISION_UNAVAILABLE",
+      nextAction: "RETRY_AFTER_DATABASE_CHECK",
+      diagnosticId,
+    }, { status: 503 });
+  }
+  const { revision, idempotencyKey, job: enqueueResult } = enqueue;
 
     logger.info("[engine route] durable Engine job accepted", {
       diagnosticId,
@@ -313,6 +251,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       vaultVerifiedProjects: vaultPreflight.sourceVerification?.projectsVerified ?? 0,
       sourceInventory: {
         tenderFiles: revision.tenderFileCount,
+        requirements: revision.requirementCount,
         vaultDocuments: revision.vaultDocumentCount,
         evidenceRecords: revision.evidenceRecordCount,
       },
