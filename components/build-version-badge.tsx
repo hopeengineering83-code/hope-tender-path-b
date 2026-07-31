@@ -91,7 +91,7 @@ export function BuildVersionBadge() {
         aria-expanded={open}
       >
         <span className={`font-medium ${envColor}`}>{environmentLabel}</span>
-        <span> · {identityAvailable ? <>commit <code>{effectiveSha}</code></> : "verifying…"}</span>{" "}
+        <span> · {identityAvailable ? <>commit <code>{effectiveSha}</code></> : "commit unavailable"}</span>{" "}
         <ChevronDownIcon className={open ? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"} />
       </button>
       {open && (

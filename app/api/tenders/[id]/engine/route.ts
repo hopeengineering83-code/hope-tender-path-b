@@ -126,32 +126,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
-    const reqUrl = new URL(req.url);
-    if (reqUrl.searchParams.get("async") === "true") {
-      const safe = reqUrl.searchParams.get("safe") === "true";
-      const skipAiRematch = reqUrl.searchParams.get("skipAiRematch") === "true";
-      const maxCharsParam = reqUrl.searchParams.get("maxChars");
-      const maxChars = maxCharsParam ? Number(maxCharsParam) : undefined;
-      const active = await findActiveEngineRunForTender(id, userId);
-      const jobId = active?.id ?? (await enqueueJob({
-        userId,
-        tenderId: id,
-        jobType: "ENGINE_RUN",
-        input: {
-          safe,
-          skipAiRematch,
-          ...(typeof maxChars === "number" && Number.isFinite(maxChars) ? { maxChars } : {}),
-        },
-      })).id;
-      return NextResponse.json({
-        jobId,
-        status: "QUEUED",
-        reusedActiveJob: Boolean(active),
-        diagnosticId,
-        vaultVerification: "DEFERRED_TO_WORKER",
-      }, { status: 202 });
-    }
-
     let vaultPreflight: Awaited<ReturnType<typeof prepareCompanyVaultForEngine>>;
     try {
       vaultPreflight = await prepareCompanyVaultForEngine(userId);
@@ -183,6 +157,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       sourceRemap: vaultPreflight.sourceRemap,
       sourceVerification: vaultPreflight.sourceVerification,
     });
+
+    const reqUrl = new URL(req.url);
+    if (reqUrl.searchParams.get("async") === "true") {
+      const safe = reqUrl.searchParams.get("safe") === "true";
+      const skipAiRematch = reqUrl.searchParams.get("skipAiRematch") === "true";
+      const maxCharsParam = reqUrl.searchParams.get("maxChars");
+      const maxChars = maxCharsParam ? Number(maxCharsParam) : undefined;
+      const active = await findActiveEngineRunForTender(id, userId);
+      const jobId = active?.id ?? (await enqueueJob({
+        userId,
+        tenderId: id,
+        jobType: "ENGINE_RUN",
+        input: {
+          safe,
+          skipAiRematch,
+          ...(typeof maxChars === "number" && Number.isFinite(maxChars) ? { maxChars } : {}),
+        },
+      })).id;
+      return NextResponse.json({ jobId, status: "QUEUED", diagnosticId }, { status: 202 });
+    }
 
     const deadlineAt = Date.now() + 50_000;
     const result = await runTenderEngine(id, userId, undefined, { deadlineAt });
