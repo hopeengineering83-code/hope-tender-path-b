@@ -21,11 +21,15 @@ describe("requirement-coverage safe response boundary", () => {
     assert.match(source, /errorClass: error instanceof Error \? error\.constructor\.name : "UnknownError"/);
   });
 
-  it("keeps tender and Company Vault queries owner/company scoped", () => {
+  it("keeps tender and canonical readiness queries tenant scoped", () => {
     assert.match(source, /where: \{ id, userId: actor\.id \}/);
-    assert.match(source, /where: \{ userId: tender\.userId \}/);
-    assert.match(source, /where: \{ companyId: company\.id, deletedAt: null \}/);
+    assert.match(source, /getFinalPackageReadinessModel\(prisma, id, actor\.id\)/);
+    assert.match(
+      source,
+      /where: \{ tenderId: id, priority: \{ in: \["MANDATORY", "CRITICAL"\] \} \}/,
+    );
     assert.match(source, /TENDER_NOT_FOUND/);
+    assert.doesNotMatch(source, /prisma\.(?:company|expert|project)\./);
   });
 
   it("counts only mandatory and critical requirements", () => {
@@ -34,17 +38,18 @@ describe("requirement-coverage safe response boundary", () => {
     assert.match(source, /coverageRatio/);
   });
 
-  it("keeps auto-linked Vault evidence display-only and never fully covered", () => {
-    assert.match(source, /evidenceSource: "VAULT_AUTO_LINK"/);
-    assert.match(source, /supportLevel: "PARTIAL"/);
-    // isReviewed decides whether the UI offers a record as linkable evidence,
-    // so it must be the canonical generation authority rather than a raw
-    // trustLevel comparison — the latter marked every durably SOURCE_VERIFIED
-    // record unusable and hid the whole vault from an upload-only company.
-    assert.match(source, /isReviewed: canUseVaultRecord\(expert as ReviewRecordState, "GENERATION"\)/);
-    assert.match(source, /isReviewed: canUseVaultRecord\(project as ReviewRecordState, "GENERATION"\)/);
-    assert.match(source, /canonicalStatus\?\.displayStatus/);
-    assert.match(source, /canonicalStatus\?\.displayStatus === "FULLY_MET"/);
+  it("reports only persisted automatic evidence and leaves coverage authority canonical", () => {
+    assert.match(source, /requirement\.complianceMatrixRows\.map/);
+    assert.match(source, /parseAutomaticRequirementEvidence\(row\.notes\)/);
+    assert.match(source, /autoLinked: Boolean\(automatic\)/);
+    assert.match(source, /linkageScore: automatic\?\.linkageScore \?\? null/);
+    assert.match(source, /linkageReasons: automatic\?\.linkageReasons \?\? \[\]/);
+    assert.match(source, /canonicalStatus\?\.displayStatus \?\? "NOT_MET"/);
+    assert.match(source, /canonicalStatus\?\.hasSourceTrace \?\? false/);
+    assert.match(source, /coverageStatus === "FULLY_MET"/);
+    assert.doesNotMatch(source, /VAULT_AUTO_LINK/);
+    assert.doesNotMatch(source, /evidenceLinks\.push\(/);
+    assert.doesNotMatch(source, /canUseVaultRecord/);
   });
 
   it("keeps source grounding required for full coverage", () => {
