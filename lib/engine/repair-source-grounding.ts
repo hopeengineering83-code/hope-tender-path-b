@@ -64,7 +64,11 @@ export function findBestSourceGroundingQuote(
   // exact quote that will be stored and re-validated by release gates.
   const windowSize = 500;
   const step = 60;
-  const minimumHits = Math.min(3, keyPhrases.length);
+  // Short phrase sets carry little redundancy. Require every phrase when four
+  // or fewer are available so terms outside the persisted quote cannot silently
+  // justify an otherwise ambiguous three-word match. Longer descriptions still
+  // require at least three coherent specific terms in the same compact quote.
+  const minimumHits = keyPhrases.length <= 4 ? keyPhrases.length : 3;
   const denominator = Math.min(6, keyPhrases.length);
   let bestScore = 0;
   let bestOffset = -1;
@@ -86,7 +90,6 @@ export function findBestSourceGroundingQuote(
       bestHits = hits;
     }
     if (start + step > lastStart && start !== lastStart) {
-      // Ensure the tail of the source is inspected once.
       const { hits: tailHits, score: tailScore } = scoreWindow(lastStart);
       if (tailScore > bestScore || (tailScore === bestScore && tailHits > bestHits)) {
         bestScore = tailScore;
@@ -180,8 +183,6 @@ function bestRepairForRequirement(
     heading: string | null;
   } | null = null;
 
-  // First recover coordinates for a real quote already extracted by AI. This
-  // is stronger than lexical matching and receives confidence 1.0.
   if (requirement.sourceExactQuote?.trim()) {
     const preferred = files.find((file) => file.id === requirement.sourceTenderFileId);
     const ordered = preferred
@@ -211,8 +212,6 @@ function bestRepairForRequirement(
     const match = findBestSourceGroundingQuote(keyPhrases, file.extractedText);
     if (!match || match.confidence < MIN_AUTOMATIC_GROUNDING_CONFIDENCE) continue;
     const page = detectPageNumber(file.extractedText, match.offset, file.totalPages);
-    // Page provenance is part of the canonical release predicate. Do not save
-    // an apparently useful quote that can never become trusted evidence.
     if (!page) continue;
     if (!file.extractedText.includes(match.quote)) continue;
     const candidate = {
