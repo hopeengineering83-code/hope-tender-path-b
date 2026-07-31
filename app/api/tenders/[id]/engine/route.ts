@@ -2,19 +2,31 @@ import { NextResponse } from "next/server";
 import { logger } from "../../../../../lib/observability";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { runTenderEngine } from "../../../../../lib/engine/run-tender-engine";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { actionableEngineError } from "../../../../../lib/engine/actionable-engine-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-jobs";
-import { checkEnginePostconditions } from "../../../../../lib/engine/engine-postconditions";
 import { prepareCompanyVaultForEngine } from "../../../../../lib/engine/prepare-company-vault";
-import { buildAndVerifyBuildPlan } from "../../../../../lib/engine/automatic-build-plan";
+import {
+  computeEngineSourceRevision,
+  engineIdempotencyKey,
+} from "../../../../../lib/engine/engine-source-revision";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
+
+const CLIENT_POLICY_PARAMETERS = [
+  "safe",
+  "skipRematch",
+  "skipAiRematch",
+  "maxChars",
+  "provider",
+  "retryCount",
+  "promotionBypass",
+  "validationBypass",
+  "staleStateBypass",
+] as const;
 
 function requestDiagnosticId() {
   return `eng_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -31,6 +43,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       : unauthorizedResponse();
   }
   const userId = actor.id;
+
+  const requestUrl = new URL(req.url);
+  const rejectedPolicyParameters = CLIENT_POLICY_PARAMETERS.filter((parameter) =>
+    requestUrl.searchParams.has(parameter),
+  );
+  if (rejectedPolicyParameters.length > 0) {
+    return NextResponse.json({
+      error: "Engine execution policy is controlled by the server.",
+      code: "CLIENT_POLICY_OVERRIDE_REJECTED",
+      rejectedParameters: rejectedPolicyParameters,
+      diagnosticId,
+    }, { status: 400 });
+  }
 
   const rl = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) {
@@ -49,18 +74,39 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const tender = await prisma.tender.findFirst({
       where: { id, userId },
       select: {
-        id: true, analysisExtractionStatus: true,
-        title: true, clientName: true, reference: true, country: true, clientContactName: true,
-        procuringEntityName: true, legalClientName: true, donorAgency: true, implementingAgency: true,
+        id: true,
+        analysisExtractionStatus: true,
+        title: true,
+        clientName: true,
+        reference: true,
+        country: true,
+        clientContactName: true,
+        procuringEntityName: true,
+        legalClientName: true,
+        donorAgency: true,
+        implementingAgency: true,
         files: {
           select: {
-            id: true, originalFileName: true, fileName: true, extractedText: true,
-            extractionScore: true, totalPages: true, extractedPages: true, ocrPages: true, failedPages: true,
+            id: true,
+            originalFileName: true,
+            fileName: true,
+            extractedText: true,
+            extractionScore: true,
+            totalPages: true,
+            extractedPages: true,
+            ocrPages: true,
+            failedPages: true,
           },
         },
       },
     });
-    if (!tender) return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND", diagnosticId }, { status: 404 });
+    if (!tender) {
+      return NextResponse.json({
+        error: "Tender not found",
+        code: "TENDER_NOT_FOUND",
+        diagnosticId,
+      }, { status: 404 });
+    }
 
     if (tender.files.length === 0) {
       return NextResponse.json({
@@ -74,12 +120,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const invalidFields = listInvalidStoredFields(tender);
     if (invalidFields.length > 0) {
-      await prisma.tender.update({ where: { id: tender.id }, data: computeStoredMetadataPatch(tender) });
+      await prisma.tender.update({
+        where: { id: tender.id },
+        data: computeStoredMetadataPatch(tender),
+      });
     }
 
     const effectiveExtractionFiles = tender.files.map((file) => {
-      const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
-      return { ...file, extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score), quality };
+      const quality = assessExtractionQuality(
+        file.extractedText,
+        file.originalFileName || file.fileName,
+      );
+      return {
+        ...file,
+        extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score),
+        quality,
+      };
     });
     const extractionReports = effectiveExtractionFiles.map((file) => ({
       fileName: file.originalFileName || file.fileName,
@@ -88,13 +144,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       extractedPages: file.extractedPages,
       failedPages: file.failedPages,
     }));
-    const blockers = extractionReports.filter((item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR");
+    const blockers = extractionReports.filter(
+      (item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR",
+    );
     if (!isExtractionAcceptableForGeneration(effectiveExtractionFiles)) {
-      const corruptedFiles = effectiveExtractionFiles.filter((file) => file.quality.corrupted).map((file) => file.originalFileName || file.fileName || file.id);
+      const corruptedFiles = effectiveExtractionFiles
+        .filter((file) => file.quality.corrupted)
+        .map((file) => file.originalFileName || file.fileName || file.id);
       return NextResponse.json({
         error: "Engine run blocked: tender extraction is not reliable enough for matching or AI work.",
-        code: corruptedFiles.length > 0 ? "EXTRACTION_CORRUPTED_ENGINE_SKIPPED" : "EXTRACTION_QUALITY_ENGINE_BLOCKED",
-        nextAction: corruptedFiles.length > 0 ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "OPEN_EXTRACTION_QUALITY",
+        code: corruptedFiles.length > 0
+          ? "EXTRACTION_CORRUPTED_ENGINE_SKIPPED"
+          : "EXTRACTION_QUALITY_ENGINE_BLOCKED",
+        nextAction: corruptedFiles.length > 0
+          ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN"
+          : "OPEN_EXTRACTION_QUALITY",
         blockers,
         corruptedFiles,
         hint: "Run OCR/re-extract the tender first. Run Engine cannot be forced through corrupted, unknown-page, or incomplete extraction.",
@@ -104,21 +168,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
     const engineAnalysisStatus = tender.analysisExtractionStatus;
     if (engineAnalysisStatus === "OCR_REQUIRED") {
-      return NextResponse.json({ error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.", code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION", nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN", hint: "Re-extract or run OCR, then re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
-    }
-    if (engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
-      return NextResponse.json({ error: "Engine run blocked: tender analysis was produced from weak extraction. Re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
-    }
-
-    const company = await prisma.company.findUnique({
-      where: { userId },
-      select: { id: true },
-    });
-    if (!company) {
       return NextResponse.json({
-        error: "Engine run blocked: create the Company Vault profile first.",
-        code: "COMPANY_VAULT_REQUIRED",
-        nextAction: "OPEN_COMPANY_VAULT",
+        error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.",
+        code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
+        nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
+        hint: "Re-extract or run OCR, then re-run AI Analyze before running the engine.",
+        diagnosticId,
+      }, { status: 422 });
+    }
+    if (
+      engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" ||
+      engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"
+    ) {
+      return NextResponse.json({
+        error: "Engine run blocked: tender analysis was produced from weak extraction. Re-extract and re-run AI Analyze before running the engine.",
+        code: "ANALYSIS_FROM_WEAK_EXTRACTION",
+        nextAction: "RERUN_AI_ANALYZE",
+        hint: "Fix extraction quality and re-run AI Analyze before running the engine.",
         diagnosticId,
       }, { status: 422 });
     }
@@ -148,118 +214,115 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
-    const reqUrl = new URL(req.url);
-    if (reqUrl.searchParams.get("async") === "true") {
-      const safe = reqUrl.searchParams.get("safe") === "true";
-      const skipAiRematch = reqUrl.searchParams.get("skipAiRematch") === "true";
-      const maxCharsParam = reqUrl.searchParams.get("maxChars");
-      const maxChars = maxCharsParam ? Number(maxCharsParam) : undefined;
-      const active = await findActiveEngineRunForTender(id, userId);
-      const jobId = active?.id ?? (await enqueueJob({
-        userId,
-        tenderId: id,
-        jobType: "ENGINE_RUN",
-        input: {
-          safe,
-          skipAiRematch,
-          ...(typeof maxChars === "number" && Number.isFinite(maxChars) ? { maxChars } : {}),
-        },
-      })).id;
-      const persistedJob = await prisma.aiJob.findFirst({
-        where: { id: jobId, tenderId: id, userId },
-        select: { status: true },
-      });
-      if (!persistedJob) {
-        return NextResponse.json({
-          error: "Engine job could not be verified after enqueue.",
-          code: "ENGINE_JOB_PERSISTENCE_FAILED",
-          diagnosticId,
-        }, { status: 503 });
-      }
+    const revision = await computeEngineSourceRevision(prisma, {
+      tenderId: id,
+      userId,
+      companyId: vaultPreflight.companyId,
+    });
+    if (!revision) {
       return NextResponse.json({
-        jobId,
-        status: persistedJob.status,
-        reusedActiveJob: Boolean(active),
+        error: "Engine source revision could not be established.",
+        code: "ENGINE_SOURCE_REVISION_UNAVAILABLE",
+        nextAction: "RETRY_AFTER_DATABASE_CHECK",
         diagnosticId,
-        vaultVerification: "COMPLETED",
-        vaultVerifiedExperts: vaultPreflight.sourceVerification?.expertsVerified ?? 0,
-        vaultVerifiedProjects: vaultPreflight.sourceVerification?.projectsVerified ?? 0,
-      }, { status: 202 });
+      }, { status: 503 });
     }
 
-    logger.info("[engine route] Company Vault automatic verification completed", {
+    const idempotencyKey = engineIdempotencyKey({
+      userId,
+      tenderId: id,
+      sourceRevision: revision.sourceRevision,
+    });
+
+    const enqueueResult = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${idempotencyKey}))`;
+
+      await tx.aiJob.updateMany({
+        where: {
+          tenderId: id,
+          userId,
+          jobType: "ENGINE_RUN",
+          status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS"] },
+          OR: [
+            { analysisInputHash: null },
+            { analysisInputHash: { not: revision.sourceRevision } },
+          ],
+        },
+        data: {
+          status: "CANCELED",
+          errorMessage: "Superseded by a newer Engine source revision.",
+          finishedAt: new Date(),
+          leaseOwner: null,
+          leaseExpiresAt: null,
+        },
+      });
+
+      const active = await tx.aiJob.findFirst({
+        where: {
+          tenderId: id,
+          userId,
+          jobType: "ENGINE_RUN",
+          analysisInputHash: revision.sourceRevision,
+          status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS"] },
+        },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, status: true },
+      });
+      if (active) return { ...active, reusedActiveJob: true };
+
+      const created = await tx.aiJob.create({
+        data: {
+          userId,
+          tenderId: id,
+          jobType: "ENGINE_RUN",
+          status: "QUEUED",
+          analysisInputHash: revision.sourceRevision,
+          input: JSON.stringify({
+            sourceRevision: revision.sourceRevision,
+            idempotencyKey,
+            purpose: "INTERNAL_ARTIFACT_PREPARATION",
+            executionPolicy: "SERVER_CONTROLLED",
+          }),
+        },
+        select: { id: true, status: true },
+      });
+      return { ...created, reusedActiveJob: false };
+    }, { isolationLevel: "Serializable" });
+
+    logger.info("[engine route] durable Engine job accepted", {
       diagnosticId,
       tenderId: id,
+      jobId: enqueueResult.id,
+      status: enqueueResult.status,
+      sourceRevision: revision.sourceRevision,
+      reusedActiveJob: enqueueResult.reusedActiveJob,
       companyId: vaultPreflight.companyId,
-      sourceRemap: vaultPreflight.sourceRemap,
-      sourceVerification: vaultPreflight.sourceVerification,
     });
 
-    const deadlineAt = Date.now() + 50_000;
-    const result = await runTenderEngine(id, userId, undefined, { deadlineAt });
-    const engineMeta = result as {
-      partial?: boolean;
-      blockers?: string[];
-      nextAction?: string | null;
-      analysisMethod?: string;
-      evidenceMatchingBlocker?: { code: string; message: string } | null;
-    };
-    const postconditions = await checkEnginePostconditions(id);
-    const buildPlan = postconditions.ok
-      ? await buildAndVerifyBuildPlan(prisma, id, userId, { reuseCurrent: false })
-      : null;
-
-    if (!postconditions.ok) {
-      logger.warn(`[engine route] Postcondition check failed after synchronous run: ${postconditions.blockers.join(", ")}`, { diagnosticId, tenderId: id });
-    }
-    if (buildPlan && !buildPlan.ok) {
-      logger.warn("[engine route] automatic Build Plan verification blocked", {
-        diagnosticId,
-        tenderId: id,
-        code: buildPlan.code,
-      });
-    }
-
-    const buildPlanBlockers = buildPlan && !buildPlan.ok
-      ? [buildPlan.message, ...(buildPlan.blockers ?? [])]
-      : [];
-    const isPartial = (engineMeta.partial ?? false) || !postconditions.ok || buildPlanBlockers.length > 0;
-    const combinedBlockers = [
-      ...(engineMeta.blockers ?? []),
-      ...(postconditions.ok ? [] : postconditions.blockers),
-      ...buildPlanBlockers,
-    ];
     return NextResponse.json({
-      success: !isPartial,
-      ok: !isPartial,
-      partial: isPartial,
-      blockers: combinedBlockers,
-      nextAction: engineMeta.nextAction ?? (
-        !postconditions.ok
-          ? "REVIEW_MATCHING_INPUTS"
-          : buildPlanBlockers.length > 0
-            ? "REPAIR_SOURCE_EVIDENCE"
-            : null
-      ),
-      analysisMethod: engineMeta.analysisMethod ?? null,
-      evidenceMatchingBlocker: engineMeta.evidenceMatchingBlocker ?? null,
-      postconditionCounts: postconditions.ok ? undefined : postconditions.counts,
-      automaticBuildPlan: buildPlan?.ok
-        ? {
-            status: buildPlan.status,
-            revision: buildPlan.revision,
-            contentHash: buildPlan.contentHash,
-            confirmationMode: buildPlan.confirmationMode,
-            authorizesGeneration: true,
-          }
-        : null,
-      tender: result,
-      extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
+      jobId: enqueueResult.id,
+      status: enqueueResult.status,
+      persistedStatus: enqueueResult.status,
+      reusedActiveJob: enqueueResult.reusedActiveJob,
+      sourceRevision: revision.sourceRevision,
+      idempotencyKey,
+      statusEndpoint: `/api/ai-jobs/${enqueueResult.id}`,
       diagnosticId,
-    });
+      vaultVerification: "COMPLETED",
+      vaultVerifiedExperts: vaultPreflight.sourceVerification?.expertsVerified ?? 0,
+      vaultVerifiedProjects: vaultPreflight.sourceVerification?.projectsVerified ?? 0,
+      sourceInventory: {
+        tenderFiles: revision.tenderFileCount,
+        vaultDocuments: revision.vaultDocumentCount,
+        evidenceRecords: revision.evidenceRecordCount,
+      },
+      extractionWarnings: extractionReports.filter(
+        (item) => item.quality.severity === "WARNING",
+      ),
+    }, { status: 202 });
   } catch (error) {
     const errorName = error instanceof Error ? error.constructor.name : typeof error;
-    logger.error("Engine run failed:", { diagnosticId, errorName });
+    logger.error("Engine enqueue failed:", { diagnosticId, errorName });
     const mapped = actionableEngineError(error);
     return NextResponse.json({ ...mapped.body, diagnosticId }, { status: mapped.status });
   }
