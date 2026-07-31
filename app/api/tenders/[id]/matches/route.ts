@@ -429,7 +429,12 @@ export async function PUT(
     });
   } catch (error) {
     if (error instanceof MatchDecisionConflict) {
-      return NextResponse.json({ error: error.message, code: error.code }, {
+      const publicMessage = error.code === "MATCH_NOT_FOUND"
+      ? "The selected evidence row was not found."
+      : error.code === "MATCH_REVISION_CONFLICT"
+        ? "The Engine selection changed after this page was loaded. Refresh and review the current selection before recording an exception."
+        : "This record is not currently source-verified and cannot be selected.";
+    return NextResponse.json({ error: publicMessage, code: error.code }, {
         status: error.code === "MATCH_NOT_FOUND" ? 404 : error.code === "MATCH_REVISION_CONFLICT" ? 409 : 422,
       });
     }
