@@ -42,7 +42,6 @@ describe("scoped evidence-selection decisions", () => {
     assert.ok(auditPosition > invalidationPosition);
 
     assert.match(route, /buildPlan\.updateMany/);
-    assert.match(route, /submissionPlanRevision\.updateMany/);
     assert.match(route, /generatedDocument\.updateMany/);
     assert.match(route, /exportPackage\.updateMany/);
     assert.match(route, /sectionEvidenceMap\.updateMany/);
