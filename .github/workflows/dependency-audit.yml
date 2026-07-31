@@ -20,10 +20,10 @@ jobs:
       - name: Checkout exact head
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup repository Node version
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install locked dependencies without lifecycle scripts
