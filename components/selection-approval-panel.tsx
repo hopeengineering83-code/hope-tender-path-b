@@ -20,42 +20,49 @@ export type SelectionApprovalPanelProps = {
   canMutate: boolean;
 };
 
+/**
+ * Displays the Engine's persisted evidence selection and permits an authorized
+ * user to make an explicit exception. It is intentionally not an approval
+ * gate: deterministic selections continue to downstream generation without a
+ * browser-local confirmation step.
+ *
+ * The historical export name is retained to avoid a broad compatibility-only
+ * rename across the consolidated recovery branch.
+ */
 export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate }: SelectionApprovalPanelProps) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [approved, setApproved] = useState(false);
 
-  const selectedExperts = experts.filter((e) => e.isSelected);
-  const selectedProjects = projects.filter((p) => p.isSelected);
+  const selectedExperts = experts.filter((expert) => expert.isSelected);
+  const selectedProjects = projects.filter((project) => project.isSelected);
   const topExperts = [...experts].sort((a, b) => b.score - a.score).slice(0, 5);
   const topProjects = [...projects].sort((a, b) => b.score - a.score).slice(0, 5);
 
-  const toggleMatch = useCallback(async (matchId: string, matchType: "expert" | "project", isSelected: boolean) => {
+  const toggleMatch = useCallback(async (
+    matchId: string,
+    matchType: "expert" | "project",
+    isSelected: boolean,
+  ) => {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/tenders/${tenderId}/matches`, {
+      const response = await fetch(`/api/tenders/${tenderId}/matches`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ matchId, matchType, isSelected }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
         throw new Error(data.error || "Failed to update selection");
       }
       router.refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Selection update failed");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Selection update failed");
     } finally {
       setBusy(false);
     }
   }, [tenderId, router]);
-
-  const approveSelection = useCallback(async () => {
-    setApproved(true);
-    router.refresh();
-  }, [router]);
 
   const hasMatches = experts.length > 0 || projects.length > 0;
   const hasSelected = selectedExperts.length > 0 || selectedProjects.length > 0;
@@ -63,40 +70,22 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
   if (!hasMatches) return null;
 
   return (
-    <section id="selection-approval" className="mb-4 rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
+    <section id="selected-evidence" className="mb-4 rounded-2xl border border-indigo-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Step 7 · Selection Approval</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">Review and approve best-matched experts and projects</h2>
+          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600">Engine-selected evidence</p>
+          <h2 className="mt-1 text-lg font-bold text-slate-900">Best-matched experts and projects</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            The engine scored and auto-selected the best candidates based on your tender requirements.
-            Review the scores below, change selections if needed, then approve to proceed to generation.
+            The Engine scored and persisted the strongest eligible candidates for this tender. Downstream processing continues automatically; authorized users may adjust a selection only when a documented exception is required.
           </p>
         </div>
-        <div className="flex flex-col gap-2 lg:items-end">
-          <div className="flex gap-3 text-xs">
-            <span className="rounded-full bg-indigo-100 px-3 py-1 font-semibold text-indigo-700">
-              {selectedExperts.length} expert(s) selected
-            </span>
-            <span className="rounded-full bg-violet-100 px-3 py-1 font-semibold text-violet-700">
-              {selectedProjects.length} project(s) selected
-            </span>
-          </div>
-          {canMutate && hasSelected && !approved && (
-            <button
-              type="button"
-              onClick={() => void approveSelection()}
-              disabled={busy}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Approve Selection & Continue
-            </button>
-          )}
-          {approved && (
-            <span className="rounded-lg bg-emerald-100 px-4 py-2 text-sm font-semibold text-emerald-700">
-              ✓ Selection Approved
-            </span>
-          )}
+        <div className="flex gap-3 text-xs lg:justify-end">
+          <span className="rounded-full bg-indigo-100 px-3 py-1 font-semibold text-indigo-700">
+            {selectedExperts.length} expert(s) selected
+          </span>
+          <span className="rounded-full bg-violet-100 px-3 py-1 font-semibold text-violet-700">
+            {selectedProjects.length} project(s) selected
+          </span>
         </div>
       </div>
 
@@ -107,7 +96,6 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
       )}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        {/* Top Experts */}
         <div className="rounded-xl border border-slate-200 p-4">
           <h3 className="mb-3 text-sm font-semibold text-slate-700">
             Top Expert Candidates
@@ -125,7 +113,7 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
                   type="checkbox"
                   checked={expert.isSelected}
                   disabled={!canMutate || busy}
-                  onChange={(e) => void toggleMatch(expert.matchId, "expert", e.target.checked)}
+                  onChange={(event) => void toggleMatch(expert.matchId, "expert", event.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                   aria-label={`Select ${expert.name}`}
                 />
@@ -151,7 +139,6 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
           </div>
         </div>
 
-        {/* Top Projects */}
         <div className="rounded-xl border border-slate-200 p-4">
           <h3 className="mb-3 text-sm font-semibold text-slate-700">
             Top Project Candidates
@@ -169,7 +156,7 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
                   type="checkbox"
                   checked={project.isSelected}
                   disabled={!canMutate || busy}
-                  onChange={(e) => void toggleMatch(project.matchId, "project", e.target.checked)}
+                  onChange={(event) => void toggleMatch(project.matchId, "project", event.target.checked)}
                   className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                   aria-label={`Select ${project.name}`}
                 />
@@ -198,7 +185,7 @@ export function SelectionApprovalPanel({ tenderId, experts, projects, canMutate 
 
       {!hasSelected && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          No experts or projects are currently selected. Select at least one candidate above, then click &ldquo;Approve Selection & Continue&rdquo; to proceed to document generation.
+          No eligible expert or project is currently selected. Repair the source evidence or rerun matching; the workflow will resume automatically when eligible evidence is available.
         </div>
       )}
     </section>
