@@ -48,7 +48,14 @@ export async function enqueueEngineJobForCurrentSources(
   });
 
   const job = await client.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${idempotencyKey}))`;
+    // pg_advisory_xact_lock returns PostgreSQL `void`, which Prisma cannot
+    // deserialize when it is selected directly. The volatile subquery still
+    // acquires the transaction-scoped lock while the outer projection returns
+    // only a supported integer type.
+    await tx.$queryRaw<Array<{ acquired: number }>>`
+      SELECT 1 AS acquired
+      FROM (SELECT pg_advisory_xact_lock(hashtext(${idempotencyKey}))) AS engine_lock
+    `;
 
     await tx.aiJob.updateMany({
       where: {
