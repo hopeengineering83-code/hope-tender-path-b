@@ -1,6 +1,4 @@
-// Real rendered-component tests for EngineActionPanel role protection and
-// mutation dispatch. The component is mounted into happy-dom; effects, clicks,
-// and fetch calls are real within the test environment.
+// Rendered-component tests for the canonical server-controlled Engine panel.
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -26,12 +24,9 @@ import { canMutateTender } from "../lib/recovery-command-actions";
 
 const h = React.createElement;
 const MUTATION_LABELS = [
-  "Run Safe Mode",
-  "Run Full AI in Background",
-  "Force run once",
-  "Retry background run",
-  "Retry from start",
-  "Skip AI Rematch",
+  "Start or resume Engine",
+  "Repair source evidence",
+  "Retry durable Engine",
 ];
 
 function assertNoMutationControls(labels: string[], where: string) {
@@ -46,7 +41,7 @@ function assertNoMutationControls(labels: string[], where: string) {
 let calls: FetchCall[];
 beforeEach(() => {
   calls = installFetchMock([
-    { match: "/engine", method: "POST", json: { success: true, tender: {} } },
+    { match: "/engine", method: "POST", json: { error: "No job returned in component dispatch fixture." } },
     { match: "/api/ai-jobs/run-next", method: "POST", json: { ok: true } },
     { match: "/api/ai-jobs/", method: "GET", json: { job: { status: "RUNNING", steps: [] } } },
   ]);
@@ -70,7 +65,7 @@ describe("EngineActionPanel — read-only render states", () => {
   it("omitted canMutate renders no mutation buttons", () => {
     const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1" }));
     assertNoMutationControls(buttonLabels(container), "omitted canMutate");
-    assert.match(container.textContent ?? "", /Read-only — engine actions require ADMIN or PROPOSAL_MANAGER role/);
+    assert.match(container.textContent ?? "", /Read-only — Engine recovery actions require ADMIN or PROPOSAL_MANAGER role/);
   });
 
   it("REVIEWER normal state renders no mutation buttons", () => {
@@ -78,24 +73,16 @@ describe("EngineActionPanel — read-only render states", () => {
     assertNoMutationControls(buttonLabels(container), "normal state");
   });
 
-  it("REVIEWER large-vault state hides recommendation and mutation controls", () => {
+  it("REVIEWER sees truthful durable-processing text", () => {
     const { container } = renderWithRouter(h(EngineActionPanel, {
       tenderId: "t1",
       canMutate: reviewerCanMutate,
       vaultReviewedExperts: 40,
       vaultReviewedProjects: 10,
     }));
-    assertNoMutationControls(buttonLabels(container), "large-vault state");
-    assert.ok(!(container.textContent ?? "").includes("Large source-verified vault"));
-  });
-
-  it("REVIEWER extraction-blocked state has no force action", () => {
-    const { container } = renderWithRouter(h(EngineActionPanel, {
-      tenderId: "t1",
-      canMutate: reviewerCanMutate,
-      initialResult: { code: "EXTRACTION_NOT_READY", error: "Extraction not ready." },
-    }));
-    assertNoMutationControls(buttonLabels(container), "extraction-blocked state");
+    assertNoMutationControls(buttonLabels(container), "inventory state");
+    assert.match(container.textContent ?? "", /Closing this browser does not stop processing/);
+    assert.match(container.textContent ?? "", /40 expert\(s\), 10 project\(s\)/);
   });
 
   it("REVIEWER poll-timeout keeps the GET-only status check", async () => {
@@ -133,43 +120,41 @@ describe("EngineActionPanel — read-only render states", () => {
 });
 
 describe("EngineActionPanel — mutating roles", () => {
-  it("ADMIN sees one primary Safe Mode and one advanced Full AI action", async () => {
+  it("ADMIN sees one canonical Engine action and no client-policy choices", async () => {
     const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1", canMutate: adminCanMutate }));
     const labels = buttonLabels(container);
-    assert.equal(labels.filter((label) => label.includes("Run Safe Mode")).length, 1);
-    assert.equal(labels.filter((label) => label.includes("Run Full AI in Background")).length, 1);
-    assert.match(container.textContent ?? "", /Advanced AI refinement/);
+    assert.equal(labels.filter((label) => label.includes("Start or resume Engine")).length, 1);
+    assert.ok(!labels.some((label) => /Safe Mode|Full AI|Skip AI|Force run/i.test(label)));
 
-    const runButton = findButton(container, "Run Safe Mode — Recommended");
+    const runButton = findButton(container, "Start or resume Engine");
     assert.ok(runButton);
     fireEvent.click(runButton!);
     await waitFor(() => {
-      assert.ok(calls.some((call) => call.method === "POST" && call.url.includes("/api/tenders/t1/engine")));
+      assert.ok(calls.some((call) => call.method === "POST" && call.url.endsWith("/api/tenders/t1/engine")));
     });
+    assert.ok(calls.every((call) => !/[?&](safe|skipAiRematch|force|maxChars)=/.test(call.url)));
   });
 
-  it("PROPOSAL_MANAGER sees the large-vault recommendation without duplicate actions", () => {
+  it("PROPOSAL_MANAGER sees the same single canonical action", () => {
     const { container } = renderWithRouter(h(EngineActionPanel, {
       tenderId: "t1",
       canMutate: pmCanMutate,
       vaultReviewedExperts: 40,
       vaultReviewedProjects: 10,
     }));
-    assert.ok((container.textContent ?? "").includes("Large source-verified vault"));
     const labels = buttonLabels(container);
-    assert.equal(labels.filter((label) => label.includes("Run Safe Mode")).length, 1);
-    assert.equal(labels.filter((label) => label.includes("Run Full AI in Background")).length, 1);
+    assert.equal(labels.filter((label) => label.includes("Start or resume Engine")).length, 1);
+    assert.ok(!labels.some((label) => /Safe Mode|Full AI|Skip AI|Force run/i.test(label)));
   });
 
-  it("ADMIN failure state retains recovery actions", () => {
+  it("ADMIN failure state exposes one policy-neutral retry", () => {
     const { container } = renderWithRouter(h(EngineActionPanel, {
       tenderId: "t1",
       canMutate: adminCanMutate,
       initialResult: { code: "ASYNC_ENGINE_FAILED", error: "Worker failed." },
     }));
-    assert.ok(findButton(container, "Retry from start"));
-    assert.ok(findButton(container, "Skip AI Rematch"));
-    assert.equal(buttonLabels(container).filter((label) => label.includes("Run Safe Mode")).length, 2);
+    assert.ok(findButton(container, "Retry durable Engine"));
+    assert.ok(!buttonLabels(container).some((label) => /Safe Mode|Skip AI Rematch|Full AI/i.test(label)));
   });
 });
 
@@ -187,21 +172,23 @@ describe("EngineActionPanel dispatch guards", () => {
 
   it("executeEngineRun with canMutate=false sends no request", async () => {
     const { results, callbacks } = collectCallbacks();
-    await executeEngineRun({ tenderId: "t1", canMutate: false, force: true, callbacks });
+    await executeEngineRun({ tenderId: "t1", canMutate: false, callbacks });
     assert.equal(calls.length, 0);
     assert.deepEqual(results, [ENGINE_MUTATION_BLOCKED_RESULT]);
   });
 
   it("executeEngineRunAsync with canMutate=false sends no request", async () => {
     const { results, callbacks } = collectCallbacks();
-    await executeEngineRunAsync({ tenderId: "t1", canMutate: false, extraParams: { safe: "true" }, callbacks });
+    await executeEngineRunAsync({ tenderId: "t1", canMutate: false, callbacks });
     assert.equal(calls.length, 0);
     assert.deepEqual(results, [ENGINE_MUTATION_BLOCKED_RESULT]);
   });
 
-  it("executeEngineRun with canMutate=true dispatches the POST", async () => {
+  it("executeEngineRun with canMutate=true dispatches one policy-neutral POST", async () => {
     const { callbacks } = collectCallbacks();
     await executeEngineRun({ tenderId: "t1", canMutate: true, callbacks });
-    assert.ok(calls.some((call) => call.method === "POST" && call.url.includes("/api/tenders/t1/engine")));
+    const engineCalls = calls.filter((call) => call.method === "POST" && call.url.includes("/api/tenders/t1/engine"));
+    assert.equal(engineCalls.length, 1);
+    assert.equal(engineCalls[0]?.url.endsWith("/api/tenders/t1/engine"), true);
   });
 });
