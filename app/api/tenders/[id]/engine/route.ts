@@ -11,6 +11,7 @@ import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limi
 import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-jobs";
 import { checkEnginePostconditions } from "../../../../../lib/engine/engine-postconditions";
 import { prepareCompanyVaultForEngine } from "../../../../../lib/engine/prepare-company-vault";
+import { buildAndVerifyBuildPlan } from "../../../../../lib/engine/automatic-build-plan";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -109,10 +110,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Engine run blocked: tender analysis was produced from weak extraction. Re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
     }
 
-    // Company existence is cheap to validate in the request. The expensive
-    // source remap and byte-bound automatic verification are deliberately left
-    // to the background worker so the async path cannot consume the 60-second
-    // HTTP budget before the durable job is even queued.
     const company = await prisma.company.findUnique({
       where: { userId },
       select: { id: true },
@@ -126,8 +123,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
-    // Vault preflight runs BEFORE both async and sync paths so that
-    // source-backed records are auto-verified before the Engine executes.
     let vaultPreflight: Awaited<ReturnType<typeof prepareCompanyVaultForEngine>>;
     try {
       vaultPreflight = await prepareCompanyVaultForEngine(userId);
@@ -164,7 +159,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       })).id;
       return NextResponse.json({
         jobId,
-        status: "QUEUED",
+        status: active?.status ?? "QUEUED",
         reusedActiveJob: Boolean(active),
         diagnosticId,
         vaultVerification: "COMPLETED",
@@ -172,14 +167,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         vaultVerifiedProjects: vaultPreflight?.sourceVerification?.projectsVerified ?? 0,
       }, { status: 202 });
     }
-    if (!vaultPreflight) {
-      return NextResponse.json({
-        error: "Engine run blocked: create the Company Vault profile first.",
-        code: "COMPANY_VAULT_REQUIRED",
-        nextAction: "OPEN_COMPANY_VAULT",
-        diagnosticId,
-      }, { status: 422 });
-    }
+
     logger.info("[engine route] Company Vault automatic verification completed", {
       diagnosticId,
       tenderId: id,
@@ -198,20 +186,54 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       evidenceMatchingBlocker?: { code: string; message: string } | null;
     };
     const postconditions = await checkEnginePostconditions(id);
+    const buildPlan = postconditions.ok
+      ? await buildAndVerifyBuildPlan(prisma, id, userId, { reuseCurrent: false })
+      : null;
+
     if (!postconditions.ok) {
       logger.warn(`[engine route] Postcondition check failed after synchronous run: ${postconditions.blockers.join(", ")}`, { diagnosticId, tenderId: id });
     }
-    const isPartial = (engineMeta.partial ?? false) || !postconditions.ok;
-    const combinedBlockers = [...(engineMeta.blockers ?? []), ...(postconditions.ok ? [] : postconditions.blockers)];
+    if (buildPlan && !buildPlan.ok) {
+      logger.warn("[engine route] automatic Build Plan verification blocked", {
+        diagnosticId,
+        tenderId: id,
+        code: buildPlan.code,
+      });
+    }
+
+    const buildPlanBlockers = buildPlan && !buildPlan.ok
+      ? [buildPlan.message, ...(buildPlan.blockers ?? [])]
+      : [];
+    const isPartial = (engineMeta.partial ?? false) || !postconditions.ok || buildPlanBlockers.length > 0;
+    const combinedBlockers = [
+      ...(engineMeta.blockers ?? []),
+      ...(postconditions.ok ? [] : postconditions.blockers),
+      ...buildPlanBlockers,
+    ];
     return NextResponse.json({
       success: !isPartial,
       ok: !isPartial,
       partial: isPartial,
       blockers: combinedBlockers,
-      nextAction: engineMeta.nextAction ?? (postconditions.ok ? null : "REVIEW_MATCHING_INPUTS"),
+      nextAction: engineMeta.nextAction ?? (
+        !postconditions.ok
+          ? "REVIEW_MATCHING_INPUTS"
+          : buildPlanBlockers.length > 0
+            ? "REPAIR_SOURCE_EVIDENCE"
+            : null
+      ),
       analysisMethod: engineMeta.analysisMethod ?? null,
       evidenceMatchingBlocker: engineMeta.evidenceMatchingBlocker ?? null,
       postconditionCounts: postconditions.ok ? undefined : postconditions.counts,
+      automaticBuildPlan: buildPlan?.ok
+        ? {
+            status: buildPlan.status,
+            revision: buildPlan.revision,
+            contentHash: buildPlan.contentHash,
+            confirmationMode: buildPlan.confirmationMode,
+            authorizesGeneration: true,
+          }
+        : null,
       tender: result,
       extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
       diagnosticId,
