@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { BoltIcon, ClockIcon, ChevronDownIcon, ArrowRightIcon } from "./icons";
+import { ArrowRightIcon, BoltIcon, ClockIcon } from "./icons";
 import { formatOperationalCode, formatOperationalReason } from "../lib/operational-labels";
 
 type ExtractionBlocker = {
@@ -36,10 +36,11 @@ export function describeEngineBlocker(blocker: ExtractionBlocker | string): stri
     }
     return formatOperationalReason(blocker);
   }
+
   const name = blocker.fileName?.trim();
   const severity = blocker.quality?.severity?.trim();
   if (!name && !severity) {
-    return "A source file is blocked, but the engine returned no detailed diagnostic. Open Extraction Quality for the full report.";
+    return "A source file is blocked, but the Engine returned no detailed diagnostic. Open Extraction Quality for the full report.";
   }
   const score = typeof blocker.quality?.score === "number" ? ` (${blocker.quality.score}/100)` : "";
   return `${name ?? "Unnamed file"}: ${formatOperationalCode(severity ?? "EXTRACTION_BLOCKED")}${score}`;
@@ -63,35 +64,17 @@ export type EngineResponse = {
   tender?: unknown;
   async?: boolean;
   jobId?: string;
+  status?: string;
+  persistedStatus?: string;
+  sourceRevision?: string;
+  idempotencyKey?: string;
+  statusEndpoint?: string;
   message?: string;
   failedStage?: string;
-  safeModeAvailable?: boolean;
-  reused?: boolean;
-  inputStats?: { fileCount?: number; totalChars?: number; safeModeAvailable?: boolean };
+  reusedActiveJob?: boolean;
 };
 
 export type EngineAsyncStatus = { jobId: string; message: string };
-
-function asyncEngineFailureResult(
-  publicError: string | null | undefined,
-  jobId: string,
-  jobOutput?: Record<string, unknown> | null,
-): EngineResponse {
-  const message = publicError ?? "No worker detail was returned.";
-  const schemaUpdateRequired = message.includes("DATABASE_SCHEMA_UPDATE_REQUIRED");
-  return {
-    error: `Background engine run failed: ${message}`,
-    code: schemaUpdateRequired
-      ? "DATABASE_SCHEMA_UPDATE_REQUIRED"
-      : typeof jobOutput?.code === "string" ? jobOutput.code : "ASYNC_ENGINE_FAILED",
-    nextAction: schemaUpdateRequired
-      ? "CONTACT_ADMIN_DATABASE_MIGRATION"
-      : typeof jobOutput?.nextAction === "string" ? jobOutput.nextAction : "RETRY_OR_REDUCE_INPUT",
-    failedStage: typeof jobOutput?.failedStage === "string" ? jobOutput.failedStage : undefined,
-    safeModeAvailable: jobOutput?.safeModeAvailable === true,
-    jobId,
-  };
-}
 
 type CompanyVaultRepairResponse = {
   success?: boolean;
@@ -104,24 +87,28 @@ type CompanyVaultRepairResponse = {
   requestId?: string;
 };
 
+type PolledJob = {
+  status: string;
+  errorMessage?: string | null;
+  output?: Record<string, unknown> | null;
+  steps?: Array<{ stepName?: string; message?: string }>;
+};
+
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_DURATION_MS = 10 * 60 * 1000;
-const LARGE_VAULT_THRESHOLD = 30;
+const TERMINAL_JOB_STATUSES = new Set(["SUCCEEDED", "FAILED", "PARTIAL_SUCCESS", "CANCELED"]);
 
 function actionLabel(action?: string) {
-  if (action === "UPLOAD_TENDER_DOCUMENT") return "Upload the tender source document, then run Engine.";
+  if (action === "UPLOAD_TENDER_DOCUMENT") return "Upload the tender source document.";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Open Extraction Quality and repair weak or unreadable files.";
-  if (action === "RETRY_OR_REDUCE_INPUT") return "Retry, or remove duplicate and oversized tender inputs.";
   if (action === "CONTACT_ADMIN_DATABASE_MIGRATION") return "Ask an administrator to update the isolated preview database, then retry.";
-  if (action === "RETRY_BACKGROUND_JOB") return "Retry the background run; the previous request failed before completion.";
-  if (action === "RETRY_AFTER_DATABASE_CHECK") return "Check database/runtime readiness, then retry.";
-  if (action === "RETRY_AS_BACKGROUND_JOB") return "Run the engine in the background.";
+  if (action === "RETRY_BACKGROUND_JOB") return "Retry the durable Engine job.";
+  if (action === "RETRY_AFTER_DATABASE_CHECK") return "Check database and worker readiness, then retry.";
   if (action === "OPEN_TENDER_LIST") return "Return to the tender list and reopen this tender.";
   if (action === "LOGIN_AGAIN") return "Sign in again, then retry.";
   if (action === "OPEN_EXTRACTION_ANALYSIS_MATCHING_QUALITY") return "Review Extraction, Analysis, and Matching Quality.";
   if (action === "REFRESH_TO_CHECK_STATUS") return "Check status again or refresh the workspace.";
-  if (action === "RUN_ENGINE_SAFE_MODE") return "Run Safe Mode for a deterministic first pass.";
-  if (action === "REVIEW_MATCHING_INPUTS") return "Repair and re-extract Company Vault sources automatically, then verify source-backed records.";
+  if (action === "REVIEW_MATCHING_INPUTS") return "Repair the source evidence; processing resumes automatically when it becomes eligible.";
   return null;
 }
 
@@ -142,16 +129,10 @@ function humanBlockerSummary(blockers: string[] | undefined): string {
   if (expertBlocked && projectBlocked) {
     return "The Engine ran, but it could not confirm eligible source-verified expert or project evidence for this tender.";
   }
-  if (expertBlocked) {
-    return "The Engine ran, but it could not confirm eligible source-verified expert evidence for this tender.";
-  }
-  if (projectBlocked) {
-    return "The Engine ran, but it could not confirm eligible source-verified project evidence for this tender.";
-  }
-  if (evidenceBlocked) {
-    return "The Engine extracted requirements, but no Company Vault evidence links were confirmed.";
-  }
-  return "The Engine finished its processing pass, but evidence matching still requires automatic source verification.";
+  if (expertBlocked) return "The Engine ran, but it could not confirm eligible source-verified expert evidence for this tender.";
+  if (projectBlocked) return "The Engine ran, but it could not confirm eligible source-verified project evidence for this tender.";
+  if (evidenceBlocked) return "The Engine extracted requirements, but no Company Vault evidence links were confirmed.";
+  return "The Engine finished its processing pass, but evidence matching remains blocked by source authority.";
 }
 
 async function parseEngineResponse(res: Response): Promise<EngineResponse> {
@@ -162,24 +143,33 @@ async function parseEngineResponse(res: Response): Promise<EngineResponse> {
 
   const text = await res.text().catch(() => "");
   const clean = text.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 320);
-  const isVercelTimeout = res.status === 504 || /function_invocation_timeout/i.test(clean) || /function_invocation_timeout/i.test(res.statusText ?? "");
-
-  if (isVercelTimeout) {
-    return {
-      error: "The synchronous engine request exceeded the hosting time limit.",
-      code: "ENGINE_VERCEL_TIMEOUT",
-      detail: clean || `The platform returned ${res.status} ${res.statusText || "Function Invocation Timeout"}.`,
-      nextAction: "RETRY_AS_BACKGROUND_JOB",
-      hint: "Use the background engine path for large tender packages.",
-    };
-  }
-
   return {
-    error: `The engine returned an invalid server response (${res.status} ${res.statusText || "HTTP error"}).`,
+    error: `The Engine returned an invalid server response (${res.status} ${res.statusText || "HTTP error"}).`,
     code: "NON_JSON_RESPONSE",
     detail: clean || "No response body was returned.",
     nextAction: res.status === 401 ? "LOGIN_AGAIN" : "RETRY_AFTER_DATABASE_CHECK",
-    hint: "The route may have failed before returning JSON, authentication may have expired, or the deployment may be unavailable.",
+  };
+}
+
+function asyncEngineFailureResult(
+  publicError: string | null | undefined,
+  jobId: string,
+  jobOutput?: Record<string, unknown> | null,
+  fallbackCode = "ASYNC_ENGINE_FAILED",
+): EngineResponse {
+  const message = publicError ?? "No worker detail was returned.";
+  const schemaUpdateRequired = message.includes("DATABASE_SCHEMA_UPDATE_REQUIRED");
+  return {
+    success: false,
+    error: `Background Engine run failed: ${message}`,
+    code: schemaUpdateRequired
+      ? "DATABASE_SCHEMA_UPDATE_REQUIRED"
+      : typeof jobOutput?.code === "string" ? jobOutput.code : fallbackCode,
+    nextAction: schemaUpdateRequired
+      ? "CONTACT_ADMIN_DATABASE_MIGRATION"
+      : typeof jobOutput?.nextAction === "string" ? jobOutput.nextAction : "RETRY_BACKGROUND_JOB",
+    failedStage: typeof jobOutput?.failedStage === "string" ? jobOutput.failedStage : undefined,
+    jobId,
   };
 }
 
@@ -199,88 +189,28 @@ export type EngineRunCallbacks = {
 export type EngineRunOptions = {
   tenderId: string;
   canMutate: boolean;
-  force?: boolean;
   lifecycleBlockersExist?: boolean;
   callbacks: EngineRunCallbacks;
 };
 
 export type EngineAsyncRunOptions = EngineRunOptions & {
-  extraParams?: Record<string, string>;
   pollIntervalMs?: number;
   maxPollDurationMs?: number;
 };
 
+/**
+ * Compatibility entry point used by existing callers. Production execution is
+ * always the same durable enqueue-and-poll workflow; there is no synchronous
+ * fallback or client-selectable execution policy.
+ */
 export async function executeEngineRun(options: EngineRunOptions): Promise<void> {
-  const { tenderId, canMutate, force = false, lifecycleBlockersExist = false, callbacks } = options;
-  if (!canMutate) {
-    callbacks.setResult(ENGINE_MUTATION_BLOCKED_RESULT);
-    return;
-  }
-
-  callbacks.setRunning(true);
-  callbacks.setResult(null);
-  callbacks.setAsyncStatus(null);
-  try {
-    const res = await fetch(`/api/tenders/${tenderId}/engine${force ? "?force=true" : ""}`, { method: "POST" });
-    const data = await parseEngineResponse(res);
-    if (!res.ok) {
-      const isVercelTimeout = data.code === "ENGINE_VERCEL_TIMEOUT" || data.code === "GENERATION_TIMEOUT" || res.status === 504;
-      if (isVercelTimeout) {
-        callbacks.setResult({
-          ...data,
-          error: "The synchronous engine request reached the hosting time limit. Continuing in the background…",
-          code: "AUTO_PROMOTING_TO_BACKGROUND",
-          nextAction: "RETRY_AS_BACKGROUND_JOB",
-        });
-        await executeEngineRunAsync({ ...options, force });
-        return;
-      }
-      callbacks.setResult(data);
-      return;
-    }
-
-    if (data.partial) {
-      const rawBlockers = (data as { blockers?: string[] }).blockers;
-      callbacks.setResult({
-        ...data,
-        success: false,
-        error: "Engine run completed, but matching is blocked.",
-        detail: humanBlockerSummary(rawBlockers),
-        code: data.evidenceMatchingBlocker?.code ?? "EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED",
-        nextAction: data.nextAction ?? "REVIEW_MATCHING_INPUTS",
-      });
-      callbacks.onSuccess();
-      return;
-    }
-
-    const warningCount = Array.isArray(data?.extractionWarnings) ? data.extractionWarnings.length : 0;
-    callbacks.setResult({
-      ...data,
-      success: true,
-      error: warningCount > 0
-        ? `Engine completed with ${warningCount} extraction warning(s). Follow the Next Required Action card above.`
-        : lifecycleBlockersExist
-          ? "Engine completed. Workflow blockers remain; follow the Next Required Action card above."
-          : "Engine completed. Follow the Next Required Action card above.",
-    });
-    callbacks.onSuccess();
-  } catch (error) {
-    callbacks.setResult({
-      error: error instanceof Error ? `Engine run failed: ${error.message}` : "Engine run failed because of a network or runtime error.",
-      code: "NETWORK_OR_RUNTIME_ERROR",
-      nextAction: "RETRY_OR_REDUCE_INPUT",
-    });
-  } finally {
-    callbacks.setRunning(false);
-  }
+  await executeEngineRunAsync(options);
 }
 
 export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Promise<void> {
   const {
     tenderId,
     canMutate,
-    force = false,
-    extraParams = {},
     lifecycleBlockersExist = false,
     callbacks,
     pollIntervalMs = POLL_INTERVAL_MS,
@@ -296,9 +226,7 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
   callbacks.setResult(null);
   callbacks.setAsyncStatus(null);
   try {
-    const qs = new URLSearchParams({ async: "true", ...extraParams });
-    if (force) qs.set("force", "true");
-    const enqueueRes = await fetch(`/api/tenders/${tenderId}/engine?${qs.toString()}`, { method: "POST" });
+    const enqueueRes = await fetch(`/api/tenders/${tenderId}/engine`, { method: "POST" });
     const enqueueData = await parseEngineResponse(enqueueRes);
     if (!enqueueRes.ok || !enqueueData.jobId) {
       callbacks.setResult(enqueueData);
@@ -306,33 +234,33 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
     }
 
     const jobId = enqueueData.jobId;
-    callbacks.setAsyncStatus({ jobId, message: "Engine queued. Starting background worker…" });
+    callbacks.setAsyncStatus({
+      jobId,
+      message: enqueueData.reusedActiveJob
+        ? "Existing durable Engine job resumed."
+        : "Engine queued. Starting background worker…",
+    });
+
+    // This endpoint only wakes an authenticated worker. The persisted job is
+    // already durable, so browser closure cannot cancel it.
     fetch("/api/ai-jobs/run-next", { method: "POST" }).catch(() => {});
 
     const startedAt = Date.now();
-    let finalStatus: "SUCCEEDED" | "FAILED" | null = null;
-    let finalJob: {
-      errorMessage?: string | null;
-      output?: Record<string, unknown> | null;
-      steps?: Array<{ stepName?: string; message?: string }>;
-    } | null = null;
+    let finalStatus: "SUCCEEDED" | "FAILED" | "PARTIAL_SUCCESS" | "CANCELED" | null = null;
+    let finalJob: PolledJob | null = null;
 
     while (Date.now() - startedAt < maxPollDurationMs) {
       await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
       const pollRes = await fetch(`/api/ai-jobs/${jobId}`, { method: "GET" });
       if (!pollRes.ok) continue;
-      const { job } = await pollRes.json() as {
-        job: {
-          status: string;
-          errorMessage?: string | null;
-          output?: Record<string, unknown> | null;
-          steps?: Array<{ stepName?: string; message?: string }>;
-        };
-      };
+      const { job } = await pollRes.json() as { job: PolledJob };
       const lastStep = job.steps?.[job.steps.length - 1];
-      callbacks.setAsyncStatus({ jobId, message: lastStep?.message ?? `Worker status: ${formatOperationalCode(job.status)}` });
-      if (job.status === "SUCCEEDED" || job.status === "FAILED") {
-        finalStatus = job.status;
+      callbacks.setAsyncStatus({
+        jobId,
+        message: lastStep?.message ?? `Worker status: ${formatOperationalCode(job.status)}`,
+      });
+      if (TERMINAL_JOB_STATUSES.has(job.status)) {
+        finalStatus = job.status as typeof finalStatus;
         finalJob = job;
         break;
       }
@@ -369,17 +297,34 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
         success: true,
         async: true,
         jobId,
+        sourceRevision: enqueueData.sourceRevision,
+        idempotencyKey: enqueueData.idempotencyKey,
         error: lifecycleBlockersExist
           ? "Engine completed. Workflow blockers remain; follow the Next Required Action card above."
-          : "Engine completed in the background. Follow the Next Required Action card above.",
+          : "Engine completed in the background. Downstream processing continues automatically.",
       });
       callbacks.onSuccess();
     } else if (finalStatus === "FAILED") {
       const jobOutput = finalJob?.output as Record<string, unknown> | null | undefined;
       callbacks.setResult(asyncEngineFailureResult(finalJob?.errorMessage, jobId, jobOutput));
+    } else if (finalStatus === "PARTIAL_SUCCESS") {
+      const jobOutput = finalJob?.output as Record<string, unknown> | null | undefined;
+      callbacks.setResult(asyncEngineFailureResult(
+        finalJob?.errorMessage ?? "The worker completed only a partial, non-authoritative result.",
+        jobId,
+        jobOutput,
+        "ENGINE_PARTIAL_SUCCESS_BLOCKED",
+      ));
+    } else if (finalStatus === "CANCELED") {
+      callbacks.setResult(asyncEngineFailureResult(
+        finalJob?.errorMessage ?? "The job was superseded by a newer source revision.",
+        jobId,
+        finalJob?.output,
+        "ENGINE_JOB_SUPERSEDED",
+      ));
     } else {
       callbacks.setResult({
-        error: "The engine is still running in the background. The browser stopped polling, but the worker continues.",
+        error: "The Engine is still running in the background. Browser polling stopped, but the durable worker continues.",
         code: "ASYNC_POLL_TIMEOUT",
         nextAction: "REFRESH_TO_CHECK_STATUS",
         jobId,
@@ -387,13 +332,10 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    const networkFailure = message === "Failed to fetch" || /network|connection/i.test(message);
     callbacks.setResult({
-      error: networkFailure
-        ? "Connection failed before the background engine request completed."
-        : `Background engine run failed: ${message || "No runtime detail was returned."}`,
+      error: `Background Engine request failed: ${message || "No runtime detail was returned."}`,
       code: "NETWORK_OR_RUNTIME_ERROR",
-      nextAction: networkFailure ? "RETRY_BACKGROUND_JOB" : "RETRY_OR_REDUCE_INPUT",
+      nextAction: "RETRY_BACKGROUND_JOB",
     });
   } finally {
     callbacks.setRunning(false);
@@ -424,7 +366,6 @@ export function EngineActionPanel({
   const [result, setResult] = useState<EngineResponse | null>(initialResult);
   const [asyncStatus, setAsyncStatus] = useState<EngineAsyncStatus | null>(initialAsyncStatus);
   const [repairingVault, setRepairingVault] = useState(false);
-  const isLargeVault = (vaultReviewedExperts + vaultReviewedProjects) > LARGE_VAULT_THRESHOLD;
 
   const callbacks: EngineRunCallbacks = {
     setRunning,
@@ -433,9 +374,9 @@ export function EngineActionPanel({
     onSuccess: () => startTransition(() => router.refresh()),
   };
 
-  async function runEngineAsync(force = false, extraParams: Record<string, string> = {}) {
-    if (!canMutate) return;
-    await executeEngineRunAsync({ tenderId, canMutate, force, extraParams, lifecycleBlockersExist, callbacks });
+  async function runEngine() {
+    if (!canMutate || running || repairingVault || isPending) return;
+    await executeEngineRunAsync({ tenderId, canMutate, lifecycleBlockersExist, callbacks });
   }
 
   async function repairVaultAndRetry() {
@@ -443,9 +384,9 @@ export function EngineActionPanel({
     setRepairingVault(true);
     setResult({
       success: false,
-      error: "Repairing Company Vault source files before retrying Safe Mode…",
+      error: "Repairing Company Vault sources…",
       code: "COMPANY_VAULT_REPAIR_RUNNING",
-      detail: "The system is re-extracting stored source bytes and rebuilding provenance-backed expert and project records for automatic verification.",
+      detail: "The system is re-extracting stored source bytes and rebuilding provenance-bound records.",
     });
 
     try {
@@ -458,29 +399,21 @@ export function EngineActionPanel({
           code: data.code ?? "COMPANY_VAULT_REPAIR_FAILED",
           diagnosticId: data.requestId,
           nextAction: "REVIEW_MATCHING_INPUTS",
-          detail: "The Engine did not bypass evidence controls. Open Company Vault and confirm that original Expert CV and Project Reference files are uploaded under the correct categories.",
         });
         return;
       }
 
       setResult({
         success: true,
-        error: `Company Vault repaired: ${data.docsReextracted ?? 0} document(s) re-extracted, ${data.expertsCreated ?? 0} expert record(s), and ${data.projectsCreated ?? 0} project record(s). Retrying Safe Mode…`,
+        error: `Company Vault repaired: ${data.docsReextracted ?? 0} document(s) re-extracted, ${data.expertsCreated ?? 0} expert record(s), and ${data.projectsCreated ?? 0} project record(s). Restarting the durable Engine workflow…`,
         code: "COMPANY_VAULT_REPAIRED",
       });
       startTransition(() => router.refresh());
-      await executeEngineRunAsync({
-        tenderId,
-        canMutate,
-        force: false,
-        extraParams: { safe: "true", skipAiRematch: "true" },
-        lifecycleBlockersExist,
-        callbacks,
-      });
+      await executeEngineRunAsync({ tenderId, canMutate, lifecycleBlockersExist, callbacks });
     } catch (error) {
       setResult({
         success: false,
-        error: error instanceof Error ? `Company Vault repair failed: ${error.message}` : "Company Vault repair failed because of a network or runtime error.",
+        error: error instanceof Error ? `Company Vault repair failed: ${error.message}` : "Company Vault repair failed because of a runtime error.",
         code: "COMPANY_VAULT_REPAIR_FAILED",
         nextAction: "REVIEW_MATCHING_INPUTS",
       });
@@ -496,7 +429,8 @@ export function EngineActionPanel({
     result?.diagnosticId ? `Diagnostic: ${result.diagnosticId}` : null,
     result?.failedStage ? `Stage: ${result.failedStage}` : null,
     result?.jobId ? `Job: ${result.jobId}` : null,
-  ].filter(Boolean);
+    result?.sourceRevision ? `Source revision: ${result.sourceRevision}` : null,
+  ].filter((value): value is string => Boolean(value));
   const visibleBlockers = Array.isArray(result?.blockers)
     ? [...new Set(result.blockers.map((blocker) => describeEngineBlocker(blocker)))]
     : [];
@@ -505,68 +439,45 @@ export function EngineActionPanel({
     <section id="run-engine-action" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Step 2 · Engine</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">Create tender-specific evidence matches</h2>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Automated Engine</p>
+          <h2 className="mt-1 text-lg font-bold text-slate-900">Durable tender processing</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Run Safe Mode after AI Analysis to create expert and project matches from your Company Vault. Use Full AI only as an optional refinement after match rows exist.
+            Eligible Company Vault evidence is verified, queued, matched, selected, and converted into a source-bound Build Plan by server policy. Closing this browser does not stop processing.
+          </p>
+          <p className="mt-2 text-xs text-slate-500">
+            Current source-verified inventory: {vaultReviewedExperts} expert(s), {vaultReviewedProjects} project(s).
           </p>
         </div>
-        <div className="flex flex-col items-start gap-2 lg:items-end">
-          {canMutate && (
-            <button
-              onClick={() => runEngineAsync(false, { safe: "true", skipAiRematch: "true" })}
-              disabled={running || repairingVault || isPending}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-              title="Deterministic matching first pass"
-            >
-              {running && asyncStatus ? <><ClockIcon /> Running…</> : <><BoltIcon /> Run Safe Mode — Recommended</>}
-            </button>
-          )}
-          {canMutate && (
-            <details className="group rounded-lg border border-indigo-200 bg-indigo-50">
-              <summary className="flex cursor-pointer list-none items-center gap-1 px-3 py-2 text-xs font-semibold text-indigo-800 marker:content-none">
-                Advanced AI refinement <span className="transition-transform group-open:rotate-180"><ChevronDownIcon /></span>
-              </summary>
-              <div className="border-t border-indigo-200 p-2">
-                <button
-                  onClick={() => runEngineAsync(false)}
-                  disabled={running || repairingVault || isPending}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-semibold text-indigo-800 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  title="Queue full AI evidence matching in the background"
-                >
-                  {running && asyncStatus ? <><ClockIcon /> Running…</> : <><ClockIcon /> Run Full AI in Background</>}
-                </button>
-              </div>
-            </details>
-          )}
-          {!canMutate && (
-            <p className="text-xs text-slate-500 italic self-center">Read-only — engine actions require ADMIN or PROPOSAL_MANAGER role</p>
-          )}
-        </div>
+        {canMutate ? (
+          <button
+            type="button"
+            onClick={() => void runEngine()}
+            disabled={running || repairingVault || isPending}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            title="Start or resume the server-controlled durable Engine workflow"
+          >
+            {running ? <><ClockIcon /> Processing…</> : <><BoltIcon /> Start or resume Engine</>}
+          </button>
+        ) : (
+          <p className="text-xs italic text-slate-500">Read-only — Engine recovery actions require ADMIN or PROPOSAL_MANAGER role</p>
+        )}
       </div>
 
-      {canMutate && isLargeVault && !result && !running && (
-        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-          <p className="font-semibold">Large source-verified vault — start with Safe Mode</p>
-          <p className="mt-1">
-            The vault contains <strong>{vaultReviewedExperts}</strong> source-verified expert(s) and <strong>{vaultReviewedProjects}</strong> source-verified project(s). Safe Mode creates the reliable first-pass match rows before optional AI refinement.
-          </p>
-        </div>
-      )}
-
       {asyncStatus && (
-        <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-800">
-          <p className="font-semibold">Background engine run in progress…</p>
-          <p className="mt-1">{formatOperationalReason(asyncStatus.message)}</p>
-          <details className="mt-2 text-xs text-indigo-600">
-            <summary className="cursor-pointer font-medium">Technical job details</summary>
-            <p className="mt-1 font-mono break-all">{asyncStatus.jobId}</p>
-          </details>
+        <div role="status" aria-live="polite" className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-800">
+          <div className="flex items-start gap-2">
+            <span aria-hidden="true" className="inline-block animate-spin"><ClockIcon /></span>
+            <div>
+              <p className="font-semibold">Engine processing continues in the background</p>
+              <p className="mt-1">{formatOperationalReason(asyncStatus.message)}</p>
+              <p className="mt-2 break-all font-mono text-xs text-indigo-700">Job {asyncStatus.jobId}</p>
+            </div>
+          </div>
         </div>
       )}
 
       {result && (
-        <div className={`mt-4 rounded-xl border p-4 text-sm ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : result.code === "ASYNC_POLL_TIMEOUT" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-red-200 bg-red-50 text-red-800"}`}>
+        <div className={`mt-4 rounded-xl border p-4 text-sm ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : result.code === "ASYNC_POLL_TIMEOUT" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-red-200 bg-red-50 text-red-800"}`}>
           <div className="flex flex-wrap items-center gap-2">
             <p className="font-semibold">{result.error ?? (ok ? "Engine completed." : "Engine needs attention.")}</p>
             {result.code && <span title={result.code} className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold">{formatOperationalCode(result.code)}</span>}
@@ -577,17 +488,6 @@ export function EngineActionPanel({
 
           {(result.nextAction === "REVIEW_MATCHING_INPUTS" || result.code === "ENGINE_COMPLETED_WITH_BLOCKERS") && (
             <div className="mt-3 flex flex-wrap gap-2">
-              <Link href="/dashboard/company/review" className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white no-underline hover:bg-slate-800">
-                Review Company Vault <ArrowRightIcon />
-              </Link>
-              <Link href="/dashboard/company/review-board" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50">
-                Open Review Board
-              </Link>
-            </div>
-          )}
-
-          {(result.nextAction === "REVIEW_MATCHING_INPUTS" || result.code === "ENGINE_COMPLETED_WITH_BLOCKERS") && (
-            <div className="mt-3 flex flex-wrap gap-2">
               {canMutate && (
                 <button
                   type="button"
@@ -595,31 +495,13 @@ export function EngineActionPanel({
                   disabled={running || repairingVault || isPending}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {repairingVault ? <><ClockIcon /> Repairing Vault…</> : <><BoltIcon /> Repair Vault & Retry Safe Mode</>}
+                  {repairingVault ? <><ClockIcon /> Repairing Vault…</> : <><BoltIcon /> Repair source evidence</>}
                 </button>
               )}
-              <Link
-                href="/dashboard/company"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50"
-              >
+              <Link href="/dashboard/company" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50">
                 Open Company Vault <ArrowRightIcon />
               </Link>
-              <Link
-                href="/dashboard/company/review"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50"
-              >
-                Open Automatic Verification
-              </Link>
             </div>
-          )}
-
-          {technicalDetails.length > 0 && (
-            <details className="mt-3 rounded-lg border border-current/10 bg-white/70 p-3 text-xs">
-              <summary className="cursor-pointer font-semibold">Technical diagnostics</summary>
-              <ul className="mt-2 space-y-1 font-mono break-all">
-                {technicalDetails.map((detail) => <li key={detail}>{detail}</li>)}
-              </ul>
-            </details>
           )}
 
           {result.code === "ASYNC_POLL_TIMEOUT" && result.jobId && (
@@ -631,29 +513,22 @@ export function EngineActionPanel({
                   if (!jobId) return;
                   const response = await fetch(`/api/ai-jobs/${jobId}`, { method: "GET" });
                   const json = await response.json().catch(() => ({}));
-                  const jobStatus = json?.job?.status ?? json?.status;
-                  const jobError = json?.job?.errorMessage ?? json?.errorMessage;
-                  if (jobStatus === "SUCCEEDED") {
+                  const job = (json?.job ?? json) as PolledJob;
+                  if (job.status === "SUCCEEDED") {
                     setResult({
                       success: true,
                       async: true,
                       jobId,
-                      error: lifecycleBlockersExist
-                        ? "Engine completed. Workflow blockers remain; follow the Next Required Action card above."
-                        : "Engine completed in the background. Follow the Next Required Action card above.",
+                      error: "Engine completed in the background. Downstream processing continues automatically.",
                     });
                     startTransition(() => router.refresh());
-                  } else if (jobStatus === "FAILED") {
-                    const jobOutput = (json?.job?.output ?? json?.output) as Record<string, unknown> | null | undefined;
-                    setResult(asyncEngineFailureResult(jobError, jobId, jobOutput));
+                  } else if (job.status === "FAILED" || job.status === "CANCELED" || job.status === "PARTIAL_SUCCESS") {
+                    setResult(asyncEngineFailureResult(job.errorMessage, jobId, job.output, `ENGINE_${job.status}`));
                   } else {
-                    setResult({
-                      ...result,
-                      error: `The worker is ${formatOperationalCode(jobStatus ?? "RUNNING").toLowerCase()}. Check again shortly.`,
-                    });
+                    setResult({ ...result, error: `The worker is ${formatOperationalCode(job.status ?? "RUNNING").toLowerCase()}. Check again shortly.` });
                   }
                 } catch {
-                  // Preserve the current result so the user can retry this read-only check.
+                  // Preserve the status card so this read-only check can be retried.
                 }
               }}
               className="mt-3 rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
@@ -662,53 +537,34 @@ export function EngineActionPanel({
             </button>
           )}
 
-          {canMutate && result.code === "NETWORK_OR_RUNTIME_ERROR" && result.nextAction === "RETRY_BACKGROUND_JOB" && (
+          {canMutate && (result.code === "NETWORK_OR_RUNTIME_ERROR" || result.code === "ASYNC_ENGINE_FAILED" || result.code === "ENGINE_JOB_SUPERSEDED") && (
             <button
               type="button"
-              onClick={() => { setResult(null); void runEngineAsync(); }}
-              className="mt-3 rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-50"
+              onClick={() => { setResult(null); void runEngine(); }}
+              className="mt-3 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
             >
-              Retry background run
+              Retry durable Engine
             </button>
           )}
 
-          {canMutate && (result.code === "ASYNC_ENGINE_FAILED" || result.code === "ASYNC_ENGINE_TIMEOUT") && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => runEngineAsync(false)}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-              >
-                Retry from start
-              </button>
-              <button
-                type="button"
-                onClick={() => runEngineAsync(false, { safe: "true" })}
-                className="rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
-              >
-                Run Safe Mode
-              </button>
-              <button
-                type="button"
-                onClick={() => runEngineAsync(false, { skipAiRematch: "true" })}
-                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-800 hover:bg-amber-100"
-              >
-                Skip AI Rematch
-              </button>
-            </div>
+          {!canMutate && (result.code === "NETWORK_OR_RUNTIME_ERROR" || result.code === "ASYNC_ENGINE_FAILED") && (
+            <p className="mt-3 text-xs italic text-slate-500">Read-only — retry actions require ADMIN or PROPOSAL_MANAGER role</p>
           )}
 
-          {!canMutate && (result.code === "ASYNC_ENGINE_FAILED" || result.code === "ASYNC_ENGINE_TIMEOUT" || result.nextAction === "RETRY_BACKGROUND_JOB") && (
-            <p className="mt-3 text-xs text-slate-500 italic">Read-only — retry actions require ADMIN or PROPOSAL_MANAGER role</p>
+          {technicalDetails.length > 0 && (
+            <details className="mt-3 rounded-lg border border-current/10 bg-white/70 p-3 text-xs">
+              <summary className="cursor-pointer font-semibold">Technical diagnostics</summary>
+              <ul className="mt-2 space-y-1 break-all font-mono">
+                {technicalDetails.map((detail) => <li key={detail}>{detail}</li>)}
+              </ul>
+            </details>
           )}
 
           {visibleBlockers.length > 0 && (
             <div className="mt-3 rounded-lg bg-white p-3">
               <p className="font-semibold">Blocking evidence gaps</p>
               <ul className="mt-2 list-disc space-y-1 pl-5">
-                {visibleBlockers.slice(0, 5).map((blocker) => (
-                  <li key={blocker}>{blocker}</li>
-                ))}
+                {visibleBlockers.slice(0, 5).map((blocker) => <li key={blocker}>{blocker}</li>)}
               </ul>
             </div>
           )}
