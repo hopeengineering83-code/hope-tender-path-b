@@ -126,6 +126,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: 422 });
     }
 
+    // Vault preflight runs BEFORE both async and sync paths so that
+    // source-backed records are auto-verified before the Engine executes.
+    let vaultPreflight: Awaited<ReturnType<typeof prepareCompanyVaultForEngine>>;
+    try {
+      vaultPreflight = await prepareCompanyVaultForEngine(userId);
+    } catch (error) {
+      logger.error("[engine route] Company Vault automatic verification failed", {
+        diagnosticId,
+        tenderId: id,
+        errorName: error instanceof Error ? error.constructor.name : typeof error,
+      });
+      return NextResponse.json({
+        error: "Run Engine could not refresh the Company Vault automatically.",
+        code: "COMPANY_VAULT_AUTO_PROMOTION_FAILED",
+        nextAction: "RETRY_AFTER_DATABASE_CHECK",
+        diagnosticId,
+      }, { status: 503 });
+    }
+
     const reqUrl = new URL(req.url);
     if (reqUrl.searchParams.get("async") === "true") {
       const safe = reqUrl.searchParams.get("safe") === "true";
@@ -148,25 +167,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         status: "QUEUED",
         reusedActiveJob: Boolean(active),
         diagnosticId,
-        vaultVerification: "DEFERRED_TO_WORKER",
+        vaultVerification: "COMPLETED",
+        vaultVerifiedExperts: vaultPreflight?.sourceVerification?.expertsVerified ?? 0,
+        vaultVerifiedProjects: vaultPreflight?.sourceVerification?.projectsVerified ?? 0,
       }, { status: 202 });
-    }
-
-    let vaultPreflight: Awaited<ReturnType<typeof prepareCompanyVaultForEngine>>;
-    try {
-      vaultPreflight = await prepareCompanyVaultForEngine(userId);
-    } catch (error) {
-      logger.error("[engine route] Company Vault automatic verification failed", {
-        diagnosticId,
-        tenderId: id,
-        errorName: error instanceof Error ? error.constructor.name : typeof error,
-      });
-      return NextResponse.json({
-        error: "Run Engine could not refresh the Company Vault automatically.",
-        code: "COMPANY_VAULT_AUTO_PROMOTION_FAILED",
-        nextAction: "RETRY_AFTER_DATABASE_CHECK",
-        diagnosticId,
-      }, { status: 503 });
     }
     if (!vaultPreflight) {
       return NextResponse.json({

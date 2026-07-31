@@ -17,7 +17,8 @@ describe("Engine route — async mode actually enqueues a job", () => {
     assert.match(route, /searchParams\.get\("async"\) === "true"/);
     assert.match(route, /findActiveEngineRunForTender\(id, userId\)/);
     assert.match(route, /jobType: "ENGINE_RUN"/);
-    assert.match(route, /NextResponse\.json\(\{ jobId, status: "QUEUED", diagnosticId \}, \{ status: 202 \}\)/);
+    assert.match(route, /jobId,\s*status: "QUEUED"/);
+    assert.match(route, /status: 202/);
   });
 
   it("async branch runs after extraction and analysis validation", () => {

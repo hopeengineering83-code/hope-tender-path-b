@@ -58,7 +58,7 @@ describe("VLM audit fix — Company Vault loading state contrast + spinner", () 
 });
 
 describe("VLM audit fix — Review Inbox loading state contrast + spinner", () => {
-  const source = readApp("app/dashboard/company/review/page.tsx");
+  const source = readApp("components/company-vault-verification-page.tsx");
 
   it("uses text-slate-700 for the loading text", () => {
     const loadingBlock = source.match(/if \(loading && !diagnostics\) \{[\s\S]*?Loading Review Inbox/);
