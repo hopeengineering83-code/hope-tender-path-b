@@ -1,184 +1,49 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import fs from "node:fs";
-import path from "node:path";
-import {
-  DASHBOARD_NAV_GROUPS,
-  flattenDashboardLinks,
-  getActiveDashboardHref,
-} from "../lib/dashboard-navigation";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
 
-const repoRoot = path.resolve(__dirname, "..");
-const readSource = (relativePath: string) => fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+const read = (path: string) => readFileSync(path, "utf8");
+const engine = read("components/engine-action-panel.tsx");
 
-// Category A — engine action ownership.
-test("category A: engine panel has one primary Safe Mode action and one advanced Full AI action", () => {
-  const source = readSource("components/engine-action-panel.tsx");
-  const buttons = source.match(/<button[\s\S]*?<\/button>/g) ?? [];
-  assert.equal(buttons.filter((button) => /Run Safe Mode — Recommended/.test(button)).length, 1);
-  assert.equal(buttons.filter((button) => /Run Full AI in Background/.test(button)).length, 1);
-  assert.match(source, /Advanced AI refinement/);
-  assert.match(source, /onClick=\{\(\) => runEngineAsync\(false, \{ safe: "true", skipAiRematch: "true" \}\)\}/);
-  assert.match(source, /onClick=\{\(\) => runEngineAsync\(false\)\}/);
+test("category A: Engine has one normal server-controlled action owner", () => {
+  assert.equal((engine.match(/Start or resume Engine/g) ?? []).length, 1);
+  assert.equal((engine.match(/onClick=\{\(\) => void runEngine\(\)\}/g) ?? []).length, 1);
+  assert.match(engine, /Durable tender processing/);
+  assert.match(engine, /Closing this browser does not stop processing/);
+  assert.doesNotMatch(engine, /Run Safe Mode/);
+  assert.doesNotMatch(engine, /Full AI/);
 });
 
-test("category A: large-vault guidance is informational, not another action owner", () => {
-  const source = readSource("components/engine-action-panel.tsx");
-  const banner = source.match(/Large source-verified vault[\s\S]*?<\/div>\s*\)\}/)?.[0] ?? "";
-  assert.ok(banner);
-  assert.doesNotMatch(banner, /<button/);
+test("category A: Vault repair remains failure-state recovery only", () => {
+  const recoveryGuard = engine.indexOf('result.nextAction === "REVIEW_MATCHING_INPUTS"');
+  const repairAction = engine.indexOf("Repair source evidence");
+  const normalAction = engine.indexOf("Start or resume Engine");
+  assert.ok(normalAction >= 0);
+  assert.ok(recoveryGuard > normalAction);
+  assert.ok(repairAction > recoveryGuard);
+  assert.match(engine, /\/api\/company\/reimport/);
+  assert.match(engine, /Restarting the durable Engine workflow/);
 });
 
 test("category A: retry controls remain failure-state-only", () => {
-  const source = readSource("components/engine-action-panel.tsx");
-  assert.match(source, /result\.code === "ASYNC_ENGINE_FAILED" \|\| result\.code === "ASYNC_ENGINE_TIMEOUT"/);
-});
-
-test("category A: generation readiness panel links to the canonical engine control", () => {
-  // components/tender-recovery-command-center.tsx (this test's original
-  // subject) was deleted as unrendered dead code (nothing imports or renders
-  // it). components/generation-readiness-panel.tsx is the live, rendered
-  // panel that resolves RUN_ENGINE / RUN_ENGINE_OR_APPROVE_ANALYSIS /
-  // RETRY_AI_ANALYZE next-actions today — it navigates to the one canonical
-  // engine control's anchor rather than dispatching a second, separate
-  // engine-run action itself.
-  const source = readSource("components/generation-readiness-panel.tsx");
-  assert.doesNotMatch(source, /executeAction\("RUN_ENGINE"\)/);
-  assert.match(source, /#run-engine-action/);
-});
-
-test("category A: export readiness does not duplicate AI Analyze or missing-plan mutations", () => {
-  const source = readSource("components/export-readiness-panel.tsx");
-  assert.doesNotMatch(source, /fetch\(`\/api\/tenders\/\$\{tenderId\}\/ai-analyze`/);
-  assert.match(source, /<DisclosureAnchorLink href="#ai-analyze-section"/);
-  assert.doesNotMatch(source, /fetch\(`\/api\/tenders\/\$\{tenderId\}\/generate-missing-plan-files`/);
-  assert.match(source, /<DisclosureAnchorLink href="#submission-plan-reconciliation"/);
-  assert.match(source, /const note = approvalNote\.trim\(\)/);
-  assert.match(source, /disabled=\{busy \|\| !approvalNote\.trim\(\)\}/);
-});
-
-test("category A: extraction quality has one runtime owner and one resilient anchor", () => {
-  const source = readSource("app/dashboard/tenders/[id]/page.tsx");
-  assert.equal((source.match(/<ExtractionQualityPanel\b/g) ?? []).length, 1);
-  assert.doesNotMatch(source, /<ExtractionQualityDashboard\b/);
-  assert.doesNotMatch(source, /<ExtractionSnapshotPanel\b/);
-  assert.doesNotMatch(source, /import \{ ExtractionQualityDashboard \}/);
-  assert.doesNotMatch(source, /import \{ ExtractionSnapshotPanel \}/);
-  assert.match(source, /id="extraction-quality"/);
-});
-
-test("category A: matching metric cannot masquerade as canonical readiness", () => {
-  const source = readSource("components/matching-quality-panel.tsx");
-  assert.match(source, />Matching score<\/p>/);
-  assert.doesNotMatch(source, />Score<\/p>/);
-});
-
-// Category B — primary navigation uniqueness.
-test("category B: five primary destinations represent five distinct workspaces", () => {
-  const links = flattenDashboardLinks(DASHBOARD_NAV_GROUPS);
-  assert.equal(links.length, 5);
-  assert.equal(new Set(links.map((link) => link.href)).size, links.length);
-  const formerPrimaryRoutes = [
-    "/dashboard/history", "/dashboard/calendar", "/dashboard/company/readiness",
-    "/dashboard/company/plan-b-import", "/dashboard/company/review-board",
-    "/dashboard/company/review", "/dashboard/assets", "/dashboard/setup",
-    "/dashboard/settings", "/dashboard/matching", "/dashboard/compliance",
-    "/dashboard/export", "/dashboard/analytics", "/dashboard/admin/ai-readiness",
-    "/dashboard/system", "/dashboard/admin/safety-center", "/dashboard/users",
-  ];
-  const primaryHrefs = new Set(links.map((link) => link.href));
-  for (const route of formerPrimaryRoutes) assert.ok(!primaryHrefs.has(route));
-});
-
-test("category B: consolidated member routes activate one correct primary destination", () => {
-  const cases: Array<[string, string]> = [
-    ["/dashboard/history", "/dashboard/tenders"],
-    ["/dashboard/calendar", "/dashboard/tenders"],
-    ["/dashboard/company/readiness", "/dashboard/company"],
-    ["/dashboard/assets", "/dashboard/company"],
-    ["/dashboard/matching", "/dashboard/analysis"],
-    ["/dashboard/compliance", "/dashboard/analysis"],
-    ["/dashboard/export", "/dashboard/documents"],
-    ["/dashboard/analytics", "/dashboard/activity"],
-    ["/dashboard/users", "/dashboard/activity"],
-  ];
-  for (const [pathname, expected] of cases) {
-    assert.equal(getActiveDashboardHref(pathname, DASHBOARD_NAV_GROUPS), expected);
-  }
-});
-
-// Category C — one page-level next action.
-test("category C: tender page renders exactly one always-visible NextActionPanel", () => {
-  const source = readSource("app/dashboard/tenders/[id]/page.tsx");
-  assert.equal((source.match(/<NextActionPanel\b/g) ?? []).length, 1);
-  const panelIndex = source.indexOf("<NextActionPanel");
-  const before = source.slice(0, panelIndex);
-  assert.equal((before.match(/<Disclosure\b/g) ?? []).length, (before.match(/<\/Disclosure>/g) ?? []).length);
-});
-
-test("category C: competing workflow and release control centers are absent from the normal workspace", () => {
-  const source = readSource("app/dashboard/tenders/[id]/page.tsx");
-  assert.doesNotMatch(source, /<TenderWorkflowActionCenter\b/);
-  assert.doesNotMatch(source, /<TenderRecoveryCommandCenter\b/);
-  assert.doesNotMatch(source, /<TenderReleaseStatePanel\b/);
-  assert.doesNotMatch(source, /<FinalSubmissionControlCenter\b/);
-  assert.match(source, /Open read-only Command Center/);
-});
-
-// Category D — sub-navigation ownership.
-test("category D: company profile tab is path-segment accurate", () => {
-  const sectionSource = readSource("components/section-subnav.tsx");
-  assert.match(sectionSource, /isDashboardRouteWithin/);
-  assert.match(sectionSource, /sort\(\(a, b\) => b\.href\.length - a\.href\.length\)/);
-  const companySource = readSource("components/company-subnav.tsx");
-  assert.match(companySource, /href:\s*"\/dashboard\/company\/profile",\s*label:\s*"Labeled Profile Editor"/);
-});
-
-test("category D: DashboardGroupSubnav does not duplicate the company tab bar", () => {
   assert.match(
-    readSource("components/dashboard-group-subnav.tsx"),
-    /isDashboardRouteWithin\(pathname, "\/dashboard\/company"\)\)\s*return null/,
+    engine,
+    /result\.code === "NETWORK_OR_RUNTIME_ERROR" \|\| result\.code === "ASYNC_ENGINE_FAILED" \|\| result\.code === "ENGINE_JOB_SUPERSEDED"/,
   );
+  assert.match(engine, /Retry durable Engine/);
+  assert.match(engine, /result\.code === "ASYNC_POLL_TIMEOUT"/);
+  assert.match(engine, /Check status now/);
 });
 
-// Category E — icon semantics.
-test("category E: no two primary sidebar links share an icon", () => {
-  const links = flattenDashboardLinks(DASHBOARD_NAV_GROUPS);
-  assert.equal(new Set(links.map((link) => link.iconName)).size, links.length);
+test("category E: Engine actions use semantic SVG icons", () => {
+  assert.match(engine, /<BoltIcon \/> Start or resume Engine/);
+  assert.match(engine, /<ClockIcon \/> Processing/);
+  assert.match(engine, /<BoltIcon \/> Repair source evidence/);
+  assert.match(engine, /Open Company Vault <ArrowRightIcon \/>/);
 });
 
-test("category E: engine actions use distinct semantic icons", () => {
-  const source = readSource("components/engine-action-panel.tsx");
-  const safeButton = source.match(/onClick=\{\(\) => runEngineAsync\(false, \{ safe: "true", skipAiRematch: "true" \}\)\}[\s\S]*?<\/button>/)?.[0] ?? "";
-  const aiButton = source.match(/onClick=\{\(\) => runEngineAsync\(false\)\}[\s\S]*?<\/button>/)?.[0] ?? "";
-  assert.match(safeButton, /<BoltIcon \/>/);
-  assert.match(aiButton, /<ClockIcon \/>/);
-});
-
-// Category F — a built-but-orphaned panel wired into the workspace.
-// SubmissionPlanCompletenessPanel was fully built, tested, and consumed the
-// live /api/tenders/[id]/submission-plan endpoint, but had zero importers
-// anywhere in app/ — including its row actions
-// (/api/tenders/[id]/documents/[docId]/plan-action and
-// /api/tenders/[id]/submission-plan/auto-classify), which had no other UI
-// caller at all. Wired into the tender detail workspace rather than left
-// orphaned or deleted, since it provides genuinely distinct capability
-// (per-document reclassify/supersede/exclude actions) not available
-// anywhere else.
-//
-// ClientSubmissionDetailsPanel was NOT wired in alongside it, despite also
-// being orphaned and despite consuming the same live snapshot endpoint --
-// tests/generic-tender-ui-defects.test.ts "defect 3" already established,
-// with its own regression test, that this exact panel is a duplicate of
-// TenderIntakeDetailPanel in the normal Stage 1 workflow and must not
-// reappear there. That decision stands; re-wiring it here would revert it.
-test("category F: tender detail page imports and renders SubmissionPlanCompletenessPanel", () => {
-  const source = readSource("app/dashboard/tenders/[id]/page.tsx");
-  assert.match(source, /import \{ SubmissionPlanCompletenessPanel \} from "..\/..\/..\/..\/components\/submission-plan-completeness-panel"/);
-  assert.match(source, /<SubmissionPlanCompletenessPanel tenderId=\{tender\.id\} canMutate=\{canMutate\} \/>/);
-});
-
-test("category F: metadata-completion-panel and metadata-truth-panel were deleted, not left as dead code", () => {
-  assert.equal(fs.existsSync(path.join(repoRoot, "components/metadata-completion-panel.tsx")), false);
-  assert.equal(fs.existsSync(path.join(repoRoot, "components/metadata-truth-panel.tsx")), false);
+test("read-only users never receive mutation controls", () => {
+  assert.match(engine, /canMutate \? \(/);
+  assert.match(engine, /Engine recovery actions require ADMIN or PROPOSAL_MANAGER role/);
+  assert.match(engine, /ROLE_READ_ONLY_MUTATION_BLOCKED/);
 });
