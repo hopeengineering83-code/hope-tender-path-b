@@ -139,6 +139,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         diagnosticId,
       }, { status: 503 });
     }
+    if (!vaultPreflight) {
+      return NextResponse.json({
+        error: "Engine run blocked: create the Company Vault profile first.",
+        code: "COMPANY_VAULT_REQUIRED",
+        nextAction: "OPEN_COMPANY_VAULT",
+        diagnosticId,
+      }, { status: 422 });
+    }
 
     const reqUrl = new URL(req.url);
     if (reqUrl.searchParams.get("async") === "true") {
@@ -157,14 +165,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ...(typeof maxChars === "number" && Number.isFinite(maxChars) ? { maxChars } : {}),
         },
       })).id;
+      const persistedJob = await prisma.aiJob.findFirst({
+        where: { id: jobId, tenderId: id, userId },
+        select: { status: true },
+      });
+      if (!persistedJob) {
+        return NextResponse.json({
+          error: "Engine job could not be verified after enqueue.",
+          code: "ENGINE_JOB_PERSISTENCE_FAILED",
+          diagnosticId,
+        }, { status: 503 });
+      }
       return NextResponse.json({
         jobId,
-        status: active?.status ?? "QUEUED",
+        status: persistedJob.status,
         reusedActiveJob: Boolean(active),
         diagnosticId,
         vaultVerification: "COMPLETED",
-        vaultVerifiedExperts: vaultPreflight?.sourceVerification?.expertsVerified ?? 0,
-        vaultVerifiedProjects: vaultPreflight?.sourceVerification?.projectsVerified ?? 0,
+        vaultVerifiedExperts: vaultPreflight.sourceVerification?.expertsVerified ?? 0,
+        vaultVerifiedProjects: vaultPreflight.sourceVerification?.projectsVerified ?? 0,
       }, { status: 202 });
     }
 
