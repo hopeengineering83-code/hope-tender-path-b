@@ -37,20 +37,27 @@ describe("Company Vault automatic runtime authority", () => {
     assert.equal(result.finalZipEligible, true);
   });
 
-  it("refreshes Vault source links and verification before sync or queued Engine execution", () => {
+  it("commits Vault verification before durable Engine enqueue and revalidates in the worker", () => {
     const route = readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8");
     const registry = readFileSync("lib/ai-job-handlers.ts", "utf8");
     const preflight = route.indexOf("prepareCompanyVaultForEngine(userId)");
-    const asyncBranch = route.indexOf('searchParams.get("async")');
-    const syncRun = route.indexOf("runTenderEngine(id, userId");
+    const revision = route.indexOf("computeEngineSourceRevision(prisma");
+    const enqueueTransaction = route.indexOf("const enqueueResult = await prisma.$transaction");
+    const createJob = route.indexOf("tx.aiJob.create");
 
     assert.ok(preflight >= 0, "Engine route must call the Company Vault preflight");
-    assert.ok(asyncBranch > preflight, "Vault promotion must complete before async enqueue");
-    assert.ok(syncRun > preflight, "Vault promotion must complete before synchronous execution");
+    assert.ok(revision > preflight, "source revision must be computed after Vault promotion commits");
+    assert.ok(enqueueTransaction > revision, "enqueue must use the post-promotion source revision");
+    assert.ok(createJob > enqueueTransaction, "job visibility must occur inside the enqueue transaction");
+    assert.doesNotMatch(route, /runTenderEngine/);
+    assert.doesNotMatch(route, /searchParams\.get\("async"\)\s*===\s*"true"/);
+
     assert.match(registry, /jobType === "ENGINE_RUN"/);
     assert.match(registry, /prepareCompanyVaultForEngine\(ctx\.userId\)/);
+    assert.match(registry, /checkpoint:\s*"before"/);
+    assert.match(registry, /checkpoint:\s*"after"/);
     assert.ok(
-      registry.indexOf("prepareCompanyVaultForEngine(ctx.userId)") < registry.lastIndexOf("legacyHandler(ctx)"),
+      registry.indexOf("prepareCompanyVaultForEngine(ctx.userId)") < registry.indexOf("legacyHandler(ctx)"),
       "Queued Engine execution must refresh Vault authority before invoking the legacy handler",
     );
   });
