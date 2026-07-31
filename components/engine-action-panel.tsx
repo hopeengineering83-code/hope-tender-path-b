@@ -94,9 +94,11 @@ type PolledJob = {
   steps?: Array<{ stepName?: string; message?: string }>;
 };
 
+type TerminalEngineJobStatus = "SUCCEEDED" | "FAILED" | "PARTIAL_SUCCESS" | "CANCELED";
+
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_DURATION_MS = 10 * 60 * 1000;
-const TERMINAL_JOB_STATUSES = new Set(["SUCCEEDED", "FAILED", "PARTIAL_SUCCESS", "CANCELED"]);
+const TERMINAL_JOB_STATUSES = new Set<TerminalEngineJobStatus>(["SUCCEEDED", "FAILED", "PARTIAL_SUCCESS", "CANCELED"]);
 
 function actionLabel(action?: string) {
   if (action === "UPLOAD_TENDER_DOCUMENT") return "Upload the tender source document.";
@@ -246,7 +248,7 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
     fetch("/api/ai-jobs/run-next", { method: "POST" }).catch(() => {});
 
     const startedAt = Date.now();
-    let finalStatus: "SUCCEEDED" | "FAILED" | "PARTIAL_SUCCESS" | "CANCELED" | null = null;
+    let finalStatus: TerminalEngineJobStatus | null = null;
     let finalJob: PolledJob | null = null;
 
     while (Date.now() - startedAt < maxPollDurationMs) {
@@ -259,8 +261,8 @@ export async function executeEngineRunAsync(options: EngineAsyncRunOptions): Pro
         jobId,
         message: lastStep?.message ?? `Worker status: ${formatOperationalCode(job.status)}`,
       });
-      if (TERMINAL_JOB_STATUSES.has(job.status)) {
-        finalStatus = job.status as typeof finalStatus;
+      if (TERMINAL_JOB_STATUSES.has(job.status as TerminalEngineJobStatus)) {
+        finalStatus = job.status as TerminalEngineJobStatus;
         finalJob = job;
         break;
       }
