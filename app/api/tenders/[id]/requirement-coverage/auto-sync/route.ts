@@ -12,7 +12,7 @@ import {
 } from "../../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../../lib/request-id";
 import { logger } from "../../../../../../lib/observability";
-import { reconcileAutomaticRequirementCoverage } from "../../../../../../lib/engine/automatic-requirement-coverage";
+import { reconcileAutomaticRequirementCoverage } from "../../../../../../lib/engine/reconcile-automatic-requirement-coverage";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
