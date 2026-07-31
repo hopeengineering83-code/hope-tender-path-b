@@ -26,7 +26,7 @@ export type RepairSourceGroundingOptions = {
   userId?: string;
 };
 
-export const MIN_AUTOMATIC_GROUNDING_CONFIDENCE = 0.35;
+export const MIN_AUTOMATIC_GROUNDING_CONFIDENCE = 0.5;
 
 const STOP_WORDS = new Set([
   "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -59,21 +59,27 @@ export function findBestSourceGroundingQuote(
   if (keyPhrases.length < 2 || sourceText.trim().length < 20) return null;
 
   const lower = sourceText.toLocaleLowerCase("en-US");
-  const windowSize = 700;
-  const step = 80;
+  // The persisted quote is capped at 500 characters. Score the same compact
+  // window so every term used to justify the match is actually inside the
+  // exact quote that will be stored and re-validated by release gates.
+  const windowSize = 500;
+  const step = 60;
+  const minimumHits = Math.min(3, keyPhrases.length);
+  const denominator = Math.min(6, keyPhrases.length);
   let bestScore = 0;
   let bestOffset = -1;
   let bestHits = 0;
 
-  const lastStart = Math.max(0, lower.length - 20);
-  for (let start = 0; start <= lastStart; start += step) {
+  const scoreWindow = (start: number) => {
     const window = lower.slice(start, Math.min(start + windowSize, lower.length));
     const hits = keyPhrases.filter((phrase) => window.includes(phrase)).length;
-    if (hits < 2) continue;
-    // A long generated fallback title can contain many low-value words. Scale
-    // against at most the six strongest unique terms so three coherent hits
-    // remain meaningful without making a single generic hit sufficient.
-    const score = Math.min(1, hits / Math.min(6, keyPhrases.length));
+    if (hits < minimumHits) return { hits, score: 0 };
+    return { hits, score: Math.min(1, hits / denominator) };
+  };
+
+  const lastStart = Math.max(0, lower.length - 20);
+  for (let start = 0; start <= lastStart; start += step) {
+    const { hits, score } = scoreWindow(start);
     if (score > bestScore || (score === bestScore && hits > bestHits)) {
       bestScore = score;
       bestOffset = start;
@@ -81,25 +87,31 @@ export function findBestSourceGroundingQuote(
     }
     if (start + step > lastStart && start !== lastStart) {
       // Ensure the tail of the source is inspected once.
-      const tailStart = lastStart;
-      const tail = lower.slice(tailStart);
-      const tailHits = keyPhrases.filter((phrase) => tail.includes(phrase)).length;
-      const tailScore = tailHits < 2 ? 0 : Math.min(1, tailHits / Math.min(6, keyPhrases.length));
+      const { hits: tailHits, score: tailScore } = scoreWindow(lastStart);
       if (tailScore > bestScore || (tailScore === bestScore && tailHits > bestHits)) {
         bestScore = tailScore;
-        bestOffset = tailStart;
+        bestOffset = lastStart;
         bestHits = tailHits;
       }
       break;
     }
   }
 
-  if (bestOffset < 0 || bestScore < MIN_AUTOMATIC_GROUNDING_CONFIDENCE) return null;
+  if (
+    bestOffset < 0
+    || bestHits < minimumHits
+    || bestScore < MIN_AUTOMATIC_GROUNDING_CONFIDENCE
+  ) return null;
 
   const quote = sourceText
-    .slice(bestOffset, Math.min(bestOffset + 500, sourceText.length))
+    .slice(bestOffset, Math.min(bestOffset + windowSize, sourceText.length))
     .trim();
   if (quote.length < 20) return null;
+
+  const normalizedQuote = quote.toLocaleLowerCase("en-US");
+  const quoteHits = keyPhrases.filter((phrase) => normalizedQuote.includes(phrase)).length;
+  if (quoteHits < minimumHits) return null;
+
   return { quote, confidence: bestScore, offset: bestOffset };
 }
 
@@ -202,7 +214,7 @@ function bestRepairForRequirement(
     // Page provenance is part of the canonical release predicate. Do not save
     // an apparently useful quote that can never become trusted evidence.
     if (!page) continue;
-    if (!file.extractedText.includes(match.quote.slice(0, Math.min(50, match.quote.length)))) continue;
+    if (!file.extractedText.includes(match.quote)) continue;
     const candidate = {
       fileId: file.id,
       quote: match.quote,
