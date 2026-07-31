@@ -24,10 +24,7 @@ describe("requirement-coverage safe response boundary", () => {
   it("keeps tender and canonical readiness queries tenant scoped", () => {
     assert.match(source, /where: \{ id, userId: actor\.id \}/);
     assert.match(source, /getFinalPackageReadinessModel\(prisma, id, actor\.id\)/);
-    assert.match(
-      source,
-      /where: \{ tenderId: id, priority: \{ in: \["MANDATORY", "CRITICAL"\] \} \}/,
-    );
+    assert.match(source, /where: \{ tenderId: id, priority: \{ in: \["MANDATORY", "CRITICAL"\] \} \}/);
     assert.match(source, /TENDER_NOT_FOUND/);
     assert.doesNotMatch(source, /prisma\.(?:company|expert|project)\./);
   });
@@ -38,16 +35,16 @@ describe("requirement-coverage safe response boundary", () => {
     assert.match(source, /coverageRatio/);
   });
 
-  it("reports only persisted automatic evidence and leaves coverage authority canonical", () => {
+  it("reports persisted automatic evidence without becoming a second writer", () => {
     assert.match(source, /requirement\.complianceMatrixRows\.map/);
     assert.match(source, /parseAutomaticRequirementEvidence\(row\.notes\)/);
+    assert.match(source, /VAULT_AUTO_LINK/);
     assert.match(source, /autoLinked: Boolean\(automatic\)/);
     assert.match(source, /linkageScore: automatic\?\.linkageScore \?\? null/);
     assert.match(source, /linkageReasons: automatic\?\.linkageReasons \?\? \[\]/);
     assert.match(source, /canonicalStatus\?\.displayStatus \?\? "NOT_MET"/);
     assert.match(source, /canonicalStatus\?\.hasSourceTrace \?\? false/);
     assert.match(source, /coverageStatus === "FULLY_MET"/);
-    assert.doesNotMatch(source, /VAULT_AUTO_LINK/);
     assert.doesNotMatch(source, /evidenceLinks\.push\(/);
     assert.doesNotMatch(source, /canUseVaultRecord/);
   });
@@ -57,10 +54,7 @@ describe("requirement-coverage safe response boundary", () => {
     assert.match(source, /sourceExactQuote/);
     assert.match(source, /sourceConfidence/);
     assert.match(source, /canonicalStatus\?\.hasSourceTrace/);
-    const authority = readFileSync(
-      join(rootDir, "lib/engine/final-package-readiness-model.ts"),
-      "utf8",
-    );
+    const authority = readFileSync(join(rootDir, "lib/engine/final-package-readiness-model.ts"), "utf8");
     assert.match(authority, /isGroundedEvidenceInActiveFiles/);
     assert.match(authority, /displayStatus === "FULLY_MET"/);
   });
@@ -74,7 +68,7 @@ describe("requirement-coverage safe response boundary", () => {
     assert.doesNotMatch(source, /\.(?:create|createMany|update|updateMany|delete|deleteMany|upsert)\(/);
   });
 
-  it("keeps Vercel Git deployment enabled (repo policy)", () => {
-    assert.equal(vercel.git?.deploymentEnabled?.["main"], true);
+  it("keeps Vercel Git deployment enabled by repository policy", () => {
+    assert.equal(vercel.git?.deploymentEnabled?.main, true);
   });
 });
