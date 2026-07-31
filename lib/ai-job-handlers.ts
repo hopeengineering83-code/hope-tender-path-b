@@ -10,13 +10,46 @@ export * from "./ai-job-handlers-legacy";
 import { recordStep, type JobType } from "./ai-jobs";
 import {
   getHandler as getLegacyHandler,
+  isTerminalHandlerResult,
   type JobHandler,
 } from "./ai-job-handlers-legacy";
 import { runTenderFileExtractionJob } from "./ai-jobs/tender-extraction-service";
 import { prepareCompanyVaultForEngine } from "./engine/prepare-company-vault";
 import { buildAndVerifyBuildPlan } from "./engine/automatic-build-plan";
 import { reconcileAutomaticRequirementCoverage } from "./engine/reconcile-automatic-requirement-coverage";
+import { computeEngineSourceRevision } from "./engine/engine-source-revision";
+import { enqueueEngineJobForCurrentSources } from "./engine/enqueue-engine-job";
 import { prisma } from "./prisma";
+
+async function assertCurrentEngineSourceRevision(input: {
+  jobId: string;
+  tenderId: string;
+  userId: string;
+  companyId: string;
+  expectedRevision: string;
+  checkpoint: "before" | "after";
+}) {
+  const current = await computeEngineSourceRevision(prisma, {
+    tenderId: input.tenderId,
+    userId: input.userId,
+    companyId: input.companyId,
+  });
+  if (!current || current.sourceRevision !== input.expectedRevision) {
+    await recordStep(input.jobId, {
+      stepName: `engine.source-revision.${input.checkpoint}.stale`,
+      message: "Engine source inputs changed; the stale job cannot promote authoritative output.",
+      status: "FAILED",
+    });
+    throw new Error("ENGINE_SOURCE_REVISION_STALE");
+  }
+
+  await recordStep(input.jobId, {
+    stepName: `engine.source-revision.${input.checkpoint}.current`,
+    message: `Engine source revision ${current.sourceRevision.slice(0, 12)} verified current`,
+    status: "SUCCEEDED",
+  });
+  return current;
+}
 
 export function getHandler(jobType: JobType): JobHandler | null {
   if (jobType === "EXTRACT_TEXT") {
@@ -24,6 +57,61 @@ export function getHandler(jobType: JobType): JobHandler | null {
   }
 
   const legacyHandler = getLegacyHandler(jobType);
+
+  if (jobType === "AI_ANALYZE" && legacyHandler) {
+    return async (ctx) => {
+      const result = await legacyHandler(ctx);
+      if (
+        !ctx.tenderId ||
+        ctx.input.autoContinue !== true ||
+        !isTerminalHandlerResult(result) ||
+        result.terminalStatus !== "SUCCEEDED"
+      ) {
+        return result;
+      }
+
+      await recordStep(ctx.jobId, {
+        stepName: "engine.auto-enqueue.preflight",
+        message: "AI analysis promoted; verifying Company Vault authority for automatic Engine continuation",
+        status: "RUNNING",
+      });
+      const preflight = await prepareCompanyVaultForEngine(ctx.userId);
+      if (!preflight) {
+        throw new Error("COMPANY_VAULT_REQUIRED_FOR_AUTOMATIC_ENGINE_CONTINUATION");
+      }
+
+      const enqueue = await enqueueEngineJobForCurrentSources(prisma, {
+        userId: ctx.userId,
+        tenderId: ctx.tenderId,
+        companyId: preflight.companyId,
+        purpose: "AUTOMATIC_POST_ANALYSIS_CONTINUATION",
+      });
+      if (!enqueue) {
+        throw new Error("ENGINE_SOURCE_REVISION_UNAVAILABLE_AFTER_ANALYSIS");
+      }
+
+      await recordStep(ctx.jobId, {
+        stepName: "engine.auto-enqueue.complete",
+        message: `Engine job ${enqueue.job.id} persisted for source revision ${enqueue.revision.sourceRevision.slice(0, 12)}`,
+        status: "SUCCEEDED",
+      });
+
+      return {
+        ...result,
+        output: {
+          ...result.output,
+          automaticEngineJob: {
+            jobId: enqueue.job.id,
+            status: enqueue.job.status,
+            reusedActiveJob: enqueue.job.reusedActiveJob,
+            sourceRevision: enqueue.revision.sourceRevision,
+            idempotencyKey: enqueue.idempotencyKey,
+          },
+        },
+      };
+    };
+  }
+
   if (jobType === "ENGINE_RUN" && legacyHandler) {
     return async (ctx) => {
       // Preserve canonical input validation first. A malformed job must fail
@@ -31,12 +119,33 @@ export function getHandler(jobType: JobType): JobHandler | null {
       // lookup error in test, retry, or operational diagnostics.
       if (!ctx.tenderId) return legacyHandler(ctx);
 
+      const expectedRevision = typeof ctx.input.sourceRevision === "string"
+        ? ctx.input.sourceRevision.trim()
+        : "";
+      if (!expectedRevision) {
+        await recordStep(ctx.jobId, {
+          stepName: "engine.source-revision.missing",
+          message: "Engine job is not bound to a persisted source revision.",
+          status: "FAILED",
+        });
+        throw new Error("ENGINE_SOURCE_REVISION_REQUIRED");
+      }
+
       // The queue may start well after the HTTP request that created the job.
       // Refresh authority again at execution time so newly repaired records are
       // promoted automatically and records changed after enqueue remain
       // fail-closed rather than using stale verification.
       const preflight = await prepareCompanyVaultForEngine(ctx.userId);
       if (!preflight) throw new Error("Company Vault profile required before Engine execution");
+
+      await assertCurrentEngineSourceRevision({
+        jobId: ctx.jobId,
+        tenderId: ctx.tenderId,
+        userId: ctx.userId,
+        companyId: preflight.companyId,
+        expectedRevision,
+        checkpoint: "before",
+      });
 
       const result = await legacyHandler(ctx);
 
@@ -139,8 +248,21 @@ export function getHandler(jobType: JobType): JobHandler | null {
         status: "SUCCEEDED",
       });
 
+      // Revalidate after all long-running work and immediately before returning
+      // the result the worker can mark authoritative. Any source change during
+      // execution invalidates this job instead of promoting stale output.
+      await assertCurrentEngineSourceRevision({
+        jobId: ctx.jobId,
+        tenderId: ctx.tenderId,
+        userId: ctx.userId,
+        companyId: preflight.companyId,
+        expectedRevision,
+        checkpoint: "after",
+      });
+
       return {
         ...result,
+        sourceRevision: expectedRevision,
         automaticRequirementCoverage: {
           groundedRequirements: coverageAfterPlan.groundedRequirements,
           persistedLinks: coverageAfterPlan.desiredLinks,
