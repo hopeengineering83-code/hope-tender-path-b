@@ -9,6 +9,8 @@ const read = (p: string) => readFileSync(p, "utf8");
 
 describe("Engine route — production dispatch is always durable and enqueue-only", () => {
   const route = read("app/api/tenders/[id]/engine/route.ts");
+  const enqueueAuthority = read("lib/engine/enqueue-engine-job.ts");
+  const sourceRevision = read("lib/engine/engine-source-revision.ts");
   const handler = read("lib/ai-job-handlers.ts");
 
   it("has no request-bound Engine execution or async opt-in branch", () => {
@@ -36,25 +38,35 @@ describe("Engine route — production dispatch is always durable and enqueue-onl
     assert.match(route, /status:\s*400/);
   });
 
-  it("commits automatic Vault verification before making a job visible", () => {
+  it("commits automatic Vault verification before invoking the canonical enqueue authority", () => {
     const preflight = route.indexOf("prepareCompanyVaultForEngine(userId)");
-    const revision = route.indexOf("computeEngineSourceRevision(prisma");
-    const enqueueTransaction = route.indexOf("const enqueueResult = await prisma.$transaction");
-    const createJob = route.indexOf("tx.aiJob.create");
+    const enqueue = route.indexOf("enqueueEngineJobForCurrentSources(prisma");
     assert.ok(preflight >= 0);
-    assert.ok(revision > preflight);
-    assert.ok(enqueueTransaction > revision);
-    assert.ok(createJob > enqueueTransaction);
+    assert.ok(enqueue > preflight);
+    assert.match(route, /const \{ revision, idempotencyKey, job: enqueueResult \} = enqueue/);
   });
 
-  it("converges duplicate requests on a deterministic source-bound job", () => {
-    assert.match(route, /engineIdempotencyKey/);
-    assert.match(route, /pg_advisory_xact_lock/);
-    assert.match(route, /analysisInputHash:\s*revision\.sourceRevision/);
-    assert.match(route, /jobType:\s*"ENGINE_RUN"/);
-    assert.match(route, /status:\s*"QUEUED"/);
-    assert.match(route, /status:\s*\{ in:\s*\["QUEUED", "RUNNING", "PARTIAL_SUCCESS"\] \}/);
-    assert.match(route, /reusedActiveJob:\s*true/);
+  it("uses one canonical authority for duplicate convergence and persisted job creation", () => {
+    assert.match(route, /enqueueEngineJobForCurrentSources/);
+    assert.doesNotMatch(route, /pg_advisory_xact_lock/);
+    assert.match(enqueueAuthority, /engineIdempotencyKey/);
+    assert.match(enqueueAuthority, /pg_advisory_xact_lock/);
+    assert.match(enqueueAuthority, /analysisInputHash:\s*revision\.sourceRevision/);
+    assert.match(enqueueAuthority, /jobType:\s*"ENGINE_RUN"/);
+    assert.match(enqueueAuthority, /status:\s*"QUEUED"/);
+    assert.match(enqueueAuthority, /status:\s*\{ in:\s*\["QUEUED", "RUNNING", "PARTIAL_SUCCESS"\] \}/);
+    assert.match(enqueueAuthority, /reusedActiveJob:\s*true/);
+  });
+
+  it("binds source revision to tender bytes, promoted requirements, and Vault evidence", () => {
+    assert.match(sourceRevision, /requirements:/);
+    assert.match(sourceRevision, /sourceTenderFileId/);
+    assert.match(sourceRevision, /sourceExactQuote/);
+    assert.match(sourceRevision, /sourceConfidence/);
+    assert.match(sourceRevision, /companyDocument\.findMany/);
+    assert.match(sourceRevision, /expert\.findMany/);
+    assert.match(sourceRevision, /project\.findMany/);
+    assert.match(sourceRevision, /requirementCount:\s*tender\.requirements\.length/);
   });
 
   it("returns the persisted job contract with HTTP 202", () => {
@@ -64,7 +76,18 @@ describe("Engine route — production dispatch is always durable and enqueue-onl
     assert.match(route, /sourceRevision:\s*revision\.sourceRevision/);
     assert.match(route, /idempotencyKey/);
     assert.match(route, /statusEndpoint:\s*`\/api\/ai-jobs\/\$\{enqueueResult\.id\}`/);
+    assert.match(route, /requirements:\s*revision\.requirementCount/);
     assert.match(route, /\}, \{ status: 202 \}\);/);
+  });
+
+  it("automatically continues promoted AI analysis into a persisted Engine job", () => {
+    assert.match(handler, /jobType === "AI_ANALYZE"/);
+    assert.match(handler, /ctx\.input\.autoContinue !== true/);
+    assert.match(handler, /result\.terminalStatus !== "SUCCEEDED"/);
+    assert.match(handler, /prepareCompanyVaultForEngine\(ctx\.userId\)/);
+    assert.match(handler, /enqueueEngineJobForCurrentSources\(prisma/);
+    assert.match(handler, /AUTOMATIC_POST_ANALYSIS_CONTINUATION/);
+    assert.match(handler, /automaticEngineJob/);
   });
 
   it("revalidates source revision before execution and before promotion", () => {
