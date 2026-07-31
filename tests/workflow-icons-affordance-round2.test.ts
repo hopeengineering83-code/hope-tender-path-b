@@ -32,11 +32,14 @@ describe("Next Required Action icons", () => {
 });
 
 describe("workflow actions have visible semantic icons and labels", () => {
-  it("Build Plan uses DocumentIcon", () => {
+  it("Build Plan uses DocumentIcon for automatic build-and-verify", () => {
     const source = read("components/build-submission-plan-button.tsx");
     assert.match(source, /<DocumentIcon \/>/);
-    assert.match(source, /Build plan draft/);
-    assert.match(source, /Confirm reviewed Build Plan/);
+    assert.match(source, /Build and verify plan/);
+    assert.match(source, /Rebuild and verify plan/);
+    assert.match(source, /No manual confirmation is required/);
+    assert.match(source, /Build Plan automatically source-verified/);
+    assert.doesNotMatch(source, /Confirm reviewed Build Plan/);
   });
 
   it("evidence actions use PaperclipIcon and LinkIcon remains exported", () => {
