@@ -199,10 +199,7 @@ describe("Requirement Coverage panel — coverage 0% does not say 'acceptable tr
       src.includes("coveragePct > 0"),
       "must check coveragePct > 0 before showing 'acceptable traceability'",
     );
-    assert.ok(
-      src.includes("No compliance coverage has been confirmed yet"),
-      "must show 'No compliance coverage has been confirmed yet' when coverage is 0",
-    );
+    assert.ok(src.includes("Automatic verification running"), "must show the neutral automatic state when coverage is 0");
   });
 });
 

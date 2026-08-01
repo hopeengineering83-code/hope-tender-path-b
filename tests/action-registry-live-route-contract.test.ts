@@ -43,7 +43,7 @@ describe("action registry matches production route owners", () => {
   it("does not invent a POST matching endpoint", () => {
     const route = read("app/api/tenders/[id]/matches/route.ts");
     assert.match(route, /export async function GET/);
-    assert.match(route, /export async function PUT/);
+    assert.doesNotMatch(route, /export async function PUT/);
     assert.doesNotMatch(route, /export async function POST/);
     assert.equal(getTenderAction("MATCH_EVIDENCE").mutation, null);
   });

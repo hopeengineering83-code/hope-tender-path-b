@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 17:45 UTC — Codex (GPT-5.6 Sol), PR #1175 full-suite stale-contract closure
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `ee45407`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** both exact-head CI copies progressed through PostgreSQL and the full suite, then exposed three additional assertions that still described removed behavior: a live-route test required manual `PUT /matches`; a zero-coverage test required superseded non-neutral copy; and a presentation test required check/warning/chevron icons in the retired dashboard instead of the shared canonical panel. Updated those tests to enforce the intended goal: GET-only matching, `Automatic verification running`, and the canonical panel's single warning/disclosure icons with no repeated check icon.
+- **Files changed:** `tests/action-registry-live-route-contract.test.ts`, `tests/canonical-workflow-truth-precondition-gates.test.ts`, `tests/compliance-gap-export-parity.test.ts`, `operator_handoff.md`.
+- **Tests / checks:** all newly exposed static assertions pass along with the earlier 24 focused tests; release integrity has zero failures; `git diff --check` passes. The local combined file also contains PostgreSQL cases that cannot reach the configured Neon host here, but those same database cases passed in exact-head CI before the stale static assertions failed.
+- **Completion assessment:** all known application and in-between contract gaps are corrected. A final exact-head CI/capture rerun is still required for the remaining external acceptance percentage.
+- **Next action:** push, require exact-head checks green, download/inspect capture evidence, and record final acceptance.
+- **Merge status:** not reviewed — corrections pass locally; exact-head external acceptance pending.
+
 ### 2026-08-01 17:33 UTC — Codex (GPT-5.6 Sol), PR #1175 exact-head full-suite correction
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `54124fa4`; zero inline comments/reviews. No merge or production deployment.

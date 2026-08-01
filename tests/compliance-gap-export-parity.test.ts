@@ -198,9 +198,11 @@ describe("matching presentation removes legacy raw Unicode prefixes", () => {
   });
 
   it("renders trust and selection states with icon components", () => {
-    assert.match(dashboard, /CheckIcon/);
-    assert.match(dashboard, /WarningIcon/);
-    assert.match(dashboard, /ChevronDownIcon/);
+    assert.match(dashboard, /MatchingSelectedEvidencePanel/);
+    const canonical = read("components/matching-selected-evidence-panel.tsx");
+    assert.match(canonical, /WarningIcon/);
+    assert.match(canonical, /ChevronDownIcon/);
+    assert.doesNotMatch(canonical, /CheckIcon/);
     assert.doesNotMatch(dashboard, /[✓⚠▲▼←→]/u);
   });
 });
