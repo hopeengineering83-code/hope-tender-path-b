@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 15:25 UTC — Codex (GPT-5.6 Sol), PR #1175 exact-head Engine verification
+
+- **Branch / PR:** `work`, aligned exactly to draft PR #1175 head `19d97609920d3f808542387f90bf3b3c7ffab824` on `release/consolidated-recovery-20260717`; no inline comments or submitted reviews.
+- **Scope:** verification-only follow-up for the screenshot-reported Company Vault → AI Analyze → durable Run Engine failure. Reconciled the initially stale local checkout to GitHub shared truth, downloaded and inspected the exact-head CI and route/screenshot artifacts, verified the PostgreSQL regression for Engine self-invalidation, and checked the exact-head Vercel deployment identity/health. No application behavior, schema, migration, dependency, or gate changed.
+- **Files changed:** `operator_handoff.md` only.
+- **Tests / evidence:** both duplicated exact-head CI workflows passed migrations, critical schema, zero drift, typecheck, lint, 8,916/8,916 unit/PostgreSQL assertions, production build, browser acceptance, and source-mutation checks. The database suite specifically passed preservation of the Engine revision after derived requirement replacement and supersession after real tender source-byte changes. Exact-head route capture covered 111/111 cases with zero critical, overflow, or warning findings. The authenticated browser suite passed 181 tests and four documented conditional skips, including the durable upload/automatic-analysis golden flow and Company Vault routes.
+- **CI / deployment:** all current PR checks are green. Vercel deployment `dpl_GuASMSrwN75hqS5ima8GcEGDS4Tu` is READY at `https://hope-tender-path-9gp9xz79y-hopeengineering83-codes-projects.vercel.app`; `/api/version` returned `19d97609`, and `/api/health` returned healthy with exact release SHA, durable private Blob storage, required tables present, and 8/10 providers configured.
+- **Risks / assumptions:** the supplied real-user failed job itself was not mutated or replayed because its credentials are not available to automation. Revision v3 ensures its UI retry creates/reuses the corrected immutable-input revision and supersedes the failed v2 row. Repository, PostgreSQL, browser, capture, build, and exact preview checks expose no remaining known defect in the scoped path.
+- **Next action:** Hope can press **Retry durable Engine** on the supplied tender in the exact-head preview; no code or manual Company Vault review step remains before automatic processing.
+- **Merge status:** scoped code is verified and safe with all exact-head checks green; PR #1175 remains draft and must not be merged without Hope's explicit approval.
+
 ### 2026-08-01 15:08 UTC — Codex (GPT-5.6 Sol), PR #1175 updated-head Engine verification
 
 - **Branch / PR:** local `work` at exact draft PR #1175 head `7899ebc`; target `integration/controlled-recovery`. GitHub reports zero inline comments and zero submitted reviews.
