@@ -7,6 +7,8 @@ import { actionableEngineError } from "../../../../../lib/engine/actionable-engi
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { enqueueJob, findActiveEngineRunForTender } from "../../../../../lib/ai-jobs";
+import { parseEngineRequestOptions } from "../../../../../lib/engine/engine-request-options";
 
 // Vercel route timeout — engine runs analyze + extract + match. Default
 // 10s is too short. 60 = Hobby max; Pro uses its own plan limit.
@@ -42,6 +44,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   try {
     await prismaReady;
+    const requestOptions = parseEngineRequestOptions(req.url);
 
     const { id } = await params;
     const tender = await prisma.tender.findFirst({
@@ -115,8 +118,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: "Engine run blocked: tender analysis used regex fallback on weak extraction — re-extract and re-run AI Analyze before running the engine.", code: "ANALYSIS_FROM_WEAK_EXTRACTION", nextAction: "RERUN_AI_ANALYZE", hint: "AI Analyze fell back to regex because extraction was too weak. Fix extraction quality and re-run AI Analyze before running the engine.", diagnosticId }, { status: 422 });
     }
 
+    if (requestOptions.async) {
+      const active = await findActiveEngineRunForTender(id, userId);
+      const job = active ?? await enqueueJob({
+        userId,
+        tenderId: id,
+        jobType: "ENGINE_RUN",
+        input: {
+          source: "engine-route",
+          safe: requestOptions.safe,
+          skipAiRematch: requestOptions.skipAiRematch,
+          ...(requestOptions.maxChars ? { maxChars: requestOptions.maxChars } : {}),
+        },
+      });
+      return NextResponse.json({
+        success: true,
+        ok: true,
+        async: true,
+        jobId: job.id,
+        reused: Boolean(active),
+        message: active ? "An Engine run is already queued or running." : "Engine queued for automatic background processing.",
+        diagnosticId,
+      }, { status: 202 });
+    }
+
     const deadlineAt = Date.now() + 50_000;
-    const result = await runTenderEngine(id, userId, undefined, { deadlineAt });
+    const hasExplicitRunMode = requestOptions.safe || requestOptions.skipAiRematch || requestOptions.maxChars !== undefined;
+    const result = hasExplicitRunMode
+      ? await runTenderEngine(id, userId, undefined, {
+          deadlineAt,
+          safe: requestOptions.safe,
+          skipAiRematch: requestOptions.skipAiRematch,
+          maxChars: requestOptions.maxChars,
+        })
+      : await runTenderEngine(id, userId, undefined, { deadlineAt });
     const engineMeta = result as {
       partial?: boolean;
       blockers?: string[];

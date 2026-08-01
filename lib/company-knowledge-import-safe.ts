@@ -37,6 +37,26 @@ const EXPERT_IMPORT_CATEGORIES = new Set(["EXPERT_CV"]);
 const PROJECT_IMPORT_CATEGORIES = new Set(["PROJECT_REFERENCE", "PROJECT_CONTRACT", "PORTFOLIO"]);
 const SUPPORT_ONLY_CATEGORIES = new Set(["COMPANY_PROFILE", "LEGAL_REGISTRATION", "FINANCIAL_STATEMENT", "MANUAL", "COMPLIANCE_RECORD", "CERTIFICATION", "OTHER"]);
 
+export function requiresStructuredCompanyKnowledgeImport(category: string): boolean {
+  return EXPERT_IMPORT_CATEGORIES.has(category) || PROJECT_IMPORT_CATEGORIES.has(category);
+}
+
+export function isUsableCompanyDocumentText(text: string | null | undefined, minimumChars = 100): boolean {
+  const normalized = (text ?? "").trim();
+  return normalized.length >= minimumChars && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(normalized);
+}
+
+export function planAutomaticCompanyVaultReview<T extends { id: string; category: string; extractedText: string | null; aiExtractionStatus: string }>(documents: T[]) {
+  const awaiting = documents.filter((document) =>
+    document.aiExtractionStatus !== "EXTRACTED" && isUsableCompanyDocumentText(document.extractedText),
+  );
+  return {
+    awaiting,
+    supportDocumentIds: awaiting.filter((document) => !requiresStructuredCompanyKnowledgeImport(document.category)).map((document) => document.id),
+    requiresStructuredImport: awaiting.some((document) => requiresStructuredCompanyKnowledgeImport(document.category)),
+  };
+}
+
 // ─── domain inference (regex fallback) ───────────────────────────────────────
 
 function inferServices(text: string): string[] {
@@ -364,16 +384,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
         logger.warn(`[company-knowledge-import] Category enforcement dropped ${droppedExperts.length} expert(s) and ${droppedProjects.length} project(s).`);
       }
 
-      // Support documents are reviewed directly by compliance matching rather
-      // than converted into Expert/Project rows. Mark every usable document as
-      // processed here so Run Engine does not repeatedly re-import the same
-      // Vault on each click merely because a legal/financial/profile document
-      // correctly produced no personnel or project records.
-      const reviewedDocuments = docs.filter((doc) => {
-        const text = (doc.extractedText ?? "").trim();
-        return text.length >= 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(text);
-      });
-      for (const doc of reviewedDocuments) {
+      for (const doc of [...expertDocs, ...projectDocs]) {
         await prisma.companyDocument.update({
           where: { id: doc.id },
           data: { aiExtractionStatus: "EXTRACTED", aiExtractedAt: new Date(), aiExtractionError: null },
@@ -501,7 +512,7 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
   // matching, its automatic Vault review is complete even when no AI provider
   // is configured for structured personnel/project extraction.
   const processedSupportDocIds = docs
-    .filter((doc) => isSupportOnlyDoc(doc) && (doc.extractedText ?? "").trim().length >= 100)
+    .filter((doc) => isSupportOnlyDoc(doc) && isUsableCompanyDocumentText(doc.extractedText))
     .map((doc) => doc.id);
   if (processedSupportDocIds.length > 0) {
     await prisma.companyDocument.updateMany({

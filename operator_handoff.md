@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 13:04 UTC — Codex (GPT-5.6 Sol), PR #1175 follow-up
+
+- **Branch / PR:** `work`; requested PR #1175 follow-up. The checkout still has no Git remote or `gh` CLI, so live inline review comments, PR head, CI, and preview screenshots could not be fetched; updated PR metadata was submitted with `make_pr` after commit.
+- **Scope:** closed remaining Company Vault ↔ AI Analyze ↔ Run Engine gaps found by re-auditing the prior commit. The production engine route now honors the UI's real `async`, Safe Mode, skip-rematch, and bounded `maxChars` parameters; async requests idempotently enqueue/reuse an `ENGINE_RUN` job and return HTTP 202 + `jobId`. Automatic Vault review now separates support-only status updates from structured CV/project importing, reloads Vault state before analysis/matching, and runs inside the engine audit try/catch. Requirement evidence needs multiple meaningful term matches, preventing single generic-word false positives.
+- **Files changed:** `app/api/tenders/[id]/engine/route.ts`, `lib/engine/engine-request-options.ts`, `lib/engine/run-tender-engine.ts`, `lib/company-knowledge-import-safe.ts`, `lib/engine/compliance.ts`, `tests/company-vault-run-engine-integration.test.ts`, `operator_handoff.md`.
+- **Tests:** focused integration tests passed 7/7; `npx tsc --noEmit` passed; `npm run lint -- --quiet` passed; five related engine/AI/runtime suites passed after one stale structural assertion was accommodated (including 37/37 engine-runtime tests). A full `npm test` attempt reached the DB-behavioral suite but the configured Neon host remained unreachable; the run was terminated after the environment-only DB failure. Production build preflight passed with local placeholder configuration, but the Next build did not finish in the available process environment and left no `.next/BUILD_ID`.
+- **CI / deployment:** unavailable in this checkout; no preview or deployment created.
+- **Known risks / assumptions:** source grounding and final-release safeguards remain fail-closed. The scoped automatic path is covered locally, but authenticated database-backed execution and browser screenshots still require a reachable PR #1175 preview/database.
+- **Next action:** run PR #1175 CI and its authenticated Playwright flow in the connected GitHub/Vercel environment, then capture the Run Engine panel plus queued-job completion screenshot.
+- **Merge status:** not reviewed — scoped code checks pass; external DB/browser/CI validation remains unavailable.
+
 ### 2026-08-01 12:49 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `work`; requested target PR #1175. This checkout has no Git remote and no `gh` CLI, so the live PR head, open-PR overlap, screenshots, CI, and deployment could not be fetched or updated directly; PR metadata was prepared after the local commit through the required `make_pr` integration.

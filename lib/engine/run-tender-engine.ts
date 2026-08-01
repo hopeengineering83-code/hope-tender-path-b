@@ -15,7 +15,10 @@ import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
-import { importCompanyKnowledgeFromDocuments } from "../company-knowledge-import-safe";
+import {
+  importCompanyKnowledgeFromDocuments,
+  planAutomaticCompanyVaultReview,
+} from "../company-knowledge-import-safe";
 
 // ─── Vercel function-budget reserves ────────────────────────────────────
 // The engine route passes deadlineAt = Date.now() + 50_000 so the whole run
@@ -152,23 +155,10 @@ export async function runTenderEngine(
   let company = await loadCompanyVault();
   if (!company) throw new Error("Company profile required before engine run");
 
-  // Run Engine is the orchestration boundary: users should not have to visit a
-  // separate Company Vault repair screen before tender matching can see newly
-  // uploaded evidence. Automatically run the existing source-bound importer
-  // for usable documents that have not completed knowledge extraction, then
-  // reload the Vault so this same engine run uses the refreshed records.
-  const documentsAwaitingAutomaticReview = company.documents.filter((document) =>
-    document.aiExtractionStatus !== "EXTRACTED" &&
-    (document.extractedText ?? "").trim().length >= 100 &&
-    !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test((document.extractedText ?? "").trim()),
-  );
+  const automaticReviewPlan = planAutomaticCompanyVaultReview(company.documents);
+  const documentsAwaitingAutomaticReview = automaticReviewPlan.awaiting;
   let automaticVaultReview = null as Awaited<ReturnType<typeof importCompanyKnowledgeFromDocuments>> | null;
-  if (documentsAwaitingAutomaticReview.length > 0) {
-    progress("engine.company.review", `Automatically reviewing ${documentsAwaitingAutomaticReview.length} new Company Vault document(s)`);
-    automaticVaultReview = await importCompanyKnowledgeFromDocuments(company.id);
-    company = await loadCompanyVault();
-    if (!company) throw new Error("Company profile became unavailable during automatic Vault review");
-  }
+  let automaticallyReviewedSupportDocuments = 0;
 
   const engineRunId = randomUUID();
   const startedAt = new Date();
@@ -183,13 +173,35 @@ export async function runTenderEngine(
       tenderFileCount: tender.files.length,
       companyExpertCount: company.experts.length,
       companyProjectCount: company.projects.length,
-      automaticVaultReview,
+      automaticVaultReviewPendingDocumentCount: documentsAwaitingAutomaticReview.length,
       destructiveCurrentStateRefresh: false,
       note: "Current-state matching/compliance artifacts are refreshed in place; generated document history is preserved by superseding older documents instead of deleting them.",
     },
   });
 
   try {
+    // Run Engine is the orchestration boundary: support evidence needs no
+    // separate repair/import click, while CV/project sources go through the
+    // existing source-bound structured importer. Keep this inside the audited
+    // try/catch so importer failures produce a TENDER_ENGINE_RUN_FAILED audit
+    // instead of escaping before the engine run is traceable.
+    if (documentsAwaitingAutomaticReview.length > 0) {
+      progress("engine.company.review", `Automatically reviewing ${documentsAwaitingAutomaticReview.length} new Company Vault document(s)`);
+      const supportDocumentIds = automaticReviewPlan.supportDocumentIds;
+      if (supportDocumentIds.length > 0) {
+        const reviewed = await prisma.companyDocument.updateMany({
+          where: { companyId: company.id, id: { in: supportDocumentIds } },
+          data: { aiExtractionStatus: "EXTRACTED", aiExtractedAt: new Date(), aiExtractionError: null },
+        });
+        automaticallyReviewedSupportDocuments = reviewed.count;
+      }
+      if (automaticReviewPlan.requiresStructuredImport) {
+        automaticVaultReview = await importCompanyKnowledgeFromDocuments(company.id);
+      }
+      company = await loadCompanyVault();
+      if (!company) throw new Error("Company profile became unavailable during automatic Vault review");
+    }
+
     progress("engine.analyze", "Analyzing tender requirements (extracting structured requirements)");
     let analysis: ReturnType<typeof analyzeTender>;
     let analysisMethod: "AI" | "REGEX_FALLBACK_AI_DISABLED" | "REGEX_FALLBACK_NO_TEXT" | "REGEX_FALLBACK_AI_ERROR" = "REGEX_FALLBACK_AI_DISABLED";
@@ -721,6 +733,7 @@ export async function runTenderEngine(
         reviewNeeded,
         knowledgeReadiness,
         automaticVaultReview,
+        automaticallyReviewedSupportDocuments,
         mainEngineAIRematch,
       },
     });

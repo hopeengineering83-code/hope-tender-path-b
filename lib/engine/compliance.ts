@@ -26,6 +26,27 @@ export function findSupportDocument(knowledge: CompanyKnowledgeSnapshot, pattern
   });
 }
 
+const REQUIREMENT_MATCH_STOP_WORDS = new Set([
+  "company", "document", "documents", "evidence", "provide", "required", "requirement",
+  "submission", "tender", "proposal", "technical", "valid", "form", "forms",
+]);
+
+export function findRequirementSupportDocument(knowledge: CompanyKnowledgeSnapshot, requirement: RequirementDraft) {
+  const terms = `${requirement.title} ${requirement.description}`
+    .toLowerCase()
+    .match(/[a-z0-9]{4,}/g)
+    ?.filter((term, index, all) => !REQUIREMENT_MATCH_STOP_WORDS.has(term) && all.indexOf(term) === index)
+    .slice(0, 8) ?? [];
+  if (terms.length === 0) return undefined;
+  const requiredMatches = terms.length === 1 ? 1 : 2;
+  return knowledge.documents.find((doc) => {
+    const extractedText = (doc.extractedText ?? "").trim();
+    if (extractedText.length < 40 || /^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(extractedText)) return false;
+    const searchableEvidence = `${doc.category} ${doc.originalFileName} ${extractedText}`.toLowerCase();
+    return terms.filter((term) => searchableEvidence.includes(term)).length >= requiredMatches;
+  });
+}
+
 function nonCriticalRequirement(type: string): boolean {
   return ["FORMAT", "SUBMISSION_RULE", "FORM", "ANNEX", "SCHEDULE", "TECHNICAL", "METHODOLOGY", "COMPANY_PROFILE", "DECLARATION"].includes(type);
 }
@@ -68,14 +89,7 @@ export function buildCompliance(
     const financialDocument = findSupportDocument(knowledge, [/FINANCIAL_STATEMENT/i, /audit/i, /financial/i, /turnover/i, /balance sheet/i]);
     const complianceDocument = findSupportDocument(knowledge, [/CERTIFICATION/i, /COMPLIANCE_RECORD/i, /MANUAL/i, /declaration/i, /certificate/i, /policy/i, /manual/i]);
     const profileDocument = findSupportDocument(knowledge, [/COMPANY_PROFILE/i, /company profile/i, /service lines/i, /consultancy/i]);
-    const requirementTerms = req.title
-      .replace(/[.*+?^${}()|[\]\\]/g, " ")
-      .split(/\s+/)
-      .filter((word) => word.length > 3)
-      .slice(0, 4);
-    const requirementDocument = requirementTerms.length > 0
-      ? findSupportDocument(knowledge, [new RegExp(requirementTerms.join("|"), "i")])
-      : undefined;
+    const requirementDocument = findRequirementSupportDocument(knowledge, req);
 
     if (req.requirementType === "EXPERT") {
       const denominator = Math.max(req.requiredQuantity || 1, 1);
@@ -105,14 +119,14 @@ export function buildCompliance(
       supportStrength = legalCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
       evidenceSummary = legalCount > 0 ? `${legalCount} legal/company registration evidence source(s) automatically reviewed and matched.` : "No relevant legal/company registration evidence was found in the Company Vault.";
-      evidenceType = "LEGAL_RECORD";
+      evidenceType = legalCount > 0 ? "LEGAL_RECORD" : "UNMAPPED";
       evidenceSource = legalCount > 0 ? "Company legal/support documents" : "No legal records found";
       evidenceReference = knowledge.legalRecords[0]?.referenceNumber ?? knowledge.legalRecords[0]?.title ?? legalDocument?.originalFileName;
     } else if (["FINANCIAL", "FINANCIAL_CAPACITY"].includes(req.requirementType)) {
       supportStrength = financialCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
       evidenceSummary = financialCount > 0 ? `${financialCount} financial evidence source(s) automatically reviewed and matched.` : "No relevant financial evidence was found in the Company Vault.";
-      evidenceType = "FINANCIAL_RECORD";
+      evidenceType = financialCount > 0 ? "FINANCIAL_RECORD" : "UNMAPPED";
       evidenceSource = financialCount > 0 ? "Company financial/support documents" : "No financial records found";
       evidenceReference = knowledge.financialRecords[0] ? `${knowledge.financialRecords[0].recordType} ${knowledge.financialRecords[0].fiscalYear}` : financialDocument?.originalFileName;
     } else if (["COMPLIANCE", "CERTIFICATION", "DECLARATION"].includes(req.requirementType)) {
@@ -126,7 +140,7 @@ export function buildCompliance(
       supportStrength = companyProfileCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 1 ? "SUPPORTED" : "UNSUPPORTED";
       evidenceSummary = supportStrength >= 1 ? "Company profile/support document evidence is available." : "Company profile evidence is missing.";
-      evidenceType = "COMPANY_DOCUMENT";
+      evidenceType = supportStrength >= 1 ? "COMPANY_DOCUMENT" : "UNMAPPED";
       evidenceSource = supportStrength >= 1 ? "Company profile/support documents" : "No company profile found";
       evidenceReference = profileDocument?.originalFileName;
     } else if (isProposalResponseRequirement(req.requirementType)) {
@@ -135,8 +149,8 @@ export function buildCompliance(
       evidenceSummary = requirementDocument || selectedEvidenceCount > 0
         ? `${requirementDocument ? "1 relevant Company Vault document" : "No relevant Company Vault document"}, ${selectedExperts.length} selected expert(s), ${selectedProjects.length} selected project reference(s), and generated response sections can support this proposal-response requirement.`
         : "The proposal generator can write this response section, but no supporting company evidence is mapped yet.";
-      evidenceType = "PROPOSAL_RESPONSE";
-      evidenceSource = "Generated proposal response + company evidence library";
+      evidenceType = requirementDocument || selectedEvidenceCount > 0 ? "PROPOSAL_RESPONSE" : "UNMAPPED";
+      evidenceSource = requirementDocument || selectedEvidenceCount > 0 ? "Generated proposal response + relevant Company Vault evidence" : "Generated response only; no Company Vault evidence matched";
       evidenceReference = requirementDocument?.originalFileName ?? selectedExperts[0]?.expertId ?? selectedProjects[0]?.projectId;
     } else {
       supportStrength = requirementDocument || selectedEvidenceCount > 0 ? 0.9 : 0.55;
@@ -144,7 +158,7 @@ export function buildCompliance(
       evidenceSummary = requirementDocument || selectedEvidenceCount > 0
         ? `${requirementDocument ? "A relevant Company Vault document" : "Selected expert/project evidence"} and generated response sections can support this strategic requirement.`
         : "No mapped company evidence yet; proposal narrative can be drafted but should be verified.";
-      evidenceType = "COMPANY_DOCUMENT";
+      evidenceType = requirementDocument ? "COMPANY_DOCUMENT" : selectedEvidenceCount > 0 ? "SELECTED_COMPANY_EVIDENCE" : "UNMAPPED";
       evidenceSource = requirementDocument ? "Relevant Company Vault document + generated response" : selectedEvidenceCount > 0 ? "Selected Company Vault expert/project evidence + generated response" : "Generated response only";
       evidenceReference = requirementDocument?.originalFileName ?? selectedExperts[0]?.expertId ?? selectedProjects[0]?.projectId;
     }
