@@ -132,19 +132,42 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
     assert.equal(rows[0]!.analysisInputHash, [...revisions][0]);
   });
 
-  it("does not supersede its immutable input revision when Engine-owned requirement output changes", async () => {
+  it("does not supersede its immutable input revision after the Engine replaces derived output", async () => {
     const before = await prisma.aiJob.findFirstOrThrow({
       where: { userId, tenderId, jobType: "ENGINE_RUN", status: "QUEUED" },
       orderBy: { createdAt: "desc" },
     });
 
-    await prisma.tenderRequirement.update({
-      where: { id: requirementId },
+    // Mirror the source-revision-relevant shape of runTenderEngine's own
+    // transaction: it updates Tender workflow fields and replaces derived
+    // TenderRequirement rows before the worker performs its post-run stale
+    // source checkpoint. None of these Engine-owned writes may invalidate the
+    // immutable tender-file + Company Vault input revision.
+    await prisma.tender.update({
+      where: { id: tenderId },
       data: {
-        description: "Submit a current company profile with legal registration evidence.",
-        sourceExactQuote: "Submit a current company profile with legal registration evidence.",
+        status: "MATCHED",
+        stage: "MATCHING",
+        readinessScore: 73,
+        notes: "Engine-owned derived workflow output",
       },
     });
+    await prisma.tenderRequirement.delete({ where: { id: requirementId } });
+    const replacement = await prisma.tenderRequirement.create({
+      data: {
+        tenderId,
+        title: "Provide company profile and registration evidence",
+        description: "Submit the current company profile with legal registration evidence.",
+        requirementType: "DOCUMENT",
+        priority: "MANDATORY",
+        sourcePageNumber: 1,
+        sourceExactQuote: "Submit the current company profile with legal registration evidence.",
+        sourceExtractionMethod: "text",
+        sourceConfidence: 1,
+      },
+      select: { id: true },
+    });
+    requirementId = replacement.id;
 
     const next = await enqueueEngineJobForCurrentSources(prisma, {
       userId,

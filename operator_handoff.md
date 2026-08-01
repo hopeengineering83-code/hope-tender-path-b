@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 15:08 UTC — Codex (GPT-5.6 Sol), PR #1175 updated-head Engine verification
+
+- **Branch / PR:** local `work` at exact draft PR #1175 head `7899ebc`; target `integration/controlled-recovery`. GitHub reports zero inline comments and zero submitted reviews.
+- **Scope:** independently verified the updated-head repair for the screenshot's durable Engine precondition failure. Strengthened the PostgreSQL regression to mirror `runTenderEngine`'s complete derived-output mutation shape: update Tender workflow fields, delete/recreate TenderRequirement output, then prove the canonical source revision and active job remain unchanged. Real tender-file byte changes remain separately proven to supersede the stale job.
+- **Files changed:** `tests/engine-enqueue-authority.integration.test.ts`, `operator_handoff.md`.
+- **Tests / CI:** predecessor exact-head CI is fully green: PostgreSQL canonical Engine enqueue suite 4/4, complete unit/database suite 8,916/8,916, production build, 180 Playwright passes with three documented skips, exact-head route capture, dependency audit, and source-mutation checks. Downloaded and inspected both exact-head acceptance artifacts. Local focused rerun and updated-head CI are required for this strengthened assertion.
+- **Deployment:** exact-head Vercel preview `dpl_3x33cf81Nu8Co7poNDA8SXEipYGW` is READY at `https://hope-tender-path-9csoukcyu-hopeengineering83-codes-projects.vercel.app`; `/api/version` reports `7899ebc4`, and `/api/health` reports healthy schema, durable private Blob storage, and 8/10 configured providers.
+- **Risks / assumptions:** CI provider credentials intentionally exercise deterministic fallback rather than paid provider output. The scoped Engine revision/queue failure is behaviorally covered against PostgreSQL; owner-data preview interaction remains credential-controlled.
+- **Next action:** push this strengthened proof, require updated-head CI green, and keep #1175 draft until Hope clears the repository's separate external release holds.
+- **Merge status:** not reviewed — predecessor is green; strengthened updated-head CI pending.
+
 ### 2026-08-01 14:29 UTC — Codex (GPT-5.6 Sol), PR #1175 Run Engine self-invalidation repair
 
 - **Branch / PR:** local `work`, aligned with and intended for draft PR #1175 head branch `release/consolidated-recovery-20260717`; predecessor head `ee27f98`. GitHub reported no inline comments or submitted reviews; dependency/Vercel checks passed while capture and full CI were still running when this repair began.
