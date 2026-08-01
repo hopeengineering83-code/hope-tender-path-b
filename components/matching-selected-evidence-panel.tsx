@@ -47,9 +47,11 @@ function EvidenceList({ title, rows }: { title: string; rows: SelectedEvidenceCa
 export function MatchingSelectedEvidencePanel({
   experts,
   projects,
+  sectionId = "matching-selected-evidence",
 }: {
   experts: SelectedEvidenceCandidate[];
   projects: SelectedEvidenceCandidate[];
+  sectionId?: string;
 }) {
   // A stale selected flag must never make draft, tampered, or otherwise
   // unpromoted Company Vault data visible as selected evidence. Matching uses
@@ -62,7 +64,7 @@ export function MatchingSelectedEvidencePanel({
   const hasSelection = selectedExperts.length + selectedProjects.length > 0;
 
   return (
-    <section id="matching-selected-evidence" className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+    <section id={sectionId} className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <div>
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Canonical persisted selection</p>
         <h2 className="mt-1 text-lg font-bold text-slate-900">Matching and Selected Evidence</h2>

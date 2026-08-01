@@ -89,6 +89,12 @@ describe("canonical Company Vault and Engine workflow panels", () => {
     assert.equal(isEligibleSelectedEvidence(candidate("TAMPERED")), false);
   });
 
+  it("keeps global matching ids unique and long tender titles mobile-safe", () => {
+    assert.match(matching, /sectionId = "matching-selected-evidence"/);
+    assert.match(matchingDashboard, /sectionId=\{`matching-selected-evidence-\$\{tender\.id\}`\}/);
+    assert.match(matchingDashboard, /summary className="[^"]*break-all/);
+  });
+
   it("never describes partial support as complete traceability", () => {
     assert.doesNotMatch(requirements, /All requirements and selected evidence have acceptable traceability/);
     assert.match(requirements, /data\.partiallyCovered === 0/);

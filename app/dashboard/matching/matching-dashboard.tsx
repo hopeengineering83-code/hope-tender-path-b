@@ -58,12 +58,16 @@ export function MatchingDashboard({ tenders, pagination }: { tenders: Tender[]; 
             }));
 
             return (
-              <details key={tender.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <summary className="cursor-pointer text-base font-semibold text-slate-900">
+              <details key={tender.id} className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <summary className="cursor-pointer break-all text-base font-semibold text-slate-900">
                   {tender.title}
                 </summary>
                 <div className="mt-4">
-                  <MatchingSelectedEvidencePanel experts={experts} projects={projects} />
+                  <MatchingSelectedEvidencePanel
+                    experts={experts}
+                    projects={projects}
+                    sectionId={`matching-selected-evidence-${tender.id}`}
+                  />
                   <p className="mt-2 text-xs text-slate-500">
                     Showing persisted selections first and up to {tender.expertMatchCount} expert / {tender.projectMatchCount} project match records.
                   </p>

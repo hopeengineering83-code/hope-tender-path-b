@@ -55,7 +55,7 @@ describe("UI gap analysis — canonical actions and disclosure-aware anchors", (
       ["components/final-package-manifest-panel.tsx", /id="final-package-manifest"/],
       ["components/evaluator-objections-panel.tsx", /id="evaluator-objections"/],
       ["components/submission-plan-truth-panel.tsx", /id="submission-plan"/],
-      ["components/matching-selected-evidence-panel.tsx", /id="matching-selected-evidence"/],
+      ["components/matching-selected-evidence-panel.tsx", /sectionId = "matching-selected-evidence"/],
       ["components/export-readiness-panel.tsx", /id="export-readiness"/],
     ];
     for (const [file, pattern] of checks) assert.match(read(file), pattern);

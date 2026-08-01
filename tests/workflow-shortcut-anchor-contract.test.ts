@@ -23,11 +23,10 @@ describe("workflow shortcut anchor contract", () => {
   for (const { anchor, file } of anchors) {
     it(`#${anchor} is attached by ${file}`, () => {
       const source = readFileSync(file, "utf8");
-      assert.match(
-        source,
-        new RegExp(`id=["']${anchor}["']`),
-        `Workflow Control Center targets #${anchor}, but ${file} does not render that id`,
-      );
+      const ownsLiteralId = new RegExp(`id=["']${anchor}["']`).test(source);
+      const ownsDefaultSectionId = new RegExp(`sectionId\\s*=\\s*["']${anchor}["']`).test(source)
+        && /id=\{sectionId\}/.test(source);
+      assert.ok(ownsLiteralId || ownsDefaultSectionId, `Workflow Control Center targets #${anchor}, but ${file} does not render that id`);
     });
   }
 

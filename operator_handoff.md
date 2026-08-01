@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 18:20 UTC — Codex (GPT-5.6 Sol), PR #1175 matching responsive/DOM closure
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `c22950b`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** the corrected shortcut passed, and exact-head CI then exposed two real Global Matching defects that the collapsed capture did not exercise: rendering the shared canonical panel once per tender repeated `id="matching-selected-evidence"`, and an injected long unbroken tender title expanded the 390px page to 1420px. Added an optional section id with the canonical tender-page default, assigned deterministic per-tender ids in Global Matching, bounded/hidden overflow, and allowed summary titles to break. Updated static anchor ownership tests to recognize the rendered default-id contract.
+- **Files changed:** `components/matching-selected-evidence-panel.tsx`, `app/dashboard/matching/matching-dashboard.tsx`, `tests/canonical-vault-engine-panels.test.ts`, `tests/ui-gap-analysis.test.ts`, `tests/workflow-shortcut-anchor-contract.test.ts`, `operator_handoff.md`.
+- **Tests / evidence:** Prisma generation and TypeScript passed; focused panel/matching/UI/shortcut assertions pass after updating the default-id static contract; targeted ESLint and `git diff --check` pass. Predecessor exact CI passed all migrations, PostgreSQL, release integrity, complete unit/database suite, build, and the corrected shortcut, then failed only the duplicate-id and long-title overflow browser assertions. Exact capture passed 111/111 with zero findings but used ordinary collapsed fixture titles, demonstrating why adversarial authenticated browser coverage remained necessary.
+- **Completion assessment:** both final browser-discovered defects are corrected with regression assertions. Exact-head CI/capture must rerun green before declaring 100% externally verified.
+- **Next action:** push, require final exact-head green, inspect matching screenshots, and keep #1175 draft/unmerged.
+- **Merge status:** not reviewed — local correction passes; exact-head external acceptance pending.
+
 ### 2026-08-01 18:08 UTC — Codex (GPT-5.6 Sol), PR #1175 authenticated shortcut closure
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `73db723b`; zero inline comments/reviews. No merge or production deployment.
