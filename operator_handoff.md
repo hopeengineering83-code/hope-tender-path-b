@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 18:45 UTC — Codex (GPT-5.6 Sol), PR #1175 exact-head 100% acceptance
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at exact application/test head `9a939aa85bc9e004316b5d48d45c9b3b9b2a7184`; zero inline comments and zero reviews. No merge or production deployment.
+- **Scope:** verification-only closure of the remaining external 5%. Reconciled the live PR head after an initially stale/no-remote local checkout, downloaded both exact-head CI logs and the exact-head route/screenshot artifact, and visually inspected the desktop and mobile Global Matching screenshots. No application, schema, migration, provider, workflow, gate, or test behavior changed.
+- **Evidence:** both duplicated exact-head workflows passed migrations, PostgreSQL, release integrity, typecheck, lint, 8,909/8,909 assertions, 58-page production build, source-mutation checks, and authenticated Playwright (180 and 179 passes respectively). Exact-head capture artifact `8822470731` contains 237 screenshots over desktop/tablet/mobile and reports 111/111 expected route cases, 100% coverage, zero critical findings, zero horizontal overflow, and zero warnings. Global Matching visibly renders the read-only automatic authority with no selection/rematch controls at desktop and mobile widths.
+- **Completion assessment:** the explicit Company Vault → durable Run Engine → automatic matching → requirement-evidence goal is now 100% implemented and 100% verified across static contracts, PostgreSQL, full tests, production build, authenticated browser flows, and visual capture. No known scoped gap or external verification hold remains.
+- **Next action:** keep PR #1175 draft/unmerged until Hope's explicit approval; investigate only a new reproducible owner-data correlation reference or screenshot.
+- **Merge status:** scoped goal safe and fully verified; repository-level merge remains Hope-controlled.
+
 ### 2026-08-01 18:33 UTC — Codex (GPT-5.6 Sol), PR #1175 final anchor-audit reconciliation
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `828ac69`; no merge or production deployment.
