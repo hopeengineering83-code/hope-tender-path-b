@@ -123,13 +123,6 @@ describe("Gaps M-S — No raw Unicode in remaining components", () => {
     assert.ok(!codeOnly.includes("⚠"), "must not contain ⚠");
   });
 
-  it("ai-rematch-button.tsx has no raw Unicode", () => {
-    const src = read("components/ai-rematch-button.tsx");
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/"[^"]*"/g, '""');
-    assert.ok(!codeOnly.includes("✓"), "must not contain ✓");
-    assert.ok(!codeOnly.includes("⚠"), "must not contain ⚠");
-  });
-
   // "snapshot-consistency-badge.tsx has no raw Unicode" test removed --
   // components/snapshot-consistency-badge.tsx was deleted as unrendered dead
   // code. Its only consumers were components/final-submission-control-center.tsx,
@@ -252,12 +245,6 @@ describe("Gaps T-Z — No raw Unicode in icon-audit round 2", () => {
   it("command-center/version-actions.tsx has no raw Unicode dismiss marks", () => {
     const src = strip(read("app/dashboard/tenders/[id]/command-center/version-actions.tsx"));
     assert.ok(!src.includes("✕"), "must not contain ✕");
-  });
-
-  it("evidence-coverage-panel.tsx heading uses ArrowRightIcon, not raw →", () => {
-    const src = strip(read("components/evidence-coverage-panel.tsx"));
-    assert.ok(!src.includes("→"), "must not contain raw →");
-    assert.match(src, /ArrowRightIcon/);
   });
 
   it("reset-password/page.tsx has no raw Unicode arrow", () => {

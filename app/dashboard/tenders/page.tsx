@@ -208,8 +208,7 @@ export default async function TendersPage({
 
   // Stage counts for pipeline visualization.
   // tender.stage is a free-form String column (not a Prisma enum), and at
-  // least one real production write path (app/api/tenders/[id]/ai-rematch/route.ts
-  // sets stage: "COMPLIANCE") writes a value outside STAGE_ORDER's six
+  // legacy rows can contain values (including "COMPLIANCE") outside STAGE_ORDER's six
   // canonical names — those tenders were previously silently absent from
   // every bucket below, so the bucket counts could sum to less than the
   // "Total" tenders shown above them. otherCount makes that reconcile

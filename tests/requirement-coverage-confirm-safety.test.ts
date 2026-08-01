@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 
 describe("automatic requirement coverage safety", () => {
   const panel = readFileSync("components/requirement-coverage-panel.tsx", "utf8");
-  const evidencePanel = readFileSync("components/evidence-coverage-panel.tsx", "utf8");
   const coverageRoute = readFileSync("app/api/tenders/[id]/requirement-coverage/route.ts", "utf8");
   const syncRoute = readFileSync("app/api/tenders/[id]/requirement-coverage/auto-sync/route.ts", "utf8");
   const confirmRoute = readFileSync("app/api/tenders/[id]/requirement-coverage/confirm/route.ts", "utf8");
@@ -47,12 +46,9 @@ describe("automatic requirement coverage safety", () => {
   });
 
   it("uses the canonical source-verification authority instead of literal REVIEWED labels", () => {
-    assert.match(evidencePanel, /canUseVaultRecord/);
-    assert.match(evidencePanel, /VAULT_REVIEW_CONSUMER_SELECT\.EXPERT/);
-    assert.match(evidencePanel, /VAULT_REVIEW_CONSUMER_SELECT\.PROJECT/);
-    assert.doesNotMatch(evidencePanel, /trustLevel\s*===\s*"REVIEWED"/);
-    assert.doesNotMatch(evidencePanel, /manually link evidence/i);
-    assert.match(evidencePanel, /no confirmation click is required/i);
+    assert.match(panel, /manualConfirmationRequired:\s*false/);
+    assert.doesNotMatch(panel, /manually link evidence/i);
+    assert.match(panel, /no confirmation click is required/i);
   });
 
   it("preserves the old direct-confirm endpoint as a capped compatibility path", () => {

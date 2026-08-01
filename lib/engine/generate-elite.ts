@@ -1336,7 +1336,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // generate-elite, it competes with the 4 parallel section calls +
   // post-passes + DOCX render against Vercel Hobby's 60s function
   // budget. The rematcher's internal REMATCH_TIMEOUT_MS (default 40s)
-  // is for the standalone manual rematch route — too long here. We
+  // belongs to Run Engine's matching pass — too long here. We
   // wrap the parallel pair in our own 18s race guard so the full
   // pipeline keeps room for generation. Skipping this on a slow
   // network just means experts/projects keep their lexical order —

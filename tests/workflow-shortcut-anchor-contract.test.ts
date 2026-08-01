@@ -12,7 +12,7 @@ const anchors: Array<{ anchor: string; file: string }> = [
   { anchor: "requirement-coverage", file: "components/requirement-coverage-panel.tsx" },
   { anchor: "tender-edit-form", file: "app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx" },
   { anchor: "submission-plan", file: "components/submission-plan-truth-panel.tsx" },
-  { anchor: "match-evidence", file: "components/matching-quality-panel.tsx" },
+  { anchor: "matching-selected-evidence", file: "components/matching-selected-evidence-panel.tsx" },
   { anchor: "generated-documents", file: "components/generation-action-panel.tsx" },
   { anchor: "authority-review", file: "components/authority-review-panel.tsx" },
   { anchor: "export-readiness", file: "components/export-readiness-panel.tsx" },
@@ -30,12 +30,6 @@ describe("workflow shortcut anchor contract", () => {
       );
     });
   }
-
-  it("matching keeps both the canonical Stage-7 and historical matching-quality anchors", () => {
-    const source = readFileSync("components/matching-quality-panel.tsx", "utf8");
-    assert.match(source, /id="match-evidence"/);
-    assert.match(source, /id="matching-quality"/);
-  });
 
   // "Workflow Control Center references only contracted primary anchors" test
   // removed -- tender-workflow-action-center.tsx and its dedicated

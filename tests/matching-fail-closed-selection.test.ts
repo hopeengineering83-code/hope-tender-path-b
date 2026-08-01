@@ -5,7 +5,7 @@ import { buildMatches } from "../lib/engine/matching";
 import type { CompanyKnowledgeSnapshot, RequirementDraft } from "../lib/engine/types";
 
 const matchingSource = readFileSync("lib/engine/matching.ts", "utf8");
-const aiRematchRoute = readFileSync("app/api/tenders/[id]/ai-rematch/route.ts", "utf8");
+const engineSource = readFileSync("lib/engine/run-tender-engine.ts", "utf8");
 
 function baseExpert(id: string, profile: string) {
   return {
@@ -68,19 +68,10 @@ describe("matching fail-closed selection", () => {
   });
 
 
-  it("AI rematch cannot apply fallback selections when provider scoring is unavailable", () => {
-    assert.match(aiRematchRoute, /const AI_SELECTION_THRESHOLD = 0\.75/);
-    assert.match(aiRematchRoute, /const AI_CRITICAL_FLOOR_MINIMUM = 5/);
-    assert.match(aiRematchRoute, /function isSelectionEligible\(assessment: CandidateAssessment\): boolean/);
-    assert.match(aiRematchRoute, /assessment\.overallScore >= AI_SELECTION_THRESHOLD/);
-    assert.match(aiRematchRoute, /criticalFloor\(assessment\) >= AI_CRITICAL_FLOOR_MINIMUM/);
-    assert.match(aiRematchRoute, /assessment\.recommendSelection === true/);
-    assert.match(aiRematchRoute, /const eligibleAssessments = assessments\.filter\(isSelectionEligible\)/);
-    assert.match(aiRematchRoute, /AI_REMATCH_UNAVAILABLE_NO_SELECTION/);
-    assert.doesNotMatch(aiRematchRoute, /AI_FALLBACK_APPLIED/);
-    assert.doesNotMatch(aiRematchRoute, /AI_FALLBACK_PREVIEW/);
-    assert.doesNotMatch(aiRematchRoute, /fallbackExpertIds/);
-    assert.doesNotMatch(aiRematchRoute, /fallbackProjectIds/);
+  it("keeps rematching inside the canonical Engine authority", () => {
+    assert.match(engineSource, /applyAIRematchToMainEngine/);
+    assert.match(engineSource, /AI_REMATCH_FAILED_ZERO_EVIDENCE/);
+    assert.doesNotMatch(engineSource, /AI_FALLBACK_APPLIED|AI_FALLBACK_PREVIEW/);
   });
 
   it("returns zero selected candidates when every candidate is below the threshold", () => {

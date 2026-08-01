@@ -7,7 +7,6 @@ const projectRoute = readFileSync("app/api/company/projects/[id]/route.ts", "utf
 const eligibility = readFileSync("lib/engine/matching-eligibility.ts", "utf8");
 const matching = readFileSync("lib/engine/matching.ts", "utf8");
 const engine = readFileSync("lib/engine/run-tender-engine.ts", "utf8");
-const rematch = readFileSync("app/api/tenders/[id]/ai-rematch/route.ts", "utf8");
 const capture = readFileSync("scripts/capture-production-pages.mjs", "utf8");
 
 // Exact-head validation contract for the cleaned PR #1204 product branch.
@@ -35,12 +34,10 @@ describe("PR 1175 final gap repair contracts", () => {
     assert.match(engine, /unsupportedReviewedExpertCount/);
   });
 
-  it("AI rematch filters candidates and commits authoritative state atomically", () => {
-    assert.match(rematch, /canUseVaultRecord\(match\.expert, "MATCHING"\)/);
-    assert.match(rematch, /canUseVaultRecord\(match\.project, "MATCHING"\)/);
-    assert.match(rematch, /prisma\.\$transaction\(async \(tx\)/);
-    assert.match(rematch, /AI_REMATCH_PERSISTENCE_FAILED/);
-    assert.doesNotMatch(rematch, /continuing with remaining assessments/);
+  it("keeps rematching inside the single durable Engine authority", () => {
+    assert.match(engine, /applyAIRematchToMainEngine/);
+    assert.match(engine, /writeScoreBreakdown/);
+    assert.doesNotMatch(engine, /continuing with remaining assessments/);
   });
 
   it("matching relevance fixtures use current verified source bytes", () => {

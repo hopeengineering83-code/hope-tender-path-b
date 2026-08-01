@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 17:13 UTC — Codex (GPT-5.6 Sol), PR #1175 final manual-owner removal
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, started from exact GitHub head `7bfc7324b11dee94f04abeb20fb207e0a9d55ca7`; zero inline comments and zero reviews. No merge or production deployment performed.
+- **Scope / root cause:** the prior tender workspace repair hid the manual matching controls but left a second live `/dashboard/matching` mutation UI, a writable `PUT /matches` selection owner, a standalone `/ai-rematch` route/background handler, and five now-unreferenced panel components. Those paths still contradicted the requested single durable Engine selection/rematch authority. The matching dashboard is now read-only and reuses `MatchingSelectedEvidencePanel`; the manual selection mutation and standalone rematch route/handler/queue admission were removed; obsolete panels were deleted; all workflow links now target the one canonical selected-evidence anchor.
+- **Files changed:** matching dashboard/page contracts, matches API, AI job registry/policy/worker admission, canonical workflow anchors, five deleted standalone panels, focused matching/Engine/UI tests, related stale comments, and `operator_handoff.md`. No schema, migration, provider order, generation gate, export gate, or production configuration changed.
+- **Tests / checks:** Prisma generation passed; TypeScript passed after clearing stale `.next` route types; 100/100 focused authority/UI tests passed; complete zero-warning lint passed; production build passed with 58/58 static pages; `git diff --check` passed. The previous exact head's CI was still running when this audit began; this new head requires its normal PostgreSQL/authenticated-browser/capture checks.
+- **Completion assessment:** implementation coverage for the explicit Company Vault → durable Engine → automatic matching → canonical requirement-evidence prompt is 100% by code-path audit. End-to-end verification is 95% until updated-head CI supplies PostgreSQL, authenticated browser, and screenshot evidence; this is an external verification hold, not a known code gap.
+- **Risks / assumptions:** historical `AI_REMATCH` job rows remain representable by the persisted job type for database compatibility but are no longer admitted, dispatched, or handled. Run Engine retains the sole 12-perspective rematch implementation. Human review remains truthful where separately and legitimately performed, but it is not required by the normal automated workflow.
+- **Next action:** commit/push to PR #1175, require updated-head CI and capture green, inspect the generated authenticated screenshots, and keep the PR draft/unmerged pending Hope's approval.
+- **Merge status:** not reviewed — all local executable checks pass; exact-head external acceptance pending.
+
 ### 2026-08-01 16:56 UTC — Codex (GPT-5.6 Sol), PR #1175 final evidence-panel fail-closed repair
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, started from exact GitHub head `8f396df90a8604c1f4800e5930e8a863830b2446`; zero inline review comments and zero submitted reviews. No merge or production deployment performed.

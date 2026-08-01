@@ -146,13 +146,13 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
           title="Selected experts"
           value={tender.expertMatches.length}
           caption={tender.expertMatches.slice(0, 2).map((m) => m.expert.fullName).join(" · ") || "None"}
-          href={`/dashboard/tenders/${id}#matching-quality`}
+          href={`/dashboard/tenders/${id}#matching-selected-evidence`}
         />
         <StatCard
           title="Selected projects"
           value={tender.projectMatches.length}
           caption={tender.projectMatches.slice(0, 2).map((m) => m.project.name).join(" · ") || "None"}
-          href={`/dashboard/tenders/${id}#matching-quality`}
+          href={`/dashboard/tenders/${id}#matching-selected-evidence`}
         />
         <StatCard
           title="Documents"

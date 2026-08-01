@@ -1,8 +1,7 @@
 // Tenders list — Pipeline stages bucket reconciliation.
 //
 // tender.stage is a free-form String column (prisma/schema.prisma), not a
-// Prisma enum. app/api/tenders/[id]/ai-rematch/route.ts writes
-// stage: "COMPLIANCE" on real tenders, which is not one of the six literal
+// Prisma enum. Legacy rows can contain stage: "COMPLIANCE", which is not one of the six literal
 // stage names (TENDER_INTAKE, ANALYSIS_COMPLETE, PLAN_CONFIRMED,
 // DOCUMENTS_GENERATED, EXPORT_READY, EXPORTED) the tenders list page's
 // "Pipeline stages" strip buckets against. Confirmed live against a seeded
@@ -32,9 +31,7 @@ describe("Tenders list — Pipeline stages bucket reconciliation", () => {
     assert.match(src, /\{otherCount\}/);
   });
 
-  it("app/api/tenders/[id]/ai-rematch/route.ts's stage: \"COMPLIANCE\" write is a confirmed real-world case this must not drop", () => {
-    const rematchSrc = read("app/api/tenders/[id]/ai-rematch/route.ts");
-    assert.match(rematchSrc, /stage:\s*"COMPLIANCE"/);
+  it("keeps legacy COMPLIANCE rows in the Other bucket", () => {
     // STAGE_ORDER must not silently gain a matching entry for it — the fix
     // is the Other bucket, not reclassifying COMPLIANCE into one of the six
     // canonical pipeline stages (that would assert an unverified semantic

@@ -9,7 +9,7 @@ import { listUserJobs, type JobStatus, type JobType } from "../../../lib/ai-jobs
 
 export const dynamic = "force-dynamic";
 
-const VALID_TYPES: JobType[] = ["PROPOSAL_GENERATION", "AI_REMATCH", "EVALUATOR_SIM", "COPILOT_DEEP_ANALYSIS", "PROFILE_FACT_EXTRACTION"];
+const VALID_TYPES: JobType[] = ["PROPOSAL_GENERATION", "EVALUATOR_SIM", "COPILOT_DEEP_ANALYSIS", "PROFILE_FACT_EXTRACTION"];
 const VALID_STATUSES: JobStatus[] = ["QUEUED", "RUNNING", "SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELED"];
 
 export async function GET(req: Request) {

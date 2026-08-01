@@ -96,15 +96,10 @@ describe("single workflow authority regressions from the latest preview", () => 
     assert.match(result.matrices[0]?.evidenceSummary ?? "", /automatically verify/i);
   });
 
-  it("keeps compliance, vault, and generation panels on canonical active evidence", () => {
-    const heatmap = readFileSync(new URL("../components/compliance-heatmap-panel.tsx", import.meta.url), "utf8");
+  it("keeps vault and generation panels on canonical active evidence", () => {
     const vault = readFileSync(new URL("../components/vault-evidence-search-panel.tsx", import.meta.url), "utf8");
     const readiness = readFileSync(new URL("../components/generation-readiness-panel.tsx", import.meta.url), "utf8");
 
-    assert.match(heatmap, /getFinalPackageReadinessModel/);
-    assert.match(heatmap, /canonicalStatusByRequirement/);
-    assert.match(heatmap, /requirements\.map\(\(requirement\)/);
-    assert.match(heatmap, /canonicalStatus\?\.displayStatus/);
     assert.match(vault, /canUseVaultRecord\(record,\s*"GENERATION"\)/);
     assert.match(vault, /Generation-eligible experts/);
     assert.match(readiness, /canMutate && item\.nextAction === "FINALIZE_REQUIRED_PDF"[\s\S]*FinalizeRequiredPdfButton[\s\S]*:\s*<Link/);

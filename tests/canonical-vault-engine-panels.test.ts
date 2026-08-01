@@ -14,6 +14,8 @@ describe("canonical Company Vault and Engine workflow panels", () => {
   const page = read("app/dashboard/tenders/[id]/page.tsx");
   const requirements = read("components/requirement-coverage-panel.tsx");
   const matching = read("components/matching-selected-evidence-panel.tsx");
+  const matchingDashboard = read("app/dashboard/matching/matching-dashboard.tsx");
+  const matchesRoute = read("app/api/tenders/[id]/matches/route.ts");
 
   it("renders only the two canonical evidence authorities", () => {
     assert.match(page, /<RequirementCoveragePanel\b/);
@@ -34,8 +36,22 @@ describe("canonical Company Vault and Engine workflow panels", () => {
   });
 
   it("contains no manual selection, rematch, synchronization, or evidence-link controls", () => {
-    const canonical = `${requirements}\n${matching}`;
+    const canonical = `${requirements}\n${matching}\n${matchingDashboard}`;
     assert.doesNotMatch(canonical, /type="checkbox"|window\.prompt|>\s*Synchronize\s*<|>\s*Refresh\s*<|>\s*(?:Review|Approve|Confirm)\s*</i);
+    assert.doesNotMatch(matchingDashboard, /method:\s*"PUT"|onClick=.*(?:select|match)|aria-pressed|Review knowledge records/i);
+    assert.doesNotMatch(matchesRoute, /export async function PUT|TENDER_EVIDENCE_SELECT|MATERIAL_EVIDENCE_SELECTION_EXCEPTION/);
+  });
+
+  it("deletes obsolete standalone workflow owners", () => {
+    for (const removed of [
+      "selection-approval-panel.tsx",
+      "ai-rematch-button.tsx",
+      "matching-quality-panel.tsx",
+      "evidence-coverage-panel.tsx",
+      "compliance-heatmap-panel.tsx",
+    ]) {
+      assert.equal(fs.existsSync(path.join(root, "components", removed)), false, removed);
+    }
   });
 
   it("uses only neutral automatic states and keeps candidates collapsed", () => {

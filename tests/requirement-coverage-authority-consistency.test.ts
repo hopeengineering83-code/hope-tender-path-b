@@ -64,16 +64,11 @@ describe("requirement coverage authority consistency", () => {
     assert.doesNotMatch(panel, /Fallback: try direct compliance matrix update/);
   });
 
-  it("all three coverage surfaces consume the canonical effective status", () => {
+  it("the sole coverage surface consumes the canonical effective status", () => {
     const api = read("app/api/tenders/[id]/requirement-coverage/route.ts");
-    const heatmap = read("components/compliance-heatmap-panel.tsx");
-    const evidence = read("components/evidence-coverage-panel.tsx");
 
     assert.match(api, /canonicalStatus\?\.displayStatus/);
-    assert.match(heatmap, /getFinalPackageReadinessModel/);
-    assert.match(heatmap, /displayStatus/);
-    assert.match(evidence, /getFinalPackageReadinessModel/);
-    assert.match(evidence, /displayStatus/);
+    assert.match(api, /getFinalPackageReadinessModel/);
   });
 
   it("workflow snapshot and lifecycle controls reuse the effective selector", () => {

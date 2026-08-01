@@ -2,7 +2,6 @@ import type { JobType } from "./ai-jobs";
 
 export const SUPPORTED_JOB_TYPES = [
   "PROPOSAL_GENERATION",
-  "AI_REMATCH",
   "EVALUATOR_SIM",
   "COPILOT_DEEP_ANALYSIS",
   "PROFILE_FACT_EXTRACTION",

@@ -12,7 +12,6 @@
 //
 // Why each handler exists:
 //   ENGINE_RUN              — escape 60s cap on full engine pipeline (large tenders)
-//   AI_REMATCH              — escape 60s cap on standalone rematch (many candidates × 12 perspectives)
 //   PROPOSAL_GENERATION     — escape 60s cap on full-proposal generation
 //   EVALUATOR_SIM           — async 4-persona evaluator panel simulation
 //   COPILOT_DEEP_ANALYSIS   — async tender copilot Q&A (frees the request for follow-up actions)
@@ -24,13 +23,6 @@ import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
 import { executeAnalysis, finalizeAnalysisJob } from "./engine/analysis-orchestrator";
 import { prisma } from "./prisma";
-import {
-  aiRematchExperts,
-  aiRematchProjects,
-  formatAssessmentRationale,
-  type ExpertCandidateInput,
-  type ProjectCandidateInput,
-} from "./engine/ai-multi-perspective-matcher";
 import { simulateEvaluatorPanel } from "./engine/evaluator-simulator";
 import { answerTenderCopilotQuestion, type TenderCopilotContext } from "./engine/tender-ai-copilot";
 import { extractCompanyFacts } from "./engine/company-fact-extractor";
@@ -280,88 +272,6 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       await recordStep(ctx.jobId, { stepName: "analyze.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });
       throw err;
     }
-  },
-
-  // ─── AI_REMATCH — 12-perspective rematch of pre-filtered candidates ──
-  // Async standalone version of /api/tenders/[id]/ai-rematch. The route
-  // is the interactive path; this handler is for queued/background runs.
-  // input.applySelections — when true, persists the union of AI + manual
-  // selections back to TenderExpertMatch/TenderProjectMatch.
-  AI_REMATCH: async (ctx) => {
-    if (!ctx.tenderId) throw new Error("AI_REMATCH requires tenderId on the job");
-    const applySelections = ctx.input?.applySelections === true;
-    await recordStep(ctx.jobId, { stepName: "rematch.start", message: `Loading tender + matches`, status: "RUNNING" });
-
-    const tender = await prisma.tender.findFirst({
-      where: { id: ctx.tenderId, userId: ctx.userId },
-      include: {
-        requirements: { select: { id: true, title: true, description: true, requirementType: true, priority: true, requiredQuantity: true, exactFileName: true, exactOrder: true, restrictions: true } },
-        expertMatches: { orderBy: { score: "desc" }, take: 20, include: { expert: { select: { id: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true, profile: true, trustLevel: true } } } },
-        projectMatches: { orderBy: { score: "desc" }, take: 20, include: { project: { select: { id: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, summary: true, contractValue: true, currency: true, startDate: true, endDate: true, trustLevel: true } } } },
-      },
-    });
-    if (!tender) throw new Error(`AI_REMATCH: tender ${ctx.tenderId} not found or not owned by user`);
-
-    const expertCandidates: ExpertCandidateInput[] = tender.expertMatches.map((m) => ({
-      id: m.expert.id, fullName: m.expert.fullName, title: m.expert.title, yearsExperience: m.expert.yearsExperience,
-      disciplines: safeJsonArray(m.expert.disciplines), sectors: safeJsonArray(m.expert.sectors),
-      certifications: safeJsonArray(m.expert.certifications), profile: m.expert.profile, trustLevel: m.expert.trustLevel,
-    }));
-    const projectCandidates: ProjectCandidateInput[] = tender.projectMatches.map((m) => ({
-      id: m.project.id, name: m.project.name, clientName: m.project.clientName, country: m.project.country, sector: m.project.sector,
-      serviceAreas: safeJsonArray(m.project.serviceAreas), summary: m.project.summary, contractValue: m.project.contractValue,
-      currency: m.project.currency, startDate: m.project.startDate, endDate: m.project.endDate, trustLevel: m.project.trustLevel,
-    }));
-
-    const requirementsText = tender.requirements
-      .map((r) => `[${r.priority}] ${r.requirementType}: ${r.title}: ${r.description}`)
-      .join("\n");
-
-    await recordStep(ctx.jobId, { stepName: "rematch.ai", message: `Scoring ${expertCandidates.length} expert(s) and ${projectCandidates.length} project(s) across 12 perspectives`, status: "RUNNING" });
-    const [expertBatch, projectBatch] = await Promise.all([
-      expertCandidates.length > 0
-        ? aiRematchExperts({ tenderTitle: tender.title, tenderRequirementsText: requirementsText, evaluationMethodology: tender.evaluationMethodology ?? "", candidates: expertCandidates })
-        : Promise.resolve(null),
-      projectCandidates.length > 0
-        ? aiRematchProjects({ tenderTitle: tender.title, tenderRequirementsText: requirementsText, tenderCategory: tender.category, candidates: projectCandidates })
-        : Promise.resolve(null),
-    ]);
-
-    let expertsUpdated = 0;
-    let projectsUpdated = 0;
-    if (expertBatch) {
-      for (const assessment of expertBatch.assessments) {
-        const match = tender.expertMatches.find((m) => m.expert.id === assessment.candidateId);
-        if (!match) continue;
-        await prisma.tenderExpertMatch.update({
-          where: { id: match.id },
-          data: {
-            score: assessment.overallScore,
-            rationale: formatAssessmentRationale(assessment),
-            ...(applySelections ? { isSelected: assessment.recommendSelection || match.isSelected } : {}),
-          },
-        });
-        expertsUpdated += 1;
-      }
-    }
-    if (projectBatch) {
-      for (const assessment of projectBatch.assessments) {
-        const match = tender.projectMatches.find((m) => m.project.id === assessment.candidateId);
-        if (!match) continue;
-        await prisma.tenderProjectMatch.update({
-          where: { id: match.id },
-          data: {
-            score: assessment.overallScore,
-            rationale: formatAssessmentRationale(assessment),
-            ...(applySelections ? { isSelected: assessment.recommendSelection || match.isSelected } : {}),
-          },
-        });
-        projectsUpdated += 1;
-      }
-    }
-
-    await recordStep(ctx.jobId, { stepName: "rematch.complete", message: `Updated ${expertsUpdated} expert(s) and ${projectsUpdated} project(s)`, status: "SUCCEEDED" });
-    return { expertsUpdated, projectsUpdated, applySelections, aiUsed: Boolean(expertBatch || projectBatch) };
   },
 
   // ─── PROPOSAL_GENERATION — async proposal generation ─────────────────

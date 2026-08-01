@@ -17,7 +17,7 @@ export type WorkflowActionSurface =
   | "extraction-quality"
   | "ai-analyze"
   | "requirement-coverage"
-  | "match-evidence"
+  | "matching-selected-evidence"
   | "engine-action"
   | "submission-plan"
   | "generated-documents"
@@ -78,22 +78,22 @@ export const TENDER_ACTIONS = {
     availability: "NAVIGATION",
   },
   MATCH_EVIDENCE: {
-    anchor: "#match-evidence",
+    anchor: "#matching-selected-evidence",
     mutation: null,
     owner: "TenderEngineWorkspace",
     label: "Review evidence matching",
     verb: "match",
-    surface: "match-evidence",
+    surface: "matching-selected-evidence",
     iconName: "LinkIcon",
     availability: "NAVIGATION",
   },
   REVIEW_EVIDENCE: {
-    anchor: "#match-evidence",
+    anchor: "#matching-selected-evidence",
     mutation: null,
     owner: "TenderEngineWorkspace",
     label: "Review matched evidence",
     verb: "review",
-    surface: "match-evidence",
+    surface: "matching-selected-evidence",
     iconName: "ClipboardCheckIcon",
     availability: "NAVIGATION",
   },

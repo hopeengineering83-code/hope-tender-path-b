@@ -37,7 +37,7 @@ describe("Issue #1135 Gap #5 — matching dashboard pagination", () => {
     const src = readFileSync("app/dashboard/matching/matching-dashboard.tsx", "utf8");
     assert.match(src, /expertMatchCount/);
     assert.match(src, /projectMatchCount/);
-    assert.match(src, /Showing top/);
+    assert.match(src, /Showing persisted selections first/);
   });
 
   it("shared module matching-config.ts exists with correct constants", () => {
@@ -59,22 +59,13 @@ describe("Issue #1135 Gap #5 — matching dashboard pagination", () => {
   });
 });
 
-// ─── Gap #6: Selection API rejection handling ──────────────────────────────
+// ─── Gap #6: Engine-owned selection authority ──────────────────────────────
 
-describe("Issue #1135 Gap #6 — selection API rejection handling", () => {
-  it("matching-dashboard.tsx surfaces server rejection errors", () => {
+describe("Issue #1135 Gap #6 — Engine-owned automatic selection", () => {
+  it("matching-dashboard.tsx is read-only", () => {
     const src = readFileSync("app/dashboard/matching/matching-dashboard.tsx", "utf8");
-    assert.match(src, /error.*useState/);
-    assert.match(src, /setError/);
-    assert.match(src, /error &&/);
-  });
-
-  it("matching-dashboard.tsx re-fetches authoritative state on rejection", () => {
-    const src = readFileSync("app/dashboard/matching/matching-dashboard.tsx", "utf8");
-    assert.match(src, /fetch\(`\/api\/tenders\/\$\{tenderId\}\/matches`, \{ cache: "no-store" \}\)/);
-    assert.match(src, /authoritative\.expertMatches \?\? tender\.expertMatches/);
-    assert.match(src, /authoritative\.projectMatches \?\? tender\.projectMatches/);
-    assert.match(src, /setTenders\(\(previous\) => previous\.map/);
+    assert.match(src, /read-only view of persisted evidence/);
+    assert.doesNotMatch(src, /method:\s*"PUT"|aria-pressed|>Select</);
   });
 
   it("matches API route has GET endpoint for re-fetching", () => {
@@ -83,9 +74,8 @@ describe("Issue #1135 Gap #6 — selection API rejection handling", () => {
     assert.match(src, /REVIEWER/);
   });
 
-  it("matches API route PUT returns structured error on not found", () => {
+  it("matches API route exposes no competing selection mutation", () => {
     const src = readFileSync("app/api/tenders/[id]/matches/route.ts", "utf8");
-    assert.match(src, /404/);
-    assert.match(src, /Match not found/);
+    assert.doesNotMatch(src, /export async function PUT|TENDER_EVIDENCE_SELECT/);
   });
 });

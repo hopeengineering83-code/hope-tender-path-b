@@ -105,36 +105,20 @@ describe("Final overlap/dead-code/page consolidation acceptance tests", () => {
     });
   });
 
-  // ScoreBreakdownPanel and AIRematchButton (per-dimension matching score and a
-  // rematch trigger, both backed by real, gated API routes) were built but
-  // never mounted anywhere. Wired into Stage 3 next to MatchingQualityPanel,
-  // the panel that already owns this surface.
-  describe("matching score breakdown and rematch are wired into the workspace", () => {
+  describe("matching has one automatic read-only authority", () => {
     const tenderPage = read("app/dashboard/tenders/[id]/page.tsx");
 
-    it("renders exactly one ScoreBreakdownPanel and one AIRematchButton", () => {
-      assert.equal((tenderPage.match(/<ScoreBreakdownPanel/g) ?? []).length, 1);
-      assert.equal((tenderPage.match(/<AIRematchButton/g) ?? []).length, 1);
+    it("renders exactly one MatchingSelectedEvidencePanel", () => {
+      assert.equal((tenderPage.match(/<MatchingSelectedEvidencePanel/g) ?? []).length, 1);
     });
 
-    it("mounts both in Stage 3, after MatchingQualityPanel", () => {
+    it("mounts it in Stage 3 without competing panels or rematch controls", () => {
       const stage3Start = tenderPage.indexOf('<WorkflowStage number={3}');
       const stage4Start = tenderPage.indexOf('<WorkflowStage number={4}');
       assert.ok(stage3Start > -1 && stage4Start > stage3Start, "Stage 3 must exist and precede Stage 4");
       const stage3 = tenderPage.slice(stage3Start, stage4Start);
-      const matchingIndex = stage3.indexOf("<MatchingQualityPanel");
-      const scoreIndex = stage3.indexOf("<ScoreBreakdownPanel");
-      const rematchIndex = stage3.indexOf("<AIRematchButton");
-      assert.ok(matchingIndex > -1, "MatchingQualityPanel must exist in Stage 3");
-      assert.ok(scoreIndex > matchingIndex, "ScoreBreakdownPanel must come after MatchingQualityPanel");
-      assert.ok(rematchIndex > matchingIndex, "AIRematchButton must come after MatchingQualityPanel");
-    });
-
-    it("gates the rematch trigger on canMutate, unlike the read-only score breakdown", () => {
-      const rematchIndex = tenderPage.indexOf("<AIRematchButton");
-      const precedingLine = tenderPage.lastIndexOf("\n", rematchIndex - 1);
-      const line = tenderPage.slice(precedingLine, rematchIndex);
-      assert.match(line, /\{canMutate && $/, "AIRematchButton must be gated behind canMutate — it triggers a real rematch job");
+      assert.match(stage3, /<MatchingSelectedEvidencePanel/);
+      assert.doesNotMatch(stage3, /MatchingQualityPanel|ScoreBreakdownPanel|AIRematchButton|SelectionApprovalPanel/);
     });
   });
 
@@ -185,7 +169,7 @@ describe("Final overlap/dead-code/page consolidation acceptance tests", () => {
         "app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx",
         "components/submission-plan-reconciliation-panel.tsx",
         "components/submission-plan-truth-panel.tsx",
-        "components/matching-quality-panel.tsx",
+        "components/matching-selected-evidence-panel.tsx",
         "components/generation-action-panel.tsx",
         "components/authority-review-panel.tsx",
         "components/export-readiness-panel.tsx",

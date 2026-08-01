@@ -24,7 +24,7 @@ function actionHref(tenderId: string, action?: string): string {
   if (action === "OPEN_EXTRACTION_QUALITY") return `/dashboard/tenders/${tenderId}#extraction-quality`;
   if (action === "BUILD_SUBMISSION_PLAN") return `/dashboard/tenders/${tenderId}#submission-plan-reconciliation`;
   if (action === "OPEN_ANALYSIS_QUALITY") return `/dashboard/tenders/${tenderId}#analysis-quality`;
-  if (action === "OPEN_MATCHING_QUALITY") return `/dashboard/tenders/${tenderId}#matching-quality`;
+  if (action === "OPEN_MATCHING_QUALITY") return `/dashboard/tenders/${tenderId}#matching-selected-evidence`;
   if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
   if (action === "REVIEW_MATCHES") return `/dashboard/tenders/${tenderId}#proposal-evidence-readiness`;
   if (action === "OPEN_KNOWLEDGE_REVIEW") return "/dashboard/company/review";

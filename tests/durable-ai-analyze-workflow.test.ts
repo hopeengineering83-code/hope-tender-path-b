@@ -249,7 +249,7 @@ describe("provider failure → partial/failed → downstream stays blocked", () 
   it("a partial result never creates GeneratedDocument rows (no generation in the handler)", () => {
     const handlers = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
     // The AI_ANALYZE handler must not create generated documents.
-    const analyzeBlock = handlers.slice(handlers.indexOf("AI_ANALYZE:"), handlers.indexOf("AI_REMATCH:"));
+    const analyzeBlock = handlers.slice(handlers.indexOf("AI_ANALYZE:"), handlers.indexOf("PROPOSAL_GENERATION:"));
     assert.doesNotMatch(analyzeBlock, /generatedDocument\.create/);
   });
 });

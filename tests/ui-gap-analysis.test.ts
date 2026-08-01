@@ -25,7 +25,7 @@ describe("UI gap analysis — canonical actions and disclosure-aware anchors", (
   it("keeps the critical primary anchors correct", () => {
     assert.equal(TENDER_WORKFLOW_STAGES[0].targets[0], "#tender-files");
     assert.equal(TENDER_WORKFLOW_STAGES[5].targets[0], "#submission-plan-reconciliation");
-    assert.equal(TENDER_WORKFLOW_STAGES[6].targets[0], "#match-evidence");
+    assert.equal(TENDER_WORKFLOW_STAGES[6].targets[0], "#matching-selected-evidence");
     assert.equal(TENDER_WORKFLOW_STAGES[9].targets[0], "#export-readiness");
     assert.ok(TENDER_WORKFLOW_STAGES[9].targets.includes("#final-package-manifest"));
   });
@@ -41,7 +41,7 @@ describe("UI gap analysis — canonical actions and disclosure-aware anchors", (
 
   it("Command Center links point to valid owning anchors", () => {
     const source = read("app/dashboard/tenders/[id]/command-center/page.tsx");
-    for (const anchor of ["#generated-documents", "#matching-quality", "#evaluator-objections"]) {
+    for (const anchor of ["#generated-documents", "#matching-selected-evidence", "#evaluator-objections"]) {
       assert.ok(source.includes(anchor), `missing ${anchor}`);
     }
     assert.ok(!source.includes('#documents"'));
@@ -55,7 +55,7 @@ describe("UI gap analysis — canonical actions and disclosure-aware anchors", (
       ["components/final-package-manifest-panel.tsx", /id="final-package-manifest"/],
       ["components/evaluator-objections-panel.tsx", /id="evaluator-objections"/],
       ["components/submission-plan-truth-panel.tsx", /id="submission-plan"/],
-      ["components/matching-quality-panel.tsx", /id="matching-quality"/],
+      ["components/matching-selected-evidence-panel.tsx", /id="matching-selected-evidence"/],
       ["components/export-readiness-panel.tsx", /id="export-readiness"/],
     ];
     for (const [file, pattern] of checks) assert.match(read(file), pattern);
