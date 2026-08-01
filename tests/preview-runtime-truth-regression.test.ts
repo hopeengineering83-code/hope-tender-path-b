@@ -91,7 +91,9 @@ describe("single workflow authority regressions from the latest preview", () => 
     );
     assert.equal(result.matrices[0]?.supportStatus, "EVIDENCE_PENDING_REVIEW");
     assert.ok((result.matrices[0]?.supportStrength ?? 1) < 1);
+    assert.equal(result.matrices[0]?.evidenceReference, undefined);
     assert.doesNotMatch(result.matrices[0]?.evidenceSummary ?? "", /generated response sections can support/i);
+    assert.match(result.matrices[0]?.evidenceSummary ?? "", /automatically verify/i);
   });
 
   it("keeps compliance, vault, and generation panels on canonical active evidence", () => {

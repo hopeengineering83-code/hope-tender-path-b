@@ -152,10 +152,14 @@ export function buildCompliance(
       // that a proposal response exists or grant FULL coverage merely because
       // generic company documents could help draft one.
       supportStrength = draftingEvidenceExists ? 0.75 : 0.4;
-      supportStatus = draftingEvidenceExists ? "EVIDENCE_PENDING_REVIEW" : "PARTIAL";
+      // A response that has not been generated remains in the engine's
+      // evidence-pending workflow even when no relevant drafting evidence is
+      // available yet. The lower score and absent reference preserve that
+      // distinction without incorrectly downgrading the workflow state.
+      supportStatus = "EVIDENCE_PENDING_REVIEW";
       evidenceSummary = draftingEvidenceExists
-        ? `${requirementDocument ? "One relevant Company Vault document" : "No relevant Company Vault document"}, ${selectedExperts.length} selected expert(s), and ${selectedProjects.length} selected project reference(s) may support drafting. The response is not covered until generated content is source-linked and reviewed.`
-        : "No generated, source-linked proposal response exists yet; drafting and reviewer confirmation are still required.";
+        ? `${requirementDocument ? "One relevant Company Vault document" : "No relevant Company Vault document"}, ${selectedExperts.length} selected expert(s), and ${selectedProjects.length} selected project reference(s) may support drafting. The response is not covered until generated content is automatically source-linked and verified.`
+        : "No generated, source-linked proposal response exists yet; the Run Engine must draft and automatically verify it.";
       evidenceType = "PROPOSAL_RESPONSE";
       evidenceSource = draftingEvidenceExists ? "Company evidence available for drafting" : "No generated response evidence";
       evidenceReference = requirementDocument?.originalFileName ?? selectedExperts[0]?.expertId ?? selectedProjects[0]?.projectId;
