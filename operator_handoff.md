@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 13:27 UTC — Codex (GPT-5.6 Sol), PR #1175 evidence-gap repair
+
+- **Branch / PR:** local `work` aligned exactly to `origin/release/consolidated-recovery-20260717` at `8768590`; governing draft PR #1175 targets `integration/controlled-recovery`. GitHub API showed zero inline comments and zero submitted reviews; all seven latest-head checks were green before this repair.
+- **Scope:** discarded the incompatible local pre-PR architecture from the active branch after verifying that #1175 already owns a newer enqueue-only, server-policy-controlled Engine with automatic Vault preparation, source revisions, `SOURCE_VERIFIED` provenance, and automatic Build Plan continuation. Repaired the remaining non-overlapping compliance gap: unrelated, empty, scanned, or first-in-list Vault documents can no longer become legal/financial/compliance/profile/general evidence merely because any document exists. Typed evidence now also requires the correct Vault category (so an ISO certificate cannot masquerade as legal registration), and requirement matching uses exact normalized tokens rather than substrings (so `audit` cannot match `auditorium`) while preserving #1175's draft-only proposal-response semantics.
+- **Files changed:** `lib/engine/compliance.ts`, `tests/company-vault-compliance-evidence.test.ts`, `operator_handoff.md`.
+- **Tests:** `npx prisma generate` passed; focused Company Vault compliance tests passed 6/6; `tests/core-engine-regressions.test.ts` and `tests/production-workflow-engine.test.ts` passed (27 total assertions across the combined run); `npx tsc --noEmit` passed; `npm run lint -- --quiet` passed; `git diff --check` passed.
+- **CI / deployment:** governing head `8768590` CI baseline is green, including migrations/integrity/typecheck/lint/tests/build/authenticated isolation and capture. Final application-code head `6f63436` deployed READY as `dpl_CNXdw7d1mn4dNSAFeJzCYb9dSVhs` at `https://hope-tender-path-aqsuxbobz-hopeengineering83-codes-projects.vercel.app`; remote build found 44 migrations with none pending, passed schema verification, compiled/typechecked, and completed successfully. Exact-head `/api/health` and `/api/version` returned HTTP 200, healthy/durable Blob storage, 8/10 configured providers, and SHA `6f634361`.
+- **Known risks / assumptions:** selection is intentionally conservative: a document with unusable extraction stays unmapped even if its filename/category appears relevant. Existing legal/financial/compliance structured records remain valid evidence with meaningful record references. No client policy override or duplicate Engine owner was introduced.
+- **Next action:** push the final local commit to `release/consolidated-recovery-20260717` using an approved GitHub credential and run PR CI. Anonymous HTTPS push was attempted and correctly failed because this container has no GitHub write credential.
+- **Merge status:** not reviewed — focused checks pass; updated-head CI/preview remain pending.
+
 ### 2026-07-30 01:45 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `codex/pr1175-final-verification-20260730` / documentation-only child targeting `release/consolidated-recovery-20260717`; governing draft #1175 verified at `0c28bf03d37bb24cc8f45fd3e7c2453c00d5c2c3`.
