@@ -19,14 +19,16 @@ import { readFileSync } from "node:fs";
 
 const page = readFileSync("app/dashboard/company/page.tsx", "utf8");
 
-describe("Company Vault Experts/Projects tabs surface a path to human review", () => {
-  it("links to the single review authority page from both tabs", () => {
+describe("Company Vault Experts/Projects tabs surface automatic verification", () => {
+  it("links both tabs to automatic verification without approval bureaucracy", () => {
     const matches = page.match(/href="\/dashboard\/company\/review"/g) ?? [];
-    assert.ok(matches.length >= 2, "expected a review link in both the Experts and Projects tabs");
+    assert.ok(matches.length >= 2, "expected an automatic verification link in both tabs");
+    assert.match(page, /Run Engine automatically source-verifies eligible expert records/);
+    assert.match(page, /Run Engine automatically source-verifies eligible project records/);
+    assert.doesNotMatch(page, /Review experts →|Review projects →|Review each file before using/);
   });
 
-  it("derives the awaiting-review count from the durable review totals, not the raw trustLevel field", () => {
-    assert.match(page, /awaitingReview = totalExperts - \(reviewTotals\?\.humanReviewedExperts/);
-    assert.match(page, /awaitingReview = totalProjects - \(reviewTotals\?\.humanReviewedProjects/);
+  it("describes automatic verification in the document library", () => {
+    assert.match(page, /Run Engine extracts and source-verifies eligible evidence automatically/);
   });
 });

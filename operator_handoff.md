@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 14:18 UTC — Codex (GPT-5.6 Sol), PR #1175 screenshot-driven Vault UI repair
+
+- **Branch / PR:** local `work`; governing draft PR #1175 head branch `release/consolidated-recovery-20260717` at `ff40a63` before this repair. No inline comments or submitted reviews.
+- **Scope:** downloaded the exact-head 23 MB route/screenshot artifact from successful capture run `30703008819` and inspected the real desktop Company Vault and Automatic Verification pages. The Vault screenshot exposed surviving manual bureaucracy: “Review each file before using it,” human-reviewed/draft completeness counts, and Experts/Projects “Review …” CTAs. Replaced those active UI paths with truthful Run Engine automatic extraction/source-verification guidance and Automatic Verification links. Runtime eligibility remains source-backed and fail-closed.
+- **Files changed:** `app/dashboard/company/page.tsx`, `tests/company-vault-experts-projects-review-cta.test.ts`, `tests/company-vault-document-actions-a11y.test.ts`, `operator_handoff.md`.
+- **Tests:** focused Company Vault UI, accessibility, pipeline, and automatic-promotion suites passed 35/35; clean-cache TypeScript passed; zero-warning lint passed; `git diff --check` passed.
+- **CI / deployment:** exact predecessor preview `dpl_71CbsVmTCjwCCSFhK1z4uwxaKpgz` returned healthy HTTP 200 with exact SHA `ff40a63b`, durable private Blob storage, and 8/10 providers. Capture and one complete duplicated full workflow passed; the second full workflow was in browser acceptance when this screenshot-derived repair began.
+- **Risks / assumptions:** authenticated human `REVIEWED` evidence remains optional and eligible, but the primary Vault UI no longer presents human approval as a prerequisite. Automatic verification does not promote stale, altered, source-less, unmatched, or unusable evidence.
+- **Next action:** push this commit into PR #1175 and require updated-head CI, preview identity/health, and fresh route screenshots.
+- **Merge status:** not reviewed — local focused checks pass; updated-head remote acceptance is required.
+
 ### 2026-08-01 14:08 UTC — Codex (GPT-5.6 Sol), PR #1175 automatic-handoff cleanup
 
 - **Branch / PR:** local `work`; governing draft PR #1175 head branch `release/consolidated-recovery-20260717` at `77dba9a` before this follow-up. GitHub reports no inline comments or submitted reviews.

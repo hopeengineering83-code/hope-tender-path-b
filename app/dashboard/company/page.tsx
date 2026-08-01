@@ -731,10 +731,6 @@ export default function CompanyPage() {
         // are available) instead of recomputing its own looser check here —
         // otherwise this page can claim "N reviewed" while the Engine
         // simultaneously reports zero eligible matches.
-        const reviewedExpertCount = reviewTotals?.humanReviewedExperts ?? 0;
-        const reviewedProjectCount = reviewTotals?.humanReviewedProjects ?? 0;
-        const draftExpertCount = allExperts.length - reviewedExpertCount;
-        const draftProjectCount = allProjects.length - reviewedProjectCount;
         const checks = [
           { label: "Company name", done: hasReal(company.name) },
           { label: "Legal name", done: hasReal(company.legalName) },
@@ -779,8 +775,8 @@ export default function CompanyPage() {
             <div className="border-t pt-3">
               <p className="text-xs font-medium text-slate-600 mb-1.5">Knowledge vault</p>
               <div className="flex flex-wrap gap-4 text-xs text-slate-500">
-                <span>Experts: <span className="font-medium text-slate-700">{reviewedExpertCount} reviewed</span>{draftExpertCount > 0 ? `, ${draftExpertCount} draft` : ""}</span>
-                <span>Projects: <span className="font-medium text-slate-700">{reviewedProjectCount} reviewed</span>{draftProjectCount > 0 ? `, ${draftProjectCount} draft` : ""}</span>
+                <span>Experts: <span className="font-medium text-slate-700">{allExperts.length} record{allExperts.length === 1 ? "" : "s"}</span> · automatically verified before use</span>
+                <span>Projects: <span className="font-medium text-slate-700">{allProjects.length} record{allProjects.length === 1 ? "" : "s"}</span> · automatically verified before use</span>
               </div>
             </div>
           </div>
@@ -819,7 +815,7 @@ export default function CompanyPage() {
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div>
               <h2 className="font-semibold text-slate-900">Document Library</h2>
-              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Review each file before using it as tender evidence</p>
+              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Run Engine extracts and source-verifies eligible evidence automatically</p>
             </div>
             <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
               className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60 font-medium">
@@ -928,21 +924,12 @@ export default function CompanyPage() {
       {tab==="experts" && (
         <div className="space-y-6">
           {(() => {
-            // The Experts table below only has Edit/Delete — there is no
-            // per-row review status or approve action here by design (see
-            // app/dashboard/company/review-board/page.tsx: this codebase
-            // deliberately keeps a single review/approval authority instead
-            // of a second mutation surface on this table). Without this
-            // banner, a user looking only at this tab has no visible signal
-            // that any of these records still need human review, or where
-            // to go to do it.
             const totalExperts = (company.experts ?? []).length;
-            const awaitingReview = totalExperts - (reviewTotals?.humanReviewedExperts ?? 0);
-            if (totalExperts === 0 || awaitingReview <= 0) return null;
+            if (totalExperts === 0) return null;
             return (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                <span><strong>{awaitingReview}</strong> of {totalExperts} expert{totalExperts === 1 ? "" : "s"} are available for tender matching and final export.</span>
-                <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 no-underline hover:bg-amber-100">Review experts →</Link>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                <span>Run Engine automatically source-verifies eligible expert records before matching and generation.</span>
+                <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 no-underline hover:bg-blue-100">Automatic verification →</Link>
               </div>
             );
           })()}
@@ -1072,12 +1059,11 @@ export default function CompanyPage() {
         <div className="space-y-6">
           {(() => {
             const totalProjects = (company.projects ?? []).length;
-            const awaitingReview = totalProjects - (reviewTotals?.humanReviewedProjects ?? 0);
-            if (totalProjects === 0 || awaitingReview <= 0) return null;
+            if (totalProjects === 0) return null;
             return (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                <span><strong>{awaitingReview}</strong> of {totalProjects} project{totalProjects === 1 ? "" : "s"} are available for tender matching and final export.</span>
-                <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 no-underline hover:bg-amber-100">Review projects →</Link>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                <span>Run Engine automatically source-verifies eligible project records before matching and generation.</span>
+                <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 no-underline hover:bg-blue-100">Automatic verification →</Link>
               </div>
             );
           })()}
