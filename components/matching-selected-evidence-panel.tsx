@@ -10,6 +10,12 @@ export type SelectedEvidenceCandidate = {
   trustLevel: string;
 };
 
+const ELIGIBLE_EVIDENCE_TRUST_LEVELS = new Set(["SOURCE_VERIFIED", "REVIEWED"]);
+
+export function isEligibleSelectedEvidence(row: SelectedEvidenceCandidate): boolean {
+  return ELIGIBLE_EVIDENCE_TRUST_LEVELS.has(row.trustLevel);
+}
+
 function EvidenceList({ title, rows }: { title: string; rows: SelectedEvidenceCandidate[] }) {
   return (
     <div>
@@ -45,9 +51,14 @@ export function MatchingSelectedEvidencePanel({
   experts: SelectedEvidenceCandidate[];
   projects: SelectedEvidenceCandidate[];
 }) {
-  const selectedExperts = experts.filter((row) => row.isSelected);
-  const selectedProjects = projects.filter((row) => row.isSelected);
-  const candidates = [...experts, ...projects].filter((row) => !row.isSelected);
+  // A stale selected flag must never make draft, tampered, or otherwise
+  // unpromoted Company Vault data visible as selected evidence. Matching uses
+  // the same fail-closed trust boundary as the Engine eligibility gate.
+  const eligibleExperts = experts.filter(isEligibleSelectedEvidence);
+  const eligibleProjects = projects.filter(isEligibleSelectedEvidence);
+  const selectedExperts = eligibleExperts.filter((row) => row.isSelected);
+  const selectedProjects = eligibleProjects.filter((row) => row.isSelected);
+  const candidates = [...eligibleExperts, ...eligibleProjects].filter((row) => !row.isSelected);
   const hasSelection = selectedExperts.length + selectedProjects.length > 0;
 
   return (

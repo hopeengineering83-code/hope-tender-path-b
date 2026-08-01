@@ -246,9 +246,11 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       </div>
 
       <div className="border-b border-blue-100 bg-blue-50 px-5 py-2 text-xs text-blue-800">
-        {coveragePct > 0
-          ? "All requirements and selected evidence have acceptable traceability. Only persisted, current, source-grounded links count toward release; no confirmation click is required."
-          : "No compliance coverage has been confirmed yet. Requirement grounding and evidence linking are automatic."}
+        {data.trueEvidenceGaps === 0 && data.sourceProcessing === 0 && data.partiallyCovered === 0
+          ? "Verified and ready. Only persisted, current, source-grounded links count toward release; no confirmation click is required."
+          : coveragePct > 0
+            ? "Partially supported. Automatic source grounding continues for remaining evidence; release stays fail-closed until every required provenance check passes."
+            : "Automatic verification running. Requirement grounding and evidence linking continue without a confirmation step."}
       </div>
 
       {syncWarning && (

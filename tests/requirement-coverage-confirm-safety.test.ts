@@ -31,7 +31,7 @@ describe("automatic requirement coverage safety", () => {
     assert.doesNotMatch(panel, /requirement-coverage\/reject/);
     assert.doesNotMatch(panel, /Run source extraction or add manually/);
     assert.doesNotMatch(panel, /No source ref/);
-    assert.match(panel, /Automatic source grounding is processing/);
+    assert.match(panel, /Automatic source grounding (?:is running|continues)/);
     assert.match(panel, /Persisted evidence links/);
   });
 

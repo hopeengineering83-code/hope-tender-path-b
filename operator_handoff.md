@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 16:56 UTC — Codex (GPT-5.6 Sol), PR #1175 final evidence-panel fail-closed repair
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, started from exact GitHub head `8f396df90a8604c1f4800e5930e8a863830b2446`; zero inline review comments and zero submitted reviews. No merge or production deployment performed.
+- **Scope / root cause:** audited the new two-panel Company Vault/Engine workspace and found two remaining presentation-authority gaps: a stale persisted `isSelected` flag could still render an unpromoted/tampered expert or project as “Automatically linked,” and any non-zero partial score produced an “all requirements” traceability claim. The matching panel now applies the Engine's fail-closed `SOURCE_VERIFIED`/`REVIEWED` trust boundary before rendering selected or candidate rows, and the requirements panel claims `Verified and ready` only when partial, processing, and genuine-gap counts are all zero.
+- **Files changed:** `components/matching-selected-evidence-panel.tsx`, `components/requirement-coverage-panel.tsx`, `tests/canonical-vault-engine-panels.test.ts`, `tests/requirement-coverage-confirm-safety.test.ts`, `operator_handoff.md`.
+- **Tests / checks:** Prisma generation passed; the focused non-PostgreSQL Vault/Engine/matching/evidence suite passed 84/84; TypeScript, targeted zero-warning ESLint, `git diff --check`, and the complete production build passed. A broader 279-test selection reached 255 passes but could not complete its PostgreSQL cases because the configured Neon host is unreachable from this container; the one stale wording assertion exposed by that run was updated and passed in the clean 84-test rerun.
+- **CI / deployment:** predecessor exact-head checks were in progress at session start. Updated-head CI remains required after push. No manual preview was created.
+- **Risks / assumptions:** machine `SOURCE_VERIFIED` and truthful human `REVIEWED` remain eligible; all other trust states are silently excluded from the canonical selected-evidence panel. This UI guard supplements rather than weakens backend provenance, tenant, byte-integrity, and source-revision enforcement.
+- **Next action:** push this commit to PR #1175, require exact-head PostgreSQL/CI/browser checks, and keep the PR draft/unmerged pending Hope's approval.
+- **Merge status:** not reviewed — local application checks pass; external PostgreSQL and updated-head CI remain pending.
+
 ### 2026-08-01 16:45 UTC — Codex (GPT-5.6 Sol), PR #1175 canonical Vault/Engine panels
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, started from exact GitHub head `dac9ff76b914da9e998af182d04a501fa60c2314`; zero inline review comments and zero submitted reviews. No merge or production deployment performed.
