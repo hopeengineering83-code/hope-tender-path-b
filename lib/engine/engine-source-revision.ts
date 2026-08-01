@@ -19,14 +19,17 @@ export type EngineSourceRevision = {
 
 /**
  * Computes the canonical Engine input revision from current tender source
- * bytes, promoted source-grounded requirements, and the complete tenant-owned
- * Company Vault evidence revision set.
+ * bytes and the complete tenant-owned Company Vault evidence revision set.
  *
  * The value is deliberately deterministic: duplicate requests for unchanged
  * source state converge on the same idempotency key, while any file-byte,
- * extraction, requirement, trust, provenance, deletion, expiry, or record
- * revision change produces a different revision. Workers recompute this value
- * before and after execution so stale jobs cannot promote authoritative output.
+ * extraction, trust, provenance, deletion, expiry, or record revision change
+ * produces a different revision. Engine-owned derived rows (requirements,
+ * matches, matrices, Build Plans, and Tender workflow metadata) are excluded:
+ * the Engine replaces those rows during a successful run, so including them
+ * made every job invalidate its own revision at the post-run checkpoint.
+ * Workers recompute this immutable-input value before and after execution so a
+ * genuine source change still prevents stale output promotion.
  */
 export async function computeEngineSourceRevision(
   client: PrismaClient,
@@ -37,7 +40,6 @@ export async function computeEngineSourceRevision(
       where: { id: input.tenderId, userId: input.userId },
       select: {
         id: true,
-        updatedAt: true,
         analysisExtractionStatus: true,
         files: {
           select: {
@@ -53,27 +55,7 @@ export async function computeEngineSourceRevision(
             deletionStatus: true,
           },
         },
-        requirements: {
-          select: {
-            id: true,
-            updatedAt: true,
-            code: true,
-            title: true,
-            description: true,
-            requirementType: true,
-            priority: true,
-            requiredQuantity: true,
-            exactFileName: true,
-            exactOrder: true,
-            restrictions: true,
-            sourceTenderFileId: true,
-            sourcePageNumber: true,
-            sourceSectionHeading: true,
-            sourceExactQuote: true,
-            sourceExtractionMethod: true,
-            sourceConfidence: true,
-          },
-        },
+        _count: { select: { requirements: true } },
       },
     }),
     input.companyId
@@ -170,10 +152,9 @@ export async function computeEngineSourceRevision(
   ]);
 
   const payload = {
-    version: 2,
+    version: 3,
     tender: {
       id: tender.id,
-      updatedAt: iso(tender.updatedAt),
       analysisExtractionStatus: tender.analysisExtractionStatus,
       files: sortById(tender.files).map((file) => ({
         id: file.id,
@@ -184,10 +165,6 @@ export async function computeEngineSourceRevision(
         extractionMethod: file.extractionMethod,
         extractionScore: file.extractionScore,
         deletionStatus: file.deletionStatus,
-      })),
-      requirements: sortById(tender.requirements).map((requirement) => ({
-        ...requirement,
-        updatedAt: iso(requirement.updatedAt),
       })),
     },
     company: {
@@ -240,7 +217,7 @@ export async function computeEngineSourceRevision(
   return {
     sourceRevision,
     tenderFileCount: tender.files.length,
-    requirementCount: tender.requirements.length,
+    requirementCount: tender._count.requirements,
     vaultDocumentCount: documents.length,
     evidenceRecordCount:
       experts.length + projects.length + legalRecords.length + financialRecords.length + complianceRecords.length,

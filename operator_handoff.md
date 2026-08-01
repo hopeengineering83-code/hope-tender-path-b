@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 14:29 UTC — Codex (GPT-5.6 Sol), PR #1175 Run Engine self-invalidation repair
+
+- **Branch / PR:** local `work`, aligned with and intended for draft PR #1175 head branch `release/consolidated-recovery-20260717`; predecessor head `ee27f98`. GitHub reported no inline comments or submitted reviews; dependency/Vercel checks passed while capture and full CI were still running when this repair began.
+- **Scope:** investigated the exact Vercel screenshots showing terminal `ASYNC_ENGINE_FAILED` precondition references. Found that the source-revision snapshot included Engine-owned `Tender.updatedAt` and `TenderRequirement` rows even though `runTenderEngine` necessarily updates/replaces them; therefore the mandatory post-run stale-source check invalidated every otherwise-successful run against its own writes. Revision v3 now hashes only stable tender-source and Company Vault inputs while retaining requirement count as non-hashed diagnostics. Also removed the competing post-analysis continuation: `run-next` now consumes the canonical source-bound `automaticEngineJob` already persisted by the AI handler instead of creating a second legacy analysis-hash-only ENGINE_RUN job; the old path remains only as compatibility fallback.
+- **Files changed:** `lib/engine/engine-source-revision.ts`, `app/api/ai-jobs/run-next/route.ts`, `tests/engine-async-job-queue.test.ts`, `tests/engine-enqueue-authority.integration.test.ts`, `operator_handoff.md`.
+- **Tests:** Prisma generation and TypeScript passed; focused Run Engine/Vault/automatic-continuation/runtime tests passed 42/42; zero-warning lint and `git diff --check` passed. The focused PostgreSQL integration test could not start because this container cannot reach the configured Neon host; CI must execute its new assertions that derived requirement writes preserve a job revision while changed tender source bytes supersede it.
+- **CI / deployment:** exact predecessor `ee27f98` checks were partially complete at session start. No additional preview was created before local validation and commit; updated-head CI/preview is required.
+- **Risks / assumptions:** the post-run authority check remains fail-closed for real tender-file or Company Vault changes. Existing failed v2 jobs will be superseded automatically on retry because revision v3 creates a different canonical idempotency key.
+- **Next action:** commit/push into PR #1175, require green updated-head CI, then use the authorized preview workflow to rerun the same authenticated tender and confirm the Engine reaches success rather than the screenshot's precondition failure.
+- **Merge status:** not reviewed — focused local checks pass; PostgreSQL CI and updated-head preview acceptance remain required.
+
 ### 2026-08-01 14:18 UTC — Codex (GPT-5.6 Sol), PR #1175 screenshot-driven Vault UI repair
 
 - **Branch / PR:** local `work`; governing draft PR #1175 head branch `release/consolidated-recovery-20260717` at `ff40a63` before this repair. No inline comments or submitted reviews.

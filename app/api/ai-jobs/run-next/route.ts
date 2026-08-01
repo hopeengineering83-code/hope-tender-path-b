@@ -171,14 +171,38 @@ export async function POST(req: Request) {
         let analysisRevision: string | undefined;
 
         if (claimed.jobType === "AI_ANALYZE") {
-          const continuation = await continueSuccessfulAnalysis(claimed.id);
-          if (continuation.queued) {
-            nextJobId = continuation.jobId;
+          // The canonical AI handler performs Vault verification and persists
+          // a source-revision-bound Engine job before returning success. Reuse
+          // that durable row instead of invoking the historical continuation
+          // service and creating a second ENGINE_RUN job whose input is bound
+          // only to the analysis hash.
+          const automaticEngineJob = result.output?.automaticEngineJob as
+            | Record<string, unknown>
+            | null
+            | undefined;
+          if (
+            automaticEngineJob &&
+            typeof automaticEngineJob === "object" &&
+            typeof automaticEngineJob.jobId === "string"
+          ) {
+            nextJobId = automaticEngineJob.jobId;
             nextJobType = "ENGINE_RUN";
-            continuationReused = continuation.reused;
-            analysisRevision = continuation.analysisRevision;
+            continuationReused = automaticEngineJob.reusedActiveJob === true;
+            analysisRevision = typeof automaticEngineJob.sourceRevision === "string"
+              ? automaticEngineJob.sourceRevision
+              : undefined;
           } else {
-            continuationReason = continuation.reason;
+            // Compatibility for an older/custom AI handler that has not yet
+            // adopted canonical automatic enqueueing.
+            const continuation = await continueSuccessfulAnalysis(claimed.id);
+            if (continuation.queued) {
+              nextJobId = continuation.jobId;
+              nextJobType = "ENGINE_RUN";
+              continuationReused = continuation.reused;
+              analysisRevision = continuation.analysisRevision;
+            } else {
+              continuationReason = continuation.reason;
+            }
           }
         }
 

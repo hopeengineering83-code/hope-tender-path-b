@@ -10,6 +10,7 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
   let userId = "";
   let companyId = "";
   let tenderId = "";
+  let tenderFileId = "";
   let requirementId = "";
 
   before(async () => {
@@ -81,6 +82,10 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
       include: { requirements: { select: { id: true } } },
     });
     tenderId = tender.id;
+    tenderFileId = (await prisma.tenderFile.findFirstOrThrow({
+      where: { tenderId },
+      select: { id: true },
+    })).id;
     requirementId = tender.requirements[0]!.id;
   });
 
@@ -127,7 +132,7 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
     assert.equal(rows[0]!.analysisInputHash, [...revisions][0]);
   });
 
-  it("supersedes the old job when a promoted requirement revision changes", async () => {
+  it("does not supersede its immutable input revision when Engine-owned requirement output changes", async () => {
     const before = await prisma.aiJob.findFirstOrThrow({
       where: { userId, tenderId, jobType: "ENGINE_RUN", status: "QUEUED" },
       orderBy: { createdAt: "desc" },
@@ -148,14 +153,11 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
       purpose: "DB_INTEGRATION_TEST_AFTER_REQUIREMENT_CHANGE",
     });
     assert.ok(next);
-    assert.notEqual(next.job.id, before.id);
-    assert.notEqual(next.revision.sourceRevision, before.analysisInputHash);
+    assert.equal(next.job.id, before.id);
+    assert.equal(next.revision.sourceRevision, before.analysisInputHash);
 
     const stale = await prisma.aiJob.findUniqueOrThrow({ where: { id: before.id } });
-    assert.equal(stale.status, "CANCELED");
-    assert.match(stale.errorMessage ?? "", /Superseded by a newer Engine source revision/);
-    assert.equal(stale.leaseOwner, null);
-    assert.equal(stale.leaseExpiresAt, null);
+    assert.equal(stale.status, "QUEUED");
 
     const activeRows = await prisma.aiJob.findMany({
       where: {
@@ -167,6 +169,35 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
     });
     assert.equal(activeRows.length, 1);
     assert.equal(activeRows[0]!.id, next.job.id);
+  });
+
+  it("supersedes an active job when actual tender source bytes change", async () => {
+    const before = await prisma.aiJob.findFirstOrThrow({
+      where: { userId, tenderId, jobType: "ENGINE_RUN", status: "QUEUED" },
+      orderBy: { createdAt: "desc" },
+    });
+
+    await prisma.tenderFile.update({
+      where: { id: tenderFileId },
+      data: {
+        contentSha256: "c".repeat(64),
+        contentByteLength: 2048,
+      },
+    });
+
+    const next = await enqueueEngineJobForCurrentSources(prisma, {
+      userId,
+      tenderId,
+      companyId,
+      purpose: "DB_INTEGRATION_TEST_AFTER_SOURCE_CHANGE",
+    });
+    assert.ok(next);
+    assert.notEqual(next.job.id, before.id);
+    assert.notEqual(next.revision.sourceRevision, before.analysisInputHash);
+
+    const stale = await prisma.aiJob.findUniqueOrThrow({ where: { id: before.id } });
+    assert.equal(stale.status, "CANCELED");
+    assert.match(stale.errorMessage ?? "", /Superseded by a newer Engine source revision/);
   });
 
   it("returns no revision for a different tenant identity", async () => {

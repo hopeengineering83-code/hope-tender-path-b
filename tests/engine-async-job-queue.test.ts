@@ -12,6 +12,7 @@ describe("Engine route — production dispatch is always durable and enqueue-onl
   const enqueueAuthority = read("lib/engine/enqueue-engine-job.ts");
   const sourceRevision = read("lib/engine/engine-source-revision.ts");
   const handler = read("lib/ai-job-handlers.ts");
+  const worker = read("app/api/ai-jobs/run-next/route.ts");
 
   it("has no request-bound Engine execution or async opt-in branch", () => {
     assert.doesNotMatch(route, /runTenderEngine/);
@@ -58,15 +59,13 @@ describe("Engine route — production dispatch is always durable and enqueue-onl
     assert.match(enqueueAuthority, /reusedActiveJob:\s*true/);
   });
 
-  it("binds source revision to tender bytes, promoted requirements, and Vault evidence", () => {
-    assert.match(sourceRevision, /requirements:/);
-    assert.match(sourceRevision, /sourceTenderFileId/);
-    assert.match(sourceRevision, /sourceExactQuote/);
-    assert.match(sourceRevision, /sourceConfidence/);
+  it("binds revision only to immutable tender/Vault inputs while reporting derived requirement inventory", () => {
+    assert.doesNotMatch(sourceRevision, /requirements:\s*sortById/);
+    assert.doesNotMatch(sourceRevision, /updatedAt: iso\(tender\.updatedAt\)/);
     assert.match(sourceRevision, /companyDocument\.findMany/);
     assert.match(sourceRevision, /expert\.findMany/);
     assert.match(sourceRevision, /project\.findMany/);
-    assert.match(sourceRevision, /requirementCount:\s*tender\.requirements\.length/);
+    assert.match(sourceRevision, /requirementCount:\s*tender\._count\.requirements/);
   });
 
   it("returns the persisted job contract with HTTP 202", () => {
@@ -88,6 +87,9 @@ describe("Engine route — production dispatch is always durable and enqueue-onl
     assert.match(handler, /enqueueEngineJobForCurrentSources\(prisma/);
     assert.match(handler, /AUTOMATIC_POST_ANALYSIS_CONTINUATION/);
     assert.match(handler, /automaticEngineJob/);
+    assert.match(worker, /const automaticEngineJob = result\.output\?\.automaticEngineJob/);
+    assert.match(worker, /nextJobId = automaticEngineJob\.jobId/);
+    assert.match(worker, /Compatibility for an older\/custom AI handler/);
   });
 
   it("revalidates source revision before execution and before promotion", () => {
