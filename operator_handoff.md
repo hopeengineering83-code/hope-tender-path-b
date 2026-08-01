@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 18:08 UTC — Codex (GPT-5.6 Sol), PR #1175 authenticated shortcut closure
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `73db723b`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** exact-head capture passed 111/111 route/viewport cases with zero findings, and both full CI copies passed migrations, PostgreSQL, release integrity, typecheck, lint, the complete unit/database suite, and production build. Authenticated Playwright then exposed the final stale in-between contract: `e2e/workflow-control-center-action-buttons.spec.ts` still required retired `#match-evidence`. Because its `beforeEach` checked every target, that single stale selector failed all 12 shortcut cases. Updated it to `#matching-selected-evidence` and added a static cross-contract assertion so browser and production anchor registries cannot diverge again.
+- **Files changed:** `e2e/workflow-control-center-action-buttons.spec.ts`, `tests/workflow-shortcut-anchor-contract.test.ts`, `operator_handoff.md`.
+- **Tests / evidence:** 24/24 focused canonical-panel/UI/shortcut assertions passed; targeted ESLint and `git diff --check` passed. Exact-head capture artifact `8821969864` was downloaded and inspected: desktop/tablet/mobile Global Matching screenshots show the read-only automatic authority without manual controls; audit summary reports 111/111 coverage, zero critical findings, zero overflow, and zero warnings.
+- **Completion assessment:** this fixes the only failing authenticated assertion. A final exact-head CI rerun must confirm the corrected browser suite before claiming 100% externally verified completion.
+- **Next action:** push, require exact-head checks green, and keep #1175 draft/unmerged pending Hope's approval.
+- **Merge status:** not reviewed — focused correction and exact predecessor capture pass; corrected-head full CI pending.
+
 ### 2026-08-01 17:45 UTC — Codex (GPT-5.6 Sol), PR #1175 full-suite stale-contract closure
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `ee45407`; zero inline comments/reviews. No merge or production deployment.

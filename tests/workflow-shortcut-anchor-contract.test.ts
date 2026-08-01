@@ -31,6 +31,12 @@ describe("workflow shortcut anchor contract", () => {
     });
   }
 
+  it("the authenticated browser contract uses the same canonical matching anchor", () => {
+    const source = readFileSync("e2e/workflow-control-center-action-buttons.spec.ts", "utf8");
+    assert.match(source, /\[7, "Match Evidence", "#matching-selected-evidence"\]/);
+    assert.doesNotMatch(source, /#match-evidence|#matching-quality/);
+  });
+
   // "Workflow Control Center references only contracted primary anchors" test
   // removed -- tender-workflow-action-center.tsx and its dedicated
   // lib/tender-workflow-stage-targets.ts registry were both deleted as
