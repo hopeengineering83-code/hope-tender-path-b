@@ -30,16 +30,12 @@ import { EngineActionPanel } from "../../../../components/engine-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
-import { MatchingQualityPanel } from "../../../../components/matching-quality-panel";
-import { SelectionApprovalPanel, type MatchCandidate } from "../../../../components/selection-approval-panel";
+import { MatchingSelectedEvidencePanel, type SelectedEvidenceCandidate } from "../../../../components/matching-selected-evidence-panel";
 import { AuthorityReviewPanel } from "../../../../components/authority-review-panel";
 import { DocumentValidatorPanel } from "../../../../components/document-validator-panel";
 import { AIAnalyzeRecoveryPanel } from "../../../../components/ai-analyze-recovery-panel";
 import { AIAnalyzePanel } from "../../../../components/ai-analyze-panel";
-import { EvidenceCoveragePanel } from "../../../../components/evidence-coverage-panel";
-import { ComplianceHeatmapPanel } from "../../../../components/compliance-heatmap-panel";
 import { AICopilotSuggestionsPanel } from "../../../../components/ai-copilot-suggestions-panel";
-import VaultEvidenceSearchPanel from "../../../../components/vault-evidence-search-panel";
 import { TenderSharePanel } from "../../../../components/tender-share-panel";
 import { AuditTrailPanel } from "../../../../components/audit-trail-panel";
 import { TenderChatPanelWrapper } from "../../../../components/tender-chat-panel-wrapper";
@@ -48,8 +44,6 @@ import { TenderSourceFilesPanel } from "../../../../components/tender-source-fil
 import { NextActionPanel } from "../../../../components/next-action-panel";
 import { ClientEntityWarningBanner } from "../../../../components/corrupted-metadata-banner";
 import { BidStrategyPanel } from "../../../../components/bid-strategy-panel";
-import ScoreBreakdownPanel from "../../../../components/score-breakdown-panel";
-import { AIRematchButton } from "../../../../components/ai-rematch-button";
 import TenderControlsPanel from "../../../../components/tender-controls-panel";
 import { prisma as prismaClient } from "../../../../lib/prisma";
 import {
@@ -284,35 +278,27 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={3} title="Evidence and matching" description="Create and review tender-specific expert, project, and compliance evidence links.">
-        <MatchingQualityPanel tenderId={tender.id} />
-        <SelectionApprovalPanel
-          tenderId={tender.id}
-          canMutate={canMutate}
-          experts={tender.expertMatches.map((m): MatchCandidate => ({
-            matchId: m.id,
+      <WorkflowStage number={3} title="Evidence and matching" description="Inspect the persisted evidence selected automatically for this tender.">
+        <MatchingSelectedEvidencePanel
+          experts={tender.expertMatches.map((m): SelectedEvidenceCandidate => ({
+            id: m.id,
             name: m.expert.fullName,
-            title: m.expert.title,
+            subtitle: m.expert.title,
             score: m.score,
             rationale: m.rationale,
             isSelected: m.isSelected,
             trustLevel: m.expert.trustLevel,
           }))}
-          projects={tender.projectMatches.map((m): MatchCandidate => ({
-            matchId: m.id,
+          projects={tender.projectMatches.map((m): SelectedEvidenceCandidate => ({
+            id: m.id,
             name: m.project.name,
-            title: m.project.clientName,
+            subtitle: m.project.clientName,
             score: m.score,
             rationale: m.rationale,
             isSelected: m.isSelected,
             trustLevel: m.project.trustLevel,
           }))}
         />
-        <ScoreBreakdownPanel tenderId={tender.id} />
-        {canMutate && <AIRematchButton tenderId={tender.id} />}
-        <EvidenceCoveragePanel tenderId={tender.id} />
-        <VaultEvidenceSearchPanel tenderId={tender.id} />
-        <ComplianceHeatmapPanel tenderId={tender.id} />
       </WorkflowStage>
 
       <WorkflowStage number={4} title="Generation and review" description="Confirm the submission plan, generate through the canonical gate, and complete document review.">

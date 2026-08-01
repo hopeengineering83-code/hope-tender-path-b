@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckIcon, ChevronDownIcon, RefreshIcon, WarningIcon } from "./icons";
+import { ChevronDownIcon, WarningIcon } from "./icons";
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
 type CoverageStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
@@ -67,13 +67,6 @@ type SyncResult = {
   desiredLinks?: number;
 };
 
-type TraceabilitySummary = {
-  requirements: number;
-  weakRequirements: number;
-  selectedExpertsWithWeakEvidence: number;
-  selectedProjectsWithWeakEvidence: number;
-};
-
 const SUPPORT_LEVEL_CONFIG: Record<SupportLevel, { label: string; color: string; dot: string }> = {
   FULL: { label: "Full", color: "border-green-300 bg-green-100 text-green-800", dot: "bg-green-500" },
   SUBSTANTIAL: { label: "Substantial", color: "border-blue-300 bg-blue-100 text-blue-800", dot: "bg-blue-500" },
@@ -83,10 +76,10 @@ const SUPPORT_LEVEL_CONFIG: Record<SupportLevel, { label: string; color: string;
 };
 
 const AUTOMATION_STATE_CONFIG: Record<AutomationState, { label: string; color: string; dot: string }> = {
-  COVERED: { label: "Covered", color: "border-green-300 bg-green-100 text-green-800", dot: "bg-green-500" },
-  PARTIAL: { label: "Auto-linked partial", color: "border-amber-300 bg-amber-100 text-amber-800", dot: "bg-amber-500" },
-  SOURCE_PROCESSING: { label: "Auto-grounding", color: "border-orange-300 bg-orange-100 text-orange-800", dot: "bg-orange-500" },
-  TRUE_EVIDENCE_GAP: { label: "Evidence unavailable", color: "border-red-300 bg-red-100 text-red-800", dot: "bg-red-500" },
+  COVERED: { label: "Verified and ready", color: "border-green-300 bg-green-100 text-green-800", dot: "bg-green-500" },
+  PARTIAL: { label: "Partially supported", color: "border-amber-300 bg-amber-100 text-amber-800", dot: "bg-amber-500" },
+  SOURCE_PROCESSING: { label: "Automatic source grounding", color: "border-orange-300 bg-orange-100 text-orange-800", dot: "bg-orange-500" },
+  TRUE_EVIDENCE_GAP: { label: "Automatic verification incomplete", color: "border-red-300 bg-red-100 text-red-800", dot: "bg-red-500" },
 };
 
 const REQ_TYPE_LABELS: Record<string, string> = {
@@ -117,19 +110,14 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   const hasLoaded = useRef(false);
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [synchronizing, setSynchronizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [filter, setFilter] = useState<CoverageFilter>("PENDING");
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [traceability, setTraceability] = useState<{ summary: TraceabilitySummary; warnings: string[] } | null>(null);
-  const [traceLoading, setTraceLoading] = useState(false);
-  const [traceOpen, setTraceOpen] = useState(false);
 
   const syncAndLoad = useCallback(async () => {
     setLoading(!hasLoaded.current);
-    setSynchronizing(true);
     setError(null);
     setSyncWarning(null);
 
@@ -153,7 +141,8 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     } catch {
       setSyncWarning("Automatic coverage synchronization is retrying in the background.");
     } finally {
-      setSynchronizing(false);
+      // The reconciliation is automatic; the canonical GET below always
+      // renders the persisted state even if this best-effort pass is retried.
     }
 
     try {
@@ -188,37 +177,11 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     });
   };
 
-  const loadTraceability = async () => {
-    if (traceOpen && traceability) {
-      setTraceOpen(false);
-      return;
-    }
-    setTraceOpen(true);
-    if (traceability) return;
-    setTraceLoading(true);
-    try {
-      const response = await fetch(`/api/tenders/${tenderId}/traceability`, { cache: "no-store" });
-      const json = await readJson(response) as {
-        success?: boolean;
-        traceability?: { summary: TraceabilitySummary; warnings: string[] };
-      };
-      if (response.ok && json.success && json.traceability) {
-        setTraceability({
-          summary: json.traceability.summary,
-          warnings: (json.traceability.warnings ?? []).filter(Boolean),
-        });
-      }
-    } finally {
-      setTraceLoading(false);
-    }
-  };
-
   if (loading) {
     return (
       <div id="requirement-coverage" className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
         <div role="status" aria-live="polite" className="flex items-center gap-2 text-sm text-gray-600">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" aria-hidden="true" />
-          Automatically grounding requirements and linking eligible evidence…
+          Automatic verification running.
         </div>
       </div>
     );
@@ -238,7 +201,8 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   if (data.totalMandatory === 0) {
     return (
       <div id="requirement-coverage" className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-        <p className="text-sm text-gray-600">No mandatory requirements are available yet. Analysis and extraction continue automatically.</p>
+        <p className="text-sm font-semibold text-gray-800">Requirements and Evidence</p>
+        <p className="mt-1 text-sm text-gray-600">Automatic verification running.</p>
       </div>
     );
   }
@@ -255,7 +219,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     <div id="requirement-coverage" className="rounded-xl border border-gray-200 bg-white shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-3">
         <div className="flex flex-wrap items-center gap-3">
-          <span className="text-sm font-semibold text-gray-800">Mandatory Requirement Coverage</span>
+          <span className="text-sm font-semibold text-gray-800">Requirements and Evidence</span>
           <div className="flex items-center gap-2">
             <div className="h-2 w-24 overflow-hidden rounded-full bg-gray-200">
               <div
@@ -264,32 +228,11 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
               />
             </div>
             <span className={`text-xs font-semibold ${coveragePct >= 80 ? "text-green-700" : coveragePct >= 50 ? "text-amber-800" : "text-red-700"}`}>
-              {coveragePct}%
+              {coveragePct}% supported
             </span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void syncAndLoad()}
-            disabled={synchronizing}
-            className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-60"
-            aria-label="Synchronize automatic requirement coverage"
-            title="Synchronize automatic requirement coverage"
-          >
-            <RefreshIcon className={synchronizing ? "animate-spin" : ""} />
-            {synchronizing ? "Synchronizing" : "Synchronize"}
-          </button>
-          <button
-            type="button"
-            onClick={() => void loadTraceability()}
-            disabled={traceLoading}
-            aria-expanded={traceOpen}
-            aria-controls="traceability-panel"
-            className="rounded px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-60"
-          >
-            {traceLoading ? "Loading…" : <><ChevronDownIcon className={traceOpen ? "inline h-3 w-3 rotate-180" : "inline h-3 w-3"} /> Traceability</>}
-          </button>
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
@@ -315,33 +258,13 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
         </div>
       )}
 
-      {traceOpen && traceability && (
-        <div id="traceability-panel" className="border-b border-gray-100 bg-amber-50 px-5 py-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-amber-800">Traceability Audit</p>
-          <div className="grid grid-cols-2 gap-3 text-center text-xs sm:grid-cols-4">
-            <div><div className="text-base font-bold text-gray-800">{traceability.summary.requirements}</div><div className="text-gray-600">Requirements</div></div>
-            <div><div className={`text-base font-bold ${traceability.summary.weakRequirements > 0 ? "text-red-700" : "text-green-700"}`}>{traceability.summary.weakRequirements}</div><div className="text-gray-600">Weak source</div></div>
-            <div><div className={`text-base font-bold ${traceability.summary.selectedExpertsWithWeakEvidence > 0 ? "text-amber-800" : "text-green-700"}`}>{traceability.summary.selectedExpertsWithWeakEvidence}</div><div className="text-gray-600">Weak experts</div></div>
-            <div><div className={`text-base font-bold ${traceability.summary.selectedProjectsWithWeakEvidence > 0 ? "text-amber-800" : "text-green-700"}`}>{traceability.summary.selectedProjectsWithWeakEvidence}</div><div className="text-gray-600">Weak projects</div></div>
-          </div>
-          {traceability.warnings.length > 0 ? (
-            <ul className="mt-2 space-y-0.5 text-xs text-amber-800">
-              {traceability.warnings.map((warning) => <li key={warning} className="flex items-start gap-1"><WarningIcon className="mt-0.5 shrink-0" /><span>{warning}</span></li>)}
-            </ul>
-          ) : (
-            <p className="mt-2 flex items-center gap-1 text-xs text-green-700"><CheckIcon /> Current traceability checks pass.</p>
-          )}
-        </div>
-      )}
 
-      <div className="grid grid-cols-2 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs sm:grid-cols-6">
+      <div className="grid grid-cols-2 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs sm:grid-cols-4">
         {[
-          { label: "Mandatory", value: data.totalMandatory, color: "text-gray-800" },
-          { label: "Source grounded", value: data.totalMandatory - data.missingSourceRef, color: "text-blue-700" },
-          { label: "Auto links", value: data.automaticallyLinked, color: "text-blue-700" },
-          { label: "Covered", value: data.fullyCovered, color: "text-green-700" },
+          { label: "Full", value: data.fullyCovered, color: "text-green-700" },
           { label: "Partial", value: data.partiallyCovered, color: "text-amber-800" },
-          { label: "True gaps", value: data.trueEvidenceGaps, color: data.trueEvidenceGaps > 0 ? "text-red-700" : "text-gray-500" },
+          { label: "Automatic verification", value: data.sourceProcessing, color: "text-orange-700" },
+          { label: "Genuine gaps", value: data.trueEvidenceGaps, color: data.trueEvidenceGaps > 0 ? "text-red-700" : "text-gray-500" },
         ].map((cell) => (
           <div key={cell.label} className="bg-white py-2">
             <div className={`text-base font-bold ${cell.color}`}>{cell.value}</div>
@@ -352,8 +275,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
 
       {data.sourceProcessing > 0 && (
         <div role="status" aria-live="polite" className="flex items-start gap-1 border-b border-orange-100 bg-orange-50 px-5 py-2 text-xs text-orange-800">
-          <RefreshIcon className="mt-0.5 shrink-0 animate-spin" />
-          <span>{data.sourceProcessing} requirement source trace(s) are being repaired automatically against active tender files. Final release remains blocked until exact quote and page provenance are proven.</span>
+          <span>Automatic source grounding is running for {data.sourceProcessing} requirement source trace(s). Final release remains blocked until exact quote and page provenance are proven.</span>
         </div>
       )}
 
@@ -431,7 +353,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                           </span>
                         </div>
                       ) : (
-                        <p role="status" className="flex items-start gap-1 text-xs text-orange-800"><RefreshIcon className="mt-0.5 shrink-0 animate-spin" /><span>Automatic source grounding is processing the active tender files. No manual source-reference entry is requested.</span></p>
+                        <p role="status" className="text-xs text-orange-800">Automatic source grounding.</p>
                       )}
                     </div>
 
@@ -440,7 +362,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                       {row.evidenceLinks.length === 0 ? (
                         <p className={`text-xs ${row.automationState === "TRUE_EVIDENCE_GAP" ? "text-red-700" : "text-orange-800"}`}>
                           {row.automationState === "TRUE_EVIDENCE_GAP"
-                            ? "No eligible source-verified evidence currently exists. Add the actual missing source document to Company Vault; ingestion, verification, matching, and linking continue automatically."
+                            ? "Automatic verification incomplete. Current company-owned bytes do not yet provide eligible evidence for this requirement."
                             : "Automatic evidence selection is waiting for source grounding or dependent generated bytes."}
                         </p>
                       ) : (

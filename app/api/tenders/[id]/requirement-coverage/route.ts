@@ -241,7 +241,13 @@ export async function GET(
     );
     const trueEvidenceGaps = rows.filter((row) => row.automationState === "TRUE_EVIDENCE_GAP").length;
     const sourceProcessing = rows.filter((row) => row.automationState === "SOURCE_PROCESSING").length;
-    const coverageRatio = totalMandatory > 0 ? fullyCovered / totalMandatory : 1;
+    // Display credit for canonical partial support without promoting it to
+    // FULLY_MET. This prevents a truthful partially-supported set from being
+    // presented as 0%, while final-package gates continue to use the exact
+    // fail-closed statuses from getFinalPackageReadinessModel.
+    const coverageRatio = totalMandatory > 0
+      ? (fullyCovered + partiallyCovered * 0.5) / totalMandatory
+      : 1;
 
     return NextResponse.json({
       ok: true,

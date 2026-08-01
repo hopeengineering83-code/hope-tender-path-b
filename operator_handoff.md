@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 16:45 UTC — Codex (GPT-5.6 Sol), PR #1175 canonical Vault/Engine panels
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, started from exact GitHub head `dac9ff76b914da9e998af182d04a501fa60c2314`; zero inline review comments and zero submitted reviews. No merge or production deployment performed.
+- **Scope:** closed the remaining screenshot/workflow contradiction after the durable Company Vault and Engine backend repairs: the tender workspace still rendered five competing evidence/matching panels plus manual selection, rematch, Vault-management, and synchronization controls. The normal workflow now renders only `Requirements and Evidence` and `Matching and Selected Evidence`; persisted selected experts/projects are first, unselected candidates/diagnostics are collapsed, requirement statuses use the final-package readiness payload, and partial evidence receives weighted display credit without weakening fail-closed release status.
+- **Files changed:** `app/dashboard/tenders/[id]/page.tsx`, `app/api/tenders/[id]/requirement-coverage/route.ts`, `components/requirement-coverage-panel.tsx`, `components/matching-selected-evidence-panel.tsx`, `tests/canonical-vault-engine-panels.test.ts`, `operator_handoff.md`.
+- **Tests / checks:** Prisma generation passed; 64 focused Vault/Engine/matching/requirements assertions passed; TypeScript passed; targeted zero-warning ESLint passed; `git diff --check` passed. Full-repository lint and local Next build were terminated by the constrained local process environment after starting; updated-head CI remains required for the complete suite/build/PostgreSQL/browser acceptance.
+- **CI / deployment:** predecessor head checks were running when work began. No preview was manually created; the normal PR integration may create its canonical preview after push.
+- **Known risks / assumptions:** backend automatic ingestion, source verification, single revision-bound Engine authority, retry idempotency, tenant isolation, and tamper rejection are unchanged and remain covered by the existing PostgreSQL/browser suites. This change removes the final live UI owners that contradicted that backend authority. Exact-head CI and authenticated preview screenshots remain required before merge readiness.
+- **Next action:** push this commit to PR #1175, require its complete exact-head CI and screenshot capture, and keep the PR draft/unmerged pending Hope's release approval.
+- **Merge status:** not reviewed — focused local checks pass; exact-head CI/browser/build are pending.
+
 ### 2026-08-01 16:35 UTC — Codex (GPT-5.6 Sol), PR #1175 final scoped Engine confirmation
 
 - **Branch / PR:** `work`, aligned exactly to draft PR #1175 head `274989d1da43c8b366b8135b766938a11e92ac52` on `release/consolidated-recovery-20260717`; zero inline comments and zero submitted reviews.
