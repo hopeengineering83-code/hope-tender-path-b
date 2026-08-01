@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 14:08 UTC — Codex (GPT-5.6 Sol), PR #1175 automatic-handoff cleanup
+
+- **Branch / PR:** local `work`; governing draft PR #1175 head branch `release/consolidated-recovery-20260717` at `77dba9a` before this follow-up. GitHub reports no inline comments or submitted reviews.
+- **Scope:** removed the remaining Company Vault client-pipeline message that incorrectly said re-imported evidence remained subject to human review. Successful byte re-import now explicitly hands eligible evidence to Run Engine automatic source verification. Also replaced the remaining generic compliance “source review” wording with automatic source verification; evidence eligibility and fail-closed source authority are unchanged.
+- **Files changed:** `lib/ui/auto-pipeline.ts`, `lib/engine/compliance.ts`, `tests/auto-pipeline.test.ts`, `operator_handoff.md`.
+- **Tests:** focused automatic-pipeline, pipeline-authority, Company Vault evidence, and preview-runtime tests passed 23/23; clean-cache TypeScript passed; zero-warning lint passed; `git diff --check` passed.
+- **CI / deployment:** predecessor `77dba9a` dependency and capture checks passed; both full duplicated workflows were still running when this follow-up was prepared. Vercel Preview Comments passed. No extra manual deployment was created; pushing this commit lets the governing PR integration create its canonical preview.
+- **Risks / assumptions:** human `REVIEWED` provenance remains a supported optional evidence authority, but it is not required between Company Vault and Run Engine. Automatic verification still cannot invent evidence or promote stale, altered, source-less, or unmatched records.
+- **Next action:** push this commit to PR #1175, verify updated-head CI/preview, and keep the PR draft until external release holds are cleared.
+- **Merge status:** not reviewed — local focused checks pass; updated-head CI is required.
+
 ### 2026-08-01 13:27 UTC — Codex (GPT-5.6 Sol), PR #1175 evidence-gap repair
 
 - **Branch / PR:** local `work` aligned exactly to `origin/release/consolidated-recovery-20260717` at `8768590`; governing draft PR #1175 targets `integration/controlled-recovery`. GitHub API showed zero inline comments and zero submitted reviews; all seven latest-head checks were green before this repair.

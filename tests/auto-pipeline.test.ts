@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import {
   decideTenderUploadAutoPipeline,
+  triggerCompanyDocumentAutoPipeline,
   triggerTenderUploadAutoPipeline,
   type UploadFirstResponse,
 } from "../lib/ui/auto-pipeline";
@@ -91,5 +92,18 @@ describe("server-owned tender pipeline", () => {
     assert.equal(response.nextAction, "RUN_AI_ANALYZE");
     assert.equal(response.processingJobId, "job-1");
     assert.equal(response.pipelineStage, "EXTRACT_TEXT_QUEUED");
+  });
+
+  it("returns automatic Company Vault verification guidance without a human handoff", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ success: true }), { status: 200 })) as typeof fetch;
+    try {
+      const result = await triggerCompanyDocumentAutoPipeline();
+      assert.equal(result.status, "queued");
+      assert.match(result.message, /Run Engine will automatically source-verify/i);
+      assert.doesNotMatch(result.message, /human review|attach original|source reference not found/i);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });

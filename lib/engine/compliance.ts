@@ -167,7 +167,7 @@ export function buildCompliance(
       supportStrength = requirementDocument || selectedEvidenceCount > 0 ? 0.9 : 0.55;
       supportStatus = supportStrength >= 0.9 ? "SUPPORTED" : "PARTIAL";
       evidenceSummary = requirementDocument || selectedEvidenceCount > 0
-        ? `${requirementDocument ? "A relevant Company Vault document" : "Selected expert/project evidence"} can support this strategic requirement after source review.`
+        ? `${requirementDocument ? "A relevant Company Vault document" : "Selected expert/project evidence"} can support this strategic requirement after automatic source verification.`
         : "No mapped company evidence yet; proposal narrative can be drafted but should be verified.";
       evidenceType = requirementDocument ? "COMPANY_DOCUMENT" : selectedEvidenceCount > 0 ? "SELECTED_COMPANY_EVIDENCE" : "UNMAPPED";
       evidenceSource = requirementDocument ? "Relevant Company Vault document" : selectedEvidenceCount > 0 ? "Selected Company Vault expert/project evidence" : "No mapped evidence";

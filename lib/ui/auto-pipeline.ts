@@ -132,7 +132,7 @@ export async function triggerCompanyDocumentAutoPipeline(): Promise<AutoPipeline
       fired: true,
       endpoint,
       status: "queued",
-      message: "Company Vault source re-import completed. Draft evidence remains subject to human review.",
+      message: "Company Vault source re-import completed. The Run Engine will automatically source-verify eligible evidence before using it.",
     };
   } catch (error) {
     logger.warn("[auto-pipeline] triggerCompanyDocumentAutoPipeline failed", {
