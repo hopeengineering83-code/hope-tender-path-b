@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 16:35 UTC — Codex (GPT-5.6 Sol), PR #1175 final scoped Engine confirmation
+
+- **Branch / PR:** `work`, aligned exactly to draft PR #1175 head `274989d1da43c8b366b8135b766938a11e92ac52` on `release/consolidated-recovery-20260717`; zero inline comments and zero submitted reviews.
+- **Scope:** final verification of the screenshot-reported Company Vault → AI Analyze → durable Run Engine failure after reconciling an initially stale local checkout to the actual PR head. Confirmed the repair commits `7899ebc` and `19d9760` are present, all exact-head checks are green, and no subsequent commit reverted or competed with the immutable-input revision and single automatic continuation authority. No application behavior, schema, migration, dependency, or gate changed.
+- **Files changed:** `operator_handoff.md` only.
+- **Tests / evidence:** local Prisma generation passed; 42 focused Run Engine/Vault/automatic-continuation/runtime assertions passed with the PostgreSQL-only suite intentionally skipped locally; TypeScript, zero-warning lint, and `git diff --check` passed. Exact-head GitHub CI passed both duplicated migration/integrity/typecheck/lint/test/build/authenticated-isolation workflows, including the PostgreSQL self-invalidation regression; dependency rejection and 111-route capture also passed.
+- **CI / deployment:** all seven current checks on `274989d1` are green. The verified application-code preview remains `dpl_GuASMSrwN75hqS5ima8GcEGDS4Tu`, READY and healthy at exact application SHA `19d97609`; commits after it are documentation/test-only and do not alter deployed runtime behavior.
+- **Risks / assumptions:** no known scoped code, database, CI, browser, screenshot, or deployment gap remains. Automation cannot impersonate the supplied real account or mutate its failed job without credentials; pressing **Retry durable Engine** is the sole user-specific replay action and creates/reuses corrected revision v3 automatically, without a Company Vault review/attachment step.
+- **Next action:** Hope may retry the supplied tender in the verified preview; investigate only if that owner-specific replay produces a new correlation reference.
+- **Merge status:** the Company Vault/AI Analyze/Run Engine scope is fully repaired and verified by all available automated acceptance layers; PR #1175 remains draft and unmerged pending Hope's explicit approval and unrelated repository-level external holds.
+
 ### 2026-08-01 16:00 UTC — Codex (GPT-5.6 Sol), final open-PR forensic disposition
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / governing draft PR #1175; starting exact head `7100ec7ba40e66eb98fdd54441899132297c2927`; #1175 remains open, draft, and unmerged.
