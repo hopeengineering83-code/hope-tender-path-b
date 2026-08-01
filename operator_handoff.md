@@ -74,6 +74,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 13:16 UTC — Codex (GPT-5.6 Sol), PR #1175 Vercel preview
+
+- **Branch / PR:** `work`, requested PR #1175. Hope explicitly authorized one Vercel preview for the current `dd7a147` changes.
+- **Deployment:** created `dpl_FAhSHixWiGjaBvKcCfoZYHRKzVq1`; READY at `https://hope-tender-path-5o5iydrzd-hopeengineering83-codes-projects.vercel.app`. Vercel build compiled successfully, passed type validation, applied/verified all 40 migrations with no pending migrations, verified the critical schema, and generated all 59 static pages.
+- **Real-app checks:** `GET /api/health` returned HTTP 200 with `status=healthy`, preview environment, all reported critical tables present, and 8/10 AI providers configured. Chromium opened the real `/login` page successfully at 1440×1000; screenshot saved locally at ignored path `artifacts/pr1175-preview/login.png` (39,652 bytes). The page rendered without visible overflow or runtime error.
+- **Authenticated limitation:** the preview has no configured E2E credentials. Known fixture/demo credentials were rejected. `vercel env pull --environment=preview` succeeded, but direct E2E seeding from this container could not reach the preview Neon host, so authenticated Company Vault/Run Engine clicks and screenshots were not performed. No production user account was modified.
+- **Files changed:** `operator_handoff.md` only; no application code changed in this deployment-validation follow-up.
+- **Tests / checks:** Vercel READY; preview health HTTP 200; real Chromium login render and screenshot passed. Authentication-dependent inspection remains blocked by unavailable credentials/database network access.
+- **Known risks / assumptions:** public health and login surfaces are verified on the exact `dd7a147` deployment. Company Vault/Run Engine authenticated runtime behavior still requires a valid preview account supplied through an approved channel or a Vercel-side seed mechanism.
+- **Next action:** provide/enable a preview-only test account, then run the authenticated Company Vault → Run Engine background job → AI Analyze/matching flow on this exact deployment and capture its screenshots.
+- **Merge status:** not reviewed — deployment is healthy, but authenticated scoped workflow validation remains pending.
+
 ### 2026-08-01 13:04 UTC — Codex (GPT-5.6 Sol), PR #1175 follow-up
 
 - **Branch / PR:** `work`; requested PR #1175 follow-up. The checkout still has no Git remote or `gh` CLI, so live inline review comments, PR head, CI, and preview screenshots could not be fetched; updated PR metadata was submitted with `make_pr` after commit.
