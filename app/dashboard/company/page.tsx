@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { classifyDeleteResponse, type DeleteResponse } from "../../../lib/company-vault-delete-classifier";
 import { CheckIcon, CrossIcon, PersonIcon, FolderIcon, ChevronDownIcon } from "../../../components/icons";
@@ -39,10 +38,10 @@ type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; err
  * `companyDoc=true` rather than running the ingestion inline (a full AI
  * extraction pass over every usable document could otherwise risk the
  * upload request's timeout). This badge tells the user their newly
- * uploaded document has been queued for re-ingestion, so they know not to
- * expect it in the Review Inbox instantly, without needing a live-polling
- * progress indicator — refreshing the Review Inbox after a short wait
- * shows the new drafts once the job completes.
+ * uploaded document has been queued for extraction and source-verification,
+ * so they know the result is not instant, without needing a live-polling
+ * progress indicator. No user action follows: the job source-verifies
+ * eligible evidence on its own and Run Engine consumes it automatically.
  */
 type VaultPipelineStatus = {
   phase: "queued" | "failed";
@@ -349,20 +348,21 @@ export default function CompanyPage() {
         } else {
           setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"done" } : x));
           await loadDocs();
-          // Surface the auto-pipeline status. Ingestion now runs in the
-          // background, so this badge tells the user their newly uploaded
-          // document has been queued for re-ingestion — check back in the
-          // Review Inbox shortly, rather than the old "already done" message.
+          // Surface the auto-pipeline status. Ingestion runs in the
+          // background, so this badge tells the user the newly uploaded
+          // document has been queued for extraction and source-verification,
+          // rather than the old "already done" message. Nothing is asked of
+          // the user either way — the queued job is the whole workflow.
           if (data.companyImport && data.companyImport.status === "QUEUED") {
             setVaultPipeline({
               phase: "queued",
-              message: "Document stored. Vault re-ingestion queued — new drafts will appear in the Review Inbox shortly.",
+              message: "Document stored. Extraction and source-verification queued — this completes automatically, no action needed.",
               at: Date.now(),
             });
           } else if (data.companyImport && data.companyImport.status === "FAILED") {
             setVaultPipeline({
               phase: "failed",
-              message: "Document stored, but vault re-ingest could not be queued. Open the Review Inbox to repair manually.",
+              message: "Document stored, but automatic extraction could not be queued. It retries on its own; Diagnostics and Recovery can force a retry.",
               at: Date.now(),
             });
           }
@@ -812,15 +812,9 @@ export default function CompanyPage() {
       {/* Documents Tab */}
       {tab==="documents" && (
         <div className="rounded-2xl border bg-white p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div>
-              <h2 className="font-semibold text-slate-900">Document Library</h2>
-              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Run Engine extracts and source-verifies eligible evidence automatically</p>
-            </div>
-            <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60 font-medium">
-              {reimporting ? "Re-importing…" : "Re-extract & Re-import All"}
-            </button>
+          <div>
+            <h2 className="font-semibold text-slate-900">Document Library</h2>
+            <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Run Engine extracts and source-verifies eligible evidence automatically</p>
           </div>
           <div className="flex gap-2 items-center">
             <select value={docCategory} onChange={e=>setDocCategory(e.target.value)} className="flex-1 rounded-lg border px-2 py-1.5 text-xs bg-white">
@@ -897,7 +891,6 @@ export default function CompanyPage() {
                       <span className="text-[10px] font-medium text-amber-600 px-2 py-1" aria-label={`Deletion pending for ${doc.originalFileName}`}>Deletion pending</span>
                     ) : (
                       <>
-                        <button type="button" onClick={()=>void reextractDoc(doc)} disabled={reextractingDocId!==null || deletingDocId!==null} aria-busy={reextractingDocId===doc.id} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-slate-200" title="Re-extract text">{reextractingDocId===doc.id ? "Re-extracting…" : "Re-extract"}</button>
                         <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">Download</a>
                         <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null || reextractingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} {...(confirmingDeleteDocId===doc.id ? { "aria-controls": `delete-confirm-${doc.id}`, "aria-describedby": `delete-confirm-help-${doc.id}` } : {})} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
                       </>
@@ -917,6 +910,44 @@ export default function CompanyPage() {
               </div>
             ))}
           </div>
+
+          {/* ── Diagnostics and Recovery ────────────────────────────────────
+              Extraction, source-verification and Vault-to-Engine handoff are
+              automatic: uploading a document is the entire user workflow. The
+              controls below re-run work the pipeline already does on its own
+              and already retries on its own, so they exist only for the case
+              where a document is genuinely stuck. They are collapsed by
+              default and deliberately absent from the document rows, because
+              a re-extract button sitting next to every file reads as a step
+              the user is expected to take. Nothing here grants review,
+              approval, or REVIEWED provenance — re-extraction re-derives
+              SOURCE_VERIFIED evidence from the stored bytes exactly as the
+              automatic path does. */}
+          <details className="rounded-xl border border-slate-200 bg-slate-50">
+            <summary className="cursor-pointer list-none px-4 py-2.5 text-xs font-semibold text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">
+              Diagnostics and Recovery
+              <span className="ml-2 font-normal text-slate-400">optional — normal processing needs none of this</span>
+            </summary>
+            <div className="space-y-3 border-t border-slate-200 px-4 py-3">
+              <p className="text-xs text-slate-500">
+                Extraction and source-verification run automatically after upload and retry on their own. Use these only if a document stays without text.
+              </p>
+              <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60">
+                {reimporting ? "Re-importing…" : "Re-extract & Re-import All"}
+              </button>
+              {docs.length > 0 && (
+                <ul className="space-y-1.5">
+                  {docs.map(doc => (
+                    <li key={doc.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
+                      <span className="min-w-0 flex-1 truncate text-xs text-slate-600">{doc.originalFileName}</span>
+                      <button type="button" onClick={()=>void reextractDoc(doc)} disabled={reextractingDocId!==null || deletingDocId!==null || doc.aiExtractionStatus === "PENDING_DELETE"} aria-busy={reextractingDocId===doc.id} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 shrink-0 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60" title="Re-extract text">{reextractingDocId===doc.id ? "Re-extracting…" : "Re-extract"}</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </details>
         </div>
       )}
 
@@ -927,9 +958,8 @@ export default function CompanyPage() {
             const totalExperts = (company.experts ?? []).length;
             if (totalExperts === 0) return null;
             return (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                <span>Run Engine automatically source-verifies eligible expert records before matching and generation.</span>
-                <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 no-underline hover:bg-blue-100">Automatic verification →</Link>
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                Run Engine automatically source-verifies eligible expert records before matching and generation.
               </div>
             );
           })()}
@@ -1061,9 +1091,8 @@ export default function CompanyPage() {
             const totalProjects = (company.projects ?? []).length;
             if (totalProjects === 0) return null;
             return (
-              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                <span>Run Engine automatically source-verifies eligible project records before matching and generation.</span>
-                <Link href="/dashboard/company/review" className="shrink-0 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 no-underline hover:bg-blue-100">Automatic verification →</Link>
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                Run Engine automatically source-verifies eligible project records before matching and generation.
               </div>
             );
           })()}

@@ -61,7 +61,16 @@ describe("Company Vault document re-extraction action", () => {
     assert.match(source, /reextractingDocId/);
     assert.match(source, /if \(reextractingDocId\) return/);
     assert.match(source, /aria-busy=\{reextractingDocId===doc\.id\}/);
-    assert.match(source, /disabled=\{reextractingDocId!==null \|\| deletingDocId!==null\}/);
+    // The re-extract control moved out of the document rows and into the
+    // collapsed "Diagnostics and Recovery" disclosure, where it also guards
+    // against acting on a document that is already pending deletion. Assert
+    // the guards this test exists to protect — no concurrent re-extract, no
+    // re-extract during a delete — rather than the exact disabled expression,
+    // which would fail on a strictly stronger condition.
+    const reextractDisabled = source.match(/disabled=\{reextractingDocId[^}]*\}/);
+    assert.ok(reextractDisabled, "expected a disabled guard on the re-extract control");
+    assert.match(reextractDisabled[0], /reextractingDocId!==null/);
+    assert.match(reextractDisabled[0], /deletingDocId!==null/);
     assert.match(source, /Re-extracting…/);
   });
 
