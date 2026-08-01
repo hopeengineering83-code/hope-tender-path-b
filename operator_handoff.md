@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 18:33 UTC — Codex (GPT-5.6 Sol), PR #1175 final anchor-audit reconciliation
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `828ac69`; no merge or production deployment.
+- **Scope / root cause:** exact-head CI reached the complete unit suite and found one stale source-shape assertion in `tests/final-overlap-consolidation.test.ts`. The production panel now renders its canonical anchor through the typed default `sectionId` prop so Global Matching can supply unique per-tender ids, but this older audit recognized only literal ids and workflow-stage ids. Extended the audit to recognize the rendered default-id contract without weakening anchor existence: the default value and `id={sectionId}` binding must both exist.
+- **Files changed:** `tests/final-overlap-consolidation.test.ts`, `operator_handoff.md` only. No application, schema, provider, Engine, Vault, matching, readiness, generation, or export behavior changed.
+- **Tests / evidence:** focused workflow/canonical-panel/UI tests, targeted ESLint, and `git diff --check` are required before commit. Both exact-head CI copies failed only this stale assertion after the preceding application correction; updated-head full CI/capture remains required for final external acceptance.
+- **Known risk / assumption:** this is a static-test reconciliation for an already-tested responsive unique-id implementation; it does not substitute for authenticated browser and PostgreSQL acceptance.
+- **Next action:** commit and push to PR #1175, require exact-head CI/capture green, inspect the final capture, and keep the PR draft/unmerged.
+- **Merge status:** not reviewed — exact-head external acceptance pending.
+
 ### 2026-08-01 18:20 UTC — Codex (GPT-5.6 Sol), PR #1175 matching responsive/DOM closure
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `c22950b`; zero inline comments/reviews. No merge or production deployment.

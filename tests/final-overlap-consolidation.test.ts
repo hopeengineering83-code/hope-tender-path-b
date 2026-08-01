@@ -176,7 +176,10 @@ describe("Final overlap/dead-code/page consolidation acceptance tests", () => {
         "app/dashboard/tenders/[id]/page.tsx",
       ].map((file) => read(file)).join("\n");
       for (const id of targets) {
-        assert.ok(sources.includes(`id="${id}"`) || sources.includes(`workflow-stage-${id.at(-1)}`), `Missing target #${id}`);
+        const hasLiteralId = sources.includes(`id="${id}"`);
+        const hasStableWorkflowStage = sources.includes(`workflow-stage-${id.at(-1)}`);
+        const hasRenderedDefaultId = sources.includes(`sectionId = "${id}"`) && sources.includes("id={sectionId}");
+        assert.ok(hasLiteralId || hasStableWorkflowStage || hasRenderedDefaultId, `Missing target #${id}`);
       }
     });
   });
