@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { logger } from "../../../../lib/observability";
 import { requireRole, unauthorizedResponse } from "../../../../lib/auth";
 import { completeJob, failJob, rearmDurableStageJob } from "../../../../lib/ai-jobs";
-import { classifyStageRetry, isDurableRetryJobType } from "../../../../lib/engine/stage-retry-policy";
+import { classifyStageRetry, isDurableRetryJobType, isSupersededStageFailure } from "../../../../lib/engine/stage-retry-policy";
 import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
 import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
@@ -270,7 +270,15 @@ export async function POST(req: Request) {
     } catch (error) {
       const correlationId = require("crypto").randomUUID().slice(0, 8);
       const message = error instanceof Error ? error.message : String(error);
-      logger.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
+      // A supersede is an expected, self-healing outcome — the newer revision's
+      // job is already queued — so it is reported at warn. Emitting it at error
+      // put a benign race at the top of runtime error monitoring and buried
+      // real incidents underneath it.
+      if (isSupersededStageFailure(message)) {
+        logger.warn(`[run-next] Job ${claimed.id} superseded by a newer Engine source revision correlationId=${correlationId}`);
+      } else {
+        logger.error(`[run-next] Job ${claimed.id} execution failed correlationId=${correlationId}: ${message}`);
+      }
       const publicFailure = publicJobFailureMessage(error, correlationId);
 
       // Durable-stage bounded backoff: EXTRACT_TEXT / VAULT_INGEST /

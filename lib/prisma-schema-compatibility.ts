@@ -57,6 +57,14 @@ export function publicJobFailureMessage(error: unknown, correlationId: string): 
   }
 
   const message = error instanceof Error ? error.message : String(error);
+  // A superseded run needs no user action: the enqueue authority already
+  // queued a fresh job for the new source revision. Without this case the
+  // all-caps fallback below told the user to "retry once the underlying issue
+  // is resolved" and to contact an administrator, for a condition that
+  // resolves itself and that they caused simply by changing their documents.
+  if (/ENGINE_SOURCE_REVISION_STALE/i.test(message)) {
+    return `Your source documents changed while this run was in progress, so the run was superseded. A new run has already been queued automatically — no action is needed. ${ref}`;
+  }
   if (/\b(?:TenderFile|Tender|Company|AiJob)\b.+\bnot found\b/i.test(message)) {
     return `A required source record no longer exists. Refresh the page, confirm the source file is still attached, and retry. ${ref}`;
   }
