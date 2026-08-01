@@ -85,6 +85,17 @@ Never claim a fix is complete unless the stated tests passed.
 - **Next action:** Hope may retry the supplied tender in the verified preview; investigate only if that owner-specific replay produces a new correlation reference.
 - **Merge status:** the Company Vault/AI Analyze/Run Engine scope is fully repaired and verified by all available automated acceptance layers; PR #1175 remains draft and unmerged pending Hope's explicit approval and unrelated repository-level external holds.
 
+### 2026-08-01 16:30 UTC — Codex (GPT-5.6 Sol), live release-control refresh
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / governing draft PR #1175; independently frozen at `274989d1da43c8b366b8135b766938a11e92ac52`, base `b3c9db5de89a2a665e61a83facbff0f276f9983c`; #1175 remains open, draft, and unmerged.
+- **Scope:** refetched GitHub and Vercel; confirmed #1175 is the only open PR; proved closed #1274 head `0611690b` and the prepared heads `130f1c13`/`b8f15162` are ancestral; inspected closure comments for #1266, #1267, #1270, #1274 and #1287; downloaded and reopened the exact-head acceptance artifact; verified the matching preview identity/health; replaced the stale narrow `pr-body.md` with the complete recovery description and explicit external holds.
+- **Files changed:** `pr-body.md`, `operator_handoff.md`. No application, schema, migration, dependency, workflow authority, safety gate, or executable test changed.
+- **Tests / evidence:** exact-head GitHub runs `30707024137`, `30707022343`, and `30707024138` passed all 44 migrations, critical schema/bootstrap/idempotency/zero drift, release audits, typecheck, zero-warning lint, 8,916/8,916 unit/PostgreSQL assertions, production build, 180 Playwright passes with three documented conditional skips, and 111/111 responsive route cases with zero findings. Artifact hashes independently recomputed for DOCX `04a07b29…` (12,094 bytes), PDF `3aff6bd5…` (985 bytes), and ZIP `90aa7480…` (10,419 bytes). Local `npm audit --omit=dev` reports zero vulnerabilities.
+- **CI / deployment:** exact application-head preview `dpl_3o2HfYVb9VaLktAXzLo5mbJ1TKNR` is READY; `/api/version` and `/api/health` return the exact SHA, healthy critical tables, and durable private Blob storage. This documentation-only commit must receive its own normal Git-triggered checks and preview before the PR body can cite the final documentation SHA.
+- **Risks / assumptions:** a fresh provider-backed persisted preview workflow was not run because approved synthetic credentials were not established. Password rotation, session revocation, automation-secret replacement, artifact sanitation, owner UAT, duplicate Vercel-project remediation, and post-workflow retained-log acceptance remain external holds.
+- **Next action:** commit and push this documentation/control-plane refresh, update the live #1175 body with the resulting exact SHA, require the normal exact-head checks, and keep #1175 draft/unmerged.
+- **Merge status:** unsafe while the external security and acceptance holds remain unresolved.
+
 ### 2026-08-01 16:00 UTC — Codex (GPT-5.6 Sol), final open-PR forensic disposition
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / governing draft PR #1175; starting exact head `7100ec7ba40e66eb98fdd54441899132297c2927`; #1175 remains open, draft, and unmerged.
