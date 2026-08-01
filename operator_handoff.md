@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 16:00 UTC — Codex (GPT-5.6 Sol), final open-PR forensic disposition
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / governing draft PR #1175; starting exact head `7100ec7ba40e66eb98fdd54441899132297c2927`; #1175 remains open, draft, and unmerged.
+- **Scope:** refetched GitHub and deployment state; proved closed #1274 heads `0611690b`, `130f1c13`, and frozen parent `b8f15162` are ancestral to #1175; audited every commit and all eight files in the sole remaining donor PR #1287; classified its already-incorporated compliance hardening and rejected its synchronous/client-policy Engine path and in-worker Vault mutation as competing or unsafe.
+- **Files changed:** `docs/audits/open-pr-unique-code-ledger-20260728.md`, `operator_handoff.md`. No application, schema, migration, dependency, workflow gate, or test implementation changed.
+- **Tests / evidence:** `npx prisma generate` passed; seven focused live-owner files passed 86/86 assertions. Downloaded exact-head GitHub artifacts for `7100ec7b`: 8,916/8,916 unit/PostgreSQL assertions, 180 Playwright passes with three documented conditional skips, production build, migrations/critical schema/idempotency/zero drift, release integrity, source-mutation checks, and 111/111 screenshot cases with zero findings all passed.
+- **CI / deployment:** all GitHub checks on starting head `7100ec7b` are green. GitHub deployment records were refetched; no production deployment or migration was initiated. The new documentation-only head still requires its own normal Git-triggered exact-head checks before donor closure or final PR-description claims.
+- **Risks / assumptions:** #1287's compliance-document matching value is already present with stronger regression coverage; replaying the remaining donor code would restore a synchronous Engine default, client-controlled policy parameters, and a late Vault mutation competing with the current pre-enqueue verification/revision authority. External credential remediation, approved synthetic provider-backed preview acceptance, owner UAT, and duplicate Vercel-project configuration remain unresolved holds.
+- **Next action:** commit and push this disposition, wait for the normal exact-head CI/preview, then close only #1287 with the verified superseding SHA and refresh #1175's stale description while keeping it draft.
+- **Merge status:** not reviewed for merge; #1175 must remain draft and unmerged.
+
 ### 2026-08-01 15:25 UTC — Codex (GPT-5.6 Sol), PR #1175 exact-head Engine verification
 
 - **Branch / PR:** `work`, aligned exactly to draft PR #1175 head `19d97609920d3f808542387f90bf3b3c7ffab824` on `release/consolidated-recovery-20260717`; no inline comments or submitted reviews.

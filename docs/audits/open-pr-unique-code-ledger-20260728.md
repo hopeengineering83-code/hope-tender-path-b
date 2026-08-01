@@ -4,6 +4,53 @@ Governing parent: draft PR #1175, branch `release/consolidated-recovery-20260717
 Frozen starting SHA for this pass: `b8f15162595e5a984169d97719942cf6906599bd`  
 Repair child: draft PR #1274, branch `fix/pr1175-final-open-pr-audit-consolidation`
 
+## 2026-08-01 final live open-PR refresh
+
+GitHub and the repository refs were refetched before this disposition. The
+governing PR #1175 is still open, draft, and unmerged at
+`7100ec7ba40e66eb98fdd54441899132297c2927`, based on
+`b3c9db5de89a2a665e61a83facbff0f276f9983c`. Closed consolidation PR #1274's
+exact head `0611690b1486402df6fb5431b055b219390517e7`, its originally reported
+failing head `130f1c130aa63c2d17a5b5758f43ee0a9e991082`, and its frozen parent
+`b8f15162595e5a984169d97719942cf6906599bd` are all ancestors of the current
+#1175 head. The obsolete export-owner tests were therefore repaired through
+the controlled staging PR and no #1274 change remains to reconcile.
+
+The only application donor still open is #1287. Its complete three-commit,
+eight-file disposition is below. No file or commit is accepted merely because
+its donor checks are green.
+
+| PR / file | Unique change | Production importer / caller | Product and policy assessment | Tests | Final disposition |
+|---|---|---|---|---|---|
+| #1287 `app/api/tenders/[id]/engine/route.ts` | Restores optional synchronous execution and parses client-selected `safe`, `skipAiRematch`, and `maxChars` policy | Run Engine mutation route | Competes with the current durable enqueue-only, server-policy-controlled owner; reintroduces request-bound timeout and client-bypass risk | Donor request-parser test expects synchronous default | **Rejected as stale and policy-conflicting.** Current route rejects client policy parameters, verifies tenant/extraction/Vault state, and returns one persisted 202 job contract. |
+| #1287 `lib/engine/engine-request-options.ts` | New query-string parser for synchronous/async and execution-policy options | Only the donor Engine route | Has no valid caller under the canonical enqueue-only contract and would create a second client-selected policy authority | Source-level parser assertions | **Rejected as unreachable under the retained authority.** |
+| #1287 `lib/engine/run-tender-engine.ts` | Performs Company Vault import and document-status writes inside the Engine execution | Background Engine worker | Duplicates the current pre-enqueue `prepareCompanyVaultForEngine` remap/automatic source-verification boundary and introduces storage/DB partial-success and retry ambiguity inside an already-running job | Donor mock/unit coverage only | **Rejected as a competing late mutation.** Current source verification commits before deterministic revision binding and enqueue. |
+| #1287 `lib/company-knowledge-import-safe.ts` | Adds a category/status planner and directly marks support documents `EXTRACTED` | Donor Engine worker | Conflates extraction status with evidence authority and can label a document extracted without performing byte-bound extraction/OCR | Donor planner assertions | **Rejected as unsafe.** Current importer delegates to `ingestCompanyVault`; automatic verification remains source/byte/provenance bound and never manufactures human review. |
+| #1287 `lib/engine/compliance.ts` | Selects requirement-relevant usable extracted support documents instead of an arbitrary first file | Live compliance builder | Valuable and policy-compatible behavior | Donor unit assertions | **Already independently incorporated and strengthened in #1175.** Current `findSupportDocument`/`findRequirementSupportDocument` logic and `tests/company-vault-compliance-evidence.test.ts` cover relevant extracted evidence, scanned/empty rejection, generic-keyword rejection, category integrity, and whole-term matching. No donor replay is needed. |
+| #1287 `components/engine-action-panel.tsx` | Changes one sentence to describe automatic review | Live Engine panel | The donor copy describes its now-rejected request-bound orchestration; current UI describes the durable enqueue/poll contract | No behavioral UI proof unique to the copy | **Superseded by current durable-workflow copy and browser coverage.** |
+| #1287 `tests/company-vault-run-engine-integration.test.ts` | Seven focused unit/source assertions for the donor parser, planner, and compliance selection | Test runner only | Compliance assertions have stronger current equivalents; parser/planner assertions lock the rejected competing design | 7 donor assertions | **Partially superseded, otherwise rejected with the implementation.** No unrelated behavioral coverage is removed from #1175. |
+| #1287 `operator_handoff.md` | Historical donor session/preview note | None | Documentation only and stale relative to the current exact head | None | **Not copied.** Current handoff and this ledger preserve the useful disposition. |
+| #1287 commits `133b2ee0`, `d77768d1`, `a23588a1` | Combined code, follow-up, and preview note | Paths above | No remaining unique policy-safe product behavior after the file-level analysis | Donor CI green; current exact-head evidence independently green | **Do not merge or cherry-pick.** The relevant evidence-selection behavior is already present; the rest conflicts with one durable Engine owner. |
+
+Falsification on the current #1175 tree ran the seven focused live-owner test
+files: **86/86 assertions passed**. They cover action registry ownership,
+Company Vault evidence selection, automatic source verification before enqueue,
+enqueue idempotency/revision binding, client-policy rejection, tenant/RBAC
+boundaries, UI polling honesty, safe public errors, and canonical provider
+order. Exact-head GitHub run `30706116533` independently passed 8,916/8,916
+unit/PostgreSQL assertions, migrations/schema/zero drift, release integrity,
+typecheck, zero-warning lint, production build, and 180 browser checks with
+three documented conditional skips. Route/screenshot run `30706116514`
+covered 111/111 cases with zero critical, warning, uncovered-route, or
+horizontal-overflow findings.
+
+After this documentation-only disposition is incorporated and its exact head
+is reverified, #1287 has no unique product code left to preserve and may be
+closed with a pointer to the superseding #1175 SHA. PR #1175 must remain draft,
+open, and unmerged. Provider-backed synthetic preview acceptance, credential
+rotation/session revocation/automation-secret replacement, artifact sanitation,
+owner UAT, and duplicate Vercel-project remediation remain external holds.
+
 ## 2026-07-30 principal live-state refresh
 
 ### 2026-07-30 01:40 UTC exact-head follow-up
