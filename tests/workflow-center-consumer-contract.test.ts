@@ -96,7 +96,7 @@ describe("workflow-center consumer contract", () => {
     const page = readFileSync("app/dashboard/tenders/[id]/page.tsx", "utf8");
     const orderedComponents = [
       "TenderSourceFilesPanel", "AIAnalyzePanel", "EngineActionPanel",
-      "MatchingQualityPanel", "EvidenceCoveragePanel", "GenerationActionPanel",
+      "RequirementCoveragePanel", "MatchingSelectedEvidencePanel", "GenerationActionPanel",
       "AuthorityReviewPanel", "FinalPackageManifestPanel", "ExportReadinessPanel",
     ];
     let previous = -1;

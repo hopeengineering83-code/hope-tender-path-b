@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 17:33 UTC — Codex (GPT-5.6 Sol), PR #1175 exact-head full-suite correction
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `54124fa4`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** downloaded both exact-head CI logs. PostgreSQL and the complete 8,900+ assertion run reached the final UI contract group and exposed two stale in-between contracts: `REVIEW_EVIDENCE` had been changed to the `match` verb but retained `ClipboardCheckIcon`, conflicting with the canonical `LinkIcon`; and the workflow consumer test still required the deleted `MatchingQualityPanel`/`EvidenceCoveragePanel`. Unified the matching verb icon and updated the ordering assertion to the live `RequirementCoveragePanel` then `MatchingSelectedEvidencePanel` authority sequence.
+- **Files changed:** `lib/ui/action-registry.ts`, `tests/workflow-center-consumer-contract.test.ts`, `operator_handoff.md`.
+- **Tests / checks:** the two failed CI assertions now pass; 24/24 focused canonical-panel/action-registry/workflow-consumer tests passed; release-integrity audit remains zero-failure; `git diff --check` passed. Predecessor capture passed, while both full CI copies failed only on these two final assertions after the database/full suite had otherwise run.
+- **Completion assessment:** no known scoped implementation gap remains. Updated-head exact CI must turn green before declaring the final 5% externally verified.
+- **Next action:** push, require both full CI copies and capture green, inspect the exact-head capture artifact, then record final verification without changing application code unless acceptance exposes another defect.
+- **Merge status:** not reviewed — focused correction passes; exact-head external acceptance pending.
+
 ### 2026-08-01 17:22 UTC — Codex (GPT-5.6 Sol), PR #1175 release-integrity reconciliation
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `61be8dfb`; zero inline comments/reviews. No merge or production deployment.

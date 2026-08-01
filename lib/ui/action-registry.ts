@@ -94,7 +94,7 @@ export const TENDER_ACTIONS = {
     label: "View automatically linked evidence",
     verb: "match",
     surface: "matching-selected-evidence",
-    iconName: "ClipboardCheckIcon",
+    iconName: "LinkIcon",
     availability: "NAVIGATION",
   },
   RUN_ENGINE: {
