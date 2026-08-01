@@ -3,9 +3,26 @@ import type { CompanyKnowledgeSnapshot, ComplianceResult, MatchingResult, Requir
 function clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
 
 function hasSupportDocument(knowledge: CompanyKnowledgeSnapshot, patterns: RegExp[]): boolean {
-  return knowledge.documents.some((doc) => {
-    const text = `${doc.category} ${doc.originalFileName} ${doc.extractedText ?? ""}`;
-    return patterns.some((pattern) => pattern.test(text));
+  return Boolean(findSupportDocument(knowledge, patterns));
+}
+
+/**
+ * Selects actual, usable Company Vault evidence for a requirement.  A filename
+ * alone is not enough: Run Engine must have extracted content to review before
+ * it can claim that the Vault supports a tender requirement.
+ *
+ * Keeping this resolver here also prevents the old "first document in the
+ * Vault" fallback from attaching an unrelated source reference.
+ */
+export function findSupportDocument(knowledge: CompanyKnowledgeSnapshot, patterns: RegExp[]) {
+  return knowledge.documents.find((doc) => {
+    const extractedText = (doc.extractedText ?? "").trim();
+    if (extractedText.length < 40 || /^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(extractedText)) return false;
+    const searchableEvidence = `${doc.category} ${doc.originalFileName} ${extractedText}`;
+    return patterns.some((pattern) => {
+      pattern.lastIndex = 0;
+      return pattern.test(searchableEvidence);
+    });
   });
 }
 
@@ -29,7 +46,6 @@ export function buildCompliance(
 
   const expertCount = knowledge.experts.length;
   const projectCount = knowledge.projects.length;
-  const documentCount = knowledge.documents.length;
   const legalCount = knowledge.legalRecords.length || (hasSupportDocument(knowledge, [/LEGAL_REGISTRATION/i, /registration/i, /license/i, /licence/i, /certificate/i, /tin/i, /vat/i]) ? 1 : 0);
   const financialCount = knowledge.financialRecords.length || (hasSupportDocument(knowledge, [/FINANCIAL_STATEMENT/i, /audit/i, /financial/i, /turnover/i, /balance/i]) ? 1 : 0);
   const complianceCount = knowledge.complianceRecords.length || (hasSupportDocument(knowledge, [/CERTIFICATION/i, /COMPLIANCE_RECORD/i, /MANUAL/i, /declaration/i, /certificate/i, /policy/i, /manual/i]) ? 1 : 0);
@@ -47,6 +63,19 @@ export function buildCompliance(
     let evidenceType = "UNMAPPED";
     let evidenceSource = "No evidence source selected";
     let evidenceReference: string | undefined;
+
+    const legalDocument = findSupportDocument(knowledge, [/LEGAL_REGISTRATION/i, /registration/i, /licen[cs]e/i, /certificate/i, /\btin\b/i, /\bvat\b/i]);
+    const financialDocument = findSupportDocument(knowledge, [/FINANCIAL_STATEMENT/i, /audit/i, /financial/i, /turnover/i, /balance sheet/i]);
+    const complianceDocument = findSupportDocument(knowledge, [/CERTIFICATION/i, /COMPLIANCE_RECORD/i, /MANUAL/i, /declaration/i, /certificate/i, /policy/i, /manual/i]);
+    const profileDocument = findSupportDocument(knowledge, [/COMPANY_PROFILE/i, /company profile/i, /service lines/i, /consultancy/i]);
+    const requirementTerms = req.title
+      .replace(/[.*+?^${}()|[\]\\]/g, " ")
+      .split(/\s+/)
+      .filter((word) => word.length > 3)
+      .slice(0, 4);
+    const requirementDocument = requirementTerms.length > 0
+      ? findSupportDocument(knowledge, [new RegExp(requirementTerms.join("|"), "i")])
+      : undefined;
 
     if (req.requirementType === "EXPERT") {
       const denominator = Math.max(req.requiredQuantity || 1, 1);
@@ -73,51 +102,51 @@ export function buildCompliance(
       evidenceSource = strongSelected > 0 ? "Selected project references" : "Project library candidates";
       evidenceReference = (strongSelected > 0 ? selectedProjects : highScoringProjects).map((match) => match.projectId).slice(0, 3).join(", ") || undefined;
     } else if (["LEGAL", "ELIGIBILITY", "REGISTRATION"].includes(req.requirementType)) {
-      supportStrength = legalCount > 0 ? 1 : documentCount > 0 ? 0.75 : 0;
+      supportStrength = legalCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
-      evidenceSummary = legalCount > 0 ? `${legalCount} legal/company registration evidence source(s) available.` : documentCount > 0 ? `${documentCount} company document(s) available for legal evidence review.` : "No legal/company registration evidence available yet.";
+      evidenceSummary = legalCount > 0 ? `${legalCount} legal/company registration evidence source(s) automatically reviewed and matched.` : "No relevant legal/company registration evidence was found in the Company Vault.";
       evidenceType = "LEGAL_RECORD";
       evidenceSource = legalCount > 0 ? "Company legal/support documents" : "No legal records found";
-      evidenceReference = knowledge.legalRecords[0]?.referenceNumber ?? knowledge.legalRecords[0]?.title ?? knowledge.documents.find((doc) => /LEGAL_REGISTRATION/i.test(doc.category))?.originalFileName;
+      evidenceReference = knowledge.legalRecords[0]?.referenceNumber ?? knowledge.legalRecords[0]?.title ?? legalDocument?.originalFileName;
     } else if (["FINANCIAL", "FINANCIAL_CAPACITY"].includes(req.requirementType)) {
-      supportStrength = financialCount > 0 ? 1 : documentCount > 0 ? 0.75 : 0;
+      supportStrength = financialCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
-      evidenceSummary = financialCount > 0 ? `${financialCount} financial evidence source(s) available for internal evidence mapping.` : documentCount > 0 ? `${documentCount} company document(s) available for financial evidence review.` : "No financial evidence available yet.";
+      evidenceSummary = financialCount > 0 ? `${financialCount} financial evidence source(s) automatically reviewed and matched.` : "No relevant financial evidence was found in the Company Vault.";
       evidenceType = "FINANCIAL_RECORD";
       evidenceSource = financialCount > 0 ? "Company financial/support documents" : "No financial records found";
-      evidenceReference = knowledge.financialRecords[0] ? `${knowledge.financialRecords[0].recordType} ${knowledge.financialRecords[0].fiscalYear}` : knowledge.documents.find((doc) => /FINANCIAL_STATEMENT/i.test(doc.category))?.originalFileName;
+      evidenceReference = knowledge.financialRecords[0] ? `${knowledge.financialRecords[0].recordType} ${knowledge.financialRecords[0].fiscalYear}` : financialDocument?.originalFileName;
     } else if (["COMPLIANCE", "CERTIFICATION", "DECLARATION"].includes(req.requirementType)) {
-      supportStrength = complianceCount > 0 || documentCount > 0 ? 1 : 0;
+      supportStrength = complianceCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 1 ? "SUPPORTED" : "UNSUPPORTED";
-      evidenceSummary = complianceCount > 0 ? `${complianceCount} compliance/certification/support evidence source(s) available.` : documentCount > 0 ? `${documentCount} company document(s) available for manual compliance evidence mapping.` : "No compliance or supporting documents available yet.";
-      evidenceType = complianceCount > 0 ? "COMPANY_COMPLIANCE_RECORD" : "COMPANY_DOCUMENT";
-      evidenceSource = complianceCount > 0 ? "Company compliance/support documents" : documentCount > 0 ? "Company documents" : "No evidence found";
-      evidenceReference = knowledge.complianceRecords[0]?.referenceNumber ?? knowledge.documents[0]?.originalFileName;
+      evidenceSummary = complianceCount > 0 ? `${complianceCount} compliance/certification/support evidence source(s) automatically reviewed and matched.` : "No relevant compliance or supporting document was found in the Company Vault.";
+      evidenceType = complianceCount > 0 ? "COMPANY_COMPLIANCE_RECORD" : "UNMAPPED";
+      evidenceSource = complianceCount > 0 ? "Company compliance/support documents" : "No relevant Company Vault evidence found";
+      evidenceReference = knowledge.complianceRecords[0]?.referenceNumber ?? complianceDocument?.originalFileName;
     } else if (req.requirementType === "COMPANY_PROFILE") {
-      supportStrength = companyProfileCount > 0 || documentCount > 0 ? 1 : 0;
+      supportStrength = companyProfileCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 1 ? "SUPPORTED" : "UNSUPPORTED";
       evidenceSummary = supportStrength >= 1 ? "Company profile/support document evidence is available." : "Company profile evidence is missing.";
       evidenceType = "COMPANY_DOCUMENT";
       evidenceSource = supportStrength >= 1 ? "Company profile/support documents" : "No company profile found";
-      evidenceReference = knowledge.documents.find((doc) => /COMPANY_PROFILE/i.test(doc.category))?.originalFileName ?? knowledge.documents[0]?.originalFileName;
+      evidenceReference = profileDocument?.originalFileName;
     } else if (isProposalResponseRequirement(req.requirementType)) {
-      supportStrength = documentCount > 0 || selectedEvidenceCount > 0 ? 1 : 0.65;
+      supportStrength = requirementDocument || selectedEvidenceCount > 0 ? 1 : 0.65;
       supportStatus = supportStrength >= 1 ? "SUPPORTED" : "PARTIAL";
-      evidenceSummary = documentCount > 0 || selectedEvidenceCount > 0
-        ? `${documentCount} company document(s), ${selectedExperts.length} selected expert(s), ${selectedProjects.length} selected project reference(s), and generated response sections can support this proposal-response requirement.`
+      evidenceSummary = requirementDocument || selectedEvidenceCount > 0
+        ? `${requirementDocument ? "1 relevant Company Vault document" : "No relevant Company Vault document"}, ${selectedExperts.length} selected expert(s), ${selectedProjects.length} selected project reference(s), and generated response sections can support this proposal-response requirement.`
         : "The proposal generator can write this response section, but no supporting company evidence is mapped yet.";
       evidenceType = "PROPOSAL_RESPONSE";
       evidenceSource = "Generated proposal response + company evidence library";
-      evidenceReference = knowledge.documents[0]?.originalFileName ?? selectedExperts[0]?.expertId ?? selectedProjects[0]?.projectId;
+      evidenceReference = requirementDocument?.originalFileName ?? selectedExperts[0]?.expertId ?? selectedProjects[0]?.projectId;
     } else {
-      supportStrength = documentCount > 0 || selectedEvidenceCount > 0 ? 0.9 : 0.55;
+      supportStrength = requirementDocument || selectedEvidenceCount > 0 ? 0.9 : 0.55;
       supportStatus = supportStrength >= 0.9 ? "SUPPORTED" : "PARTIAL";
-      evidenceSummary = documentCount > 0 || selectedEvidenceCount > 0
-        ? `${documentCount} company document(s), selected experts/projects, and generated response sections can support this strategic requirement after senior review.`
+      evidenceSummary = requirementDocument || selectedEvidenceCount > 0
+        ? `${requirementDocument ? "A relevant Company Vault document" : "Selected expert/project evidence"} and generated response sections can support this strategic requirement.`
         : "No mapped company evidence yet; proposal narrative can be drafted but should be verified.";
       evidenceType = "COMPANY_DOCUMENT";
-      evidenceSource = documentCount > 0 ? "Company document library / generated response" : "Generated response only";
-      evidenceReference = knowledge.documents[0]?.originalFileName;
+      evidenceSource = requirementDocument ? "Relevant Company Vault document + generated response" : selectedEvidenceCount > 0 ? "Selected Company Vault expert/project evidence + generated response" : "Generated response only";
+      evidenceReference = requirementDocument?.originalFileName ?? selectedExperts[0]?.expertId ?? selectedProjects[0]?.projectId;
     }
 
     matrices.push({

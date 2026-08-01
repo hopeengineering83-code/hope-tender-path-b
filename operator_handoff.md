@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 12:49 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `work`; requested target PR #1175. This checkout has no Git remote and no `gh` CLI, so the live PR head, open-PR overlap, screenshots, CI, and deployment could not be fetched or updated directly; PR metadata was prepared after the local commit through the required `make_pr` integration.
+- **Scope:** Company Vault ↔ Run Engine ↔ AI Analyze only. Run Engine now automatically invokes the existing source-bound Company Vault importer for usable unprocessed documents, reloads the Vault in the same run, and records the import result in engine audits. Compliance matching now selects relevant extracted evidence rather than treating any Vault file/the first filename as proof. Support-only Vault documents are marked processed after automatic inspection so they do not trigger duplicate imports. Run Engine UI copy describes the consolidated automatic path.
+- **Files changed:** `lib/engine/run-tender-engine.ts`, `lib/company-knowledge-import-safe.ts`, `lib/engine/compliance.ts`, `components/engine-action-panel.tsx`, `tests/company-vault-run-engine-integration.test.ts`, `operator_handoff.md`.
+- **Tests:** `npx prisma generate` passed; `npx tsx --test tests/company-vault-run-engine-integration.test.ts` passed (4/4); `npx tsc --noEmit` passed; `npm run lint -- --quiet` passed; `npm test` passed. `npm run build` reached Next configuration and then failed because this environment has none of the required AI provider keys. A real authenticated screenshot could not be captured because the configured Neon database host was unreachable, so the E2E seed/login could not run.
+- **CI / deployment:** not checked; no repository remote or GitHub CLI is configured in this checkout. No deployment or preview was created.
+- **Known risks / assumptions:** Automatic processing preserves the factual-evidence boundary: unrelated, empty, scanned, or extraction-failure documents are not promoted as requirement evidence. Human/original-document final-release safeguards were intentionally not removed because repository instructions explicitly prohibit fabricated evidence, automatic all-Vault fallback, and official-original placeholders in final ZIPs.
+- **Next action:** Run the authenticated tender page against PR #1175's reachable preview/database, capture the Run Engine panel screenshot, and confirm CI with provider secrets configured.
+- **Merge status:** not reviewed — local code/test checks pass, but live PR/CI and authenticated screenshot validation are unavailable in this checkout.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.

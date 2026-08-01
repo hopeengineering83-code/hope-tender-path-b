@@ -15,6 +15,7 @@ import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
+import { importCompanyKnowledgeFromDocuments } from "../company-knowledge-import-safe";
 
 // ─── Vercel function-budget reserves ────────────────────────────────────
 // The engine route passes deadlineAt = Date.now() + 50_000 so the whole run
@@ -137,18 +138,37 @@ export async function runTenderEngine(
   if (!tender) throw new Error("Tender not found");
   progress("engine.company", "Loading company vault (experts + projects + documents)");
 
-  const company = await prisma.company.findUnique({
+  const loadCompanyVault = () => prisma.company.findUnique({
     where: { userId },
     include: {
       experts: true,
       projects: true,
-      documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
+      documents: { select: { id: true, category: true, originalFileName: true, extractedText: true, aiExtractionStatus: true } },
       legalRecords: true,
       financialRecords: true,
       complianceRecords: true,
     },
   });
+  let company = await loadCompanyVault();
   if (!company) throw new Error("Company profile required before engine run");
+
+  // Run Engine is the orchestration boundary: users should not have to visit a
+  // separate Company Vault repair screen before tender matching can see newly
+  // uploaded evidence. Automatically run the existing source-bound importer
+  // for usable documents that have not completed knowledge extraction, then
+  // reload the Vault so this same engine run uses the refreshed records.
+  const documentsAwaitingAutomaticReview = company.documents.filter((document) =>
+    document.aiExtractionStatus !== "EXTRACTED" &&
+    (document.extractedText ?? "").trim().length >= 100 &&
+    !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test((document.extractedText ?? "").trim()),
+  );
+  let automaticVaultReview = null as Awaited<ReturnType<typeof importCompanyKnowledgeFromDocuments>> | null;
+  if (documentsAwaitingAutomaticReview.length > 0) {
+    progress("engine.company.review", `Automatically reviewing ${documentsAwaitingAutomaticReview.length} new Company Vault document(s)`);
+    automaticVaultReview = await importCompanyKnowledgeFromDocuments(company.id);
+    company = await loadCompanyVault();
+    if (!company) throw new Error("Company profile became unavailable during automatic Vault review");
+  }
 
   const engineRunId = randomUUID();
   const startedAt = new Date();
@@ -163,6 +183,7 @@ export async function runTenderEngine(
       tenderFileCount: tender.files.length,
       companyExpertCount: company.experts.length,
       companyProjectCount: company.projects.length,
+      automaticVaultReview,
       destructiveCurrentStateRefresh: false,
       note: "Current-state matching/compliance artifacts are refreshed in place; generated document history is preserved by superseding older documents instead of deleting them.",
     },
@@ -699,6 +720,7 @@ export async function runTenderEngine(
         reviewGapCount: reviewGaps,
         reviewNeeded,
         knowledgeReadiness,
+        automaticVaultReview,
         mainEngineAIRematch,
       },
     });

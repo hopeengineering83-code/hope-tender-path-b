@@ -434,7 +434,7 @@ export function EngineActionPanel({
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Run Engine control</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Run tender engine with structured diagnostics</h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Use this panel for Run Engine. It displays error code, next action, hint, detail, extraction blockers, and diagnostic ID from the backend.
+            One run automatically reviews newly extracted Company Vault documents, refreshes expert/project knowledge, analyzes the tender, and matches relevant evidence. Diagnostics remain available here if an automatic step cannot complete safely.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

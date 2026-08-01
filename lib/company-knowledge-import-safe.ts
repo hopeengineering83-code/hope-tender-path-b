@@ -364,7 +364,16 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
         logger.warn(`[company-knowledge-import] Category enforcement dropped ${droppedExperts.length} expert(s) and ${droppedProjects.length} project(s).`);
       }
 
-      for (const doc of [...expertDocs, ...projectDocs]) {
+      // Support documents are reviewed directly by compliance matching rather
+      // than converted into Expert/Project rows. Mark every usable document as
+      // processed here so Run Engine does not repeatedly re-import the same
+      // Vault on each click merely because a legal/financial/profile document
+      // correctly produced no personnel or project records.
+      const reviewedDocuments = docs.filter((doc) => {
+        const text = (doc.extractedText ?? "").trim();
+        return text.length >= 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(text);
+      });
+      for (const doc of reviewedDocuments) {
         await prisma.companyDocument.update({
           where: { id: doc.id },
           data: { aiExtractionStatus: "EXTRACTED", aiExtractedAt: new Date(), aiExtractionError: null },
@@ -486,6 +495,20 @@ export async function importCompanyKnowledgeFromDocuments(companyId: string): Pr
       ? [prisma.project.createMany({ data: projectsPayload as any, skipDuplicates: true })]
       : []),
   ]);
+
+  // Support-only evidence has no Expert/Project draft lifecycle. Once its
+  // extracted text has been inspected and made available to compliance
+  // matching, its automatic Vault review is complete even when no AI provider
+  // is configured for structured personnel/project extraction.
+  const processedSupportDocIds = docs
+    .filter((doc) => isSupportOnlyDoc(doc) && (doc.extractedText ?? "").trim().length >= 100)
+    .map((doc) => doc.id);
+  if (processedSupportDocIds.length > 0) {
+    await prisma.companyDocument.updateMany({
+      where: { id: { in: processedSupportDocIds }, companyId },
+      data: { aiExtractionStatus: "EXTRACTED", aiExtractedAt: new Date(), aiExtractionError: null },
+    });
+  }
 
   const expertsCreated = expertsPayload.length;
   const projectsCreated = projectsPayload.length;
