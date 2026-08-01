@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-01 17:22 UTC — Codex (GPT-5.6 Sol), PR #1175 release-integrity reconciliation
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `61be8dfb`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** exact-head CI correctly caught one missed in-between contract after the standalone AI-rematch route was deleted: `scripts/audit-release-integrity.mjs` still required that retired file and attempted to audit its persistent limiter. Updated the release audit to remove the obsolete required-route entry and add the inverse invariant that the standalone route must remain absent so AI rematching stays inside the durable Engine authority.
+- **Files changed:** `scripts/audit-release-integrity.mjs`, `operator_handoff.md` only.
+- **Tests / checks:** release-integrity audit passed with zero failures; 26/26 focused canonical-panel/job-handler/matching tests passed; `git diff --check` passed. The preceding head's two CI runs failed only at the stale release-integrity assertion before the full suite; updated-head CI must rerun PostgreSQL, full tests, build, browser, and capture.
+- **Completion assessment:** the code-path audit remains 100% implemented, but production-grade end-to-end verification remains pending until the corrected exact head is green. No honest 100% verification claim is made before then.
+- **Next action:** push this reconciliation, require updated-head CI/capture green, inspect its screenshots, and keep #1175 draft/unmerged.
+- **Merge status:** not reviewed — local correction passes; exact-head external acceptance pending.
+
 ### 2026-08-01 17:13 UTC — Codex (GPT-5.6 Sol), PR #1175 final manual-owner removal
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, started from exact GitHub head `7bfc7324b11dee94f04abeb20fb207e0a9d55ca7`; zero inline comments and zero reviews. No merge or production deployment performed.

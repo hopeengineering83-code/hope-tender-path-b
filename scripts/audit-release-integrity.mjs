@@ -85,7 +85,6 @@ check("persistent limiter fails closed in production", limiter.includes("RATE_LI
 const directPersistentAiRoutes = [
   "app/api/tenders/[id]/engine/route.ts",
   "app/api/tenders/[id]/ai-proposal/route.ts",
-  "app/api/tenders/[id]/ai-rematch/route.ts",
   "app/api/tenders/[id]/regenerate-cvs/route.ts",
   "app/api/tenders/[id]/regenerate-section/route.ts",
   "app/api/tenders/[id]/copilot/route.ts",
@@ -95,6 +94,11 @@ for (const path of directPersistentAiRoutes) {
   const source = read(path);
   check(`${path} uses persistent AI throttling`, source.includes("rateLimitPersistent") && !source.includes("const rl = rateLimit("), `${path} must not rely on a process-local mutation limiter`);
 }
+check(
+  "standalone AI rematch authority stays retired",
+  !existsSync(join(root, "app/api/tenders/[id]/ai-rematch/route.ts")),
+  "AI rematching must remain inside the canonical durable Engine job",
+);
 
 const middleware = read("middleware.ts");
 const rateGuard = read("app/api/internal/rate-guard/route.ts");
