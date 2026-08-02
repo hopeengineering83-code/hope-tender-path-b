@@ -40,22 +40,23 @@ describe("auto-finalize continuation service (Gap 4 + user req A/B/C)", () => {
   });
 });
 
-describe("run-next invokes auto-finalize after PROPOSAL_GENERATION succeeds", () => {
-  it("imports runAutoFinalizeAfterGeneration", () => {
-    assert.match(runNext, /import \{ runAutoFinalizeAfterGeneration \} from/);
+describe("run-next enqueues durable AUTO_FINALIZE after PROPOSAL_GENERATION succeeds (Gap 3)", () => {
+  it("no longer imports runAutoFinalizeAfterGeneration inline", () => {
+    assert.doesNotMatch(runNext, /import \{ runAutoFinalizeAfterGeneration \} from/);
   });
 
-  it("calls runAutoFinalizeAfterGeneration when PROPOSAL_GENERATION succeeds", () => {
+  it("enqueues an AUTO_FINALIZE job when PROPOSAL_GENERATION succeeds", () => {
     const idx = runNext.indexOf('claimed.jobType === "PROPOSAL_GENERATION"');
     assert.ok(idx > -1, "PROPOSAL_GENERATION branch must exist");
-    const region = runNext.slice(idx, idx + 800);
-    assert.match(region, /runAutoFinalizeAfterGeneration\(/);
+    const region = runNext.slice(idx, idx + 1000);
+    assert.match(region, /jobType: "AUTO_FINALIZE"/);
+    assert.match(region, /enqueueJob/);
   });
 
-  it("never crashes the worker on auto-finalize failure", () => {
+  it("logs enqueue errors but never crashes the worker", () => {
     const idx = runNext.indexOf('claimed.jobType === "PROPOSAL_GENERATION"');
-    const region = runNext.slice(idx, idx + 800);
-    assert.match(region, /logger\.warn.*Auto-finalize after proposal generation failed/);
+    const region = runNext.slice(idx, idx + 1000);
+    assert.match(region, /AUTO_FINALIZE_ENQUEUE_ERROR/);
   });
 });
 

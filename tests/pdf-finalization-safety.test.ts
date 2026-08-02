@@ -110,7 +110,7 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
     });
   });
 
-  describe("source eligibility — validation/approval/current-revision are enforced", () => {
+  describe("source eligibility — validation/current-revision are enforced (Gap 5: VALIDATED is sufficient)", () => {
     it("rejects a superseded source", async () => {
       const result = await finalizeRequiredPdf({
         requiredFileName: "Technical Proposal.pdf",
@@ -131,14 +131,28 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
       if (!result.ok) assert.equal(result.code, "PDF_SOURCE_NOT_VALIDATED");
     });
 
-    it("rejects a validated-but-unapproved source", async () => {
+    it("accepts a validated source without human reviewStatus (Gap 5: VALIDATED is sufficient for automatic PDF path)", async () => {
       const result = await finalizeRequiredPdf({
         requiredFileName: "Technical Proposal.pdf",
         tender: TENDER,
         sourceDocument: sourceDoc({ reviewStatus: "PENDING", fileContent: await makeDocxBase64(GOOD_TEXT) }),
       });
+      // Per Gap 5, the automatic chain may finalize PDFs from VALIDATED sources
+      // without a separate human reviewStatus — the canonical validator is the
+      // machine-safe authority. The human reviewStatus remains required only
+      // where legally mandatory (Gap 6).
+      assert.equal(result.ok, true);
+    });
+
+    it("rejects an unvalidated AND unapproved source", async () => {
+      const result = await finalizeRequiredPdf({
+        requiredFileName: "Technical Proposal.pdf",
+        tender: TENDER,
+        sourceDocument: sourceDoc({ validationStatus: "PENDING", reviewStatus: "PENDING", fileContent: await makeDocxBase64(GOOD_TEXT) }),
+      });
       assert.equal(result.ok, false);
-      if (!result.ok) assert.equal(result.code, "PDF_SOURCE_NOT_APPROVED");
+      // Validation is checked first, so an unvalidated source gets NOT_VALIDATED.
+      if (!result.ok) assert.equal(result.code, "PDF_SOURCE_NOT_VALIDATED");
     });
 
     it("rejects a PLANNED source", async () => {
