@@ -35,6 +35,7 @@ export type AutoFinalizeResult = {
   sourceRepair: { checked: number; repaired: number; remaining: number };
   exportRepair: { repaired: number; skipped: number; manualRequired: number };
   validation: { validated: number; failed: number; pending: number };
+  pdfFinalization: { finalized: number; skipped: number; failed: number };
   warning: string | null;
 };
 
@@ -55,6 +56,7 @@ export async function runAutoFinalizeAfterGeneration(
     sourceRepair: { checked: 0, repaired: 0, remaining: 0 },
     exportRepair: { repaired: 0, skipped: 0, manualRequired: 0 },
     validation: { validated: 0, failed: 0, pending: 0 },
+    pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
     warning: null,
   };
 
@@ -136,6 +138,34 @@ export async function runAutoFinalizeAfterGeneration(
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     result.warning = (result.warning ?? "") + " Canonical validation encountered an error. Documents remain PENDING.";
+  }
+
+  // Step 4 (Gap 4+5): auto-finalize eligible PDFs from VALIDATED source
+  // documents. Per Gap 5, PDFs are finalized ONLY from current, validated,
+  // tenant-owned, integrity-verified sources — never fabricated. The
+  // finalizeRequiredPdf function already enforces all these checks.
+  // Per Gap 1, automation does not write reviewStatus=READY_FOR_EXPORT;
+  // per Gap 5, VALIDATED is sufficient for the automatic PDF path.
+  try {
+    await recordStep(jobId, {
+      stepName: "auto-finalize.pdf-finalization",
+      message: "Auto-finalizing eligible PDFs from validated source documents",
+      status: "RUNNING",
+    });
+    const pdfResult = await runPdfFinalization(tenderId, userId);
+    result.pdfFinalization = pdfResult;
+    await recordStep(jobId, {
+      stepName: "auto-finalize.pdf-finalization.complete",
+      message: `PDF finalization: ${pdfResult.finalized} finalized, ${pdfResult.skipped} skipped, ${pdfResult.failed} failed`,
+      status: "SUCCEEDED",
+    });
+  } catch (error) {
+    logger.warn("[auto-finalize] PDF finalization failed", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    result.warning = (result.warning ?? "") + " PDF finalization encountered an error. Eligible PDFs may need manual finalization.";
   }
 
   return result;
@@ -222,4 +252,163 @@ async function runCanonicalValidation(
   }
 
   return { validated, failed, pending };
+}
+
+/**
+ * Gap 4+5: Auto-finalize eligible PDFs from VALIDATED source documents.
+ *
+ * Per Gap 5, PDFs are finalized ONLY from:
+ *   - current (non-superseded) source documents
+ *   - validated (validationStatus = VALIDATED or PASSED)
+ *   - tenant-owned (the tender belongs to the user)
+ *   - integrity-verified (byte integrity = VERIFIED)
+ *
+ * Never fabricate official forms, originals, evidence, approvals, or PDFs.
+ * The finalizeRequiredPdf function enforces all source-eligibility checks.
+ *
+ * This function finds required PDF file names (from the tender's
+ * exactFileNaming + requirements), finds the matching validated DOCX
+ * source document for each, and calls finalizeRequiredPdf to render the
+ * PDF. PDFs that already exist are skipped.
+ */
+async function runPdfFinalization(
+  tenderId: string,
+  userId: string,
+): Promise<{ finalized: number; skipped: number; failed: number }> {
+  const { finalizeRequiredPdf } = await import("../engine/workflow/pdf-finalizer");
+  const { detectTenderFormatPolicy } = await import("../engine/export-format-policy");
+
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: {
+      id: true, title: true, clientName: true, reference: true,
+      submissionEmailSubject: true, exactFileNaming: true, exactFileOrder: true,
+      user: { select: { company: { select: { name: true, legalName: true, address: true, phone: true, email: true, website: true } } } },
+    },
+  });
+  if (!tender) return { finalized: 0, skipped: 0, failed: 0 };
+
+  // Determine which required PDF file names are needed.
+  const policy = detectTenderFormatPolicy({
+    exactFileNaming: tender.exactFileNaming,
+    exactFileOrder: tender.exactFileOrder,
+  });
+
+  // Get the list of required PDF names from exactFileNaming.
+  const requiredPdfNames = (tender.exactFileNaming ?? "")
+    .split(/[;,\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.toLowerCase().endsWith(".pdf"))
+    .filter(Boolean);
+
+  if (requiredPdfNames.length === 0 && !policy.requiresPdf) {
+    return { finalized: 0, skipped: 0, failed: 0 };
+  }
+
+  // Load all non-superseded generated documents.
+  const docs = await prisma.generatedDocument.findMany({
+    where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+    select: {
+      id: true, name: true, exactFileName: true, documentType: true,
+      format: true, generationStatus: true, validationStatus: true,
+      reviewStatus: true, fileContent: true, storagePath: true,
+      contentSha256: true, contentByteLength: true, integrityStatus: true,
+    },
+  });
+
+  let finalized = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const requiredName of requiredPdfNames) {
+    // Check if a PDF with this exact name already exists.
+    const existingPdf = docs.find(
+      (d) => d.exactFileName?.toLowerCase() === requiredName.toLowerCase() && d.format === "PDF",
+    );
+    if (existingPdf) {
+      skipped++;
+      continue;
+    }
+
+    // Find the matching DOCX source (by base name, ignoring extension).
+    const baseName = requiredName.replace(/\.pdf$/i, "");
+    const sourceDoc = docs.find((d) => {
+      const docBase = (d.exactFileName ?? d.name ?? "").replace(/\.docx$/i, "");
+      return docBase.toLowerCase() === baseName.toLowerCase()
+        && d.format === "DOCX"
+        && (d.validationStatus === "VALIDATED" || d.validationStatus === "PASSED");
+    });
+
+    if (!sourceDoc) {
+      // No validated source — skip (don't fabricate).
+      skipped++;
+      continue;
+    }
+
+    try {
+      const result = await finalizeRequiredPdf({
+        requiredFileName: requiredName,
+        tender: {
+          title: tender.title,
+          clientName: tender.clientName,
+          reference: tender.reference,
+          submissionEmailSubject: tender.submissionEmailSubject,
+        },
+        company: tender.user?.company,
+        sourceDocument: {
+          id: sourceDoc.id,
+          name: sourceDoc.name,
+          exactFileName: sourceDoc.exactFileName,
+          documentType: sourceDoc.documentType,
+          format: sourceDoc.format,
+          generationStatus: sourceDoc.generationStatus,
+          validationStatus: sourceDoc.validationStatus,
+          reviewStatus: sourceDoc.reviewStatus,
+          fileContent: sourceDoc.fileContent,
+          storagePath: sourceDoc.storagePath,
+          contentSha256: sourceDoc.contentSha256,
+          contentByteLength: sourceDoc.contentByteLength,
+          integrityStatus: sourceDoc.integrityStatus,
+        } as any,
+      });
+
+      if (result.ok) {
+        // Persist the finalized PDF as a new GeneratedDocument.
+        const pdfBase64 = result.bytes.toString("base64");
+        const { createHash } = await import("crypto");
+        const contentSha256 = createHash("sha256").update(result.bytes).digest("hex");
+        const contentByteLength = result.bytes.byteLength;
+        await prisma.generatedDocument.create({
+          data: {
+            tenderId,
+            name: requiredName,
+            exactFileName: requiredName,
+            documentType: "PDF",
+            format: "PDF",
+            fileContent: pdfBase64,
+            generationStatus: "GENERATED",
+            validationStatus: "PENDING",
+            reviewStatus: "PENDING",
+            reviewNotes: "machine:auto-finalize-pdf — rendered from validated DOCX source. Awaiting canonical validation.",
+            contentSha256,
+            contentByteLength,
+            integrityStatus: "VERIFIED",
+            contentMimeType: "application/pdf",
+          },
+        });
+        finalized++;
+      } else {
+        failed++;
+      }
+    } catch (error) {
+      logger.warn("[auto-finalize] PDF finalization failed for required file", {
+        tenderId,
+        requiredName,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      failed++;
+    }
+  }
+
+  return { finalized, skipped, failed };
 }
