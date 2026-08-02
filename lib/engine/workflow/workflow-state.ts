@@ -3,7 +3,8 @@ import { computeTenderReadinessState } from "../../tender-readiness-state";
 import { computeCanonicalModuleStates } from "../canonical-readiness-state";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../extraction-quality-gate";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../build-plan";
-import { deriveSubmissionPlanStatus } from "../submission-plan";
+import { deriveSubmissionPlanStatus, findExtraGeneratedDocuments, findMissingGeneratedDocuments } from "../submission-plan";
+import { filterFinalExportCandidateDocuments } from "../document-output-state";
 import { detectAnalysisSource, ANALYSIS_APPROVAL_GAP_TITLE } from "../analysis-source";
 
 function traced(r: { sourceTenderFileId?: string | null; sourcePageNumber?: number | null }): boolean {
@@ -55,29 +56,36 @@ export type CanonicalWorkflowState = {
   readyForExport: boolean;
 };
 
+/**
+ * Which required plan files are satisfied, per the one shared rule.
+ *
+ * This used to compare raw lowercased file names, which is strictly weaker
+ * than the shared rule in submission-plan.ts: that one strips the extension
+ * and collapses non-alphanumerics, so "Technical Proposal.docx",
+ * "Technical-Proposal.docx" and "Technical_Proposal.docx" are one key. The
+ * local compare treated the last two as different files, so the canonical
+ * workflow decision reported a required document missing when it already
+ * existed and parked on GENERATE_DOCUMENTS permanently.
+ *
+ * It also accepted any generationStatus GENERATED row, ignoring
+ * isFinalExportCandidateDocument, so a row marked NOT_EXPORTABLE or
+ * REPLACE_WITH_ORIGINAL satisfied its plan file here while the final-ZIP gate
+ * refused it — wrong in the opposite direction.
+ *
+ * Filtering to export candidates first mirrors final-submission-readiness.ts,
+ * which is the gate this decision must agree with.
+ */
 export function validateGeneratedDocsAgainstPlan(
   plan: any,
   generatedDocs: any[]
 ): { ok: boolean; missing: string[]; extras: string[] } {
-  const plannedFiles = plan.files.filter((f: any) => f.required);
-  const plannedNames = new Set(plannedFiles.map((f: any) => (f.exactFileName || "").toLowerCase()).filter(Boolean));
+  const exportable = filterFinalExportCandidateDocuments(generatedDocs as any[]);
 
-  const generatedNames = new Set(
-    generatedDocs
-      .filter(d => d.generationStatus === "GENERATED")
-      .map(d => (d.exactFileName || d.name || "").toLowerCase())
-      .filter(Boolean)
-  );
+  const missing = findMissingGeneratedDocuments(plan, exportable as any[])
+    .map((file: any) => file.exactFileName);
 
-  const missing = plannedFiles
-    .filter((f: any) => f.exactFileName && !generatedNames.has(f.exactFileName.toLowerCase()))
-    .map((f: any) => f.exactFileName);
-
-  const extras = generatedDocs
-    .filter(d => d.generationStatus === "GENERATED" &&
-                 (d.exactFileName || d.name) &&
-                 !plannedNames.has((d.exactFileName || d.name).toLowerCase()))
-    .map(d => d.exactFileName || d.name);
+  const extras = findExtraGeneratedDocuments(plan, exportable as any[])
+    .map((doc: any) => doc.exactFileName || doc.name);
 
   return {
     ok: missing.length === 0 && extras.length === 0,

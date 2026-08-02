@@ -3,6 +3,7 @@ import { getTenderGenerationReadinessStrict } from "./tender-generation-readines
 import { assessMatchingQuality } from "./matching-quality";
 import { getCompanyIngestionReadiness } from "./company-ingestion-readiness";
 import { findMissingGeneratedDocuments } from "./engine/submission-plan";
+import { filterFinalExportCandidateDocuments } from "./engine/document-output-state";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./engine/build-plan";
 import { computeTenderReadinessState } from "./tender-readiness-state";
 import { buildCanonicalModulePayload, computeCanonicalModuleStates, type CanonicalModuleStatePayload } from "./engine/canonical-readiness-state";
@@ -72,7 +73,14 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   const confirmedPlan = await getCurrentConfirmedBuildPlan(client, tenderId, userId);
   const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
-  const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
+  // Only export candidates can satisfy a required plan file. Without this
+  // filter a row marked NOT_EXPORTABLE or REPLACE_WITH_ORIGINAL, a CONTROL
+  // format, a SUBMISSION_CONTROL type, or an internal draft counted as "the
+  // required file exists" — so MISSING_PLANNED_FILES never fired and
+  // readyForFinalExport went true while final-submission-readiness.ts, which
+  // filters at line 565 before asking the same question, refused the same
+  // tender. Readiness must not promise what the export gate will decline.
+  const missing = findMissingGeneratedDocuments(plan, filterFinalExportCandidateDocuments(tender.generatedDocuments as never));
   const expertRequirementExists = tender.requirements.some((r) => r.requirementType === "EXPERT");
   const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
   const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length;
