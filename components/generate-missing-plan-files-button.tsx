@@ -12,7 +12,7 @@ type GenerateResponse = {
   warning?: string;
   created?: number;
   updated?: number;
-  files?: { created?: string[]; updated?: string[] };
+  files?: { created?: string[]; updated?: string[]; skipped?: string[] };
 };
 
 function nextActionLabel(action?: string) {
@@ -21,6 +21,7 @@ function nextActionLabel(action?: string) {
   if (action === "OPEN_EXTRACTION_QUALITY") return "Open Extraction Quality and fix weak files.";
   if (action === "OPEN_ANALYSIS_QUALITY") return "Review Analysis Quality, then retry.";
   if (action === "OPEN_MATCHING_QUALITY") return "Review Matching Quality, then retry.";
+  if (action === "REVIEW_SKIPPED_TARGETS") return "Each target below was skipped for the reason shown — retrying without changing them repeats this result.";
   return null;
 }
 
@@ -50,9 +51,18 @@ export function GenerateMissingPlanFilesButton({ tenderId, missingCount }: { ten
       const res = await fetch(`/api/tenders/${tenderId}/generate-missing-plan-files`, { method: "POST" });
       const data = await parseResponse(res);
       if (!res.ok || data.error) {
+        // A run that changed nothing arrives here with its per-target reasons.
+        // Listing them is the point: without them the user is told "0 created"
+        // and has nothing to act on except clicking again.
         const action = nextActionLabel(data.nextAction);
+        const skipped = data.files?.skipped ?? [];
         setOk(false);
-        setMessage([data.error || "Missing-file generation failed.", action, data.hint].filter(Boolean).join(" "));
+        setMessage([
+          data.error || "Missing-file generation failed.",
+          action,
+          data.hint,
+          skipped.length > 0 ? `Skipped: ${skipped.join("; ")}` : null,
+        ].filter(Boolean).join(" "));
         return;
       }
       const count = (data.created ?? 0) + (data.updated ?? 0);

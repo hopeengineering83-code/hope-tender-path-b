@@ -560,6 +560,32 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     requestId,
   });
 
+  // A run that changed nothing is not a success.
+  //
+  // This response used to be unconditionally {success: true, created: 0,
+  // updated: 0}, and the button rendered it as "0 missing planned file records
+  // created/updated" — a cheerful message describing a complete no-op, with no
+  // reason and nothing different to try. Clicking again produced the same
+  // thing. When there were targets and none of them moved, say so and name the
+  // reason for each, so the next step is a fact rather than another click.
+  const changedCount = created.length + updated.length + convertedFromPlanned.length;
+  if (changedCount === 0) {
+    return NextResponse.json(
+      {
+        success: false,
+        ok: false,
+        code: "NO_PLANNED_FILE_COULD_BE_GENERATED",
+        error: skipped.length > 0
+          ? `No planned file could be generated. ${skipped.length} target(s) were skipped, each for the reason listed.`
+          : "No planned file could be generated, and no target reported a reason. Re-run the Engine to rebuild the submission plan.",
+        skipped: skipped.length,
+        files: { created, updated, convertedFromPlanned, skipped },
+        nextAction: skipped.length > 0 ? "REVIEW_SKIPPED_TARGETS" : "RUN_ENGINE",
+      },
+      { status: 422 },
+    );
+  }
+
   return NextResponse.json({
     success: true,
     created: created.length,
