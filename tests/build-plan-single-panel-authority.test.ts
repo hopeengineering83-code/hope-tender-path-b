@@ -29,6 +29,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 import { findMissingGeneratedDocuments } from "../lib/engine/submission-plan";
 import { resolveSubmissionPlanCompleteness } from "../lib/engine/submission-plan-completeness";
@@ -86,18 +87,32 @@ describe("the second Build Plan panel is gone", () => {
   });
 
   it("leaves no dangling #submission-plan-reconciliation anchor anywhere", () => {
-    for (const path of [
-      "lib/ui/action-registry.ts",
-      "lib/tender-workflow-stages.ts",
-      "lib/recovery-command-actions.ts",
-      "components/export-readiness-panel.tsx",
-      "components/submission-plan-truth-panel.tsx",
-      "components/generation-readiness-panel.tsx",
-    ]) {
-      assert.doesNotMatch(readFileSync(path, "utf8"), /#?submission-plan-reconciliation/,
-        `${path} still points at the deleted panel's anchor`);
-    }
+    // Scan every tracked source file rather than a hand-listed set. The first
+    // version of this test listed six files and passed while
+    // e2e/workflow-control-center-action-buttons.spec.ts still pointed stage 6
+    // at the deleted anchor — an allowlist can only catch the sites its author
+    // already thought of, which is precisely the mistake being guarded against.
+    const tracked = execFileSync("git", ["ls-files", "*.ts", "*.tsx"], { encoding: "utf8" })
+      .split("\n")
+      .filter(Boolean)
+      // This file names the dead anchor deliberately, to explain the rule.
+      .filter((path) => path !== "tests/build-plan-single-panel-authority.test.ts");
+
+    const offenders = tracked.filter((path) => {
+      const source = readFileSync(path, "utf8");
+      // Comments may reference the deleted panel by filename as history; only
+      // a live anchor reference is a defect.
+      return /["'#]submission-plan-reconciliation["']?/.test(source.replace(/\/\/[^\n]*|\/\*[\s\S]*?\*\//g, ""));
+    });
+    assert.deepEqual(offenders, [], `these files still point at the deleted panel's anchor: ${offenders.join(", ")}`);
     assert.match(PANEL, /id="submission-plan-completeness"/);
+  });
+
+  it("keeps the workflow stage-6 shortcut pointed at a target that exists", () => {
+    const stages = readFileSync("lib/tender-workflow-stages.ts", "utf8");
+    const spec = readFileSync("e2e/workflow-control-center-action-buttons.spec.ts", "utf8");
+    assert.match(stages, /stage: 6,[^}]*targets: \["#submission-plan-completeness"/);
+    assert.match(spec, /\[6, "Confirmed Build Plan", "#submission-plan-completeness"\]/);
   });
 });
 
