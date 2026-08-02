@@ -97,8 +97,11 @@ describe("canonical requirement-evidence resolver runtime fixture", () => {
     const route = readFileSync("app/api/tenders/[id]/requirement-coverage/route.ts", "utf8");
     assert.match(panel, /Genuine gaps \/ unresolved/);
     assert.doesNotMatch(panel, /Automatic source grounding continues/);
-    assert.doesNotMatch(panel, /Automatic work/);
+    assert.doesNotMatch(panel, /automatic work/i);
+    assert.match(panel, /No resolver job is queued or running/);
     assert.match(route, /fullyCovered \/ totalMandatory/);
     assert.match(route, /weightedProgressRatio/);
+    assert.match(route, /jobType: "ENGINE_RUN"/);
+    assert.match(route, /resolverRunning: Boolean\(activeResolverJob\)/);
   });
 });

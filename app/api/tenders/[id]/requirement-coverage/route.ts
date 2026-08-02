@@ -69,9 +69,11 @@ function automaticStateFor(input: {
   coverageStatus: CoverageStatus;
   hasSourceRef: boolean;
   evidenceLinks: EvidenceLink[];
+  resolverRunning: boolean;
 }): RequirementCoverageRow["automationState"] {
   if (input.coverageStatus === "FULLY_MET") return "FULLY_VERIFIED";
   if (input.coverageStatus === "PARTIALLY_MET") return "PARTIALLY_VERIFIED";
+  if (input.resolverRunning) return "AUTO_RESOLVING";
   if (!input.hasSourceRef || input.coverageStatus === "NEEDS_TRACE") return "STALE_OR_INVALIDATED";
   return "TRUE_EVIDENCE_GAP";
 }
@@ -148,7 +150,7 @@ export async function GET(
       );
     }
 
-    const [finalPackageModel, requirements] = await Promise.all([
+    const [finalPackageModel, requirements, activeResolverJob] = await Promise.all([
       getFinalPackageReadinessModel(prisma, id, actor.id),
       prisma.tenderRequirement.findMany({
         where: { tenderId: id, priority: { in: ["MANDATORY", "CRITICAL"] } },
@@ -175,6 +177,15 @@ export async function GET(
             },
           },
         },
+      }),
+      prisma.aiJob.findFirst({
+        where: {
+          tenderId: id,
+          userId: actor.id,
+          jobType: "ENGINE_RUN",
+          status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS"] },
+        },
+        select: { id: true },
       }),
     ]);
 
@@ -216,7 +227,12 @@ export async function GET(
       const coverageStatus: CoverageStatus = canonicalStatus?.displayStatus ?? "NOT_MET";
       const hasSourceRef = canonicalStatus?.hasSourceTrace ?? false;
       const isFullyCovered = coverageStatus === "FULLY_MET";
-      const automationState = automaticStateFor({ coverageStatus, hasSourceRef, evidenceLinks });
+      const automationState = automaticStateFor({
+        coverageStatus,
+        hasSourceRef,
+        evidenceLinks,
+        resolverRunning: Boolean(activeResolverJob),
+      });
 
       return {
         id: requirement.id,

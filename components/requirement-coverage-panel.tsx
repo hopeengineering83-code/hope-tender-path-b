@@ -190,7 +190,11 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     return (
       <div id="requirement-coverage" className="rounded-xl border border-gray-200 bg-gray-50 p-4">
         <p className="text-sm font-semibold text-gray-800">Requirements and Evidence</p>
-        <p className="mt-1 text-sm text-gray-600">Automatic verification running.</p>
+        <p className="mt-1 text-sm text-gray-600">
+          {data.sourceProcessing > 0
+            ? "Durable requirement resolution is queued or running."
+            : "No mandatory or critical requirements are available for evidence resolution."}
+        </p>
       </div>
     );
   }
@@ -239,10 +243,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
           : coveragePct > 0
             ? data.sourceProcessing > 0
               ? "Partially verified. Durable automatic resolution is running; release stays fail-closed until every required provenance check passes."
-              : "Partially verified. No automatic work is running; unresolved requirements are genuine gaps or stale evidence and release remains blocked."
+              : "Partially verified. No resolver job is queued or running; unresolved requirements are genuine gaps or stale evidence and release remains blocked."
             : data.sourceProcessing > 0
               ? "Durable automatic resolution is running."
-              : "No mandatory requirement is fully verified. No automatic work is running; release remains fail-closed."}
+              : "No mandatory requirement is fully verified. No resolver job is queued or running; release remains fail-closed."}
       </div>
 
       {syncWarning && (

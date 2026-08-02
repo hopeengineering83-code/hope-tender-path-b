@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-02 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; re-fetched and verified starting head `87fa6a28b9461900dd9c0471539cf37c4f3c6cc8` before editing.
+- **Scope / files:** corrected Requirements and Evidence runtime-state truth so `AUTO_RESOLVING` is emitted only when a tenant-scoped `ENGINE_RUN` job is actually queued/running/partial, removed zero-processing copy that said automatic work was running, and strengthened the exact runtime-fixture contract. Changed `app/api/tenders/[id]/requirement-coverage/route.ts`, `components/requirement-coverage-panel.tsx`, `tests/requirement-evidence-resolver-runtime-fixture.test.ts`, and this handoff.
+- **Tests:** focused requirement/evidence suites passed (41 tests, then 18 tests after the final change); Prisma generation, typecheck, scoped ESLint, full lint, Prisma validation, `npm audit --audit-level=high` (0 vulnerabilities), and production build with non-secret build-only provider/cron placeholders passed. The full PostgreSQL run could not proceed because the configured Neon host returned Prisma P1001; migration status had the same external database limitation. Provider-backed preview execution, Vercel runtime logs, authenticated screenshots, and Playwright were not claimed without working preview/database credentials.
+- **Risks / assumptions:** the existing PR already contains the canonical resolver and fixture fixes; this session deliberately made no release-gate, provider-order, schema, deployment, or unrelated-area change. `PARTIAL_SUCCESS` remains an active durable Engine state because current enqueue/recovery code treats it as resumable.
+- **Next action:** after the configured PostgreSQL/preview environment is reachable, run the remaining exact-head migration/full-DB/Playwright/provider-backed preview checks and inspect deployment `dpl_AKr8QMbzMcS1rcNn5SAnj1auw8JL` logs before considering the draft ready.
+- **Merge status:** not reviewed for merge; draft and unmerged.
+
 ### 2026-08-02 15:44 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; re-fetched exact starting head `e8ff72ac23eaebb2e1ea37ac8b4a36e1a39a36e2` before editing.
