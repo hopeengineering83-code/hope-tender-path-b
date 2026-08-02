@@ -13,6 +13,7 @@ export type ReviewEvidenceField = {
 
 export type ReviewSourceDocument = {
   id: string;
+  fileName?: string | null;
   companyId?: string | null;
   extractedText: string | null | undefined;
   contentSha256?: string | null;
@@ -31,6 +32,7 @@ const VAULT_REVIEW_AUTHORITY_SELECT = {
   sourceDocument: {
     select: {
       id: true,
+      fileName: true,
       companyId: true,
       extractedText: true,
       contentSha256: true,
@@ -50,6 +52,7 @@ export const VAULT_REVIEW_CONSUMER_SELECT = {
     disciplines: true,
     sectors: true,
     certifications: true,
+    profile: true,
   },
   PROJECT: {
     ...VAULT_REVIEW_AUTHORITY_SELECT,
@@ -60,6 +63,8 @@ export const VAULT_REVIEW_CONSUMER_SELECT = {
     serviceAreas: true,
     contractValue: true,
     currency: true,
+    startDate: true,
+    endDate: true,
   },
   LEGAL: {
     ...VAULT_REVIEW_AUTHORITY_SELECT,

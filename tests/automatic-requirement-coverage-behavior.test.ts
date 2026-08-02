@@ -86,7 +86,7 @@ describe("automatic requirement coverage behavior", () => {
     assert.equal(selected.length, 1);
     assert.equal(selected[0].candidate.recordId, "legal-1");
     assert.ok(selected[0].score >= 70);
-    assert.notEqual(selected[0].supportLevel, "FULL", "Vault records must not become FULL solely from lexical matching");
+    assert.equal(selected[0].supportLevel, "FULL", "current verified legal bytes satisfy every explicit structured constraint");
   });
 
   it("grants FULL only to a current validated generated artifact with exact filename fit", () => {
@@ -151,6 +151,12 @@ describe("automatic requirement coverage behavior", () => {
       sourceDocumentId: "company-doc-1",
       sourceContentHash: HASH_A,
       sourceByteLength: 4096,
+      sourceFileName: "trade-licence.pdf",
+      sourceSection: "Legal registration",
+      sourceQuote: "Current Grade 1 Trade Licence",
+      matchedFacets: ["verifiedBytes"],
+      sourceRevision: HASH_B,
+      evidenceRevision: HASH_A,
       linkageScore: 88,
       linkageReasons: ["direct evidence family: LEGAL_REGISTRATION"],
       state: "ACTIVE",
@@ -176,6 +182,12 @@ describe("automatic requirement coverage behavior", () => {
       sourceDocumentId: "company-doc-1",
       sourceContentHash: HASH_A,
       sourceByteLength: 4096,
+      sourceFileName: "trade-licence.pdf",
+      sourceSection: "Legal registration",
+      sourceQuote: "Current Grade 1 Trade Licence",
+      matchedFacets: ["verifiedBytes"],
+      sourceRevision: HASH_B,
+      evidenceRevision: HASH_A,
       linkageScore: 88,
       linkageReasons: ["direct evidence family: LEGAL_REGISTRATION"],
       state: "ACTIVE",

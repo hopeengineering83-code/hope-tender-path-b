@@ -10,11 +10,12 @@ describe("automatic requirement coverage safety", () => {
   const worker = readFileSync("lib/ai-job-handlers.ts", "utf8");
   const audit = readFileSync("lib/audit.ts", "utf8");
 
-  it("self-synchronizes before reading persisted coverage", () => {
+  it("reads persisted coverage without making panel-open the workflow authority", () => {
     const syncIndex = panel.indexOf("/requirement-coverage/auto-sync");
     const readIndex = panel.indexOf("/requirement-coverage`, { cache: \"no-store\" }");
     assert.ok(syncIndex >= 0, "automatic synchronization endpoint must be called");
-    assert.ok(readIndex > syncIndex, "persisted coverage must be read after automatic synchronization");
+    assert.ok(readIndex >= 0, "persisted coverage must be read directly");
+    assert.ok(syncIndex > readIndex, "the POST may be exposed only as an explicit recovery path after the canonical read path");
     assert.match(panel, /method:\s*"POST"/);
     assert.match(panel, /manualConfirmationRequired:\s*false/);
     assert.match(panel, /no confirmation click is required/i);
@@ -30,7 +31,7 @@ describe("automatic requirement coverage safety", () => {
     assert.doesNotMatch(panel, /requirement-coverage\/reject/);
     assert.doesNotMatch(panel, /Run source extraction or add manually/);
     assert.doesNotMatch(panel, /No source ref/);
-    assert.match(panel, /Automatic source grounding (?:is running|continues)/);
+    assert.match(panel, /Durable automatic resolution is running/);
     assert.match(panel, /Persisted evidence links/);
   });
 

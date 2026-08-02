@@ -29,6 +29,11 @@ type EvidenceLink = {
   autoLinked: boolean;
   linkageScore: number | null;
   linkageReasons: string[];
+  sourceDocumentId: string | null;
+  sourceFileName: string | null;
+  sourceContentHash: string | null;
+  sourceByteLength: number | null;
+  matchedFacets: string[];
 };
 
 type RequirementCoverageRow = {
@@ -46,7 +51,7 @@ type RequirementCoverageRow = {
   supportLevel: SupportLevel;
   coverageStatus: CoverageStatus;
   isFullyCovered: boolean;
-  automationState: "COVERED" | "PARTIAL" | "SOURCE_PROCESSING" | "TRUE_EVIDENCE_GAP";
+  automationState: "FULLY_VERIFIED" | "PARTIALLY_VERIFIED" | "AUTO_RESOLVING" | "TRUE_EVIDENCE_GAP" | "STALE_OR_INVALIDATED";
   nextAction: string;
 };
 
@@ -65,9 +70,9 @@ function automaticStateFor(input: {
   hasSourceRef: boolean;
   evidenceLinks: EvidenceLink[];
 }): RequirementCoverageRow["automationState"] {
-  if (input.coverageStatus === "FULLY_MET") return "COVERED";
-  if (input.coverageStatus === "PARTIALLY_MET") return "PARTIAL";
-  if (!input.hasSourceRef || input.coverageStatus === "NEEDS_TRACE") return "SOURCE_PROCESSING";
+  if (input.coverageStatus === "FULLY_MET") return "FULLY_VERIFIED";
+  if (input.coverageStatus === "PARTIALLY_MET") return "PARTIALLY_VERIFIED";
+  if (!input.hasSourceRef || input.coverageStatus === "NEEDS_TRACE") return "STALE_OR_INVALIDATED";
   return "TRUE_EVIDENCE_GAP";
 }
 
@@ -77,13 +82,13 @@ function nextAutomaticAction(input: {
   automationState: RequirementCoverageRow["automationState"];
   evidenceLinks: EvidenceLink[];
 }): string {
-  if (input.automationState === "COVERED") {
+  if (input.automationState === "FULLY_VERIFIED") {
     return "Automatically covered with current tender-source trace and eligible evidence.";
   }
-  if (input.automationState === "PARTIAL") {
+  if (input.automationState === "PARTIALLY_VERIFIED") {
     return "Automatically linked. The Engine will strengthen this requirement when more specific eligible evidence or validated output bytes become available.";
   }
-  if (input.automationState === "SOURCE_PROCESSING") {
+  if (input.automationState === "AUTO_RESOLVING") {
     return "Automatic source grounding is retrying against the active tender files. No manual source-reference entry is required.";
   }
 
@@ -184,9 +189,13 @@ export async function GET(
       // Only persisted links are shown or counted. The former in-memory
       // VAULT_AUTO_LINK suggestion was never release authority and caused the
       // exact contradiction visible in the supplied screenshots.
-      const evidenceLinks: EvidenceLink[] = requirement.complianceMatrixRows.map((row) => {
+      const evidenceLinks: EvidenceLink[] = requirement.complianceMatrixRows.flatMap((row) => {
         const automatic = parseAutomaticRequirementEvidence(row.notes);
-        return {
+        // Generic/null automatic rows have no auditable evidence identity and
+        // are neither rendered nor counted. Reconciliation deletes them.
+        if (row.evidenceSource.startsWith("AUTO_") && !automatic) return [];
+        if (!automatic && !row.evidenceReference?.trim()) return [];
+        return [{
           id: row.id,
           evidenceType: row.evidenceType,
           evidenceSource: row.evidenceSource,
@@ -195,7 +204,12 @@ export async function GET(
           autoLinked: Boolean(automatic),
           linkageScore: automatic?.linkageScore ?? null,
           linkageReasons: automatic?.linkageReasons ?? [],
-        };
+          sourceDocumentId: automatic?.sourceDocumentId ?? null,
+          sourceFileName: automatic?.sourceFileName ?? null,
+          sourceContentHash: automatic?.sourceContentHash ?? null,
+          sourceByteLength: automatic?.sourceByteLength ?? null,
+          matchedFacets: automatic?.matchedFacets ?? [],
+        }];
       });
       const supportLevel = deriveSupportLevel(evidenceLinks);
       const canonicalStatus = canonicalStatuses.get(requirement.id);
@@ -240,12 +254,14 @@ export async function GET(
       0,
     );
     const trueEvidenceGaps = rows.filter((row) => row.automationState === "TRUE_EVIDENCE_GAP").length;
-    const sourceProcessing = rows.filter((row) => row.automationState === "SOURCE_PROCESSING").length;
-    // Display credit for canonical partial support without promoting it to
-    // FULLY_MET. This prevents a truthful partially-supported set from being
-    // presented as 0%, while final-package gates continue to use the exact
-    // fail-closed statuses from getFinalPackageReadinessModel.
+    const sourceProcessing = rows.filter((row) => row.automationState === "AUTO_RESOLVING").length;
+    const staleOrInvalidated = rows.filter((row) => row.automationState === "STALE_OR_INVALIDATED").length;
+    // Primary coverage is deliberately unweighted: only canonically FULL
+    // mandatory requirements count. Partial progress is reported separately.
     const coverageRatio = totalMandatory > 0
+      ? fullyCovered / totalMandatory
+      : 1;
+    const weightedProgressRatio = totalMandatory > 0
       ? (fullyCovered + partiallyCovered * 0.5) / totalMandatory
       : 1;
 
@@ -262,7 +278,9 @@ export async function GET(
       automaticallyLinked,
       trueEvidenceGaps,
       sourceProcessing,
+      staleOrInvalidated,
       coverageRatio,
+      weightedProgressRatio,
       rows,
       finalPackageReadiness: {
         requirements: finalPackageModel.requirements,

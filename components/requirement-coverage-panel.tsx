@@ -1,13 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ChevronDownIcon, WarningIcon } from "./icons";
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
 type CoverageStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
-type AutomationState = "COVERED" | "PARTIAL" | "SOURCE_PROCESSING" | "TRUE_EVIDENCE_GAP";
-type CoverageFilter = "ALL" | "PENDING" | "PARTIAL" | "COVERED";
+type AutomationState = "FULLY_VERIFIED" | "PARTIALLY_VERIFIED" | "AUTO_RESOLVING" | "TRUE_EVIDENCE_GAP" | "STALE_OR_INVALIDATED";
+type CoverageFilter = "ALL" | "UNRESOLVED" | "PARTIAL" | "COVERED";
 
 type EvidenceLink = {
   id: string;
@@ -18,6 +17,11 @@ type EvidenceLink = {
   autoLinked: boolean;
   linkageScore: number | null;
   linkageReasons: string[];
+  sourceDocumentId: string | null;
+  sourceFileName: string | null;
+  sourceContentHash: string | null;
+  sourceByteLength: number | null;
+  matchedFacets: string[];
 };
 
 type RequirementCoverageRow = {
@@ -52,7 +56,9 @@ type CoverageData = {
   automaticallyLinked: number;
   trueEvidenceGaps: number;
   sourceProcessing: number;
+  staleOrInvalidated: number;
   coverageRatio: number;
+  weightedProgressRatio: number;
   rows: RequirementCoverageRow[];
 };
 
@@ -76,10 +82,11 @@ const SUPPORT_LEVEL_CONFIG: Record<SupportLevel, { label: string; color: string;
 };
 
 const AUTOMATION_STATE_CONFIG: Record<AutomationState, { label: string; color: string; dot: string }> = {
-  COVERED: { label: "Verified and ready", color: "border-green-300 bg-green-100 text-green-800", dot: "bg-green-500" },
-  PARTIAL: { label: "Partially supported", color: "border-amber-300 bg-amber-100 text-amber-800", dot: "bg-amber-500" },
-  SOURCE_PROCESSING: { label: "Automatic source grounding", color: "border-orange-300 bg-orange-100 text-orange-800", dot: "bg-orange-500" },
-  TRUE_EVIDENCE_GAP: { label: "Automatic verification incomplete", color: "border-red-300 bg-red-100 text-red-800", dot: "bg-red-500" },
+  FULLY_VERIFIED: { label: "Fully verified", color: "border-green-300 bg-green-100 text-green-800", dot: "bg-green-500" },
+  PARTIALLY_VERIFIED: { label: "Partially verified", color: "border-amber-300 bg-amber-100 text-amber-800", dot: "bg-amber-500" },
+  AUTO_RESOLVING: { label: "Auto-resolving", color: "border-orange-300 bg-orange-100 text-orange-800", dot: "bg-orange-500" },
+  TRUE_EVIDENCE_GAP: { label: "Genuine gap", color: "border-red-300 bg-red-100 text-red-800", dot: "bg-red-500" },
+  STALE_OR_INVALIDATED: { label: "Stale or invalidated", color: "border-slate-300 bg-slate-100 text-slate-800", dot: "bg-slate-500" },
 };
 
 const REQ_TYPE_LABELS: Record<string, string> = {
@@ -105,45 +112,19 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
 }
 
 export default function RequirementCoveragePanel({ tenderId }: { tenderId: string; canMutate?: boolean }) {
-  const router = useRouter();
-  const serverPanelsRefreshed = useRef(false);
   const hasLoaded = useRef(false);
   const [data, setData] = useState<CoverageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const [filter, setFilter] = useState<CoverageFilter>("PENDING");
+  const [filter, setFilter] = useState<CoverageFilter>("UNRESOLVED");
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
-  const syncAndLoad = useCallback(async () => {
+  const loadCoverage = useCallback(async () => {
     setLoading(!hasLoaded.current);
     setError(null);
     setSyncWarning(null);
-
-    let changed = 0;
-    try {
-      const syncResponse = await fetch(`/api/tenders/${tenderId}/requirement-coverage/auto-sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const syncJson = await readJson(syncResponse) as SyncResult;
-      if (!syncResponse.ok || !syncJson.ok) {
-        setSyncWarning(typeof syncJson.error === "string"
-          ? syncJson.error
-          : "Automatic coverage synchronization is retrying in the background.");
-      } else {
-        changed = Number(syncJson.created ?? 0)
-          + Number(syncJson.updated ?? 0)
-          + Number(syncJson.removedStale ?? 0)
-          + Number(syncJson.sourceRepair?.repairedCount ?? 0);
-      }
-    } catch {
-      setSyncWarning("Automatic coverage synchronization is retrying in the background.");
-    } finally {
-      // The reconciliation is automatic; the canonical GET below always
-      // renders the persisted state even if this best-effort pass is retried.
-    }
 
     try {
       const response = await fetch(`/api/tenders/${tenderId}/requirement-coverage`, { cache: "no-store" });
@@ -152,21 +133,28 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
         throw new Error(typeof json.error === "string" ? json.error : "Failed to load coverage");
       }
       setData(json as unknown as CoverageData);
-      if (changed > 0 && !serverPanelsRefreshed.current) {
-        serverPanelsRefreshed.current = true;
-        router.refresh();
-      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to load coverage");
     } finally {
       hasLoaded.current = true;
       setLoading(false);
     }
-  }, [router, tenderId]);
+  }, [tenderId]);
+
+  const requestRecovery = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/tenders/${tenderId}/requirement-coverage/auto-sync`, { method: "POST" });
+      const json = await readJson(response) as SyncResult;
+      if (!response.ok || !json.ok) setSyncWarning(json.error ?? "Recovery could not be queued.");
+      await loadCoverage();
+    } catch {
+      setSyncWarning("Recovery could not be queued. Existing release gates remain fail-closed.");
+    }
+  }, [loadCoverage, tenderId]);
 
   useEffect(() => {
-    void syncAndLoad();
-  }, [syncAndLoad]);
+    void loadCoverage();
+  }, [loadCoverage]);
 
   const toggleRow = (id: string) => {
     setExpandedRows((previous) => {
@@ -191,8 +179,8 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
     return (
       <div id="requirement-coverage" className="rounded-xl border border-red-200 bg-red-50 p-4">
         <p className="text-sm text-red-700">{error ?? "Unable to load requirement coverage."}</p>
-        <button type="button" onClick={() => void syncAndLoad()} className="mt-2 text-xs text-red-700 underline">
-          Retry automatic synchronization
+        <button type="button" onClick={() => void requestRecovery()} className="mt-2 text-xs text-red-700 underline">
+          Request recovery
         </button>
       </div>
     );
@@ -209,9 +197,9 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
 
   const coveragePct = Math.round(data.coverageRatio * 100);
   const filteredRows = data.rows.filter((row) => {
-    if (filter === "PENDING") return row.automationState === "SOURCE_PROCESSING" || row.automationState === "TRUE_EVIDENCE_GAP";
-    if (filter === "PARTIAL") return row.automationState === "PARTIAL";
-    if (filter === "COVERED") return row.automationState === "COVERED";
+    if (filter === "UNRESOLVED") return row.automationState === "TRUE_EVIDENCE_GAP" || row.automationState === "STALE_OR_INVALIDATED";
+    if (filter === "PARTIAL") return row.automationState === "PARTIALLY_VERIFIED";
+    if (filter === "COVERED") return row.automationState === "FULLY_VERIFIED";
     return true;
   });
 
@@ -249,8 +237,12 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
         {data.trueEvidenceGaps === 0 && data.sourceProcessing === 0 && data.partiallyCovered === 0
           ? "Verified and ready. Only persisted, current, source-grounded links count toward release; no confirmation click is required."
           : coveragePct > 0
-            ? "Partially supported. Automatic source grounding continues for remaining evidence; release stays fail-closed until every required provenance check passes."
-            : "Automatic verification running. Requirement grounding and evidence linking continue without a confirmation step."}
+            ? data.sourceProcessing > 0
+              ? "Partially verified. Durable automatic resolution is running; release stays fail-closed until every required provenance check passes."
+              : "Partially verified. No automatic work is running; unresolved requirements are genuine gaps or stale evidence and release remains blocked."
+            : data.sourceProcessing > 0
+              ? "Durable automatic resolution is running."
+              : "No mandatory requirement is fully verified. No automatic work is running; release remains fail-closed."}
       </div>
 
       {syncWarning && (
@@ -284,11 +276,11 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       {expanded && (
         <div id="req-coverage-list" className="divide-y divide-gray-100">
           <div className="flex flex-wrap gap-1 px-5 py-2">
-            {(["ALL", "PENDING", "PARTIAL", "COVERED"] as CoverageFilter[]).map((value) => {
+            {(["ALL", "UNRESOLVED", "PARTIAL", "COVERED"] as CoverageFilter[]).map((value) => {
               const count = value === "ALL"
                 ? data.rows.length
-                : value === "PENDING"
-                  ? data.sourceProcessing + data.trueEvidenceGaps
+                : value === "UNRESOLVED"
+                  ? data.trueEvidenceGaps + data.staleOrInvalidated
                   : value === "PARTIAL"
                     ? data.partiallyCovered
                     : data.fullyCovered;
@@ -299,7 +291,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                   onClick={() => setFilter(value)}
                   className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${filter === value ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
                 >
-                  {value === "PENDING" ? "Automatic work" : value[0] + value.slice(1).toLowerCase()} ({count})
+                  {value === "UNRESOLVED" ? "Genuine gaps / unresolved" : value[0] + value.slice(1).toLowerCase()} ({count})
                 </button>
               );
             })}
@@ -377,12 +369,16 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                                   <span className={`h-2 w-2 shrink-0 rounded-full ${support.dot}`} aria-hidden="true" />
                                   <span className="font-medium">{link.evidenceType}</span>
                                   {link.evidenceReference && <span className="min-w-0 break-all text-gray-600">{link.evidenceReference}</span>}
+                                  {link.sourceFileName && <span className="min-w-0 break-all text-gray-600">Source: {link.sourceFileName}</span>}
                                   <span className={`rounded border px-1 py-0.5 text-[10px] ${support.color}`}>{support.label}</span>
                                   {link.autoLinked && <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">Automatically linked</span>}
                                   {typeof link.linkageScore === "number" && <span className="text-[10px] text-gray-600">{Math.round(link.linkageScore)}% fit</span>}
                                 </div>
                                 {link.linkageReasons.length > 0 && (
                                   <p className="mt-1 text-[10px] text-gray-600">{link.linkageReasons.join(" · ")}</p>
+                                )}
+                                {link.sourceContentHash && (
+                                  <p className="mt-1 break-all font-mono text-[10px] text-gray-500">sha256:{link.sourceContentHash} · {link.sourceByteLength} bytes</p>
                                 )}
                               </li>
                             );

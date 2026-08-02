@@ -63,6 +63,11 @@ export type AutomaticEvidenceCandidate = {
   selected: boolean;
   generatedReady: boolean;
   exactFileName: string | null;
+  sourceFileName?: string;
+  sourceSection?: string | null;
+  sourceQuote?: string | null;
+  evidenceRevision?: string;
+  facets?: Record<string, string | number | boolean | string[] | null>;
 };
 
 export type AutomaticRequirementEvidenceMetadata = {
@@ -77,6 +82,12 @@ export type AutomaticRequirementEvidenceMetadata = {
   sourceDocumentId: string | null;
   sourceContentHash: string;
   sourceByteLength: number;
+  sourceFileName?: string;
+  sourceSection?: string | null;
+  sourceQuote?: string | null;
+  matchedFacets?: string[];
+  sourceRevision?: string;
+  evidenceRevision?: string;
   linkageScore: number;
   linkageReasons: string[];
   state: "ACTIVE";
@@ -334,7 +345,70 @@ function scoreCandidate(
   return { score: Math.max(0, Math.min(100, score)), reasons };
 }
 
+type FacetEvaluation = { complete: boolean; matched: string[]; missing: string[] };
+
+function explicitNumber(text: string, pattern: RegExp): number | null {
+  const match = normalizeText(text).match(pattern);
+  return match ? Number(match[1]) : null;
+}
+
+/**
+ * Fail-closed, family-specific completeness. FULL means that every explicit
+ * structured constraint we can identify is present in current verified bytes;
+ * lexical similarity alone can never promote a row to FULL.
+ */
+export function evaluateCandidateFacets(
+  requirement: RequirementInput,
+  candidate: AutomaticEvidenceCandidate,
+): FacetEvaluation {
+  const text = normalizeText(`${requirement.title} ${requirement.description} ${requirement.restrictions ?? ""}`);
+  const candidateText = normalizeText(`${candidate.label} ${candidate.searchableText}`);
+  const matched: string[] = [];
+  const missing: string[] = [];
+  const requireText = (facet: string, expression: RegExp) => {
+    if (!expression.test(text)) return;
+    if (expression.test(candidateText)) matched.push(facet); else missing.push(facet);
+  };
+
+  if (candidate.recordType === "EXPERT") {
+    const years = explicitNumber(text, /(?:minimum|min|at least|not less than) (\d{1,2}) years?/);
+    if (years !== null) {
+      if (Number(candidate.facets?.yearsExperience ?? -1) >= years) matched.push("minimumExperience");
+      else missing.push("minimumExperience");
+    }
+    requireText("qualification", /\b(degree|bachelor|master|phd|qualification)\b/);
+    requireText("certification", /\b(certifi(?:ed|cation)|licen[cs]e|registration)\b/);
+    requireText("disciplineOrRole", /\b(engineer|architect|specialist|expert|team leader|manager|surveyor|consultant)\b/);
+    if (!candidate.facets?.disciplines || (candidate.facets.disciplines as string[]).length === 0) missing.push("discipline");
+    else matched.push("discipline");
+  } else if (candidate.recordType === "PROJECT") {
+    for (const [facet, value] of Object.entries({
+      client: candidate.facets?.client,
+      sector: candidate.facets?.sector,
+      scope: candidate.facets?.serviceAreas,
+      location: candidate.facets?.location,
+      dates: candidate.facets?.dates,
+    })) {
+      if (value && (!Array.isArray(value) || value.length > 0)) matched.push(facet); else missing.push(facet);
+    }
+    if (/\b(value|contract amount|budget)\b/.test(text)) {
+      if (Number(candidate.facets?.value ?? 0) > 0) matched.push("value"); else missing.push("value");
+    }
+    requireText("similarity", /\b(similar|relevant|comparable)\b/);
+  } else {
+    if (candidate.sourceByteLength > 0 && candidate.sourceContentHash) matched.push("verifiedBytes");
+    else missing.push("verifiedBytes");
+    if (requirement.exactFileName) {
+      if (normalizeText(candidate.exactFileName) === normalizeText(requirement.exactFileName)) matched.push("exactFileName");
+      else missing.push("exactFileName");
+    }
+  }
+
+  return { complete: missing.length === 0, matched: [...new Set(matched)], missing: [...new Set(missing)] };
+}
+
 function supportForCandidate(
+  requirement: RequirementInput,
   candidate: AutomaticEvidenceCandidate,
   score: number,
 ): "FULL" | "SUBSTANTIAL" | "PARTIAL" {
@@ -342,6 +416,7 @@ function supportForCandidate(
     return "FULL";
   }
   if (candidate.recordType === "BUILD_PLAN_ITEM") return "PARTIAL";
+  if (evaluateCandidateFacets(requirement, candidate).complete && score >= MIN_AUTOMATIC_LINK_SCORE) return "FULL";
   return score >= 84 ? "SUBSTANTIAL" : "PARTIAL";
 }
 
@@ -381,7 +456,7 @@ export function selectAutomaticEvidenceForRequirement(
         candidate: item.candidate,
         score: item.score,
         reasons: item.reasons,
-        supportLevel: supportForCandidate(item.candidate, item.score),
+        supportLevel: supportForCandidate(requirement, item.candidate, item.score),
       });
       used.add(item.candidate.evidenceKey);
       count += 1;
@@ -390,6 +465,11 @@ export function selectAutomaticEvidenceForRequirement(
     if (selected.length >= MAX_AUTOMATIC_LINKS_PER_REQUIREMENT) break;
   }
 
+  // Quantity is a requirement-level constraint. Never mark one record FULL
+  // when the requirement asks for several and the complete set is absent.
+  if (desiredPerKind > 1 && selected.filter((item) => item.supportLevel === "FULL").length < desiredPerKind) {
+    return selected.map((item) => ({ ...item, supportLevel: item.supportLevel === "FULL" ? "SUBSTANTIAL" : item.supportLevel }));
+  }
   return selected;
 }
 
@@ -419,6 +499,11 @@ export function parseAutomaticRequirementEvidence(
       || (parsed.sourceByteLength ?? 0) <= 0
       || !Number.isFinite(parsed.linkageScore)
       || !Array.isArray(parsed.linkageReasons)
+      || typeof parsed.sourceFileName !== "string"
+      || parsed.sourceFileName.trim().length === 0
+      || !Array.isArray(parsed.matchedFacets)
+      || !SHA256_PATTERN.test(parsed.sourceRevision ?? "")
+      || !SHA256_PATTERN.test(parsed.evidenceRevision ?? "")
       || parsed.state !== "ACTIVE"
     ) return null;
     return parsed as AutomaticRequirementEvidenceMetadata;
@@ -443,6 +528,12 @@ function metadataFor(
     sourceDocumentId: selected.candidate.sourceDocumentId,
     sourceContentHash: selected.candidate.sourceContentHash,
     sourceByteLength: selected.candidate.sourceByteLength,
+    sourceFileName: selected.candidate.sourceFileName ?? selected.candidate.label,
+    sourceSection: selected.candidate.sourceSection ?? null,
+    sourceQuote: selected.candidate.sourceQuote ?? null,
+    matchedFacets: evaluateCandidateFacets(requirement, selected.candidate).matched,
+    sourceRevision: sha256(`${requirement.sourceTenderFileId}:${requirement.sourceExactQuote!.replace(/\s+/g, " ").trim()}`),
+    evidenceRevision: selected.candidate.evidenceRevision ?? selected.candidate.sourceContentHash,
     linkageScore: selected.score,
     linkageReasons: selected.reasons,
     state: "ACTIVE",
@@ -511,6 +602,7 @@ function vaultRecordCandidate(
   searchableText: string,
   kinds: AutomaticEvidenceKind[],
   selected: boolean,
+  facets: AutomaticEvidenceCandidate["facets"] = {},
 ): AutomaticEvidenceCandidate | null {
   if (!canUseVaultRecord(record as ReviewRecordState, "GENERATION")) return null;
   const integrity = verifiedHashAndLength(record.sourceDocument ?? {});
@@ -528,6 +620,11 @@ function vaultRecordCandidate(
     selected,
     generatedReady: false,
     exactFileName: null,
+    sourceFileName: record.sourceDocument?.fileName ?? "",
+    sourceSection: null,
+    sourceQuote: record.sourceDocument?.extractedText?.slice(0, 320) ?? null,
+    evidenceRevision: integrity.hash,
+    facets,
   };
 }
 
@@ -692,6 +789,13 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       ].filter(Boolean).join(" "),
       ["EXPERT_CV"],
       selectedExpertIds.has(expert.id),
+      {
+        yearsExperience: expert.yearsExperience,
+        disciplines: parseStringArray(expert.disciplines),
+        sectors: parseStringArray(expert.sectors),
+        certifications: parseStringArray(expert.certifications),
+        qualification: expert.title,
+      },
     );
     if (candidate) candidates.push(candidate);
   }
@@ -710,6 +814,14 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       ].filter(Boolean).join(" "),
       ["PROJECT_REFERENCE"],
       selectedProjectIds.has(project.id),
+      {
+        client: project.clientName,
+        sector: project.sector,
+        serviceAreas: parseStringArray(project.serviceAreas),
+        location: project.country,
+        value: project.contractValue,
+        dates: project.startDate && project.endDate ? `${project.startDate}:${project.endDate}` : null,
+      },
     );
     if (candidate) candidates.push(candidate);
   }
@@ -757,6 +869,11 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       selected: false,
       generatedReady: false,
       exactFileName: document.fileName,
+      sourceFileName: document.fileName,
+      sourceSection: document.category ?? null,
+      sourceQuote: document.extractedText.slice(0, 320),
+      evidenceRevision: integrity.hash,
+      facets: { category: document.category },
     });
   }
 
@@ -785,6 +902,11 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       selected: true,
       generatedReady: true,
       exactFileName: document.exactFileName ?? document.name,
+      sourceFileName: document.exactFileName ?? document.name,
+      sourceSection: document.documentType ?? null,
+      sourceQuote: null,
+      evidenceRevision: integrity.hash,
+      facets: { validationStatus, generationStatus },
     });
   }
 
@@ -811,6 +933,11 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
         selected: true,
         generatedReady: false,
         exactFileName,
+        sourceFileName: exactFileName,
+        sourceSection: "Confirmed Build Plan",
+        sourceQuote: null,
+        evidenceRevision: String(buildPlan.contentHash).toLowerCase(),
+        facets: { confirmed: true },
       });
     }
   }

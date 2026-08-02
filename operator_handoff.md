@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-02 15:05 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; began from exact re-fetched head `c5a7a654228a378ec6953b45c111317fcf2945f6`.
+- **Scope:** Requirements and Evidence runtime repair for deployment `dpl_AKr8QMbzMcS1rcNn5SAnj1auw8JL` / tender `e15b9e35-d8a8-4136-97e8-9f087cd1078a`: family-specific FULL evaluation for verified expert/project/current bytes, complementary quantity enforcement, audit-complete automatic-link metadata, structural source-quote rejection, stable semantic requirement identity/deduplication, exact canonical UI states, unweighted mandatory coverage, and removal of panel-open POST as workflow authority.
+- **Files changed:** `lib/engine/automatic-requirement-coverage.ts`, `lib/engine/requirement-source-extractor.ts`, `lib/engine/stable-requirements.ts`, `lib/vault-review-provenance.ts`, `app/api/tenders/[id]/requirement-coverage/route.ts`, `components/requirement-coverage-panel.tsx`, `tests/automatic-requirement-coverage-behavior.test.ts`, `tests/requirement-coverage-confirm-safety.test.ts`, and `tests/requirement-evidence-resolver-runtime-fixture.test.ts`.
+- **Tests:** focused requirement/evidence run 26/26 passed; `npx prisma generate` passed; `npx tsc --noEmit` passed; `npm run lint` passed; `npm run prisma:validate` passed; `npm audit --audit-level=high` passed with 0 vulnerabilities. Full `npm test` was stopped after the external Neon database was unreachable; the first DB-backed suite failed only with connection error. Production build reached Next config and was blocked because this container has no AI provider key.
+- **CI/deployment:** pre-edit PR checks and Vercel status were green. Exact supplied deployment is READY and bound to the verified starting SHA. Build events were available; the Vercel CLI returned no runtime invocation logs for the requested window. No deployment was created.
+- **Risks / assumptions:** no provider credentials or reachable PostgreSQL were available, so provider-backed synthetic execution, full PostgreSQL, browser fixture login/screenshot, and post-change deployed runtime logs remain unverified. The implementation remains fail-closed; current fixture coverage must be recomputed on a preview before any 6/6 claim.
+- **Next action:** run the full PostgreSQL and Playwright matrices with deployment credentials, deploy this committed head through the existing draft PR only if Hope authorizes it, then rerun the exact fixture and inspect runtime logs.
+- **Merge status:** unsafe to merge until those environment-dependent checks complete; PR remains draft and unmerged.
+
 ### 2026-08-01 18:45 UTC — Codex (GPT-5.6 Sol), PR #1175 exact-head 100% acceptance
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at exact application/test head `9a939aa85bc9e004316b5d48d45c9b3b9b2a7184`; zero inline comments and zero reviews. No merge or production deployment.

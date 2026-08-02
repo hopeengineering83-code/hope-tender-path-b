@@ -136,6 +136,19 @@ function jaccard(a: Set<string>, b: Set<string>): number {
   return inter / (a.size + b.size - inter);
 }
 
+/** Reject structurally unrelated boilerplate even when generic words overlap. */
+export function quoteStructurallyProvesRequirement(requirement: RequirementInput, quote: string): boolean {
+  const requirementText = `${requirement.title} ${requirement.description}`.toLowerCase();
+  const quoteText = quote.toLowerCase();
+  const expert = /\b(expert|personnel|staff|curriculum vitae|\bcv\b|specialist|team leader)\b/.test(requirementText);
+  const project = /\b(project reference|past performance|similar project|relevant experience|contract experience)\b/.test(requirementText);
+  if (expert && !/\b(expert|personnel|staff|curriculum vitae|\bcv\b|specialist|team leader|qualification|years? experience)\b/.test(quoteText)) return false;
+  if (project && !/\b(project|contract|client|assignment|reference|past performance|experience)\b/.test(quoteText)) return false;
+  if ((expert || project) && /\bevaluation criteria\b/.test(quoteText)
+    && !/\b(submit|provide|required|minimum|shall|must)\b/.test(quoteText)) return false;
+  return true;
+}
+
 /**
  * For each requirement, find the best-matching paragraph in the file.
  * The "best match" is the highest Jaccard overlap between the
@@ -165,6 +178,7 @@ export function extractRequirementSources(opts: {
     let bestScore = 0;
     const titleLc = req.title.toLowerCase();
     for (let i = 0; i < paragraphs.length; i += 1) {
+      if (!quoteStructurallyProvesRequirement(req, paragraphs[i].paragraph)) continue;
       const j = jaccard(reqTokens, paraTokens[i]);
       // Verbatim title bonus.
       const verbatim = titleLc.length > 8 && paragraphs[i].paragraph.toLowerCase().includes(titleLc) ? 0.15 : 0;
