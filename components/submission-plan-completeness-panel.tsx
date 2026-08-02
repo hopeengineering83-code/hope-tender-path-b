@@ -1,15 +1,28 @@
-// Submission Plan Completeness panel.
+// The single Build Plan panel.
 //
-// Drops into the tender detail page next to the export-readiness panel.
-// Answers the screenshot question "where are the missing 13 of 19 docs?"
-// by rendering one row per planned file with a status badge and the
-// recommended next action.
+// Answers "where are the missing 13 of 19 docs?" with one row per planned
+// file, its status badge, and the recommended next action — and owns the
+// three plan mutations (build, generate missing, reconcile stale).
+//
+// It used to share the page with submission-plan-reconciliation-panel.tsx,
+// which re-derived required/generated/missing itself from
+// findMissingGeneratedDocuments instead of the canonical
+// /api/tenders/[id]/submission-plan resolver. That helper counts any
+// non-SUPERSEDED row as satisfying its plan file, while the resolver first
+// asks isFinalExportCandidateDocument. So a document marked NOT_EXPORTABLE —
+// by the row action in THIS panel — showed as "1/1 · plan is reconciled"
+// there and "Current outputs 0 · REPLACE WITH ORIGINAL" here, on the same
+// screen. One panel now reads one resolver, so the two cannot disagree.
 
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshIcon, CheckCircleIcon, WarningIcon, ClockIcon, BanIcon, FolderIcon } from "./icons";
+import { BuildSubmissionPlanButton } from "./build-submission-plan-button";
+import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
+import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
+import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
 type Status =
   | "GENERATED"
@@ -57,6 +70,10 @@ type Summary = {
   hasExplicitScope: boolean;
   planState: PlanState;
   requiresUserConfirmation: boolean;
+  // !confirmedPlan.ok — the same condition the deleted reconciliation panel
+  // used to decide whether to offer Build Plan.
+  automaticPlanPending?: boolean;
+  automaticPlanBlocker?: string | null;
 };
 
 type Response = {
@@ -154,7 +171,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -167,7 +184,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
     } finally {
       setLoading(false);
     }
-  }
+  }, [tenderId]);
 
   async function runRowAction(documentId: string, action: PlanRowAction) {
     let note: string | undefined;
@@ -197,7 +214,15 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
     }
   }
 
-  useEffect(() => { void load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tenderId]);
+  // The three plan mutations below live inside this client panel, so
+  // router.refresh() alone would leave these counts stale — the server tree
+  // would update while this panel kept showing the pre-mutation numbers and
+  // re-offered the action that just ran. Re-read on the same workflow-sync
+  // event the mutations emit.
+  useEffect(() => {
+    void load();
+    return subscribeTenderWorkflowSync(tenderId, () => { void load(); });
+  }, [load, tenderId]);
 
   if (loading && !data) {
     return <section aria-busy="true" aria-label="Submission plan completeness" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Loading submission plan completeness…</section>;
@@ -228,6 +253,9 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
+          {canMutate && data.summary.totalMissing > 0 && (
+            <GenerateMissingPlanFilesButton tenderId={tenderId} missingCount={data.summary.totalMissing} />
+          )}
           <button type="button" onClick={() => void load()} aria-label={loading ? "Refreshing submission scope" : "Re-check submission scope"} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60" disabled={loading || busyKey !== null} title="Re-check the current confirmed plan and output status">
             <RefreshIcon /> {loading ? "Checking…" : "Re-check"}
           </button>
@@ -308,6 +336,14 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
         {data.summary.planState === "NO_REQUIREMENTS" && (
           <p className="mt-2">No tender requirements are extracted yet. Run AI Analyze or add requirements manually before building the submission package.</p>
         )}
+        {data.summary.automaticPlanPending && (
+          <div className="mt-3">
+            <p className="mb-2">
+              {data.summary.automaticPlanBlocker ?? "No current confirmed Build Plan."} Document counts and export eligibility stay unavailable until a Build Plan is rebuilt and source-verified.
+            </p>
+            {canMutate && <BuildSubmissionPlanButton tenderId={tenderId} />}
+          </div>
+        )}
       </div>
 
       <div className="mt-4 overflow-x-auto">
@@ -333,7 +369,9 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
                   <td className="px-2 py-2">
                     <div className="font-medium text-slate-900">{row.exactFileName ?? row.name}</div>
                     {row.exactFileName && row.exactFileName !== row.name && <div className="text-[10px] text-slate-400">{row.name}</div>}
-                    {row.documentType && <div className="text-[10px] text-slate-400">{row.documentType}</div>}
+                    {(row.documentType || row.format) && (
+                      <div className="text-[10px] text-slate-400">{[row.documentType, row.format].filter(Boolean).join(" · ")}</div>
+                    )}
                   </td>
                   <td className="px-2 py-2 text-[10px] font-medium text-slate-600">{row.envelope}</td>
                   <td className="px-2 py-2">
@@ -366,6 +404,10 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
           </tbody>
         </table>
       </div>
+
+      {canMutate && data.summary.totalOutsidePlan > 0 && (
+        <ReconcileStaleFilesButton tenderId={tenderId} staleCount={data.summary.totalOutsidePlan} />
+      )}
 
       {!canMutate && data.rows.some((row) => Boolean(row.documentId) && row.status !== "SUPERSEDED") && (
         <p className="mt-3 text-xs text-slate-500">Read-only: changing submission-scope rows requires ADMIN or PROPOSAL_MANAGER.</p>

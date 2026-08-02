@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { emitTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
 type GenerateResponse = {
   success?: boolean;
@@ -68,6 +69,11 @@ export function GenerateMissingPlanFilesButton({ tenderId, missingCount }: { ten
       const count = (data.created ?? 0) + (data.updated ?? 0);
       setOk(true);
       setMessage(`${count} missing planned file record${count === 1 ? "" : "s"} created/updated. ${data.warning ?? "Review replacement-control records before export."}`.trim());
+      // The Build Plan panel that hosts this button holds its own fetched
+      // counts; router.refresh() does not re-run that client fetch, so without
+      // this the panel would keep offering "Generate N missing" after N were
+      // generated.
+      emitTenderWorkflowSync({ tenderId, source: "missing-plan-files-generated" });
       startTransition(() => router.refresh());
     } catch (error) {
       setOk(false);

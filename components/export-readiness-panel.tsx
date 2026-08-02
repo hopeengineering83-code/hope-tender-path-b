@@ -427,12 +427,12 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && (
             // Links to the one canonical Generate Missing Plan Files control
-            // (submission-plan-reconciliation-panel.tsx's
-            // #submission-plan-reconciliation, which shows the exact missing
+            // (submission-plan-completeness-panel.tsx's
+            // #submission-plan-completeness, which shows the exact missing
             // count) instead of a second, separate button here that POSTs
             // the same /generate-missing-plan-files route without that
             // context.
-            <DisclosureAnchorLink href="#submission-plan-reconciliation" className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800" title="Go to Submission plan reconciliation to generate missing planned docs">
+            <DisclosureAnchorLink href="#submission-plan-completeness" className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800" title="Go to the Build Plan panel to generate missing planned docs">
               <ArrowRightIcon /> Go to Generate missing planned docs
             </DisclosureAnchorLink>
           )}

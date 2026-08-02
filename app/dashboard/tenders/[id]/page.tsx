@@ -25,7 +25,6 @@ import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objec
 import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-panel";
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 import { GenerationActionPanel } from "../../../../components/generation-action-panel";
-import { SubmissionPlanReconciliationPanel } from "../../../../components/submission-plan-reconciliation-panel";
 import { EngineActionPanel } from "../../../../components/engine-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
@@ -311,7 +310,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           description="Detailed readiness, reconciliation, and evaluator simulation remain available without competing with the generation action."
         >
           <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
-          <SubmissionPlanReconciliationPanel tenderId={tender.id} />
           <SubmissionPlanCompletenessPanel tenderId={tender.id} canMutate={canMutate} />
           <EvaluatorObjectionsPanel tenderId={tender.id} canMutate={canMutate} />
         </Disclosure>

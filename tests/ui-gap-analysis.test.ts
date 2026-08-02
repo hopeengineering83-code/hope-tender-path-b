@@ -24,7 +24,7 @@ describe("UI gap analysis — canonical actions and disclosure-aware anchors", (
 
   it("keeps the critical primary anchors correct", () => {
     assert.equal(TENDER_WORKFLOW_STAGES[0].targets[0], "#tender-files");
-    assert.equal(TENDER_WORKFLOW_STAGES[5].targets[0], "#submission-plan-reconciliation");
+    assert.equal(TENDER_WORKFLOW_STAGES[5].targets[0], "#submission-plan-completeness");
     assert.equal(TENDER_WORKFLOW_STAGES[6].targets[0], "#matching-selected-evidence");
     assert.equal(TENDER_WORKFLOW_STAGES[9].targets[0], "#export-readiness");
     assert.ok(TENDER_WORKFLOW_STAGES[9].targets.includes("#final-package-manifest"));

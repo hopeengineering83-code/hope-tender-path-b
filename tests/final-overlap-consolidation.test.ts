@@ -167,7 +167,7 @@ describe("Final overlap/dead-code/page consolidation acceptance tests", () => {
         "components/ai-analyze-panel.tsx",
         "components/requirement-coverage-panel.tsx",
         "app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx",
-        "components/submission-plan-reconciliation-panel.tsx",
+        "components/submission-plan-completeness-panel.tsx",
         "components/submission-plan-truth-panel.tsx",
         "components/matching-selected-evidence-panel.tsx",
         "components/generation-action-panel.tsx",

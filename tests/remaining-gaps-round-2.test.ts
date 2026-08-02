@@ -97,31 +97,37 @@ describe("F5 — evaluator-objections-panel gates mutation buttons on canMutate"
   });
 });
 
-// ─── F6: submission-plan-reconciliation-panel role gate ──────────────────────
+// ─── F6: Build Plan panel role gate ──────────────────────────────────────────
+//
+// The three plan mutations moved out of the deleted
+// submission-plan-reconciliation-panel.tsx into the one surviving Build Plan
+// panel. That panel is a client component, so the role decision itself is
+// made on the server by the page and passed down as canMutate — the gate
+// still has to hold on every one of the three buttons.
 
-describe("F6 — submission-plan-reconciliation-panel gates mutation buttons on canMutate", () => {
-  it("uses getCurrentUser (not getSession) + canMutateTender", () => {
-    const src = read("components/submission-plan-reconciliation-panel.tsx");
-    assert.match(src, /import \{ getCurrentUser \} from "\.\.\/lib\/auth"/);
-    assert.match(src, /import \{ canMutateTender \} from "\.\.\/lib\/recovery-command-actions"/);
-    assert.match(src, /const user = await getCurrentUser\(\)/);
-    assert.match(src, /const canMutate = canMutateTender\(user\.role\)/);
-    assert.doesNotMatch(src, /import \{ getSession \} from "\.\.\/lib\/auth"/);
+describe("F6 — the Build Plan panel gates every mutation button on canMutate", () => {
+  it("resolves the role server-side with getCurrentUser + canMutateTender and passes it down", () => {
+    const page = read("app/dashboard/tenders/[id]/page.tsx");
+    assert.match(page, /import \{ getSession, getCurrentUser \} from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/auth"/);
+    assert.match(page, /import \{ canMutateTender \} from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/recovery-command-actions"/);
+    assert.match(page, /const currentUser = await getCurrentUser\(\)/);
+    assert.match(page, /const canMutate = canMutateTender\(currentUser\?\.role\)/);
+    assert.match(page, /<SubmissionPlanCompletenessPanel tenderId=\{tender\.id\} canMutate=\{canMutate\} \/>/);
   });
 
   it("gates BuildSubmissionPlanButton behind canMutate", () => {
-    const src = read("components/submission-plan-reconciliation-panel.tsx");
+    const src = read("components/submission-plan-completeness-panel.tsx");
     assert.match(src, /\{canMutate && <BuildSubmissionPlanButton/);
   });
 
   it("gates GenerateMissingPlanFilesButton behind canMutate", () => {
-    const src = read("components/submission-plan-reconciliation-panel.tsx");
-    assert.match(src, /missing\.length > 0 && canMutate && <GenerateMissingPlanFilesButton/);
+    const src = read("components/submission-plan-completeness-panel.tsx");
+    assert.match(src, /canMutate && data\.summary\.totalMissing > 0 && \(\s*<GenerateMissingPlanFilesButton/);
   });
 
   it("gates ReconcileStaleFilesButton behind canMutate", () => {
-    const src = read("components/submission-plan-reconciliation-panel.tsx");
-    assert.match(src, /\{canMutate && <ReconcileStaleFilesButton/);
+    const src = read("components/submission-plan-completeness-panel.tsx");
+    assert.match(src, /canMutate && data\.summary\.totalOutsidePlan > 0 && \(\s*<ReconcileStaleFilesButton/);
   });
 });
 

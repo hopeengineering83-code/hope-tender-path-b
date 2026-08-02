@@ -116,12 +116,12 @@ describe("Dashboard panel consistency — PLANNED/SUPERSEDED never shown as read
     );
   });
 
-  it("submission-plan-reconciliation panel does not count PLANNED as generated", () => {
-    const src = readFileSync("components/submission-plan-reconciliation-panel.tsx", "utf8");
+  it("the Build Plan panel does not count PLANNED as generated", () => {
+    const src = readFileSync("components/submission-plan-completeness-panel.tsx", "utf8");
     // The panel should distinguish planned from generated
     assert.ok(
       src.includes("PLANNED") || src.includes("generationStatus") || src.includes("derivedDocumentCount"),
-      "Submission plan reconciliation must track PLANNED vs generated separately",
+      "The Build Plan panel must track PLANNED vs generated separately",
     );
   });
 });

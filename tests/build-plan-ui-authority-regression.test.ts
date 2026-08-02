@@ -9,7 +9,6 @@ const read = (path: string) => readFileSync(path, "utf8");
 describe("Build Plan has one automatic action owner", () => {
   const action = read("components/build-submission-plan-button.tsx");
   const completeness = read("components/submission-plan-completeness-panel.tsx");
-  const reconciliation = read("components/submission-plan-reconciliation-panel.tsx");
 
   it("uses the canonical automatic build-and-verify route", () => {
     assert.match(action, /\/api\/tenders\/\$\{tenderId\}\/build-plan`/);
@@ -28,8 +27,9 @@ describe("Build Plan has one automatic action owner", () => {
     assert.match(action, /No manual confirmation is required/);
   });
 
-  it("keeps the action in reconciliation and removes the competing completeness action", () => {
-    assert.equal((reconciliation.match(/<BuildSubmissionPlanButton/g) ?? []).length, 1);
+  it("renders exactly one Build Plan action, in the one Build Plan panel", () => {
+    assert.equal((completeness.match(/<BuildSubmissionPlanButton/g) ?? []).length, 1);
+    // The panel offers the shared button; it never posts a build of its own.
     assert.doesNotMatch(completeness, /submission-plan\/build/);
     assert.doesNotMatch(completeness, /Build Plan<\/button>/);
   });
@@ -41,11 +41,11 @@ describe("Build Plan has one automatic action owner", () => {
       recovery.indexOf("RUN_ENGINE:", recovery.indexOf("BUILD_SUBMISSION_PLAN:")),
     );
     assert.match(actionBlock, /kind: "scroll"/);
-    assert.match(actionBlock, /anchorId: "submission-plan-reconciliation"/);
+    assert.match(actionBlock, /anchorId: "submission-plan-completeness"/);
     assert.doesNotMatch(actionBlock, /method: "POST"/);
 
     const stages = read("lib/tender-workflow-stages.ts");
-    assert.match(stages, /stage: 6,\s*label: "Confirmed Build Plan",\s*targets: \["#submission-plan-reconciliation"/);
+    assert.match(stages, /stage: 6,\s*label: "Confirmed Build Plan",\s*targets: \["#submission-plan-completeness"/);
   });
 
   it("opens scroll targets without a custom callback", () => {
@@ -67,7 +67,7 @@ describe("automatic submission scope is presented truthfully", () => {
 
   it("labels pending authority as automatic, not human-confirmed", () => {
     assert.match(truth, /Automatic Build Plan pending/);
-    assert.match(truth, /href="#submission-plan-reconciliation"/);
+    assert.match(truth, /href="#submission-plan-completeness"/);
     assert.doesNotMatch(truth, /Review and confirm Build Plan/);
   });
 

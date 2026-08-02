@@ -87,7 +87,7 @@ export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
         <span className="text-slate-500">Current outputs: {summary.totalGenerated}</span>
         {!verified && (
           <DisclosureAnchorLink
-            href="#submission-plan-reconciliation"
+            href="#submission-plan-completeness"
             className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[10px] font-semibold text-amber-800 hover:bg-amber-100"
             title="Open automatic Build Plan recovery"
           >

@@ -178,7 +178,6 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
       "lib/engine/workflow/workflow-state.ts",
       "app/api/tenders/[id]/auto-finalize/route.ts",
       "app/api/tenders/[id]/supersede-outside-plan/route.ts",
-      "components/submission-plan-reconciliation-panel.tsx",
     ]) {
       const source = readFileSync(path, "utf8");
       assert.ok(!/JSON\.parse\([^)]*itemsJson/.test(source), `${path} must consume confirmedPlan.items instead of re-parsing itemsJson`);

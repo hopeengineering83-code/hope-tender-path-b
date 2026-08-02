@@ -137,7 +137,7 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
   BUILD_SUBMISSION_PLAN: {
     label: "Review and Confirm Build Plan",
     kind: "scroll",
-    anchorId: "submission-plan-reconciliation",
+    anchorId: "submission-plan-completeness",
     message: "Open the canonical Build Plan panel to build a draft, review the complete ordered file scope, and confirm it.",
   },
   RUN_ENGINE: {
@@ -324,13 +324,13 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
   CONFIRM_SUBMISSION_PLAN: {
     label: "Review and Confirm Build Plan",
     kind: "scroll",
-    anchorId: "submission-plan-reconciliation",
+    anchorId: "submission-plan-completeness",
     message: "Open the canonical Build Plan panel, review the complete ordered file scope, and confirm it.",
   },
   REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN: {
     label: "Review Requirements and Build Plan",
     kind: "scroll",
-    anchorId: "submission-plan-reconciliation",
+    anchorId: "submission-plan-completeness",
     message: "Open the canonical Build Plan panel after reviewing tender requirements; build a draft and confirm the exact scope there.",
   },
   // Repair source grounding ──────────────────────────────────────────────────

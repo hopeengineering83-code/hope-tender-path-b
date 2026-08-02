@@ -108,7 +108,7 @@ export const TENDER_ACTIONS = {
     availability: "NORMAL",
   },
   BUILD_SUBMISSION_PLAN: {
-    anchor: "#submission-plan-reconciliation",
+    anchor: "#submission-plan-completeness",
     mutation: "POST /api/tenders/:id/build-plan",
     owner: "BuildSubmissionPlanButton",
     label: "Build and verify plan",
