@@ -7,6 +7,9 @@ import { isValidClientName, getClientNameStatus } from "./engine/metadata-valida
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "./engine/analysis-source";
 import { assessTenderMetadataCompleteness } from "./engine/tender-metadata-completeness";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
+// Same base-name rule the finalize-pdf route uses to find a source, so this
+// warning and that route can never disagree about what is finalizable.
+import { normalizeFileBaseName } from "./engine/workflow/pdf-finalizer";
 // Round follow-up to PR #424/#425 — surface PDF-required + branding/
 // signature/stamp policy in the readiness panel BEFORE the user
 // clicks Download. Operators see the conflict early and fix it
@@ -676,11 +679,46 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     );
     const missingPdfNames = requiredPdfNames.filter((name) => !coveredPdfNames.has(name.trim().toLowerCase()));
     if (missingPdfNames.length > 0) {
-      warnings.push({
-        code: "TENDER_REQUIRES_PDF",
-        message: `Tender submission plan requires PDF output (${missingPdfNames.join(", ")}). Final export will block with PDF_REQUIRED_CONVERSION_UNAVAILABLE until the required PDF is finalized from an approved source document (Finalize PDF) or the tender-issued PDF is uploaded.`,
-        nextAction: "FINALIZE_REQUIRED_PDF",
-      });
+      // Offering "Finalize PDF" only makes sense when there is something to
+      // finalize FROM. app/api/tenders/[id]/finalize-pdf/route.ts converts a
+      // GENERATED .docx whose base name matches the required PDF; with no such
+      // source it answers PDF_REQUIRED_CONVERSION_UNAVAILABLE. Previously this
+      // warning always carried nextAction FINALIZE_REQUIRED_PDF, so the panel
+      // rendered an enabled Finalize button whose only possible outcome was
+      // that rejection — click, error, nothing changes, click again. Decide
+      // here, where the source documents are already in hand, and name the
+      // real prerequisite when it is missing.
+      const docxSourceModel = (client as unknown as Record<string, unknown>).generatedDocument as
+        | undefined
+        | { findMany: (q: unknown) => Promise<Array<{ exactFileName: string | null; name?: string | null }>> };
+      const docxRows = docxSourceModel?.findMany
+        ? await docxSourceModel
+            .findMany({ where: { tenderId, generationStatus: "GENERATED" }, select: { exactFileName: true, name: true } })
+            .catch(() => [] as Array<{ exactFileName: string | null; name?: string | null }>)
+        : [];
+      const docxBaseNames = new Set(
+        (docxRows ?? [])
+          .map((row) => (row.exactFileName ?? row.name ?? "").trim())
+          .filter((value) => value.toLowerCase().endsWith(".docx"))
+          .map((value) => normalizeFileBaseName(value)),
+      );
+      const finalizable = missingPdfNames.filter((name) => docxBaseNames.has(normalizeFileBaseName(name)));
+      const notFinalizable = missingPdfNames.filter((name) => !docxBaseNames.has(normalizeFileBaseName(name)));
+
+      if (finalizable.length > 0) {
+        warnings.push({
+          code: "TENDER_REQUIRES_PDF",
+          message: `Tender submission plan requires PDF output (${finalizable.join(", ")}). A matching approved source document exists, so the required PDF can be finalized now; final export blocks with PDF_REQUIRED_CONVERSION_UNAVAILABLE until it is.`,
+          nextAction: "FINALIZE_REQUIRED_PDF",
+        });
+      }
+      if (notFinalizable.length > 0) {
+        warnings.push({
+          code: "TENDER_REQUIRES_PDF_SOURCE_MISSING",
+          message: `Tender submission plan requires PDF output (${notFinalizable.join(", ")}), and no generated source document matches ${notFinalizable.length === 1 ? "it" : "them"}. Finalizing is not possible yet: generate the matching document first, or upload the tender-issued PDF.`,
+          nextAction: "OPEN_TENDER_DETAIL",
+        });
+      }
     }
   }
   if (!exportAssetStatus.brandingAllowed && exportAssetStatus.brandingApplied === false && (appSettingsRow?.allowBrandingDefault ?? true)) {
