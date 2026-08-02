@@ -44,8 +44,10 @@ describe("workflow actions have visible semantic icons and labels", () => {
 
   it("evidence actions use PaperclipIcon and LinkIcon remains exported", () => {
     const exportPanel = read("components/export-readiness-panel.tsx");
-    assert.match(exportPanel, /<PaperclipIcon \/>/);
-    assert.match(exportPanel, /Use vault evidence/);
+    // Gap 5: the "Use vault evidence" button was removed (safe repairs now
+    // run automatically). PaperclipIcon may still be imported for other uses,
+    // but the "Use vault evidence" button text must not appear.
+    assert.doesNotMatch(exportPanel, /Use vault evidence/);
     assert.match(read("components/icons.tsx"), /export function LinkIcon/);
   });
 
