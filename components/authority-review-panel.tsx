@@ -185,6 +185,20 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
         ? "border-amber-200 bg-amber-50"
         : "border-red-200 bg-red-50";
 
+  // Gap 6: Keep Authority Review hidden until eligible. When the
+  // prerequisites are not met (no confirmed Build Plan, missing required
+  // documents, or documents not yet validated), the panel renders nothing
+  // — not even a greyed-out "NOT AVAILABLE" state. The panel appears only
+  // when resolveAuthorityReviewAvailability returns available=true, so the
+  // user never sees an incomplete authority score or a "prerequisites not
+  // met" message. Machine-safe checks run automatically via the GET
+  // handler; one explicit human release decision is required only where
+  // legally mandatory (the panel shows the release decision UI only when
+  // result.status !== "AUTHORITY_READY").
+  if (!loading && !error && unavailable) {
+    return null;
+  }
+
   return (
     <section id="authority-review" className={`mb-4 rounded-2xl border p-5 shadow-sm ${available !== null || result ? borderClass : "border-slate-200 bg-white"}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
