@@ -32,6 +32,7 @@ import { assertTenderReadyForGenerationAndExport } from "./engine/generation-rea
 import { ingestCompanyVault } from "./company-vault-ingestion";
 import { reextractAllCompanyDocuments, type ReextractAllResult } from "./company-vault-reextraction";
 import { cleanupSupportDocImportedRecords } from "./company-support-doc-cleanup";
+import { reconcileAutomaticRequirementCoverage } from "./engine/reconcile-automatic-requirement-coverage";
 import { classifyStageRetry } from "./engine/stage-retry-policy";
 import { recordSafeStageEvent } from "./engine/stage-observability";
 import { logAction } from "./audit";
@@ -581,6 +582,67 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       message: `Ingestion complete: ${result.docsProcessed} document(s) processed, ${result.expertsCreated} expert(s) and ${result.projectsCreated} project(s) created.`,
       status: "SUCCEEDED",
     });
+
+    // ── Event-driven requirement-coverage reconciliation ────────────────
+    // Vault uploads and re-extraction are the only source-revision events
+    // that previously did NOT trigger requirement-coverage reconciliation
+    // for the company's tenders. The Engine run reconciles, and the
+    // tender-source invalidation hook (`invalidateTenderForSourceRevision`)
+    // reconciles on the next Engine pass — but a tender whose only change
+    // is "the company just uploaded a new Expert CV that satisfies one of
+    // its mandatory EXPERT requirements" had to wait for the next Engine
+    // run, or for a user to open the Requirements and Evidence panel and
+    // click "Request recovery". That violates the "durable, revision-
+    // bound, event-driven — not dependent on opening the panel" contract.
+    //
+    // Reconciliation is bounded: one call per tender, only for tenders in
+    // an active (non-final) state, and the same revision-bound transaction
+    // the Engine uses. Failures are logged but never block the VAULT_INGEST
+    // job — the existing fail-closed authority (canUseVaultRecord,
+    // release gates, export readiness) is unchanged.
+    try {
+      const activeTenders = await prisma.tender.findMany({
+        where: {
+          userId: ctx.userId,
+          // Skip tenders in a final state — their requirement coverage is
+          // already locked in the export package and re-reconciliation is
+          // not meaningful.
+          status: { notIn: ["ARCHIVED", "WITHDRAWN", "NO_BID"] },
+        },
+        select: { id: true },
+      });
+      let reconciledCount = 0;
+      let reconcileFailures = 0;
+      for (const tender of activeTenders) {
+        try {
+          const coverage = await reconcileAutomaticRequirementCoverage(
+            prisma,
+            tender.id,
+            ctx.userId,
+          );
+          if (coverage.ok) {
+            reconciledCount += 1;
+          }
+        } catch (error) {
+          reconcileFailures += 1;
+          logger.warn("[job-handler] VAULT_INGEST per-tender coverage reconciliation failed", {
+            jobId: ctx.jobId,
+            tenderId: tender.id,
+            errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+          });
+        }
+      }
+      await recordStep(ctx.jobId, {
+        stepName: "vault.coverage-reconciled",
+        message: `Event-driven requirement coverage reconciled for ${reconciledCount} tender(s); ${reconcileFailures} failure(s).`,
+        status: "SUCCEEDED",
+      });
+    } catch (error) {
+      logger.warn("[job-handler] VAULT_INGEST coverage reconciliation sweep failed", {
+        jobId: ctx.jobId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    }
 
     // Admin-triggered reprocess/reimport actions get a human-readable audit
     // entry with the real outcome (only known now that the job has actually

@@ -73,7 +73,13 @@ function automaticStateFor(input: {
 }): RequirementCoverageRow["automationState"] {
   if (input.coverageStatus === "FULLY_MET") return "FULLY_VERIFIED";
   if (input.coverageStatus === "PARTIALLY_MET") return "PARTIALLY_VERIFIED";
-  if (input.resolverRunning) return "AUTO_RESOLVING";
+  // AUTO_RESOLVING is bound to the exact requirement: only requirements
+  // whose own source trace is missing or stale (and therefore actually
+  // need re-grounding) show AUTO_RESOLVING when a resolver is active.
+  // Requirements that are already grounded but lack eligible evidence
+  // show TRUE_EVIDENCE_GAP — the resolver is not working on their source
+  // trace, so showing "Auto-resolving" would be misleading.
+  if (input.resolverRunning && !input.hasSourceRef) return "AUTO_RESOLVING";
   if (!input.hasSourceRef || input.coverageStatus === "NEEDS_TRACE") return "STALE_OR_INVALIDATED";
   return "TRUE_EVIDENCE_GAP";
 }
