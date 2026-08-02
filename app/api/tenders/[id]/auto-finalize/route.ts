@@ -443,7 +443,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const rebuiltIntegrity = inspectActualFileBytes({ bytes: Buffer.from(rebuilt, "base64"), filename: doc.exactFileName ?? `${fileName}.docx`, claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
     const ready = hygieneReady && gateEvaluation.finalApprovalAllowed && rebuiltIntegrity.integrityStatus === "VERIFIED";
 
-    const priorStatus = doc.reviewStatus;
     const hygieneNotes = hygieneReady ? "" : `hygiene: ${[...issues, ...(stillHasPricingLeakage ? ["pricing leakage detected"] : [])].join("; ")}`;
     const gateNotes = summarizeSevenPassForReviewNotes(gateEvaluation);
     // If integrity is the only blocker, the notes must say so — otherwise the
@@ -455,17 +454,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ? `Auto-finalized for print/submission. ${gateNotes}`
       : `Auto-finalized but needs review. ${[hygieneNotes, integrityNotes, gateNotes].filter(Boolean).join(" | ")}`;
 
-    // Wrap update + audit in a transaction — if the DocumentReview create
-    // fails, the GeneratedDocument should NOT be marked READY_FOR_EXPORT
-    // without an audit trail (was non-atomic — broken "every approval is
-    // audited" invariant).
+    // Wrap update in a transaction so the byte integrity and status stay
+    // atomic. Gap 1: automation must never write reviewedBy, reviewedAt,
+    // or a human READY_FOR_EXPORT reviewStatus, and never create a
+    // DocumentReview record. The auto-finalize route now only writes
+    // machine-safe state: generationStatus, validationStatus (PENDING —
+    // the Document Validator owns VALIDATED per Gap 2), and reviewNotes
+    // carrying the machine-repair provenance. The human reviewStatus
+    // (READY_FOR_EXPORT / NEEDS_REVIEW) is NOT set by automation.
     await prisma.$transaction(async (tx) => {
-      // Only inline-content rows reach this point (storage-backed rows are
-      // skipped above), so the rebuilt bytes are canonical. storagePath: null
-      // is defensive normalization; the legacy final-ZIP digest columns must
-      // describe the same rebuilt bytes.
-      await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, ...rebuiltIntegrity, sha256: rebuiltIntegrity.contentSha256, byteSize: rebuiltIntegrity.contentByteLength, storagePath: null, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
-      if (ready && priorStatus !== "READY_FOR_EXPORT") await tx.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
+      await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, ...rebuiltIntegrity, sha256: rebuiltIntegrity.contentSha256, byteSize: rebuiltIntegrity.contentByteLength, storagePath: null, format: "DOCX", generationStatus: "GENERATED", validationStatus: "PENDING", reviewNotes: `machine:auto-finalize — ${reviewNotes.slice(0, 3800)}` } });
+      // No DocumentReview row is created — that is a human-review record.
     });
     processed += 1;
   }

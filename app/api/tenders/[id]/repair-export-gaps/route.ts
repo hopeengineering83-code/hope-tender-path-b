@@ -3,7 +3,7 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
-import { deriveDocumentOutputState, normalizeStatus } from "../../../../../lib/engine/document-output-state";
+import { normalizeStatus } from "../../../../../lib/engine/document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
 import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -79,6 +79,7 @@ type RepairDoc = {
   generationStatus: string;
   validationStatus: string;
   reviewStatus: string;
+  reviewNotes?: string | null;
   fileContent: string | null;
   storagePath?: string | null;
 };
@@ -129,9 +130,11 @@ function needsSafeRepair(doc: RepairDoc): boolean {
   if (isManualOnly(doc)) return false;
   if (!generatedDocumentHasContent(doc)) return true;
   if (normalizeStatus(doc.generationStatus) !== "GENERATED") return true;
-  if (normalizeStatus(doc.validationStatus) !== "VALIDATED" && normalizeStatus(doc.validationStatus) !== "PASSED") return true;
-  if (normalizeStatus(doc.reviewStatus) !== "READY_FOR_EXPORT") return true;
-  return deriveDocumentOutputState(doc) !== "READY_FOR_EXPORT";
+  // Gap 1: machine repair writes a `machine:safe-export-repair` marker in
+  // reviewNotes. A document carrying this marker has already been content-
+  // repaired. Validation status is the Document Validator's authority.
+  if (typeof doc.reviewNotes === "string" && doc.reviewNotes.startsWith("machine:safe-export-repair")) return false;
+  return true;
 }
 
 async function makeSafeDocx(title: string, tenderTitle: string): Promise<string> {
@@ -169,7 +172,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true, storagePath: true },
+    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, fileContent: true, storagePath: true },
   });
 
   const repaired: string[] = [];
@@ -214,7 +217,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         }
       }
 
-      const priorStatus = doc.reviewStatus;
       await tx.generatedDocument.update({
         where: { id: doc.id },
         data: {
@@ -223,18 +225,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           exactFileName: name,
           fileContent: content,
           generationStatus: "GENERATED",
-          validationStatus: "VALIDATED",
-          reviewStatus: "READY_FOR_EXPORT",
-          reviewedBy: actor.id,
-          reviewedAt: new Date(),
-          reviewNotes: "Safe export repair completed. Official-original and not-exportable files are excluded from repair.",
-          contentSummary: `Safe export repair completed for ${name}.`,
+          // Gap 1: automation must never directly mark VALIDATED — that is
+          // the Document Validator's authority (Gap 2). Only machine-safe
+          // content repair runs here. Automation never writes reviewedBy,
+          // reviewedAt, or a human READY_FOR_EXPORT reviewStatus, and never
+          // creates a DocumentReview record.
+          reviewNotes: "machine:safe-export-repair — DOCX hygiene cleaned (AI traces, placeholders, pricing leakage). Awaiting canonical Document Validator.",
+          contentSummary: `Machine export repair completed for ${name}.`,
           updatedAt: new Date(),
         },
       });
-      if (priorStatus !== "READY_FOR_EXPORT") {
-        await tx.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Safe export repair completed; manual-original rows were excluded.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
-      }
       repaired.push(name);
     }
   });

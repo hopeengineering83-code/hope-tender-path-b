@@ -25,7 +25,7 @@
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { prisma } from "../prisma";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "./apply-active-letterhead";
-import { deriveDocumentOutputState, normalizeStatus } from "./document-output-state";
+import { normalizeStatus } from "./document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
 import { generatedDocumentHasContent } from "../generated-document-content";
 import { logger } from "../observability";
@@ -90,6 +90,7 @@ type RepairDoc = {
   generationStatus: string;
   validationStatus: string;
   reviewStatus: string;
+  reviewNotes?: string | null;
   fileContent: string | null;
   storagePath?: string | null;
 };
@@ -138,9 +139,13 @@ function needsSafeRepair(doc: RepairDoc): boolean {
   if (isManualOnly(doc)) return false;
   if (!generatedDocumentHasContent(doc)) return true;
   if (normalizeStatus(doc.generationStatus) !== "GENERATED") return true;
-  if (normalizeStatus(doc.validationStatus) !== "VALIDATED" && normalizeStatus(doc.validationStatus) !== "PASSED") return true;
-  if (normalizeStatus(doc.reviewStatus) !== "READY_FOR_EXPORT") return true;
-  return deriveDocumentOutputState(doc) !== "READY_FOR_EXPORT";
+  // Gap 1: the machine repair writes a `machine:safe-export-repair` marker
+  // in reviewNotes. A document that already carries this marker has already
+  // been content-repaired; it does NOT need another repair pass. Validation
+  // status is owned by the Document Validator (Gap 2), not this function —
+  // so we do NOT check validationStatus here.
+  if (typeof doc.reviewNotes === "string" && doc.reviewNotes.startsWith("machine:safe-export-repair")) return false;
+  return true;
 }
 
 async function makeSafeDocx(title: string, tenderTitle: string): Promise<string> {
@@ -195,7 +200,7 @@ export async function runExportGapRepair(
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true, storagePath: true },
+    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, fileContent: true, storagePath: true },
   });
 
   const repaired: string[] = [];
@@ -239,7 +244,6 @@ export async function runExportGapRepair(
         }
       }
 
-      const priorStatus = doc.reviewStatus;
       await tx.generatedDocument.update({
         where: { id: doc.id },
         data: {
@@ -248,18 +252,21 @@ export async function runExportGapRepair(
           exactFileName: name,
           fileContent: content,
           generationStatus: "GENERATED",
-          validationStatus: "VALIDATED",
-          reviewStatus: "READY_FOR_EXPORT",
-          reviewedBy: userId,
-          reviewedAt: new Date(),
-          reviewNotes: "Safe export repair completed. Official-original and not-exportable files are excluded from repair.",
-          contentSummary: `Safe export repair completed for ${name}.`,
+          // Gap 1: automation must never directly mark VALIDATED — that is
+          // the Document Validator's authority (Gap 2). Only machine-safe
+          // content repair (AI traces, placeholders, pricing leakage) runs
+          // here; validation remains pending until the canonical validator
+          // passes. Similarly, automation never writes reviewedBy,
+          // reviewedAt, or a human REVIEWED/READY_FOR_EXPORT reviewStatus,
+          // and never creates a DocumentReview record — those are human
+          // review state. reviewNotes carries the machine-repair provenance
+          // payload only.
+          reviewNotes: "machine:safe-export-repair — DOCX hygiene cleaned (AI traces, placeholders, pricing leakage). Awaiting canonical Document Validator.",
+          contentSummary: `Machine export repair completed for ${name}.`,
           updatedAt: new Date(),
         },
       });
-      if (priorStatus !== "READY_FOR_EXPORT") {
-        await tx.documentReview.create({ data: { documentId: doc.id, reviewerId: userId, action: "READY_FOR_EXPORT", notes: "Safe export repair completed; manual-original rows were excluded.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
-      }
+      // No DocumentReview row is created — that is a human-review record.
       repaired.push(name);
     }
   });
