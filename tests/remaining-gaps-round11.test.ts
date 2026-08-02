@@ -66,10 +66,29 @@ describe("round 11 — T2: tender delete durable storage cleanup", () => {
 describe("round 11 — T5: auto-finalize transaction", () => {
   const src = read("app/api/tenders/[id]/auto-finalize/route.ts");
 
-  it("wraps update + DocumentReview create in a transaction", () => {
-    assert.ok(src.includes("prisma.$transaction(async (tx)"), "must use $transaction for update + audit");
+  // This used to require `tx.documentReview.create` inside the transaction.
+  // A DocumentReview row is a record that a HUMAN reviewed the document, and
+  // the same write set marked the row READY_FOR_EXPORT with reviewedBy and
+  // reviewedAt. Automation writing that is fabricated human state, so it was
+  // removed — the assertion, not the route, was wrong. Requiring the write
+  // back would re-introduce exactly the fabrication the app forbids.
+  //
+  // The atomicity guarantee the test was really protecting still holds and is
+  // still asserted; the no-fabrication guarantee is now pinned beside it so
+  // neither can regress into the other.
+  it("keeps the byte/status update atomic", () => {
+    assert.ok(src.includes("prisma.$transaction(async (tx)"), "must use $transaction for the update");
     assert.ok(src.includes("tx.generatedDocument.update"), "must use tx for the update");
-    assert.ok(src.includes("tx.documentReview.create"), "must use tx for the audit create");
+  });
+
+  it("never fabricates human review state while finalizing", () => {
+    assert.ok(!src.includes("tx.documentReview.create"),
+      "a DocumentReview row asserts a human reviewed this document; automation must not create one");
+    assert.ok(!/reviewedBy:\s*actor\.id/.test(src), "automation must not write reviewedBy");
+    assert.ok(!/reviewedAt:\s*new Date\(\)/.test(src), "automation must not write reviewedAt");
+    // Machine-safe fields only: the Document Validator owns VALIDATED, and the
+    // human reviewStatus is left for a human.
+    assert.ok(/validationStatus:\s*"PENDING"/.test(src), "automation leaves validation to the canonical validator");
   });
 });
 
