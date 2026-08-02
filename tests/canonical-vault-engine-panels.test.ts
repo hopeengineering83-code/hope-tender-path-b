@@ -61,7 +61,7 @@ describe("canonical Company Vault and Engine workflow panels", () => {
       "Automatic verification running",
       "Automatic source grounding",
       "Automatically linked",
-      "Partially supported",
+      "Partially verified",
       "Verified and ready",
       "Automatic verification incomplete",
     ]) {
@@ -98,6 +98,6 @@ describe("canonical Company Vault and Engine workflow panels", () => {
   it("never describes partial support as complete traceability", () => {
     assert.doesNotMatch(requirements, /All requirements and selected evidence have acceptable traceability/);
     assert.match(requirements, /data\.partiallyCovered === 0/);
-    assert.match(requirements, /Partially supported/);
+    assert.match(requirements, /Partially verified/);
   });
 });

@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-02 16:25 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; re-fetched and verified exact starting head `2f90c465e7207159b0dba7211509f94fc7760f82` before editing.
+- **Scope / files:** inspected both duplicate failed GitHub CI jobs and found the same two stale source-contract assertions in `tests/canonical-vault-engine-panels.test.ts`: they still required the retired phrase `Partially supported` after the canonical runtime state was intentionally renamed `PARTIALLY_VERIFIED` / `Partially verified`. Updated those assertions to enforce the canonical state vocabulary and changed this handoff. No application, schema, provider, release-gate, deployment, or unrelated behavior changed.
+- **Tests:** the 32-test focused requirement/evidence and canonical-panel set passed; Prisma generation, TypeScript, full lint, Prisma validation, dependency audit (0 vulnerabilities), and `git diff --check` passed.
+- **CI / deployment:** exact starting-head check jobs `91518513556` and `91518508323` each reached the complete test run and failed only the same two stale assertions (8,983/8,985 assertions passed); dependency and Vercel comment checks passed, while exact-head capture was still running when inspected. No deployment was requested or created.
+- **Risks / assumptions:** updated-head PostgreSQL/full-suite/build/authenticated browser/capture results remain CI-dependent. This correction reconciles tests with the already-covered canonical runtime truth rather than weakening an acceptance condition.
+- **Next action:** push this commit to the existing PR #1175 head, let exact-head CI/capture rerun, and inspect any newly exposed failure while keeping the PR draft and unmerged.
+- **Merge status:** not reviewed for merge; draft and unmerged.
+
 ### 2026-08-02 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; re-fetched and verified starting head `87fa6a28b9461900dd9c0471539cf37c4f3c6cc8` before editing.
