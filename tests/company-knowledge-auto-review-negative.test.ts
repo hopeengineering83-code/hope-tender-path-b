@@ -30,8 +30,15 @@ describe("company knowledge auto-review safety contract", () => {
     }
   });
 
-  it("repairs legacy fabricated system review into SOURCE_VERIFIED without preserving reviewer identity", () => {
-    assert.match(verification, /trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED"/);
+  it("does not accept or re-touch REVIEWED rows during automatic verification (Plan B)", () => {
+    // Automation never matches REVIEWED rows. The OR clause that used to
+    // re-pick `trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED"`
+    // was removed; a one-shot PostgreSQL migration converts any legacy
+    // fabricated rows to SOURCE_VERIFIED (or resets them to AI_DRAFT when
+    // the persisted provenance no longer applies) so the application code
+    // never has to re-write them.
+    assert.doesNotMatch(verification, /trustLevel:\s*["']REVIEWED["'],\s*reviewedBy:\s*["']SYSTEM_AUTO_VERIFIED["']/);
+    assert.match(verification, /trustLevel:\s*\{\s*in:\s*MACHINE_ELIGIBLE_TRUST\s*\}/);
     assert.match(verification, /trustLevel: "SOURCE_VERIFIED"/);
     assert.match(verification, /reviewedBy: null/);
     assert.match(verification, /reviewedAt: null/);

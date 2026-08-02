@@ -35,6 +35,18 @@ const MACHINE_ELIGIBLE_TRUST = ["REGEX_DRAFT", "AI_DRAFT", "SOURCE_VERIFIED"];
 // byte-verified source document, and otherwise stays exactly as it is.
 const MACHINE_ELIGIBLE_TRUST_SUPPORT = [...MACHINE_ELIGIBLE_TRUST, "MANUAL_DRAFT"];
 
+// Plan B safety: automation never accepts or re-touches REVIEWED rows. The
+// trust model gives automatic work exactly one promotion path —
+// SOURCE_VERIFIED with `reviewedBy: null, reviewedAt: null`. Any REVIEWED row
+// is either a genuine human approval (real `reviewedBy` user id) or a legacy
+// fabrication (`reviewedBy: "SYSTEM_AUTO_VERIFIED"`) that the one-shot
+// `20260801180000_repair_legacy_fabricated_system_review` migration has
+// already converted. Re-matching REVIEWED here would re-introduce the
+// original Plan-B leak: automation silently preserving a fabricated
+// human-approval state on every ingest pass. The OR branch was removed and
+// the migration cleans up the rows once, in PostgreSQL, instead of relying
+// on every future ingest to re-write them.
+
 function verificationMethod(trustLevel: string | null | undefined): "AI" | "DETERMINISTIC" | "HYBRID" {
   if (trustLevel === "AI_DRAFT") return "AI";
   if (trustLevel === "REGEX_DRAFT") return "DETERMINISTIC";
@@ -129,10 +141,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         companyId,
         deletedAt: null,
         sourceDocumentId: { not: null },
-        OR: [
-          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
-          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
-        ],
+        trustLevel: { in: MACHINE_ELIGIBLE_TRUST },
       },
       select: {
         id: true,
@@ -166,10 +175,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         companyId,
         deletedAt: null,
         sourceDocumentId: { not: null },
-        OR: [
-          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
-          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
-        ],
+        trustLevel: { in: MACHINE_ELIGIBLE_TRUST },
       },
       select: {
         id: true,
@@ -226,10 +232,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         id: expert.id,
         companyId,
         deletedAt: null,
-        OR: [
-          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
-          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
-        ],
+        trustLevel: { in: MACHINE_ELIGIBLE_TRUST },
       },
       data: {
         ...decision.reviewState,
@@ -281,10 +284,7 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
         id: project.id,
         companyId,
         deletedAt: null,
-        OR: [
-          { trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
-          { trustLevel: "REVIEWED", reviewedBy: "SYSTEM_AUTO_VERIFIED" },
-        ],
+        trustLevel: { in: MACHINE_ELIGIBLE_TRUST },
       },
       data: {
         ...decision.reviewState,
