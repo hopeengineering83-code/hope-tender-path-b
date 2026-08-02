@@ -4,6 +4,23 @@ import { logger } from "../observability";
  * Scores experts/projects across twelve evaluator lenses. The route performs
  * the final 20-iteration best-available portfolio selection and persists the
  * selected rows into TenderExpertMatch / TenderProjectMatch.
+ *
+ * Gap 3 (AI runtime) — bounded matcher payloads:
+ * The caller (lib/engine/main-engine-ai-rematch.ts) caps the candidate pool
+ * at PRE_FILTER_LIMIT = 20. Each candidate line is ~1K chars (800-char
+ * profile + metadata), so 20 candidates × ~1K = ~20K chars. Combined with
+ * the 8K-char requirements slice and 4K-char methodology slice, the total
+ * prompt is ~32K chars = ~8K tokens (4 chars/token heuristic).
+ *
+ * This fits within Groq's 32K context window AND the 28K free-tier TPM
+ * limit. lib/ai-preflight.ts enforces both limits before any provider is
+ * called — Groq is skipped WITHOUT consuming an attempt if the payload
+ * would 413. So Groq never receives an oversized matcher payload, even
+ * if the candidate count or requirements text grows in the future.
+ *
+ * MAX_CANDIDATES_PER_MATCHER_BATCH is the explicit bound: if the upstream
+ * pre-filter limit is ever raised, this constant caps the batch size so
+ * the payload stays within provider limits.
  */
 
 import { generateWithFallback } from "../ai";
@@ -16,6 +33,15 @@ import {
   universalProfileSummary,
   type UniversalTenderProfile,
 } from "./universal-tender-taxonomy";
+
+/**
+ * Maximum candidates per single matcher AI call. Bounded to keep the total
+ * prompt within Groq's 32K context window and 28K free-tier TPM limit.
+ * The upstream PRE_FILTER_LIMIT in main-engine-ai-rematch.ts is already 20,
+ * so this is a defensive cap — if the upstream limit is ever raised, this
+ * constant triggers batching so no single payload can 413 Groq.
+ */
+export const MAX_CANDIDATES_PER_MATCHER_BATCH = 20;
 
 
 async function withRematchTimeout<T>(promise: Promise<T>): Promise<T> {
@@ -446,47 +472,76 @@ function coerceAssessment(raw: Record<string, unknown>): CandidateAssessment | n
 export async function aiRematchExperts(opts: { tenderTitle: string; tenderRequirementsText: string; evaluationMethodology: string; candidates: ExpertCandidateInput[] }): Promise<MatchAssessmentBatch | null> {
   if (opts.candidates.length === 0) return null;
   const t0 = Date.now();
-  let raw: string;
-  try {
-    raw = await withRematchTimeout(generateWithFallback(buildExpertUserPrompt(opts), { systemPrompt: EXPERT_MATCHER_SYSTEM_PROMPT }));
-  } catch (err) {
-    logger.warn(`[ai-multi-perspective-matcher] Expert rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
+  // Gap 3: bound the batch size so no single payload can 413 Groq. The
+  // upstream PRE_FILTER_LIMIT is already 20, so this is a defensive cap
+  // that triggers batching if the upstream limit is ever raised.
+  const batches: ExpertCandidateInput[][] = [];
+  for (let i = 0; i < opts.candidates.length; i += MAX_CANDIDATES_PER_MATCHER_BATCH) {
+    batches.push(opts.candidates.slice(i, i + MAX_CANDIDATES_PER_MATCHER_BATCH));
   }
-  const parsed = parseAssessmentArray(raw);
-  if (!parsed) return null;
-  const byId = new Map(opts.candidates.map((candidate) => [candidate.id, candidate]));
-  const assessments = parsed
-    .map(coerceAssessment)
-    .filter((a): a is CandidateAssessment => a !== null)
-    .map((assessment) => {
-      const candidate = byId.get(assessment.candidateId);
-      return candidate ? applyExpertSafety({ ...opts, tenderCategory: null }, candidate, assessment) : assessment;
-    });
-  return { category: "EXPERT", assessments, durationMs: Date.now() - t0 };
+  const allAssessments: CandidateAssessment[] = [];
+  for (const batch of batches) {
+    const batchOpts = { ...opts, candidates: batch };
+    let raw: string;
+    try {
+      raw = await withRematchTimeout(generateWithFallback(buildExpertUserPrompt(batchOpts), { systemPrompt: EXPERT_MATCHER_SYSTEM_PROMPT }));
+    } catch (err) {
+      logger.warn(`[ai-multi-perspective-matcher] Expert rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
+      // If at least one batch succeeded, return partial results. Otherwise null.
+      if (allAssessments.length > 0) break;
+      return null;
+    }
+    const parsed = parseAssessmentArray(raw);
+    if (!parsed) continue;
+    const byId = new Map(batch.map((candidate) => [candidate.id, candidate]));
+    const assessments = parsed
+      .map(coerceAssessment)
+      .filter((a): a is CandidateAssessment => a !== null)
+      .map((assessment) => {
+        const candidate = byId.get(assessment.candidateId);
+        return candidate ? applyExpertSafety({ ...opts, tenderCategory: null }, candidate, assessment) : assessment;
+      });
+    allAssessments.push(...assessments);
+  }
+  if (allAssessments.length === 0) return null;
+  return { category: "EXPERT", assessments: allAssessments, durationMs: Date.now() - t0 };
 }
 
 export async function aiRematchProjects(opts: { tenderTitle: string; tenderRequirementsText: string; tenderCategory?: string | null; candidates: ProjectCandidateInput[] }): Promise<MatchAssessmentBatch | null> {
   if (opts.candidates.length === 0) return null;
   const t0 = Date.now();
-  let raw: string;
-  try {
-    raw = await withRematchTimeout(generateWithFallback(buildProjectUserPrompt(opts), { systemPrompt: PROJECT_MATCHER_SYSTEM_PROMPT }));
-  } catch (err) {
-    logger.warn(`[ai-multi-perspective-matcher] Project rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
+  // Gap 3: bound the batch size so no single payload can 413 Groq. The
+  // upstream PRE_FILTER_LIMIT is already 20, so this is a defensive cap
+  // that triggers batching if the upstream limit is ever raised.
+  const batches: ProjectCandidateInput[][] = [];
+  for (let i = 0; i < opts.candidates.length; i += MAX_CANDIDATES_PER_MATCHER_BATCH) {
+    batches.push(opts.candidates.slice(i, i + MAX_CANDIDATES_PER_MATCHER_BATCH));
   }
-  const parsed = parseAssessmentArray(raw);
-  if (!parsed) return null;
-  const byId = new Map(opts.candidates.map((candidate) => [candidate.id, candidate]));
-  const assessments = parsed
-    .map(coerceAssessment)
-    .filter((a): a is CandidateAssessment => a !== null)
-    .map((assessment) => {
-      const candidate = byId.get(assessment.candidateId);
-      return candidate ? applyProjectSectorSafety(opts, candidate, assessment) : assessment;
-    });
-  return { category: "PROJECT", assessments, durationMs: Date.now() - t0 };
+  const allAssessments: CandidateAssessment[] = [];
+  for (const batch of batches) {
+    const batchOpts = { ...opts, candidates: batch };
+    let raw: string;
+    try {
+      raw = await withRematchTimeout(generateWithFallback(buildProjectUserPrompt(batchOpts), { systemPrompt: PROJECT_MATCHER_SYSTEM_PROMPT }));
+    } catch (err) {
+      logger.warn(`[ai-multi-perspective-matcher] Project rematch AI call failed: ${err instanceof Error ? err.message : String(err)}`);
+      if (allAssessments.length > 0) break;
+      return null;
+    }
+    const parsed = parseAssessmentArray(raw);
+    if (!parsed) continue;
+    const byId = new Map(batch.map((candidate) => [candidate.id, candidate]));
+    const assessments = parsed
+      .map(coerceAssessment)
+      .filter((a): a is CandidateAssessment => a !== null)
+      .map((assessment) => {
+        const candidate = byId.get(assessment.candidateId);
+        return candidate ? applyProjectSectorSafety(opts, candidate, assessment) : assessment;
+      });
+    allAssessments.push(...assessments);
+  }
+  if (allAssessments.length === 0) return null;
+  return { category: "PROJECT", assessments: allAssessments, durationMs: Date.now() - t0 };
 }
 
 export function formatAssessmentRationale(assessment: CandidateAssessment): string {

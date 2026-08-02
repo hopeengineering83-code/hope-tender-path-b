@@ -50,9 +50,13 @@ function mockFetch(handler: (url: string, init: RequestInit) => { status: number
 }
 
 describe("12. provider attempt budget caps actual outbound attempts", () => {
-  it("makes at most 5 outbound provider calls with default budget", async () => {
-    // Configure enough providers to exceed the default budget of 5.
+  it("makes at most 10 outbound provider calls with default budget (all eligible providers tried)", async () => {
+    // Configure enough providers to exceed the old budget of 5.
     // All return HTTP 500 so the chain keeps falling over.
+    // Gap 3: the budget is now 10 so ALL eligible providers get a real
+    // attempt before the chain declares ALL_PROVIDERS_EXHAUSTED. This
+    // eliminates ATTEMPT_BUDGET_EXHAUSTED as a workflow blocker in the
+    // normal case.
     process.env.OPENAI_API_KEY = "k";
     process.env.GROQ_API_KEY = "k";
     process.env.DEEPSEEK_API_KEY = "k";
@@ -67,9 +71,10 @@ describe("12. provider attempt budget caps actual outbound attempts", () => {
       () => generateWithFallback("hello", { useCase: "proposal" }),
       (err: unknown) => err instanceof NoAiProviderReadyError,
     );
-    // Default budget is 5 — the chain must cap at 5 actual outbound attempts.
-    assert.ok(m.calls() <= 5, `expected at most 5 outbound attempts, got ${m.calls()}`);
-    assert.ok(m.calls() >= 3, `expected at least 3 outbound attempts (budget is 5), got ${m.calls()}`);
+    // Default budget is 10 — the chain must try every eligible provider
+    // (7 configured here) before declaring ALL_PROVIDERS_EXHAUSTED.
+    assert.ok(m.calls() <= 10, `expected at most 10 outbound attempts, got ${m.calls()}`);
+    assert.ok(m.calls() >= 5, `expected at least 5 outbound attempts (all eligible providers tried), got ${m.calls()}`);
   });
 });
 
@@ -98,7 +103,7 @@ describe("11. cooldown providers are skipped without consuming the budget", () =
     await assert.rejects(() => generateWithFallback("hi", { useCase: "proposal" }));
     // openrouter is skipped (cooldown); live attempts among openai/groq/deepseek/together.
     assert.ok(m.calls() >= 3, `expected at least 3 live attempts, got ${m.calls()}`);
-    assert.ok(m.calls() <= 5, `expected at most 5 attempts (budget), got ${m.calls()}`);
+    assert.ok(m.calls() <= 10, `expected at most 10 attempts (budget), got ${m.calls()}`);
     assert.ok(!seen.includes("openrouter"), "cooled-down openrouter must not be called");
   });
 });

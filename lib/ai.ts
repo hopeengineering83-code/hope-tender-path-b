@@ -452,16 +452,26 @@ export type NoAiProviderReadyErrorKind =
 // consume an attempt. Bounded to keep cumulative provider time within the
 // Vercel Hobby 60s function limit.
 //
-// FIX: raised default from 3 to 5. The previous default of 3 meant that if
-// Z.ai (400), Cerebras (429), and Mistral (timeout) all failed, the budget
-// was exhausted BEFORE trying Groq, OpenRouter, Gemini, etc. — even though
-// those providers were eligible and could have succeeded. With preflight
-// skips not consuming budget, 5 actual attempts still fits within Vercel
-// Hobby's 60s limit (5 × ~8s average = 40s, leaving 20s for error handling).
+// Gap 3 (AI runtime): the budget must be high enough that every eligible
+// provider gets a real attempt before the chain declares exhaustion. The
+// canonical order has 10 providers; with preflight skips not consuming
+// budget, 10 actual attempts still fits within Vercel Hobby's 60s limit
+// (10 × ~5s average with early-fail = 50s, leaving 10s for error handling).
+// The shared-deadline guard (ERROR_HANDLING_RESERVE_MS) prevents the chain
+// from running past the request boundary regardless.
+//
+// This eliminates ATTEMPT_BUDGET_EXHAUSTED as a workflow blocker in the
+// normal case: when all eligible providers are tried and all fail, the
+// error is classified ALL_PROVIDERS_EXHAUSTED (a genuine provider
+// outage), not ATTEMPT_BUDGET_EXHAUSTED (a self-imposed budget limit
+// that left eligible providers untried). ATTEMPT_BUDGET_EXHAUSTED now
+// fires only when the shared deadline hits mid-chain — the workflow
+// falls back to deterministic mode (regex analysis, lexical matcher)
+// rather than blocking.
 export const MAX_PROVIDER_ATTEMPTS_PER_REQUEST = (() => {
   const raw = Number(process.env.AI_MAX_PROVIDER_ATTEMPTS);
   if (Number.isFinite(raw) && raw >= 1 && raw <= 10) return Math.floor(raw);
-  return 5;
+  return 10;
 })();
 
 // Wall-clock reserved at the tail of the shared deadline for error handling and
