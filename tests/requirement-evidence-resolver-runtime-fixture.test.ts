@@ -95,7 +95,12 @@ describe("canonical requirement-evidence resolver runtime fixture", () => {
   it("renders exact status truth and an unweighted primary percentage", () => {
     const panel = readFileSync("components/requirement-coverage-panel.tsx", "utf8");
     const route = readFileSync("app/api/tenders/[id]/requirement-coverage/route.ts", "utf8");
-    assert.match(panel, /Genuine gaps \/ unresolved/);
+    // Renamed from "Genuine gaps / unresolved". The bucket holds both
+    // TRUE_EVIDENCE_GAP and STALE_OR_INVALIDATED rows, so naming it after the
+    // first left the stat tile ("Genuine gaps", 5) contradicting the chip
+    // ("Genuine gaps / unresolved", 6) on the same screen. See
+    // tests/requirement-coverage-counter-truth.test.ts.
+    assert.match(panel, /Gaps \/ unresolved/);
     assert.doesNotMatch(panel, /Automatic source grounding continues/);
     assert.doesNotMatch(panel, /automatic work/i);
     assert.match(panel, /No resolver job is queued or running/);

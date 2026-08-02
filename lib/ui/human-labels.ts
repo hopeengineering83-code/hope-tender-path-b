@@ -94,6 +94,21 @@ export function errorCodeLabel(code: string): string {
   return ERROR_CODE_LABELS[code] ?? code;
 }
 
+/**
+ * Render an UPPER_SNAKE enum value as readable text.
+ *
+ * Label maps are written against the values known when they were written, and
+ * the producer keeps shipping new ones. Falling back to the raw value makes the
+ * newcomer SHOUT next to its Title Case siblings — which is how a requirement
+ * typed FORMAT ended up rendering as "FORMAT" beside "Form" and "Submission".
+ * A humanising fallback means an unmapped value still looks like a label.
+ */
+export function humanizeEnumValue(value: string): string {
+  const cleaned = value.trim().replace(/[_-]+/g, " ").toLowerCase();
+  if (cleaned.length === 0) return value;
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
 export function formatRevision(hash: string | null | undefined): string | null {
   if (!hash || hash.length < 8) return null;
   return `Snapshot ${hash.slice(0, 8)}`;

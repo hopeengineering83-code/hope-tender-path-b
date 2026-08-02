@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDownIcon, WarningIcon } from "./icons";
+import { humanizeEnumValue } from "../lib/ui/human-labels";
 
 type SupportLevel = "FULL" | "SUBSTANTIAL" | "PARTIAL" | "NONE" | "NOT_APPLICABLE";
 type CoverageStatus = "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
@@ -101,6 +102,11 @@ const REQ_TYPE_LABELS: Record<string, string> = {
   METHODOLOGY: "Methodology",
   COMPANY_PROFILE: "Company",
   SUBMISSION_RULE: "Submission",
+  // FORMAT and SCHEDULE are in the requirementType contract the analyzer emits
+  // (see the enumeration in lib/ai.ts) but were missing here, so a FORMAT
+  // requirement rendered as raw "FORMAT" next to "Form" and "Submission".
+  FORMAT: "Format",
+  SCHEDULE: "Schedule",
 };
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
@@ -200,6 +206,10 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   }
 
   const coveragePct = Math.round(data.coverageRatio * 100);
+  // One definition of "unresolved", shared by the stat tile, the filter chip
+  // and the filter predicate, so the three can never disagree.
+  const unresolvedCount = data.trueEvidenceGaps + data.staleOrInvalidated;
+
   const filteredRows = data.rows.filter((row) => {
     if (filter === "UNRESOLVED") return row.automationState === "TRUE_EVIDENCE_GAP" || row.automationState === "STALE_OR_INVALIDATED";
     if (filter === "PARTIAL") return row.automationState === "PARTIALLY_VERIFIED";
@@ -262,7 +272,11 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
           { label: "Full", value: data.fullyCovered, color: "text-green-700" },
           { label: "Partial", value: data.partiallyCovered, color: "text-amber-800" },
           { label: "Automatic verification", value: data.sourceProcessing, color: "text-orange-700" },
-          { label: "Genuine gaps", value: data.trueEvidenceGaps, color: data.trueEvidenceGaps > 0 ? "text-red-700" : "text-gray-500" },
+          // Counts BOTH unresolved states, matching the filter chip below.
+          // Naming this tile "Genuine gaps" while the chip counted genuine gaps
+          // plus stale evidence meant the same words carried two numbers, and
+          // the four tiles summed to fewer than the rows on screen.
+          { label: "Gaps / unresolved", value: unresolvedCount, color: unresolvedCount > 0 ? "text-red-700" : "text-gray-500" },
         ].map((cell) => (
           <div key={cell.label} className="bg-white py-2">
             <div className={`text-base font-bold ${cell.color}`}>{cell.value}</div>
@@ -284,7 +298,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
               const count = value === "ALL"
                 ? data.rows.length
                 : value === "UNRESOLVED"
-                  ? data.trueEvidenceGaps + data.staleOrInvalidated
+                  ? unresolvedCount
                   : value === "PARTIAL"
                     ? data.partiallyCovered
                     : data.fullyCovered;
@@ -295,7 +309,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                   onClick={() => setFilter(value)}
                   className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${filter === value ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
                 >
-                  {value === "UNRESOLVED" ? "Genuine gaps / unresolved" : value[0] + value.slice(1).toLowerCase()} ({count})
+                  {value === "UNRESOLVED" ? "Gaps / unresolved" : value[0] + value.slice(1).toLowerCase()} ({count})
                 </button>
               );
             })}
@@ -321,7 +335,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium text-gray-900">{row.title}</span>
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">{REQ_TYPE_LABELS[row.requirementType] ?? row.requirementType}</span>
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">{REQ_TYPE_LABELS[row.requirementType] ?? humanizeEnumValue(row.requirementType)}</span>
                       <span className={`rounded border px-1.5 py-0.5 text-xs font-medium ${stateConfig.color}`}>{stateConfig.label}</span>
                       {!row.hasSourceRef && (
                         <span className="rounded border border-orange-200 bg-orange-50 px-1.5 py-0.5 text-xs text-orange-800">Source grounding</span>
