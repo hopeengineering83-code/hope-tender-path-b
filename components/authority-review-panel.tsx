@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { errorCodeLabel } from "@/lib/ui/human-labels";
-import { RefreshIcon, WarningIcon, CheckCircleIcon, CrossIcon, ChevronDownIcon } from "./icons";
+import { subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
+import { WarningIcon, CheckCircleIcon, CrossIcon, ChevronDownIcon } from "./icons";
 import type {
   AuthorityReviewResult,
   AuthorityBlocker,
@@ -163,6 +164,13 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
 
   useEffect(() => { void fetchReview(); }, [fetchReview]);
 
+  // Gap 4: auto-refresh when the workflow advances (e.g. PROPOSAL_GENERATION
+  // completes, documents are validated). Previously the user had to click
+  // "Refresh" manually — now the panel re-fetches on every workflow sync
+  // event, so the Authority Review state is always current without a
+  // manual button click.
+  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void fetchReview(); }), [fetchReview, tenderId]);
+
   const unavailable = !loading && !error && available === false;
   // Compatibility name retained for existing workflow-contract tests. It is a
   // real computed state, not a second authority: unavailable means the
@@ -209,15 +217,9 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
           {preconditionBlocked && (
             <span className="inline-flex rounded-full bg-slate-200 px-2.5 py-0.5 text-xs font-semibold text-slate-700">NOT AVAILABLE</span>
           )}
-          <button
-            type="button"
-            onClick={() => void fetchReview()}
-            disabled={loading}
-            className="inline-flex min-h-11 items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-            title="Refresh the authority-review status"
-          >
-            <RefreshIcon /> {loading ? "Loading…" : "Refresh"}
-          </button>
+          {/* Gap 4: Refresh button removed. The panel auto-fetches on mount
+              and re-fetches on every workflow sync event, so a manual
+              Refresh button is unnecessary bureaucracy. */}
         </div>
       </div>
 

@@ -436,57 +436,21 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               <ArrowRightIcon /> Go to Generate missing planned docs
             </DisclosureAnchorLink>
           )}
-          {canMutate && readiness && !ok && hasDocumentBlockers && (
-            <div className="flex flex-col items-start gap-1">
-              <button type="button" onClick={() => void autoFinalize()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-700 px-3 py-2 text-xs font-medium text-white hover:bg-blue-800 disabled:opacity-60" title="Auto-finalize documents for print/submission">
-                <CheckCircleIcon /> {autoFinalizing ? "Auto-finalizing…" : "Auto-finalize for print/submission"}
-              </button>
-              <p className="text-[10px] text-slate-500 max-w-xs">Auto-finalize cleans 1–3 documents per click. Click multiple times until remaining = 0. Official original files still require manual attachment.</p>
-            </div>
-          )}
-          {canMutate && readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void repair()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-800 disabled:opacity-60" title="Safely repair generated DOCX status/content mismatches only. Official tender forms/templates, original-required rows, PDFs, planned rows, and non-exportable records are skipped and must be handled manually.">
-              <RefreshIcon /> {repairing ? "Repairing…" : "Repair safe document gaps"}
-            </button>
-          )}
-          {canMutate && readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void linkVaultEvidence()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-700 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-800 disabled:opacity-60" title="Link vault evidence to strengthen mandatory requirement coverage">
-              <PaperclipIcon /> {linkingVault ? "Linking vault…" : "Use vault evidence"}
-            </button>
-          )}
-          {canMutate && readiness && !ok && (
-            <button
-              type="button"
-              onClick={() => void repairSourceGrounding()}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-teal-700 px-3 py-2 text-xs font-medium text-white hover:bg-teal-800 disabled:opacity-60"
-              title="Extract source page/section/quote for mandatory requirements that lack traceability."
-            >
-              <RefreshIcon /> {repairingSource ? "Repairing…" : "Repair source references"}
-            </button>
-          )}
-          {canMutate && readiness && !ok && (
-            <button
-              type="button"
-              onClick={() => void reclassifyDocuments()}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-violet-700 px-3 py-2 text-xs font-medium text-white hover:bg-violet-800 disabled:opacity-60"
-              title="Reclassify mistyped documents (e.g. financial evidence marked as TECHNICAL_PROPOSAL)."
-            >
-              <RefreshIcon /> {reclassifying ? "Reclassifying…" : "Fix document types"}
-            </button>
-          )}
-          {canMutate && readiness && !ok && (
-            <button
-              type="button"
-              onClick={() => void deduplicateDocuments()}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-orange-700 px-3 py-2 text-xs font-medium text-white hover:bg-orange-800 disabled:opacity-60"
-              title="Find and supersede duplicate document rows (same name+type, multiple versions)."
-            >
-              <RefreshIcon /> {deduplicating ? "Deduplicating…" : "Clean duplicate rows"}
-            </button>
-          )}
+          {/* Gap 5 + user req C: normal-path repair buttons removed.
+              Safe repairs (source grounding, export gaps, AI traces,
+              placeholders, pricing leakage) now run automatically after
+              PROPOSAL_GENERATION succeeds via runAutoFinalizeAfterGeneration
+              in the run-next worker. The only manual actions remaining are:
+              1. "Go to Generate missing planned docs" (links to Build Plan).
+              2. "Repair prohibited assets" (exceptional, only for
+                 PROHIBITED_ASSET blockers — branding/signature/stamp in
+                 generated docs).
+              3. "Download Final ZIP" (the canonical download, only when
+                 the gate is open).
+              The repeated "Re-check", multi-click "Auto-finalize", "Use
+              vault evidence", "Repair source references", "Fix document
+              types", "Clean duplicate rows", and "Exclude outside-plan
+              files" buttons are removed — their work is done automatically. */}
           {readiness && readiness.tenderLevelBlockers.some((b) => b.category === "PROHIBITED_ASSET") && (
             <button
               type="button"
@@ -498,14 +462,6 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               <WarningIcon /> {repairingAssets ? "Checking…" : "Repair prohibited assets"}
             </button>
           )}
-          {readiness && !ok && hasDocumentBlockers && (
-            <button type="button" onClick={() => void supersedeOutsidePlan()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-700 px-3 py-2 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-60" title="Exclude outside-plan files from the final submission">
-              <BanIcon /> {supersedingOutsidePlan ? "Superseding…" : "Exclude outside-plan files"}
-            </button>
-          )}
-          <button type="button" onClick={() => void refresh()} disabled={busy} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60" title="Re-check the export readiness gate">
-            <RefreshIcon /> {loading ? "Checking…" : readiness ? "Re-check" : "Check export gate"}
-          </button>
           {/* Download affordance — ONLY renders a real <a href> when the
               canonical gate is open. When blocked, render a disabled
               <button> with NO href so the user cannot accidentally hit
@@ -648,10 +604,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               <ol className="mt-2 space-y-1 pl-4 text-xs text-sky-800 list-decimal">
                 <li>Click <strong>Generate missing planned docs</strong> to convert any PLANNED rows into draft placeholders.</li>
                 <li>For official-original rows (bid forms, tender templates): click <strong>Attach official original</strong> on each blocker below.</li>
-                <li>Click <strong>Repair safe document gaps</strong> — automatically cleans AI traces, pricing leakage, and placeholders from generated DOCX files.</li>
-                <li>If blockers remain: click <strong>Auto-finalize for print/submission</strong> to AI-polish and mark safe documents ready for export. Run again if <em>remainingCount &gt; 0</em>.</li>
-                <li>If outside-plan files are present: click <strong>Exclude outside-plan files</strong>.</li>
-                <li>Click <strong>Re-check</strong> to refresh the gate.</li>
+                <li>Safe repairs (AI traces, pricing leakage, placeholders, source grounding) run <strong>automatically</strong> after generation — no manual button needed.</li>
               </ol>
               <p className="mt-2 text-[10px] text-sky-600">Manual action required only for: tender-issued official forms/templates, missing company evidence not in Knowledge Vault, or missing official tender source file.</p>
               <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-sky-200 pt-2">

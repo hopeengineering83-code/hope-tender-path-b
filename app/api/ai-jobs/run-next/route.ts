@@ -5,6 +5,7 @@ import { completeJob, failJob, rearmDurableStageJob } from "../../../../lib/ai-j
 import { classifyStageRetry, isDurableRetryJobType, isSupersededStageFailure } from "../../../../lib/engine/stage-retry-policy";
 import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
 import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
+import { runAutoFinalizeAfterGeneration } from "../../../../lib/ai-jobs/auto-finalize-continuation-service";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
@@ -246,6 +247,29 @@ export async function POST(req: Request) {
           } catch (error) {
             continuationReason = "PROPOSAL_CONTINUATION_ERROR";
             logger.error("[run-next] Proposal continuation failed after successful engine job", {
+              jobId: claimed.id,
+              errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+            });
+          }
+        }
+
+        // Gap 4 + user req A/B/C: after PROPOSAL_GENERATION succeeds, auto-run
+        // safe repairs (source grounding + export gaps) so the tender reaches
+        // export-ready state without manual button clicks. The app never says
+        // "source reference not found" because repairSourceGrounding runs here.
+        // Safe repairs (AI traces, placeholders, pricing leakage) run
+        // automatically. The actual ZIP download remains user-triggered.
+        if (claimed.jobType === "PROPOSAL_GENERATION") {
+          try {
+            await runAutoFinalizeAfterGeneration(
+              claimed.tenderId ?? "",
+              claimed.userId,
+              claimed.id,
+            );
+          } catch (error) {
+            // Never crash the worker on auto-finalize failure — the tender
+            // remains in its post-generation state for manual retry.
+            logger.warn("[run-next] Auto-finalize after proposal generation failed", {
               jobId: claimed.id,
               errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
             });
