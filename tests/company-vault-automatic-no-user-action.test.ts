@@ -89,9 +89,17 @@ describe("Company Vault requires no navigation, review, or approval", () => {
     // messages. Identifiers such as confirmingDeleteDocId and the delete
     // confirmation (a destructive-action guard, not an approval step) are
     // deliberately out of scope.
+    //
+    // Comments are stripped first. The `>…<` scrape cannot tell a JSX text
+    // node from a prose comment that happens to contain both characters, so
+    // without this a code comment explaining *why* nothing needs approval
+    // would itself trip the /approve/i rule — failing the test for text no
+    // user will ever see, and pressuring the next author to write a worse
+    // comment instead of a better page.
+    const rendered = page.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     const userVisible = [
-      ...occurrences(page, 'message: "').map((at) => page.slice(at + 10, page.indexOf('"', at + 10))),
-      ...(page.match(/>[^<>{}]{12,}</g) ?? []),
+      ...occurrences(rendered, 'message: "').map((at) => rendered.slice(at + 10, rendered.indexOf('"', at + 10))),
+      ...(rendered.match(/>[^<>{}]{12,}</g) ?? []),
     ].join("\n");
 
     for (const forbidden of [

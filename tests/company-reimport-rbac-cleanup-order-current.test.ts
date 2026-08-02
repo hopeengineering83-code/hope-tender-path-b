@@ -35,7 +35,7 @@ describe("company reimport safety", () => {
   });
 
   it("treats mixed/support document handling as a non-destructive audit", () => {
-    assert.match(cleanup, /uncertain claim must remain available to the Review Inbox/);
+    assert.match(cleanup, /uncertain claim must remain available for automatic verification/);
     assert.match(cleanup, /prisma\.expert\.count/);
     assert.match(cleanup, /prisma\.project\.count/);
     assert.match(cleanup, /expertsPreservedForReview/);

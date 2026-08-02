@@ -153,7 +153,7 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
         <section id="vault-evidence-search" className="rounded-2xl border bg-white p-6 shadow-sm">
           <h2 className="mb-1 text-base font-semibold text-slate-900">Vault Evidence — coverage for this tender</h2>
           <p className="mb-4 text-sm text-slate-500">No vault records found. Import CV documents and project references to build your evidence vault.</p>
-          <Link href="/dashboard/company/review" className="inline-block rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">Set up Vault</Link>
+          <Link href="/dashboard/company" className="inline-block rounded-lg bg-black px-4 py-2 text-sm font-medium text-white hover:bg-slate-800">Set up Vault</Link>
         </section>
       );
     }
@@ -165,7 +165,7 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
             <h2 className="text-base font-semibold text-slate-900">Vault Evidence — coverage for this tender</h2>
             <p className="mt-0.5 text-xs text-slate-500">Selected evidence stays visible; long vault lists are collapsed.</p>
           </div>
-          <Link href="/dashboard/company/review" className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Manage Vault</Link>
+          <Link href="/dashboard/company" className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Manage Vault</Link>
         </div>
 
         <div className="grid grid-cols-2 gap-4 border-b px-6 py-4 sm:grid-cols-4">
@@ -224,12 +224,12 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
           )}
 
           {(pendingExpertCount > 0 || pendingProjectCount > 0) && (
-            <p className="text-xs text-amber-800">{pendingExpertCount + pendingProjectCount} vault item(s) lack current source-verification or durable human-review provenance and are excluded from generation. <Link href="/dashboard/company/review" className="text-blue-600 hover:underline">Review now</Link></p>
+            <p className="text-xs text-amber-800">{pendingExpertCount + pendingProjectCount} vault item(s) are not yet source-verified against current bytes and are excluded from generation. Run Engine verifies them automatically — no review step is required.</p>
           )}
         </div>
 
         <div className="rounded-b-2xl border-t bg-slate-50 px-6 py-3">
-          <p className="text-xs text-slate-500">All vault records are eligible for proposal generation. <Link href="/dashboard/company/review" className="text-blue-600 hover:underline">Manage vault records</Link></p>
+          <p className="text-xs text-slate-500">All vault records are eligible for proposal generation. <Link href="/dashboard/company" className="text-blue-600 hover:underline">Manage vault records</Link></p>
         </div>
       </section>
     );

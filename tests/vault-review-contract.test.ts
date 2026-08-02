@@ -49,6 +49,29 @@ describe("Company Vault automatic verification contract", () => {
     assert.doesNotMatch(deepReasoning, /\/dashboard\/company\/review-board/);
   });
 
+  it("sends 'manage the vault' calls to action to a page that can actually manage the vault", () => {
+    // These three CTAs all pointed at /dashboard/company/review, which is a
+    // read-only automatic-verification monitor: it can refresh and it can
+    // re-run ingestion, but it has no way to add, edit, or remove an expert,
+    // a project, or a document. A button labelled "Set up Vault" that lands
+    // somewhere you cannot set up a vault is a dead end dressed as an action.
+    const panel = read("components/vault-evidence-search-panel.tsx");
+    const monitor = read("components/company-vault-verification-page.tsx");
+
+    for (const label of ["Set up Vault", "Manage Vault", "Manage vault records"]) {
+      const at = panel.indexOf(`>${label}<`);
+      assert.ok(at > 0, `expected a "${label}" call to action`);
+      const linkStart = panel.lastIndexOf("<Link", at);
+      const href = /href="([^"]+)"/.exec(panel.slice(linkStart, at))?.[1];
+      assert.equal(href, "/dashboard/company", `"${label}" must link to the page that owns vault content`);
+    }
+
+    // Guards the premise: if the monitor ever grows real record management,
+    // this assertion fails and the retarget above should be reconsidered
+    // rather than left stale.
+    assert.doesNotMatch(monitor, /expert\.create|project\.create|method:\s*"DELETE"|method:\s*"PATCH"/);
+  });
+
   it("returns bounded diagnostics without exposing raw source narratives", () => {
     const api = read("app/api/company/knowledge/repair/route.ts");
     const view = read("components/company-vault-verification-page.tsx");

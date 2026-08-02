@@ -361,7 +361,7 @@ async function upsertLegalRecord(db: PlanBDb, companyId: string, record: PlanBLe
     } else {
       effectiveTrust = "AI_DRAFT";
       evidenceDowngraded = 1;
-      warning = `Legal record "${title}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Inbox.`;
+      warning = `Legal record "${title}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`;
     }
   }
 
@@ -415,7 +415,7 @@ async function upsertFinancialRecord(db: PlanBDb, companyId: string, record: Pla
     } else {
       effectiveTrust = "AI_DRAFT";
       evidenceDowngraded = 1;
-      warning = `Financial record "${recordType} ${fiscalYear}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Inbox.`;
+      warning = `Financial record "${recordType} ${fiscalYear}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`;
     }
   }
 
@@ -467,7 +467,7 @@ async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: Pl
     } else {
       effectiveTrust = "AI_DRAFT";
       evidenceDowngraded = 1;
-      warning = `Compliance record "${title}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Inbox.`;
+      warning = `Compliance record "${title}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`;
     }
   }
 
@@ -611,7 +611,7 @@ export async function POST(req: Request) {
     // Maps each source document's declared fileName to the real, persisted
     // CompanyDocument row it produced, so experts/projects that claim
     // "REVIEWED" can be checked against genuine stored evidence (the same
-    // buildReviewProvenance gate the interactive Review Inbox uses) instead
+    // buildReviewProvenance gate automatic source verification uses) instead
     // of trusting the caller's self-declared trustLevel outright.
     const documentByFileName = new Map<string, ReviewSourceDocument>();
     let evidenceDowngraded = 0;
@@ -743,7 +743,7 @@ export async function POST(req: Request) {
         } else {
           effectiveTrust = "AI_DRAFT";
           evidenceDowngraded += 1;
-          warnings.push(`Expert ${fullName} requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Inbox.`);
+          warnings.push(`Expert ${fullName} requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`);
         }
       }
       const data = {
@@ -801,7 +801,7 @@ export async function POST(req: Request) {
         } else {
           effectiveTrust = "AI_DRAFT";
           evidenceDowngraded += 1;
-          warnings.push(`Project ${name} requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Complete a real review in the Review Inbox.`);
+          warnings.push(`Project ${name} requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`);
         }
       }
       const data = {

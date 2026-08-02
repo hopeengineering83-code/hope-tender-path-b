@@ -14,9 +14,14 @@
  *   - per-dimension status + missing items
  *   - actionable suggestions for closing each gap
  *
- * Used by:
- *   - the diagnostic endpoint (operator sees readiness at a glance)
- *   - the future pre-generation gate (UI can warn before kicking off)
+ * Status: no production consumer yet. It is retained deliberately —
+ * docs/audits/legacy-overlap-dependency-map.md marks it KEEP for the planned
+ * deep-reasoning gate — but nothing under app/, lib/ or components/ imports
+ * it today, so its output reaches no user and its thresholds gate nothing.
+ * Do not cite it as the reason a generation was or was not allowed; the
+ * authorities that actually decide are lib/company-ingestion-readiness.ts and
+ * lib/canonical-tender-readiness.ts. Wiring this in means reconciling its
+ * thresholds with those, not adding a third opinion alongside them.
  *
  * Pure function — no AI, no DB. Caller passes the loaded firm data.
  */
@@ -97,8 +102,12 @@ export function assessDeepReasoningReadiness(input: ReadinessInput): ReadinessAs
   })();
 
   // ── Experts ────────────────────────────────────────────────────
-  // Deep reasoning's alignment + critique paths need REVIEWED experts;
-  // draft records leak unverified facts into the proposal.
+  // Deep reasoning's alignment + critique paths need source-verified experts;
+  // draft records leak unverified facts into the proposal. Verification is
+  // automatic — a record becomes usable when its values can be matched back to
+  // owned, byte-checked source bytes — so a shortfall means the source
+  // documents are missing or unreadable, never that someone forgot to click
+  // approve.
   const expertStatus: DimensionStatus = input.reviewedExpertCount >= 3 ? "ok"
     : input.reviewedExpertCount >= 1 ? "partial"
     : "missing";
@@ -127,12 +136,12 @@ export function assessDeepReasoningReadiness(input: ReadinessInput): ReadinessAs
     experts: {
       status: expertStatus,
       detail: expertDetail,
-      suggestion: expertStatus === "ok" ? null : "Open /dashboard/company/review and promote expert records from DRAFT → REVIEWED. Aim for at least 3 reviewed experts so the alignment call has enough candidates to score.",
+      suggestion: expertStatus === "ok" ? null : "Upload CVs for more key experts under /dashboard/company. Run Engine source-verifies them automatically against the uploaded bytes; aim for at least 3 verified experts so the alignment call has enough candidates to score. If experts are already uploaded but not yet verified, their source document is missing or could not be read.",
     },
     projects: {
       status: projectStatus,
       detail: projectDetail,
-      suggestion: projectStatus === "ok" ? null : "Open /dashboard/company/review and promote project records from DRAFT → REVIEWED. Aim for at least 3 reviewed projects so the throughline enforcer and alignment have substantive evidence.",
+      suggestion: projectStatus === "ok" ? null : "Upload project reference sheets under /dashboard/company. Run Engine source-verifies them automatically against the uploaded bytes; aim for at least 3 verified projects so the throughline enforcer and alignment have substantive evidence. If projects are already uploaded but not yet verified, their source document is missing or could not be read.",
     },
     "legal-records": {
       status: legalStatus,

@@ -969,18 +969,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // checkpoints in this route consistent and avoids a redundant DB round trip.
   if (requiresExperts && selectedExpertMatches.length === 0) {
     if (totalExpertMatches > 0) {
-      return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.", code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
+      return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches are selected. Run Engine, then select the expert matches to propose.", code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    return NextResponse.json({ error: "Generation blocked: tender requires experts but no tender-specific expert match rows exist yet. Run Engine first to create tender expert match rows, then review/select expert matches.", code: "ENGINE_NOT_RUN_OR_NO_EXPERT_MATCH_ROWS", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
+    return NextResponse.json({ error: "Generation blocked: tender requires experts but no tender-specific expert match rows exist yet. Run Engine first to create tender expert match rows, then select the expert matches to propose.", code: "ENGINE_NOT_RUN_OR_NO_EXPERT_MATCH_ROWS", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
   if (requiresProjects && selectedProjectMatches.length === 0) {
     if (totalProjectMatches > 0) {
-      return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.", code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
+      return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches are selected. Run Engine, then select the project matches to propose.", code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    return NextResponse.json({ error: "Generation blocked: tender requires project references but no tender-specific project match rows exist yet. Run Engine first to create tender project match rows, then review/select project matches.", code: "ENGINE_NOT_RUN_OR_NO_PROJECT_MATCH_ROWS", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
+    return NextResponse.json({ error: "Generation blocked: tender requires project references but no tender-specific project match rows exist yet. Run Engine first to create tender project match rows, then select the project matches to propose.", code: "ENGINE_NOT_RUN_OR_NO_PROJECT_MATCH_ROWS", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
-  if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && requiresExperts) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
-  if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && requiresProjects) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
+  if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && requiresExperts) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} selected expert(s) could not be source-verified against their uploaded documents, so none can be cited as evidence. Re-upload or replace the CVs behind them under Company Vault and run the Engine again — verification is automatic and needs no approval step.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
+  if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && requiresProjects) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} selected project reference(s) could not be source-verified against their uploaded documents, so none can be cited as evidence. Re-upload or replace the project reference sheets behind them under Company Vault and run the Engine again — verification is automatic and needs no approval step.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
 
   // ── Empty vault hard gate ─────────────────────────────────────────────────
   // A proposal built from zero evidence is entirely generic and unsuitable for
@@ -996,8 +996,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (vaultReviewedExpertCount === 0 && vaultReviewedProjectCount === 0) {
     return NextResponse.json({
       errorCode: "EMPTY_VAULT",
-      error: "Generation blocked: your company knowledge vault contains no reviewed experts or projects. A proposal built from zero evidence will be entirely generic and unsuitable for submission. Import and review at least one expert CV or one comparable project reference before generating documents.",
-      blockers: ["Company knowledge vault is empty — zero reviewed experts and zero reviewed projects found."],
+      error: "Generation blocked: your company knowledge vault contains no source-verified experts or projects. A proposal built from zero evidence will be entirely generic and unsuitable for submission. Upload at least one expert CV or one comparable project reference under Company Vault — the Engine verifies them automatically against the uploaded bytes, with no approval step.",
+      blockers: ["Company knowledge vault has no usable evidence — zero source-verified experts and zero source-verified projects found."],
       nextAction: "OPEN_COMPANY_READINESS",
       diagnosticId: `empty-vault-${id}`,
     }, { status: 422 });
@@ -1006,8 +1006,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const warnings: string[] = [...readiness.warnings, ...promotion.warnings];
   if (explicitSubmissionScope) warnings.push(`Submission plan target scope detected: ${plannedTargetFiles.length} tender-required file(s) will control generation reconciliation.`);
   if (seniorReviewCriticals.length > 0) warnings.push(`${seniorReviewCriticals.length} critical evidence/review gap(s) were carried into the proposal as senior bid-review items instead of blocking draft generation.`);
-  if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
-  if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are unreviewed drafts: ${draftProjects.map((m) => m.project.name).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
+  if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are not source-verified and were excluded from the evidence base: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Upload the CVs they came from so the Engine can verify them automatically.`);
+  if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are not source-verified and were excluded from the evidence base: ${draftProjects.map((m) => m.project.name).join(", ")}. Upload the reference sheets they came from so the Engine can verify them automatically.`);
 
   // ── Central authoritative readiness gate (final consolidated check) ───────
   // Last fail-closed check before full generation creates documents. Enforces

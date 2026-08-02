@@ -676,6 +676,20 @@ export function effectiveReviewTrustLevel(
   return record.trustLevel === "AI_DRAFT" ? "AI_DRAFT" : "REGEX_DRAFT";
 }
 
+/**
+ * The single authority on whether a Company Vault record may be used at
+ * runtime. Every consumer — matching, readiness, generation, export — routes
+ * here, either directly or through canUseVaultRecordSafely().
+ *
+ * `purpose` is deliberately accepted and deliberately not branched on. All
+ * three purposes currently share one rule: an unexpired record that is either
+ * durably human-REVIEWED or durably machine-SOURCE_VERIFIED. EXPORT used to be
+ * stricter (human review only); it was widened to match, because machine
+ * verification against byte-checked source is the stronger claim of the two.
+ * The parameter stays in the signature so call sites keep declaring what they
+ * are gating, and so any future divergence has exactly one place to land
+ * instead of being reimplemented per consumer.
+ */
 export function canUseVaultRecord(
   record: ReviewRecordState,
   purpose: "MATCHING" | "GENERATION" | "EXPORT",

@@ -11,11 +11,18 @@
 // Engine correctly rejects such records via isDurablyReviewed(), but the
 // summary panel had no way to know that and silently overstated readiness.
 //
-// Fixed by having the page fetch the canonical durable-review counts from
+// Fixed by having the page fetch the canonical counts from
 // GET /api/company/ingestion-readiness (lib/company-ingestion-readiness.ts,
-// which computes humanReviewedExperts/humanReviewedProjects via the same
-// isDurablyReviewed() the Engine uses) instead of recomputing its own
+// the same resolver the Engine's gate uses) instead of recomputing its own
 // looser check from the raw trustLevel field.
+//
+// The counts the page displays have since moved from humanReviewedExperts to
+// reviewedExperts — human review is no longer a separate step, so what a user
+// needs to see is how much evidence is usable, not how much a person signed
+// off. This file still guards the original defect: the count must never again
+// be recomputed locally from the trustLevel column. What the page does with
+// the fetched totals now lives in
+// tests/company-vault-usable-evidence-count.test.ts.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -41,8 +48,8 @@ describe("Company Vault summary panel's 'reviewed' count matches the Engine's du
     );
   });
 
-  it("derives the reviewed counts from the fetched readiness totals", () => {
-    assert.match(page, /reviewTotals\?\.humanReviewedExperts/);
-    assert.match(page, /reviewTotals\?\.humanReviewedProjects/);
+  it("derives the displayed counts from the fetched readiness totals, never from local state alone", () => {
+    assert.match(page, /readiness\.totals\.reviewedExperts/);
+    assert.match(page, /readiness\.totals\.reviewedProjects/);
   });
 });

@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { assessCompanyIngestionReadiness } from "../lib/company-ingestion-readiness";
 import { buildReleaseSnapshotEligibility } from "../lib/engine/release-snapshot-eligibility";
+import { type ReviewRecordState } from "../lib/vault-review-provenance";
+import { canUseVaultRecordSafely } from "../lib/vault-runtime-authority";
 
 describe("Company Vault automatic runtime authority", () => {
   it("treats SOURCE_VERIFIED evidence as ready without a mandatory human step", () => {
@@ -73,15 +75,38 @@ describe("Company Vault automatic runtime authority", () => {
 
   it("keeps automatic promotion source-backed and fail-closed globally", () => {
     const authority = readFileSync("lib/vault-review-provenance.ts", "utf8");
-    const runtimeAuthority = readFileSync("lib/vault-runtime-authority.ts", "utf8");
     const preflight = readFileSync("lib/engine/prepare-company-vault.ts", "utf8");
     assert.match(authority, /return isDurablyReviewed\(record\) \|\| isDurablySourceVerified\(record\)/);
-    assert.match(runtimeAuthority, /isDurablySourceVerified/);
-    assert.match(runtimeAuthority, /isDurablyReviewed/);
     assert.match(preflight, /remapUnlinkedVaultSources/);
     assert.match(preflight, /autoVerifyCompanyKnowledge/);
     assert.doesNotMatch(preflight, /reviewedBy:\s*["']SYSTEM_AUTO_VERIFIED/);
     assert.doesNotMatch(authority, /all non-expired company records are usable/i);
+
+    // This used to also require lib/vault-runtime-authority.ts to literally
+    // contain "isDurablySourceVerified" and "isDurablyReviewed". That was an
+    // assertion about the file's text, and it held only because that file
+    // carried its own copy of the rule — the very duplication that made one
+    // decision have two implementations. canUseVaultRecordSafely now delegates
+    // to canUseVaultRecord, so the identifiers are gone from that file while
+    // the behaviour is identical. Assert the behaviour instead: the runtime
+    // entry point must still refuse a draft and must still refuse a
+    // SOURCE_VERIFIED record wearing fabricated reviewer metadata.
+    // tests/vault-evidence-policy-single-authority.test.ts proves full
+    // equivalence across every distinguishing state.
+    assert.equal(canUseVaultRecordSafely({ trustLevel: "AI_DRAFT" } as ReviewRecordState, "GENERATION"), false);
+    assert.equal(
+      canUseVaultRecordSafely(
+        {
+          trustLevel: "SOURCE_VERIFIED",
+          sourceDocumentId: "doc-1",
+          reviewedBy: "system",
+          reviewedAt: new Date(),
+          reviewNotes: null,
+        } as ReviewRecordState,
+        "GENERATION",
+      ),
+      false,
+    );
   });
 
   it("removes mandatory review controls from the active Company Vault page", () => {

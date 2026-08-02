@@ -16,7 +16,7 @@ export const MIXED_OR_SUPPORT_CATEGORIES = new Set([
  * A company profile, certification bundle, financial record, or unclassified
  * document may contain an exact expert/project claim. Such a claim can be
  * source-verified when every bound field is present in the owned bytes; an
- * uncertain claim must remain available to the Review Inbox. This audit helper
+ * uncertain claim must remain available for automatic verification. This audit helper
  * therefore reports records for follow-up but never destroys them.
  */
 export async function cleanupSupportDocImportedRecords(companyId: string) {

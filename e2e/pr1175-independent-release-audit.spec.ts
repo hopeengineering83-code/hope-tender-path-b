@@ -194,7 +194,7 @@ test.describe("PR #1175 independent principal QA release audit", () => {
     }
   });
 
-  test("legacy Company Vault review bookmarks converge on the single Review Inbox authority", async ({ page }) => {
+  test("legacy Company Vault review bookmarks converge on the single Automatic Verification authority", async ({ page }) => {
     const response = await page.goto("/dashboard/company/review-board", { waitUntil: "domcontentloaded" });
 
     expect(response?.status()).toBeLessThan(400);

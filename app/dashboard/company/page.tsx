@@ -102,7 +102,16 @@ type FinancialRecord = {
 export default function CompanyPage() {
   const [tab, setTab] = useState<Tab>("documents");
   const [company, setCompany] = useState<Company>(empty);
-  const [reviewTotals, setReviewTotals] = useState<{ humanReviewedExperts: number; humanReviewedProjects: number } | null>(null);
+  /**
+   * How many Expert/Project records the Engine will actually accept as
+   * evidence. Computed server-side, because durable verification compares a
+   * record's current values against the stored source-document bytes and the
+   * browser has neither. Displayed, not acted on: nothing here asks the user
+   * to review or approve anything. It exists so the page cannot claim records
+   * are "automatically verified before use" while the Engine is silently
+   * excluding some of them.
+   */
+  const [usableEvidence, setUsableEvidence] = useState<{ experts: number; projects: number } | null>(null);
   const [docs, setDocs] = useState<CompanyDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -293,20 +302,40 @@ export default function CompanyPage() {
     }
   }
 
+  /**
+   * Re-read the usable-evidence counts from the canonical server-side
+   * resolver. Deleting a record cannot be compensated for locally: whether the
+   * removed row was source-verified is exactly the thing the browser cannot
+   * determine, so decrementing by one here would drift away from what the
+   * Engine reports. Ask the same resolver again instead.
+   */
+  const refreshUsableEvidence = useCallback(async () => {
+    try {
+      const res = await fetch("/api/company/ingestion-readiness");
+      if (!res.ok) return;
+      const readiness = await res.json() as { totals?: { reviewedExperts?: number; reviewedProjects?: number } };
+      if (!readiness?.totals) return;
+      setUsableEvidence({
+        experts: readiness.totals.reviewedExperts ?? 0,
+        projects: readiness.totals.reviewedProjects ?? 0,
+      });
+    } catch {
+      // Leave the last known counts in place rather than showing a wrong one.
+    }
+  }, []);
+
   useEffect(() => {
     Promise.all([
       fetch("/api/company").then(r=>r.json()),
       fetch("/api/company/documents?limit=50").then(r=>r.json()),
       fetch("/api/company/assets?limit=50").then(r=>r.json()),
-      // Durable review status (whether an Expert/Project has real, verified
-      // human-review provenance, not just a raw trustLevel="REVIEWED" flag)
-      // can only be computed server-side, where source-document bytes are
-      // available — see lib/company-ingestion-readiness.ts, the same
-      // canonical resolver the Engine's matching gate uses. Fetching it here
-      // keeps this page's "reviewed" count from silently disagreeing with
-      // what the Engine will actually accept as usable evidence.
+      // Usable-evidence counts come from lib/company-ingestion-readiness.ts —
+      // the same canonical resolver the Engine's matching gate uses — so this
+      // page cannot report a different number from what the Engine accepts.
+      // A raw trustLevel flag is not sufficient: it can be stale, or was never
+      // durably backed by source bytes.
       fetch("/api/company/ingestion-readiness").then(r=>r.json()).catch(() => null),
-    ]).then(([c, d, a, readiness]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }, { totals?: { humanReviewedExperts?: number; humanReviewedProjects?: number } } | null]) => {
+    ]).then(([c, d, a, readiness]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }, { totals?: { reviewedExperts?: number; reviewedProjects?: number } } | null]) => {
       const co = c.company ?? c;
       if (co.name !== undefined) {
         setCompany({ ...empty, ...(co as Company) });
@@ -314,9 +343,9 @@ export default function CompanyPage() {
       setDocs(d.items ?? []);
       setAssets(a.assets ?? []);
       if (readiness?.totals) {
-        setReviewTotals({
-          humanReviewedExperts: readiness.totals.humanReviewedExperts ?? 0,
-          humanReviewedProjects: readiness.totals.humanReviewedProjects ?? 0,
+        setUsableEvidence({
+          experts: readiness.totals.reviewedExperts ?? 0,
+          projects: readiness.totals.reviewedProjects ?? 0,
         });
       }
     }).finally(() => setLoading(false));
@@ -538,7 +567,7 @@ export default function CompanyPage() {
         return;
       }
       setCompany(c => ({ ...c, experts:(c.experts||[]).filter(x => x.id!==id) }));
-      setReviewTotals(rt => rt ? { ...rt, humanReviewedExperts: Math.max(0, rt.humanReviewedExperts - 1) } : rt);
+      void refreshUsableEvidence();
       setConfirmingDeleteExpertId(null);
     } catch {
       setError("Network interruption while deleting the expert record. Please retry when your connection is stable.");
@@ -560,7 +589,8 @@ export default function CompanyPage() {
       }
       const data = await res.json().catch(() => ({}));
       setCompany(c => ({ ...c, experts: [] }));
-      setReviewTotals({ humanReviewedExperts: 0, humanReviewedProjects: reviewTotals?.humanReviewedProjects ?? 0 });
+      setUsableEvidence(prev => ({ experts: 0, projects: prev?.projects ?? 0 }));
+      void refreshUsableEvidence();
       setConfirmingDeleteAllExperts(false);
       if (data.deletedCount > 0) {
         setError(`Deleted ${data.deletedCount} expert record(s).`);
@@ -631,7 +661,7 @@ export default function CompanyPage() {
         return;
       }
       setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
-      setReviewTotals(rt => rt ? { ...rt, humanReviewedProjects: Math.max(0, rt.humanReviewedProjects - 1) } : rt);
+      void refreshUsableEvidence();
       setConfirmingDeleteProjectId(null);
     } catch {
       setError("Network interruption while deleting the project record. Please retry when your connection is stable.");
@@ -653,7 +683,8 @@ export default function CompanyPage() {
       }
       const data = await res.json().catch(() => ({}));
       setCompany(c => ({ ...c, projects: [] }));
-      setReviewTotals({ humanReviewedExperts: reviewTotals?.humanReviewedExperts ?? 0, humanReviewedProjects: 0 });
+      setUsableEvidence(prev => ({ experts: prev?.experts ?? 0, projects: 0 }));
+      void refreshUsableEvidence();
       setConfirmingDeleteAllProjects(false);
       if (data.deletedCount > 0) {
         setError(`Deleted ${data.deletedCount} project record(s).`);
@@ -721,16 +752,12 @@ export default function CompanyPage() {
         const activeAssetTypes = new Set(assets.filter(a => a.isActive).map(a => a.assetType));
         const allExperts = company.experts ?? [];
         const allProjects = company.projects ?? [];
-        // A raw trustLevel === "REVIEWED" flag is not sufficient on its own —
-        // it can be stale or was never durably provenance-backed (missing
-        // sourceDocumentId/reviewedBy/reviewedAt, or a quote that no longer
-        // matches the source bytes). The Engine's matching gate
-        // (lib/engine/matching-eligibility.ts) only accepts records that
-        // pass isDurablyReviewed(), so this label must use the same
-        // canonical count (fetched server-side, where source-document bytes
-        // are available) instead of recomputing its own looser check here —
-        // otherwise this page can claim "N reviewed" while the Engine
-        // simultaneously reports zero eligible matches.
+        // "Profile completeness" below counts whether fields and records
+        // exist. It is deliberately not a readiness score: a 100% complete
+        // profile can still be unusable for matching, generation, or export if
+        // the evidence behind it is not source-verified. The usable-evidence
+        // counts rendered underneath come from the canonical server-side
+        // resolver instead, so the two never contradict each other.
         const checks = [
           { label: "Company name", done: hasReal(company.name) },
           { label: "Legal name", done: hasReal(company.legalName) },
@@ -775,9 +802,14 @@ export default function CompanyPage() {
             <div className="border-t pt-3">
               <p className="text-xs font-medium text-slate-600 mb-1.5">Knowledge vault</p>
               <div className="flex flex-wrap gap-4 text-xs text-slate-500">
-                <span>Experts: <span className="font-medium text-slate-700">{allExperts.length} record{allExperts.length === 1 ? "" : "s"}</span> · automatically verified before use</span>
-                <span>Projects: <span className="font-medium text-slate-700">{allProjects.length} record{allProjects.length === 1 ? "" : "s"}</span> · automatically verified before use</span>
+                <span>Experts: <span className="font-medium text-slate-700">{allExperts.length} record{allExperts.length === 1 ? "" : "s"}</span>{usableEvidence ? <> · <span className="font-medium text-slate-700">{usableEvidence.experts}</span> source-verified and usable</> : " · automatically verified before use"}</span>
+                <span>Projects: <span className="font-medium text-slate-700">{allProjects.length} record{allProjects.length === 1 ? "" : "s"}</span>{usableEvidence ? <> · <span className="font-medium text-slate-700">{usableEvidence.projects}</span> source-verified and usable</> : " · automatically verified before use"}</span>
               </div>
+              {usableEvidence && (usableEvidence.experts < allExperts.length || usableEvidence.projects < allProjects.length) && (
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Records that are not yet source-verified are excluded from matching and generation. Run Engine verifies them automatically against the uploaded documents — no action is needed here.
+                </p>
+              )}
             </div>
           </div>
         );

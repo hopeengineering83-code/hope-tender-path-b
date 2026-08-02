@@ -6,7 +6,7 @@
 // Confirmed gaps fixed:
 // 1. Company Vault loading state: poor contrast (text-slate-400 on white) +
 //    no spinner. Fixed: added spinner + text-slate-700 + font-medium.
-// 2. Review Inbox loading state: same issue. Fixed: same pattern.
+// 2. Automatic-verification loading state: same issue. Fixed: same pattern.
 // 3. Export Hub "ZIP locked" button: no visible explanation of why it's
 //    locked. Fixed: added inline "N blockers — view checklist to resolve"
 //    link that expands the checklist.
@@ -57,11 +57,11 @@ describe("VLM audit fix — Company Vault loading state contrast + spinner", () 
   });
 });
 
-describe("VLM audit fix — Review Inbox loading state contrast + spinner", () => {
+describe("VLM audit fix — automatic-verification loading state contrast + spinner", () => {
   const source = readApp("components/company-vault-verification-page.tsx");
 
   it("uses text-slate-700 for the loading text", () => {
-    const loadingBlock = source.match(/if \(loading && !diagnostics\) \{[\s\S]*?Loading Review Inbox/);
+    const loadingBlock = source.match(/if \(loading && !diagnostics\) \{[\s\S]*?Loading automatic verification status/);
     assert.ok(loadingBlock, "Could not find the loading state block");
     assert.match(loadingBlock[0], /text-slate-700/);
   });
@@ -70,7 +70,7 @@ describe("VLM audit fix — Review Inbox loading state contrast + spinner", () =
     // Strip comments before checking — the comment references text-slate-400
     // to explain what was changed, but the actual className must not use it.
     const stripped = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
-    const loadingBlock = stripped.match(/if \(loading && !diagnostics\) \{[\s\S]*?Loading Review Inbox/);
+    const loadingBlock = stripped.match(/if \(loading && !diagnostics\) \{[\s\S]*?Loading automatic verification status/);
     assert.ok(loadingBlock, "Could not find the loading state block");
     assert.doesNotMatch(loadingBlock[0], /text-slate-400/);
   });
