@@ -49,9 +49,24 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
     exactFileName: input.exactFileName,
     documentType: input.requirementType,
   });
-  if (officialTemplate.required) {
+
+  // An explicit tender-issued form/template wins outright: those must be
+  // obtained and completed, never invented, so they stay fail-closed.
+  if (officialTemplate.required && officialTemplate.confidence === "HIGH") {
     return result("FORM_TEMPLATE_TO_COMPLETE", officialTemplate.reason ?? "Official tender-issued form/template detected.");
   }
+
+  // A MEDIUM template signal does NOT outrank explicit rule language below.
+  //
+  // MEDIUM_SIGNALS includes a bare file extension (/\.(xls|xlsx|pdf)\b/), so
+  // any row carrying a filename was being read as "possible official
+  // form/template" before the rule checks ever ran. That is how
+  // "Submission formatting, file and packaging rules" — which this classifier
+  // correctly rejects on its text alone — became a required deliverable named
+  // "Submission formatting, file and packaging rules.pdf" as soon as a
+  // filename was attached to it. A file extension describes a format, not a
+  // fact about who issues the document, and a planned file that no upload can
+  // ever satisfy blocks the run permanently.
 
   if (/financial proposal exclusion|separate envelope|two[-\s]envelope|sealed envelope|technical only|do not include price|do not include financial/.test(value)) {
     return result("COMMERCIAL_SEPARATION_RULE", "Financial/technical separation rule, not a deliverable file.");
@@ -63,8 +78,24 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   }
 
   // Formatting rules → INTERNAL_COMPLIANCE_CONTROL (not TECHNICAL_PROPOSAL)
-  if (/document control|formatting rules|labelling rules|file naming|internal checklist|compliance control|page limit|font size|margin requirement|document format/.test(value)) {
+  // The literal phrases below only matched when the tender happened to write
+  // them contiguously. "Submission formatting, file and packaging rules"
+  // contains neither "formatting rules" nor "file naming" — the comma and the
+  // conjunction split them — so it slipped through and became a planned file.
+  // The added pattern matches a formatting/packaging/labelling/naming noun
+  // followed by "rule(s)" or "instruction(s)" anywhere in the same clause.
+  if (
+    /document control|formatting rules|labelling rules|file naming|internal checklist|compliance control|page limit|font size|margin requirement|document format/.test(value) ||
+    /\b(formatting|packaging|labell?ing|naming|numbering|binding|collation)\b[^.;]{0,60}\b(rules?|instructions?|requirements?|conventions?)\b/.test(value) ||
+    /\b(rules?|instructions?)\b[^.;]{0,60}\b(formatting|packaging|labell?ing|file naming)\b/.test(value)
+  ) {
     return result("INTERNAL_COMPLIANCE_CONTROL", "Internal format/control rule, not a generated file.");
+  }
+
+  // Explicit rule language has now had its say, so a weaker template signal
+  // (including a bare file extension) may take the row.
+  if (officialTemplate.required) {
+    return result("FORM_TEMPLATE_TO_COMPLETE", officialTemplate.reason ?? "Official tender-issued form/template detected.");
   }
 
   // Financial capacity / audited financial statements → ORIGINAL_EVIDENCE_ATTACHMENT (not TECHNICAL_PROPOSAL)
