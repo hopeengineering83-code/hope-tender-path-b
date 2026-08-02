@@ -190,12 +190,14 @@ describe("Fix 7 — Cerebras 429 falls through safely", () => {
 // ─── 8. Later capable providers are attempted when earlier providers fail ─────
 
 describe("Fix 8 — Later capable providers are attempted", () => {
-  it("MAX_PROVIDER_ATTEMPTS_PER_REQUEST default is 5 (not 3)", () => {
+  it("MAX_PROVIDER_ATTEMPTS_PER_REQUEST default is 10 (try all eligible providers)", () => {
     const src = read("lib/ai.ts");
-    // The default must be 5 so later providers (Groq, OpenRouter, Gemini)
-    // get tried even when Z.ai, Cerebras, and Mistral all fail.
-    assert.match(src, /return 5;\s*\}\)\(\)/);
-    assert.match(src, /FIX: raised default from 3 to 5/);
+    // Gap 3: the default was raised from 5 to 10 so ALL eligible providers
+    // get tried before the chain declares ALL_PROVIDERS_EXHAUSTED. This
+    // eliminates ATTEMPT_BUDGET_EXHAUSTED as a workflow blocker in the
+    // normal case.
+    assert.match(src, /return 10;\s*\}\)\(\)/);
+    assert.match(src, /eliminates ATTEMPT_BUDGET_EXHAUSTED as a workflow blocker/);
   });
 
   it("the attempt budget guards only apply to eligible providers", () => {
