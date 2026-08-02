@@ -684,6 +684,33 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       ...(supportAudit ? { supportAudit } : {}),
     } as unknown as Record<string, unknown>;
   },
+
+  // ─── AUTO_FINALIZE — durable auto-finalize continuation ───────────────
+  // Replaces the request-bound inline call that previously ran inside
+  // run-next after PROPOSAL_GENERATION succeeded. Moving to a durable job
+  // means: (1) the 60s Vercel Hobby limit no longer risks cutting off the
+  // safe-repair + canonical-validation sweep on large tenders; (2) a
+  // transient failure is automatically retried by the durable-stage
+  // retry policy (rearmDurableStageJob) instead of falling back to
+  // "manual retry"; (3) the job is idempotent — re-running on the same
+  // tender is safe because repaired documents carry a machine: marker.
+  AUTO_FINALIZE: async (ctx) => {
+    const tenderId = ctx.input?.tenderId as string | undefined;
+    if (!tenderId) throw new Error("AUTO_FINALIZE requires tenderId in the job input");
+
+    await recordStep(ctx.jobId, { stepName: "auto-finalize.start", message: `Starting durable auto-finalize for tender ${tenderId}`, status: "RUNNING" });
+
+    const { runAutoFinalizeAfterGeneration } = await import("./ai-jobs/auto-finalize-continuation-service");
+    const result = await runAutoFinalizeAfterGeneration(tenderId, ctx.userId, ctx.jobId);
+
+    await recordStep(ctx.jobId, {
+      stepName: "auto-finalize.complete",
+      message: `Auto-finalize complete: source repair ${result.sourceRepair.repaired}/${result.sourceRepair.checked}, export repair ${result.exportRepair.repaired} repaired, validation ${result.validation.validated}/${result.validation.failed}/${result.validation.pending}${result.warning ? `, warning: ${result.warning}` : ""}`,
+      status: "SUCCEEDED",
+    });
+
+    return result as unknown as Record<string, unknown>;
+  },
 };
 
 export function getHandler(jobType: JobType): JobHandler | null {

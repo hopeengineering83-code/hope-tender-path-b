@@ -5,7 +5,6 @@ import { completeJob, failJob, rearmDurableStageJob } from "../../../../lib/ai-j
 import { classifyStageRetry, isDurableRetryJobType, isSupersededStageFailure } from "../../../../lib/engine/stage-retry-policy";
 import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
 import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
-import { runAutoFinalizeAfterGeneration } from "../../../../lib/ai-jobs/auto-finalize-continuation-service";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
@@ -253,23 +252,35 @@ export async function POST(req: Request) {
           }
         }
 
-        // Gap 4 + user req A/B/C: after PROPOSAL_GENERATION succeeds, auto-run
-        // safe repairs (source grounding + export gaps) so the tender reaches
-        // export-ready state without manual button clicks. The app never says
-        // "source reference not found" because repairSourceGrounding runs here.
-        // Safe repairs (AI traces, placeholders, pricing leakage) run
-        // automatically. The actual ZIP download remains user-triggered.
+        // Gap 3: after PROPOSAL_GENERATION succeeds, enqueue a DURABLE
+        // AUTO_FINALIZE job instead of calling runAutoFinalizeAfterGeneration
+        // inline. The durable job runs in its own worker budget (not the
+        // request-bound 60s Vercel Hobby limit), is automatically retried by
+        // the durable-stage retry policy on transient failure, and is
+        // idempotent. No failure falls back to "manual retry" when it can be
+        // safely automated.
         if (claimed.jobType === "PROPOSAL_GENERATION") {
           try {
-            await runAutoFinalizeAfterGeneration(
-              claimed.tenderId ?? "",
-              claimed.userId,
-              claimed.id,
-            );
+            const { enqueueJob } = await import("../../../../lib/ai-jobs");
+            const analysisRevision = typeof claimed.input?.analysisRevision === "string"
+              ? claimed.input.analysisRevision
+              : null;
+            const autoFinalizeJob = await enqueueJob({
+              userId: claimed.userId,
+              tenderId: claimed.tenderId ?? null,
+              jobType: "AUTO_FINALIZE",
+              input: {
+                tenderId: claimed.tenderId,
+                analysisRevision,
+                source: "post-proposal-generation",
+              },
+            });
+            nextJobId = autoFinalizeJob.id;
+            nextJobType = "AUTO_FINALIZE";
+            continuationReused = false;
           } catch (error) {
-            // Never crash the worker on auto-finalize failure — the tender
-            // remains in its post-generation state for manual retry.
-            logger.warn("[run-next] Auto-finalize after proposal generation failed", {
+            continuationReason = "AUTO_FINALIZE_ENQUEUE_ERROR";
+            logger.error("[run-next] Failed to enqueue AUTO_FINALIZE after proposal generation", {
               jobId: claimed.id,
               errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
             });
@@ -348,7 +359,7 @@ export async function POST(req: Request) {
       });
     }
 
-    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE", "VAULT_INGEST"].includes(claimed.jobType)) break;
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE", "VAULT_INGEST", "AUTO_FINALIZE"].includes(claimed.jobType)) break;
   }
 
   if (processedJobs.length === 0) {

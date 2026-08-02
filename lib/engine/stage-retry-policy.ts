@@ -1,4 +1,4 @@
-export type DurableRetryJobType = "EXTRACT_TEXT" | "VAULT_INGEST" | "ENGINE_RUN" | "PROPOSAL_GENERATION";
+export type DurableRetryJobType = "EXTRACT_TEXT" | "VAULT_INGEST" | "ENGINE_RUN" | "PROPOSAL_GENERATION" | "AUTO_FINALIZE";
 export type RetryDecision = { retryable: boolean; blockerCode: string; delayMs: number | null };
 
 // A superseded run is not a failure anyone needs to act on. When the Engine's
@@ -32,5 +32,5 @@ export function isSupersededStageFailure(errorCodeOrMessage: string): boolean {
 }
 
 export function isDurableRetryJobType(value: string): value is DurableRetryJobType {
-  return value === "EXTRACT_TEXT" || value === "VAULT_INGEST" || value === "ENGINE_RUN" || value === "PROPOSAL_GENERATION";
+  return value === "EXTRACT_TEXT" || value === "VAULT_INGEST" || value === "ENGINE_RUN" || value === "PROPOSAL_GENERATION" || value === "AUTO_FINALIZE";
 }

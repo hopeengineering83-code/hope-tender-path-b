@@ -56,7 +56,17 @@ export type JobType =
   // worker reads the CompanyDocument, runs the company-knowledge import
   // for just that document, and updates the ingestion revision.
   // Input: { companyDocumentId: string, companyId: string }.
-  | "VAULT_INGEST";
+  | "VAULT_INGEST"
+  // Durable auto-finalize continuation. After PROPOSAL_GENERATION succeeds,
+  // this job runs the safe repairs (source grounding, export gaps) and the
+  // canonical Document Validator, persisting VALIDATED only for documents
+  // that pass. Replaces the request-bound inline call that previously ran
+  // inside run-next (which risked the 60s Vercel Hobby limit for large
+  // tenders). Idempotent: re-running on the same tender is safe — repaired
+  // documents carry a machine: marker and are skipped. Revision-bound: the
+  // job input includes the analysis revision so a stale job is rejected.
+  // Input: { tenderId: string, analysisRevision: string }.
+  | "AUTO_FINALIZE";
 
 export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "PARTIAL_SUCCESS" | "FAILED" | "CANCELED";
 
@@ -285,7 +295,7 @@ export async function findActiveEngineRunForTender(tenderId: string, userId: str
  * trigger spurious recoveries.
  */
 export function isProgressStuckOnlyType(jobType: string): boolean {
-  return jobType === "ENGINE_RUN" || jobType === "PROPOSAL_GENERATION";
+  return jobType === "ENGINE_RUN" || jobType === "PROPOSAL_GENERATION" || jobType === "AUTO_FINALIZE";
 }
 
 /**
@@ -330,7 +340,7 @@ export async function findStuckJobs(opts?: { stuckAfterMs?: number; progressStuc
       status: "RUNNING",
       OR: [
         { startedAt: { lt: totalThreshold } },
-        { jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION"] }, startedAt: { lt: progressThreshold } },
+        { jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"] }, startedAt: { lt: progressThreshold } },
       ],
     },
     select: {
