@@ -71,8 +71,18 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   const selectedExpertIds = tender.expertMatches.map((m) => m.expertId);
   const selectedProjectIds = tender.projectMatches.map((m) => m.projectId);
 
+  // Vault records are re-read scoped to the tender owner, not by bare ID.
+  // These IDs arrive from TenderExpertMatch/TenderProjectMatch rows, and
+  // matching is company-scoped, so a foreign ID should never reach here — but
+  // "should never" is the tenant boundary being inherited from a caller two
+  // levels up rather than enforced where the read happens. The messages below
+  // interpolate fullName/name, so a single cross-tenant match row would leak
+  // another company's expert and project names into a validation report.
+  // Scoping the read makes the boundary local and self-evident.
+  const ownedByTenant = { company: { userId: tender.userId } } as const;
+
   if (selectedExpertIds.length > 0) {
-    const experts = await prisma.expert.findMany({ where: { id: { in: selectedExpertIds }, deletedAt: null }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT } });
+    const experts = await prisma.expert.findMany({ where: { id: { in: selectedExpertIds }, deletedAt: null, ...ownedByTenant }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT } });
     // isDurablyReviewed(), not a raw trustLevel==="REVIEWED" check — a stale
     // or never-durably-provenance-backed REVIEWED record must not pass this
     // check as if genuinely human-reviewed (it would otherwise produce a
@@ -87,7 +97,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   }
 
   if (selectedProjectIds.length > 0) {
-    const projects = await prisma.project.findMany({ where: { id: { in: selectedProjectIds }, deletedAt: null }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT } });
+    const projects = await prisma.project.findMany({ where: { id: { in: selectedProjectIds }, deletedAt: null, ...ownedByTenant }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT } });
     const regexDraft = projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT");
     const aiDraft = projects.filter((p) => p.trustLevel === "AI_DRAFT");
     if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_PROJECT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((p) => p.name).join(", ")}.` });
