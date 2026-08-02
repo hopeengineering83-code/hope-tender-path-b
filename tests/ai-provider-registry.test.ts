@@ -99,24 +99,13 @@ describe("5. zai + cerebras appear in health surfaces", () => {
 
 // 6. Z.ai endpoint + model — resolver-based endpoint/model compatibility
 describe("6. Z.ai general endpoint + configured model", () => {
-  it("uses the general Z.ai endpoint and default model (glm-4-flash)", () => {
+  it("uses the general Z.ai endpoint and default model (glm-4.7-flash)", () => {
     delete process.env.ZAI_PROPOSAL_MODEL;
     delete process.env.ZAI_ANALYSIS_MODEL;
     delete process.env.ZAI_FAST_MODEL;
     delete process.env.ZAI_BASE_URL;
     assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4");
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
-  });
-  it("Coding Plan model glm-coding is accepted as valid override", () => {
-    // Z.ai support confirmed: both plans use the SAME endpoint (api.z.ai).
-    // The Coding Plan model is "glm-coding". The resolver accepts it.
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
-    delete process.env.ZAI_BASE_URL;
-    process.env.ZAI_PROPOSAL_MODEL = "glm-coding";
-    assert.equal(getProviderModel("zai", "proposal"), "glm-coding");
-    delete process.env.ZAI_PROPOSAL_MODEL;
+    assert.equal(getProviderModel("zai", "proposal"), "glm-4.7-flash");
   });
   it("open.bigmodel.cn is NOT a valid Z.ai endpoint (different platform)", () => {
     delete process.env.ZAI_BASE_URL;
@@ -127,13 +116,13 @@ describe("6. Z.ai general endpoint + configured model", () => {
       "open.bigmodel.cn is NOT a valid Z.ai endpoint — must be skipped");
     delete process.env.ZAI_BASE_URL;
   });
-  it("accepts a valid explicit Z.ai model override (glm-4-flash)", () => {
+  it("accepts the deployed explicit Z.ai model override (glm-4.7-flash)", () => {
     delete process.env.ZAI_PROPOSAL_MODEL;
     delete process.env.ZAI_ANALYSIS_MODEL;
     delete process.env.ZAI_FAST_MODEL;
     delete process.env.ZAI_BASE_URL;
-    process.env.ZAI_PROPOSAL_MODEL = "glm-4-flash";
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
+    process.env.ZAI_PROPOSAL_MODEL = "glm-4.7-flash";
+    assert.equal(getProviderModel("zai", "proposal"), "glm-4.7-flash");
     delete process.env.ZAI_PROPOSAL_MODEL;
   });
   it("is NOT a Coding Plan endpoint by default", () => {

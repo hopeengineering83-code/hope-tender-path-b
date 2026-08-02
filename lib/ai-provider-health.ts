@@ -28,6 +28,10 @@ export type AiProviderFailureCategory =
   | "NETWORK"
   | "MALFORMED_RESPONSE"
   | "CONFIGURATION_INVALID"
+  // The provider accepted the request and then failed on its own side (5xx).
+  // Distinct from NETWORK (never reached them) and from UNKNOWN (we cannot
+  // tell), because a provider outage is retryable and is not our misconfiguration.
+  | "PROVIDER_ERROR"
   | "UNKNOWN";
 
 export type AiProviderStatus =
@@ -168,6 +172,9 @@ export const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number>
   NETWORK: 30_000,
   MALFORMED_RESPONSE: 60_000,
   CONFIGURATION_INVALID: 10 * 60_000,
+  // A provider-side outage usually clears on its own, so back off like a
+  // timeout rather than quarantining for minutes as a config fault would.
+  PROVIDER_ERROR: 30_000,
   UNKNOWN: 60_000,
 };
 
@@ -216,6 +223,9 @@ export function classifyAiError(error: unknown): AiProviderFailureCategory {
   if (/404|model\s+not|not\s+found|not\s+supported|model\s+unavailable|invalid_request|unknown\s+model|please\s+check\s+the\s+model|model\s+code/.test(lower)) return "MODEL_UNAVAILABLE";
   if (/network|fetch\s+failed|econnreset|enotfound|getaddrinfo|socket\s+hang\s+up/.test(lower)) return "NETWORK";
   if (/no\s+json|malformed\s+json|invalid\s+json|json\s+parse/.test(lower)) return "MALFORMED_RESPONSE";
+  // Checked after the specific cases above so a 503 that also says "rate limit"
+  // is still RATE_LIMIT. Bare 5xx means the provider broke, not us.
+  if (/\b5\d{2}\b|internal\s+server\s+error|bad\s+gateway|service\s+unavailable|gateway\s+timeout/.test(lower)) return "PROVIDER_ERROR";
   return "UNKNOWN";
 }
 

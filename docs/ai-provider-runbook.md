@@ -18,7 +18,7 @@ an AI provider and its output can never pass final proposal export gates.
 
 | Provider | API key | Base URL (optional) | Models (optional) |
 | --- | --- | --- | --- |
-| Z.ai GLM | `ZAI_API_KEY` | `ZAI_BASE_URL` (default `https://api.z.ai/api/paas/v4`) | `ZAI_PROPOSAL_MODEL` / `ZAI_ANALYSIS_MODEL` / `ZAI_FAST_MODEL` (default `glm-4-flash`) |
+| Z.ai GLM | `ZAI_API_KEY` | `ZAI_BASE_URL` (default `https://api.z.ai/api/paas/v4`) | `ZAI_PROPOSAL_MODEL` / `ZAI_ANALYSIS_MODEL` / `ZAI_FAST_MODEL` (default `glm-4.7-flash`) |
 | Cerebras | `CEREBRAS_API_KEY` | `CEREBRAS_BASE_URL` (default `https://api.cerebras.ai/v1`) | `CEREBRAS_PROPOSAL_MODEL` / `CEREBRAS_ANALYSIS_MODEL` / `CEREBRAS_FAST_MODEL` (default `gpt-oss-120b`) |
 | Mistral | `MISTRAL_API_KEY` | `MISTRAL_BASE_URL` | `MISTRAL_PROPOSAL_MODEL` / `MISTRAL_ANALYSIS_MODEL` / `MISTRAL_FAST_MODEL` |
 | Groq | `GROQ_API_KEY` | `GROQ_BASE_URL` | `GROQ_PROPOSAL_MODEL` |

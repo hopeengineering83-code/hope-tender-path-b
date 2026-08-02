@@ -474,7 +474,7 @@ SESSION_SECRET="<64-character random hex>"
 # unconfigured/cooled-down/invalid-OpenRouter providers are skipped for free.
 
 # Z.ai GLM — first-tier, general OpenAI-compatible endpoint (NOT a Coding Plan).
-# ZAI_API_KEY="..."           # ZAI_BASE_URL default https://api.z.ai/api/paas/v4, model glm-4-flash
+# ZAI_API_KEY="..."           # ZAI_BASE_URL default https://api.z.ai/api/paas/v4, model glm-4.7-flash
 
 # Cerebras — second-tier, OpenAI-compatible (uses max_completion_tokens).
 # CEREBRAS_API_KEY="..."      # default model gpt-oss-120b

@@ -25,45 +25,43 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
+import { resolveZaiConfiguration } from "../lib/ai-provider-registry";
+
 const read = (p: string) => readFileSync(p, "utf8");
 
 // ─── 1. Invalid Z.ai model is skipped safely ─────────────────────────────────
 
-describe("Fix 1 — Invalid Z.ai model (glm-coding) is skipped safely", () => {
-  it("glm-coding is NOT in the Z.ai Coding Plan model allowlist", () => {
-    const src = read("lib/ai-provider-registry.ts");
-    // The allowlist must NOT include "glm-coding" — it returns HTTP 400.
-    // It MUST include "glm-4-coding" (the valid identifier).
-    assert.ok(
-      src.includes('ZAI_CODING_PLAN_MODELS = new Set(["glm-4-coding", "glm-4v-coding"])'),
-      "Z.ai Coding Plan allowlist must be {glm-4-coding, glm-4v-coding} — glm-coding is invalid",
-    );
-    // Strip comments and verify glm-coding is NOT in the actual Set() definition.
-    // (Comments explaining why glm-coding was removed are fine — they're not code.)
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.doesNotMatch(
-      codeOnly,
-      /ZAI_CODING_PLAN_MODELS\s*=\s*new Set\([^)]*"glm-coding"/,
-      "glm-coding must NOT be in the ZAI_CODING_PLAN_MODELS Set (it returns HTTP 400 code 1211)",
-    );
+describe("Fix 1 — an unusable Z.ai model is skipped safely", () => {
+  // These used to assert on the text of a hardcoded allowlist
+  // (ZAI_CODING_PLAN_MODELS). That allowlist is gone: it was a stale local copy
+  // of Z.ai's catalogue that rejected the operator's own configured model and
+  // silently demoted rank-1 Z.ai. The behaviour it was protecting — a
+  // malformed model must be refused before an attempt is spent — is asserted
+  // here directly against the resolver instead.
+  const resolve = (model: string) =>
+    resolveZaiConfiguration("proposal", {
+      NODE_ENV: "test",
+      ZAI_API_KEY: "test-key",
+      ZAI_BASE_URL: "https://api.z.ai/api/paas/v4",
+      ZAI_PROPOSAL_MODEL: model,
+    } as NodeJS.ProcessEnv);
+
+  it("refuses glm-coding, which is not a valid Z.ai identifier", () => {
+    const r = resolve("glm-coding");
+    assert.equal(r.valid, false);
+    assert.equal(r.reason, "MODEL_UNSUPPORTED");
   });
 
-  it("resolveZaiConfiguration rejects glm-coding as MODEL_UNSUPPORTED", () => {
-    const src = read("lib/ai-provider-registry.ts");
-    // The resolver must return MODEL_UNSUPPORTED for invalid models so the
-    // provider is skipped without consuming an attempt.
-    assert.match(src, /reason: "MODEL_UNSUPPORTED"/);
-    assert.match(src, /MODEL_UNSUPPORTED.*Z\.ai model is not in the supported allowlist/);
+  it("refuses a foreign vendor identifier without contacting the provider", () => {
+    for (const model of ["gpt-4o", "claude-3-5-sonnet"]) {
+      assert.equal(resolve(model).valid, false, `${model} must be refused`);
+    }
   });
 
-  it("the Coding Plan default model is glm-4-coding (not glm-coding)", () => {
-    const src = read("lib/ai-provider-registry.ts");
-    // The plan-specific default for coding-plan must be glm-4-coding.
-    assert.match(
-      src,
-      /planDefault = planType === "coding-plan" \? "glm-4-coding"/,
-      "Coding Plan default model must be glm-4-coding (not glm-coding)",
-    );
+  it("accepts the configured GLM model so rank-1 Z.ai is actually attempted", () => {
+    const r = resolve("glm-4.7-flash");
+    assert.equal(r.valid, true);
+    assert.equal(r.reason, "OK");
   });
 });
 

@@ -1323,7 +1323,7 @@ async function generateWithZai(
     maxTokens,
     responseFormatJson: wantJson,
     // FIX: Use registry timeout (45s) instead of the 20s default.
-    // The AI Analyze prompt is very large and glm-4-flash needs more time.
+    // The AI Analyze prompt is very large and glm-4.7-flash needs more time.
     timeoutMs: getProviderTimeoutMs("zai"),
   });
 }

@@ -118,7 +118,7 @@ const HOBBY_SAFE_CAPS: ProviderOutputCaps = { analysis: 8000, proposal: 8000, fa
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 // FIX: Z.ai and Cerebras need longer timeouts for AI Analyze. The analysis
-// prompt is very large (thousands of tokens) and glm-4-flash / gpt-oss-120b
+// prompt is very large (thousands of tokens) and glm-4.7-flash / gpt-oss-120b
 // can take 15-40s to generate a complete JSON response. 20s causes TIMEOUT
 // on the first provider, consuming an attempt budget slot for nothing.
 const ANALYSIS_TIMEOUT_MS = 45_000;
@@ -143,13 +143,13 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     defaults: {
       // General Z.ai API endpoint (NOT a Coding Plan endpoint).
       baseUrl: "https://api.z.ai/api/paas/v4",
-      proposalModel: "glm-4-flash",
-      analysisModel: "glm-4-flash",
-      fastModel: "glm-4-flash",
+      proposalModel: "glm-4.7-flash",
+      analysisModel: "glm-4.7-flash",
+      fastModel: "glm-4.7-flash",
     },
     outputCaps: HOBBY_SAFE_CAPS, // 8K proposal tokens — safe for Vercel Hobby 45s
     // FIX: 45s timeout for analysis — the large AI Analyze prompt needs
-    // more than the 20s default. Z.ai glm-4-flash can take 15-40s on
+    // more than the 20s default. Z.ai glm-4.7-flash can take 15-40s on
     // a full tender analysis JSON response.
     timeoutMs: ANALYSIS_TIMEOUT_MS,
     retry: FALLBACK_RETRY,
@@ -495,10 +495,9 @@ export function getProviderModel(
         ? entry.env.fastModel
         : entry.env.proposalModel;
 
-  // Z.ai uses a dedicated resolver that validates endpoint/model compatibility.
-  // Coding Plan keys only support glm-4-coding/glm-4v-coding.
-  // General API keys (api.z.ai) only support glm-4-flash/glm-4-flashx.
-  // Invalid configurations are skipped before consuming an attempt.
+  // Z.ai uses a dedicated resolver that validates the endpoint and the shape of
+  // the model identifier. A malformed configuration is skipped before consuming
+  // an attempt; which GLM models a key may actually use is Z.ai's to answer.
   if (provider === "zai") return resolveZaiConfiguration(useCase, env).model;
 
   const fromEnv = envName ? env[envName]?.trim() : undefined;
@@ -513,13 +512,10 @@ export function getProviderModel(
 }
 
 // ─── Z.ai Configuration Resolver ────────────────────────────────────
-// Z.ai has two distinct API products with different endpoints and models:
-//   1. General API (api.z.ai) — glm-4-flash, glm-4-flashx
-//   2. Coding Plan () — glm-4-coding, glm-4v-coding
-// Mixing a Coding Plan key with the General endpoint (or vice versa)
-// produces HTTP 400 code 1211 "Unknown Model". This resolver detects the
-// plan type from the base URL and validates the model/endpoint pairing
-// so invalid configurations are skipped before consuming an attempt.
+// Z.ai's General API and Coding Plan are both served from api.z.ai; the plan is
+// carried by the key, not the URL. This resolver therefore checks the three
+// things the app can know locally — key present, endpoint is api.z.ai, model
+// identifier is well-formed — and leaves model entitlement to the provider.
 
 export type ZaiPlanType = "general" | "coding-plan" | "unknown";
 
@@ -534,28 +530,37 @@ export type ZaiConfigurationResult = {
 };
 
 const ZAI_GENERAL_BASE_URL = "https://api.z.ai/api/paas/v4";
-// Z.ai support confirmed: Coding Plan keys use the SAME endpoint as General API
-// (api.z.ai). The  endpoint is a DIFFERENT platform (Zhipu AI)
-// that does NOT accept Z.ai Coding Plan keys. Both plans share the same URL.
-const ZAI_CODING_PLAN_BASE_URL = "https://api.z.ai/api/paas/v4";
-const ZAI_GENERAL_MODELS = new Set(["glm-4-flash", "glm-4-flashx"]);
-// Z.ai Coding Plan models. The valid model identifiers on api.z.ai are:
-//   - glm-4-coding (text)
-//   - glm-4v-coding (vision)
-// "glm-coding" (without the "-4-" segment) is NOT a valid Z.ai model identifier
-// and returns HTTP 400 code 1211 "Unknown Model". The previous allowlist
-// included "glm-coding" as the Coding Plan default — that was the root cause
-// of the Z.ai 400 errors observed in Vercel runtime. It has been removed.
-// If a user explicitly configures ZAI_PROPOSAL_MODEL=glm-coding, the resolver
-// now rejects it as MODEL_UNSUPPORTED and the provider is skipped safely
-// without consuming an attempt budget slot.
-const ZAI_CODING_PLAN_MODELS = new Set(["glm-4-coding", "glm-4v-coding"]);
 
+/**
+ * Z.ai model identifiers are validated by SHAPE, not by an enumerated list.
+ *
+ * This used to be two hardcoded Sets mirroring Z.ai's catalogue
+ * (`{glm-4-flash, glm-4-flashx}` and `{glm-4-coding, glm-4v-coding}`). A local
+ * copy of a third party's model list is a second authority on a question only
+ * the provider can answer, and it goes stale the moment they ship a model. It
+ * did: when the operator configured the current `glm-4.7-flash` family, the
+ * allowlist rejected it as MODEL_UNSUPPORTED and rank-1 Z.ai was skipped
+ * before it ever made a request — every call silently fell through to
+ * Cerebras, with no error anywhere because the skip was "safe".
+ *
+ * A shape check keeps the genuine protection (an empty value, or another
+ * vendor's identifier pasted into ZAI_*_MODEL, is still refused before an
+ * attempt is spent) while letting Z.ai be the authority on which of its own
+ * models exist. A model this app does not recognise now produces a real,
+ * classified MODEL_UNAVAILABLE from the provider instead of an invisible skip.
+ */
+const ZAI_MODEL_SHAPE = /^glm-[0-9][0-9a-z.\-]*$/;
+
+function isPlausibleZaiModel(model: string): boolean {
+  return ZAI_MODEL_SHAPE.test(model.trim().toLowerCase());
+}
+
+// Both the General API and the Coding Plan are served from api.z.ai; the plan
+// is determined by which key the operator holds, not by the URL. The endpoint
+// therefore identifies the platform only.
 function zaiPlanTypeForBaseUrl(baseUrl: string): ZaiPlanType {
   const normalized = baseUrl.replace(/\/+$/, "").toLowerCase();
-  if (normalized === ZAI_GENERAL_BASE_URL) return "general";
-  if (normalized === ZAI_CODING_PLAN_BASE_URL) return "coding-plan";
-  return "unknown";
+  return normalized === ZAI_GENERAL_BASE_URL ? "general" : "unknown";
 }
 
 export function resolveZaiConfiguration(
@@ -571,37 +576,24 @@ export function resolveZaiConfiguration(
   const specific = envName ? env[envName]?.trim() : undefined;
   const proposal = entry.env.proposalModel ? env[entry.env.proposalModel]?.trim() : undefined;
 
-  // Determine the effective model. If no env override is set, use the
-  // correct default for the detected plan type:
-  //   - General API → glm-4-flash (entry.defaults)
-  //   - Coding Plan → glm-4-coding (plan-specific default — the valid Z.ai
-  //     Coding Plan model identifier. "glm-coding" is NOT valid and returns
-  //     HTTP 400 code 1211 "Unknown Model".)
-  const registryDefault = entry.defaults[slot];
-  const planDefault = planType === "coding-plan" ? "glm-4-coding" : registryDefault;
+  // Effective model: the specific env override, else the proposal override for
+  // non-proposal slots, else the registry default.
   const model = (specific && specific.length > 0
     ? specific
     : slot !== "proposalModel" && proposal && proposal.length > 0
       ? proposal
-      : planDefault
+      : entry.defaults[slot]
   ).trim();
-  const lowerModel = model.toLowerCase();
   const keyPresent = Boolean(readProviderKey("zai", env));
-  const general = ZAI_GENERAL_MODELS.has(lowerModel);
-  const coding = ZAI_CODING_PLAN_MODELS.has(lowerModel);
 
   if (!keyPresent) return { valid: false, reason: "API_KEY_MISSING", safeMessage: "Z.ai API key is not configured.", baseUrl, model, planType, useCase };
-  if (planType === "unknown") return { valid: false, reason: "BASE_URL_MISSING", safeMessage: "Z.ai base URL is not a supported General or Coding Plan endpoint.", baseUrl, model, planType, useCase };
-  if (!general && !coding) return { valid: false, reason: "MODEL_UNSUPPORTED", safeMessage: "Z.ai model is not in the supported allowlist for AI Analyze.", baseUrl, model, planType, useCase };
-  // Z.ai support confirmed: both General API and Coding Plan use the SAME
-  // endpoint (api.z.ai). The plan type is determined by which API key the
-  // user has, NOT by the endpoint URL. Since we can't distinguish plan type
-  // by URL (they're identical), we accept ANY valid Z.ai model on the
-  // api.z.ai endpoint. If the key doesn't support the model, the API will
-  // return HTTP 400 code 1211 and the chain will fall through to the next
-  // provider.
-  // (The old code rejected coding models on the general endpoint — this was
-  // WRONG because both plans share the same URL.)
+  if (planType === "unknown") return { valid: false, reason: "BASE_URL_MISSING", safeMessage: "Z.ai base URL is not the supported api.z.ai endpoint.", baseUrl, model, planType, useCase };
+  if (!isPlausibleZaiModel(model)) return { valid: false, reason: "MODEL_UNSUPPORTED", safeMessage: "Z.ai model identifier is empty or does not look like a Z.ai GLM model.", baseUrl, model, planType, useCase };
+  // Beyond this point the configuration is well-formed, so the provider is the
+  // authority on whether the key may use the model. If it may not, Z.ai answers
+  // with an error that classifyAiError() turns into MODEL_UNAVAILABLE (or AUTH,
+  // RATE_LIMIT, PROVIDER_ERROR…) and the chain falls through to rank 2 with a
+  // recorded reason — rather than the provider being skipped silently here.
 
   return { valid: true, reason: "OK", safeMessage: "Z.ai configuration is valid.", baseUrl, model, planType, useCase };
 }

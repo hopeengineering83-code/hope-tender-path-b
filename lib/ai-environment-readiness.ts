@@ -92,7 +92,7 @@ function status(
  * status("DEEPSEEK_API_KEY", ...)
  * status("ANTHROPIC_API_KEY", ...)
  *
- * Z.ai general API model default: glm-4-flash. The effective runtime value is
+ * Z.ai general API model default: glm-4.7-flash. The effective runtime value is
  * still resolved by the central provider registry; this note is diagnostic,
  * not an independent model configuration.
  */

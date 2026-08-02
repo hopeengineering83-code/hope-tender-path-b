@@ -71,6 +71,7 @@ function toFailureCategory(failureClass: string): AiProviderFailureCategory {
     MODEL_UNAVAILABLE: "MODEL_UNAVAILABLE",
     NETWORK: "NETWORK",
     MALFORMED_RESPONSE: "MALFORMED_RESPONSE",
+    PROVIDER_ERROR: "PROVIDER_ERROR",
     UNKNOWN: "UNKNOWN",
   };
   return map[failureClass] ?? "UNKNOWN";

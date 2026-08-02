@@ -26,14 +26,20 @@ export const ZAI_MODEL_OVERRIDE_VARIABLES = [
   "ZAI_FAST_MODEL",
 ] as const;
 
-// These names have already failed live diagnostics for Hope's current Z.ai
-// account/endpoint. The guardian fails closed rather than letting an old Vercel
-// override silently overrule a reviewed registry change.
-export const REJECTED_ZAI_MODELS = new Set([
-  "glm-4.7-flash",
-  "glm-4-flash",
-  "glm-4",
-]);
+// There is deliberately no hardcoded list of "rejected" Z.ai model names here.
+//
+// There used to be one — {glm-4.7-flash, glm-4-flash, glm-4} — recording models
+// that had failed live diagnostics at some past moment. It became a second
+// authority on which models are usable, and it contradicted the first: the
+// provider registry's allowlist permitted only glm-4-flash, while this set
+// rejected glm-4-flash and quarantined Z.ai. No value the operator could put in
+// ZAI_PROPOSAL_MODEL satisfied both, so rank-1 Z.ai was unreachable by
+// configuration.
+//
+// A model name that failed once is not permanently invalid: keys change, plans
+// change, and providers ship new families. Whether this account can use a given
+// model is a live fact, so the guardian reports that an override exists and
+// defers to the live diagnostic instead of asserting a stale verdict.
 
 // Every field emitted by canonical-analysis-update.ts and the durable promoter.
 // The database check detects an un-applied migration before operators retry AI
@@ -92,17 +98,6 @@ export function inspectZaiModelOverrides(env: NodeJS.ProcessEnv = process.env): 
   const configured = ZAI_MODEL_OVERRIDE_VARIABLES
     .map((name) => ({ name, value: env[name]?.trim() ?? "" }))
     .filter((entry) => entry.value.length > 0);
-
-  const rejected = configured.filter((entry) => REJECTED_ZAI_MODELS.has(entry.value.toLowerCase()));
-  if (rejected.length > 0) {
-    return {
-      key: "zai_model_override",
-      title: "Z.ai model override",
-      severity: "CRITICAL",
-      detail: `${rejected.map((entry) => entry.name).join(", ")} uses a model rejected by live diagnostics. The value is not shown.`,
-      automaticAction: "Quarantine Z.ai for new analysis runs and continue only with the next configured provider.",
-    };
-  }
 
   if (configured.length > 0) {
     return {

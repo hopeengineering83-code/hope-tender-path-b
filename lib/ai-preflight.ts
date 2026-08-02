@@ -25,7 +25,7 @@ import { getProviderEntry, type AiProviderName, type AiUseCase } from "./ai-prov
 // When a user overrides the model via env, the limit may differ — we use the
 // default-model limit as a safe conservative bound.
 const PROVIDER_CONTEXT_LIMITS: Record<AiProviderName, number> = {
-  zai: 128_000, // glm-4-flash: 128K context
+  zai: 128_000, // glm-4.7-flash: 128K context
   cerebras: 128_000, // gpt-oss-120b: 128K context
   mistral: 128_000, // mistral-large-latest: 128K context
   groq: 32_000, // llama-3.3-70b-versatile: 32K context (Groq free tier is lower)

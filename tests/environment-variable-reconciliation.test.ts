@@ -102,8 +102,8 @@ describe("Environment Variable Reconciliation", () => {
         DATABASE_URL: "postgresql://localhost/test",
         SESSION_SECRET: "a".repeat(32),
         ZAI_API_KEY: "zai-test-key",
-        ZAI_PROPOSAL_MODEL: "glm-4-flash",
-        ZAI_ANALYSIS_MODEL: "glm-4-flash",
+        ZAI_PROPOSAL_MODEL: "glm-4.7-flash",
+        ZAI_ANALYSIS_MODEL: "glm-4.7-flash",
       };
 
       const envWithoutKey = {
@@ -111,7 +111,7 @@ describe("Environment Variable Reconciliation", () => {
         DATABASE_URL: "postgresql://localhost/test",
         SESSION_SECRET: "a".repeat(32),
         // ZAI_API_KEY intentionally absent
-        ZAI_PROPOSAL_MODEL: "glm-4-flash", // Should be ignored
+        ZAI_PROPOSAL_MODEL: "glm-4.7-flash", // Should be ignored
       };
 
       const resultWith = evaluateEnv(envWithKey);
