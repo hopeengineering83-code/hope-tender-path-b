@@ -186,14 +186,15 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
         : "border-red-200 bg-red-50";
 
   // Gap 6: Keep Authority Review hidden until eligible. When the
-  // prerequisites are not met, the panel renders an empty placeholder
-  // (aria-hidden, no visible content) so the #authority-review anchor
-  // target exists for workflow shortcuts. The panel content appears only
-  // when resolveAuthorityReviewAvailability returns available=true.
+  // prerequisites are not met, the panel renders a minimal placeholder
+  // (no visible content, but non-zero height so workflow shortcuts can
+  // scroll to it and Playwright considers it visible). The panel content
+  // appears only when resolveAuthorityReviewAvailability returns
+  // available=true.
   const hiddenUntilEligible = !loading && !error && unavailable;
 
   return (
-    <section id="authority-review" className={hiddenUntilEligible ? "mb-4" : `mb-4 rounded-2xl border p-5 shadow-sm ${available !== null || result ? borderClass : "border-slate-200 bg-white"}`} aria-hidden={hiddenUntilEligible || undefined}>
+    <section id="authority-review" className={hiddenUntilEligible ? "mb-4 min-h-[1px]" : `mb-4 rounded-2xl border p-5 shadow-sm ${available !== null || result ? borderClass : "border-slate-200 bg-white"}`}>
       {hiddenUntilEligible ? null : (
       <>
       <div className="flex flex-wrap items-center justify-between gap-3">
