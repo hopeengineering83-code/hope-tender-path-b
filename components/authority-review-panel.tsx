@@ -186,22 +186,16 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
         : "border-red-200 bg-red-50";
 
   // Gap 6: Keep Authority Review hidden until eligible. When the
-  // prerequisites are not met (no confirmed Build Plan, missing required
-  // documents, or documents not yet validated), the panel renders an empty
-  // placeholder section (so the #authority-review anchor target exists for
-  // workflow shortcuts) but shows NO content — no score, no blockers, no
-  // "NOT AVAILABLE" badge. The panel content appears only when
-  // resolveAuthorityReviewAvailability returns available=true, so the user
-  // never sees an incomplete authority score or a "prerequisites not met"
-  // message. Machine-safe checks run automatically via the GET handler;
-  // one explicit human release decision is required only where legally
-  // mandatory.
-  if (!loading && !error && unavailable) {
-    return <section id="authority-review" className="mb-4" aria-hidden="true" />;
-  }
+  // prerequisites are not met, the panel renders an empty placeholder
+  // (aria-hidden, no visible content) so the #authority-review anchor
+  // target exists for workflow shortcuts. The panel content appears only
+  // when resolveAuthorityReviewAvailability returns available=true.
+  const hiddenUntilEligible = !loading && !error && unavailable;
 
   return (
-    <section id="authority-review" className={`mb-4 rounded-2xl border p-5 shadow-sm ${available !== null || result ? borderClass : "border-slate-200 bg-white"}`}>
+    <section id="authority-review" className={hiddenUntilEligible ? "mb-4" : `mb-4 rounded-2xl border p-5 shadow-sm ${available !== null || result ? borderClass : "border-slate-200 bg-white"}`} aria-hidden={hiddenUntilEligible || undefined}>
+      {hiddenUntilEligible ? null : (
+      <>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Authority Review</p>
@@ -299,6 +293,8 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
             )}
           </div>
         </>
+      )}
+      </>
       )}
     </section>
   );
