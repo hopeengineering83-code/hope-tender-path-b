@@ -165,10 +165,13 @@ describe("migrated UI canonical rendering", () => {
     assert.equal(isGenerationActionEnabled(payload.generation.state, true), false);
   });
 
-  it("existing recovery action labels remain available in the generation panel source", () => {
+  it("the recovery action remains available in the generation panel source", () => {
     const source = readFileSync("components/generation-action-panel.tsx", "utf8");
-    assert.match(source, /Repair evaluation criteria only/);
-    assert.match(source, /Repair all empty fields from source/);
+    // One control, not two scopes of the same call. The narrow
+    // "Repair evaluation criteria only" button posted a strict subset of the
+    // batch manifest and was removed; the field is still repaired by the batch.
+    assert.match(source, /Repair Tender Details from source/);
+    assert.doesNotMatch(source, /Repair evaluation criteria only/);
   });
 });
 

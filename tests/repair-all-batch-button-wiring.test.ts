@@ -47,13 +47,32 @@ describe("GenerationActionPanel surfaces a one-click 'Repair all' batch action",
     // The button is now guarded by canMutate AND metadataBlockerPresent so
     // REVIEWER users never see it.
     assert.match(source, /\{canMutate\s*&&\s*metadataBlockerPresent\s*&&\s*\(/);
-    assert.match(source, /Repair all empty fields from source/);
+    assert.match(source, /Repair Tender Details from source/);
   });
 
-  it("the existing single-field button is preserved alongside the batch action", () => {
-    assert.match(source, /Repair evaluation criteria only/);
-    // Single-field handler still exists.
-    assert.match(source, /async function runRepairMetadata\(\)/);
+  it("offers exactly one repair control, not two scopes of the same call", () => {
+    // There used to be a second, narrower button posting
+    // {fields:["evaluationMethodology"]} — a strict subset of
+    // ALL_REPAIRABLE_FIELDS, behind ~48 lines of duplicated fetch and error
+    // handling. It asked the user to choose between two spellings of the same
+    // remedy. evaluationMethodology is the first entry of the batch manifest,
+    // so nothing it could repair was lost.
+    assert.doesNotMatch(source, /Repair evaluation criteria only/);
+    assert.doesNotMatch(source, /async function runRepairMetadata\(\)/);
+    assert.doesNotMatch(source, /fields:\s*\["evaluationMethodology"\]/);
+    assert.match(source, /"evaluationMethodology",/, "the field is still repaired, via the batch manifest");
+  });
+
+  // Merged from the former tests/repair-metadata-button-wiring.test.ts, which
+  // covered the deleted narrow button and otherwise duplicated this file.
+  it("computes metadataBlockerPresent from the blocker code, not free-text matching", () => {
+    assert.match(source, /metadataBlockerPresent\s*=\s*fullProposalBlockers\.some\(\(b\)\s*=>\s*b\.code === "FINAL_PACKAGE_FACTS_UNCONFIRMED"/);
+    assert.match(source, /FULL_PROPOSAL_METADATA_INCOMPLETE/);
+  });
+
+  it("states the source-grounded intent in the surviving control", () => {
+    assert.match(source, /Repair Tender Details from source/);
+    assert.match(source, /source-grounded/i);
   });
 
   it("does not weaken the Generate Docs disable rule", () => {

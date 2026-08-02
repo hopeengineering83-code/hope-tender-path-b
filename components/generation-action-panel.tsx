@@ -111,54 +111,6 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
     "mandatorySiteVisit",
   ] as const;
 
-  async function runRepairMetadata() {
-    setRunning(true);
-    setMessage(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/repair-metadata`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: ["evaluationMethodology"] }),
-      });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({})) as { error?: string };
-        setKind("error");
-        setMessage(errBody.error ?? `Repair failed (HTTP ${res.status}).`);
-        return;
-      }
-      const raw = await res.json().catch(() => null);
-      const parsed = parseRepairMetadataResponse(raw);
-      if (!parsed) {
-        setKind("error");
-        setMessage("Repair returned a malformed response. Try again or correct manually.");
-        return;
-      }
-      const outcome = parsed.outcomesByField["evaluationMethodology"];
-      if (outcome?.status === "REPAIRED") {
-        setKind("success");
-        setMessage("Evaluation criteria repaired from source.");
-        startTransition(() => router.refresh());
-      } else if (outcome?.status === "NOT_FOUND") {
-        setKind("info");
-        setMessage("Evaluation criteria not found in the tender source.");
-      } else if (outcome?.status === "SKIPPED") {
-        setKind("info");
-        setMessage("Evaluation criteria repair was skipped (field already has a value).");
-      } else if (outcome?.status === "REJECTED") {
-        setKind("info");
-        setMessage("Evaluation criteria value was rejected (placeholder pattern).");
-      } else {
-        setKind("error");
-        setMessage("Repair failed — no valid outcome returned.");
-      }
-    } catch (error) {
-      setKind("error");
-      setMessage(error instanceof Error ? error.message : "Repair failed due to a network error.");
-    } finally {
-      setRunning(false);
-    }
-  }
-
   async function runRepairAllMetadata() {
     setRunning(true);
     setMessage(null);
@@ -330,17 +282,8 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
         {canMutate && metadataBlockerPresent && (
           <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
             <p className="text-xs font-semibold text-amber-800">Tender Details incomplete — source-grounded repair available</p>
-            <p className="mt-1 text-xs text-amber-600">Use the source-grounded repair to extract missing Tender Details fields directly from the tender document.</p>
+            <p className="mt-1 text-xs text-amber-600">Extract the missing Tender Details fields directly from the tender document. Only source-grounded values are written; nothing is invented.</p>
             <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={runRepairMetadata}
-                disabled={running || isPending}
-                className="inline-flex items-center gap-1 rounded-md bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-200 disabled:opacity-60"
-                title="Repair evaluation criteria fields from the tender source"
-              >
-                <RefreshIcon /> Repair evaluation criteria only
-              </button>
               <button
                 type="button"
                 onClick={runRepairAllMetadata}
@@ -348,7 +291,7 @@ export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness,
                 className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
                 title="Repair all empty Tender Details fields from the tender source"
               >
-                <RefreshIcon /> Repair all empty fields from source
+                <RefreshIcon /> Repair Tender Details from source
               </button>
             </div>
           </div>
