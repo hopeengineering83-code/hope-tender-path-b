@@ -11,12 +11,12 @@ import { completenessStats, deriveExpectedCounts, hasUsableText } from "./helper
 import { sanitizeError } from "../../../../lib/sanitize-error";
 import { safeParse } from "../../../../lib/safe-json";
 import {
-  buildReviewProvenance,
   expertReviewFields,
   projectReviewFields,
   legalReviewFields,
   financialReviewFields,
   complianceReviewFields,
+  buildSourceVerificationProvenance,
   type ReviewSourceDocument,
 } from "../../../../lib/vault-review-provenance";
 
@@ -25,7 +25,17 @@ import {
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-type TrustLevel = "REVIEWED" | "AI_DRAFT" | "REGEX_DRAFT";
+// Plan B safety: bulk import never persists REVIEWED, never writes
+// reviewedBy/reviewedAt, and never accepts a caller-declared trust of
+// REVIEWED. Stored bytes that pass the same source-verification gate the
+// automatic Company Vault verifier uses promote the record to
+// SOURCE_VERIFIED with null reviewer identity; anything else stays at
+// AI_DRAFT so the next autoVerifyCompanyKnowledge pass re-decides. A
+// caller that still sends `trustLevel: "REVIEWED"` is silently treated
+// as if it had sent `AI_DRAFT` — the evidence-gate runs and may upgrade
+// to SOURCE_VERIFIED, but no human-approval state is ever fabricated.
+type TrustLevel = "SOURCE_VERIFIED" | "AI_DRAFT" | "REGEX_DRAFT";
+type RequestedTrust = "REVIEWED" | TrustLevel;
 
 type PlanBExpert = {
   fullName?: string;
@@ -122,7 +132,7 @@ type PlanBPayload = {
   schemaVersion?: string;
   sourceDocuments?: PlanBSourceDocument[];
   companyProfile?: PlanBCompanyProfile;
-  importPolicy?: { trustLevel?: TrustLevel; reviewNotes?: string; requireRawText?: boolean };
+  importPolicy?: { trustLevel?: RequestedTrust; reviewNotes?: string; requireRawText?: boolean };
   experts?: PlanBExpert[];
   projects?: PlanBProject[];
   legalRecords?: PlanBLegalRecord[];
@@ -198,7 +208,10 @@ const planBPayloadSchema = z.object({
     knowledgeMode: z.string().nullable().optional(),
   }).passthrough().optional(),
   importPolicy: z.object({
-    trustLevel: z.enum(["REVIEWED", "AI_DRAFT", "REGEX_DRAFT"]).optional(),
+    // Accepts REVIEWED for backward compatibility with existing callers,
+    // but the route refuses to persist REVIEWED. See requestedTrust() and
+    // the SOURCE_VERIFIED / AI_DRAFT decision in each upsert below.
+    trustLevel: z.enum(["REVIEWED", "SOURCE_VERIFIED", "AI_DRAFT", "REGEX_DRAFT"]).optional(),
     reviewNotes: z.string().optional(),
     requireRawText: z.boolean().optional(),
   }).optional(),
@@ -277,9 +290,64 @@ function normalizeDocumentCategory(doc: PlanBSourceDocument): string {
   return "OTHER";
 }
 
-function requestedTrust(payload: PlanBPayload): TrustLevel {
+function requestedTrust(payload: PlanBPayload): RequestedTrust {
   const requested = payload.importPolicy?.trustLevel;
-  return requested === "AI_DRAFT" || requested === "REGEX_DRAFT" || requested === "REVIEWED" ? requested : "REVIEWED";
+  return requested === "AI_DRAFT" || requested === "REGEX_DRAFT" || requested === "REVIEWED" || requested === "SOURCE_VERIFIED"
+    ? requested
+    : "AI_DRAFT";
+}
+
+// Map a caller-requested trust level to the verification method
+// buildSourceVerificationProvenance expects. REVIEWED is treated as
+// AI_DRAFT here — Plan B import refuses to persist human-approval state.
+function verificationMethodForRequest(requested: RequestedTrust): "AI" | "DETERMINISTIC" | "HYBRID" {
+  if (requested === "AI_DRAFT" || requested === "REVIEWED") return "AI";
+  if (requested === "REGEX_DRAFT") return "DETERMINISTIC";
+  return "HYBRID";
+}
+
+type PlanBTrustDecision =
+  | {
+      ok: true;
+      trustLevel: "SOURCE_VERIFIED";
+      reviewNotes: string;
+    }
+  | {
+      ok: false;
+      trustLevel: "AI_DRAFT";
+      reviewNotes: string;
+      code: string;
+    };
+
+// Run the same source-verification gate the automatic Company Vault
+// verifier (lib/company-auto-verification.ts) uses, producing a
+// SOURCE_VERIFIED decision with null reviewer identity when stored bytes
+// contain the claimed field values, or an AI_DRAFT fallback otherwise.
+// Plan B import never persists REVIEWED and never writes
+// reviewedBy/reviewedAt — only the machine-verification provenance
+// payload in `reviewNotes` when verification succeeds.
+function decidePlanBTrust(input: {
+  requested: RequestedTrust;
+  recordType: "EXPERT" | "PROJECT" | "LEGAL" | "FINANCIAL" | "COMPLIANCE";
+  sourceDocument: ReviewSourceDocument | null;
+  fields: ReturnType<typeof expertReviewFields> | ReturnType<typeof projectReviewFields> | ReturnType<typeof legalReviewFields> | ReturnType<typeof financialReviewFields> | ReturnType<typeof complianceReviewFields>;
+  fallbackNotes: string;
+}): PlanBTrustDecision {
+  const provenance = buildSourceVerificationProvenance({
+    recordType: input.recordType,
+    sourceDocument: input.sourceDocument,
+    fields: input.fields,
+    verificationMethod: verificationMethodForRequest(input.requested),
+  });
+  if (provenance.ok) {
+    return { ok: true, trustLevel: "SOURCE_VERIFIED", reviewNotes: provenance.serialized };
+  }
+  return {
+    ok: false,
+    trustLevel: "AI_DRAFT",
+    reviewNotes: input.fallbackNotes,
+    code: provenance.code,
+  };
 }
 
 function reviewNotes(payload: PlanBPayload): string {
@@ -316,7 +384,7 @@ function sourceLine(item: { sourceDocument?: string; sourcePages?: { start?: num
 
 type PlanBRecordTrustContext = {
   documentByFileName: Map<string, ReviewSourceDocument>;
-  importTrust: TrustLevel;
+  importTrust: RequestedTrust;
   userId: string;
   now: Date;
   notes: string;
@@ -344,26 +412,17 @@ async function upsertLegalRecord(db: PlanBDb, companyId: string, record: PlanBLe
   const existing = await db.legalRecord.findFirst({ where: { companyId, title, recordType }, select: { id: true } });
 
   const linkedSourceDoc = record.sourceDocument ? ctx.documentByFileName.get(key(clean(record.sourceDocument))) ?? null : null;
-  let effectiveTrust: TrustLevel = ctx.importTrust;
-  let effectiveReviewNotes = ctx.notes;
-  let evidenceDowngraded = 0;
-  let warning: string | null = null;
-  if (ctx.importTrust === "REVIEWED") {
-    const provenance = buildReviewProvenance({
-      recordType: "LEGAL",
-      sourceDocument: linkedSourceDoc,
-      fields: legalReviewFields({ recordType, title, authority, referenceNumber, issueDate, expiryDate }),
-      reviewerId: ctx.userId,
-      reviewedAt: ctx.now,
-    });
-    if (provenance.ok) {
-      effectiveReviewNotes = provenance.serialized;
-    } else {
-      effectiveTrust = "AI_DRAFT";
-      evidenceDowngraded = 1;
-      warning = `Legal record "${title}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`;
-    }
-  }
+  const decision = decidePlanBTrust({
+    requested: ctx.importTrust,
+    recordType: "LEGAL",
+    sourceDocument: linkedSourceDoc,
+    fields: legalReviewFields({ recordType, title, authority, referenceNumber, issueDate, expiryDate }),
+    fallbackNotes: ctx.notes,
+  });
+  const effectiveTrust: TrustLevel = decision.trustLevel;
+  const effectiveReviewNotes = decision.reviewNotes;
+  const evidenceDowngraded = decision.ok ? 0 : 1;
+  const warning: string | null = decision.ok ? null : `Legal record "${title}" could not be source-verified against stored bytes (${decision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`;
 
   const data = {
     recordType,
@@ -376,9 +435,11 @@ async function upsertLegalRecord(db: PlanBDb, companyId: string, record: PlanBLe
     metadata: JSON.stringify(record.metadata ?? {}),
     sourceDocumentId: linkedSourceDoc?.id ?? null,
     trustLevel: effectiveTrust,
-    reviewedBy: effectiveTrust === "REVIEWED" ? ctx.userId : null,
-    reviewedAt: effectiveTrust === "REVIEWED" ? ctx.now : null,
-    reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : ctx.notes,
+    // Plan B never persists reviewer identity. SOURCE_VERIFIED carries
+    // only the machine-verification provenance payload in reviewNotes.
+    reviewedBy: null,
+    reviewedAt: null,
+    reviewNotes: effectiveReviewNotes,
   };
   if (existing) {
     await db.legalRecord.update({ where: { id: existing.id }, data });
@@ -398,26 +459,17 @@ async function upsertFinancialRecord(db: PlanBDb, companyId: string, record: Pla
   const existing = await db.financialRecord.findFirst({ where: { companyId, recordType, fiscalYear }, select: { id: true } });
 
   const linkedSourceDoc = record.sourceDocument ? ctx.documentByFileName.get(key(clean(record.sourceDocument))) ?? null : null;
-  let effectiveTrust: TrustLevel = ctx.importTrust;
-  let effectiveReviewNotes = ctx.notes;
-  let evidenceDowngraded = 0;
-  let warning: string | null = null;
-  if (ctx.importTrust === "REVIEWED") {
-    const provenance = buildReviewProvenance({
-      recordType: "FINANCIAL",
-      sourceDocument: linkedSourceDoc,
-      fields: financialReviewFields({ fiscalYear, recordType, currency, amount, notes: notesText }),
-      reviewerId: ctx.userId,
-      reviewedAt: ctx.now,
-    });
-    if (provenance.ok) {
-      effectiveReviewNotes = provenance.serialized;
-    } else {
-      effectiveTrust = "AI_DRAFT";
-      evidenceDowngraded = 1;
-      warning = `Financial record "${recordType} ${fiscalYear}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`;
-    }
-  }
+  const decision = decidePlanBTrust({
+    requested: ctx.importTrust,
+    recordType: "FINANCIAL",
+    sourceDocument: linkedSourceDoc,
+    fields: financialReviewFields({ fiscalYear, recordType, currency, amount, notes: notesText }),
+    fallbackNotes: ctx.notes,
+  });
+  const effectiveTrust: TrustLevel = decision.trustLevel;
+  const effectiveReviewNotes = decision.reviewNotes;
+  const evidenceDowngraded = decision.ok ? 0 : 1;
+  const warning: string | null = decision.ok ? null : `Financial record "${recordType} ${fiscalYear}" could not be source-verified against stored bytes (${decision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`;
 
   const data = {
     fiscalYear,
@@ -428,9 +480,11 @@ async function upsertFinancialRecord(db: PlanBDb, companyId: string, record: Pla
     metadata: JSON.stringify(record.metadata ?? {}),
     sourceDocumentId: linkedSourceDoc?.id ?? null,
     trustLevel: effectiveTrust,
-    reviewedBy: effectiveTrust === "REVIEWED" ? ctx.userId : null,
-    reviewedAt: effectiveTrust === "REVIEWED" ? ctx.now : null,
-    reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : ctx.notes,
+    // Plan B never persists reviewer identity. SOURCE_VERIFIED carries
+    // only the machine-verification provenance payload in reviewNotes.
+    reviewedBy: null,
+    reviewedAt: null,
+    reviewNotes: effectiveReviewNotes,
   };
   if (existing) {
     await db.financialRecord.update({ where: { id: existing.id }, data });
@@ -450,26 +504,17 @@ async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: Pl
   const existing = await db.companyComplianceRecord.findFirst({ where: { companyId, title, complianceType }, select: { id: true } });
 
   const linkedSourceDoc = record.sourceDocument ? ctx.documentByFileName.get(key(clean(record.sourceDocument))) ?? null : null;
-  let effectiveTrust: TrustLevel = ctx.importTrust;
-  let effectiveReviewNotes = ctx.notes;
-  let evidenceDowngraded = 0;
-  let warning: string | null = null;
-  if (ctx.importTrust === "REVIEWED") {
-    const provenance = buildReviewProvenance({
-      recordType: "COMPLIANCE",
-      sourceDocument: linkedSourceDoc,
-      fields: complianceReviewFields({ complianceType, title, referenceNumber, expiryDate }),
-      reviewerId: ctx.userId,
-      reviewedAt: ctx.now,
-    });
-    if (provenance.ok) {
-      effectiveReviewNotes = provenance.serialized;
-    } else {
-      effectiveTrust = "AI_DRAFT";
-      evidenceDowngraded = 1;
-      warning = `Compliance record "${title}" requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`;
-    }
-  }
+  const decision = decidePlanBTrust({
+    requested: ctx.importTrust,
+    recordType: "COMPLIANCE",
+    sourceDocument: linkedSourceDoc,
+    fields: complianceReviewFields({ complianceType, title, referenceNumber, expiryDate }),
+    fallbackNotes: ctx.notes,
+  });
+  const effectiveTrust: TrustLevel = decision.trustLevel;
+  const effectiveReviewNotes = decision.reviewNotes;
+  const evidenceDowngraded = decision.ok ? 0 : 1;
+  const warning: string | null = decision.ok ? null : `Compliance record "${title}" could not be source-verified against stored bytes (${decision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`;
 
   const data = {
     complianceType,
@@ -481,9 +526,11 @@ async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: Pl
     metadata: JSON.stringify(record.metadata ?? {}),
     sourceDocumentId: linkedSourceDoc?.id ?? null,
     trustLevel: effectiveTrust,
-    reviewedBy: effectiveTrust === "REVIEWED" ? ctx.userId : null,
-    reviewedAt: effectiveTrust === "REVIEWED" ? ctx.now : null,
-    reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : ctx.notes,
+    // Plan B never persists reviewer identity. SOURCE_VERIFIED carries
+    // only the machine-verification provenance payload in reviewNotes.
+    reviewedBy: null,
+    reviewedAt: null,
+    reviewNotes: effectiveReviewNotes,
   };
   if (existing) {
     await db.companyComplianceRecord.update({ where: { id: existing.id }, data });
@@ -728,23 +775,18 @@ export async function POST(req: Request) {
       const title = clean(expert.title) || null;
       const yearsExperience = typeof expert.yearsExperience === "number" ? expert.yearsExperience : null;
       const linkedSourceDoc = expert.sourceDocument ? documentByFileName.get(key(clean(expert.sourceDocument))) ?? null : null;
-      let effectiveTrust: TrustLevel = importTrust;
-      let effectiveReviewNotes = notes;
-      if (importTrust === "REVIEWED") {
-        const provenance = buildReviewProvenance({
-          recordType: "EXPERT",
-          sourceDocument: linkedSourceDoc,
-          fields: expertReviewFields({ fullName, title, yearsExperience, disciplines, sectors, certifications }),
-          reviewerId: userId,
-          reviewedAt: now,
-        });
-        if (provenance.ok) {
-          effectiveReviewNotes = provenance.serialized;
-        } else {
-          effectiveTrust = "AI_DRAFT";
-          evidenceDowngraded += 1;
-          warnings.push(`Expert ${fullName} requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`);
-        }
+      const expertDecision = decidePlanBTrust({
+        requested: importTrust,
+        recordType: "EXPERT",
+        sourceDocument: linkedSourceDoc,
+        fields: expertReviewFields({ fullName, title, yearsExperience, disciplines, sectors, certifications }),
+        fallbackNotes: notes,
+      });
+      const effectiveTrust: TrustLevel = expertDecision.trustLevel;
+      const effectiveReviewNotes = expertDecision.reviewNotes;
+      if (!expertDecision.ok) {
+        evidenceDowngraded += 1;
+        warnings.push(`Expert ${fullName} could not be source-verified against stored bytes (${expertDecision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`);
       }
       const data = {
         fullName,
@@ -758,9 +800,11 @@ export async function POST(req: Request) {
         profile: profile || null,
         sourceDocumentId: linkedSourceDoc?.id ?? null,
         trustLevel: effectiveTrust,
-        reviewedBy: effectiveTrust === "REVIEWED" ? userId : null,
-        reviewedAt: effectiveTrust === "REVIEWED" ? now : null,
-        reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : notes,
+        // Plan B never persists reviewer identity. SOURCE_VERIFIED carries
+        // only the machine-verification provenance payload in reviewNotes.
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewNotes: effectiveReviewNotes,
       };
       const existing = expertMap.get(key(fullName));
       if (existing) {
@@ -786,23 +830,18 @@ export async function POST(req: Request) {
       const sector = clean(project.sector || project.sectors?.[0]) || null;
       const serviceAreasJson = arr(serviceAreas);
       const linkedSourceDoc = project.sourceDocument ? documentByFileName.get(key(clean(project.sourceDocument))) ?? null : null;
-      let effectiveTrust: TrustLevel = importTrust;
-      let effectiveReviewNotes = notes;
-      if (importTrust === "REVIEWED") {
-        const provenance = buildReviewProvenance({
-          recordType: "PROJECT",
-          sourceDocument: linkedSourceDoc,
-          fields: projectReviewFields({ name, clientName, country, sector, serviceAreas: serviceAreasJson }),
-          reviewerId: userId,
-          reviewedAt: now,
-        });
-        if (provenance.ok) {
-          effectiveReviewNotes = provenance.serialized;
-        } else {
-          effectiveTrust = "AI_DRAFT";
-          evidenceDowngraded += 1;
-          warnings.push(`Project ${name} requested REVIEWED but lacks verifiable stored source evidence (${provenance.code}) — imported as AI_DRAFT instead. Upload the source document it came from so the Engine can source-verify it automatically.`);
-        }
+      const projectDecision = decidePlanBTrust({
+        requested: importTrust,
+        recordType: "PROJECT",
+        sourceDocument: linkedSourceDoc,
+        fields: projectReviewFields({ name, clientName, country, sector, serviceAreas: serviceAreasJson }),
+        fallbackNotes: notes,
+      });
+      const effectiveTrust: TrustLevel = projectDecision.trustLevel;
+      const effectiveReviewNotes = projectDecision.reviewNotes;
+      if (!projectDecision.ok) {
+        evidenceDowngraded += 1;
+        warnings.push(`Project ${name} could not be source-verified against stored bytes (${projectDecision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`);
       }
       const data = {
         name,
@@ -813,9 +852,11 @@ export async function POST(req: Request) {
         summary: summary || null,
         sourceDocumentId: linkedSourceDoc?.id ?? null,
         trustLevel: effectiveTrust,
-        reviewedBy: effectiveTrust === "REVIEWED" ? userId : null,
-        reviewedAt: effectiveTrust === "REVIEWED" ? now : null,
-        reviewNotes: effectiveTrust === "REVIEWED" ? effectiveReviewNotes : notes,
+        // Plan B never persists reviewer identity. SOURCE_VERIFIED carries
+        // only the machine-verification provenance payload in reviewNotes.
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewNotes: effectiveReviewNotes,
       };
       const existing = projectMap.get(key(name));
       if (existing) {
@@ -861,12 +902,18 @@ export async function POST(req: Request) {
       success: true,
       schemaVersion: payload.schemaVersion ?? null,
       sourceDocuments: sourceDocuments.map((d) => ({ fileName: d.fileName, type: d.type, category: normalizeDocumentCategory(d) })),
-      trustLevel: importTrust,
-      // Individual records requesting REVIEWED without verifiable stored
-      // source evidence (a real sourceDocument match + buildReviewProvenance
-      // quote-containment check) are silently downgraded to AI_DRAFT rather
-      // than trusting the caller's self-declared trustLevel — see the
-      // per-record warnings for which ones were downgraded and why.
+      // Plan B import never persists REVIEWED. The reported `requestedTrust`
+      // is the caller's declared value (REVIEWED is accepted for backward
+      // compatibility but treated as AI_DRAFT internally). The
+      // `persistedTrustRange` field names the only trust levels any record
+      // can leave the route with: SOURCE_VERIFIED (when stored bytes verify)
+      // or AI_DRAFT (when they do not).
+      requestedTrust: importTrust,
+      persistedTrustRange: ["SOURCE_VERIFIED", "AI_DRAFT"] as const,
+      // Individual records whose stored bytes could not be source-verified
+      // are persisted as AI_DRAFT; the next autoVerifyCompanyKnowledge pass
+      // re-decides. See per-record warnings for which ones were downgraded
+      // and why.
       evidenceDowngraded,
       requireRawText,
       enforceExpectedCounts,

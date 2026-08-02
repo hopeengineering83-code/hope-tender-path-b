@@ -1,32 +1,28 @@
-// Plan-B bulk import used to set trustLevel: "REVIEWED" (including by
-// DEFAULT when importPolicy.trustLevel was omitted) purely from the
-// caller's self-declared value, with reviewedBy/reviewedAt stamped
-// unconditionally. That bypassed the same buildReviewProvenance evidence
-// gate every other path to "REVIEWED" enforces (app/api/company/experts/[id]
-// and .../projects/[id]'s review actions) — no sourceDocumentId link was
-// ever set, no quote-containment check ever ran, and downstream generation
-// (lib/engine/generate-elite.ts) trusts trustLevel === "REVIEWED" alone. A
-// caller could mark fabricated records "REVIEWED" and have them used
-// directly as evidence in a generated, submitted proposal.
+// Plan B import: bulk import never persists REVIEWED, never writes
+// reviewedBy/reviewedAt, and never accepts a caller-declared trust of
+// REVIEWED. Stored bytes that pass the same source-verification gate
+// the automatic Company Vault verifier uses (buildSourceVerificationProvenance,
+// the same function lib/company-auto-verification.ts calls) promote the
+// record to SOURCE_VERIFIED with null reviewer identity; anything else
+// stays at AI_DRAFT so the next autoVerifyCompanyKnowledge pass
+// re-decides. A caller that still sends `trustLevel: "REVIEWED"` is
+// silently treated as if it had sent `AI_DRAFT` — the evidence-gate
+// runs and may upgrade to SOURCE_VERIFIED, but no human-approval state
+// is ever fabricated.
 //
-// The fix wires the exact same buildReviewProvenance() gate into
-// app/api/company/plan-b-import/route.ts: a record can only persist as
-// REVIEWED when it links to a real, persisted CompanyDocument (built from
-// the payload's sourceDocuments) whose extractedText genuinely contains the
-// record's claimed field values. Otherwise it is downgraded to AI_DRAFT and
-// a warning is returned, regardless of what the caller requested.
-//
-// This test proves the underlying evidence contract the route now depends
-// on — the same buildReviewProvenance/expertReviewFields/projectReviewFields
-// functions, called with the same field shapes the route constructs — since
-// exercising the full authenticated HTTP route requires Next.js
-// request/session plumbing this suite doesn't otherwise mock.
+// This test proves the underlying evidence contract the route now
+// depends on — the same buildSourceVerificationProvenance /
+// expertReviewFields / projectReviewFields / legalReviewFields /
+// financialReviewFields / complianceReviewFields functions, called with
+// the same field shapes the route constructs — since exercising the
+// full authenticated HTTP route requires Next.js request/session
+// plumbing this suite doesn't otherwise mock.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import {
-  buildReviewProvenance,
+  buildSourceVerificationProvenance,
   expertReviewFields,
   projectReviewFields,
   legalReviewFields,
@@ -37,28 +33,58 @@ import {
 
 const route = readFileSync("app/api/company/plan-b-import/route.ts", "utf8");
 
-describe("plan-b-import wires the real review-evidence gate (no more self-declared REVIEWED)", () => {
-  it("imports and calls buildReviewProvenance before trusting REVIEWED", () => {
-    assert.match(route, /import \{[^}]*buildReviewProvenance[^}]*\} from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/vault-review-provenance"/);
-    assert.match(route, /buildReviewProvenance\(\{/);
+describe("plan-b-import refuses to persist REVIEWED and routes through source verification", () => {
+  it("imports buildSourceVerificationProvenance (not buildReviewProvenance) from vault-review-provenance", () => {
+    assert.match(route, /import \{[^}]*buildSourceVerificationProvenance[^}]*\} from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/vault-review-provenance"/);
+    assert.doesNotMatch(route, /buildReviewProvenance\(/);
   });
 
-  it("downgrades to AI_DRAFT and never blindly trusts a self-declared REVIEWED", () => {
-    const idx = route.indexOf('if (importTrust === "REVIEWED")');
-    assert.ok(idx > -1, "the evidence-gate branch must exist");
-    const region = route.slice(idx, idx + 700);
-    assert.match(region, /provenance\.ok/);
-    assert.match(region, /effectiveTrust = "AI_DRAFT"/);
-    assert.match(region, /evidenceDowngraded \+= 1/);
+  it("default requested trust is AI_DRAFT, not REVIEWED", () => {
+    // The default branch of requestedTrust() returns "AI_DRAFT".
+    const idx = route.indexOf("function requestedTrust(");
+    assert.ok(idx > -1, "requestedTrust must exist");
+    const region = route.slice(idx, idx + 400);
+    assert.match(region, /return requested === "AI_DRAFT" \|\| requested === "REGEX_DRAFT" \|\| requested === "REVIEWED" \|\| requested === "SOURCE_VERIFIED"/);
+    assert.match(region, /: "AI_DRAFT"/);
+  });
+
+  it("all five upsert sites write reviewedBy: null and reviewedAt: null (no fabricated reviewer)", () => {
+    // There must be no remaining `reviewedBy: ... ? userId : null` or
+    // `reviewedAt: ... ? now : null` patterns anywhere in the route.
+    assert.doesNotMatch(route, /reviewedBy:\s*effectiveTrust\s*===\s*"REVIEWED"\s*\?\s*\w+/);
+    assert.doesNotMatch(route, /reviewedAt:\s*effectiveTrust\s*===\s*"REVIEWED"\s*\?\s*\w+/);
+    // The route must NOT contain any literal persistence of trustLevel: "REVIEWED"
+    // as data (a `trustLevel: "REVIEWED"` token in a data: { ... } object).
+    // Comments mentioning "REVIEWED" are fine — only the persisted value matters.
+    // Strip // comments and /* */ comments before scanning.
+    const stripped = route
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "");
+    assert.doesNotMatch(stripped, /trustLevel:\s*"REVIEWED"/);
+  });
+
+  it("uses decidePlanBTrust helper that returns SOURCE_VERIFIED or AI_DRAFT, never REVIEWED", () => {
+    const idx = route.indexOf("function decidePlanBTrust(");
+    assert.ok(idx > -1, "decidePlanBTrust must exist");
+    const region = route.slice(idx, idx + 1200);
+    assert.match(region, /buildSourceVerificationProvenance\(/);
+    assert.match(region, /trustLevel: "SOURCE_VERIFIED"/);
+    assert.match(region, /trustLevel: "AI_DRAFT"/);
   });
 
   it("links the created record to a real persisted CompanyDocument via sourceDocumentId", () => {
     assert.match(route, /sourceDocumentId: linkedSourceDoc\?\.id \?\? null/);
     assert.match(route, /documentByFileName\.set\(/);
   });
+
+  it("response reports requestedTrust and persistedTrustRange (no trustLevel field that could read REVIEWED)", () => {
+    assert.match(route, /requestedTrust: importTrust/);
+    assert.match(route, /persistedTrustRange:\s*\["SOURCE_VERIFIED", "AI_DRAFT"\]/);
+    assert.doesNotMatch(route, /\n\s*trustLevel:\s*importTrust,/);
+  });
 });
 
-describe("buildReviewProvenance evidence contract (as wired by plan-b-import)", () => {
+describe("buildSourceVerificationProvenance evidence contract (as wired by plan-b-import)", () => {
   const goodDoc: ReviewSourceDocument = {
     id: "doc-1",
     companyId: "company-1",
@@ -74,7 +100,7 @@ describe("buildReviewProvenance evidence contract (as wired by plan-b-import)", 
   };
 
   it("passes when the expert's claimed fields genuinely appear in the linked document's text", () => {
-    const provenance = buildReviewProvenance({
+    const provenance = buildSourceVerificationProvenance({
       recordType: "EXPERT",
       sourceDocument: goodDoc,
       fields: expertReviewFields({
@@ -85,14 +111,13 @@ describe("buildReviewProvenance evidence contract (as wired by plan-b-import)", 
         sectors: JSON.stringify([]),
         certifications: JSON.stringify([]),
       }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     });
     assert.equal(provenance.ok, true);
   });
 
   it("fails closed when there is no linked source document at all (the old default-REVIEWED path)", () => {
-    const provenance = buildReviewProvenance({
+    const provenance = buildSourceVerificationProvenance({
       recordType: "EXPERT",
       sourceDocument: null,
       fields: expertReviewFields({
@@ -103,14 +128,13 @@ describe("buildReviewProvenance evidence contract (as wired by plan-b-import)", 
         sectors: JSON.stringify([]),
         certifications: JSON.stringify([]),
       }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     });
     assert.equal(provenance.ok, false);
   });
 
   it("fails closed when the claimed fields do not actually appear in the linked document's text", () => {
-    const provenance = buildReviewProvenance({
+    const provenance = buildSourceVerificationProvenance({
       recordType: "EXPERT",
       sourceDocument: goodDoc,
       fields: expertReviewFields({
@@ -121,8 +145,7 @@ describe("buildReviewProvenance evidence contract (as wired by plan-b-import)", 
         sectors: JSON.stringify([]),
         certifications: JSON.stringify([]),
       }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     });
     assert.equal(provenance.ok, false);
   });
@@ -136,7 +159,7 @@ describe("buildReviewProvenance evidence contract (as wired by plan-b-import)", 
       contentByteLength: 300,
       integrityStatus: "VERIFIED",
     };
-    const ok = buildReviewProvenance({
+    const ok = buildSourceVerificationProvenance({
       recordType: "PROJECT",
       sourceDocument: projectDoc,
       fields: projectReviewFields({
@@ -146,12 +169,11 @@ describe("buildReviewProvenance evidence contract (as wired by plan-b-import)", 
         sector: null,
         serviceAreas: JSON.stringify([]),
       }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     });
     assert.equal(ok.ok, true);
 
-    const fabricated = buildReviewProvenance({
+    const fabricated = buildSourceVerificationProvenance({
       recordType: "PROJECT",
       sourceDocument: projectDoc,
       fields: projectReviewFields({
@@ -161,33 +183,31 @@ describe("buildReviewProvenance evidence contract (as wired by plan-b-import)", 
         sector: null,
         serviceAreas: JSON.stringify([]),
       }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     });
     assert.equal(fabricated.ok, false);
   });
 });
 
-// Legal/Financial/Compliance records previously had NO trustLevel concept at
-// all — every Plan-B-imported record was fed directly into generation
-// evidence regardless of the caller's importPolicy. This closes the same
-// class of bug the Expert/Project fix above closed, for these three types.
-describe("plan-b-import wires the same evidence gate for legal/financial/compliance records", () => {
-  it("imports legalReviewFields/financialReviewFields/complianceReviewFields and calls buildReviewProvenance for each type", () => {
+// Legal/Financial/Compliance records get the same source-verification
+// gate as Expert/Project — same evidence contract, same fail-closed
+// behavior, same refusal to persist REVIEWED.
+describe("plan-b-import wires the same source-verification gate for legal/financial/compliance records", () => {
+  it("imports legalReviewFields/financialReviewFields/complianceReviewFields and calls decidePlanBTrust for each type", () => {
     assert.match(route, /import \{[^}]*legalReviewFields[^}]*\} from "\.\.\/\.\.\/\.\.\/\.\.\/lib\/vault-review-provenance"/);
     assert.match(route, /recordType: "LEGAL"/);
     assert.match(route, /recordType: "FINANCIAL"/);
     assert.match(route, /recordType: "COMPLIANCE"/);
   });
 
-  it("upsertLegalRecord/upsertFinancialRecord/upsertComplianceRecord each downgrade to AI_DRAFT and never blindly trust a self-declared REVIEWED", () => {
+  it("upsertLegalRecord/upsertFinancialRecord/upsertComplianceRecord each call decidePlanBTrust and persist reviewedBy: null, reviewedAt: null", () => {
     for (const fn of ["upsertLegalRecord", "upsertFinancialRecord", "upsertComplianceRecord"]) {
       const idx = route.indexOf(`async function ${fn}(`);
       assert.ok(idx > -1, `${fn} must exist`);
       const region = route.slice(idx, idx + 2400);
-      assert.match(region, /provenance\.ok/);
-      assert.match(region, /effectiveTrust = "AI_DRAFT"/);
-      assert.match(region, /evidenceDowngraded = 1/);
+      assert.match(region, /decidePlanBTrust\(/);
+      assert.match(region, /reviewedBy: null/);
+      assert.match(region, /reviewedAt: null/);
       assert.match(region, /sourceDocumentId: linkedSourceDoc\?\.id \?\? null/);
     }
   });
@@ -199,7 +219,7 @@ describe("plan-b-import wires the same evidence gate for legal/financial/complia
     assert.match(route, /upsertComplianceRecord\(tx, company\.id, record, recordTrustCtx\)/);
   });
 
-  it("buildReviewProvenance passes for a genuinely matching legal record and fails closed for a fabricated one", () => {
+  it("buildSourceVerificationProvenance passes for a genuinely matching legal record and fails closed for a fabricated one", () => {
     const doc: ReviewSourceDocument = {
       id: "doc-legal-1",
       companyId: "company-1",
@@ -208,21 +228,19 @@ describe("plan-b-import wires the same evidence gate for legal/financial/complia
       contentByteLength: 200,
       integrityStatus: "VERIFIED",
     };
-    const ok = buildReviewProvenance({
+    const ok = buildSourceVerificationProvenance({
       recordType: "LEGAL",
       sourceDocument: doc,
       fields: legalReviewFields({ recordType: "General Contracting License", title: "General Contracting License", referenceNumber: "BL-99101" }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     });
     assert.equal(ok.ok, true);
 
-    const fabricated = buildReviewProvenance({
+    const fabricated = buildSourceVerificationProvenance({
       recordType: "LEGAL",
       sourceDocument: doc,
       fields: legalReviewFields({ recordType: "General Contracting License", title: "A License That Does Not Exist", referenceNumber: "FAKE-000" }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     });
     assert.equal(fabricated.ok, false);
   });
@@ -236,19 +254,17 @@ describe("plan-b-import wires the same evidence gate for legal/financial/complia
       contentByteLength: 200,
       integrityStatus: "VERIFIED",
     };
-    assert.equal(buildReviewProvenance({
+    assert.equal(buildSourceVerificationProvenance({
       recordType: "FINANCIAL",
       sourceDocument: financialDoc,
       fields: financialReviewFields({ fiscalYear: 2025, recordType: "Annual Turnover Statement", currency: "ETB", amount: 5000000 }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     }).ok, true);
-    assert.equal(buildReviewProvenance({
+    assert.equal(buildSourceVerificationProvenance({
       recordType: "FINANCIAL",
       sourceDocument: financialDoc,
       fields: financialReviewFields({ fiscalYear: 2025, recordType: "Annual Turnover Statement", amount: 999 }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     }).ok, false);
 
     const complianceDoc: ReviewSourceDocument = {
@@ -259,19 +275,17 @@ describe("plan-b-import wires the same evidence gate for legal/financial/complia
       contentByteLength: 200,
       integrityStatus: "VERIFIED",
     };
-    assert.equal(buildReviewProvenance({
+    assert.equal(buildSourceVerificationProvenance({
       recordType: "COMPLIANCE",
       sourceDocument: complianceDoc,
       fields: complianceReviewFields({ complianceType: "ISO", title: "ISO 9001:2015 Quality Management Certificate", referenceNumber: "ISO-12345" }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     }).ok, true);
-    assert.equal(buildReviewProvenance({
+    assert.equal(buildSourceVerificationProvenance({
       recordType: "COMPLIANCE",
       sourceDocument: complianceDoc,
       fields: complianceReviewFields({ complianceType: "ISO", title: "A Certificate Never Issued" }),
-      reviewerId: "user-1",
-      reviewedAt: new Date(),
+      verificationMethod: "AI",
     }).ok, false);
   });
 });
