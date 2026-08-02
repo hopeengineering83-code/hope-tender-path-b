@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-02 15:44 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; re-fetched exact starting head `e8ff72ac23eaebb2e1ea37ac8b4a36e1a39a36e2` before editing.
+- **Scope / files:** repaired the only failing CI assertion left by the canonical Requirements and Evidence change. `tests/requirement-coverage-safe-errors-current.test.ts` now verifies the intentional `flatMap` path and its rejection of malformed automatic and null-reference rows instead of requiring the superseded `map` implementation. No application or release-gate behavior changed in this follow-up.
+- **Tests:** focused requirement/evidence suite passed (37/37); `npx prisma generate`, typecheck, lint, and the release-integrity audit passed. Full `RUN_DB_INTEGRATION=true npm test` could not complete because the configured Neon PostgreSQL host was unreachable; the first DB hook failed in `tests/ai-job-concurrency.test.ts` with Prisma connectivity, not an assertion failure. Production build reached the fail-closed `next.config.js` preflight and stopped because this local environment has no supported AI-provider key.
+- **CI / deployment:** inspected exact-head CI; both duplicate primary jobs failed only on the stale structural assertion corrected here. Dependency checks and Vercel capture/comment checks were green. No deployment was requested or created.
+- **Risks / assumptions:** provider-backed preview execution, Vercel runtime-log inspection, full PostgreSQL, build, and Playwright remain to be re-run by CI or an environment with database/preview credentials. Fail-closed behavior is unchanged.
+- **Next action:** push this commit to the existing PR head and let PR #1175 CI re-run; keep the PR draft and unmerged.
+- **Merge status:** not reviewed; draft and unmerged.
+
 ### 2026-08-02 15:05 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; began from exact re-fetched head `c5a7a654228a378ec6953b45c111317fcf2945f6`.

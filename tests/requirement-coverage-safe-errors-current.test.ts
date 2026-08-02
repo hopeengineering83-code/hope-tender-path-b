@@ -36,7 +36,9 @@ describe("requirement-coverage safe response boundary", () => {
   });
 
   it("reports persisted automatic evidence without becoming a second writer", () => {
-    assert.match(source, /requirement\.complianceMatrixRows\.map/);
+    assert.match(source, /requirement\.complianceMatrixRows\.flatMap/);
+    assert.match(source, /row\.evidenceSource\.startsWith\("AUTO_"\) && !automatic/);
+    assert.match(source, /!automatic && !row\.evidenceReference\?\.trim\(\)/);
     assert.match(source, /parseAutomaticRequirementEvidence\(row\.notes\)/);
     assert.match(source, /VAULT_AUTO_LINK/);
     assert.match(source, /autoLinked: Boolean\(automatic\)/);
