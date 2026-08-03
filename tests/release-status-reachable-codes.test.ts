@@ -7,18 +7,24 @@
 //
 // They had come apart. getCanonicalReleaseDecision passes
 // getCanonicalTenderReadiness().blockers, which is
-// readiness.fullProposalBlockers plus nine hardcoded automatic codes. Against
-// that, all four GENUINE_SOURCE_BLOCKER_CODES were unreachable:
+// readiness.fullProposalBlockers plus nine hardcoded automatic codes. Three of
+// the four GENUINE_SOURCE_BLOCKER_CODES cannot arrive there at all:
 //
 //   SOURCE_REQUIRED_FOR_APPROVAL  — a Vault approve-route response code
 //   MISSING_TENDER_SOURCE_FORM    — submission-plan completeness
 //   OFFICIAL_BYTES_LOST           — admin repair route
-//   HARD_COMPLIANCE_BLOCKER       — pushed to `blockers`, and canonical maps
-//                                   `fullProposalBlockers`, a different array
 //
-// So GENUINE_SOURCE_BLOCKED could not be produced, and a tender whose document
-// extraction came back corrupted reported "processing automatically" forever
-// while waiting for a re-upload the app never asked for.
+// HARD_COMPLIANCE_BLOCKER does arrive, via a second pass in
+// tender-generation-readiness.ts that inherits entries from its `blockers`
+// array into fullProposalBlockers by topic. That merge is easy to miss — the
+// first version of the derivation below did miss it, and so left both
+// HARD_COMPLIANCE_BLOCKER and COMPANY_INGESTION_NOT_READY out of the reachable
+// set it claimed to compute.
+//
+// Either way the practical effect was the same: FULL_PROPOSAL_EXTRACTION_CORRUPTED
+// was reachable and classified as automatic work, so a tender whose document
+// extraction came back corrupted reported "processing automatically" forever,
+// waiting for a re-upload the app never asked for.
 //
 // A Set of strings that matches nothing fails silently and looks correct in
 // review, so reachability is asserted here rather than assumed.
@@ -42,9 +48,13 @@ function reachableBlockerCodes(): Set<string> {
   // The literal codes canonical appends itself, e.g. ["ENGINE_NOT_COMPLETED"].
   const inline = [...canonical.matchAll(/\?\s*\["([A-Z][A-Z_]+)"\]/g)].map((m) => m[1]);
 
-  // fullProposalBlockers entries are the other half of the array.
-  const block = generation.slice(generation.indexOf("const fullProposalBlockers"));
-  const pushed = [...block.matchAll(/code:\s*"([A-Z][A-Z_]+)"/g)].map((m) => m[1]);
+  // Both producer arrays count. tender-generation-readiness builds
+  // fullProposalBlockers and then, in a second pass, inherits entries from its
+  // `blockers` array by topic — so a code pushed to EITHER array can reach the
+  // classifier. Scanning only from `const fullProposalBlockers` missed that
+  // merge and left COMPANY_INGESTION_NOT_READY and HARD_COMPLIANCE_BLOCKER out
+  // of the reachable set.
+  const pushed = [...generation.matchAll(/code:\s*"([A-Z][A-Z_]+)"/g)].map((m) => m[1]);
 
   return new Set([...inline, ...pushed]);
 }
@@ -52,11 +62,15 @@ function reachableBlockerCodes(): Set<string> {
 const REACHABLE = reachableBlockerCodes();
 
 describe("the reachable-code derivation is not vacuous", () => {
-  it("finds codes from both producers", () => {
+  it("covers both producer arrays, including the topic-inheritance merge", () => {
     // If either extraction silently returned nothing, every assertion below
     // would pass by default.
     assert.ok(REACHABLE.has("ENGINE_NOT_COMPLETED"), "missed canonical's inline codes");
     assert.ok(REACHABLE.has("FULL_PROPOSAL_EXTRACTION_CORRUPTED"), "missed fullProposalBlockers codes");
+    // These two arrive only through the second-pass merge from `blockers`.
+    // Scanning from `const fullProposalBlockers` onwards missed them.
+    assert.ok(REACHABLE.has("COMPANY_INGESTION_NOT_READY"), "missed the blockers-array merge");
+    assert.ok(REACHABLE.has("HARD_COMPLIANCE_BLOCKER"), "missed the blockers-array merge");
     assert.ok(REACHABLE.size >= 10, `expected a substantial set, got ${REACHABLE.size}`);
   });
 });

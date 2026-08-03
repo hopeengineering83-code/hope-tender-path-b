@@ -52,18 +52,23 @@ const SECURITY_FAILURE_CODES = new Set([
 // Genuine source blocker codes — require user action (upload/re-upload).
 // These CANNOT be resolved by the automatic workflow.
 //
-// Of the four codes originally listed here, NONE can reach this function.
+// Reachability of these codes is uneven, and worth stating precisely.
 // getCanonicalReleaseDecision passes getCanonicalTenderReadiness().blockers,
-// which is built from readiness.fullProposalBlockers plus nine hardcoded
-// automatic codes. SOURCE_REQUIRED_FOR_APPROVAL is a Vault approve-route
-// response code, MISSING_TENDER_SOURCE_FORM belongs to submission-plan
-// completeness, OFFICIAL_BYTES_LOST to the admin repair route, and
-// HARD_COMPLIANCE_BLOCKER is pushed to `blockers` in
-// tender-generation-readiness.ts — a different array from the
-// `fullProposalBlockers` canonical actually maps. They are kept because they
-// are the right answer if those paths are ever wired in; the test alongside
-// this module now asserts which codes are genuinely reachable so the list
-// cannot silently become decorative again.
+// which is readiness.fullProposalBlockers plus nine hardcoded automatic codes.
+// tender-generation-readiness.ts builds fullProposalBlockers and then, in a
+// second pass, inherits entries from its `blockers` array by topic — so codes
+// pushed to EITHER array can arrive here.
+//
+//   HARD_COMPLIANCE_BLOCKER      reachable, via that second-pass merge
+//   SOURCE_REQUIRED_FOR_APPROVAL unreachable — a Vault approve-route response
+//                                code, never a readiness blocker
+//   MISSING_TENDER_SOURCE_FORM   unreachable — submission-plan completeness
+//   OFFICIAL_BYTES_LOST          unreachable — admin repair route status
+//
+// The unreachable three are kept because they are the right classification if
+// those paths are ever wired in. The test alongside this module derives the
+// reachable set from both producers, so a blocker added to either without
+// being classified surfaces there rather than silently defaulting.
 //
 // FULL_PROPOSAL_EXTRACTION_CORRUPTED is reachable, and was classified as
 // automatic work. It is not: it fires when extraction already ran, came back
