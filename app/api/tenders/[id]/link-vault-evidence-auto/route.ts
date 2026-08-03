@@ -3,29 +3,29 @@ import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../.
 import { logAction } from "../../../../../lib/audit";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { documentHygieneIssues } from "../../../../../lib/engine/export-readiness";
-import { Document, Packer, Paragraph, TextRun } from "docx";
+import { includeVaultDocumentInPackage, INCLUDABLE_VAULT_DOCUMENT_WHERE } from "../../../../../lib/engine/vault-document-package-inclusion";
+import { getStorageAdapter } from "../../../../../lib/storage";
 
 export const dynamic = "force-dynamic";
 
 const mapCats = (s: string) => { const t = s.toLowerCase(); if (/financial|audited|bank|turnover|capacity/.test(t)) return ["FINANCIAL_STATEMENT"]; if (/legal|license|tax|vat|tin|registration|cert/.test(t)) return ["LEGAL_REGISTRATION", "CERTIFICATION"]; if (/profile|capability/.test(t)) return ["COMPANY_PROFILE"]; if (/manual|policy|quality|safeguard|compliance/.test(t)) return ["MANUAL", "COMPLIANCE_RECORD"]; if (/cv|personnel|expert/.test(t)) return ["EXPERT_CV"]; if (/project|reference|experience|contract/.test(t)) return ["PROJECT_REFERENCE", "PROJECT_CONTRACT"]; return []; };
-const usable = (d: { storagePath: string; extractedText: string | null }) => Boolean((d.storagePath ?? "").trim() || (d.extractedText ?? "").trim());
 const scoreOption = (rowName: string, category: string, fileName: string) => { let score = 0; const label = `${rowName} ${fileName}`.toLowerCase(); if (label.includes(category.toLowerCase().replace(/_/g, " "))) score += 2; if (/audited|financial|tax|vat|tin|legal|license|cv|project|reference/.test(label)) score += 1; if (rowName.toLowerCase() === fileName.toLowerCase()) score += 3; return score; };
-
-async function extractedTextDocx(title: string, text: string) { const lines = text.replace(/[\x00-\x1f\x7f]/g, " ").split(/\n+/).filter(Boolean).slice(0, 200); const buf = await Packer.toBuffer(new Document({ sections: [{ children: [new Paragraph({ children: [new TextRun({ text: title, bold: true })] }), ...lines.map((line) => new Paragraph({ text: line.slice(0, 3000) }))] }] })); return buf.toString("base64"); }
 
 /**
  * POST /api/tenders/[id]/link-vault-evidence-auto
  *
- * Auto-links the highest-scored vault evidence option to each eligible
- * generated document row in a single request. Equivalent to calling GET
- * link-vault-evidence (fetch candidates) then POST link-vault-evidence
- * (link each best option) in a loop — consolidated here so the Recovery
- * Command Center can treat it as a plain "api" action instead of custom code.
+ * Includes the highest-scored official Vault document in each eligible package
+ * row in a single request. Equivalent to calling GET link-vault-evidence
+ * (fetch candidates) then POST link-vault-evidence (include each best option)
+ * in a loop — consolidated here so the recovery action can treat it as a plain
+ * "api" action instead of custom code.
+ *
+ * ADMIN only, like the single-document route: this places unchanged official
+ * company documents into a package that goes to a client.
  */
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   let actor;
-  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  try { actor = await requireRole("ADMIN"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   const rl = rateLimit(`link-vault-auto:${actor.id}`, MUTATION_RATE_LIMIT);
@@ -57,15 +57,17 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     nextAction: "OPEN_COMPANY_READINESS",
   }, { status: 422 });
 
+  // Only documents inclusion can actually accept, filtered in the query so the
+  // base64 blobs are never loaded just to build a candidate list.
   const vault = await prisma.companyDocument.findMany({
-    where: { companyId: company.id },
-    select: { id: true, fileName: true, category: true, storagePath: true, extractedText: true, fileContent: true },
+    where: { companyId: company.id, ...INCLUDABLE_VAULT_DOCUMENT_WHERE },
+    select: { id: true, fileName: true, category: true },
   });
 
   const candidates = tender.generatedDocuments.map((row) => {
     const cats = mapCats(`${row.exactFileName ?? row.name} ${row.documentType ?? ""}`);
     const options = vault
-      .filter((v) => cats.includes(v.category) && usable(v))
+      .filter((v) => cats.includes(v.category))
       .map((v) => ({ ...v, score: scoreOption(row.exactFileName ?? row.name, v.category, v.fileName) }))
       .sort((a, b) => b.score - a.score);
     return { row, cats, options };
@@ -75,91 +77,78 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     return NextResponse.json({
       success: true,
       linked: 0,
-      partialLinked: 0,
       skipped: 0,
+      blockedReasons: [],
       message: "No reviewed evidence available in the Knowledge Vault for this tender's documents. Add expert CVs, project references, financial statements, or compliance records to the Knowledge Vault, then retry.",
       nextAction: "OPEN_COMPANY_READINESS",
     });
   }
 
-  // Idempotency: skip documents already auto-linked by this actor within the
-  // last 5 minutes to prevent duplicate documentReview records on re-submission.
-  const idempotencyWindow = new Date(Date.now() - 5 * 60 * 1000);
-  const recentAutoLinks = await prisma.documentReview.findMany({
-    where: {
-      reviewerId: actor.id,
-      documentId: { in: candidates.map((c) => c.row.id) },
-      notes: { startsWith: "Auto-linked vault evidence" },
-      createdAt: { gt: idempotencyWindow },
-    },
-    select: { documentId: true },
-  });
-  const alreadyLinkedIds = new Set(recentAutoLinks.map((r) => r.documentId));
+  // Idempotency no longer needs a time window. Inclusion is itself idempotent:
+  // re-running writes the same verified bytes and the same digest, and a row
+  // that already holds them is skipped outright. The old five-minute guard
+  // existed only to stop duplicate DocumentReview rows piling up — and those
+  // rows should never have been written in the first place, since including a
+  // file is not reviewing it.
+  const alreadyIncluded = new Set(
+    (await prisma.generatedDocument.findMany({
+      where: {
+        id: { in: candidates.map((c) => c.row.id) },
+        reviewNotes: { startsWith: "machine:vault-document-inclusion" },
+      },
+      select: { id: true },
+    })).map((doc) => doc.id),
+  );
 
   let linked = 0;
-  let partialLinked = 0;
   let skipped = 0;
+  const blockedReasons: string[] = [];
 
   for (const { row, options } of candidates) {
     const best = options[0];
     if (!best) { skipped++; continue; }
-    if (alreadyLinkedIds.has(row.id)) { skipped++; continue; }
+    if (alreadyIncluded.has(row.id)) { skipped++; continue; }
 
-    const fileContent = (best.fileContent ?? "").trim()
-      ? best.fileContent
-      : (best.extractedText ?? "").trim()
-        ? await extractedTextDocx(best.fileName, best.extractedText ?? "")
-        : row.fileContent;
-
-    const hasBytes = Boolean((fileContent ?? "").trim() || (best.storagePath ?? "").trim());
-    const hygieneIssues = documentHygieneIssues(best.extractedText ?? best.fileName, { name: row.name, exactFileName: row.exactFileName, documentType: row.documentType ?? undefined, format: row.format ?? undefined });
-    const ready = hasBytes && hygieneIssues.length === 0;
-
-    await prisma.generatedDocument.update({
-      where: { id: row.id },
-      data: {
-        fileContent,
-        storagePath: (best.storagePath ?? "") || row.storagePath,
-        generationStatus: "GENERATED",
-        validationStatus: ready ? "VALIDATED" : "PENDING",
-        reviewStatus: ready ? "READY_FOR_EXPORT" : "PENDING",
-        reviewNotes: ready
-          ? `Auto-linked Knowledge Vault evidence: ${best.fileName}`
-          : `Auto-linked Knowledge Vault evidence (${best.fileName}) but requires validation/hygiene review.`,
-      },
+    // Same inclusion authority as the single-document route: verified bytes
+    // only, copied unchanged, digests computed from what was actually written.
+    // A document that cannot be included that way is skipped with its reason
+    // rather than filled with an approximation.
+    const outcome = await includeVaultDocumentInPackage({
+      client: prisma,
+      storage: getStorageAdapter(),
+      tenderId: id,
+      userId: actor.id,
+      documentId: row.id,
+      vaultDocumentId: best.id,
     });
 
-    await prisma.documentReview.create({
-      data: {
-        documentId: row.id,
-        reviewerId: actor.id,
-        action: ready ? "READY_FOR_EXPORT" : "CHANGES_REQUESTED",
-        notes: `Auto-linked vault evidence ${best.fileName}`,
-        priorStatus: row.reviewStatus,
-        newStatus: ready ? "READY_FOR_EXPORT" : row.reviewStatus,
-      },
-    });
+    if (!outcome.included) {
+      blockedReasons.push(outcome.reason);
+      skipped++;
+      continue;
+    }
 
     await logAction({
       userId: actor.id,
       action: "VAULT_EVIDENCE_LINKED",
       entityType: "GeneratedDocument",
       entityId: row.id,
-      description: `Auto-linked vault evidence: ${best.fileName} → ${row.exactFileName ?? row.name}. Ready: ${ready}.`,
-      metadata: { tenderId: id, packageDocId: row.id, vaultDocId: best.id, vaultFileName: best.fileName, readyForExport: ready, hygieneIssues },
+      description: `Official Vault document included unchanged: ${outcome.vaultFileName} → ${row.exactFileName ?? row.name}. Awaiting validation and approval.`,
+      metadata: { tenderId: id, packageDocId: row.id, vaultDocId: outcome.vaultDocumentId, vaultFileName: outcome.vaultFileName, sha256: outcome.sha256, byteLength: outcome.byteLength },
     });
 
-    if (ready) linked++; else partialLinked++;
+    linked++;
   }
 
+  // Never say "ready for export" here. An included document is real official
+  // bytes awaiting canonical validation and an approver — claiming otherwise
+  // is the kind of confident-but-wrong status the export gate then contradicts.
   const message =
-    linked + partialLinked === 0
-      ? "Evidence suggestions created but no documents could be linked. Open Mandatory Requirement Coverage to confirm evidence."
-      : linked > 0 && partialLinked === 0
-        ? `Vault evidence linking completed — ${linked} document(s) linked and ready for export.`
-        : linked > 0
-          ? `Vault evidence linking started — ${linked} document(s) ready, ${partialLinked} require validation review.`
-          : `Evidence suggestions created — ${partialLinked} document(s) linked but require validation/hygiene review.`;
+    linked === 0
+      ? blockedReasons.length > 0
+        ? `No official Vault documents could be included: ${blockedReasons[0]}`
+        : "No official Vault documents were available to include for this tender's package rows."
+      : `${linked} official Vault document(s) included unchanged. They still need canonical validation and approval before final export.`;
 
-  return NextResponse.json({ success: true, linked, partialLinked, skipped, message });
+  return NextResponse.json({ success: true, linked, skipped, blockedReasons, message });
 }

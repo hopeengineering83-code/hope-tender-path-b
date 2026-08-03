@@ -1,14 +1,28 @@
 // Regression tests for POST /api/tenders/[id]/link-vault-evidence-auto
 //
 // Verifies (source-level):
-//   1. Route enforces role-based authorization (ADMIN, PROPOSAL_MANAGER, REVIEWER)
+//   1. Route enforces role-based authorization — ADMIN only
 //   2. Route enforces rate limiting via rateLimit()
-//   3. Route includes idempotency protection (skips recently-linked documents)
-//   4. Route creates documentReview records (one per linked document)
-//   5. Route calls logAction with VAULT_EVIDENCE_LINKED for audit trail
-//   6. Route never auto-links documents with SUPERSEDED generationStatus
-//   7. Route checks documentHygieneIssues before marking READY_FOR_EXPORT
-//   8. Response shape includes linked, partialLinked, skipped, message fields
+//   3. Route is idempotent (skips documents whose bytes it already included)
+//   4. Route calls logAction with VAULT_EVIDENCE_LINKED for audit trail
+//   5. Route never auto-links documents with SUPERSEDED generationStatus
+//   6. Route never promotes a document it included to VALIDATED/READY_FOR_EXPORT
+//   7. Response shape includes linked, skipped, blockedReasons, message fields
+//
+// Four expectations in this file were rewritten rather than kept, because what
+// they pinned was the defect:
+//
+//   - "creates documentReview record for each linked document" required a
+//     review row naming the actor with action READY_FOR_EXPORT. Including a
+//     file is not reviewing it; that row was a fabricated human record.
+//   - "checks documentHygieneIssues before marking READY_FOR_EXPORT" required
+//     a filename-and-text heuristic to stand in for canonical validation and
+//     human approval. Inclusion no longer promotes anything, so there is no
+//     promotion left to gate.
+//   - the documentReview-based idempotency window existed only to stop those
+//     fabricated rows accumulating. Inclusion is now idempotent by content.
+//   - partialLinked no longer exists: inclusion of a document either happens
+//     with verified bytes or does not happen, and nothing read the field.
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -67,24 +81,27 @@ describe("link-vault-evidence-auto — rate limiting", () => {
 });
 
 describe("link-vault-evidence-auto — idempotency", () => {
-  it("queries for recently-linked documentReview records before processing", () => {
+  it("identifies documents whose bytes it already included", () => {
     assert.ok(
-      routeSource.includes("alreadyLinkedIds") && routeSource.includes("Auto-linked vault evidence"),
-      "route must check for existing auto-link reviews within a recent window to prevent duplicate documentReview records",
+      routeSource.includes("alreadyIncluded") && routeSource.includes("machine:vault-document-inclusion"),
+      "route must recognise its own provenance marker so a re-run does not redo completed work",
     );
   });
 
-  it("skips documents already linked within the idempotency window", () => {
+  it("skips those documents instead of re-including them", () => {
     assert.ok(
-      routeSource.includes("alreadyLinkedIds.has(row.id)"),
-      "route must skip documents that already have a recent auto-link review",
+      routeSource.includes("alreadyIncluded.has(row.id)"),
+      "route must skip a document it has already included",
     );
   });
 
-  it("uses a time-bounded idempotency window (not indefinite)", () => {
+  it("does not depend on a time window", () => {
+    // The old five-minute window existed only to stop fabricated
+    // documentReview rows accumulating on re-submission. Idempotency now
+    // follows from the content itself, so it holds however much time passes.
     assert.ok(
-      routeSource.includes("idempotencyWindow") && routeSource.includes("Date.now()"),
-      "idempotency check must be time-bounded so re-running after the window still links",
+      !routeSource.includes("idempotencyWindow"),
+      "idempotency must come from what is already included, not from how recently it happened",
     );
   });
 });
@@ -104,10 +121,21 @@ describe("link-vault-evidence-auto — audit logging", () => {
     );
   });
 
-  it("creates documentReview record for each linked document", () => {
+  it("does NOT create a documentReview record", () => {
+    // A DocumentReview names a person and an action they took. Including a
+    // file is a machine copying bytes; writing a review row for it puts an
+    // approval in the audit trail that nobody gave. logAction above is the
+    // correct record: it says what happened and who triggered it.
     assert.ok(
-      routeSource.includes("documentReview.create"),
-      "route must create a documentReview record per linked document for audit/history",
+      !routeSource.includes("documentReview.create"),
+      "including a file must not fabricate a human review record",
+    );
+  });
+
+  it("records the byte digest in the audit metadata", () => {
+    assert.ok(
+      routeSource.includes("sha256: outcome.sha256"),
+      "the audit entry must record which exact bytes were placed in the package",
     );
   });
 });
@@ -120,10 +148,17 @@ describe("link-vault-evidence-auto — export safety", () => {
     );
   });
 
-  it("checks documentHygieneIssues before marking READY_FOR_EXPORT", () => {
+  it("never promotes an included document to VALIDATED or READY_FOR_EXPORT", () => {
+    // The old route promoted on a filename-and-text hygiene heuristic, which
+    // is neither canonical validation nor a person's approval. Nothing is
+    // promoted now, so there is no heuristic left standing in for either.
     assert.ok(
-      routeSource.includes("documentHygieneIssues"),
-      "route must check hygiene issues; documents with issues must not be auto-promoted to READY_FOR_EXPORT",
+      !routeSource.includes("documentHygieneIssues"),
+      "a text heuristic must not stand in for validation or approval",
+    );
+    assert.ok(
+      !routeSource.includes("READY_FOR_EXPORT\"") || !routeSource.includes("reviewStatus: ready"),
+      "inclusion must not write an export-ready state",
     );
   });
 
@@ -140,8 +175,8 @@ describe("link-vault-evidence-auto — response shape", () => {
     assert.ok(routeSource.includes("linked,"), "response must include linked count");
   });
 
-  it("response includes partialLinked count", () => {
-    assert.ok(routeSource.includes("partialLinked,"), "response must include partialLinked count");
+  it("response includes blockedReasons so a caller can say why nothing was included", () => {
+    assert.ok(routeSource.includes("blockedReasons"), "response must carry the specific reasons inclusion was refused");
   });
 
   it("response includes skipped count", () => {
@@ -193,7 +228,7 @@ describe("link-vault-evidence-auto — empty-vault response gives an actionable 
   it("candidates.length === 0 branch includes nextAction: OPEN_COMPANY_READINESS", () => {
     const emptyBranch = routeSource.slice(
       routeSource.indexOf("if (candidates.length === 0)"),
-      routeSource.indexOf("if (candidates.length === 0)") + 400,
+      routeSource.indexOf("if (candidates.length === 0)") + 700,
     );
     assert.ok(
       emptyBranch.includes("OPEN_COMPANY_READINESS"),
@@ -204,7 +239,7 @@ describe("link-vault-evidence-auto — empty-vault response gives an actionable 
   it("candidates.length === 0 branch tells the user what to add, not just that it failed", () => {
     const emptyBranch = routeSource.slice(
       routeSource.indexOf("if (candidates.length === 0)"),
-      routeSource.indexOf("if (candidates.length === 0)") + 400,
+      routeSource.indexOf("if (candidates.length === 0)") + 700,
     );
     assert.match(
       emptyBranch,
