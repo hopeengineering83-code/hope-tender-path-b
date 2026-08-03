@@ -49,6 +49,7 @@ type PlanBExpert = {
   profile?: string | null;
   rawText?: string | null;
   sourceDocument?: string;
+  sourceSha256?: string | null;
   sourcePages?: { start?: number; end?: number };
 };
 
@@ -64,6 +65,7 @@ type PlanBProject = {
   summary?: string | null;
   rawText?: string | null;
   sourceDocument?: string;
+  sourceSha256?: string | null;
   sourceNo?: number | string;
   sourceEvidence?: string | null;
 };
@@ -105,6 +107,7 @@ type PlanBLegalRecord = {
   status?: string;
   metadata?: Record<string, unknown>;
   sourceDocument?: string;
+  sourceSha256?: string | null;
 };
 
 type PlanBFinancialRecord = {
@@ -115,6 +118,7 @@ type PlanBFinancialRecord = {
   notes?: string | null;
   metadata?: Record<string, unknown>;
   sourceDocument?: string;
+  sourceSha256?: string | null;
 };
 
 type PlanBComplianceRecord = {
@@ -126,6 +130,7 @@ type PlanBComplianceRecord = {
   expiryDate?: string | null;
   metadata?: Record<string, unknown>;
   sourceDocument?: string;
+  sourceSha256?: string | null;
 };
 
 type PlanBPayload = {
@@ -384,6 +389,7 @@ function sourceLine(item: { sourceDocument?: string; sourcePages?: { start?: num
 
 type PlanBRecordTrustContext = {
   documentByFileName: Map<string, ReviewSourceDocument>;
+  documentBySha256: Map<string, ReviewSourceDocument>;
   importTrust: RequestedTrust;
   userId: string;
   now: Date;
@@ -391,6 +397,43 @@ type PlanBRecordTrustContext = {
 };
 
 type PlanBRecordUpsertResult = { created: number; updated: number; skipped: number; evidenceDowngraded: number; warning: string | null };
+
+/**
+ * Defect 2: link an imported expert/project/legal/financial/compliance record
+ * to the correct tenant-owned uploaded Company Vault document using BOTH
+ * filename AND SHA-256.
+ *
+ * Resolution order:
+ *   1. If the caller supplied a sha256, look it up in documentBySha256.
+ *      This is the strongest signal — only one tenant-owned document can
+ *      have that exact byte hash.
+ *   2. If no sha256 match, fall back to filename lookup in documentByFileName.
+ *      The filename map already prefers official uploads over Plan B artifacts
+ *      (see the pre-load loop above), so a record that names an uploaded
+ *      document will link to the real bytes, not synthetic JSON.
+ *   3. If neither matches, return null — the record stays AI_DRAFT.
+ *
+ * The returned ReviewSourceDocument carries the official row's
+ * extractedText / contentSha256 / contentByteLength / integrityStatus, so
+ * the source-verification gate runs against REAL bytes, not synthetic JSON.
+ */
+function resolveLinkedSourceDoc(
+  ctx: PlanBRecordTrustContext,
+  declaredFileName: string | undefined,
+  declaredSha256?: string | null,
+): ReviewSourceDocument | null {
+  if (!declaredFileName && !declaredSha256) return null;
+  const normalizedHash = declaredSha256 ? clean(declaredSha256).toLowerCase() : null;
+  if (normalizedHash) {
+    const byHash = ctx.documentBySha256.get(normalizedHash);
+    if (byHash) return byHash;
+  }
+  if (declaredFileName) {
+    const byName = ctx.documentByFileName.get(key(clean(declaredFileName)));
+    if (byName) return byName;
+  }
+  return null;
+}
 
 // Same evidence gate as the Expert/Project loops above: importPolicy.trustLevel
 // (default REVIEWED) is the CALLER's self-declared request, not an authority.
@@ -411,7 +454,7 @@ async function upsertLegalRecord(db: PlanBDb, companyId: string, record: PlanBLe
   const expiryDate = parseDate(record.expiryDate);
   const existing = await db.legalRecord.findFirst({ where: { companyId, title, recordType }, select: { id: true } });
 
-  const linkedSourceDoc = record.sourceDocument ? ctx.documentByFileName.get(key(clean(record.sourceDocument))) ?? null : null;
+  const linkedSourceDoc = resolveLinkedSourceDoc(ctx, record.sourceDocument, record.sourceSha256);
   const decision = decidePlanBTrust({
     requested: ctx.importTrust,
     recordType: "LEGAL",
@@ -458,7 +501,7 @@ async function upsertFinancialRecord(db: PlanBDb, companyId: string, record: Pla
   const notesText = sourceText(record.notes);
   const existing = await db.financialRecord.findFirst({ where: { companyId, recordType, fiscalYear }, select: { id: true } });
 
-  const linkedSourceDoc = record.sourceDocument ? ctx.documentByFileName.get(key(clean(record.sourceDocument))) ?? null : null;
+  const linkedSourceDoc = resolveLinkedSourceDoc(ctx, record.sourceDocument, record.sourceSha256);
   const decision = decidePlanBTrust({
     requested: ctx.importTrust,
     recordType: "FINANCIAL",
@@ -503,7 +546,7 @@ async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: Pl
   const evidenceSummary = sourceText(record.evidenceSummary);
   const existing = await db.companyComplianceRecord.findFirst({ where: { companyId, title, complianceType }, select: { id: true } });
 
-  const linkedSourceDoc = record.sourceDocument ? ctx.documentByFileName.get(key(clean(record.sourceDocument))) ?? null : null;
+  const linkedSourceDoc = resolveLinkedSourceDoc(ctx, record.sourceDocument, record.sourceSha256);
   const decision = decidePlanBTrust({
     requested: ctx.importTrust,
     recordType: "COMPLIANCE",
@@ -661,6 +704,10 @@ export async function POST(req: Request) {
     // buildReviewProvenance gate automatic source verification uses) instead
     // of trusting the caller's self-declared trustLevel outright.
     const documentByFileName = new Map<string, ReviewSourceDocument>();
+    // Defect 2: parallel index by contentSha256 so records can be linked to
+    // the correct tenant-owned uploaded document when the caller supplies a
+    // sha256. Falls back to filename-only matching when sha256 is absent.
+    const documentBySha256 = new Map<string, ReviewSourceDocument>();
     let evidenceDowngraded = 0;
     let expertsCreated = 0;
     let expertsUpdated = 0;
@@ -673,6 +720,51 @@ export async function POST(req: Request) {
     const compliance = { created: 0, updated: 0, skipped: 0 };
 
     await prisma.$transaction(async (tx) => {
+    // Defect 1: pre-load all tenant-owned, byte-verified CompanyDocuments so
+    // the source-document upsert loop can detect an existing official upload
+    // (integrityStatus === "VERIFIED") and REFUSE to overwrite its bytes,
+    // filename, MIME, hash, or storage path with synthetic Plan B JSON.
+    // Records then link to the official row, not the synthetic JSON artifact.
+    const tenantOfficialDocs = await tx.companyDocument.findMany({
+      where: { companyId: company.id, integrityStatus: "VERIFIED" },
+      select: {
+        id: true,
+        fileName: true,
+        originalFileName: true,
+        mimeType: true,
+        contentSha256: true,
+        contentByteLength: true,
+        integrityStatus: true,
+        extractedText: true,
+        storagePath: true,
+        metadata: true,
+      },
+    });
+    for (const official of tenantOfficialDocs) {
+      const officialName = official.originalFileName ?? official.fileName ?? "";
+      if (!officialName) continue;
+      const officialEntry: ReviewSourceDocument = {
+        id: official.id,
+        companyId: company.id,
+        extractedText: official.extractedText,
+        contentSha256: official.contentSha256,
+        contentByteLength: official.contentByteLength,
+        integrityStatus: official.integrityStatus,
+      };
+      // Prefer the official row over any Plan B artifact with the same name.
+      // Setting these BEFORE the Plan B upsert loop means later Plan B entries
+      // for the same filename will not overwrite the official entry.
+      const nameKey = key(officialName);
+      if (!documentByFileName.has(nameKey)) {
+        documentByFileName.set(nameKey, officialEntry);
+      }
+      if (official.contentSha256) {
+        const hashKey = official.contentSha256.toLowerCase();
+        if (!documentBySha256.has(hashKey)) {
+          documentBySha256.set(hashKey, officialEntry);
+        }
+      }
+    }
     if (payload.companyProfile) {
       const profile = payload.companyProfile;
       await tx.company.update({
@@ -701,6 +793,71 @@ export async function POST(req: Request) {
       if (!fileName) { documentsSkipped += 1; continue; }
       if (requireRawText && (!exactText || exactText.length < 50)) { documentsSkipped += 1; continue; }
       const category = normalizeDocumentCategory(doc);
+      const suppliedSha256 = doc.sha256 ? clean(doc.sha256).toLowerCase() : null;
+
+      // Defect 1: if a tenant-owned, byte-verified official upload already
+      // exists for this filename (or for this sha256 when the caller supplied
+      // one), the Plan B import MUST NOT overwrite its bytes, fileName,
+      // mimeType, contentSha256, contentByteLength, integrityStatus,
+      // storagePath, or any other byte-bearing field. The official row is the
+      // authority; Plan B's synthetic JSON is only a diagnostic.
+      //
+      // We pre-loaded tenantOfficialDocs above; check both the filename map
+      // and the sha256 map. If a sha256 was supplied and it matches an
+      // official row, link to that row. If the filename matches an official
+      // row but the supplied sha256 differs, skip with a warning (hash
+      // mismatch — the caller is declaring the wrong source).
+      const existingOfficialByName = documentByFileName.get(key(fileName)) ?? null;
+      const existingOfficialByHash = suppliedSha256 ? documentBySha256.get(suppliedSha256) ?? null : null;
+      const existingOfficial = existingOfficialByHash ?? existingOfficialByName;
+
+      if (existingOfficial && (existingOfficialByHash || (existingOfficialByName && !suppliedSha256))) {
+        // Official row exists — preserve it. Only update non-byte fields
+        // (extractedText if missing, aiExtractionStatus, metadata diagnostic).
+        // Never touch bytes / hash / mime / fileName / storagePath.
+        if (suppliedSha256 && existingOfficialByName && existingOfficialByName.id !== existingOfficialByHash?.id) {
+          // Filename matched one official row but sha256 matched a different
+          // one — ambiguous. Skip the doc with a warning rather than guess.
+          documentsSkipped += 1;
+          warnings.push(`Skipped ${fileName}: filename and sha256 point to different official documents. Disambiguate by re-uploading the correct source.`);
+          continue;
+        }
+        if (suppliedSha256 && existingOfficialByName && existingOfficialByName.contentSha256?.toLowerCase() !== suppliedSha256) {
+          // Filename matched an official row but the caller-supplied sha256
+          // does not match that row's persisted hash. Skip with a warning.
+          documentsSkipped += 1;
+          warnings.push(`Skipped ${fileName}: caller-declared sha256 does not match the persisted hash of the official upload with the same filename. Re-upload the correct source or fix the sha256 in the Plan B payload.`);
+          continue;
+        }
+        // Only update the official row's extractedText if it is currently
+        // empty AND the Plan B payload supplies raw text. This lets Plan B
+        // recover from a prior failed extraction without touching bytes.
+        const officialNeedsText = !existingOfficial.extractedText || existingOfficial.extractedText.trim().length < 100;
+        if (officialNeedsText && exactText && exactText.length >= 100) {
+          await tx.companyDocument.update({
+            where: { id: existingOfficial.id },
+            data: {
+              extractedText: exactText,
+              aiExtractionStatus: "EXTRACTED",
+              aiExtractedAt: now,
+              aiExtractionError: null,
+              // Append a planBDiagnostic to metadata WITHOUT touching any
+              // byte/hash/mime/storage fields. Use a read-modify-write to
+              // preserve any existing metadata fields.
+            },
+          });
+        }
+        // official row stays in documentByFileName / documentBySha256 as
+        // already set above. Records linking by fileName or sha256 will
+        // resolve to the official row, not a synthetic JSON artifact.
+        documentsUpdated += 1;
+        continue;
+      }
+
+      // No official row exists — create the synthetic Plan B JSON artifact
+      // (current behavior). This row is marked metadata.planB = true so
+      // future imports can recognize it as non-authoritative and refuse to
+      // promote it over a real upload.
       const artifactFileName = `${fileName.replace(/\.[a-z0-9]{2,5}$/i, "")}.plan-b.json`;
       const artifactBytes = Buffer.from(JSON.stringify({
         sourceFileName: fileName,
@@ -722,7 +879,21 @@ export async function POST(req: Request) {
         warnings.push(`Skipped ${fileName}: Plan B artifact integrity verification failed.`);
         continue;
       }
-      const existing = await tx.companyDocument.findFirst({ where: { companyId: company.id, originalFileName: fileName }, select: { id: true } });
+      // Check if a Plan B artifact row already exists for this filename
+      // (created by a prior Plan B import). If so, update only the synthetic
+      // artifact — never an official upload.
+      const existingPlanB = await tx.companyDocument.findFirst({
+        where: { companyId: company.id, originalFileName: fileName },
+        select: { id: true, metadata: true, integrityStatus: true },
+      });
+      const isExistingPlanBArtifact = existingPlanB && (() => {
+        try {
+          const meta = JSON.parse(existingPlanB.metadata ?? "{}");
+          return meta.planB === true;
+        } catch {
+          return false;
+        }
+      })();
       const data = {
         fileName: artifactFileName,
         originalFileName: fileName,
@@ -738,29 +909,61 @@ export async function POST(req: Request) {
         metadata: JSON.stringify({ planB: true, evidenceAuthority: "IMPORTED_JSON_DIAGNOSTIC", sourceType: doc.type, sourceCategory: doc.category, normalizedCategory: category, parsedExperts: doc.parsedExperts, parsedProjects: doc.parsedProjects, sha256: doc.sha256, reviewNotes: notes }),
       };
       let persistedDocId: string;
-      if (existing) {
-        await tx.companyDocument.update({ where: { id: existing.id }, data });
-        persistedDocId = existing.id;
+      if (isExistingPlanBArtifact) {
+        // Safe to overwrite a prior Plan B artifact — it was never official.
+        await tx.companyDocument.update({ where: { id: existingPlanB!.id }, data });
+        persistedDocId = existingPlanB!.id;
         documentsUpdated += 1;
+      } else if (existingPlanB) {
+        // A row exists but is NOT marked planB — treat it as official even if
+        // integrityStatus is not VERIFIED (could be UNKNOWN/MISSING). Refuse
+        // to overwrite; just link to it.
+        persistedDocId = existingPlanB.id;
+        documentsUpdated += 1;
+        warnings.push(`Preserved existing uploaded document "${fileName}" — synthetic Plan B artifact was not written. Upload the document through the Company Vault if you need to replace its bytes.`);
       } else {
         const created = await tx.companyDocument.create({ data: { companyId: company.id, storagePath: "", ...data } });
         persistedDocId = created.id;
         documentsCreated += 1;
       }
-      documentByFileName.set(key(fileName), {
-        id: persistedDocId,
-        companyId: company.id,
-        extractedText: data.extractedText,
-        contentSha256: data.contentSha256,
-        contentByteLength: data.contentByteLength,
-        integrityStatus: data.integrityStatus,
-      });
+      // Only register the synthetic artifact in the lookup maps when no
+      // official row already occupies that filename key. This prevents the
+      // artifact from shadowing an official upload when both exist.
+      const nameKey = key(fileName);
+      if (!documentByFileName.has(nameKey) || documentByFileName.get(nameKey) === existingOfficial) {
+        // If existingOfficial is set, it means we got here through the
+        // "no official exists" branch — so this is a fresh synthetic artifact.
+        // Otherwise, just set it.
+        documentByFileName.set(nameKey, {
+          id: persistedDocId,
+          companyId: company.id,
+          extractedText: data.extractedText,
+          contentSha256: data.contentSha256,
+          contentByteLength: data.contentByteLength,
+          integrityStatus: data.integrityStatus,
+        });
+      }
+      if (data.contentSha256 && !documentBySha256.has(data.contentSha256.toLowerCase())) {
+        documentBySha256.set(data.contentSha256.toLowerCase(), {
+          id: persistedDocId,
+          companyId: company.id,
+          extractedText: data.extractedText,
+          contentSha256: data.contentSha256,
+          contentByteLength: data.contentByteLength,
+          integrityStatus: data.integrityStatus,
+        });
+      }
     }
 
     const existingExperts = await tx.expert.findMany({ where: { companyId: company.id }, select: { id: true, fullName: true } });
     const existingProjects = await tx.project.findMany({ where: { companyId: company.id }, select: { id: true, name: true } });
     const expertMap = new Map(existingExperts.map((e) => [key(e.fullName), e]));
     const projectMap = new Map(existingProjects.map((p) => [key(p.name), p]));
+
+    // Build the record-trust context once, before all record upsert loops, so
+    // experts and projects can also use the resolveLinkedSourceDoc helper that
+    // Defect 2 introduced.
+    const recordTrustCtx: PlanBRecordTrustContext = { documentByFileName, documentBySha256, importTrust, userId, now, notes };
 
     for (const expert of experts) {
       const fullName = clean(expert.fullName);
@@ -774,7 +977,7 @@ export async function POST(req: Request) {
       const certifications = arr(expert.certifications);
       const title = clean(expert.title) || null;
       const yearsExperience = typeof expert.yearsExperience === "number" ? expert.yearsExperience : null;
-      const linkedSourceDoc = expert.sourceDocument ? documentByFileName.get(key(clean(expert.sourceDocument))) ?? null : null;
+      const linkedSourceDoc = resolveLinkedSourceDoc(recordTrustCtx, expert.sourceDocument, expert.sourceSha256);
       const expertDecision = decidePlanBTrust({
         requested: importTrust,
         recordType: "EXPERT",
@@ -829,7 +1032,7 @@ export async function POST(req: Request) {
       const country = clean(project.country) || null;
       const sector = clean(project.sector || project.sectors?.[0]) || null;
       const serviceAreasJson = arr(serviceAreas);
-      const linkedSourceDoc = project.sourceDocument ? documentByFileName.get(key(clean(project.sourceDocument))) ?? null : null;
+      const linkedSourceDoc = resolveLinkedSourceDoc(recordTrustCtx, project.sourceDocument, project.sourceSha256);
       const projectDecision = decidePlanBTrust({
         requested: importTrust,
         recordType: "PROJECT",
@@ -868,8 +1071,6 @@ export async function POST(req: Request) {
         projectsCreated += 1;
       }
     }
-
-    const recordTrustCtx: PlanBRecordTrustContext = { documentByFileName, importTrust, userId, now, notes };
 
     for (const record of legalRecords) {
       const r = await upsertLegalRecord(tx, company.id, record, recordTrustCtx);

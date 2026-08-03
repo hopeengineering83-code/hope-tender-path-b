@@ -212,8 +212,8 @@ describe("plan-b-import wires the same source-verification gate for legal/financ
     }
   });
 
-  it("the call sites thread documentByFileName/importTrust/userId/now/notes through a shared context, and roll up evidenceDowngraded/warnings", () => {
-    assert.match(route, /const recordTrustCtx: PlanBRecordTrustContext = \{ documentByFileName, importTrust, userId, now, notes \};/);
+  it("the call sites thread documentByFileName/documentBySha256/importTrust/userId/now/notes through a shared context, and roll up evidenceDowngraded/warnings", () => {
+    assert.match(route, /const recordTrustCtx: PlanBRecordTrustContext = \{ documentByFileName, documentBySha256, importTrust, userId, now, notes \};/);
     assert.match(route, /upsertLegalRecord\(tx, company\.id, record, recordTrustCtx\)/);
     assert.match(route, /upsertFinancialRecord\(tx, company\.id, record, recordTrustCtx\)/);
     assert.match(route, /upsertComplianceRecord\(tx, company\.id, record, recordTrustCtx\)/);
