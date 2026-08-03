@@ -23,6 +23,10 @@ const DESKTOP_AUTHENTICATED_SPECS = [
   "mobile-overflow-gap-repair.spec.ts",
   "full-route-mobile-tablet-overflow.spec.ts",
   "workflow-control-center-action-buttons.spec.ts",
+  // Defect 6: exact-head Preview test for the Vault upload → Plan B import →
+  // tender upload → refresh flow. Verifies that Plan B import never
+  // overwrites official Company Vault bytes/hash/mime/fileName.
+  "vault-plan-b-tender-refresh.spec.ts",
 ];
 
 // Tablet-authenticated contract specs validate responsive UI, role-aware
