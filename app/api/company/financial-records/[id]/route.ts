@@ -91,14 +91,14 @@ export async function PATCH(
   // deliberately does not parse as provenance, so the durable-review gate
   // still refuses to treat this record as verified evidence.
 
-  const durableProvenance = provenance?.ok ? provenance : {
-    ok: true as const,
-    serialized: JSON.stringify({ reviewerId: actor.id, reviewedAt: reviewedAt.toISOString(), note: 'Auto-approved review.' }),
-    sourceContentHash: 'manual',
-    sourceByteLength: 0,
-    sourceTextHash: 'manual',
-    evidenceFields: [],
-  };
+  // Source-less auto-approval is forbidden (Gap 3).
+  if (isApprove && !provenance?.ok) {
+    return NextResponse.json(
+      { ok: false, error: "Cannot approve without a verified source document.", code: "SOURCE_REQUIRED_FOR_APPROVAL" },
+      { status: 422 },
+    );
+  }
+  const verifiedProvenance = provenance?.ok ? provenance : null;
   // Optimistic lock for the approve path. When the record HAS an owned source
   // document, the update also asserts that document's exact state, so an
   // approval cannot land against source bytes that changed underneath it.
@@ -137,7 +137,7 @@ export async function PATCH(
               trustLevel: "REVIEWED",
               reviewedBy: actor.id,
               reviewedAt,
-              reviewNotes: durableProvenance!.serialized,
+              reviewNotes: verifiedProvenance!.serialized,
               updatedAt: new Date(),
             }
           : {
@@ -163,11 +163,11 @@ export async function PATCH(
             requestId,
             recordRef: publicVaultIdentifier(id),
             action: body.action,
-            ...(durableProvenance ? {
-              sourceContentHash: durableProvenance.sourceContentHash,
-              sourceByteLength: durableProvenance.sourceByteLength,
-              sourceTextHash: durableProvenance.sourceTextHash,
-              evidenceFields: durableProvenance.evidenceFields,
+            ...(verifiedProvenance ? {
+              sourceContentHash: verifiedProvenance.sourceContentHash,
+              sourceByteLength: verifiedProvenance.sourceByteLength,
+              sourceTextHash: verifiedProvenance.sourceTextHash,
+              evidenceFields: verifiedProvenance.evidenceFields,
             } : {}),
           }),
         },

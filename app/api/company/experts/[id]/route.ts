@@ -192,23 +192,16 @@ export async function PATCH(
       })
     : null;
 
-  // Allow machine-verified review even without full machine provenance.
-  // The machine-verified reviewer IS the authority — the app detected and extracted
-  // the record from uploaded company documents. Never block review.
-  const durableProvenance = provenance?.ok ? provenance : {
-    ok: true as const,
-    serialized: JSON.stringify({
-      recordType: "EXPERT",
-      reviewerId: actor.id,
-      reviewedAt: reviewedAt.toISOString(),
-      sourceDocumentId: record.sourceDocumentId,
-      note: "Auto-approved — record extracted from company documents.",
-    }),
-    sourceContentHash: "manual",
-    sourceByteLength: 0,
-    sourceTextHash: "manual",
-    evidenceFields: [],
-  };
+  // Source-less auto-approval is forbidden (Gap 3). When no verified source
+  // exists, the record stays UNVERIFIED — never REVIEWED, never reviewedBy,
+  // never reviewedAt, never a fabricated "manual" hash.
+  if (!provenance?.ok) {
+    return NextResponse.json(
+      { ok: false, error: "Cannot approve without a verified source document. Upload the source document so the Engine can source-verify it automatically.", code: "SOURCE_REQUIRED_FOR_APPROVAL" },
+      { status: 422 },
+    );
+  }
+  const durableProvenance = provenance;
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.expert.updateMany({
