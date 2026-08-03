@@ -2928,3 +2928,64 @@ Stage Summary:
   54 new regression tests total.
 - typecheck clean, lint clean, build green (58/58 pages), 426+ targeted tests pass.
 - PR #1175 stays draft and unmerged. No new PRs created, no merges, no deploys.
+
+---
+Task ID: defect4-wiring-final
+Agent: main (Super Z / GLM)
+Task: Fix all remaining gaps end to end. Wire partial verification into all approval routes + export gate.
+
+Work Log:
+- Investigated remaining gaps: defect 4 library was ready but not wired into
+  consumers. PostgreSQL integration tests cannot run (no postgres in this
+  environment — apt-get requires root). Focused on code-side gaps.
+
+Defect 4 wiring (commit 2f88a6f):
+- Plan B import route decidePlanBTrust: try full gate first, then partial
+  verification, then AI_DRAFT fallback. All 5 record loops emit
+  partial-verification warnings.
+- Human-approval routes (experts/[id], projects/[id]): when buildReviewProvenance
+  fails, try buildPartialSourceVerificationProvenance. If identity verified,
+  persist SOURCE_VERIFIED (not REVIEWED) with null reviewer identity.
+- Batch routes (experts/batch, projects/batch): same fallback. accepted array
+  now carries per-record status (REVIEWED or SOURCE_VERIFIED).
+- New partialVerificationSummary() helper in vault-review-provenance.ts.
+- final-package-readiness-model: imports canUseVaultRecordField +
+  partialVerificationSummary. New partialVerificationWarnings() helper.
+  FinalPackageReadinessModel.evidence gains partialVerificationWarnings: string[].
+- company-vault-verification-page: added partial-verification info banner.
+
+Tests:
+- tests/defect4-wiring-contract.test.ts (NEW, 22 tests) — asserts every
+  approval route imports + calls buildPartialSourceVerificationProvenance.
+- Updated tests/plan-b-import-review-evidence-gate.test.ts and
+  tests/company-batch-review-rbac-current.test.ts for the new patterns.
+
+Verification (on commit 2f88a6f):
+- typecheck: 0 errors
+- lint: 0 warnings
+- build: PASS (58/58 pages, 24.8s)
+- 370 targeted tests pass across 24 test files
+
+Remaining blockers (honest):
+1. PostgreSQL integration tests (vault-review-route-postgres,
+   company-vault-source-remap, build-plan-db-integration,
+   vault-document-inclusion-db-integration,
+   vault-record-approve-null-source-db-integration,
+   tender-issued-form-reuse-db-integration) require RUN_DB_INTEGRATION=true
+   with a real PostgreSQL database. This environment has no postgres
+   installed and no root access to install it. These tests must be run by
+   the owner in an environment with PostgreSQL. NOT caused by these changes.
+2. The Defect 6 e2e spec requires E2E_GOLDEN_AUTH=true with a seeded E2E
+   account and a real preview deployment. The 17-assertion source-contract
+   test verifies the spec exists and covers every step.
+3. External blockers unchanged: credential rotation, session revocation,
+   provider-backed Preview runtime verification, owner UAT, duplicate
+   Vercel project cleanup.
+
+Stage Summary:
+- Defect 4 fully wired end-to-end: library + Plan B import + human-approval
+  routes + batch routes + export gate + UI.
+- 1 new commit: 2f88a6f.
+- 1 new test file: defect4-wiring-contract.test.ts (22 tests).
+- typecheck clean, lint clean, build green, 370 targeted tests pass.
+- PR #1175 stays draft and unmerged.
