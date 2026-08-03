@@ -285,9 +285,12 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (tender.status === "NO_BID") {
     blockers.push({ code: "NO_BID_BLOCK", message: "Tender is marked NO_BID. Apply a BID or BID_WITH_CONDITIONS decision before generation." });
   }
-  if (tender.requirements.length === 0) {
-    blockers.push({ code: "NO_REQUIREMENTS", message: "No tender requirements are extracted. Run AI Analyze / Run Engine first, or add requirements manually.", nextAction: "RUN_ENGINE" });
-  }
+  // Gap 1: NO_REQUIREMENTS is no longer a blocker. Readable, integrity-
+  // verified extracted tender text must proceed even when there are no
+  // structured requirements. Source-text-only generation uses the extracted
+  // scope, tender type, requested services, deliverables, forms and
+  // submission instructions. Genuinely absent information is stored as
+  // NOT_STATED — never invented.
 
   const hardBlocks = tender.complianceGaps.filter((gap) => gap.severity === "CRITICAL" && criticalGapIsHardBlock(gap));
   for (const gap of hardBlocks) blockers.push({ code: "HARD_COMPLIANCE_BLOCKER", message: gap.title, nextAction: "RESOLVE_COMPLIANCE_GAPS" });

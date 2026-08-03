@@ -1,21 +1,18 @@
 // Proactive banner — surfaces stored tender details that fail the
 // canonical validators (corrupted from an extraction that pre-dates the
-// validator rules) and offers a one-click re-extract to clean them.
+// validator rules). Repair is now automatic — no button needed.
 //
 // WHY THIS EXISTS
 // ───────────────
-// Without this banner, users had to KNOW to scroll down to the Tender
-// Detail panel and click "Re-extract from PDF" — production screenshots
-// kept showing the same corrupted values (reference="only",
+// Without this banner, corrupted values (reference="only",
 // country="A ddis Ababa", clientName=TOC fragment, contact="s Contact
-// Person") for weeks because the user simply didn't realise that
-// button would fix them. (And until commit 7688111 the button used
-// fill-empty-only semantics so even clicking it didn't help.)
+// Person") could persist for weeks because the user simply didn't
+// realise the extractor would fix them.
 //
 // Server-side detection here means we ALWAYS surface the problem
 // loudly at the top of the page when ANY of the four validated fields
-// is in an invalid state. Once the user clicks "Clean now", the
-// re-extract route overwrites the invalid values, the banner detects
+// is in an invalid state. The automatic repair workflow re-runs the
+// extractor, overwrites the invalid values, and the banner detects
 // no remaining corruption on the next render, and disappears.
 //
 // SCOPE RULE (source-driven model)
@@ -25,7 +22,7 @@
 // "TBD", "N/A", "Unknown". Those placeholder values are already hidden
 // by the TenderIntakeDetailPanel's sanitizer (shown as "Not extracted")
 // and do NOT block draft generation. Showing them here as "corrupted"
-// would be misleading and would prompt the user to "Clean now" when
+// would be misleading and would trigger automatic repair when
 // the value is simply missing/placeholder, not corrupted.
 
 import {
@@ -114,7 +111,7 @@ export function ClientEntityWarningBanner({ tender, canMutate = false }: { tende
           <p className="mt-1 max-w-3xl text-sm text-slate-700">
             These fields were extracted before the metadata validators landed. They fail the current validation rules
             (e.g. reference numbers must contain a digit, countries must be in the whitelist, client names must not
-            be TOC/section fragments). Click <strong>Clean now</strong> to re-run the extractor — it will overwrite
+            be TOC/section fragments). The automatic repair workflow will re-run the extractor and overwrite
             only the invalid values with whatever the new patterns capture from the stored PDF text. Valid manual
             edits are preserved.
           </p>
@@ -127,7 +124,7 @@ export function ClientEntityWarningBanner({ tender, canMutate = false }: { tende
             ))}
           </ul>
         </div>
-        {canMutate && <RepairTenderFactsButton tenderId={tender.id} badCount={bad.length} />}
+        {/* Gap 2: RepairTenderFactsButton removed from normal path. Repair is now automatic. */}
       </div>
     </section>
   );

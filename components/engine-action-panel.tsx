@@ -439,119 +439,34 @@ export function EngineActionPanel({
 
   return (
     <section id="run-engine-action" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Automated Engine</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">Durable tender processing</h2>
-          <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Eligible Company Vault evidence is verified, queued, matched, selected, and converted into a source-bound Build Plan by server policy. Closing this browser does not stop processing.
-          </p>
-          <p className="mt-2 text-xs text-slate-500">
-            Current source-verified inventory: {vaultReviewedExperts} expert(s), {vaultReviewedProjects} project(s).
-          </p>
-        </div>
-        {canMutate ? (
-          <button
-            type="button"
-            onClick={() => void runEngine()}
-            disabled={running || repairingVault || isPending}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-            title="Start or resume the server-controlled durable Engine workflow"
-          >
-            {running ? <><ClockIcon /> Processing…</> : <><BoltIcon /> Start or resume Engine</>}
-          </button>
-        ) : (
-          <p className="text-xs italic text-slate-500">Read-only — Engine recovery actions require ADMIN or PROPOSAL_MANAGER role</p>
-        )}
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Automated Engine</p>
+        <h2 className="mt-1 text-lg font-bold text-slate-900">
+          {running || repairingVault ? "Processing automatically" : ok ? "Engine complete" : result ? "Engine needs attention" : "Pending automatic processing"}
+        </h2>
+        <p className="mt-1 max-w-3xl text-sm text-slate-600">
+          Eligible Company Vault evidence is verified, queued, matched, selected, and converted into a source-bound Build Plan by server policy. Closing this browser does not stop processing.
+        </p>
+        <p className="mt-2 text-xs text-slate-500">
+          Current source-verified inventory: {vaultReviewedExperts} expert(s), {vaultReviewedProjects} project(s).
+        </p>
       </div>
 
       {asyncStatus && (
         <div role="status" aria-live="polite" className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-sm text-indigo-800">
-          <div className="flex items-start gap-2">
-            <span aria-hidden="true" className="inline-block animate-spin"><ClockIcon /></span>
-            <div>
-              <p className="font-semibold">Engine processing continues in the background</p>
-              <p className="mt-1">{formatOperationalReason(asyncStatus.message)}</p>
-              <p className="mt-2 break-all font-mono text-xs text-indigo-700">Job {asyncStatus.jobId}</p>
-            </div>
-          </div>
+          <p className="font-semibold">Engine processing continues in the background</p>
+          <p className="mt-1">{formatOperationalReason(asyncStatus.message)}</p>
+          <p className="mt-2 break-all font-mono text-xs text-indigo-700">Job {asyncStatus.jobId}</p>
         </div>
       )}
 
       {result && (
         <div className={`mt-4 rounded-xl border p-4 text-sm ${ok ? "border-emerald-200 bg-emerald-50 text-emerald-800" : result.code === "ASYNC_POLL_TIMEOUT" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-red-200 bg-red-50 text-red-800"}`}>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="font-semibold">{result.error ?? (ok ? "Engine completed." : "Engine needs attention.")}</p>
-            {result.code && <span title={result.code} className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold">{formatOperationalCode(result.code)}</span>}
-          </div>
+          <p className="font-semibold">{result.error ?? (ok ? "Engine completed." : "Engine needs attention.")}</p>
+          {result.code && <p className="mt-1 text-xs font-mono">{formatOperationalCode(result.code)}</p>}
           {action && <p className="mt-2"><strong>Next action:</strong> {action}</p>}
           {result.hint && <p className="mt-1"><strong>Guidance:</strong> {formatOperationalReason(result.hint)}</p>}
           {result.detail && <p className="mt-1"><strong>Summary:</strong> {formatOperationalReason(result.detail)}</p>}
-
-          {(result.nextAction === "REVIEW_MATCHING_INPUTS" || result.code === "ENGINE_COMPLETED_WITH_BLOCKERS") && (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {canMutate && (
-                <button
-                  type="button"
-                  onClick={() => void repairVaultAndRetry()}
-                  disabled={running || repairingVault || isPending}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {repairingVault ? <><ClockIcon /> Repairing Vault…</> : <><BoltIcon /> Repair source evidence</>}
-                </button>
-              )}
-              <Link href="/dashboard/company" className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 no-underline hover:bg-slate-50">
-                Open Company Vault <ArrowRightIcon />
-              </Link>
-            </div>
-          )}
-
-          {result.code === "ASYNC_POLL_TIMEOUT" && result.jobId && (
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const jobId = result.jobId;
-                  if (!jobId) return;
-                  const response = await fetch(`/api/ai-jobs/${jobId}`, { method: "GET" });
-                  const json = await response.json().catch(() => ({}));
-                  const job = (json?.job ?? json) as PolledJob;
-                  if (job.status === "SUCCEEDED") {
-                    setResult({
-                      success: true,
-                      async: true,
-                      jobId,
-                      error: "Engine completed in the background. Downstream processing continues automatically.",
-                    });
-                    startTransition(() => router.refresh());
-                  } else if (job.status === "FAILED" || job.status === "CANCELED" || job.status === "PARTIAL_SUCCESS") {
-                    setResult(asyncEngineFailureResult(job.errorMessage, jobId, job.output, `ENGINE_${job.status}`));
-                  } else {
-                    setResult({ ...result, error: `The worker is ${formatOperationalCode(job.status ?? "RUNNING").toLowerCase()}. Check again shortly.` });
-                  }
-                } catch {
-                  // Preserve the status card so this read-only check can be retried.
-                }
-              }}
-              className="mt-3 rounded-lg border border-indigo-300 bg-white px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
-            >
-              Check status now
-            </button>
-          )}
-
-          {canMutate && (result.code === "NETWORK_OR_RUNTIME_ERROR" || result.code === "ASYNC_ENGINE_FAILED" || result.code === "ENGINE_JOB_SUPERSEDED") && (
-            <button
-              type="button"
-              onClick={() => { setResult(null); void runEngine(); }}
-              className="mt-3 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-            >
-              Retry durable Engine
-            </button>
-          )}
-
-          {!canMutate && (result.code === "NETWORK_OR_RUNTIME_ERROR" || result.code === "ASYNC_ENGINE_FAILED") && (
-            <p className="mt-3 text-xs italic text-slate-500">Read-only — retry actions require ADMIN or PROPOSAL_MANAGER role</p>
-          )}
 
           {technicalDetails.length > 0 && (
             <details className="mt-3 rounded-lg border border-current/10 bg-white/70 p-3 text-xs">

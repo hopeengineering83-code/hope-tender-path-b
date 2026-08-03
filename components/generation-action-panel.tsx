@@ -1,15 +1,24 @@
 "use client";
 
+// Gap 2 + Gap 3: Text-based automatic status surface.
+//
+// Replaces the old GenerationActionPanel that had Generate Docs button,
+// BlockerActionLink instances, Repair Tender Details button, support/full-
+// proposal pills, duplicated readiness badges, and icons.
+//
+// The new surface shows exactly one status:
+//   PROCESSING_AUTOMATICALLY     — workflow is running
+//   GENUINE_SOURCE_BLOCKED       — a genuine source blocker exists
+//   LEGAL_RELEASE_REQUIRED       — a legal signature/declaration or ADMIN
+//                                  release decision is required
+//   READY_TO_DOWNLOAD            — the final ZIP is ready
+//   FAILED_SECURITY_OR_INTEGRITY — a security or integrity failure occurred
+//
+// No icons, badges, emoji, icon packages or decorative graphics.
+
 import React from "react";
-import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
-import { parseRepairMetadataResponse, buildRepairMessage } from "../lib/engine/repair-metadata-contract";
-import { GenerationProgressPanel } from "./generation-progress-panel";
-import { CanonicalStatusBadge } from "./canonical-status-badge";
-import { BlockerActionLink } from "./blocker-action-link";
-import { DocumentGenerateIcon, RefreshIcon, WarningIcon, CheckCircleIcon, BanIcon } from "./icons";
-import { CANONICAL_STATUS_CONFIG, type CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
+import type { CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 
 type GenerationReadiness = {
   ready: boolean;
@@ -26,284 +35,188 @@ type GenerationReadiness = {
   };
 };
 
-type GenerateResponse = {
-  jobId?: string;
-  error?: string;
-  nextAction?: string;
-  warnings?: string[];
-  diagnosticId?: string;
-};
+export type ReleaseStatus =
+  | "PROCESSING_AUTOMATICALLY"
+  | "GENUINE_SOURCE_BLOCKED"
+  | "LEGAL_RELEASE_REQUIRED"
+  | "READY_TO_DOWNLOAD"
+  | "FAILED_SECURITY_OR_INTEGRITY";
 
-function shortAction(action?: string): string {
-  if (action === "RUN_ENGINE") return "Run Engine first.";
-  if (action === "REVIEW_MATCHES") return "Review/select matching evidence.";
-  if (action === "EDIT_TENDER_METADATA") return "Open Tender Detail and fill missing Tender Details.";
-  if (action === "BUILD_SUBMISSION_PLAN") return "Review and confirm the Build Plan first.";
-  if (action === "RUN_OCR_OR_UPLOAD_CLEARER_SCAN") return "Run OCR or upload a clearer scan.";
-  if (action === "OPEN_EXTRACTION_QUALITY") return "Check Extraction Quality.";
-  return "Resolve the readiness blockers first.";
-}
+/**
+ * Derive the single release status from the canonical readiness and
+ * generation readiness data. This is the ONE authority the UI reads.
+ */
+export function deriveReleaseStatus(
+  readiness: GenerationReadiness | null,
+  canonicalReadiness?: CanonicalTenderReadiness | null,
+): ReleaseStatus {
+  if (!readiness && !canonicalReadiness) return "PROCESSING_AUTOMATICALLY";
 
-export function isGenerationActionEnabled(canonicalGenerationState: CanonicalModuleStatus, serverGateAllowsGeneration: boolean): boolean {
-  return canonicalGenerationState === "READY" || (canonicalGenerationState === "WARNING" && serverGateAllowsGeneration);
-}
+  // READY_TO_DOWNLOAD: canonical readiness says final export is ready.
+  if (canonicalReadiness?.readyForFinalExport) return "READY_TO_DOWNLOAD";
+  if (readiness?.ready && (readiness.fullProposalReady ?? false)) return "READY_TO_DOWNLOAD";
 
-type GenerationActionButtonProps = {
-  canonicalGenerationState: CanonicalModuleStatus;
-  fullProposalReady: boolean;
-  busy: boolean;
-  blockedReason?: string;
-  onClick?: () => void;
-};
+  // Collect all blocker codes from both sources. canonicalReadiness.blockers
+  // is string[] (just codes); readiness.blockers is Array<{code, message}>.
+  const blockerCodes: string[] = [];
+  for (const b of readiness?.blockers ?? []) blockerCodes.push(b.code);
+  for (const b of readiness?.fullProposalBlockers ?? []) blockerCodes.push(b.code);
+  for (const code of canonicalReadiness?.blockers ?? []) blockerCodes.push(code);
 
-export function GenerationActionButton({ canonicalGenerationState, fullProposalReady, busy, blockedReason, onClick }: GenerationActionButtonProps) {
-  const blocked = !fullProposalReady;
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={blocked || busy}
-      aria-disabled={blocked || busy}
-      className={fullProposalReady
-        ? "inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
-        : "inline-flex items-center gap-1.5 cursor-not-allowed rounded-lg border border-red-200 bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-600"}
-      title={blocked ? blockedReason ?? "Generation blocked — resolve the blockers listed below." : "Generate proposal documents."}
-    >
-      {fullProposalReady ? <DocumentGenerateIcon /> : <BanIcon />} {busy ? "Generating…" : canonicalGenerationState === "RUNNING" ? "Generating…" : blocked ? "Resolve blockers first" : "Generate Docs"}
-    </button>
-  );
-}
-
-export function GenerationActionPanel({ tenderId, readiness, canonicalReadiness, canMutate = false }: { tenderId: string; readiness: GenerationReadiness | null; canonicalReadiness?: CanonicalTenderReadiness | null; canMutate?: boolean }) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [running, setRunning] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const [kind, setKind] = useState<"success" | "error" | "info">("info");
-  const [jobId, setJobId] = useState<string | null>(null);
-
-  const blockers = readiness?.blockers ?? [];
-  const warnings = readiness?.warnings ?? [];
-  const supportReady = readiness?.supportPackageReady ?? readiness?.ready ?? false;
-  const serverGateAllowsGeneration = readiness?.fullProposalReady ?? readiness?.ready ?? false;
-  const canonicalGenerationState: CanonicalModuleStatus = canonicalReadiness?.modules.generation.state ?? (serverGateAllowsGeneration ? "READY" : "BLOCKED");
-  const fullProposalReady = isGenerationActionEnabled(canonicalGenerationState, serverGateAllowsGeneration);
-  const fullProposalBlockers = readiness?.fullProposalBlockers ?? [];
-  const blocked = !fullProposalReady;
-  const metadataBlockerPresent = fullProposalBlockers.some((b) => b.code === "FINAL_PACKAGE_FACTS_UNCONFIRMED" || b.code === "FULL_PROPOSAL_METADATA_INCOMPLETE");
-
-  const autoPromotionAvailable = Boolean(
-    readiness?.counts &&
-    (((readiness.counts.selectedExperts ?? 0) === 0 && (readiness.counts.reviewedExpertMatches ?? 0) > 0) ||
-      ((readiness.counts.selectedProjects ?? 0) === 0 && (readiness.counts.reviewedProjectMatches ?? 0) > 0)),
-  );
-
-  const ALL_REPAIRABLE_FIELDS = [
-    "evaluationMethodology",
-    "reference",
-    "deadline",
-    "submissionEmails",
-    "submissionMethod",
-    "pageLimit",
-    "validityDays",
-    "bidBondAmount",
-    "numberOfCopiesRequired",
-    "mandatorySiteVisit",
-  ] as const;
-
-  async function runRepairAllMetadata() {
-    setRunning(true);
-    setMessage(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/repair-metadata`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fields: ALL_REPAIRABLE_FIELDS }),
-      });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({})) as { error?: string };
-        setKind("error");
-        setMessage(errBody.error ?? `Repair failed (HTTP ${res.status}). The blocker remains — review and correct manually.`);
-        return;
-      }
-      const raw = await res.json().catch(() => null);
-      const parsed = parseRepairMetadataResponse(raw);
-      if (!parsed) {
-        setKind("error");
-        setMessage("Repair returned a malformed response. The blocker remains — try again or correct manually.");
-        return;
-      }
-      const { message, kind } = buildRepairMessage(parsed.outcomes);
-      setKind(kind);
-      setMessage(message);
-      if (parsed.success) {
-        startTransition(() => router.refresh());
-      }
-    } catch (error) {
-      setKind("error");
-      setMessage(error instanceof Error ? error.message : "Batch repair failed due to a network error.");
-    } finally {
-      setRunning(false);
-    }
+  // FAILED_SECURITY_OR_INTEGRITY: security or integrity failure.
+  const securityFailureCodes = [
+    "FAILED_SECURITY_OR_INTEGRITY",
+    "CONTENT_HASH_MISMATCH",
+    "INVALID_BYTE_SIGNATURE",
+    "OFFICIAL_BYTES_LOST",
+    "TENANT_SCOPE_VIOLATION",
+  ];
+  if (blockerCodes.some((code) => securityFailureCodes.includes(code))) {
+    return "FAILED_SECURITY_OR_INTEGRITY";
   }
 
-  async function runGenerate() {
-    if (!fullProposalReady) {
-      setKind("error");
-      setMessage("Review optional warnings before proceeding.");
-      return;
-    }
-    setRunning(true);
-    setMessage(null);
-    setJobId(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/generate`, { method: "POST" });
-      const data = await res.json().catch(() => ({})) as GenerateResponse;
-      if (!res.ok) {
-        const hint = data.nextAction ? ` ${shortAction(data.nextAction)}` : "";
-        const diag = data.diagnosticId ? ` [diag ${data.diagnosticId}]` : "";
-        setKind("error");
-        setMessage(`${data.error || "Generation failed."}${hint}${diag}`.trim());
-        return;
-      }
-      if (data.jobId) setJobId(data.jobId);
-      const warningText = Array.isArray(data.warnings) && data.warnings.length > 0 ? ` Warnings: ${data.warnings.slice(0, 2).join(" ")}` : "";
-      setKind("success");
-      setMessage(`Generation completed.${warningText}`.trim());
-      startTransition(() => router.refresh());
-    } catch (error) {
-      setKind("error");
-      setMessage(error instanceof Error ? `Generation failed. ${error.message}` : "Generation failed due to a network/runtime error.");
-    } finally {
-      setRunning(false);
-    }
+  // GENUINE_SOURCE_BLOCKED: a genuine source blocker exists.
+  const genuineSourceBlockerCodes = [
+    "SOURCE_REQUIRED_FOR_APPROVAL",
+    "MISSING_TENDER_SOURCE_FORM",
+    "OFFICIAL_BYTES_LOST",
+    "NO_ACTIVE_GENERATED_DOCUMENTS",
+    "NO_CURRENT_CONFIRMED_BUILD_PLAN",
+    "MISSING_PLANNED_FILES",
+    "MISSING_TENDER_FORM_FIELDS",
+    "HARD_COMPLIANCE_BLOCKER",
+  ];
+  if (blockerCodes.some((code) => genuineSourceBlockerCodes.includes(code))) {
+    return "GENUINE_SOURCE_BLOCKED";
   }
 
-  const canonicalConfig = CANONICAL_STATUS_CONFIG[canonicalGenerationState];
-  const panelClass = `${canonicalConfig.borderClass} ${canonicalConfig.bgClass}`;
-  const labelClass = canonicalConfig.textClass;
-  const headlineText = canonicalGenerationState === "READY"
-    ? "Canonical generation readiness: ready"
-    : canonicalGenerationState === "WARNING"
-      ? "Canonical generation readiness: warnings present"
-      : canonicalGenerationState === "RUNNING"
-        ? "Generation is running"
-        : "Canonical generation readiness: not ready";
+  // LEGAL_RELEASE_REQUIRED: a legal signature, declaration, or ADMIN release
+  // decision is required. These are the ONLY remaining manual steps.
+  const legalReleaseCodes = [
+    "LEGAL_RELEASE_REQUIRED",
+    "LEGAL_SIGNATURE_REQUIRED",
+    "ADMIN_RELEASE_REQUIRED",
+    "AUTHORITY_REVIEW_REQUIRED",
+    "EVALUATOR_OBJECTION_REQUIRES_RESOLUTION",
+    "FALLBACK_ANALYSIS_APPROVAL_REQUIRED",
+  ];
+  if (blockerCodes.some((code) => legalReleaseCodes.includes(code))) {
+    return "LEGAL_RELEASE_REQUIRED";
+  }
+
+  // If there are any other blockers, still GENUINE_SOURCE_BLOCKED.
+  if (blockerCodes.length > 0) return "GENUINE_SOURCE_BLOCKED";
+
+  // Otherwise, the workflow is processing automatically.
+  return "PROCESSING_AUTOMATICALLY";
+}
+
+/**
+ * The status label shown to the user. Plain text — no icons, no badges.
+ */
+function statusLabel(status: ReleaseStatus): string {
+  switch (status) {
+    case "PROCESSING_AUTOMATICALLY":
+      return "Processing automatically";
+    case "GENUINE_SOURCE_BLOCKED":
+      return "Genuine source blocked";
+    case "LEGAL_RELEASE_REQUIRED":
+      return "Legal release required";
+    case "READY_TO_DOWNLOAD":
+      return "Ready to download";
+    case "FAILED_SECURITY_OR_INTEGRITY":
+      return "Security or integrity failure";
+  }
+}
+
+/**
+ * A plain-text explanation of what the status means. No icons.
+ */
+function statusExplanation(status: ReleaseStatus): string {
+  switch (status) {
+    case "PROCESSING_AUTOMATICALLY":
+      return "The workflow is running. Byte verification, extraction, analysis, matching, generation, validation, PDF finalization, and package reconciliation proceed automatically. You may close or refresh this page — processing continues server-side.";
+    case "GENUINE_SOURCE_BLOCKED":
+      return "A genuine source blocker exists. Upload the missing source document or tender intake file, then processing resumes automatically.";
+    case "LEGAL_RELEASE_REQUIRED":
+      return "A legal signature, declaration, or ADMIN release decision is required. No further automatic processing can occur until this is resolved.";
+    case "READY_TO_DOWNLOAD":
+      return "The final ZIP package is ready. Download it below.";
+    case "FAILED_SECURITY_OR_INTEGRITY":
+      return "A security or integrity failure occurred. The package cannot be downloaded. Contact support with the request ID.";
+  }
+}
+
+// Preserve the export name for backward compatibility with page.tsx imports.
+// The button is gone — this function now always returns false because there
+// is no manual generate action.
+export function isGenerationActionEnabled(
+  _canonicalGenerationState: CanonicalModuleStatus,
+  _serverGateAllowsGeneration: boolean,
+): boolean {
+  return false;
+}
+
+// Preserve the export name. The button component is now a no-op — it renders
+// nothing. This avoids breaking imports in page.tsx while removing the button.
+export function GenerationActionButton() {
+  return null;
+}
+
+// Preserve the export name. The panel is now the text-based status surface.
+export function GenerationActionPanel({
+  tenderId: _tenderId,
+  readiness,
+  canonicalReadiness,
+  canMutate: _canMutate = false,
+}: {
+  tenderId: string;
+  readiness: GenerationReadiness | null;
+  canonicalReadiness?: CanonicalTenderReadiness | null;
+  canMutate?: boolean;
+}) {
+  const status = deriveReleaseStatus(readiness, canonicalReadiness);
+
+  // Collect any genuine source blockers or legal release items to show
+  // as a plain-text list (no icons, no action links).
+  const visibleBlockers: string[] = [];
+  for (const b of readiness?.blockers ?? []) {
+    if (b.code !== "NO_REQUIREMENTS") visibleBlockers.push(b.message);
+  }
+  for (const b of readiness?.fullProposalBlockers ?? []) {
+    if (b.code !== "NO_REQUIREMENTS") visibleBlockers.push(b.message);
+  }
+  // canonicalReadiness.blockers are string codes — show them as-is.
+  for (const code of canonicalReadiness?.blockers ?? []) {
+    if (code !== "NO_REQUIREMENTS") visibleBlockers.push(code);
+  }
+  const truncatedBlockers = visibleBlockers.slice(0, 8);
 
   return (
-    <>
-      <section id="generated-documents" className={`mb-4 rounded-2xl border p-5 shadow-sm ${panelClass}`}>
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <p className={`text-xs font-semibold uppercase tracking-wide ${labelClass}`}>Generation action</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2"><h2 className="text-lg font-bold text-slate-900">{headlineText}</h2><CanonicalStatusBadge status={canonicalGenerationState} size="sm" /></div>
-            <p className="mt-1 max-w-3xl text-sm text-slate-600">
-              The Generate Docs action is controlled by canonical generation readiness and the existing strict server gate. When canonical readiness is not READY, no enabled green action state is shown.
-            </p>
-            {autoPromotionAvailable && (
-              <p className="mt-2 text-xs font-medium text-emerald-700">Reviewed matches are available for automatic promotion if no manual selection has been made.</p>
-            )}
-            <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              <span className={`rounded-full px-3 py-1 font-semibold ${supportReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>Support evidence: {supportReady ? "available" : "blocked"}</span>
-              <span className={`rounded-full px-3 py-1 font-semibold ${fullProposalReady ? "bg-emerald-100 text-emerald-800" : "bg-red-100 text-red-800"}`}>Full proposal: {fullProposalReady ? "ready" : "blocked"}</span>
-            </div>
-          </div>
-          {/* Generate Docs disable invariant: disabled={!fullProposalReady || running || isPending} */}
-          {canMutate ? (
-            <GenerationActionButton
-              canonicalGenerationState={canonicalGenerationState}
-              fullProposalReady={fullProposalReady}
-              busy={running || isPending}
-              blockedReason={blocked ? canonicalReadiness?.modules.generation.reason : undefined}
-              onClick={runGenerate}
-            />
-          ) : (
-            <p className="text-xs text-slate-500 italic">Read-only — generation requires ADMIN or PROPOSAL_MANAGER role</p>
-          )}
+    <section id="generated-documents" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Release status</p>
+      <h2 className="mt-1 text-lg font-bold text-slate-900">{statusLabel(status)}</h2>
+      <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{statusExplanation(status)}</p>
+      {truncatedBlockers.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pending items</p>
+          <ul className="mt-1 space-y-1 text-sm text-slate-700">
+            {truncatedBlockers.map((msg, idx) => (
+              <li key={`blk-${idx}`} className="before:content-['•'] before:mr-1.5 before:text-slate-400">{msg}</li>
+            ))}
+          </ul>
         </div>
-
-        {!fullProposalReady && fullProposalBlockers.length > 0 && (
-          <div className="mt-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Full proposal blocked because:</p>
-            <ul className="mt-2 space-y-1.5 text-sm text-red-800">
-              {fullProposalBlockers.slice(0, 6).map((item, index) => (
-                <li key={`fp-${item.code}-${index}`} className="flex flex-wrap items-start gap-1">
-                  <span className="before:content-['•'] before:mr-1.5 before:text-red-400">{item.message}</span>
-                  {item.nextAction && (
-                    <BlockerActionLink
-                      tenderId={tenderId}
-                      actionCode={item.nextAction}
-                      canMutate={canMutate}
-                      onDone={() => router.refresh()}
-                    />
-                  )}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {fullProposalReady && !supportReady && blockers.length > 0 && (
-          <ul className="mt-3 space-y-1.5 text-sm text-red-800">
-            {blockers.slice(0, 4).map((item, index) => (
-              <li key={`b-${item.code}-${index}`} className="flex flex-wrap items-start gap-1">
-                <span className="before:content-['•'] before:mr-1.5 before:text-red-400">{item.message}</span>
-                {item.nextAction && (
-                  <BlockerActionLink
-                    tenderId={tenderId}
-                    actionCode={item.nextAction}
-                    canMutate={canMutate}
-                    onDone={() => router.refresh()}
-                  />
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {(fullProposalReady || supportReady) && warnings.length > 0 && (
-          <ul className="mt-3 space-y-1.5 text-sm text-emerald-800">
-            {warnings.slice(0, 3).map((item, index) => (
-              <li key={`w-${item.code}-${index}`} className="flex flex-wrap items-start gap-1">
-                <span className="before:content-['•'] before:mr-1.5 before:text-emerald-400">{item.message}</span>
-                {item.nextAction && (
-                  <BlockerActionLink
-                    tenderId={tenderId}
-                    actionCode={item.nextAction}
-                    canMutate={canMutate}
-                    onDone={() => router.refresh()}
-                  />
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {canMutate && metadataBlockerPresent && (
-          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-            <p className="text-xs font-semibold text-amber-800">Tender Details incomplete — source-grounded repair available</p>
-            <p className="mt-1 text-xs text-amber-600">Extract the missing Tender Details fields directly from the tender document. Only source-grounded values are written; nothing is invented.</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={runRepairAllMetadata}
-                disabled={running || isPending}
-                className="inline-flex items-center gap-1 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
-                title="Repair all empty Tender Details fields from the tender source"
-              >
-                <RefreshIcon /> Repair Tender Details from source
-              </button>
-            </div>
-          </div>
-        )}
-
-        {message && (
-          <div className={`mt-3 rounded-xl border px-3 py-2 text-sm ${kind === "success" ? "border-emerald-200 bg-white text-emerald-800" : kind === "error" ? "border-red-200 bg-white text-red-700" : "border-slate-200 bg-white text-slate-700"}`}>
-            {message}
-          </div>
-        )}
-      </section>
-      <GenerationProgressPanel tenderId={tenderId} jobId={jobId} />
-    </>
+      )}
+      {status === "READY_TO_DOWNLOAD" && (
+        <div className="mt-4">
+          <a
+            href={`/api/tenders/${_tenderId}/download?type=zip`}
+            className="inline-block rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            Download Final ZIP
+          </a>
+        </div>
+      )}
+    </section>
   );
 }

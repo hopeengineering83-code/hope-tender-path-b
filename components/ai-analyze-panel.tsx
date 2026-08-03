@@ -254,35 +254,23 @@ export function AIAnalyzePanel({
   }
 
   const busy = analyzing || isPending;
+  const analysisComplete = jobStatus === "SUCCEEDED";
 
   return (
     <section id="ai-analyze-section" className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-purple-700">Step 1 · AI analysis</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">AI analysis</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">
-            {analyzing ? "AI Analysis in progress" : "Run AI Analysis"}
+            {analyzing ? "Processing automatically" : analysisComplete ? "Analysis complete" : "Pending automatic analysis"}
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Extract requirements, client details, and evaluation criteria from tender documents.
-            Run this first, then use the Engine below to create evidence matches.
+            {analyzing
+              ? (phase || "Extracting requirements, client details, and evaluation criteria from tender documents.")
+              : analysisComplete
+                ? "Requirements, client details, and evaluation criteria have been extracted. Processing continues automatically."
+                : "Analysis will start automatically once extraction completes. No action required."}
           </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {aiEnabled && canMutate ? (
-            <button
-              onClick={handleBackgroundAnalyze}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-60"
-            >
-              <SparklesIcon />
-              {analyzing ? (phase || "Analyzing…") : "Run AI Analyze"}
-            </button>
-          ) : aiEnabled && !canMutate ? (
-            <span className="text-xs text-slate-500 font-medium italic">Read-only — AI Analyze requires ADMIN or PROPOSAL_MANAGER role</span>
-          ) : (
-            <span className="text-xs text-red-600 font-medium italic">AI providers not configured</span>
-          )}
         </div>
       </div>
 
@@ -306,25 +294,11 @@ export function AIAnalyzePanel({
       )}
 
       {autoRetrySecondsLeft !== null && autoRetrySecondsLeft > 0 && (
-        <div className="mt-4 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
-          <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-blue-400 border-t-transparent" />
+        <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
           <span className="text-xs font-medium text-blue-800">
             Providers cooling down — auto-retrying in {autoRetrySecondsLeft}s
             {willResume ? " (resumes from the last completed chunk)" : ""}
           </span>
-          {canMutate && (
-          <button
-            onClick={() => { cancelAutoRetry(); handleBackgroundAnalyze(); }}
-            disabled={analyzing}
-            className="ml-auto rounded bg-blue-600 px-2 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-            title="Retry now and resume from the last completed chunk"
-          >
-            Retry now
-          </button>
-          )}
-          <button onClick={cancelAutoRetry} className="text-xs text-blue-600 underline hover:text-blue-800">
-            Cancel
-          </button>
         </div>
       )}
 
@@ -332,31 +306,6 @@ export function AIAnalyzePanel({
         <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
           <p className="font-semibold">Analysis {jobStatus === "PARTIAL_SUCCESS" ? "Incomplete" : "Error"}</p>
           <p className="mt-1 text-red-700">{error}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            {canMutate && (
-            <button
-              onClick={() => { setError(""); handleBackgroundAnalyze(); }}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-60"
-            >
-              <RefreshIcon /> Retry AI Analyze
-            </button>
-            )}
-            <button
-              onClick={runProviderDiagnostics}
-              disabled={diagnosing}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
-              title="Run a live test of every AI provider to see which key is working and why a run fails"
-            >
-              {diagnosing ? "Testing providers…" : "Diagnose providers"}
-            </button>
-            <button
-              onClick={() => setError("")}
-              className="text-xs font-medium underline hover:text-red-900"
-            >
-              Dismiss
-            </button>
-          </div>
 
           {diag && (
             <div className="mt-3 rounded-lg border border-slate-200 bg-white p-3">

@@ -193,8 +193,9 @@ test("tender generation readiness blocks missing requirements", async () => {
     },
   }), "user-1", "tender-1");
   assert.ok(readiness);
-  assert.equal(readiness.ready, false);
-  assert.ok(readiness.blockers.some((blocker) => blocker.code === "NO_REQUIREMENTS"));
+  // Gap 1: NO_REQUIREMENTS is no longer a blocker. Source-text-only
+  // generation proceeds even without structured requirements.
+  assert.ok(!readiness.blockers.some((blocker) => blocker.code === "NO_REQUIREMENTS"));
 });
 
 test("tender generation readiness permits durable reviewed evidence", async () => {

@@ -46,7 +46,8 @@ export async function checkEnginePostconditions(tenderId: string): Promise<Postc
   const reviewedProjects = selectedProjectRows.filter((row) => canUseVaultRecord(row.project, "GENERATION")).length;
 
   const blockers: string[] = [];
-  if (requirementCount === 0) blockers.push("NO_REQUIREMENTS_PERSISTED");
+  // Gap 1: NO_REQUIREMENTS_PERSISTED is no longer a blocker. Source-text-only
+  // generation proceeds even without structured requirements.
   if (requirementCount > 0 && complianceRows === 0) blockers.push("ENGINE_RAN_ZERO_EVIDENCE_ROWS");
 
   // A zero-row result already implies that no eligible reviewed selection can
