@@ -37,6 +37,20 @@ export type AutoFinalizeResult = {
   validation: { validated: number; failed: number; pending: number };
   pdfFinalization: { finalized: number; skipped: number; failed: number };
   /**
+   * Second validation pass over the PDFs the finalization stage just created.
+   * They are persisted validationStatus PENDING, and canonical validation had
+   * already run one stage earlier, so without this every auto-finalized PDF
+   * stayed unvalidated forever — and an unvalidated document is exactly what
+   * the export gate refuses.
+   */
+  pdfValidation: { validated: number; failed: number; pending: number };
+  /**
+   * Does the package actually contain every required file? The stages above
+   * can each succeed while the plan is still short a document, so the run is
+   * not converged until the manifest reconciles against the confirmed plan.
+   */
+  packageReconciliation: { requiredTotal: number; missing: number };
+  /**
    * Why the tender did NOT converge to export-ready. Empty exactly when every
    * stage left nothing outstanding. `ok` is derived from this, never set
    * independently, so a stage cannot be added later that quietly leaves work
@@ -78,6 +92,15 @@ export function evaluateAutoFinalizeConvergence(
   if (result.exportRepair.manualRequired > 0) {
     blockers.push(`AUTHORITY: ${result.exportRepair.manualRequired} document(s) need manual attention and cannot be repaired automatically`);
   }
+  if (result.pdfValidation.failed > 0) {
+    blockers.push(`readiness gate: ${result.pdfValidation.failed} auto-finalized PDF(s) failed canonical validation`);
+  }
+  if (result.pdfValidation.pending > 0) {
+    blockers.push(`readiness gate: ${result.pdfValidation.pending} auto-finalized PDF(s) are still unvalidated`);
+  }
+  if (result.packageReconciliation.missing > 0) {
+    blockers.push(`INTEGRITY: package reconciliation incomplete — ${result.packageReconciliation.missing} of ${result.packageReconciliation.requiredTotal} required file(s) are not in the package`);
+  }
   return blockers;
 }
 
@@ -99,6 +122,8 @@ export async function runAutoFinalizeAfterGeneration(
     exportRepair: { repaired: 0, skipped: 0, manualRequired: 0 },
     validation: { validated: 0, failed: 0, pending: 0 },
     pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
+    pdfValidation: { validated: 0, failed: 0, pending: 0 },
+    packageReconciliation: { requiredTotal: 0, missing: 0 },
     blockers: [],
     warning: null,
   };
@@ -211,6 +236,63 @@ export async function runAutoFinalizeAfterGeneration(
     throw error;
   }
 
+  // Step 5: validate the PDFs step 4 just created. They are persisted
+  // validationStatus PENDING with a "awaiting canonical validation" note, and
+  // canonical validation ran in step 3 — before they existed. Without this
+  // pass every auto-finalized PDF stayed PENDING forever, and the export gate
+  // refuses unvalidated documents, so the automatic chain could never actually
+  // reach export-ready. Re-running the same canonical validator keeps one
+  // validation authority rather than adding a PDF-specific one.
+  if (result.pdfFinalization.finalized > 0) {
+    try {
+      await recordStep(jobId, {
+        stepName: "auto-finalize.pdf-validation",
+        message: `Validating ${result.pdfFinalization.finalized} newly finalized PDF(s)`,
+        status: "RUNNING",
+      });
+      const pdfValidation = await runCanonicalValidation(tenderId, userId);
+      result.pdfValidation = pdfValidation;
+      await recordStep(jobId, {
+        stepName: "auto-finalize.pdf-validation.complete",
+        message: `PDF validation: ${pdfValidation.validated} validated, ${pdfValidation.failed} failed, ${pdfValidation.pending} pending`,
+        status: "SUCCEEDED",
+      });
+    } catch (error) {
+      logger.warn("[auto-finalize] PDF validation failed", {
+        tenderId,
+        jobId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      throw error;
+    }
+  }
+
+  // Step 6: reconcile the package against the confirmed plan. Every stage
+  // above can succeed while the package is still short a required file — a
+  // document that was never generated is not something any repair, validation
+  // or PDF pass would notice. Reconciling here is what makes "export ready"
+  // mean the package is actually complete.
+  try {
+    await recordStep(jobId, {
+      stepName: "auto-finalize.package-reconciliation",
+      message: "Reconciling package manifest against the confirmed Build Plan",
+      status: "RUNNING",
+    });
+    result.packageReconciliation = await reconcilePackageManifest(tenderId, userId);
+    await recordStep(jobId, {
+      stepName: "auto-finalize.package-reconciliation.complete",
+      message: `Package reconciliation: ${result.packageReconciliation.requiredTotal - result.packageReconciliation.missing}/${result.packageReconciliation.requiredTotal} required file(s) present`,
+      status: "SUCCEEDED",
+    });
+  } catch (error) {
+    logger.warn("[auto-finalize] package reconciliation failed", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    throw error;
+  }
+
   // Convergence is decided from what the stages actually left behind, not
   // assumed from "no stage threw". A stage that completes while leaving
   // unresolved grounding, unvalidated documents, an unfinalizable PDF, or
@@ -227,6 +309,28 @@ export async function runAutoFinalizeAfterGeneration(
   });
 
   return result;
+}
+
+/**
+ * How many required plan files are still absent from the package.
+ *
+ * Reads the same canonical resolver the Build Plan panel and the export gate
+ * read, so auto-finalize cannot disagree with what the user is shown or with
+ * what the final ZIP will accept. A tender with no confirmed Build Plan has
+ * nothing to reconcile against — that is reported as zero required rather than
+ * invented as a blocker, because the missing plan is already the Engine's
+ * blocker upstream and duplicating it here would just be noise.
+ */
+async function reconcilePackageManifest(
+  tenderId: string,
+  userId: string,
+): Promise<{ requiredTotal: number; missing: number }> {
+  const { loadSubmissionPlanCompleteness } = await import("../engine/submission-plan-completeness");
+
+  const loaded = await loadSubmissionPlanCompleteness(prisma, tenderId, userId);
+  if (!loaded || !loaded.hasConfirmedPlan) return { requiredTotal: 0, missing: 0 };
+
+  return { requiredTotal: loaded.report.totalRequired, missing: loaded.report.totalMissing };
 }
 
 /**

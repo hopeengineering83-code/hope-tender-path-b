@@ -383,6 +383,98 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
 export const __testing__ = { looksLikeOfficialOriginal, fileKey };
 export { filterFinalExportCandidateDocuments };
 
+export type LoadedSubmissionPlanCompleteness = {
+  report: SubmissionPlanCompletenessReport;
+  /** Identity of the tender the report was resolved for. */
+  tender: { id: string; title: string };
+  /** False when no CONFIRMED Build Plan exists, so the plan is still derived. */
+  hasConfirmedPlan: boolean;
+  /** Why there is no confirmed plan. Null exactly when hasConfirmedPlan. */
+  planBlocker: string | null;
+};
+
+/**
+ * Load a tender and resolve its plan completeness in one place.
+ *
+ * The row selection and the confirmed-plan lookup are the contract between
+ * this resolver and the database; every caller that duplicated them was one
+ * more place the panel, the gates and the automatic pipeline could silently
+ * disagree about how many files a package still owes. Callers that already
+ * hold the tender in memory should call `resolveSubmissionPlanCompleteness`
+ * directly instead of re-querying through this.
+ *
+ * Returns null when the tender does not exist for this user — the query is
+ * user-scoped, so a cross-tenant id is indistinguishable from a missing one.
+ */
+export async function loadSubmissionPlanCompleteness(
+  client: any,
+  tenderId: string,
+  userId: string,
+): Promise<LoadedSubmissionPlanCompleteness | null> {
+  const { getCurrentConfirmedBuildPlan } = await import("./build-plan");
+
+  const tender = await client.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: {
+      id: true,
+      title: true,
+      exactFileNaming: true,
+      exactFileOrder: true,
+      pageLimit: true,
+      requirements: {
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          requirementType: true,
+          priority: true,
+          exactFileName: true,
+          exactOrder: true,
+          requiredQuantity: true,
+          pageLimit: true,
+          restrictions: true,
+          sectionReference: true,
+        },
+      },
+      generatedDocuments: {
+        orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          name: true,
+          exactFileName: true,
+          exactOrder: true,
+          documentType: true,
+          format: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+          storagePath: true,
+          contentSummary: true,
+        },
+      },
+    },
+  });
+  if (!tender) return null;
+
+  // Metadata-only: fileContent is deliberately not loaded. Deep byte/quality
+  // checks belong to the export-readiness gate, which reads the bytes it is
+  // about to package.
+  const confirmedPlan = await getCurrentConfirmedBuildPlan(client, tenderId, userId);
+  const report = resolveSubmissionPlanCompleteness({
+    tender,
+    generatedDocuments: tender.generatedDocuments.map((doc: GeneratedDocSnapshot) => ({ ...doc, fileContent: null })),
+    qualityFailedIds: new Set<string>(),
+    confirmedPlanItems: confirmedPlan.ok ? confirmedPlan.items : null,
+  });
+
+  return {
+    report,
+    tender: { id: tender.id, title: tender.title },
+    hasConfirmedPlan: confirmedPlan.ok,
+    planBlocker: confirmedPlan.ok ? null : confirmedPlan.blocker ?? null,
+  };
+}
+
 export type SubmissionPlanCheckResult = {
   valid: boolean;
   reason?: string;

@@ -249,8 +249,14 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
   });
 
   it("submission-plan GET and lifecycle orchestrator pass confirmed items into completeness", () => {
+    // The GET route no longer resolves this itself — it and the automatic
+    // finalize pipeline share loadSubmissionPlanCompleteness, so the confirmed
+    // plan is applied in exactly one place for both. Assert the guarantee at
+    // its new home, and that the route actually goes through it.
     const route = readFileSync("app/api/tenders/[id]/submission-plan/route.ts", "utf8");
-    assert.match(route, /confirmedPlanItems: confirmedPlan\.ok \? confirmedPlan\.items : null/);
+    assert.match(route, /loadSubmissionPlanCompleteness\(prisma, id, actor\.id\)/);
+    const loader = readFileSync("lib/engine/submission-plan-completeness.ts", "utf8");
+    assert.match(loader, /confirmedPlanItems: confirmedPlan\.ok \? confirmedPlan\.items : null/);
     const orchestrator = readFileSync("lib/engine/tender-lifecycle-orchestrator.ts", "utf8");
     assert.match(orchestrator, /confirmedPlanItems: confirmedPlan\.ok \? confirmedPlan\.items : null/);
   });

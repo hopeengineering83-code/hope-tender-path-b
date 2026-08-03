@@ -37,12 +37,24 @@ const CLEAN = {
   exportRepair: { repaired: 2, skipped: 1, manualRequired: 0 },
   validation: { validated: 4, failed: 0, pending: 0 },
   pdfFinalization: { finalized: 1, skipped: 0, failed: 0 },
+  pdfValidation: { validated: 1, failed: 0, pending: 0 },
+  packageReconciliation: { requiredTotal: 5, missing: 0 },
   warning: null,
 };
 
 function withStage(overrides: Record<string, unknown>) {
   return { ...CLEAN, ...overrides } as Parameters<typeof evaluateAutoFinalizeConvergence>[0];
 }
+
+/** Every stage left something behind — one blocker per outstanding state. */
+const ALL_BLOCKED = withStage({
+  sourceRepair: { checked: 2, repaired: 0, remaining: 2 },
+  validation: { validated: 0, failed: 1, pending: 1 },
+  pdfFinalization: { finalized: 0, skipped: 0, failed: 1 },
+  exportRepair: { repaired: 0, skipped: 0, manualRequired: 1 },
+  pdfValidation: { validated: 0, failed: 1, pending: 1 },
+  packageReconciliation: { requiredTotal: 4, missing: 1 },
+});
 
 describe("a converged run reports no blockers", () => {
   it("returns an empty blocker list when every stage finished cleanly", () => {
@@ -65,6 +77,9 @@ describe("every unfinished state the user named is a blocker", () => {
     ["pending validation", { validation: { validated: 1, failed: 0, pending: 3 } }, /still unvalidated/],
     ["failed PDF finalization", { pdfFinalization: { finalized: 0, skipped: 0, failed: 1 } }, /could not be finalized/],
     ["manual-required documents", { exportRepair: { repaired: 0, skipped: 0, manualRequired: 4 } }, /need manual attention/],
+    ["failed PDF re-validation", { pdfValidation: { validated: 0, failed: 2, pending: 0 } }, /auto-finalized PDF\(s\) failed canonical validation/],
+    ["pending PDF re-validation", { pdfValidation: { validated: 0, failed: 0, pending: 2 } }, /auto-finalized PDF\(s\) are still unvalidated/],
+    ["an incomplete package", { packageReconciliation: { requiredTotal: 9, missing: 3 } }, /package reconciliation incomplete — 3 of 9/],
   ];
 
   for (const [label, override, pattern] of cases) {
@@ -76,24 +91,14 @@ describe("every unfinished state the user named is a blocker", () => {
   }
 
   it("reports every outstanding reason, not just the first", () => {
-    const blockers = evaluateAutoFinalizeConvergence(withStage({
-      sourceRepair: { checked: 2, repaired: 0, remaining: 2 },
-      validation: { validated: 0, failed: 1, pending: 1 },
-      pdfFinalization: { finalized: 0, skipped: 0, failed: 1 },
-      exportRepair: { repaired: 0, skipped: 0, manualRequired: 1 },
-    }));
-    assert.equal(blockers.length, 5, "a user fixing this needs the whole list, not one item at a time");
+    const blockers = evaluateAutoFinalizeConvergence(ALL_BLOCKED);
+    assert.equal(blockers.length, 8, "a user fixing this needs the whole list, not one item at a time");
   });
 });
 
 describe("blockers fail terminally instead of burning the retry budget", () => {
   it("every blocker classifies as non-retryable", () => {
-    const all = evaluateAutoFinalizeConvergence(withStage({
-      sourceRepair: { checked: 2, repaired: 0, remaining: 2 },
-      validation: { validated: 0, failed: 1, pending: 1 },
-      pdfFinalization: { finalized: 0, skipped: 0, failed: 1 },
-      exportRepair: { repaired: 0, skipped: 0, manualRequired: 1 },
-    }));
+    const all = evaluateAutoFinalizeConvergence(ALL_BLOCKED);
     for (const blocker of all) {
       const decision = classifyStageRetry(`AUTO_FINALIZE_NOT_CONVERGED — ${blocker}`, 0);
       assert.equal(decision.retryable, false, `re-running will not change "${blocker}"`);
@@ -102,6 +107,65 @@ describe("blockers fail terminally instead of burning the retry budget", () => {
 
   it("a genuinely transient stage failure is still retryable", () => {
     assert.equal(classifyStageRetry("TIMEOUT contacting provider", 0).retryable, true);
+  });
+});
+
+describe("the PDFs auto-finalize creates are actually validated", () => {
+  // The PDF finalization loop persists each new PDF validationStatus PENDING
+  // ("awaiting canonical validation"), and canonical validation runs one stage
+  // EARLIER. So without a second pass, every auto-finalized PDF stayed PENDING
+  // forever — and the export gate refuses unvalidated documents, meaning the
+  // automatic chain could never reach export-ready on its own.
+
+  it("still persists new PDFs as PENDING, which is what makes the second pass necessary", () => {
+    assert.match(SERVICE, /validationStatus: "PENDING"/);
+  });
+
+  it("re-runs canonical validation after PDF finalization, not before", () => {
+    const finalizeIdx = SERVICE.indexOf("result.pdfFinalization =");
+    const revalidateIdx = SERVICE.indexOf("result.pdfValidation = pdfValidation;");
+    assert.ok(finalizeIdx > -1 && revalidateIdx > -1, "both stages must exist");
+    assert.ok(revalidateIdx > finalizeIdx, "validating before the PDFs exist is the bug being fixed");
+  });
+
+  it("reuses the one canonical validator instead of adding a PDF-specific one", () => {
+    const stage = SERVICE.slice(SERVICE.indexOf('stepName: "auto-finalize.pdf-validation"'));
+    assert.match(stage.slice(0, 600), /await runCanonicalValidation\(tenderId, userId\)/);
+  });
+
+  it("skips the pass when finalization produced no PDFs", () => {
+    // Re-validating nothing would waste a full validation sweep on every run.
+    assert.match(SERVICE, /if \(result\.pdfFinalization\.finalized > 0\) \{/);
+  });
+});
+
+describe("package reconciliation reads the one completeness authority", () => {
+  // A required file that was never generated is invisible to source repair,
+  // export repair, validation and PDF finalization alike — every one of them
+  // can succeed while the package is still short. Reconciling against the
+  // confirmed plan is what makes convergence mean "the package is complete".
+
+  it("resolves completeness through the shared loader rather than its own query", () => {
+    const helper = SERVICE.slice(SERVICE.indexOf("async function reconcilePackageManifest"));
+    const body = helper.slice(0, helper.indexOf("\n}\n") + 1);
+    assert.match(body, /loadSubmissionPlanCompleteness\(prisma, tenderId, userId\)/);
+    // A second hand-rolled tender select here is exactly how the panel and the
+    // pipeline drift apart about how many files are still owed.
+    assert.doesNotMatch(body, /prisma\.tender\.findFirst/);
+    assert.doesNotMatch(body, /resolveSubmissionPlanCompleteness\(/);
+  });
+
+  it("the API route the user sees reads that same loader", () => {
+    const route = readFileSync("app/api/tenders/[id]/submission-plan/route.ts", "utf8");
+    assert.match(route, /loadSubmissionPlanCompleteness\(prisma, id, actor\.id\)/);
+    assert.doesNotMatch(route, /prisma\.tender\.findFirst/);
+  });
+
+  it("reports nothing to reconcile when no confirmed plan exists", () => {
+    // The missing plan is already the Engine's blocker upstream; repeating it
+    // here would just be a second voice saying the same thing.
+    const helper = SERVICE.slice(SERVICE.indexOf("async function reconcilePackageManifest"));
+    assert.match(helper.slice(0, 600), /!loaded \|\| !loaded\.hasConfirmedPlan\) return \{ requiredTotal: 0, missing: 0 \}/);
   });
 });
 
