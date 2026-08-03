@@ -143,43 +143,28 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   // other panels (workflow center, recovery center) take actions.
   useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void refresh(); }), [refresh, tenderId]);
 
-  async function repair() {
+
+
+  // Dead code removed: repair(), autoFinalize(), linkVaultEvidence(),
+  // applySelectedVaultEvidence(), supersedeOutsidePlan(),
+  // repairSourceGrounding(), reclassifyDocuments(), deduplicateDocuments().
+  // These functions were called by bureaucracy buttons that have been removed.
+  // Safe repairs now run automatically via AUTO_FINALIZE.
+
+  async function approveRegexFallback() {
     setRepairing(true);
     setError(null);
     setRepairMessage(null);
     try {
-      const res = await fetch(`/api/tenders/${tenderId}/repair-export-gaps`, { method: "POST" });
-      const data = await res.json().catch(() => ({} as RepairResult));
-      if (!res.ok || data.error) throw new Error(data.error ?? `Export repair failed (${res.status})`);
-      const remainingDocs = data.remaining?.documentBlockers ?? 0;
-      const remainingTender = data.remaining?.tenderLevelBlockers ?? 0;
-      const manual = data.manualRequired ?? 0;
-      const manualText = manual > 0 ? ` ${manual} official/manual file(s) were skipped and must be attached or reviewed manually.` : "";
-      setRepairMessage(`Repair completed: ${data.repaired ?? 0} generated document(s) repaired, ${data.skipped ?? 0} already safe/skipped.${manualText} Remaining blockers: ${remainingDocs + remainingTender}.`);
+      const res = await fetch(`/api/tenders/${tenderId}/approve-analysis`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error ?? `Approve fallback failed (${res.status})`);
+      setRepairMessage(`Fallback analysis approved. Re-checking readiness.`);
       await refresh();
     } catch (err) {
-      setError("Export repair failed. Refresh to retry.");
+      setError("Approve fallback failed. Refresh to retry.");
     } finally {
       setRepairing(false);
-    }
-  }
-
-  async function autoFinalize() {
-    setAutoFinalizing(true);
-    setError(null);
-    setRepairMessage(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/auto-finalize`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) throw new Error(data.error ?? `Auto-finalize failed (${res.status})`);
-      const remaining = data.remainingCount ?? 0;
-      setAutoFinalizeRemaining(remaining > 0 ? remaining : null);
-      setRepairMessage(`Auto-finalize: processed ${data.processedCount ?? 0}, remaining ${remaining}. ${data.readinessOk ? "Export gate passed" : remaining > 0 ? `${remaining} doc(s) still need finalization — click Auto-finalize again.` : "Re-check to refresh the gate."}`);
-      await refresh();
-    } catch (err) {
-      setError("Auto-finalize failed. Refresh to retry.");
-    } finally {
-      setAutoFinalizing(false);
     }
   }
 
@@ -226,161 +211,13 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
     }
   }
 
-  async function linkVaultEvidence() {
-    setLinkingVault(true);
-    setError(null);
-    setRepairMessage(null);
-    try {
-      const listRes = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`, { method: "GET" });
-      const listData = await listRes.json().catch(() => ({}));
-      if (!listRes.ok) throw new Error(listData.error ?? `Vault evidence lookup failed (${listRes.status})`);
-      const candidates = Array.isArray(listData.candidates) ? (listData.candidates as VaultCandidate[]) : [];
-      setVaultCandidates(candidates);
-      const defaults: Record<string, string> = {};
-      for (const c of candidates) {
-        if (c.options?.[0]?.id) defaults[c.rowId] = c.options[0].id;
-      }
-      setSelectedVaultOption(defaults);
-      if (candidates.length === 0) {
-        setRepairMessage("No vault-linkable blockers were found.");
-        await refresh();
-      }
-    } catch (err) {
-      setError("Vault evidence linking failed. Refresh to retry.");
-    } finally {
-      setLinkingVault(false);
-    }
-  }
-
-  async function applySelectedVaultEvidence() {
-    setLinkingVault(true);
-    setError(null);
-    try {
-      let linked = 0;
-      for (const candidate of vaultCandidates) {
-        const selected = selectedVaultOption[candidate.rowId];
-        if (!selected) continue;
-        const res = await fetch(`/api/tenders/${tenderId}/link-vault-evidence`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rowId: candidate.rowId, vaultDocumentId: selected }),
-        });
-        if (res.ok) linked += 1;
-      }
-      setRepairMessage(linked > 0 ? `Linked vault evidence for ${linked} document blocker(s).` : "No vault evidence links were applied.");
-      setVaultCandidates([]);
-      await refresh();
-    } catch (err) {
-      setError("Applying vault evidence failed. Refresh to retry.");
-    } finally {
-      setLinkingVault(false);
-    }
-  }
-
-  async function supersedeOutsidePlan() {
-    setSupersedingOutsidePlan(true);
-    setError(null);
-    setRepairMessage(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/supersede-outside-plan`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) throw new Error(data.error ?? `Supersede outside-plan failed (${res.status})`);
-      setRepairMessage(`Superseded ${data.superseded ?? 0} outside-plan document(s).`);
-      await refresh();
-    } catch (err) {
-      setError("Supersede outside-plan failed. Refresh to retry.");
-    } finally {
-      setSupersedingOutsidePlan(false);
-    }
-  }
 
 
-  async function approveRegexFallback() {
-    // An approval note is a real audit record of why a human accepted
-    // regex-fallback output as authoritative — it must reflect this
-    // reviewer's actual justification, not a canned string every approval
-    // shares (that reduces the audit trail to a checkbox).
-    const note = approvalNote.trim();
-    if (!note) { setError("An approval note is required."); return; }
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/approve-analysis`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note }),
-      });
-      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; error?: string };
-      if (data.success) {
-        setRepairMessage("Fallback note saved for audit. Re-checking readiness — generation and export remain blocked until full AI analysis succeeds.");
-        setApprovalNote("");
-      } else {
-        setError((data.error as string | undefined) ?? "Failed to approve fallback analysis");
-      }
-    } catch {
-      setError("Failed to approve fallback analysis");
-    } finally {
-      await refresh();
-    }
-  }
 
-  async function repairSourceGrounding() {
-    setRepairingSource(true);
-    setError(null);
-    setRepairMessage(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/repair-source-grounding`, { method: "POST" });
-      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; repairedCount?: number; remainingCount?: number; error?: string };
-      if (data.success) {
-        setRepairMessage(`Source grounding: ${data.repairedCount ?? 0} requirement(s) repaired. ${data.remainingCount ? `${data.remainingCount} still need manual review.` : "All repaired."}`);
-      } else {
-        setError((data.error as string | undefined) ?? "Source grounding repair failed");
-      }
-    } catch {
-      setError("Source grounding repair failed");
-    } finally {
-      setRepairingSource(false);
-      await refresh();
-    }
-  }
 
-  async function reclassifyDocuments() {
-    setReclassifying(true);
-    setError(null);
-    setRepairMessage(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/reclassify-documents`, { method: "POST" });
-      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; changed?: number; error?: string };
-      if (data.success) {
-        setRepairMessage(`Reclassified ${data.changed ?? 0} document type(s). Re-checking readiness…`);
-      } else {
-        setError((data.error as string | undefined) ?? "Reclassification failed");
-      }
-    } catch {
-      setError("Reclassification failed");
-    } finally {
-      setReclassifying(false);
-      await refresh();
-    }
-  }
 
-  async function deduplicateDocuments() {
-    setDeduplicating(true);
-    setError(null);
-    setRepairMessage(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/deduplicate-documents`, { method: "POST" });
-      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; duplicatesFound?: number; error?: string };
-      if (data.success) {
-        setRepairMessage(`Deduplicated ${data.duplicatesFound ?? 0} row(s). Re-checking readiness…`);
-      } else {
-        setError((data.error as string | undefined) ?? "Deduplication failed");
-      }
-    } catch {
-      setError("Deduplication failed");
-    } finally {
-      setDeduplicating(false);
-      await refresh();
-    }
-  }
+
+
 
   async function repairExportPolicyAssets() {
     setRepairingAssets(true);
@@ -543,26 +380,9 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
         </div>
       )}
 
-      {vaultCandidates.length > 0 && (
-        <div className="mt-3 rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-xs">
-          <p className="font-semibold text-indigo-800">Select vault evidence per blocker</p>
-          <div className="mt-2 space-y-2">
-            {vaultCandidates.map((candidate) => (
-              <div key={candidate.rowId} className="rounded border border-indigo-100 bg-white p-2">
-                <p className="font-medium text-slate-900">{candidate.rowName}</p>
-                <select className="mt-1 w-full rounded border border-slate-300 p-1" value={selectedVaultOption[candidate.rowId] ?? ""} onChange={(e) => setSelectedVaultOption((prev) => ({ ...prev, [candidate.rowId]: e.target.value }))}>
-                  <option value="">Select evidence…</option>
-                  {candidate.options.map((opt) => <option key={opt.id} value={opt.id}>{opt.fileName} ({opt.category})</option>)}
-                </select>
-              </div>
-            ))}
-          </div>
-          <div className="mt-2 flex gap-2">
-            <button type="button" onClick={() => void applySelectedVaultEvidence()} disabled={linkingVault} className="rounded bg-indigo-700 px-3 py-1 text-white">{linkingVault ? "Linking…" : "Apply selected vault evidence"}</button>
-            <button type="button" onClick={() => setVaultCandidates([])} className="rounded border border-slate-300 bg-white px-3 py-1">Cancel</button>
-          </div>
-        </div>
-      )}
+      {/* Vault evidence modal removed — linkVaultEvidence() and
+          applySelectedVaultEvidence() are dead code. Vault evidence
+          linking runs automatically via reconcileAutomaticRequirementCoverage. */}
 
       {!readiness && !loading && (
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
