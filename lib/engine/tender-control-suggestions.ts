@@ -252,7 +252,7 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "NO_ACTIVE_EXPORT_CANDIDATES",
       type: "RISK",
       title: "No active final-export candidates",
-      description: "There are no documents currently eligible for the final ZIP. Generate planned documents, attach official originals, or repair quality-failed documents before export.",
+      description: "There are no documents currently eligible for the final ZIP. Generate planned documents or repair quality-failed documents before export. Tender-issued forms are sourced automatically from uploaded Tender Intake files.",
       severity: "HIGH",
       nextAction: "Generate or attach documents until at least one is final-export ready.",
     }));
@@ -264,10 +264,10 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
     out.push(mkSuggestion({
       code: "MISSING_OFFICIAL_ORIGINALS",
       type: "RISK",
-      title: `${missing} official original(s) not attached`,
-      description: "The submission plan calls for tender-issued official originals (forms, declarations, sealed certificates). The system will NOT fabricate these — attach the signed/sealed originals before final export.",
+      title: `${missing} tender-issued form(s) not found in Tender Intake`,
+      description: "The submission plan requires tender-issued forms that were not found in the uploaded Tender Intake files. Upload the complete tender package to resolve this. The system will NOT fabricate these forms.",
       severity: "HIGH",
-      nextAction: "Attach the official originals on the Generated Documents panel.",
+      nextAction: "Upload the complete tender package containing the required forms.",
     }));
   }
 
@@ -277,9 +277,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "QUALITY_FAILED_DOCS",
       type: "RISK",
       title: `${input.counts.qualityFailedCandidates} document(s) failed the quality gate`,
-      description: "Quality-failed documents cannot be included in the export package. Rewrite, regenerate, or replace them with official originals.",
+      description: "Quality-failed documents cannot be included in the export package. Rewrite or regenerate the quality-failed documents.",
       severity: "HIGH",
-      nextAction: "Rewrite or attach official originals for the quality-failed documents.",
+      nextAction: "Rewrite or regenerate the quality-failed documents.",
     }));
   }
 

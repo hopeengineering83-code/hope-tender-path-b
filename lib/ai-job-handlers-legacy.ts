@@ -705,7 +705,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
 
     await recordStep(ctx.jobId, {
       stepName: "auto-finalize.complete",
-      message: `Auto-finalize complete: planned ${result.plannedFiles.generated}/${result.plannedFiles.skipped}, source repair ${result.sourceRepair.repaired}/${result.sourceRepair.checked}, export repair ${result.exportRepair.repaired} repaired, validation ${result.validation.validated}/${result.validation.failed}/${result.validation.pending}, PDF ${result.pdfFinalization.finalized}/${result.pdfFinalization.skipped}/${result.pdfFinalization.failed}${result.warning ? `, warning: ${result.warning}` : ""}`,
+      message: `Auto-finalize complete: source repair ${result.sourceRepair.repaired}/${result.sourceRepair.checked}, export repair ${result.exportRepair.repaired} repaired, validation ${result.validation.validated}/${result.validation.failed}/${result.validation.pending}, PDF ${result.pdfFinalization.finalized}/${result.pdfFinalization.skipped}/${result.pdfFinalization.failed}${result.warning ? `, warning: ${result.warning}` : ""}`,
       status: "SUCCEEDED",
     });
 

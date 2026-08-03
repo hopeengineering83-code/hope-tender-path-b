@@ -20,7 +20,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircleIcon, WarningIcon, ClockIcon, BanIcon, FolderIcon } from "./icons";
 import { BuildSubmissionPlanButton } from "./build-submission-plan-button";
-import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
 import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
@@ -253,10 +252,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {canMutate && data.summary.totalMissing > 0 && (
-            <GenerateMissingPlanFilesButton tenderId={tenderId} missingCount={data.summary.totalMissing} />
-          )}
-          {/* Re-check button removed — panel auto-refreshes via subscribeTenderWorkflowSync. */}
+          {/* GenerateMissingPlanFilesButton removed — planned documents are generated automatically by the pipeline. */}
           {data.summary.totalSuperseded > 0 && (
             <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-slate-500">
               <input type="checkbox" checked={showHistorical} onChange={(e) => setShowHistorical(e.target.checked)} />

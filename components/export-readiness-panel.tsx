@@ -2,9 +2,8 @@
 
 import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { CheckIcon, WarningIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, ArrowRightIcon } from "./icons";
+import { CheckIcon, WarningIcon, CheckCircleIcon, DownloadIcon, LockIcon } from "./icons";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
-import { DisclosureAnchorLink } from "./disclosure-anchor-link";
 
 type Severity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -84,9 +83,8 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
-  const [repairingAssets, setRepairingAssets] = useState(false);
 
-  const busy = loading || repairing || Boolean(resolvingAdvisory) || repairingAssets;
+  const busy = loading || repairing || Boolean(resolvingAdvisory);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -180,28 +178,6 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
 
 
 
-  async function repairExportPolicyAssets() {
-    setRepairingAssets(true);
-    setError(null);
-    setRepairMessage(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/export-policy/repair-assets`, { method: "POST" });
-      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { ok?: boolean; changed?: number; message?: string; conflicts?: string[]; error?: string };
-      if (data.ok) {
-        const conflicts = (data.conflicts ?? []).join(", ");
-        setRepairMessage(data.changed === 0
-          ? "No prohibited asset conflicts found."
-          : `Marked ${data.changed} document(s) for regeneration (conflicts: ${conflicts}).`);
-      } else {
-        setError(data.error ?? "Asset repair failed");
-      }
-    } catch {
-      setError("Asset repair failed");
-    } finally {
-      setRepairingAssets(false);
-      await refresh();
-    }
-  }
 
   const ok = readiness?.ok;
   const hasDocumentBlockers = (readiness?.summary.documentBlockers ?? 0) > 0;
@@ -223,32 +199,10 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               {ok ? "READY" : `${readiness.summary.totalBlockers} blocker(s)`}
             </span>
           )}
-          {canMutate && readiness && !ok && hasDocumentBlockers && (
-            // Links to the one canonical Generate Missing Plan Files control
-            // (submission-plan-completeness-panel.tsx's
-            // #submission-plan-completeness, which shows the exact missing
-            // count) instead of a second, separate button here that POSTs
-            // the same /generate-missing-plan-files route without that
-            // context.
-            <DisclosureAnchorLink href="#submission-plan-completeness" className="inline-flex items-center gap-1.5 rounded-lg bg-sky-700 px-3 py-2 text-xs font-medium text-white hover:bg-sky-800" title="Go to the Build Plan panel to generate missing planned docs">
-              <ArrowRightIcon /> Go to Generate missing planned docs
-            </DisclosureAnchorLink>
-          )}
+          {canMutate && readiness && !ok && hasDocumentBlockers && null}
           {/* All safe repairs run automatically via AUTO_FINALIZE.
-              Manual actions: Repair prohibited assets (exceptional),
-              Download Final ZIP (canonical download). */}
-          {readiness && readiness.tenderLevelBlockers.some((b) => b.category === "PROHIBITED_ASSET") && (
-            <button
-              type="button"
-              onClick={() => void repairExportPolicyAssets()}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-              title="Check for prohibited branding/signature/stamp in generated documents and mark affected docs for regeneration."
-            >
-              <WarningIcon /> {repairingAssets ? "Checking…" : "Repair prohibited assets"}
-            </button>
-          )}
-          {/* Download affordance — ONLY renders a real <a href> when the
+              Manual action: Download Final ZIP (canonical download). */}
+                    {/* Download affordance — ONLY renders a real <a href> when the
               canonical gate is open. When blocked, render a disabled
               <button> with NO href so the user cannot accidentally hit
               the URL. The download route also enforces this server-side. */}
@@ -404,9 +358,9 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                         route itself as bounded by the Vercel function limit,
                         the same class of gap fixed by generation-readiness-
                         panel.tsx's #run-engine-action anchor for RUN_ENGINE. */}
-                    <DisclosureAnchorLink href="#ai-analyze-section" className="inline-flex items-center gap-1 rounded-md border border-amber-400 bg-white px-2.5 py-1 text-xs font-medium text-amber-800 hover:bg-amber-100" title="Go to AI Analyze to re-run analysis with all available providers">
-                      <RefreshIcon /> Go to Retry AI Analysis
-                    </DisclosureAnchorLink>
+                    {/* "Go to Retry AI Analysis" link removed — AI analysis retries
+                        automatically via the durable retry policy. The approve
+                        fallback button below is a genuine human legal decision. */}
                     <button
                       type="button"
                       onClick={() => void approveRegexFallback()}
