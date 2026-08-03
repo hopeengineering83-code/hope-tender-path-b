@@ -2,6 +2,7 @@ import type { CompanyKnowledgeSnapshot, MatchingResult, RequirementDraft } from 
 import { exactSelectionLimit } from "./scope-policy";
 import { deriveRequirementConstraintProfile } from "./requirement-constraints";
 import { checkMatchingEligibility } from "./matching-eligibility";
+import { effectiveReviewTrustLevel, type ReviewRecordState } from "../vault-review-provenance";
 
 // Per-record lexical interpretation cycles. For each candidate expert /
 // project, the matcher runs MATCHING_CYCLES different tokenization
@@ -417,16 +418,52 @@ function sectorBoost(tenderSector: string | null | undefined, items: string[]): 
   return 0;
 }
 
-function trustLevelAdjustment(trustLevel: string | null | undefined): number {
-  if (true) return 0.18;
-  if (trustLevel === "AI_DRAFT") return -0.03;
-  return -0.10;
+/**
+ * Trust contribution to the match score.
+ *
+ * Flat, because scoring only ever reaches a record that already passed
+ * checkMatchingEligibility — an ineligible record is forced to score 0 at the
+ * call site, so there is no draft tier left here to penalise. This used to be
+ * written as `if (true) return 0.18;` above two unreachable draft branches,
+ * which read as though drafts were still being scored down. They were not.
+ */
+const ELIGIBLE_TRUST_ADJUSTMENT = 0.18;
+
+/**
+ * How the record's provenance is described in the rationale the user reads.
+ *
+ * This must not say "Reviewed" unless a person actually reviewed it.
+ * checkMatchingEligibility deliberately accepts a durably machine
+ * SOURCE_VERIFIED record on equal terms with a human REVIEWED one — and
+ * isDurablySourceVerified requires reviewedBy and reviewedAt to be null, so
+ * those records provably have no reviewer. The old code returned "✓ Reviewed"
+ * for every eligible record, which stated a human judgement that never
+ * happened. Both are legitimate evidence; only one of them was reviewed.
+ *
+ * Derived from effectiveReviewTrustLevel rather than the raw trustLevel
+ * column, so a record whose stored level is not backed by durable provenance
+ * cannot claim either status.
+ */
+const HUMAN_REVIEWED_LABEL = "✓ Reviewed";
+
+function trustProvenanceLabel(record: ReviewRecordState): string {
+  switch (effectiveReviewTrustLevel(record)) {
+    case "REVIEWED": return HUMAN_REVIEWED_LABEL;
+    case "SOURCE_VERIFIED": return "✓ Source-verified against uploaded document (not human-reviewed)";
+    default: return "⚠ Provenance required";
+  }
 }
 
-function trustLevelLabel(trustLevel: string | null | undefined): string {
-  if (true) return "✓ Reviewed";
-  if (trustLevel === "AI_DRAFT") return "⚠ AI draft — review before final use";
-  return "⚠ Regex draft — review required";
+/**
+ * Rank a result by whether a person reviewed its source record.
+ *
+ * Reads the label through the same constant the label is written from. While
+ * every eligible record was labelled "✓ Reviewed" this comparison was a
+ * constant and the sort silently degraded to score-only — rewording the label
+ * must not be able to do that again.
+ */
+function humanReviewedRank(rationale: string): number {
+  return rationale.includes(HUMAN_REVIEWED_LABEL) ? 1 : 0;
 }
 
 function cycleQueryTokens(baseTokens: string[], cycle: number): string[] {
@@ -817,7 +854,7 @@ export function buildMatches(
         : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
       const effectiveCap = Math.max(capability, weightedCapability);
       const sector = sectorBoost(tenderSector, parseArr(expert.sectors));
-      const trust = trustLevelAdjustment(trustLevel);
+      const trust = ELIGIBLE_TRUST_ADJUSTMENT;
       const experience = Math.min(0.18, Math.max(0, (expert.yearsExperience ?? 0) * 0.008));
       const mismatchPenalty = criticalFamilyMismatchPenalty(queryText, recordText);
       const domainScore = domainTagMatchScore(constraintProfile.domainTags, recordText);
@@ -831,7 +868,7 @@ export function buildMatches(
       // GLM-A2 Issue #1135 Gap #3: Enforce durable provenance eligibility.
       // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
       // reviewedBy, or reviewedAt) scores zero and cannot be selected.
-      const matchingEligibility = checkMatchingEligibility({
+      const eligibilityRecord = {
         id: expert.id,
         companyId: (expert as { companyId?: string }).companyId ?? knowledge.companyId,
         trustLevel,
@@ -846,13 +883,14 @@ export function buildMatches(
         disciplines: expert.disciplines,
         sectors: expert.sectors,
         certifications: expert.certifications,
-      });
+      };
+      const matchingEligibility = checkMatchingEligibility(eligibilityRecord);
       const score = matchingEligibility.eligible ? rawScore : 0;
       const evidence = [expert.title, ...parseArr(expert.disciplines), ...parseArr(expert.sectors)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;
       const families = recordFamilies.join(", ");
-      const trustLabel = matchingEligibility.eligible ? trustLevelLabel(trustLevel) : "⚠ Provenance required";
+      const trustLabel = matchingEligibility.eligible ? trustProvenanceLabel(eligibilityRecord as never) : "⚠ Provenance required";
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       const domainLabel = constraintProfile.strictDomain
         ? (domainScore > 0 ? `Domain-tag overlap ${(domainScore * 100).toFixed(0)}%.` : "No strict-domain overlap; hard-excluded.")
@@ -866,8 +904,8 @@ export function buildMatches(
       };
     })
     .sort((a, b) => {
-      const aReviewed = a.rationale.includes("✓ Reviewed") ? 1 : 0;
-      const bReviewed = b.rationale.includes("✓ Reviewed") ? 1 : 0;
+      const aReviewed = humanReviewedRank(a.rationale);
+      const bReviewed = humanReviewedRank(b.rationale);
       if (aReviewed !== bReviewed) return bReviewed - aReviewed;
       return b.score - a.score;
     });
@@ -892,7 +930,7 @@ export function buildMatches(
         : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
       const effectiveCap = Math.max(capability, weightedCapability);
       const sector = sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
-      const trust = trustLevelAdjustment(trustLevel);
+      const trust = ELIGIBLE_TRUST_ADJUSTMENT;
       let recency = 0;
       if (project.endDate) {
         const ageYears = (Date.now() - new Date(project.endDate).getTime()) / (365.25 * 24 * 3600 * 1000);
@@ -912,7 +950,7 @@ export function buildMatches(
       // GLM-A2 Issue #1135 Gap #3: Enforce durable provenance eligibility.
       // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
       // reviewedBy, or reviewedAt) scores zero and cannot be selected.
-      const matchingEligibility = checkMatchingEligibility({
+      const eligibilityRecord = {
         id: project.id,
         companyId: (project as { companyId?: string }).companyId ?? knowledge.companyId,
         trustLevel,
@@ -928,13 +966,14 @@ export function buildMatches(
         serviceAreas: project.serviceAreas,
         contractValue: project.contractValue,
         currency: project.currency,
-      });
+      };
+      const matchingEligibility = checkMatchingEligibility(eligibilityRecord);
       const score = matchingEligibility.eligible ? rawScore : 0;
       const evidence = [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;
       const families = recordFamilies.join(", ");
-      const trustLabel = matchingEligibility.eligible ? trustLevelLabel(trustLevel) : "⚠ Provenance required";
+      const trustLabel = matchingEligibility.eligible ? trustProvenanceLabel(eligibilityRecord as never) : "⚠ Provenance required";
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       const domainLabel = constraintProfile.strictDomain
         ? (domainScore > 0 ? `Domain-tag overlap ${(domainScore * 100).toFixed(0)}%.` : "No strict-domain overlap; hard-excluded.")
@@ -948,8 +987,8 @@ export function buildMatches(
       };
     })
     .sort((a, b) => {
-      const aReviewed = a.rationale.includes("✓ Reviewed") ? 1 : 0;
-      const bReviewed = b.rationale.includes("✓ Reviewed") ? 1 : 0;
+      const aReviewed = humanReviewedRank(a.rationale);
+      const bReviewed = humanReviewedRank(b.rationale);
       if (aReviewed !== bReviewed) return bReviewed - aReviewed;
       return b.score - a.score;
     });
