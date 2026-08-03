@@ -42,13 +42,13 @@ describe("final-submission-readiness — severityForReasons", () => {
 });
 
 describe("final-submission-readiness — nextActionForReason", () => {
-  it("guides users to attach original for tender-issued forms", () => {
-    assert.match(nextActionForReason("ORIGINAL_REQUIRED"), /Attach.*original/i);
-    assert.match(nextActionForReason("REPLACE_WITH_ORIGINAL"), /Attach.*original/i);
+  it("guides users to upload tender package for tender-issued forms", () => {
+    assert.match(nextActionForReason("ORIGINAL_REQUIRED"), /upload.*tender|tender.*Intake/i);
+    assert.match(nextActionForReason("REPLACE_WITH_ORIGINAL"), /upload.*tender|tender.*Intake/i);
   });
   it("guides users to generate when planned/control", () => {
-    assert.match(nextActionForReason("[CONTROL_RECORD_ONLY] x"), /Generate.*final file|attach.*original/i);
-    assert.match(nextActionForReason("PLANNED"), /Generate.*final file|attach.*original/i);
+    assert.match(nextActionForReason("[CONTROL_RECORD_ONLY] x"), /Generate.*final file/i);
+    assert.match(nextActionForReason("PLANNED"), /Generate.*final file/i);
   });
   it("guides users to fix missing content", () => {
     assert.match(nextActionForReason("fileContent is missing"), /Regenerate.*upload.*missing/i);
