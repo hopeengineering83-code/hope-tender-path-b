@@ -463,6 +463,208 @@ export function buildSourceVerificationProvenance(input: {
   };
 }
 
+/**
+ * Defect 4: Identity field for each record type. The identity field is the
+ * minimum required to consider a record "source-verified" — other fields
+ * may remain inferred/non-authoritative without rejecting the entire record.
+ *
+ *   EXPERT  → fullName
+ *   PROJECT → name
+ *   LEGAL   → title
+ *   FINANCIAL → (fiscalYear + recordType) — verified as a pair
+ *   COMPLIANCE → title
+ *
+ * The FINANCIAL case uses a composite identity because neither fiscalYear
+ * alone nor recordType alone uniquely identifies the record.
+ */
+const IDENTITY_FIELD_BY_RECORD_TYPE: Record<ReviewRecordType, string | string[]> = {
+  EXPERT: "fullName",
+  PROJECT: "name",
+  LEGAL: "title",
+  FINANCIAL: ["fiscalYear", "recordType"],
+  COMPLIANCE: "title",
+};
+
+/**
+ * Defect 4: Partial source-verification result. Directly proven fields
+ * become source-verified; unsupported inferred fields remain
+ * non-authoritative. The record is NOT rejected just because some
+ * inferred fields are missing from source text — only when the identity
+ * field itself is missing.
+ */
+export type PartialSourceVerificationResult = {
+  /** True iff the identity field (or composite identity) was verified. */
+  ok: boolean;
+  /** The list of fields whose values were found in source text. */
+  verifiedFields: string[];
+  /** The list of fields whose values were NOT found in source text. */
+  unverifiedFields: string[];
+  /** When ok=true, the serialized provenance payload (prefix + JSON). */
+  serialized: string | null;
+  /** When ok=false, the failure code (always FIELD_EVIDENCE_REQUIRED when
+   * the identity field is missing, or the upstream code otherwise). */
+  code: ReviewEvidenceFailure["code"] | null;
+  /** The persisted sourceContentHash (when ok=true). */
+  sourceContentHash: string | null;
+  /** The persisted sourceByteLength (when ok=true). */
+  sourceByteLength: number | null;
+  /** The persisted sourceTextHash (when ok=true). */
+  sourceTextHash: string | null;
+  /** The persisted sourceExtractionRevision (when ok=true). */
+  sourceExtractionRevision: string | null;
+};
+
+/**
+ * Defect 4: build a PARTIAL source-verification provenance. Unlike
+ * buildSourceVerificationProvenance (which fails closed when ANY field is
+ * missing from source text), this function succeeds when at least the
+ * identity field is verified. The provenance payload records only the
+ * verified fields; unverified fields are listed in unverifiedFields but
+ * do not block verification.
+ *
+ * Use this when importing records that may have inferred fields (e.g., a
+ * CV with the expert's name and title but no explicit yearsExperience
+ * number). The record becomes SOURCE_VERIFIED on its identity; consumers
+ * can check field-level trust via canUseVaultRecordField().
+ *
+ * When the identity field itself is missing, returns ok=false with
+ * code=FIELD_EVIDENCE_REQUIRED and the identity field in unverifiedFields.
+ */
+export function buildPartialSourceVerificationProvenance(input: {
+  recordType: ReviewRecordType;
+  sourceDocument: ReviewSourceDocument | null | undefined;
+  fields: ReviewEvidenceField[];
+  verificationMethod: StoredSourceVerificationProvenance["verificationMethod"];
+  verifiedAt?: Date;
+}): PartialSourceVerificationResult {
+  const empty: PartialSourceVerificationResult = {
+    ok: false,
+    verifiedFields: [],
+    unverifiedFields: [],
+    serialized: null,
+    code: "SOURCE_DOCUMENT_REQUIRED",
+    sourceContentHash: null,
+    sourceByteLength: null,
+    sourceTextHash: null,
+    sourceExtractionRevision: null,
+  };
+  if (!input.sourceDocument) {
+    return { ...empty, code: "SOURCE_DOCUMENT_REQUIRED" };
+  }
+  if (!input.sourceDocument.id) {
+    return { ...empty, code: "SOURCE_DOCUMENT_REQUIRED" };
+  }
+  if (!sourceTextIsUsable(input.sourceDocument.extractedText)) {
+    return { ...empty, code: "SOURCE_TEXT_REQUIRED" };
+  }
+  if (!sourceByteIntegrityIsVerified(input.sourceDocument)) {
+    return { ...empty, code: "PROVENANCE_REQUIRED" };
+  }
+
+  const text = input.sourceDocument.extractedText;
+  const persistedHash = input.sourceDocument.contentSha256!.toLowerCase();
+  const persistedByteLength = input.sourceDocument.contentByteLength!;
+  const normalizedFields = normalizedEvidenceFields(input.fields);
+  const verified: DurableReviewEvidence[] = [];
+  const unverifiedFields: string[] = [];
+
+  for (const item of normalizedFields) {
+    const match = evidencePattern(item.value).exec(text);
+    if (!match || match.index < 0) {
+      unverifiedFields.push(item.field);
+      continue;
+    }
+    const start = Math.max(0, match.index - 80);
+    const end = Math.min(text.length, match.index + match[0].length + 80);
+    const quote = normalizedQuote(text.slice(start, end));
+    verified.push({
+      field: item.field,
+      valueHash: evidenceValueHash(item.value),
+      quoteHash: sha256(quote),
+      quote,
+      page: sourcePageAtOffset(text, match.index),
+      start,
+      end,
+    });
+  }
+
+  // Check identity verification.
+  const identityField = IDENTITY_FIELD_BY_RECORD_TYPE[input.recordType];
+  const identityFields = Array.isArray(identityField) ? identityField : [identityField];
+  const allIdentityFieldsVerified = identityFields.every((f) => verified.some((v) => v.field === f));
+
+  if (!allIdentityFieldsVerified) {
+    // Identity field(s) not verified — fail closed like the original gate.
+    const missing = identityFields.filter((f) => !verified.some((v) => v.field === f));
+    return {
+      ...empty,
+      verifiedFields: verified.map((v) => v.field),
+      unverifiedFields: [...missing, ...unverifiedFields.filter((f) => !identityFields.includes(f))],
+      code: "FIELD_EVIDENCE_REQUIRED",
+    };
+  }
+
+  // Identity verified — succeed with partial verification.
+  const verifiedAt = (input.verifiedAt ?? new Date()).toISOString();
+  const provenance: StoredSourceVerificationProvenance = {
+    version: 1,
+    recordType: input.recordType,
+    sourceDocumentId: input.sourceDocument.id,
+    sourceContentHash: persistedHash,
+    sourceByteLength: persistedByteLength,
+    sourceTextHash: sha256(text),
+    sourceExtractionRevision: sourceExtractionRevision(input.sourceDocument),
+    verificationMethod: input.verificationMethod,
+    verifiedAt,
+    evidence: verified,
+  };
+
+  return {
+    ok: true,
+    verifiedFields: verified.map((v) => v.field),
+    unverifiedFields,
+    serialized: SOURCE_VERIFICATION_PROVENANCE_PREFIX + JSON.stringify(provenance),
+    code: null,
+    sourceContentHash: persistedHash,
+    sourceByteLength: persistedByteLength,
+    sourceTextHash: sha256(text),
+    sourceExtractionRevision: sourceExtractionRevision(input.sourceDocument),
+  };
+}
+
+/**
+ * Defect 4: per-field trust check. Returns true iff the record's provenance
+ * payload contains evidence for the requested field AND the provenance still
+ * matches the current record state (same source bytes, same source text).
+ *
+ * Consumers that need to gate on a specific field (e.g., "can I cite this
+ * expert's yearsExperience in the proposal?") should call this instead of
+ * canUseVaultRecord(), which gates on the whole-record trust level only.
+ *
+ * For a record verified via buildPartialSourceVerificationProvenance, this
+ * returns true for verifiedFields and false for unverifiedFields — exactly
+ * the per-field authority the defect requires.
+ */
+export function canUseVaultRecordField(
+  record: ReviewRecordState,
+  fieldName: string,
+  _purpose?: "MATCHING" | "GENERATION" | "EXPORT",
+): boolean {
+  if (!isDurablySourceVerified(record) && !isDurablyReviewed(record)) return false;
+  // Both provenance formats store evidence as an array of {field, ...}.
+  // parseStoredSourceVerification returns the v1 payload; parseStoredReviewProvenance
+  // returns the v2 payload. Try both.
+  const sv = parseStoredSourceVerification(record.reviewNotes);
+  if (sv) {
+    return sv.evidence.some((item) => item.field === fieldName);
+  }
+  const rv = parseStoredReviewProvenance(record.reviewNotes);
+  if (rv) {
+    return rv.evidence.some((item) => item.field === fieldName);
+  }
+  return false;
+}
+
 function evidenceItemIsValid(item: Partial<DurableReviewEvidence>): boolean {
   return typeof item.field === "string" && item.field.trim().length > 0 &&
     HASH_PATTERN.test(item.valueHash ?? "") &&
@@ -628,7 +830,15 @@ function provenanceMatchesCurrentRecord(
   ) return false;
 
   const currentFields = currentRecordEvidenceFields(record, provenance.recordType);
-  if (!currentFields || currentFields.length !== provenance.evidence.length) return false;
+  if (!currentFields) return false;
+  // Defect 4: relax the strict count match. For partial source verification
+  // (buildPartialSourceVerificationProvenance), the provenance.evidence array
+  // contains only the VERIFIED fields — not every non-null field on the record.
+  // Requiring currentFields.length === provenance.evidence.length would reject
+  // every partially-verified record on read. Instead, require that every
+  // evidence entry's field is still present in currentFields with the same
+  // valueHash. (The full-verification path also satisfies this — every
+  // evidence field is in currentFields with matching hash.)
   const currentValueHashes = new Map(
     currentFields.map((item) => [item.field, evidenceValueHash(item.value)]),
   );
