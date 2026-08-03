@@ -51,11 +51,39 @@ const SECURITY_FAILURE_CODES = new Set([
 
 // Genuine source blocker codes — require user action (upload/re-upload).
 // These CANNOT be resolved by the automatic workflow.
+//
+// Of the four codes originally listed here, NONE can reach this function.
+// getCanonicalReleaseDecision passes getCanonicalTenderReadiness().blockers,
+// which is built from readiness.fullProposalBlockers plus nine hardcoded
+// automatic codes. SOURCE_REQUIRED_FOR_APPROVAL is a Vault approve-route
+// response code, MISSING_TENDER_SOURCE_FORM belongs to submission-plan
+// completeness, OFFICIAL_BYTES_LOST to the admin repair route, and
+// HARD_COMPLIANCE_BLOCKER is pushed to `blockers` in
+// tender-generation-readiness.ts — a different array from the
+// `fullProposalBlockers` canonical actually maps. They are kept because they
+// are the right answer if those paths are ever wired in; the test alongside
+// this module now asserts which codes are genuinely reachable so the list
+// cannot silently become decorative again.
+//
+// FULL_PROPOSAL_EXTRACTION_CORRUPTED is reachable, and was classified as
+// automatic work. It is not: it fires when extraction already ran, came back
+// corrupted or unreadable, and AI analysis was skipped. Its own message tells
+// the user to "Re-upload the document or upload a clearer scan" and its
+// nextAction is RE_UPLOAD_TENDER. Left as PROCESSING_AUTOMATICALLY the app
+// reported "processing" indefinitely while waiting for an upload it never
+// asked for.
+//
+// FULL_PROPOSAL_NO_VAULT is deliberately NOT here. matching-quality sets
+// NO_VAULT as the else-branch of `hasVault`, so it is also the state while an
+// uploaded Vault document is still being extracted and verified. Treating it
+// as a source blocker would demand another upload during normal processing —
+// the exact false request this classification exists to prevent.
 const GENUINE_SOURCE_BLOCKER_CODES = new Set([
   "SOURCE_REQUIRED_FOR_APPROVAL",
   "MISSING_TENDER_SOURCE_FORM",
   "OFFICIAL_BYTES_LOST",
   "HARD_COMPLIANCE_BLOCKER",
+  "FULL_PROPOSAL_EXTRACTION_CORRUPTED",
 ]);
 
 // Legal release codes — the ONLY remaining manual steps.
