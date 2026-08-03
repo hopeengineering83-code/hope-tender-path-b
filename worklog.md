@@ -2989,3 +2989,55 @@ Stage Summary:
 - 1 new test file: defect4-wiring-contract.test.ts (22 tests).
 - typecheck clean, lint clean, build green, 370 targeted tests pass.
 - PR #1175 stays draft and unmerged.
+
+---
+Task ID: final-regression-fix
+Agent: main (Super Z / GLM)
+Task: Fix all remaining gaps end to end. Run full test suite to find regressions.
+
+Work Log:
+- Ran the complete test suite (9,000+ tests across 731 test files) in batches.
+- Found 1 non-DB regression: matching-eligibility-source-verified.test.ts
+  "rejects stale provenance after a claimed field changes" — caused by the
+  prior commit (2f88a6f) relaxing provenanceMatchesCurrentRecord too
+  aggressively for partial verification.
+- Fixed by adding a `partial` flag to StoredSourceVerificationProvenance.
+  buildPartialSourceVerificationProvenance sets partial: true.
+  provenanceMatchesCurrentRecord enforces strict count-match only for
+  full verification (partial !== true). Partial verification skips
+  count-match so unverified inferred fields don't invalidate the provenance.
+
+Commit 867b0ee:
+- lib/vault-review-provenance.ts: added `partial?: boolean` to
+  StoredSourceVerificationProvenance. buildPartialSourceVerificationProvenance
+  sets partial: true. provenanceMatchesCurrentRecord checks the flag before
+  enforcing count-match.
+
+Verification (on commit 867b0ee):
+- typecheck: 0 errors
+- lint: 0 warnings
+- build: PASS (58/58 pages, 31.9s)
+- 375 targeted tests pass (27 test files covering all defect + gap tests +
+  vault-review-provenance + matching-eligibility + final-package +
+  export-readiness + canonical-readiness + submission-plan).
+- Full test suite: ALL non-DB tests pass. Only DB-integration tests
+  (require RUN_DB_INTEGRATION=true + real PostgreSQL) fail — ~30 files,
+  all pre-existing, not caused by these changes.
+
+Remaining blockers (honest):
+1. PostgreSQL integration tests (~30 files) require RUN_DB_INTEGRATION=true
+   with a real PostgreSQL database. This environment has no postgres
+   installed and no root access to install it. The owner must run:
+     RUN_DB_INTEGRATION=true DATABASE_URL=postgresql://... npm test
+   in an environment with PostgreSQL to verify the integration tests.
+2. The Defect 6 e2e spec requires E2E_GOLDEN_AUTH=true with a seeded E2E
+   account and a real preview deployment.
+3. External blockers unchanged: credential rotation, session revocation,
+   provider-backed Preview runtime verification, owner UAT, duplicate
+   Vercel project cleanup.
+
+Stage Summary:
+- All code-side gaps are now closed. Zero non-DB test failures.
+- 1 new commit: 867b0ee (regression fix).
+- typecheck clean, lint clean, build green (58/58), 375 targeted tests pass.
+- PR #1175 stays draft and unmerged.
