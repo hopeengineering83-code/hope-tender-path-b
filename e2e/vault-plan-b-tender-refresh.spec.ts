@@ -8,8 +8,9 @@
 //   3. Run a Plan B import that references the uploaded PDF by filename
 //      AND sha256. The Plan B import must NOT overwrite the official row's
 //      bytes / hash / mime / fileName / storagePath with synthetic JSON.
-//   4. Verify the Company Vault row is unchanged: same contentSha256,
-//      contentByteLength, mimeType, fileName, integrityStatus === "VERIFIED".
+//   4. Verify the Company Vault document is unchanged: the row is still listed
+//      with the same fileName and mimeType, and downloading it returns bytes
+//      whose SHA-256 and length still match what upload persisted.
 //   5. Upload a tender via POST /api/tenders/upload-first.
 //   6. Wait for durable extraction.
 //   7. Refresh: GET /api/tenders/:id/generation-readiness,
@@ -24,6 +25,43 @@
 
 import { primaryTest as test, expect } from "./auth-helper";
 import { waitForDurableTenderExtraction } from "./durable-tender-extraction";
+
+async function sha256Hex(bytes: ArrayBuffer | Uint8Array): Promise<string> {
+  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const copy = new ArrayBuffer(view.byteLength);
+  new Uint8Array(copy).set(view);
+  const digest = await crypto.subtle.digest("SHA-256", copy);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The one read surface that can prove the official Vault bytes are unchanged.
+ *
+ * GET /api/company/documents returns a privacy DTO — `fileName`, `mimeType`,
+ * `category`, `size`, extraction status. It deliberately withholds
+ * `contentSha256`, `contentByteLength`, `integrityStatus` and the storage path
+ * (`tests/company-documents-privacy-dto.test.ts` pins that), so this spec
+ * cannot read a stored hash column back and compare it. Reading a metadata
+ * column would be the weaker check anyway: it proves a number was not edited,
+ * not that the bytes behind it survived.
+ *
+ * So download the document and hash what comes back. If Plan B (or anything
+ * else) overwrote the stored bytes with synthetic JSON, the digest moves —
+ * whatever the hash column says.
+ */
+async function readOfficialVaultBytes(
+  request: import("@playwright/test").APIRequestContext,
+  documentId: string,
+): Promise<{ sha256: string; byteLength: number; contentType: string | undefined }> {
+  const res = await request.get(`/api/company/documents/${documentId}`);
+  expect(res.status(), await res.text()).toBe(200);
+  const body = await res.body();
+  return {
+    sha256: await sha256Hex(body),
+    byteLength: body.byteLength,
+    contentType: res.headers()["content-type"],
+  };
+}
 
 const FULL = process.env.E2E_GOLDEN_AUTH === "true";
 const email = process.env.E2E_TEST_EMAIL ?? "e2e-release-integrity@example.test";
@@ -146,10 +184,14 @@ test.describe.serial("Defect 6 — Vault upload → Plan B import → tender upl
       while (Date.now() < extractionDeadline) {
         const listRes = await page.request.get("/api/company/documents");
         if (listRes.status() === 200) {
+          // The route returns `{ items, nextCursor, hasMore }`. Reading
+          // `documents` here found nothing for the whole 60s window and the
+          // poll reported `status=missing` — a defect in this spec, not in the
+          // Vault: the key never existed.
           const listJson = await listRes.json() as {
-            documents?: Array<{ id: string; aiExtractionStatus?: string | null; extractedTextLength?: number }>;
+            items?: Array<{ id: string; aiExtractionStatus?: string | null; extractedTextLength?: number }>;
           };
-          const row = (listJson.documents ?? []).find((d) => d.id === vaultDocId);
+          const row = (listJson.items ?? []).find((d) => d.id === vaultDocId);
           lastExtractionState = `status=${row?.aiExtractionStatus ?? "missing"} textLength=${row?.extractedTextLength ?? 0}`;
           if ((row?.extractedTextLength ?? 0) > 0) { vaultExtracted = true; break; }
         }
@@ -212,26 +254,27 @@ test.describe.serial("Defect 6 — Vault upload → Plan B import → tender upl
       const vaultListRes = await page.request.get("/api/company/documents");
       expect(vaultListRes.status()).toBeLessThan(500);
       const vaultListJson = await vaultListRes.json() as {
-        documents?: Array<{
+        items?: Array<{
           id: string;
           fileName?: string | null;
           originalFileName?: string | null;
           mimeType?: string | null;
-          contentSha256?: string | null;
-          contentByteLength?: number | null;
-          integrityStatus?: string | null;
         }>;
       };
-      const docs = vaultListJson.documents ?? [];
+      const docs = vaultListJson.items ?? [];
       const ourDoc = docs.find((d) => d.id === vaultDocId);
       expect(ourDoc, "official Vault row must still exist after Plan B import").toBeTruthy();
-      // The byte-bearing fields must be UNCHANGED — Plan B did not overwrite
-      // them with synthetic JSON values.
-      expect(ourDoc!.contentSha256).toBe(officialHash);
-      expect(ourDoc!.contentByteLength).toBe(officialByteLength);
       expect(ourDoc!.mimeType).toBe("application/pdf");
       expect(ourDoc!.fileName).toBe(officialFileName);
-      expect(ourDoc!.integrityStatus).toBe("VERIFIED");
+
+      // The bytes must be UNCHANGED — Plan B did not overwrite the stored
+      // document with synthetic JSON. Download and re-hash rather than trust a
+      // metadata column: an overwrite that also rewrote the hash column would
+      // pass a column comparison and fail this one.
+      const afterImport = await readOfficialVaultBytes(page.request, vaultDocId!);
+      expect(afterImport.sha256).toBe(officialHash);
+      expect(afterImport.byteLength).toBe(officialByteLength);
+      expect(afterImport.contentType).toContain("application/pdf");
 
       // ─── Step 4: Upload a tender via /api/tenders/upload-first ────────
       const tenderText = `
@@ -282,13 +325,14 @@ MANDATORY ELIGIBILITY REQUIREMENTS
         const vaultListRes2 = await page.request.get("/api/company/documents");
         expect(vaultListRes2.status()).toBeLessThan(500);
         const vaultListJson2 = await vaultListRes2.json() as typeof vaultListJson;
-        const docs2 = vaultListJson2.documents ?? [];
+        const docs2 = vaultListJson2.items ?? [];
         const ourDoc2 = docs2.find((d) => d.id === vaultDocId);
         expect(ourDoc2, "official Vault row must still exist after tender upload + refresh").toBeTruthy();
-        expect(ourDoc2!.contentSha256).toBe(officialHash);
-        expect(ourDoc2!.contentByteLength).toBe(officialByteLength);
         expect(ourDoc2!.mimeType).toBe("application/pdf");
-        expect(ourDoc2!.integrityStatus).toBe("VERIFIED");
+
+        const afterTender = await readOfficialVaultBytes(page.request, vaultDocId!);
+        expect(afterTender.sha256).toBe(officialHash);
+        expect(afterTender.byteLength).toBe(officialByteLength);
 
         // ─── Step 8: No horizontal overflow on the dashboard pages ────────
         await page.goto(`/dashboard/tenders/${tenderId}`);
