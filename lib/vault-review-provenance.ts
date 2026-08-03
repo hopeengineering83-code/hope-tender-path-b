@@ -218,13 +218,28 @@ type StoredSourceVerificationProvenance = {
   verificationMethod: "AI" | "DETERMINISTIC" | "HYBRID";
   verifiedAt: string;
   evidence: DurableReviewEvidence[];
-  // Defect 4: when true, this provenance was built by
+  // True when this provenance was built by
   // buildPartialSourceVerificationProvenance — only the identity field and
-  // other verified fields are in `evidence`. Unverified inferred fields are
-  // intentionally absent. provenanceMatchesCurrentRecord uses this flag to
-  // decide whether to enforce strict count-match (full verification) or
-  // allow extra unverified fields (partial verification).
+  // other verified fields are in `evidence`. Descriptive only: which fields
+  // may legitimately be absent from `evidence` is decided by unverifiedFields
+  // below, because "partial" alone cannot say WHICH fields were unproven.
   partial?: boolean;
+  /**
+   * Fields the record carried at verification time whose values could NOT be
+   * found in the source text. They are recorded — not just discarded — because
+   * on read they are the only way to tell a field that was present-but-unproven
+   * from one that appeared AFTER verification.
+   *
+   * Without this, partial verification silently loses the staleness guarantee:
+   * anyone could add a certification to a SOURCE_VERIFIED expert and it would
+   * ride along inside a record the whole system labels verified, into matching
+   * scores and generated client documents.
+   *
+   * Absent on provenance written before partial verification existed. Those
+   * are always full verifications, so absence means "every field was proven"
+   * and the stricter completeness rule applies.
+   */
+  unverifiedFields?: string[];
 };
 
 function sha256(value: string): string {
@@ -456,6 +471,8 @@ export function buildSourceVerificationProvenance(input: {
     verificationMethod: input.verificationMethod,
     verifiedAt,
     evidence: assessment.evidence,
+    // Full verification: every field the record carried was proven.
+    unverifiedFields: [],
   };
 
   return {
@@ -624,10 +641,11 @@ export function buildPartialSourceVerificationProvenance(input: {
     verificationMethod: input.verificationMethod,
     verifiedAt,
     evidence: verified,
-    // Defect 4: mark this as partial so provenanceMatchesCurrentRecord
-    // does NOT enforce strict count-match. Unverified inferred fields are
-    // intentionally absent from `evidence`.
+    // Descriptive marker: this record was only partially verified.
     partial: true,
+    // Persisted so a later reader can tell these apart from fields that did
+    // not exist at verification time.
+    unverifiedFields,
   };
 
   return {
@@ -795,7 +813,13 @@ function parseStoredSourceVerification(reviewNotes: string | null | undefined): 
       typeof parsed.verifiedAt !== "string" ||
       !Array.isArray(parsed.evidence) ||
       parsed.evidence.length === 0 ||
-      parsed.evidence.length > MAX_REVIEW_FIELDS
+      parsed.evidence.length > MAX_REVIEW_FIELDS ||
+      // Optional, for provenance written before partial verification existed.
+      // Malformed when present means the payload cannot be trusted at all.
+      (parsed.unverifiedFields !== undefined &&
+        (!Array.isArray(parsed.unverifiedFields) ||
+          parsed.unverifiedFields.length > MAX_REVIEW_FIELDS ||
+          !parsed.unverifiedFields.every((field) => typeof field === "string" && field.length > 0)))
     ) return null;
 
     const evidenceValid = parsed.evidence.every((item) => evidenceItemIsValid(item));
@@ -902,29 +926,37 @@ function provenanceMatchesCurrentRecord(
 
   const currentFields = currentRecordEvidenceFields(record, provenance.recordType);
   if (!currentFields) return false;
-  // Defect 4: for partial source verification (provenance.partial === true),
-  // the evidence array contains only VERIFIED fields — not every non-null
-  // field on the record. Do NOT enforce count-match; only require that every
-  // evidence entry's field is still present in currentFields with the same
-  // valueHash. This allows unverified inferred fields to exist on the record
-  // without invalidating the provenance.
-  //
-  // For full verification (provenance.partial !== true, including all
-  // buildReviewProvenance and buildSourceVerificationProvenance results),
-  // enforce the STRICT count-match: currentFields.length must equal
-  // provenance.evidence.length. This catches stale provenance when a field
-  // was added or removed after verification (e.g., certifications changed
-  // from [] to ["PMP"] — the record now has a certifications[0] field that
-  // the provenance doesn't cover, so the provenance is stale).
-  const isPartial = (provenance as { partial?: boolean }).partial === true;
-  if (!isPartial && currentFields.length !== provenance.evidence.length) return false;
   const currentValueHashes = new Map(
     currentFields.map((item) => [item.field, evidenceValueHash(item.value)]),
   );
-  if (
-    currentValueHashes.size !== currentFields.length ||
-    !provenance.evidence.every((item) => currentValueHashes.get(item.field) === item.valueHash)
-  ) return false;
+  if (currentValueHashes.size !== currentFields.length) return false;
+
+  // Every verified field must still hold the value that was verified.
+  if (!provenance.evidence.every((item) => currentValueHashes.get(item.field) === item.valueHash)) {
+    return false;
+  }
+
+  // And the record must not have GROWN since. A field the provenance never
+  // assessed is a claim nothing verified — and because these gates return one
+  // verdict for the whole record, that claim would ride along inside a record
+  // the app labels verified, into matching scores and generated client
+  // documents. Adding a certification to a SOURCE_VERIFIED expert is exactly
+  // the case.
+  //
+  // Partial verification (buildPartialSourceVerificationProvenance) legitimately
+  // leaves fields unproven, so those are allowed — but only the ones actually
+  // recorded as unproven at verification time. That list is what distinguishes
+  // "present but unprovable" from "appeared afterwards"; when it is absent the
+  // provenance predates partial verification and every field had to be proven,
+  // so the stricter rule is the correct fail-closed default.
+  const unverifiedAtVerification = new Set(
+    (provenance as { unverifiedFields?: string[] }).unverifiedFields ?? [],
+  );
+  const verifiedFieldNames = new Set(provenance.evidence.map((item) => item.field));
+  const assessedEveryField = currentFields.every(
+    (item) => verifiedFieldNames.has(item.field) || unverifiedAtVerification.has(item.field),
+  );
+  if (!assessedEveryField) return false;
 
   return provenance.evidence.every((item) => {
     if (item.end > record.sourceDocument!.extractedText!.length) return false;
