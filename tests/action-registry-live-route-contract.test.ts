@@ -24,10 +24,11 @@ describe("action registry matches production route owners", () => {
     assert.match(route, /export async function POST/);
     assert.match(route, /enqueueEngineJobForCurrentSources/);
     assert.match(route, /CLIENT_POLICY_OVERRIDE_REJECTED/);
-    assert.match(panel, /Start or resume Engine/);
+    // Gap 2: the Engine button was removed from the normal-path panel.
+    // The route still exists — the automatic workflow calls it. The panel
+    // now shows text-based status instead of a button.
+    assert.match(panel, /Processing automatically/);
     assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
-    assert.equal(getTenderAction("RUN_ENGINE").owner, "EngineActionPanel");
-    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
   });
 
   it("uses the automatic Build Plan route and live button owner", () => {

@@ -32,17 +32,16 @@ describe("operational components use SVG icons", () => {
     });
   }
 
-  it("generation and Engine actions retain distinct icons and visible labels", () => {
+  it("generation and Engine actions use text-based status (no icons)", () => {
     const generation = readComponent("generation-action-panel.tsx");
     const engine = readComponent("engine-action-panel.tsx");
-    assert.match(generation, /DocumentGenerateIcon/);
-    assert.match(generation, /Generate Docs/);
-    assert.match(engine, /<BoltIcon \/> Start or resume Engine/);
-    assert.match(engine, /<ClockIcon \/> Processing/);
-    assert.match(engine, /<ClockIcon \/> Repairing Vault/);
+    // Gap 2+3: buttons and icons removed. Text-based status surface instead.
+    assert.match(generation, /PROCESSING_AUTOMATICALLY/);
+    assert.match(generation, /READY_TO_DOWNLOAD/);
+    assert.match(engine, /Processing automatically/);
+    assert.match(engine, /Engine complete/);
     assert.doesNotMatch(engine, /Run Safe Mode/);
     assert.doesNotMatch(engine, /Full AI/);
-    assert.doesNotMatch(generation, /BoltIcon/);
   });
 
   it("final ZIP uses DownloadIcon and visible text", () => {
@@ -50,12 +49,9 @@ describe("operational components use SVG icons", () => {
   });
 
   it("disabled controls remain readable", () => {
-    const engine = stripComments(readComponent("engine-action-panel.tsx"));
     const exportPanel = readComponent("export-readiness-panel.tsx");
-    assert.match(engine, /disabled:opacity-60/);
-    assert.doesNotMatch(engine, /disabled:opacity-(40|50)/);
     assert.match(exportPanel, /disabled:opacity-60/);
-    assert.match(readComponent("generation-action-panel.tsx"), /blockedReason/);
+    // Gap 2+3: generation-action-panel no longer has buttons or disabled states.
   });
 });
 
