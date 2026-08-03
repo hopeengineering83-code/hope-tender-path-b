@@ -36,8 +36,50 @@ export type AutoFinalizeResult = {
   exportRepair: { repaired: number; skipped: number; manualRequired: number };
   validation: { validated: number; failed: number; pending: number };
   pdfFinalization: { finalized: number; skipped: number; failed: number };
+  /**
+   * Why the tender did NOT converge to export-ready. Empty exactly when every
+   * stage left nothing outstanding. `ok` is derived from this, never set
+   * independently, so a stage cannot be added later that quietly leaves work
+   * behind while the run still claims success.
+   */
+  blockers: string[];
   warning: string | null;
 };
+
+/**
+ * Decide whether auto-finalize actually converged.
+ *
+ * Previously `ok` was initialised true and never falsified, so AUTO_FINALIZE
+ * recorded SUCCEEDED with unresolved source grounding, failed or still-pending
+ * validation, failed PDF finalization, or documents needing manual work. That
+ * is the worst kind of false success: the pipeline reports the tender finished
+ * while the export gate still refuses it, and nothing names the reason.
+ *
+ * Each blocker is phrased so lib/engine/stage-retry-policy.ts classifies it as
+ * NON_RETRYABLE — these are states a retry cannot change, so the job must fail
+ * terminally with the reason persisted rather than burn its retry budget.
+ */
+export function evaluateAutoFinalizeConvergence(
+  result: Omit<AutoFinalizeResult, "ok" | "blockers">,
+): string[] {
+  const blockers: string[] = [];
+  if (result.sourceRepair.remaining > 0) {
+    blockers.push(`source grounding incomplete: ${result.sourceRepair.remaining} requirement(s) still have no current source trace`);
+  }
+  if (result.validation.failed > 0) {
+    blockers.push(`readiness gate: ${result.validation.failed} document(s) failed canonical validation`);
+  }
+  if (result.validation.pending > 0) {
+    blockers.push(`readiness gate: ${result.validation.pending} document(s) are still unvalidated`);
+  }
+  if (result.pdfFinalization.failed > 0) {
+    blockers.push(`INTEGRITY: ${result.pdfFinalization.failed} required PDF(s) could not be finalized from a validated source`);
+  }
+  if (result.exportRepair.manualRequired > 0) {
+    blockers.push(`AUTHORITY: ${result.exportRepair.manualRequired} document(s) need manual attention and cannot be repaired automatically`);
+  }
+  return blockers;
+}
 
 /**
  * Run safe auto-finalize repairs for a tender after proposal generation.
@@ -57,6 +99,7 @@ export async function runAutoFinalizeAfterGeneration(
     exportRepair: { repaired: 0, skipped: 0, manualRequired: 0 },
     validation: { validated: 0, failed: 0, pending: 0 },
     pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
+    blockers: [],
     warning: null,
   };
 
@@ -167,6 +210,21 @@ export async function runAutoFinalizeAfterGeneration(
     });
     throw error;
   }
+
+  // Convergence is decided from what the stages actually left behind, not
+  // assumed from "no stage threw". A stage that completes while leaving
+  // unresolved grounding, unvalidated documents, an unfinalizable PDF, or
+  // manual-only work has not finished the job the user was promised.
+  result.blockers = evaluateAutoFinalizeConvergence(result);
+  result.ok = result.blockers.length === 0;
+
+  await recordStep(jobId, {
+    stepName: "auto-finalize.convergence",
+    message: result.ok
+      ? "Auto-finalize converged: no outstanding blockers"
+      : `Auto-finalize did not converge: ${result.blockers.join("; ")}`,
+    status: result.ok ? "SUCCEEDED" : "FAILED",
+  });
 
   return result;
 }

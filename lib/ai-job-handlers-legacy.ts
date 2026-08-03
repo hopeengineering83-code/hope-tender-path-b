@@ -703,9 +703,31 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     const { runAutoFinalizeAfterGeneration } = await import("./ai-jobs/auto-finalize-continuation-service");
     const result = await runAutoFinalizeAfterGeneration(tenderId, ctx.userId, ctx.jobId);
 
+    const summary = `source repair ${result.sourceRepair.repaired}/${result.sourceRepair.checked}, export repair ${result.exportRepair.repaired} repaired, validation ${result.validation.validated}/${result.validation.failed}/${result.validation.pending}, PDF ${result.pdfFinalization.finalized}/${result.pdfFinalization.skipped}/${result.pdfFinalization.failed}${result.warning ? `, warning: ${result.warning}` : ""}`;
+
+    // A run that left blockers behind must not be recorded SUCCEEDED. It used
+    // to be, unconditionally, so a tender with unresolved source grounding,
+    // unvalidated documents, or an unfinalizable required PDF looked finished
+    // while the export gate still refused it.
+    //
+    // The blocker text is written to be classified NON_RETRYABLE by
+    // lib/engine/stage-retry-policy.ts: these states do not change on their
+    // own, so re-running burns the retry budget instead of fixing anything.
+    // Failing terminally persists the precise reason on AiJob.errorMessage,
+    // which is what the tender UI reads. Transient stage failures still throw
+    // from inside the service above and keep their durable retry.
+    if (!result.ok) {
+      await recordStep(ctx.jobId, {
+        stepName: "auto-finalize.complete",
+        message: `Auto-finalize did not converge (${summary})`,
+        status: "FAILED",
+      });
+      throw new Error(`AUTO_FINALIZE_NOT_CONVERGED — ${result.blockers.join("; ")}`);
+    }
+
     await recordStep(ctx.jobId, {
       stepName: "auto-finalize.complete",
-      message: `Auto-finalize complete: source repair ${result.sourceRepair.repaired}/${result.sourceRepair.checked}, export repair ${result.exportRepair.repaired} repaired, validation ${result.validation.validated}/${result.validation.failed}/${result.validation.pending}, PDF ${result.pdfFinalization.finalized}/${result.pdfFinalization.skipped}/${result.pdfFinalization.failed}${result.warning ? `, warning: ${result.warning}` : ""}`,
+      message: `Auto-finalize complete: ${summary}`,
       status: "SUCCEEDED",
     });
 
