@@ -19,6 +19,7 @@
 import React from "react";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 import type { CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
+import { classifyReleaseStatus } from "../lib/release-status-classifier";
 
 type GenerationReadiness = {
   ready: boolean;
@@ -45,6 +46,9 @@ export type ReleaseStatus =
 /**
  * Derive the single release status from the canonical readiness and
  * generation readiness data. This is the ONE authority the UI reads.
+ *
+ * Gap 5: delegates to classifyReleaseStatus from canonical-release-decision.ts
+ * so the UI and the server use the SAME classification logic.
  */
 export function deriveReleaseStatus(
   readiness: GenerationReadiness | null,
@@ -52,63 +56,18 @@ export function deriveReleaseStatus(
 ): ReleaseStatus {
   if (!readiness && !canonicalReadiness) return "PROCESSING_AUTOMATICALLY";
 
-  // READY_TO_DOWNLOAD: canonical readiness says final export is ready.
-  if (canonicalReadiness?.readyForFinalExport) return "READY_TO_DOWNLOAD";
-  if (readiness?.ready && (readiness.fullProposalReady ?? false)) return "READY_TO_DOWNLOAD";
+  const readyForFinalExport = Boolean(
+    canonicalReadiness?.readyForFinalExport ??
+      (readiness?.ready && (readiness.fullProposalReady ?? false)),
+  );
 
-  // Collect all blocker codes from both sources. canonicalReadiness.blockers
-  // is string[] (just codes); readiness.blockers is Array<{code, message}>.
+  // Collect all blocker codes from both sources.
   const blockerCodes: string[] = [];
   for (const b of readiness?.blockers ?? []) blockerCodes.push(b.code);
   for (const b of readiness?.fullProposalBlockers ?? []) blockerCodes.push(b.code);
   for (const code of canonicalReadiness?.blockers ?? []) blockerCodes.push(code);
 
-  // FAILED_SECURITY_OR_INTEGRITY: security or integrity failure.
-  const securityFailureCodes = [
-    "FAILED_SECURITY_OR_INTEGRITY",
-    "CONTENT_HASH_MISMATCH",
-    "INVALID_BYTE_SIGNATURE",
-    "OFFICIAL_BYTES_LOST",
-    "TENANT_SCOPE_VIOLATION",
-  ];
-  if (blockerCodes.some((code) => securityFailureCodes.includes(code))) {
-    return "FAILED_SECURITY_OR_INTEGRITY";
-  }
-
-  // GENUINE_SOURCE_BLOCKED: a genuine source blocker exists.
-  const genuineSourceBlockerCodes = [
-    "SOURCE_REQUIRED_FOR_APPROVAL",
-    "MISSING_TENDER_SOURCE_FORM",
-    "OFFICIAL_BYTES_LOST",
-    "NO_ACTIVE_GENERATED_DOCUMENTS",
-    "NO_CURRENT_CONFIRMED_BUILD_PLAN",
-    "MISSING_PLANNED_FILES",
-    "MISSING_TENDER_FORM_FIELDS",
-    "HARD_COMPLIANCE_BLOCKER",
-  ];
-  if (blockerCodes.some((code) => genuineSourceBlockerCodes.includes(code))) {
-    return "GENUINE_SOURCE_BLOCKED";
-  }
-
-  // LEGAL_RELEASE_REQUIRED: a legal signature, declaration, or ADMIN release
-  // decision is required. These are the ONLY remaining manual steps.
-  const legalReleaseCodes = [
-    "LEGAL_RELEASE_REQUIRED",
-    "LEGAL_SIGNATURE_REQUIRED",
-    "ADMIN_RELEASE_REQUIRED",
-    "AUTHORITY_REVIEW_REQUIRED",
-    "EVALUATOR_OBJECTION_REQUIRES_RESOLUTION",
-    "FALLBACK_ANALYSIS_APPROVAL_REQUIRED",
-  ];
-  if (blockerCodes.some((code) => legalReleaseCodes.includes(code))) {
-    return "LEGAL_RELEASE_REQUIRED";
-  }
-
-  // If there are any other blockers, still GENUINE_SOURCE_BLOCKED.
-  if (blockerCodes.length > 0) return "GENUINE_SOURCE_BLOCKED";
-
-  // Otherwise, the workflow is processing automatically.
-  return "PROCESSING_AUTOMATICALLY";
+  return classifyReleaseStatus(blockerCodes, readyForFinalExport);
 }
 
 /**

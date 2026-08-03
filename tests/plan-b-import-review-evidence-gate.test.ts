@@ -80,6 +80,9 @@ describe("plan-b-import refuses to persist REVIEWED and routes through source ve
 
   it("links the created record to a real persisted CompanyDocument via sourceDocumentId", () => {
     assert.match(route, /sourceDocumentId: linkedSourceDoc\?\.id \?\? null/);
+    // Gap 8: documentByFileName.set is still called for official uploads
+    // (pre-loaded before the Plan B loop), but NOT for Plan B synthetic
+    // artifacts. The map is populated from tenantOfficialDocs.
     assert.match(route, /documentByFileName\.set\(/);
   });
 

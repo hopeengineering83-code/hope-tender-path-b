@@ -991,33 +991,13 @@ export async function POST(req: Request) {
         persistedDocId = created.id;
         documentsCreated += 1;
       }
-      // Only register the synthetic artifact in the lookup maps when no
-      // official row already occupies that filename key. This prevents the
-      // artifact from shadowing an official upload when both exist.
-      const nameKey = key(fileName);
-      if (!documentByFileName.has(nameKey) || documentByFileName.get(nameKey) === existingOfficial) {
-        // If existingOfficial is set, it means we got here through the
-        // "no official exists" branch — so this is a fresh synthetic artifact.
-        // Otherwise, just set it.
-        documentByFileName.set(nameKey, {
-          id: persistedDocId,
-          companyId: company.id,
-          extractedText: data.extractedText,
-          contentSha256: data.contentSha256,
-          contentByteLength: data.contentByteLength,
-          integrityStatus: data.integrityStatus,
-        });
-      }
-      if (data.contentSha256 && !documentBySha256.has(data.contentSha256.toLowerCase())) {
-        documentBySha256.set(data.contentSha256.toLowerCase(), {
-          id: persistedDocId,
-          companyId: company.id,
-          extractedText: data.extractedText,
-          contentSha256: data.contentSha256,
-          contentByteLength: data.contentByteLength,
-          integrityStatus: data.integrityStatus,
-        });
-      }
+      // Gap 8: Plan B staging data must NEVER become an official document
+      // source. The synthetic JSON artifact is stored as a diagnostic only —
+      // it is NOT registered in documentByFileName or documentBySha256.
+      // Records can only link to official uploaded Company Vault documents
+      // (integrityStatus === "VERIFIED"). When no official upload exists,
+      // records are imported as AI_DRAFT with no sourceDocumentId — the user
+      // must upload the real document so the Engine can source-verify it.
     }
 
     const existingExperts = await tx.expert.findMany({ where: { companyId: company.id }, select: { id: true, fullName: true } });
