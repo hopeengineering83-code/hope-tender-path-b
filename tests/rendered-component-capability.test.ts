@@ -52,7 +52,7 @@ const reviewerCanMutate = canMutateTender("REVIEWER");
 const adminCanMutate = canMutateTender("ADMIN");
 const pmCanMutate = canMutateTender("PROPOSAL_MANAGER");
 
-describe("EngineActionPanel — read-only render states", () => {
+describe("EngineActionPanel — text-based status (Gap 2: buttons removed)", () => {
   it("role mapping fails closed", () => {
     assert.equal(reviewerCanMutate, false);
     assert.equal(adminCanMutate, true);
@@ -62,15 +62,10 @@ describe("EngineActionPanel — read-only render states", () => {
     assert.equal(canMutateTender(undefined), false);
   });
 
-  it("omitted canMutate renders no mutation buttons", () => {
+  it("renders text-based status with no buttons", () => {
     const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1" }));
-    assertNoMutationControls(buttonLabels(container), "omitted canMutate");
-    assert.match(container.textContent ?? "", /Read-only — Engine recovery actions require ADMIN or PROPOSAL_MANAGER role/);
-  });
-
-  it("REVIEWER normal state renders no mutation buttons", () => {
-    const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1", canMutate: reviewerCanMutate }));
-    assertNoMutationControls(buttonLabels(container), "normal state");
+    assertNoMutationControls(buttonLabels(container), "no canMutate");
+    assert.match(container.textContent ?? "", /Closing this browser does not stop processing/);
   });
 
   it("REVIEWER sees truthful durable-processing text", () => {
@@ -85,76 +80,28 @@ describe("EngineActionPanel — read-only render states", () => {
     assert.match(container.textContent ?? "", /40 expert\(s\), 10 project\(s\)/);
   });
 
-  it("REVIEWER poll-timeout keeps the GET-only status check", async () => {
-    const { container } = renderWithRouter(h(EngineActionPanel, {
-      tenderId: "t1",
-      canMutate: reviewerCanMutate,
-      initialResult: { code: "ASYNC_POLL_TIMEOUT", jobId: "job-9", error: "Still running." },
-    }));
-    assertNoMutationControls(buttonLabels(container), "poll-timeout state");
-    const checkButton = findButton(container, "Check status now");
-    assert.ok(checkButton);
-    fireEvent.click(checkButton!);
-    await waitFor(() => assert.ok(calls.length > 0));
-    assert.ok(calls.every((call) => call.method === "GET"));
-    assert.ok(calls.some((call) => call.url.includes("/api/ai-jobs/job-9")));
-  });
-
-  it("REVIEWER failure and network states hide retries", () => {
-    const failed = renderWithRouter(h(EngineActionPanel, {
-      tenderId: "t1",
-      canMutate: reviewerCanMutate,
-      initialResult: { code: "ASYNC_ENGINE_FAILED", error: "Worker failed.", failedStage: "matching" },
-    }));
-    assertNoMutationControls(buttonLabels(failed.container), "failure state");
-    assert.match(failed.container.textContent ?? "", /Read-only — retry actions require ADMIN or PROPOSAL_MANAGER role/);
+  it("renders text-based status for all roles (no buttons)", () => {
+    const adminPanel = renderWithRouter(h(EngineActionPanel, { tenderId: "t1", canMutate: adminCanMutate }));
+    assertNoMutationControls(buttonLabels(adminPanel.container), "ADMIN");
     cleanup();
 
-    const network = renderWithRouter(h(EngineActionPanel, {
-      tenderId: "t1",
-      canMutate: reviewerCanMutate,
-      initialResult: { code: "NETWORK_OR_RUNTIME_ERROR", nextAction: "RETRY_BACKGROUND_JOB", error: "Connection failed." },
-    }));
-    assertNoMutationControls(buttonLabels(network.container), "network state");
-  });
-});
-
-describe("EngineActionPanel — mutating roles", () => {
-  it("ADMIN sees one canonical Engine action and no client-policy choices", async () => {
-    const { container } = renderWithRouter(h(EngineActionPanel, { tenderId: "t1", canMutate: adminCanMutate }));
-    const labels = buttonLabels(container);
-    assert.equal(labels.filter((label) => label.includes("Start or resume Engine")).length, 1);
-    assert.ok(!labels.some((label) => /Safe Mode|Full AI|Skip AI|Force run/i.test(label)));
-
-    const runButton = findButton(container, "Start or resume Engine");
-    assert.ok(runButton);
-    fireEvent.click(runButton!);
-    await waitFor(() => {
-      assert.ok(calls.some((call) => call.method === "POST" && call.url.endsWith("/api/tenders/t1/engine")));
-    });
-    assert.ok(calls.every((call) => !/[?&](safe|skipAiRematch|force|maxChars)=/.test(call.url)));
-  });
-
-  it("PROPOSAL_MANAGER sees the same single canonical action", () => {
-    const { container } = renderWithRouter(h(EngineActionPanel, {
+    const pmPanel = renderWithRouter(h(EngineActionPanel, {
       tenderId: "t1",
       canMutate: pmCanMutate,
       vaultReviewedExperts: 40,
       vaultReviewedProjects: 10,
     }));
-    const labels = buttonLabels(container);
-    assert.equal(labels.filter((label) => label.includes("Start or resume Engine")).length, 1);
-    assert.ok(!labels.some((label) => /Safe Mode|Full AI|Skip AI|Force run/i.test(label)));
+    assertNoMutationControls(buttonLabels(pmPanel.container), "PROPOSAL_MANAGER");
   });
 
-  it("ADMIN failure state exposes one policy-neutral retry", () => {
-    const { container } = renderWithRouter(h(EngineActionPanel, {
+  it("failure state shows text diagnostics without retry buttons", () => {
+    const failed = renderWithRouter(h(EngineActionPanel, {
       tenderId: "t1",
       canMutate: adminCanMutate,
       initialResult: { code: "ASYNC_ENGINE_FAILED", error: "Worker failed." },
     }));
-    assert.ok(findButton(container, "Retry durable Engine"));
-    assert.ok(!buttonLabels(container).some((label) => /Safe Mode|Skip AI Rematch|Full AI/i.test(label)));
+    assertNoMutationControls(buttonLabels(failed.container), "failure state");
+    assert.match(failed.container.textContent ?? "", /Engine needs attention/);
   });
 });
 

@@ -52,18 +52,18 @@ describe("F3 — allMandatoryGrounded vacuously true when mandatory.length === 0
 
 // ─── F4: corrupted-metadata-banner role gate ─────────────────────────────────
 
-describe("F4 — corrupted-metadata-banner gates RepairTenderFactsButton on canMutate", () => {
-  it("accepts a canMutate prop", () => {
+describe("F4 — corrupted-metadata-banner (Gap 2: RepairTenderFactsButton removed)", () => {
+  it("accepts a canMutate prop (retained for backward compat)", () => {
     const src = read("components/corrupted-metadata-banner.tsx");
     assert.match(src, /canMutate = false }: \{ tender: TenderShape; canMutate\?: boolean \}/);
   });
 
-  it("gates RepairTenderFactsButton behind canMutate", () => {
+  it("does NOT render RepairTenderFactsButton (Gap 2: removed from normal path)", () => {
     const src = read("components/corrupted-metadata-banner.tsx");
-    assert.match(src, /\{canMutate && <RepairTenderFactsButton/);
+    assert.doesNotMatch(src, /\{canMutate && <RepairTenderFactsButton/);
   });
 
-  it("page.tsx passes canMutate to ClientEntityWarningBanner", () => {
+  it("page.tsx still passes canMutate to ClientEntityWarningBanner", () => {
     const src = read("app/dashboard/tenders/[id]/page.tsx");
     const bannerIdx = src.indexOf("<ClientEntityWarningBanner");
     assert.ok(bannerIdx > -1, "banner must be rendered");
