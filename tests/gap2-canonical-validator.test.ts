@@ -46,6 +46,10 @@ describe("Gap 2 — canonical Document Validator is the single VALIDATED authori
     assert.match(service, /if \(doc\.validationStatus !== "PENDING"\)/);
   });
 
+  it("verifies tenant ownership before reading/writing documents (Gap B)", () => {
+    assert.match(service, /where: \{ id: tenderId, userId \}/);
+  });
+
   it("records a canonical-validation step in the job progress", () => {
     assert.match(service, /stepName: "auto-finalize\.canonical-validation"/);
     assert.match(service, /stepName: "auto-finalize\.canonical-validation\.complete"/);

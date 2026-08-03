@@ -124,7 +124,7 @@ export async function runAutoFinalizeAfterGeneration(
       message: "Running canonical Document Validator on repaired documents",
       status: "RUNNING",
     });
-    const validation = await runCanonicalValidation(tenderId);
+    const validation = await runCanonicalValidation(tenderId, userId);
     result.validation = validation;
     await recordStep(jobId, {
       stepName: "auto-finalize.canonical-validation.complete",
@@ -195,8 +195,20 @@ async function runSafeExportRepairs(
  */
 async function runCanonicalValidation(
   tenderId: string,
+  userId: string,
 ): Promise<{ validated: number; failed: number; pending: number }> {
   const { checkFullExportReadiness } = await import("../engine/export-readiness");
+
+  // Gap B: verify tenant ownership before reading/writing documents.
+  // Without this, a malicious AUTO_FINALIZE job with another tenant's
+  // tenderId would read and write that tenant's documents.
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: { id: true },
+  });
+  if (!tender) {
+    return { validated: 0, failed: 0, pending: 0 };
+  }
 
   // Load all non-superseded documents with their content for validation.
   const docs = await prisma.generatedDocument.findMany({
