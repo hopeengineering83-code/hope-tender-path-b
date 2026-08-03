@@ -73,11 +73,54 @@ describe("Defect 6 — exact-head Preview e2e spec exists and covers the full fl
   it("spec re-fetches the Company Vault document list and asserts the official row is UNCHANGED", () => {
     assert.match(spec, /page\.request\.get\("\/api\/company\/documents"\)/);
     assert.match(spec, /ourDoc/);
-    // Byte-bearing fields must match the post-upload values.
-    assert.match(spec, /ourDoc.*\.contentSha256.*\.toBe\(officialHash\)/s);
-    assert.match(spec, /ourDoc.*\.contentByteLength.*\.toBe\(officialByteLength\)/s);
-    assert.match(spec, /ourDoc.*\.mimeType.*\.toBe\("application\/pdf"\)/s);
-    assert.match(spec, /ourDoc.*\.integrityStatus.*\.toBe\("VERIFIED"\)/s);
+    // These used to require `ourDoc.contentSha256`, `.contentByteLength` and
+    // `.integrityStatus`. That list route never returned any of them — its
+    // privacy DTO is pinned by tests/company-documents-privacy-dto.test.ts —
+    // so these assertions were holding the spec to a response shape that does
+    // not exist, and passed for as long as the spec was wrong in the matching
+    // way. Two of the three fields the spec compared were always `undefined`
+    // on both sides.
+    //
+    // The guarantee is that the stored document survived Plan B import. The
+    // spec now proves it by downloading the document and re-hashing the bytes,
+    // which is what the fields were standing in for.
+    assert.match(spec, /ourDoc!\.mimeType.*\.toBe\("application\/pdf"\)/s);
+    assert.match(spec, /ourDoc!\.fileName.*\.toBe\(officialFileName\)/s);
+    assert.match(spec, /const afterImport = await readOfficialVaultBytes\(/);
+    assert.match(spec, /afterImport\.sha256.*\.toBe\(officialHash\)/s);
+    assert.match(spec, /afterImport\.byteLength.*\.toBe\(officialByteLength\)/s);
+  });
+
+  it("spec reads the document list under a key that route actually returns", () => {
+    // The failure this prevents: the spec polled for `documents` while the
+    // route returns `items`, so the lookup found nothing for its whole 60s
+    // window and CI failed three runs in a row with a misleading
+    // "never finished extraction". Every assertion in this file passed
+    // throughout, because none of them compared the two sides.
+    //
+    // Derive the route's own top-level response keys and require the spec to
+    // read one of them, so renaming either side without the other fails here
+    // rather than in a 13-minute browser job.
+    const route = readFileSync("app/api/company/documents/route.ts", "utf8");
+    const get = route.slice(route.indexOf("export async function GET"), route.indexOf("export async function DELETE"));
+    const lastReturn = get.slice(get.lastIndexOf("return NextResponse.json({"));
+    const listReturn = /return NextResponse\.json\(\{([^}]*)\}\)/.exec(lastReturn);
+    assert.ok(listReturn, "could not read the list route's response literal");
+
+    const routeKeys = listReturn[1]
+      .split(",")
+      .map((part) => part.split(":")[0].trim())
+      .filter((name) => /^[A-Za-z_$][\w$]*$/.test(name));
+    assert.ok(routeKeys.length > 0, `no keys parsed from: ${listReturn[1]}`);
+
+    const specKeys = [...spec.matchAll(/(?:listJson|vaultListJson2?)\.(\w+)\s*\?\?\s*\[\]/g)].map((m) => m[1]);
+    assert.ok(specKeys.length >= 3, `expected all three list reads, found ${specKeys.length}`);
+    for (const key of specKeys) {
+      assert.ok(
+        routeKeys.includes(key),
+        `spec reads "${key}" from /api/company/documents, which returns ${JSON.stringify(routeKeys)}`,
+      );
+    }
   });
 
   it("spec uploads a tender via POST /api/tenders/upload-first", () => {
@@ -94,10 +137,12 @@ describe("Defect 6 — exact-head Preview e2e spec exists and covers the full fl
   });
 
   it("spec re-verifies the official Vault row is STILL UNCHANGED after tender upload + refresh", () => {
-    // The second verification uses ourDoc2 and re-asserts the same fields.
+    // Same correction as the post-import check above: the row must still be
+    // listed, and the bytes behind it must still hash to what upload persisted.
     assert.match(spec, /ourDoc2/);
-    assert.match(spec, /ourDoc2.*\.contentSha256.*\.toBe\(officialHash\)/s);
-    assert.match(spec, /ourDoc2.*\.integrityStatus.*\.toBe\("VERIFIED"\)/s);
+    assert.match(spec, /const afterTender = await readOfficialVaultBytes\(/);
+    assert.match(spec, /afterTender\.sha256.*\.toBe\(officialHash\)/s);
+    assert.match(spec, /afterTender\.byteLength.*\.toBe\(officialByteLength\)/s);
   });
 
   it("spec checks for horizontal overflow on /dashboard/tenders/[id] and /dashboard/company", () => {
