@@ -86,23 +86,48 @@ test.describe.serial("Defect 6 — Vault upload → Plan B import → tender upl
     const uploadRes = await page.request.post("/api/upload", { multipart: vaultForm });
     expect(uploadRes.status(), await uploadRes.text()).toBeLessThan(500);
     expect(uploadRes.status()).toBe(200);
+    // /api/upload returns a per-file result list, not a single `file` object:
+    // one entry per uploaded file, each carrying the persisted row under
+    // `docRecord` for company-scope uploads. Reading `file` here returned
+    // undefined and failed the very first assertion, so nothing after it ran.
     const uploadJson = await uploadRes.json() as {
       success: boolean;
-      documentId?: string;
-      file?: { id?: string; contentSha256?: string; contentByteLength?: number; mimeType?: string; fileName?: string; integrityStatus?: string };
+      uploaded: number;
+      results?: Array<{
+        success: boolean;
+        scope?: string;
+        docRecord?: {
+          id?: string;
+          contentSha256?: string;
+          contentByteLength?: number;
+          mimeType?: string;
+          fileName?: string;
+          originalFileName?: string;
+          integrityStatus?: string;
+        };
+      }>;
     };
     expect(uploadJson.success).toBe(true);
-    const vaultDocId = uploadJson.file?.id ?? uploadJson.documentId;
+    expect(uploadJson.uploaded).toBe(1);
+
+    const vaultRecord = uploadJson.results?.find((r) => r.scope === "company")?.docRecord;
+    expect(vaultRecord, JSON.stringify(uploadJson)).toBeTruthy();
+    const vaultDocId = vaultRecord?.id;
     expect(vaultDocId).toBeTruthy();
 
     // Capture the official row's persisted values immediately after upload.
-    const officialHash = uploadJson.file?.contentSha256;
-    const officialByteLength = uploadJson.file?.contentByteLength;
-    const officialMime = uploadJson.file?.mimeType;
-    const officialFileName = uploadJson.file?.fileName;
+    const officialHash = vaultRecord?.contentSha256;
+    const officialByteLength = vaultRecord?.contentByteLength;
+    const officialMime = vaultRecord?.mimeType;
+    const officialFileName = vaultRecord?.fileName;
     expect(officialHash).toBeTruthy();
     expect(officialByteLength).toBeGreaterThan(0);
     expect(officialMime).toBe("application/pdf");
+    // The upload path verifies bytes before persisting; a row that reaches the
+    // Vault unverified would make every later "unchanged" assertion vacuous.
+    expect(vaultRecord?.integrityStatus).toBe("VERIFIED");
+    // The digest the server persisted must be the digest of the bytes sent.
+    expect(officialHash).toBe(pdfSha256);
 
     try {
       // ─── Step 2: Plan B import referencing the uploaded PDF by filename + sha256 ──
