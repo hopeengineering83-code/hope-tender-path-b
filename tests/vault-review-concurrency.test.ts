@@ -15,16 +15,34 @@ const ROUTES = [
 
 describe("vault review routes use revision-bound optimistic concurrency", () => {
   for (const route of ROUTES) {
+    // The guarantee is that an approve write is bound to the exact revision it
+    // was decided against. These assertions used to spell the source fields as
+    // `ownedSource!.x`. That non-null assertion was the bug: ownedSource is
+    // null whenever the record has no source document, so the approve path
+    // threw a TypeError and returned 500 instead of approving — the one case
+    // the provenance fallback above it exists to handle.
+    //
+    // The binding still has to hold, so it is asserted here on the un-asserted
+    // form, together with the source-less branch that must keep the
+    // record-level lock rather than dropping concurrency control with it.
     it(`${route} binds the write to the record and source revision`, () => {
       const source = readFileSync(resolve(route), "utf8");
       assert.match(source, /updatedAt:\s*record\.updatedAt/);
       assert.match(source, /sourceDocumentId:\s*record\.sourceDocumentId/);
       assert.match(source, /sourceDocument:\s*\{\s*is:\s*\{/s);
-      assert.match(source, /extractedText:\s*ownedSource!\.extractedText/);
-      assert.match(source, /contentSha256:\s*ownedSource!\.contentSha256/);
-      assert.match(source, /contentByteLength:\s*ownedSource!\.contentByteLength/);
-      assert.match(source, /integrityStatus:\s*ownedSource!\.integrityStatus/);
-      assert.match(source, /metadata:\s*ownedSource!\.metadata/);
+      assert.match(source, /extractedText:\s*ownedSource\.extractedText/);
+      assert.match(source, /contentSha256:\s*ownedSource\.contentSha256/);
+      assert.match(source, /contentByteLength:\s*ownedSource\.contentByteLength/);
+      assert.match(source, /integrityStatus:\s*ownedSource\.integrityStatus/);
+      assert.match(source, /metadata:\s*ownedSource\.metadata/);
+
+      const codeOnly = source.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+      assert.doesNotMatch(codeOnly, /ownedSource!/, "the assertion that crashed on a source-less record must not return");
+      assert.match(
+        codeOnly,
+        /: \{ id, companyId: company\.id, updatedAt: record\.updatedAt, sourceDocumentId: record\.sourceDocumentId \}/,
+        "a record with no source document must still be approved under an optimistic lock",
+      );
     });
   }
 });

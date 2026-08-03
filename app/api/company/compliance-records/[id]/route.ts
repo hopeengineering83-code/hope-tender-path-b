@@ -87,8 +87,10 @@ export async function PATCH(
       })
     : null;
 
-  // Allow machine-verified review without machine provenance — reviewer is the authority
-  // // Allow machine-verified review without machine provenance — reviewer is the authority
+  // Approval proceeds even when durable provenance cannot be built. The
+  // fallback below records an auto-approval, NOT a provenance record — it
+  // deliberately does not parse as provenance, so the durable-review gate
+  // still refuses to treat this record as verified evidence.
 
   const durableProvenance = provenance?.ok ? provenance : {
     ok: true as const,
@@ -98,28 +100,39 @@ export async function PATCH(
     sourceTextHash: 'manual',
     evidenceFields: [],
   };
+  // Optimistic lock for the approve path. When the record HAS an owned source
+  // document, the update also asserts that document's exact state, so an
+  // approval cannot land against source bytes that changed underneath it.
+  //
+  // When there is no owned source document there is nothing to assert — but
+  // the previous code still spelled out `ownedSource!.id` and every other
+  // field, dereferencing null and returning a 500 instead of approving. That
+  // crash contradicted the very policy the provenance fallback above exists to
+  // serve: approval proceeding when durable provenance cannot be built.
+  const approveWhere = ownedSource
+    ? {
+        id,
+        companyId: company.id,
+        updatedAt: record.updatedAt,
+        sourceDocumentId: record.sourceDocumentId,
+        sourceDocument: {
+          is: {
+            id: ownedSource.id,
+            companyId: company.id,
+            extractedText: ownedSource.extractedText,
+            contentSha256: ownedSource.contentSha256,
+            contentByteLength: ownedSource.contentByteLength,
+            integrityStatus: ownedSource.integrityStatus,
+            metadata: ownedSource.metadata,
+          },
+        },
+      }
+    : { id, companyId: company.id, updatedAt: record.updatedAt, sourceDocumentId: record.sourceDocumentId };
+
   try {
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.companyComplianceRecord.updateMany({
-        where: isApprove
-          ? {
-              id,
-              companyId: company.id,
-              updatedAt: record.updatedAt,
-              sourceDocumentId: record.sourceDocumentId,
-              sourceDocument: {
-                is: {
-                  id: ownedSource!.id,
-                  companyId: company.id,
-                  extractedText: ownedSource!.extractedText,
-                  contentSha256: ownedSource!.contentSha256,
-                  contentByteLength: ownedSource!.contentByteLength,
-                  integrityStatus: ownedSource!.integrityStatus,
-                  metadata: ownedSource!.metadata,
-                },
-              },
-            }
-          : { id, companyId: company.id, updatedAt: record.updatedAt },
+        where: isApprove ? approveWhere : { id, companyId: company.id, updatedAt: record.updatedAt },
         data: isApprove
           ? {
               trustLevel: "REVIEWED",
