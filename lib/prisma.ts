@@ -226,6 +226,29 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE
   )`);
 
+  // Plan B staging — deliberately NOT a CompanyDocument. Synthetic JSON from a
+  // Plan B import is diagnostic only and must never be reachable as official
+  // uploaded evidence, so it lives in its own table with no provenance columns
+  // and nothing downstream treats it as a source.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "PlanBStaging" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "companyId" TEXT NOT NULL,
+    "originalFileName" TEXT NOT NULL,
+    "sourceType" TEXT,
+    "sourceCategory" TEXT,
+    "normalizedCategory" TEXT,
+    "rawText" TEXT,
+    "parsedExperts" INTEGER,
+    "parsedProjects" INTEGER,
+    "suppliedSha256" TEXT,
+    "reviewNotes" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE
+  )`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "PlanBStaging_companyId_idx" ON "PlanBStaging"("companyId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "PlanBStaging_originalFileName_idx" ON "PlanBStaging"("originalFileName")`);
+
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "CompanyAsset" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "companyId" TEXT NOT NULL,
@@ -621,19 +644,15 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Project", "deletedAt", "TIMESTAMPTZ");
   await ensureColumn(client, "Project", "deletedBy", "TEXT");
 
-  // ── Schema-drift repair: DocumentReview / DocumentComment ─────────────────
-  // Ensure correct column names exist. The schema uses documentId, action, notes
-  // from initial creation; no data migration from old names is needed.
-  await ensureColumn(client, "DocumentReview", "documentId", "TEXT");
-  await ensureColumn(client, "DocumentReview", "action", "TEXT");
-  await ensureColumn(client, "DocumentReview", "notes", "TEXT");
-  await ensureColumn(client, "DocumentReview", "priorStatus", "TEXT");
-  await ensureColumn(client, "DocumentReview", "newStatus", "TEXT");
-  await ensureColumn(client, "DocumentComment", "documentId", "TEXT");
-  await ensureColumn(client, "DocumentComment", "visibility", "TEXT NOT NULL DEFAULT 'INTERNAL'");
-  await ensureColumn(client, "DocumentComment", "resolvedAt", "TIMESTAMPTZ");
-  await ensureColumn(client, "DocumentComment", "resolvedBy", "TEXT");
-  await ensureColumn(client, "DocumentComment", "parentId", "TEXT");
+  // The DocumentReview / DocumentComment drift repair used to sit here, ~270
+  // lines BEFORE those tables are created below. ensureColumn issues an
+  // ALTER TABLE, so on a genuinely empty database the very first call threw
+  // `relation "DocumentReview" does not exist` and aborted the whole bootstrap
+  // — the one situation bootstrap exists for. It survived because every
+  // database it had ever run against was created by `prisma migrate deploy`,
+  // which makes the table first, and because the coverage test compares table
+  // NAMES in this file without ever executing it. The repair now runs directly
+  // after the CREATE TABLE statements it depends on.
 
   // Notification table
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "Notification" (
@@ -922,6 +941,22 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
   )`);
+
+  // ── Schema-drift repair: DocumentReview / DocumentComment ─────────────────
+  // Ensure correct column names exist. The schema uses documentId, action, notes
+  // from initial creation; no data migration from old names is needed.
+  // Must stay AFTER the two CREATE TABLE statements above — these are ALTER
+  // TABLEs and fail outright on a database where the tables do not exist yet.
+  await ensureColumn(client, "DocumentReview", "documentId", "TEXT");
+  await ensureColumn(client, "DocumentReview", "action", "TEXT");
+  await ensureColumn(client, "DocumentReview", "notes", "TEXT");
+  await ensureColumn(client, "DocumentReview", "priorStatus", "TEXT");
+  await ensureColumn(client, "DocumentReview", "newStatus", "TEXT");
+  await ensureColumn(client, "DocumentComment", "documentId", "TEXT");
+  await ensureColumn(client, "DocumentComment", "visibility", "TEXT NOT NULL DEFAULT 'INTERNAL'");
+  await ensureColumn(client, "DocumentComment", "resolvedAt", "TIMESTAMPTZ");
+  await ensureColumn(client, "DocumentComment", "resolvedBy", "TEXT");
+  await ensureColumn(client, "DocumentComment", "parentId", "TEXT");
 
   // ── tables added by feature migrations (missing from original bootstrap) ──
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderShare" (
