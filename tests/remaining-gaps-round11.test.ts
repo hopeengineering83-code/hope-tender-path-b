@@ -92,24 +92,6 @@ describe("round 11 — T5: auto-finalize transaction", () => {
   });
 });
 
-describe("round 11 — T4: attach-original old blob cleanup", () => {
-  const src = read("app/api/tenders/[id]/documents/[docId]/attach-original/route.ts");
-
-  it("captures priorStoragePath before the update", () => {
-    assert.ok(src.includes("priorStoragePath"), "must capture priorStoragePath");
-    assert.ok(src.includes("priorFileContent"), "must capture priorFileContent");
-  });
-
-  it("cleans up the old blob after the transaction", () => {
-    assert.ok(src.includes("Best-effort cleanup of the OLD blob"), "must clean up old blob");
-    assert.ok(src.includes("priorStoragePath || priorFileContent"), "must guard on prior blob existing");
-  });
-
-  it("includes storagePath + fileContent in the doc select", () => {
-    assert.ok(src.includes("storagePath: true"), "must select storagePath");
-    assert.ok(src.includes("fileContent: true"), "must select fileContent");
-  });
-});
 
 // Retargeted from the deleted lib/ai-jobs/worker.ts to the live classifier in
 // lib/ai.ts. The property that matters is unchanged: an error the classifier

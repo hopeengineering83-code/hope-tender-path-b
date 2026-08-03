@@ -81,7 +81,7 @@ describe("release integrity upgrade", () => {
     assert.match(seed, /44444444-4444-4444-8444-444444444444/);
     assert.match(isolation, /SECONDARY_DOCUMENT_ID/);
     assert.match(isolation, /SECONDARY_FILE_ID/);
-    assert.match(isolation, /attach-original/);
+    // attach-original route deleted — no longer in release-integrity isolation list
     assert.match(isolation, /finalize-pdf/);
     assert.match(isolation, /files\/\$\{SECONDARY_FILE_ID\}/);
     assert.match(isolation, /Secondary Owner Private Tender/);

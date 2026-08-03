@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { CheckIcon, WarningIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, ArrowRightIcon } from "./icons";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
@@ -67,10 +67,6 @@ function severityClass(severity: string): string {
   return SEVERITY_BADGE.LOW;
 }
 
-function isOriginalRequired(blocker: DocumentBlocker): boolean {
-  const text = `${blocker.reasons.join(" ")} ${blocker.nextActions.join(" ")}`;
-  return /ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|tender-issued original|official-original/i.test(text);
-}
 
 const ADVISORY_RESOLUTION_OPTIONS: Array<{ value: string; label: string }> = [
   { value: "NOT_REQUIRED_BY_TOR", label: "Not required by ToR" },
@@ -85,14 +81,12 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   const [loading, setLoading] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [resolvingAdvisory, setResolvingAdvisory] = useState<string | null>(null);
-  const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
   const [repairingAssets, setRepairingAssets] = useState(false);
-  const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const busy = loading || repairing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || repairingAssets;
+  const busy = loading || repairing || Boolean(resolvingAdvisory) || repairingAssets;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -177,27 +171,6 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
     }
   }
 
-  async function attachOriginal(blocker: DocumentBlocker, file: File | null) {
-    if (!file) return;
-    setAttachingDocId(blocker.documentId);
-    setError(null);
-    setRepairMessage(null);
-    try {
-      const body = new FormData();
-      body.append("file", file);
-      const res = await fetch(`/api/tenders/${tenderId}/documents/${blocker.documentId}/attach-original`, { method: "POST", body });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) throw new Error(data.error ?? `Attach original failed (${res.status})`);
-      setRepairMessage(`Official original attached for ${blocker.fileName}. Re-checking export readiness.`);
-      await refresh();
-    } catch (err) {
-      setError("Attach original failed. Refresh to retry.");
-    } finally {
-      setAttachingDocId(null);
-      const input = fileInputs.current[blocker.documentId];
-      if (input) input.value = "";
-    }
-  }
 
 
 
@@ -402,7 +375,6 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               <p className="text-xs font-semibold text-sky-900">How to clear blockers</p>
               <ol className="mt-2 space-y-1 pl-4 text-xs text-sky-800 list-decimal">
                 <li>Click <strong>Generate missing planned docs</strong> to convert any PLANNED rows into draft placeholders.</li>
-                <li>For tender-issued original forms/templates only (bid forms, declaration forms): click <strong>Attach official original</strong> on each blocker below. Company Vault documents are already official — no attachment needed.</li>
                 <li>Safe repairs (AI traces, pricing leakage, placeholders, source grounding) run <strong>automatically</strong> after generation — no manual button needed.</li>
               </ol>
               <p className="mt-2 text-[10px] text-sky-600">Manual action required only for: tender-issued official forms/templates that must be copied from the tender package. Uploaded Company Vault documents are automatically treated as official after verification.</p>
@@ -489,15 +461,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                             <p className="font-medium text-slate-900">{blocker.fileName}</p>
                             <p className="mt-0.5 text-slate-500">{blocker.name}</p>
                           </div>
-                          {isOriginalRequired(blocker) && (
-                            <div className="shrink-0">
-                              <input ref={(el) => { fileInputs.current[blocker.documentId] = el; }} type="file" accept=".doc,.docx,.pdf,.xls,.xlsx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={(event) => void attachOriginal(blocker, event.target.files?.[0] ?? null)} />
-                              <button type="button" onClick={() => fileInputs.current[blocker.documentId]?.click()} disabled={busy} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-60" title="Attach the exact tender-issued original form/template. This does not regenerate the form.">
-                                {attachingDocId === blocker.documentId ? "Attaching…" : "Attach official original"}
-                              </button>
-                            </div>
-                          )}
-                        </div>
+                                                  </div>
                         <ul className="mt-2 list-disc space-y-1 pl-4 text-slate-600">{blocker.reasons.map((reason, i) => <li key={i}>{reason}</li>)}</ul>
                         <ul className="mt-2 list-disc space-y-1 pl-4 text-emerald-700">{blocker.nextActions.map((action, i) => <li key={i}>{action}</li>)}</ul>
                       </div>

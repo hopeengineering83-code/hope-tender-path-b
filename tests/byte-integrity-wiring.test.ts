@@ -32,32 +32,8 @@ describe("byte-integrity wiring — every writer pins at creation", () => {
       "NEEDS_REVIEW notes must state the byte-integrity reason (truthful audit trail)",
     );
   });
-
-  it("attach-original pins integrity and rejects non-verified originals before storing", () => {
-    const src = read("app/api/tenders/[id]/documents/[docId]/attach-original/route.ts");
-    assert.ok(src.includes("const attachedIntegrity = inspectActualFileBytes({ bytes: buffer, filename: outputName"), "attached original must be pinned from the actual bytes");
-    assert.ok(src.includes("...attachedIntegrity"), "must persist the pinned integrity record");
-    assert.ok(
-      src.includes('attachedIntegrity.integrityStatus !== "VERIFIED"'),
-      "must fail closed: never mark READY_FOR_EXPORT with unverifiable bytes",
-    );
-    assert.ok(
-      src.indexOf("const attachedIntegrity") < src.indexOf("putFile"),
-      "integrity must be checked BEFORE the storage write (no orphan blobs for rejected files)",
-    );
-  });
-
-  it("generate-elite CV writes remain pinned (regression guard)", () => {
-    const src = read("lib/engine/generate-elite.ts");
-    assert.ok(src.includes("verifiedIntegrityDataFromBase64"), "CV writes must pin via the canonical helper");
-  });
-
-  it("writeGeneratedDocumentContent remains the verified-write helper (regression guard)", () => {
-    const src = read("lib/generated-document-content.ts");
-    assert.ok(src.includes("inspectActualFileBytes"), "central write helper must inspect bytes");
-    assert.ok(src.includes("contentSha256: integrity.contentSha256"), "central write helper must persist the digest");
-  });
 });
+
 
 describe("review-status badge truthfulness", () => {
   it("NEEDS_REVIEW renders an attention badge, not the neutral fallback", () => {

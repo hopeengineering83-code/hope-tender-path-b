@@ -36,6 +36,7 @@ export type AutoFinalizeResult = {
   exportRepair: { repaired: number; skipped: number; manualRequired: number };
   validation: { validated: number; failed: number; pending: number };
   pdfFinalization: { finalized: number; skipped: number; failed: number };
+  plannedFiles: { generated: number; skipped: number };
   warning: string | null;
 };
 
@@ -57,8 +58,35 @@ export async function runAutoFinalizeAfterGeneration(
     exportRepair: { repaired: 0, skipped: 0, manualRequired: 0 },
     validation: { validated: 0, failed: 0, pending: 0 },
     pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
+    plannedFiles: { generated: 0, skipped: 0 },
     warning: null,
   };
+
+  // Step 0: Generate missing planned documents automatically.
+  // Previously required a manual "Generate Missing Planned Docs" button click.
+  // Now runs inside AUTO_FINALIZE so the pipeline never stalls waiting for
+  // the user to create placeholder DOCX files for missing planned rows.
+  try {
+    await recordStep(jobId, {
+      stepName: "auto-finalize.generate-planned",
+      message: "Generating missing planned documents automatically",
+      status: "RUNNING",
+    });
+    const plannedResult = await generateMissingPlannedDocuments(tenderId, userId);
+    result.plannedFiles = plannedResult;
+    await recordStep(jobId, {
+      stepName: "auto-finalize.generate-planned.complete",
+      message: `Planned files: ${plannedResult.generated} generated, ${plannedResult.skipped} skipped`,
+      status: "SUCCEEDED",
+    });
+  } catch (error) {
+    logger.warn("[auto-finalize] generate missing planned documents failed", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    result.warning = (result.warning ?? "") + " Generate missing planned documents encountered an error.";
+  }
 
   // Step 1: repair source grounding so "source reference not found" never
   // appears in the UI. This re-grounds any requirement whose source trace
@@ -423,4 +451,114 @@ async function runPdfFinalization(
   }
 
   return { finalized, skipped, failed };
+}
+
+/**
+ * Step 0: Generate missing planned documents automatically.
+ * Previously required a manual "Generate Missing Planned Docs" button click.
+ * Now runs inside AUTO_FINALIZE so the pipeline never stalls waiting for
+ * the user to create placeholder DOCX files for missing planned rows.
+ *
+ * Uses the same logic as /api/tenders/:id/generate-missing-plan-files but
+ * called directly without the HTTP layer.
+ */
+async function generateMissingPlannedDocuments(
+  tenderId: string,
+  userId: string,
+): Promise<{ generated: number; skipped: number }> {
+  const { findMissingGeneratedDocuments, buildSubmissionPlan, plannedSubmissionTargetFiles } = await import("../engine/submission-plan");
+  const { getCurrentConfirmedBuildPlan } = await import("../engine/build-plan");
+
+  // Verify tenant ownership
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: { id: true, title: true, exactFileNaming: true, exactFileOrder: true },
+  });
+  if (!tender) return { generated: 0, skipped: 0 };
+
+  // Get the confirmed build plan
+  const buildPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
+  if (!buildPlan.ok) {
+    return { generated: 0, skipped: 0 };
+  }
+
+  // Get all non-superseded generated documents
+  const existingDocs = await prisma.generatedDocument.findMany({
+    where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+    select: { id: true, name: true, exactFileName: true, generationStatus: true },
+  });
+
+  // Find missing planned files
+  const plan = buildSubmissionPlan(tender as any);
+  const plannedFiles = plannedSubmissionTargetFiles(plan);
+  const missing = findMissingGeneratedDocuments(
+    { files: plannedFiles },
+    existingDocs as any[],
+  );
+
+  if (missing.length === 0) return { generated: 0, skipped: 0 };
+
+  // Create placeholder DOCX for each missing planned file
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = await import("docx");
+  let generated = 0;
+  let skipped = 0;
+
+  for (const file of missing) {
+    try {
+      const buffer = await Packer.toBuffer(new Document({
+        sections: [{
+          properties: { page: { margin: { top: 720, bottom: 720, left: 900, right: 900 } } },
+          children: [
+            new Paragraph({ children: [new TextRun({ text: file.exactFileName || file.canonicalId || "Document", bold: true, size: 30 })], spacing: { after: 240 } }),
+            new Paragraph({ children: [new TextRun({ text: `Tender: ${tender.title}`, size: 22 })], spacing: { after: 160 } }),
+            new Paragraph({ children: [new TextRun({ text: "This placeholder document was automatically generated for the submission plan. It will be replaced by validated content during the automatic pipeline.", size: 22 })], spacing: { after: 160 } }),
+          ],
+        }],
+      }));
+
+      // Check if a planned row exists to update
+      const plannedRow = await prisma.generatedDocument.findFirst({
+        where: { tenderId, exactFileName: file.exactFileName, generationStatus: "PLANNED" },
+        select: { id: true },
+      });
+
+      if (plannedRow) {
+        await prisma.generatedDocument.update({
+          where: { id: plannedRow.id },
+          data: {
+            fileContent: buffer.toString("base64"),
+            generationStatus: "GENERATED",
+            validationStatus: "PENDING",
+            reviewNotes: "machine:auto-planned — placeholder generated automatically by AUTO_FINALIZE.",
+            updatedAt: new Date(),
+          },
+        });
+      } else {
+        await prisma.generatedDocument.create({
+          data: {
+            tenderId,
+            name: file.exactFileName || file.canonicalId || "Generated Document",
+            exactFileName: file.exactFileName,
+            documentType: "TENDER_REQUIRED_FILE",
+            format: "DOCX",
+            fileContent: buffer.toString("base64"),
+            generationStatus: "GENERATED",
+            validationStatus: "PENDING",
+            reviewStatus: "PENDING",
+            reviewNotes: "machine:auto-planned — placeholder generated automatically by AUTO_FINALIZE.",
+          },
+        });
+      }
+      generated++;
+    } catch (error) {
+      logger.warn("[auto-finalize] Failed to generate planned document", {
+        tenderId,
+        fileName: file.exactFileName,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      skipped++;
+    }
+  }
+
+  return { generated, skipped };
 }

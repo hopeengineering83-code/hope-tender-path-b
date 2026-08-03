@@ -33,7 +33,6 @@ describe("Company Vault automatic verification contract", () => {
     const subnav = read("components/company-subnav.tsx");
     const generationReadiness = read("components/generation-readiness-panel.tsx");
     const planBImport = read("app/dashboard/company/plan-b-import/page.tsx");
-    const deepReasoning = read("lib/engine/deep-reasoning-readiness.ts");
 
     assert.match(page, /company-vault-verification-page/);
     assert.match(view, /Automatic Verification/);
@@ -46,7 +45,6 @@ describe("Company Vault automatic verification contract", () => {
     assert.doesNotMatch(subnav, /label: "Review Inbox"|href: "\/dashboard\/company\/review-board"/);
     assert.doesNotMatch(generationReadiness, /\/dashboard\/company\/review-board|Open review board/);
     assert.doesNotMatch(planBImport, /\/dashboard\/company\/review-board|>Review Board</);
-    assert.doesNotMatch(deepReasoning, /\/dashboard\/company\/review-board/);
   });
 
   it("sends 'manage the vault' calls to action to a page that can actually manage the vault", () => {
