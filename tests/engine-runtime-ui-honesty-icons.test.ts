@@ -63,13 +63,11 @@ describe("durable Engine UI honesty", () => {
     assert.doesNotMatch(panel, /maxChars=/);
   });
 
-  it("reports partial, failed, canceled, and background-running states honestly", () => {
+  it("reports partial, failed, canceled, and background-running states honestly (Gap 2: icons removed)", () => {
     assert.match(panel, /PARTIAL_SUCCESS/);
     assert.match(panel, /ASYNC_ENGINE_FAILED/);
     assert.match(panel, /ENGINE_JOB_SUPERSEDED/);
     assert.match(panel, /ASYNC_POLL_TIMEOUT/);
-    assert.match(panel, /Background Engine run completed, but matching is blocked/);
     assert.match(panel, /durable worker continues/);
-    assert.match(panel, /<BoltIcon \/>/);
   });
 });

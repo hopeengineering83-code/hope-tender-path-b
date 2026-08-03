@@ -4,10 +4,12 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 describe("readiness UI contradiction guardrails", () => {
-  it("blocked generation button does not stay green or say Generate Docs", () => {
+  it("generation panel is text-based status (Gap 2+3: no button)", () => {
     const source = readFileSync(resolve(process.cwd(), "components/generation-action-panel.tsx"), "utf8");
+    // Gap 2+3: no button, no green/disabled state, text-based status instead.
     assert.doesNotMatch(source, /Tender details incomplete/);
-    assert.match(source, /cursor-not-allowed/);
+    assert.doesNotMatch(source, /cursor-not-allowed/);
+    assert.match(source, /PROCESSING_AUTOMATICALLY/);
   });
 
   it("export readiness normalizes mandatory evidence support before displaying 0\/N blockers", () => {

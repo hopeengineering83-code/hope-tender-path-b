@@ -40,13 +40,14 @@ describe("Generation action panel — blocker action field matches the public en
     assert.match(envelopeSrc, /nextAction:\s*normalizeAction\(/);
   });
 
-  it("the component's blocker types expect `nextAction`, matching the real envelope shape", () => {
+  it("the component's blocker types still expect `nextAction` (Gap 2+3: no action links)", () => {
+    // Gap 2+3: BlockerActionLink was removed. The types still carry nextAction
+    // for the pending-items list, but no actionCode is rendered.
     assert.match(componentSrc, /fullProposalBlockers\?: Array<\{ code: string; message: string; nextAction\?: string \}>/);
     assert.match(componentSrc, /blockers\?: Array<\{ code: string; message: string; nextAction\?: string \}>/);
   });
 
-  it("the Blockers lists render item.nextAction, not an orchestrator-internal item.action", () => {
-    assert.match(componentSrc, /actionCode=\{item\.nextAction\}/);
-    assert.doesNotMatch(componentSrc, /actionCode=\{item\.action\}/);
+  it("the panel does NOT render actionCode (Gap 2: BlockerActionLink removed)", () => {
+    assert.doesNotMatch(componentSrc, /actionCode=/);
   });
 });

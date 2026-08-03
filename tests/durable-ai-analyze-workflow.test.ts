@@ -121,9 +121,9 @@ describe("run-next respects the handler terminal status", () => {
 describe("AIAnalyzePanel uses the durable background workflow", () => {
   const src = readFileSync("components/ai-analyze-panel.tsx", "utf8");
 
-  it("the Run AI Analyze button enqueues via the background endpoint", () => {
+  it("AI Analyze enqueues via the background endpoint (Gap 2: button removed, function retained)", () => {
     assert.match(src, /ai-analyze\?mode=background/);
-    assert.match(src, /onClick=\{handleBackgroundAnalyze\}/);
+    assert.match(src, /function handleBackgroundAnalyze/);
   });
 
   it("does NOT use the direct SSE route for normal analysis", () => {
@@ -211,7 +211,7 @@ describe("durable resume — a stopped run continues where it left off", () => {
 });
 
 describe("auto-retry-when-available resumes via the durable path", () => {
-  it("panel schedules auto-retry from the cooldown signal and offers Retry now", () => {
+  it("panel schedules auto-retry from the cooldown signal (Gap 2: Retry now button removed)", () => {
     const panel = readFileSync("components/ai-analyze-panel.tsx", "utf8");
     assert.match(panel, /function scheduleAutoRetry/);
     assert.match(panel, /function cancelAutoRetry/);
@@ -219,7 +219,6 @@ describe("auto-retry-when-available resumes via the durable path", () => {
     assert.match(panel, /scheduleAutoRetry\(Math\.max\(providerRetryAfterMs, 5_000\)/);
     // the auto-retry calls the durable handler (so it resumes), not SSE
     assert.match(panel, /void handleBackgroundAnalyze\(\)/);
-    assert.match(panel, /Retry now/);
     assert.match(panel, /resumes from the last completed chunk/);
   });
 });

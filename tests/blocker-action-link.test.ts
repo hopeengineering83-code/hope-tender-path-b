@@ -74,39 +74,28 @@ describe("BlockerActionLink component contract", () => {
   });
 });
 
-describe("generation-action-panel — frozen/silent pattern eliminated", () => {
-  const source = readComponent("generation-action-panel.tsx");
+describe("generation-action-panel — text-based status surface (Gap 2+3)", () => {
+  // Strip comments before matching — we only care about code, not docs.
+  const rawSource = readComponent("generation-action-panel.tsx");
+  const source = rawSource
+    .replace(/\/\/[^\n]*/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
 
-  it("imports BlockerActionLink", () => {
-    assert.match(source, /import\s*\{\s*BlockerActionLink\s*\}\s*from\s*"\.\/blocker-action-link"/);
+  it("does NOT import BlockerActionLink (removed in Gap 2)", () => {
+    assert.doesNotMatch(source, /BlockerActionLink/);
   });
 
-  it("renders a BlockerActionLink next to each fullProposalBlocker that has a nextAction", () => {
-    // The frozen/silent pattern was: <li>{item.message}</li>
-    // The fix: <li>{item.message}{item.nextAction && <BlockerActionLink .../>}</li>
-    assert.match(source, /fullProposalBlockers\.slice\(0,\s*6\)\.map\([\s\S]*?item\.nextAction\s*&&\s*\([\s\S]*?<BlockerActionLink/);
+  it("does NOT render BlockerActionLink next to blockers (removed in Gap 2)", () => {
+    assert.doesNotMatch(source, /<BlockerActionLink/);
   });
 
-  it("renders a BlockerActionLink next to each support blocker that has a nextAction", () => {
-    assert.match(source, /blockers\.slice\(0,\s*4\)\.map\([\s\S]*?item\.nextAction\s*&&\s*\([\s\S]*?<BlockerActionLink/);
+  it("uses text-based status instead of action buttons", () => {
+    assert.match(source, /PROCESSING_AUTOMATICALLY/);
+    assert.match(source, /READY_TO_DOWNLOAD/);
   });
 
-  it("renders a BlockerActionLink next to each warning that has a nextAction", () => {
-    assert.match(source, /warnings\.slice\(0,\s*3\)\.map\([\s\S]*?item\.nextAction\s*&&\s*\([\s\S]*?<BlockerActionLink/);
-  });
-
-  it("does NOT use the bare <li>{item.message}</li> pattern for blockers", () => {
-    // The frozen/silent pattern is the bare list item with no action link.
-    // After the fix, every blocker <li> should contain a BlockerActionLink
-    // conditional on item.nextAction. We approximate this by checking that
-    // no <li> with just {item.message} exists in the file — the new
-    // pattern wraps item.message in a <span> with a bullet pseudo-element.
-    const bareLiPattern = /<li[^>]*>\s*\{item\.message\}\s*<\/li>/;
-    assert.doesNotMatch(
-      source,
-      bareLiPattern,
-      "Found a bare <li>{item.message}</li> — every blocker must have an actionable recovery link",
-    );
+  it("shows pending items as plain text list (no action links)", () => {
+    assert.match(source, /truncatedBlockers\.map/);
   });
 });
 

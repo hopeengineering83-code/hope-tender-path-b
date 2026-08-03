@@ -8,18 +8,13 @@ const verificationPage = readFileSync("components/company-vault-verification-pag
 const ingestion = readFileSync("lib/company-vault-ingestion.ts", "utf8");
 const verification = readFileSync("lib/company-auto-verification.ts", "utf8");
 
-test("blocked Engine exposes explicit Vault recovery without becoming the normal action owner", () => {
+test("Engine panel has repair function and text-based status (Gap 2: buttons removed)", () => {
   assert.match(engine, /async function repairVaultAndRetry\(\)/);
   assert.match(engine, /fetch\("\/api\/company\/reimport", \{ method: "POST" \}\)/);
-  assert.match(engine, /Repair source evidence/);
-  assert.match(engine, /Restarting the durable Engine workflow/);
-  assert.match(engine, /href="\/dashboard\/company"/);
-  assert.match(engine, /Open Company Vault/);
+  // Gap 2: "Repair source evidence" button text removed from normal path.
+  // The function still exists for automatic/diagnostic use.
+  assert.match(engine, /Processing automatically/);
   assert.doesNotMatch(engine, /safe: "true"|skipAiRematch|Run Safe Mode|Full AI/);
-  const normalAction = engine.indexOf("Start or resume Engine");
-  const recoveryGuard = engine.indexOf('result.nextAction === "REVIEW_MATCHING_INPUTS"');
-  const repairAction = engine.indexOf("Repair source evidence");
-  assert.ok(normalAction >= 0 && recoveryGuard > normalAction && repairAction > recoveryGuard);
 });
 
 test("Engine recovery copy requests automatic source verification, not approval", () => {

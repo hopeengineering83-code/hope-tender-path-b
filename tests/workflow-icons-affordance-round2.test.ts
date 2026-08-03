@@ -51,21 +51,21 @@ describe("workflow actions have visible semantic icons and labels", () => {
     assert.match(read("components/icons.tsx"), /export function LinkIcon/);
   });
 
-  it("generation, review, and export actions use distinct icons", () => {
-    // Generate Docs uses DocumentGenerateIcon (not BoltIcon — that's reserved
-    // for engine "Run Safe Mode" on the engine-action surface).
-    assert.match(read("components/generation-action-panel.tsx"), /DocumentGenerateIcon/);
+  it("generation uses text-based status (Gap 2+3: icons removed)", () => {
+    // Gap 2+3: no DocumentGenerateIcon, no BoltIcon. Text-based status instead.
+    assert.doesNotMatch(read("components/generation-action-panel.tsx"), /DocumentGenerateIcon/);
     assert.doesNotMatch(read("components/generation-action-panel.tsx"), /BoltIcon/);
-    assert.match(read("components/build-submission-plan-button.tsx"), /<CheckCircleIcon \/>/);
-    assert.match(read("components/authority-review-panel.tsx"), /<CheckCircleIcon \/>/);
+    assert.match(read("components/generation-action-panel.tsx"), /PROCESSING_AUTOMATICALLY/);
     assert.match(read("components/export-readiness-panel.tsx"), /<DownloadIcon \/> Download Final ZIP/);
   });
 });
 
 describe("disabled critical actions remain readable and explained", () => {
   it("uses at least 60% opacity on priority disabled actions", () => {
+    // Gap 2: engine-action-panel no longer has buttons, so no disabled state.
+    // Only export-readiness-panel and submission-plan-completeness-panel have
+    // disabled buttons.
     for (const file of [
-      "components/engine-action-panel.tsx",
       "components/export-readiness-panel.tsx",
       "components/submission-plan-completeness-panel.tsx",
     ]) assert.match(read(file), /disabled:opacity-60/);
@@ -74,9 +74,6 @@ describe("disabled critical actions remain readable and explained", () => {
   it("does not use 40% disabled opacity in priority workflow components", () => {
     for (const file of [
       "components/next-action-panel.tsx",
-      // tender-recovery-command-center.tsx removed -- deleted as unrendered
-      // dead code (nothing imports or renders it).
-      "components/engine-action-panel.tsx",
       "components/generation-action-panel.tsx",
       "components/submission-plan-completeness-panel.tsx",
       "components/requirement-coverage-panel.tsx",

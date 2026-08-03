@@ -1,9 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { ArrowRightIcon, BoltIcon, ClockIcon } from "./icons";
 import { formatOperationalCode, formatOperationalReason } from "../lib/operational-labels";
 
 type ExtractionBlocker = {

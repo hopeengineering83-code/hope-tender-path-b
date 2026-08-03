@@ -21,11 +21,11 @@ describe("REPAIR_METADATA consumer contract (shared repair-metadata-contract mod
   const contractSource = readFileSync("lib/engine/repair-metadata-contract.ts", "utf8");
   const panelSource = readFileSync("components/generation-action-panel.tsx", "utf8");
 
-  it("the panel reads parsed.outcomes (not a raw json.repaired array) for REPAIR_METADATA", () => {
-    assert.match(panelSource, /repair-metadata/);
-    assert.match(panelSource, /parseRepairMetadataResponse/);
-    assert.match(panelSource, /buildRepairMessage\(parsed\.outcomes\)/);
-    assert.doesNotMatch(panelSource, /json\.repaired/);
+  it("the repair-metadata contract is still used by the codebase (Gap 2: panel button removed, contract retained)", () => {
+    // Gap 2: the panel no longer calls repair-metadata directly, but the
+    // contract module is still used by the automatic repair workflow.
+    assert.match(contractSource, /Array\.isArray\(obj\.outcomes\)/);
+    assert.doesNotMatch(contractSource, /obj\.repaired/);
   });
 
   it("parseRepairMetadataResponse reads the outcomes[] array, not a legacy repaired[] array", () => {

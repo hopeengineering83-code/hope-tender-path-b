@@ -1,3 +1,6 @@
+// Gap 2+3: Engine action panel buttons and icons were removed.
+// These tests verify the new text-based status surface.
+
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -5,45 +8,30 @@ import { test } from "node:test";
 const read = (path: string) => readFileSync(path, "utf8");
 const engine = read("components/engine-action-panel.tsx");
 
-test("category A: Engine has one normal server-controlled action owner", () => {
-  assert.equal((engine.match(/Start or resume Engine/g) ?? []).length, 1);
-  assert.equal((engine.match(/onClick=\{\(\) => void runEngine\(\)\}/g) ?? []).length, 1);
-  assert.match(engine, /Durable tender processing/);
+test("category A: Engine panel uses text-based status (Gap 2: buttons removed)", () => {
   assert.match(engine, /Closing this browser does not stop processing/);
+  assert.match(engine, /Processing automatically/);
   assert.doesNotMatch(engine, /Run Safe Mode/);
   assert.doesNotMatch(engine, /Full AI/);
 });
 
-test("category A: Vault repair remains failure-state recovery only", () => {
-  const recoveryGuard = engine.indexOf('result.nextAction === "REVIEW_MATCHING_INPUTS"');
-  const repairAction = engine.indexOf("Repair source evidence");
-  const normalAction = engine.indexOf("Start or resume Engine");
-  assert.ok(normalAction >= 0);
-  assert.ok(recoveryGuard > normalAction);
-  assert.ok(repairAction > recoveryGuard);
+test("category A: Vault repair function retained for automatic use", () => {
   assert.match(engine, /\/api\/company\/reimport/);
-  assert.match(engine, /Restarting the durable Engine workflow/);
+  assert.match(engine, /async function repairVaultAndRetry/);
 });
 
-test("category A: retry controls remain failure-state-only", () => {
-  assert.match(
-    engine,
-    /result\.code === "NETWORK_OR_RUNTIME_ERROR" \|\| result\.code === "ASYNC_ENGINE_FAILED" \|\| result\.code === "ENGINE_JOB_SUPERSEDED"/,
-  );
-  assert.match(engine, /Retry durable Engine/);
-  assert.match(engine, /result\.code === "ASYNC_POLL_TIMEOUT"/);
-  assert.match(engine, /Check status now/);
+test("category A: no retry buttons in normal path (Gap 2)", () => {
+  assert.doesNotMatch(engine, /Retry durable Engine/);
+  assert.doesNotMatch(engine, /Check status now/);
 });
 
-test("category E: Engine actions use semantic SVG icons", () => {
-  assert.match(engine, /<BoltIcon \/> Start or resume Engine/);
-  assert.match(engine, /<ClockIcon \/> Processing/);
-  assert.match(engine, /<BoltIcon \/> Repair source evidence/);
-  assert.match(engine, /Open Company Vault <ArrowRightIcon \/>/);
+test("category E: no SVG icons in engine panel (Gap 2+3)", () => {
+  assert.doesNotMatch(engine, /<BoltIcon/);
+  assert.doesNotMatch(engine, /<ClockIcon/);
+  assert.doesNotMatch(engine, /<ArrowRightIcon/);
 });
 
-test("read-only users never receive mutation controls", () => {
-  assert.match(engine, /canMutate \? \(/);
-  assert.match(engine, /Engine recovery actions require ADMIN or PROPOSAL_MANAGER role/);
-  assert.match(engine, /ROLE_READ_ONLY_MUTATION_BLOCKED/);
+test("read-only users see text status (no mutation controls)", () => {
+  // Gap 2: no canMutate gate needed because there are no buttons.
+  assert.match(engine, /Processing automatically/);
 });
