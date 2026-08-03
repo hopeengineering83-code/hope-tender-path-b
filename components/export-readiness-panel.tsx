@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { CheckIcon, WarningIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, PaperclipIcon, BanIcon, CrossIcon, ArrowRightIcon } from "./icons";
+import { CheckIcon, WarningIcon, CheckCircleIcon, RefreshIcon, DownloadIcon, LockIcon, ArrowRightIcon } from "./icons";
 import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 import { DisclosureAnchorLink } from "./disclosure-anchor-link";
 
@@ -55,21 +55,6 @@ type ExportReadiness = {
   message: string;
 };
 
-type VaultOption = { id: string; fileName: string; category: string; score?: number };
-type VaultCandidate = { rowId: string; rowName: string; suggestedCategories: string[]; options: VaultOption[] };
-
-type RepairResult = {
-  success?: boolean;
-  error?: string;
-  repaired?: number;
-  skipped?: number;
-  manualRequired?: number;
-  plannedCreated?: number;
-  letterheadAppliedCount?: number;
-  finalExportReady?: boolean;
-  remaining?: { documentBlockers?: number; tenderLevelBlockers?: number };
-};
-
 const SEVERITY_BADGE: Record<Severity, string> = {
   HIGH: "bg-red-100 text-red-700",
   MEDIUM: "bg-amber-100 text-amber-800",
@@ -99,24 +84,15 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   const [readiness, setReadiness] = useState<ExportReadiness | null>(null);
   const [loading, setLoading] = useState(false);
   const [repairing, setRepairing] = useState(false);
-  const [linkingVault, setLinkingVault] = useState(false);
-  const [supersedingOutsidePlan, setSupersedingOutsidePlan] = useState(false);
-  const [autoFinalizing, setAutoFinalizing] = useState(false);
   const [resolvingAdvisory, setResolvingAdvisory] = useState<string | null>(null);
-  const [vaultCandidates, setVaultCandidates] = useState<VaultCandidate[]>([]);
-  const [selectedVaultOption, setSelectedVaultOption] = useState<Record<string, string>>({});
   const [attachingDocId, setAttachingDocId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [repairMessage, setRepairMessage] = useState<string | null>(null);
-  const [autoFinalizeRemaining, setAutoFinalizeRemaining] = useState<number | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
-  const [repairingSource, setRepairingSource] = useState(false);
-  const [reclassifying, setReclassifying] = useState(false);
-  const [deduplicating, setDeduplicating] = useState(false);
   const [repairingAssets, setRepairingAssets] = useState(false);
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const busy = loading || repairing || linkingVault || supersedingOutsidePlan || autoFinalizing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || repairingSource || reclassifying || deduplicating || repairingAssets;
+  const busy = loading || repairing || Boolean(attachingDocId) || Boolean(resolvingAdvisory) || repairingAssets;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -128,7 +104,6 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       const r = data.exportReadiness;
       setReadiness(r);
       // Clear the "click again" nudge once the gate passes or blockers are resolved
-      if (r?.ok || (r?.summary?.documentBlockers ?? 0) === 0) setAutoFinalizeRemaining(null);
       router.refresh();
     } catch {
       // Never expose raw Prisma error text to UI.
@@ -383,16 +358,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
         </div>
       )}
       {repairMessage && <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">{repairMessage}</div>}
-      {autoFinalizeRemaining !== null && autoFinalizeRemaining > 0 && !ok && (
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="text-xs text-amber-800">
-            <strong>{autoFinalizeRemaining} document{autoFinalizeRemaining === 1 ? "" : "s"}</strong> still need finalization.
-            Click <strong>Auto-finalize for print/submission</strong> again to continue — each run processes up to 3 documents.
-          </p>
-          <button type="button" onClick={() => setAutoFinalizeRemaining(null)} aria-label="Dismiss auto-finalize notice" className="inline-flex items-center shrink-0 text-amber-600 hover:text-amber-800 text-xs font-medium"><CrossIcon /></button>
-        </div>
-      )}
-
+      
       {/* Vault evidence modal removed — linkVaultEvidence() and
           applySelectedVaultEvidence() are dead code. Vault evidence
           linking runs automatically via reconcileAutomaticRequirementCoverage. */}
