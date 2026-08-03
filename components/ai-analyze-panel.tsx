@@ -119,7 +119,7 @@ export function AIAnalyzePanel({
             } else {
               setError(job.status === "PARTIAL_SUCCESS"
                 ? "Automatic analysis stopped at partial success. Generation and export remain blocked until a full AI analysis succeeds."
-                : job.errorMessage || "Automatic analysis failed. Retry AI Analyze when the provider is available.");
+                : job.errorMessage || "Automatic analysis failed. The system will retry automatically when the provider is available.");
             }
             return;
           }

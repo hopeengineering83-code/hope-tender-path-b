@@ -52,7 +52,7 @@ function buildActionLabel(action?: string): string {
   if (action === "REVIEW_MATCHES") return "Review matches";
   if (action === "OPEN_KNOWLEDGE_REVIEW") return "Open Automatic Verification";
   if (action === "OPEN_COMPLIANCE_REVIEW" || action === "RESOLVE_COMPLIANCE_GAPS") return "Open compliance";
-  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return "Retry AI Analyze or approve fallback";
+  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return "Approve fallback analysis";
   if (action === "RETRY_AI_ANALYZE") return "Retry AI Analyze";
   if (action === "REVIEW_ANALYSIS") return "Review analysis quality";
   if (action === "REPAIR_OR_EDIT_TENDER") return "Repair or edit Tender Details";

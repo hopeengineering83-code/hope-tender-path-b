@@ -159,11 +159,11 @@ function recommendedActionFor(status: SubmissionPlanRowStatus, planFile: Submiss
   switch (status) {
     case "GENERATED": return "Ready for export.";
     case "GENERATED_NEEDS_REVIEW": return "Complete reviewer approval — mark READY_FOR_EXPORT.";
-    case "GENERATED_QUALITY_FAILED": return "Quality gate failed — rewrite or attach the official original.";
+    case "GENERATED_QUALITY_FAILED": return "Quality gate failed — rewrite or regenerate.";
     case "PLANNED": return "Generate the planned document. This row has no final file content yet.";
     case "OFFICIAL_ORIGINAL_REQUIRED": return "Upload the tender-issued original form/template. Company Vault documents are already official — this only applies to tender-issued forms.";
-    case "REPLACE_WITH_ORIGINAL": return "Attach the exact tender-issued original form/template. Company Vault documents are already official — this only applies to tender-issued forms.";
-    case "MISSING": return `Generate the required file (${planFile?.exactFileName ?? "missing file"}) or attach the official original.`;
+    case "REPLACE_WITH_ORIGINAL": return "Tender-issued form not found in Tender Intake files. Upload the complete tender package. Company Vault documents are already official.";
+    case "MISSING": return `Generate the required file (${planFile?.exactFileName ?? "missing file"}).`;
     case "OUTSIDE_PLAN": return `Map this document into the submission plan or supersede it; it is not part of the tender-required file list (${doc?.exactFileName ?? doc?.name ?? "unmapped doc"}).`;
     case "SUPERSEDED": return "Historical row — already excluded from the final package.";
     default: return "Review the row status.";
@@ -359,7 +359,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
     warnings.push(`${totalOutsidePlan} generated document(s) are outside the explicit submission plan and must be mapped or superseded.`);
   }
   if (totalOfficialOriginalsRequired > 0) {
-    warnings.push(`${totalOfficialOriginalsRequired} official-original document(s) are required — attach via Attach official original; do not generate.`);
+    warnings.push(`${totalOfficialOriginalsRequired} tender-issued form(s) are required — upload the complete tender package; do not generate.`);
   }
 
   return {

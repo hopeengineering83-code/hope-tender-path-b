@@ -162,7 +162,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         </div>
         <p className="mt-1 text-slate-600">{analysisSource.detail}</p>
         {analysisSource.risk === "HIGH" && (
-          <p className="mt-2 text-red-700">High risk: untrusted extraction can miss exact forms, evaluation scoring, file names, submission instructions, and expert/project requirements. Re-check extraction quality and AI provider health, then re-run Engine.</p>
+          <p className="mt-2 text-red-700">High risk: untrusted extraction can miss exact forms, evaluation scoring, file names, submission instructions, and expert/project requirements. Check extraction quality and AI provider health. The Engine runs automatically.</p>
         )}
         {fallbackOnly && analysisSource.risk !== "HIGH" && (
           <p className="mt-2 text-amber-800">Fallback or partial analysis is for draft review only. Do not treat this as final-export ready until extraction and AI analysis are reliable.</p>

@@ -340,7 +340,7 @@ function generatedDocumentExclusionReason(
   }
   if (!isFinalExportCandidateDocument(document)) {
     const reviewStatus = activeStatus(document.reviewStatus);
-    if (reviewStatus === "REPLACE_WITH_ORIGINAL") return "tender-issued original must be uploaded";
+    if (reviewStatus === "REPLACE_WITH_ORIGINAL") return "tender-issued form not found in Tender Intake";
     if (reviewStatus === "NOT_EXPORTABLE") return "not required by tender or marked not exportable";
     if (activeStatus(document.format) === "CONTROL") return "control/replacement row only";
     return "draft only or not a final export candidate";

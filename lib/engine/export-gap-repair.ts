@@ -129,7 +129,7 @@ function isManualOnly(doc: RepairDoc): string | null {
   if (generation === "SUPERSEDED" || validation === "SUPERSEDED") return "Historical/superseded document; regenerate from the current submission plan instead of repairing.";
   if (review === "REPLACE_WITH_ORIGINAL") return "Tender-issued original form/template required. This is a tender file, not a Company Vault document — repair must not recreate it generically. Company Vault documents are already official after verification.";
   if (review === "NOT_EXPORTABLE") return "Document is marked not exportable. Manual review or original attachment is required.";
-  if (generation === "PLANNED") return "Planned-only row. Generate the document through the main generation flow or attach the required original.";
+  if (generation === "PLANNED") return "Planned-only row. Generate the document through the canonical generation pipeline.";
   if (/QUICK_DRAFT|DRAFT_ONLY|MARKDOWN|CONTROL|PLACEHOLDER/i.test(label)) return "Internal draft/control row. It is not a final submission file.";
   if ((doc.exactFileName ?? "").toLowerCase().endsWith(".pdf") && normalizeStatus(doc.format) !== "PDF") return "PDF output/original is required. Upload the final PDF instead of repairing to DOCX.";
   return null;
@@ -155,7 +155,7 @@ async function makeSafeDocx(title: string, tenderTitle: string): Promise<string>
       children: [
         new Paragraph({ children: [new TextRun({ text: clean(title), bold: true, size: 30 })], spacing: { after: 240 } }),
         new Paragraph({ children: [new TextRun({ text: `Tender: ${clean(tenderTitle)}`, size: 22 })], spacing: { after: 160 } }),
-        new Paragraph({ children: [new TextRun({ text: "This file was repaired only as a generated package document. Official tender-issued forms and templates are intentionally excluded from automatic repair and must be attached as originals.", size: 22 })], spacing: { after: 160 } }),
+        new Paragraph({ children: [new TextRun({ text: "This file was repaired only as a generated package document. Tender-issued forms are sourced automatically from uploaded Tender Intake files. Company Vault documents are already official.", size: 22 })], spacing: { after: 160 } }),
       ],
     }],
   }));

@@ -162,7 +162,7 @@ function buildNonNarrativeReport(
       requirementCoverageRatio: 1,
       evidenceReferenceCount: 0,
       issues,
-      notes: [`Non-narrative document (category: ${category}). Requires official original attachment — narrative quality gate does not apply.`],
+      notes: [`Non-narrative document (category: ${category}). Tender-issued form — narrative quality gate does not apply.`],
     };
   }
 

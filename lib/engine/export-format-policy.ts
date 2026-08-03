@@ -151,7 +151,7 @@ export function checkTenderFormatCoverage(
     return { ok: false, code: "DOCX_REQUIRED_BUT_MISSING", missing: policy.perFile.filter((p) => p.format === "docx").map((p) => p.exactFileName), reason: "Tender requires DOCX output but the generated set has no DOCX file." };
   }
   if (missingFormats.includes("xlsx")) {
-    return { ok: false, code: "XLSX_REQUIRED_BUT_MISSING", missing: policy.perFile.filter((p) => p.format === "xlsx").map((p) => p.exactFileName), reason: "Tender requires an Excel workbook. Attach the exact tender-issued XLS/XLSX original before export." };
+    return { ok: false, code: "XLSX_REQUIRED_BUT_MISSING", missing: policy.perFile.filter((p) => p.format === "xlsx").map((p) => p.exactFileName), reason: "Tender requires an Excel workbook. Upload the complete tender package containing the required XLS/XLSX file." };
   }
   return { ok: true };
 }

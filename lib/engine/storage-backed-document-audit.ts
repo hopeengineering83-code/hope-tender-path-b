@@ -130,7 +130,7 @@ export async function auditStorageBackedDocument(
       issueCodes: ["STORAGE_UNREADABLE"],
       wordCount: null,
       finalExportCandidate,
-      recommendedAction: "Storage file is unreadable. Regenerate this document or attach the official original.",
+      recommendedAction: "Storage file is unreadable. Regenerate this document.",
     };
   }
 
@@ -225,9 +225,9 @@ export async function auditStorageBackedDocument(
   if (!byteSignatureOk) {
     recommendedAction = "File extension does not match byte signature. Regenerate in the required format.";
   } else if (officialOriginalPlaceholderRisk) {
-    recommendedAction = "Attach the exact tender-issued original. REPLACE_WITH_ORIGINAL placeholders must not enter the ZIP.";
+    recommendedAction = "Tender-issued forms must be sourced from uploaded Tender Intake files. REPLACE_WITH_ORIGINAL placeholders must not enter the ZIP.";
   } else if (qualityRecommendedStatus === "QUALITY_FAILED" || qualityRecommendedStatus === "NEEDS_REWRITE") {
-    recommendedAction = `Quality gate ${qualityRecommendedStatus} (score ${qualityScore}/100). Rewrite or attach official original.`;
+    recommendedAction = `Quality gate ${qualityRecommendedStatus} (score ${qualityScore}/100). Rewrite or regenerate.`;
   } else if (bidTeamToConfirmIssue) {
     recommendedAction = '"Bid-Team to confirm" placeholder detected. Remove before export.';
   } else if (pricingLeakageIssue) {

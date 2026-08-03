@@ -169,7 +169,7 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     label: "Attach Official Originals",
     kind: "scroll",
     anchorId: "generated-documents",
-    message: "Open Generated Documents and attach the exact tender-issued originals.",
+    message: "Upload the complete tender package containing the required tender-issued forms.",
   },
   REPAIR_DOCUMENT_QUALITY: {
     label: "Repair Document Quality",

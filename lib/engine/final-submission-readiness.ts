@@ -170,13 +170,13 @@ export type GetFinalSubmissionReadinessOptions = {
 
 function nextActionForReason(reason: string): string {
   if (/ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|tender-issued original/i.test(reason)) {
-    return "Attach or upload the exact tender-issued original form/template for this file. Do not use Repair safe document gaps for official-original rows.";
+    return "Tender-issued forms are sourced automatically from uploaded Tender Intake files. This file is not available in the tender package.";
   }
   if (/NOT_EXPORTABLE/i.test(reason)) {
     return "Manual review required: this row is marked NOT_EXPORTABLE and must not be included in the final package unless replaced by the official source file.";
   }
   if (/PLANNED|CONTROL_RECORD_ONLY|control, placeholder, or text-only/i.test(reason)) {
-    return "Generate the actual final file or attach the official original. Planned/control rows are not exportable files.";
+    return "Generate the actual final file. Planned/control rows are not exportable files.";
   }
   if (/PDF_CONVERSION_REQUIRED|not a real PDF/i.test(reason)) {
     return "Upload the final PDF required by the tender or provide a real PDF file before export.";
@@ -187,7 +187,7 @@ function nextActionForReason(reason: string): string {
   if (/reviewStatus/i.test(reason)) return "Complete human review and mark the document READY_FOR_EXPORT.";
   if (/fileContent|MISSING_CONTENT/i.test(reason)) return "Regenerate or upload the missing DOCX/PDF file content.";
   if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|not a final export/i.test(reason)) {
-    return "Use Generate Docs or attach the tender-issued original; quick drafts, placeholders and control rows cannot be exported.";
+    return "Use Generate Docs; quick drafts, placeholders and control rows cannot be exported.";
   }
   return "Review and resolve this blocker before final export.";
 }
@@ -944,7 +944,7 @@ export async function getFinalSubmissionReadiness(
       category: "GENERATED_DOCUMENT_QUALITY_FAILED",
       severity: "HIGH",
       title: `${qualityFailed} generated document(s) failed the quality gate (QUALITY_FAILED).`,
-      recommendedAction: "Review the flagged documents in the Export Readiness panel; rewrite or attach official originals before export.",
+      recommendedAction: "Review the flagged documents in the Export Readiness panel; rewrite or regenerate before export.",
     });
   }
   if (!confirmedPlan.ok) {

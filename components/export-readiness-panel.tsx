@@ -136,7 +136,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       });
       const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; error?: string };
       if (data.success) {
-        setRepairMessage("Fallback note saved for audit. Re-checking readiness — generation and export remain blocked until full AI analysis succeeds.");
+        setRepairMessage("Fallback note saved for audit. Refreshing — generation and export remain blocked until full AI analysis succeeds.");
         setApprovalNote("");
       } else {
         setError((data.error as string | undefined) ?? "Failed to approve fallback analysis");
@@ -160,7 +160,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error) throw new Error(data.error ?? `Advisory resolution failed (${res.status})`);
-      setRepairMessage(`Marked advisory ${code} as ${resolution.toLowerCase().replace(/_/g, " ")}. Re-checking readiness.`);
+      setRepairMessage(`Marked advisory ${code} as ${resolution.toLowerCase().replace(/_/g, " ")}. Refreshing.`);
       await refresh();
     } catch (err) {
       setError("Advisory resolution failed.");
@@ -252,7 +252,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               disabled
               aria-disabled="true"
               className="inline-flex items-center gap-1.5 cursor-not-allowed rounded-lg bg-slate-200 px-3 py-2 text-xs font-medium text-slate-500"
-              title={`Download blocked — resolve all ${readiness.summary.totalBlockers} blocker(s) above, then re-check.`}
+              title={`Download blocked — resolve all ${readiness.summary.totalBlockers} blocker(s) above, then check.`}
             >
               <LockIcon /> Download blocked — resolve blockers first
             </button>

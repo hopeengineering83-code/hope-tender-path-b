@@ -868,13 +868,13 @@ export async function computeTenderLifecycle(
   else if (officialRequired > officialAttached) {
     lifecycleState = "OFFICIAL_ORIGINALS_REQUIRED";
     primaryNextAction = "ATTACH_OFFICIAL_ORIGINALS";
-    blockers.push({ code: "OFFICIAL_ORIGINALS_MISSING", message: `${officialRequired - officialAttached} official original(s) must be attached (bid form, financial statements, certificates). Do not generate — attach the tender-issued originals.`, action: "Use 'Attach official original' for each required official document." });
+    blockers.push({ code: "OFFICIAL_ORIGINALS_MISSING", message: `${officialRequired - officialAttached} tender-issued form(s) not found in Tender Intake files. Upload the complete tender package.`, action: "Upload the complete tender package containing the required forms." });
   }
   // 13. Quality gate failing
   else if (counts.qualityFailedCandidates > 0) {
     lifecycleState = "QUALITY_REVIEW_REQUIRED";
     primaryNextAction = "REPAIR_DOCUMENT_QUALITY";
-    blockers.push({ code: "QUALITY_GATE_FAILED", message: `${counts.qualityFailedCandidates} document(s) failed the quality gate.`, action: "Rewrite or attach official originals for quality-failed documents." });
+    blockers.push({ code: "QUALITY_GATE_FAILED", message: `${counts.qualityFailedCandidates} document(s) failed the quality gate.`, action: "Rewrite or regenerate quality-failed documents." });
   }
   // 14. Has generated docs, needs auto-finalize
   else if (counts.finalExportCandidates > 0 && !finalExportReady) {
@@ -963,7 +963,7 @@ export async function computeTenderLifecycle(
     allowed.push("GENERATE_DOCS");
   }
 
-  // Attach official originals
+  // Tender-issued forms (sourced from Tender Intake files)
   if (officialRequired > 0) {
     allowed.push("ATTACH_OFFICIAL_ORIGINALS");
   }
@@ -999,7 +999,7 @@ export async function computeTenderLifecycle(
     if (fallbackUnapproved) reasons.push("analysis source is unapproved regex fallback");
     if (noFinalDocs) reasons.push("no active final export candidates");
     if (counts.plannedMissingDocs > 0) reasons.push(`${counts.plannedMissingDocs} required document(s) not yet generated`);
-    if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} official original(s) not attached`);
+    if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} tender-issued form(s) not found in Tender Intake`);
     if (ungroundedMandatory.length > 0) reasons.push(`${ungroundedMandatory.length} mandatory requirement(s) missing source traceability`);
     if (!mandatoryEvidenceReady) reasons.push("mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence");
     if (counts.qualityFailedCandidates > 0) reasons.push(`${counts.qualityFailedCandidates} document(s) failed quality gate`);

@@ -101,7 +101,7 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   // Financial capacity / audited financial statements → ORIGINAL_EVIDENCE_ATTACHMENT (not TECHNICAL_PROPOSAL)
   // Legal eligibility / registration / license → ORIGINAL_EVIDENCE_ATTACHMENT (not TECHNICAL_PROPOSAL)
   if (/business license|trade license|tax clearance|audited\s+(financial\s+)?statements?|financial statements?|financial capacity|turnover statement|bank statement|annual report|registration\s+certificate|certificate\s+of\s+registration|incorporation\s+certificate|certificate\s+of\s+incorporation|tin certificate|vat certificate|grade certificate|good standing certificate|legal eligibility|eligibility certificate|company registration|license to operate|contractor registration|professional license|legal entity certificate/.test(value)) {
-    return result("ORIGINAL_EVIDENCE_ATTACHMENT", "Evidence attachment must be uploaded as an original document, not generated.");
+    return result("ORIGINAL_EVIDENCE_ATTACHMENT", "Evidence attachment must be sourced from Company Vault, not generated.");
   }
 
   if (/bid form|tender form|declaration form|undertaking form|integrity pact|price schedule|rate card|boq|bill of quantities|annex|annexure|appendix|attachment|template/.test(value)) {
