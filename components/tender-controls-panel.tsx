@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDownIcon, RefreshIcon, WarningIcon, DocumentIcon, ChatIcon, QuestionIcon, FlagIcon, CheckCircleIcon, CoinIcon } from "./icons";
+import { subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
+import { ChevronDownIcon, WarningIcon, DocumentIcon, ChatIcon, QuestionIcon, FlagIcon, CheckCircleIcon, CoinIcon } from "./icons";
 
 type ControlType =
   | "ADDENDUM"
@@ -151,6 +152,9 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
   }, [tenderId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Auto-refresh on workflow sync — no manual Refresh button needed.
+  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void load(); }), [load, tenderId]);
 
   // ── Suggested-control workflow (H). ───────────────────────────────────────
   const [suggestionBusy, setSuggestionBusy] = useState<string | null>(null);
@@ -353,7 +357,6 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={load} className="rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100" aria-label="Refresh controls"><RefreshIcon /></button>
           <button
             type="button"
             onClick={() => { setShowForm((v) => !v); setSubmitError(null); }}

@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
 import { severityBadgeClassesCompact, severityToUISeverity } from "../lib/ui-tokens";
 
 type Objection = {
@@ -47,7 +48,7 @@ export function EvaluatorObjectionsPanel({ tenderId, canMutate = false }: { tend
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -61,7 +62,11 @@ export function EvaluatorObjectionsPanel({ tenderId, canMutate = false }: { tend
     } finally {
       setLoading(false);
     }
-  }
+  }, [tenderId]);
+
+  // Auto-load on mount + auto-refresh on workflow sync — no manual button needed.
+  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void refresh(); }), [refresh, tenderId]);
 
   async function updateObjection(objectionId: string, status: "RESOLVED" | "WAIVED") {
     const resolutionNote = (notes[objectionId] ?? "").trim();
@@ -105,9 +110,7 @@ export function EvaluatorObjectionsPanel({ tenderId, canMutate = false }: { tend
               {summary.exportBlockedByHighObjections ? `${summary.openHigh} high blocker(s)` : "No high blockers"}
             </span>
           )}
-          <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60">
-            {loading ? "Loading…" : hasLoaded ? "Refresh" : "Load objections"}
-          </button>
+          {/* Auto-loads on mount + workflow sync — no manual Refresh button. */}
         </div>
       </div>
 

@@ -56,6 +56,12 @@ export default function CompanyVaultVerificationPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // Auto-refresh every 30 seconds — no manual Refresh button needed.
+  useEffect(() => {
+    const interval = setInterval(() => { void load(); }, 30_000);
+    return () => clearInterval(interval);
+  }, [load]);
+
   async function reprocess() {
     setWorking(true);
     setError("");
@@ -110,7 +116,6 @@ export default function CompanyVaultVerificationPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => void load()} className="rounded-lg border px-4 py-2 text-sm">Refresh</button>
           <button type="button" onClick={() => void reprocess()} disabled={working} className="rounded-lg bg-slate-900 px-4 py-2 text-sm text-white disabled:opacity-50">
             {working ? "Queuing…" : "Reprocess and verify"}
           </button>
