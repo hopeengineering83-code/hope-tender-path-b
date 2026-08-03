@@ -28,8 +28,7 @@ type Status =
   | "GENERATED_NEEDS_REVIEW"
   | "GENERATED_QUALITY_FAILED"
   | "PLANNED"
-  | "OFFICIAL_ORIGINAL_REQUIRED"
-  | "REPLACE_WITH_ORIGINAL"
+  | "MISSING_TENDER_SOURCE_FORM"
   | "MISSING"
   | "OUTSIDE_PLAN"
   | "SUPERSEDED";
@@ -88,8 +87,7 @@ const STATUS_BADGE: Record<Status, { label: string; tone: "ok" | "warn" | "bad" 
   GENERATED_NEEDS_REVIEW: { label: "REVIEW NEEDED", tone: "warn", icon: <WarningIcon /> },
   GENERATED_QUALITY_FAILED: { label: "QUALITY FAILED", tone: "bad", icon: <BanIcon /> },
   PLANNED: { label: "PLANNED", tone: "warn", icon: <ClockIcon /> },
-  OFFICIAL_ORIGINAL_REQUIRED: { label: "TENDER FORM", tone: "warn", icon: <WarningIcon /> },
-  REPLACE_WITH_ORIGINAL: { label: "REPLACE WITH ORIGINAL", tone: "warn", icon: <WarningIcon /> },
+  MISSING_TENDER_SOURCE_FORM: { label: "MISSING TENDER FORM", tone: "warn", icon: <WarningIcon /> },
   MISSING: { label: "MISSING", tone: "bad", icon: <BanIcon /> },
   OUTSIDE_PLAN: { label: "OUTSIDE PLAN", tone: "warn", icon: <WarningIcon /> },
   SUPERSEDED: { label: "HISTORICAL", tone: "neutral", icon: <FolderIcon /> },

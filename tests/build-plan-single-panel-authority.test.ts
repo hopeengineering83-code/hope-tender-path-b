@@ -160,7 +160,7 @@ describe("the divergence that motivated the merge is real and now unreachable", 
     // The canonical resolver the surviving panel reads: not a current output.
     const report = canonicalReport(doc);
     assert.equal(report.totalGenerated, 0);
-    assert.equal(report.rows[0].status, "REPLACE_WITH_ORIGINAL");
+    assert.equal(report.rows[0].status, "MISSING_TENDER_SOURCE_FORM");
   });
 
   it("agrees with itself on an ordinary generated document", () => {

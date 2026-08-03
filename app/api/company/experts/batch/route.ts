@@ -108,33 +108,15 @@ export async function PATCH(req: Request) {
       reviewedAt,
     });
     if (!provenance.ok) {
-      // Allow machine-verified review even without full machine provenance when the
-      // record has a sourceDocumentId. The machine-verified reviewer IS the authority
-      // — requiring machine byte-integrity proof before the human can
-      // review defeats the purpose and freezes the review board.
-      // Record a minimal provenance with the available info.
-      if (record.sourceDocumentId) {
-        candidates.push({
-          id,
-          serialized: JSON.stringify({
-            recordType: "EXPERT",
-            reviewerId: actor.id,
-            reviewedAt: reviewedAt.toISOString(),
-            sourceDocumentId: record.sourceDocumentId,
-            note: "Auto-approved — record extracted from company documents.",
-          }),
-          sourceContentHash: ownedSource?.contentSha256 ?? "manual",
-          sourceByteLength: ownedSource?.contentByteLength ?? 0,
-          sourceTextHash: "manual",
-          evidenceFields: [],
-        });
-      } else {
-        rejected.push({
-          id,
-          code: provenance.code,
-          ...(provenance.missingFields.length ? { missingEvidenceFields: provenance.missingFields.slice(0, 8) } : {}),
-        });
-      }
+      // Source-less auto-approval is forbidden (Gap 3). A record without a
+      // verified source document stays UNVERIFIED — never REVIEWED, never a
+      // fabricated "manual" hash. The user must upload the source document so
+      // the Engine can source-verify it automatically.
+      rejected.push({
+        id,
+        code: provenance.code,
+        ...(provenance.missingFields.length ? { missingEvidenceFields: provenance.missingFields.slice(0, 8) } : {}),
+      });
       continue;
     }
     candidates.push({ id, ...provenance });

@@ -659,9 +659,7 @@ export async function computeTenderLifecycle(
   const counts = countSummaryFromPlan(plan, docsSnap);
 
   // ── Official originals ─────────────────────────────────────────────────────
-  const officialRequired =
-    plan.totalOfficialOriginalsRequired +
-    plan.rows.filter((r) => r.status === "REPLACE_WITH_ORIGINAL").length;
+  const officialRequired = plan.totalOfficialOriginalsRequired;
   const officialAttached = plan.rows.filter(
     (r) =>
       r.officialOriginal &&

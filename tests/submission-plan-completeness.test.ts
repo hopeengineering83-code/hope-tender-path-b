@@ -65,11 +65,11 @@ describe("submission-plan completeness — 6 of 19 case", () => {
 });
 
 describe("submission-plan completeness — official originals", () => {
-  it("marks Bid Bond / Tax Clearance / Bid Form rows as OFFICIAL_ORIGINAL_REQUIRED", () => {
+  it("marks Bid Bond / Tax Clearance / Bid Form rows as MISSING_TENDER_SOURCE_FORM", () => {
     const required = ["Technical-Proposal.docx", "Bid-Bond.pdf", "Tax-Clearance.pdf", "Bid-Form.docx"];
     const report = resolveSubmissionPlanCompleteness({ tender: planTender(required), generatedDocuments: [] });
     const labels = new Set(report.rows.filter((r) => r.officialOriginal).map((r) => r.status));
-    assert.ok(labels.has("OFFICIAL_ORIGINAL_REQUIRED"));
+    assert.ok(labels.has("MISSING_TENDER_SOURCE_FORM"));
   });
 });
 

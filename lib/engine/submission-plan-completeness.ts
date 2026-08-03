@@ -24,8 +24,15 @@ export type SubmissionPlanRowStatus =
   | "GENERATED_NEEDS_REVIEW"
   | "GENERATED_QUALITY_FAILED"
   | "PLANNED"
-  | "OFFICIAL_ORIGINAL_REQUIRED"
-  | "REPLACE_WITH_ORIGINAL"
+  // Unified blocker for any tender-issued source form the app does not have
+  // — whether it never matched a Tender Intake file (was OFFICIAL_ORIGINAL_REQUIRED)
+  // or matched one but the produced row is still a placeholder reviewStatus
+  // (was REPLACE_WITH_ORIGINAL). Both collapse into one user-facing signal:
+  // the tender package is incomplete until the missing form is uploaded. The
+  // underlying GeneratedDocument.reviewStatus DB value (REPLACE_WITH_ORIGINAL,
+  // NOT_EXPORTABLE) is unchanged — only the row-status enum the resolver emits
+  // to panels and gates is renamed.
+  | "MISSING_TENDER_SOURCE_FORM"
   | "MISSING"
   | "OUTSIDE_PLAN"
   | "SUPERSEDED";
@@ -135,7 +142,7 @@ function fileKey(value: string | null | undefined): string {
 function resolveStatus(doc: GeneratedDocSnapshot | null, planFile: SubmissionPlanFile | null, qualityFailed: boolean): SubmissionPlanRowStatus {
   if (!doc && planFile) {
     const label = `${planFile.exactFileName} ${planFile.documentType}`;
-    if (looksLikeOfficialOriginal(label)) return "OFFICIAL_ORIGINAL_REQUIRED";
+    if (looksLikeOfficialOriginal(label)) return "MISSING_TENDER_SOURCE_FORM";
     return "MISSING";
   }
   if (!doc) return "MISSING";
@@ -146,8 +153,8 @@ function resolveStatus(doc: GeneratedDocSnapshot | null, planFile: SubmissionPla
     status === "GENERATED_QUALITY_FAILED" || status === "QUALITY_FAILED" || status === "NEEDS_REWRITE",
   );
   if (gen === "SUPERSEDED") return "SUPERSEDED";
-  if (rev === "REPLACE_WITH_ORIGINAL") return "REPLACE_WITH_ORIGINAL";
-  if (rev === "NOT_EXPORTABLE") return "REPLACE_WITH_ORIGINAL";
+  if (rev === "REPLACE_WITH_ORIGINAL") return "MISSING_TENDER_SOURCE_FORM";
+  if (rev === "NOT_EXPORTABLE") return "MISSING_TENDER_SOURCE_FORM";
   if (gen === "PLANNED") return "PLANNED";
   if (qualityFailed || storedQualityFailed) return "GENERATED_QUALITY_FAILED";
   if (!isFinalExportCandidateDocument(doc)) return "PLANNED";
@@ -161,8 +168,7 @@ function recommendedActionFor(status: SubmissionPlanRowStatus, planFile: Submiss
     case "GENERATED_NEEDS_REVIEW": return "Complete reviewer approval — mark READY_FOR_EXPORT.";
     case "GENERATED_QUALITY_FAILED": return "Quality gate failed — rewrite or regenerate.";
     case "PLANNED": return "Generate the planned document. This row has no final file content yet.";
-    case "OFFICIAL_ORIGINAL_REQUIRED": return "Upload the tender-issued original form/template. Company Vault documents are already official — this only applies to tender-issued forms.";
-    case "REPLACE_WITH_ORIGINAL": return "Tender-issued form not found in Tender Intake files. Upload the complete tender package. Company Vault documents are already official.";
+    case "MISSING_TENDER_SOURCE_FORM": return "Upload the tender-issued source form from the complete tender package. Company Vault documents are already official — this only applies to tender-issued forms.";
     case "MISSING": return `Generate the required file (${planFile?.exactFileName ?? "missing file"}).`;
     case "OUTSIDE_PLAN": return `Map this document into the submission plan or supersede it; it is not part of the tender-required file list (${doc?.exactFileName ?? doc?.name ?? "unmapped doc"}).`;
     case "SUPERSEDED": return "Historical row — already excluded from the final package.";
@@ -303,7 +309,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   const totalGenerated = rows.filter((r) => r.status === "GENERATED" || r.status === "GENERATED_NEEDS_REVIEW").length;
   const plannedOnlyCount = rows.filter((r) => r.status === "PLANNED").length;
   const totalMissing = rows.filter((r) => r.status === "MISSING").length + plannedOnlyCount;
-  const totalOfficialOriginalsRequired = rows.filter((r) => r.status === "OFFICIAL_ORIGINAL_REQUIRED" || r.status === "REPLACE_WITH_ORIGINAL").length;
+  const totalOfficialOriginalsRequired = rows.filter((r) => r.status === "MISSING_TENDER_SOURCE_FORM").length;
   const totalOutsidePlan = rows.filter((r) => r.status === "OUTSIDE_PLAN").length;
   const totalSuperseded = rows.filter((r) => r.status === "SUPERSEDED").length;
   const totalQualityFailed = rows.filter((r) => r.status === "GENERATED_QUALITY_FAILED").length;
