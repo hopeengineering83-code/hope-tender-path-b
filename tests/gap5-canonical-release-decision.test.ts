@@ -43,15 +43,37 @@ describe("Gap 5 — CanonicalReleaseDecision is the ONE readiness authority", ()
     assert.match(canonicalReleaseDecision, /import\s+\{[^}]*classifyReleaseStatus[^}]*\}\s+from\s+["'][^"']*release-status-classifier["']/);
   });
 
-  it("exports READINESS_CALCULATOR_CLASSIFICATION with CANONICAL/DELEGATE/DELETE", () => {
+  it("exports READINESS_CALCULATOR_CLASSIFICATION using the documented vocabulary", () => {
+    // This used to also require the literal "DELETE" to appear. That forced
+    // at least one module to be marked deletable at all times, whether or not
+    // one actually was — a table shaped by an assertion instead of by the
+    // codebase. The vocabulary is defined in the module's own docblock; what
+    // matters is that the entries are drawn from it, not that every value is
+    // in use.
     assert.match(canonicalReleaseDecision, /READINESS_CALCULATOR_CLASSIFICATION/);
     assert.match(canonicalReleaseDecision, /"CANONICAL"/);
     assert.match(canonicalReleaseDecision, /"DELEGATE"/);
-    assert.match(canonicalReleaseDecision, /"DELETE"/);
+    for (const value of canonicalReleaseDecision.matchAll(/"lib\/[^"]+":\s*"(\w+)"/g)) {
+      assert.ok(
+        ["CANONICAL", "DELEGATE", "DELETE"].includes(value[1]),
+        `unknown classification "${value[1]}"`,
+      );
+    }
   });
 
-  it("classifies runtime-readiness-facts as DELETE", () => {
-    assert.match(canonicalReleaseDecision, /"lib\/engine\/runtime-readiness-facts\.ts":\s*"DELETE"/);
+  it("does not classify runtime-readiness-facts as DELETE — a live route imports it", () => {
+    // Reversed deliberately. This previously asserted "DELETE", which pinned a
+    // landmine: app/api/tenders/[id]/runtime-readiness-parity/route.ts imports
+    // getRuntimeReadinessFacts and safePanelError, so acting on that entry
+    // would have 500'd a live route. The general rule — every DELETE entry
+    // must have zero production importers — is enforced by execution in
+    // tests/readiness-classification-is-true.test.ts; this case is kept here
+    // because it is the one that was actually wrong.
+    assert.doesNotMatch(canonicalReleaseDecision, /"lib\/engine\/runtime-readiness-facts\.ts":\s*"DELETE"/);
+    assert.ok(
+      existsSync("app/api/tenders/[id]/runtime-readiness-parity/route.ts"),
+      "the importing route must still exist for this test to mean anything",
+    );
   });
 
   it("classifies canonical-tender-readiness as DELEGATE (computation engine)", () => {
