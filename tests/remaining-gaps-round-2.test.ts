@@ -120,9 +120,9 @@ describe("F6 — the Build Plan panel gates every mutation button on canMutate",
     assert.match(src, /\{canMutate && <BuildSubmissionPlanButton/);
   });
 
-  it("gates GenerateMissingPlanFilesButton behind canMutate", () => {
+  it("GenerateMissingPlanFilesButton removed — planned docs generated automatically", () => {
     const src = read("components/submission-plan-completeness-panel.tsx");
-    assert.match(src, /canMutate && data\.summary\.totalMissing > 0 && \(\s*<GenerateMissingPlanFilesButton/);
+    assert.doesNotMatch(src, /<GenerateMissingPlanFilesButton/);
   });
 
   it("gates ReconcileStaleFilesButton behind canMutate", () => {
