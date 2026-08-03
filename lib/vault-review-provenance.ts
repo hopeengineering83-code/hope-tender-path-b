@@ -665,6 +665,66 @@ export function canUseVaultRecordField(
   return false;
 }
 
+/**
+ * Defect 4: return a summary of which fields are verified vs unverified for
+ * a given record. Consumers (UI, generation pipeline, export gate) can call
+ * this to render per-field trust badges or to decide which fields are safe
+ * to cite.
+ *
+ * For a fully-verified record (every field in source text), returns
+ * { verifiedFields: [...all], unverifiedFields: [], partial: false }.
+ * For a partially-verified record (identity verified, some inferred fields
+ * missing), returns { verifiedFields: [...verified], unverifiedFields:
+ * [...missing], partial: true }.
+ * For a non-verified record (AI_DRAFT, no provenance), returns
+ * { verifiedFields: [], unverifiedFields: [], partial: false }.
+ */
+export type PartialVerificationSummary = {
+  /** True iff the record has provenance AND some fields are unverified. */
+  partial: boolean;
+  /** Fields whose values were found in source text. */
+  verifiedFields: string[];
+  /** Fields whose values were NOT found in source text (inferred). */
+  unverifiedFields: string[];
+};
+
+export function partialVerificationSummary(
+  record: ReviewRecordState,
+  recordType: ReviewRecordType,
+): PartialVerificationSummary {
+  const empty: PartialVerificationSummary = { partial: false, verifiedFields: [], unverifiedFields: [] };
+  // Try source-verification provenance (v1) first — that's what Plan B and
+  // partial verification write.
+  const sv = parseStoredSourceVerification(record.reviewNotes);
+  if (sv) {
+    const verified = sv.evidence.map((item) => item.field);
+    // Compute unverified as the set of record fields that are NOT in the
+    // verified list. Use currentRecordEvidenceFields to get the full set.
+    const allFields = currentRecordEvidenceFields(record, recordType) ?? [];
+    const allFieldNames = allFields.map((item) => item.field);
+    const unverified = allFieldNames.filter((name) => !verified.includes(name));
+    return {
+      partial: unverified.length > 0,
+      verifiedFields: verified,
+      unverifiedFields: unverified,
+    };
+  }
+  // Try review provenance (v2) — human-approval path.
+  const rv = parseStoredReviewProvenance(record.reviewNotes);
+  if (rv) {
+    const verified = rv.evidence.map((item) => item.field);
+    const allFields = currentRecordEvidenceFields(record, recordType) ?? [];
+    const allFieldNames = allFields.map((item) => item.field);
+    const unverified = allFieldNames.filter((name) => !verified.includes(name));
+    return {
+      partial: unverified.length > 0,
+      verifiedFields: verified,
+      unverifiedFields: unverified,
+    };
+  }
+  return empty;
+}
+
 function evidenceItemIsValid(item: Partial<DurableReviewEvidence>): boolean {
   return typeof item.field === "string" && item.field.trim().length > 0 &&
     HASH_PATTERN.test(item.valueHash ?? "") &&

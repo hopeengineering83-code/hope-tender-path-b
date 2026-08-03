@@ -17,6 +17,7 @@ import {
   financialReviewFields,
   complianceReviewFields,
   buildSourceVerificationProvenance,
+  buildPartialSourceVerificationProvenance,
   type ReviewSourceDocument,
 } from "../../../../lib/vault-review-provenance";
 
@@ -316,12 +317,22 @@ type PlanBTrustDecision =
       ok: true;
       trustLevel: "SOURCE_VERIFIED";
       reviewNotes: string;
+      // Defect 4: when partial verification was used (identity verified,
+      // some inferred fields unverified), carry the lists so the route can
+      // surface them in per-record warnings. Empty arrays when full
+      // verification succeeded.
+      verifiedFields: string[];
+      unverifiedFields: string[];
     }
   | {
       ok: false;
       trustLevel: "AI_DRAFT";
       reviewNotes: string;
       code: string;
+      // Even on a hard-fail (identity not verified), surface which fields
+      // were verified vs unverified so the UI can hint at what to fix.
+      verifiedFields: string[];
+      unverifiedFields: string[];
     };
 
 // Run the same source-verification gate the automatic Company Vault
@@ -331,6 +342,14 @@ type PlanBTrustDecision =
 // Plan B import never persists REVIEWED and never writes
 // reviewedBy/reviewedAt — only the machine-verification provenance
 // payload in `reviewNotes` when verification succeeds.
+//
+// Defect 4: when the full gate fails because some INFERRED fields are
+// missing from source text (but the IDENTITY field IS verified), fall
+// back to buildPartialSourceVerificationProvenance so the record becomes
+// SOURCE_VERIFIED on its identity. The unverified inferred fields are
+// listed in unverifiedFields and canUseVaultRecordField() returns false
+// for them — consumers can gate per-field instead of rejecting the whole
+// record.
 function decidePlanBTrust(input: {
   requested: RequestedTrust;
   recordType: "EXPERT" | "PROJECT" | "LEGAL" | "FINANCIAL" | "COMPLIANCE";
@@ -338,20 +357,51 @@ function decidePlanBTrust(input: {
   fields: ReturnType<typeof expertReviewFields> | ReturnType<typeof projectReviewFields> | ReturnType<typeof legalReviewFields> | ReturnType<typeof financialReviewFields> | ReturnType<typeof complianceReviewFields>;
   fallbackNotes: string;
 }): PlanBTrustDecision {
-  const provenance = buildSourceVerificationProvenance({
+  // Try the full gate first — every field must be in source text.
+  const full = buildSourceVerificationProvenance({
     recordType: input.recordType,
     sourceDocument: input.sourceDocument,
     fields: input.fields,
     verificationMethod: verificationMethodForRequest(input.requested),
   });
-  if (provenance.ok) {
-    return { ok: true, trustLevel: "SOURCE_VERIFIED", reviewNotes: provenance.serialized };
+  if (full.ok) {
+    return {
+      ok: true,
+      trustLevel: "SOURCE_VERIFIED",
+      reviewNotes: full.serialized,
+      verifiedFields: full.evidenceFields,
+      unverifiedFields: [],
+    };
   }
+
+  // Full gate failed. Try partial verification — succeeds when the identity
+  // field is verified even if inferred fields are missing. This avoids
+  // rejecting the entire record just because (e.g.) yearsExperience is not
+  // explicitly in the CV text.
+  const partial = buildPartialSourceVerificationProvenance({
+    recordType: input.recordType,
+    sourceDocument: input.sourceDocument,
+    fields: input.fields,
+    verificationMethod: verificationMethodForRequest(input.requested),
+  });
+  if (partial.ok) {
+    return {
+      ok: true,
+      trustLevel: "SOURCE_VERIFIED",
+      reviewNotes: partial.serialized!,
+      verifiedFields: partial.verifiedFields,
+      unverifiedFields: partial.unverifiedFields,
+    };
+  }
+
+  // Identity not verified either — fail closed to AI_DRAFT.
   return {
     ok: false,
     trustLevel: "AI_DRAFT",
     reviewNotes: input.fallbackNotes,
-    code: provenance.code,
+    code: partial.code ?? "FIELD_EVIDENCE_REQUIRED",
+    verifiedFields: partial.verifiedFields,
+    unverifiedFields: partial.unverifiedFields,
   };
 }
 
@@ -465,7 +515,12 @@ async function upsertLegalRecord(db: PlanBDb, companyId: string, record: PlanBLe
   const effectiveTrust: TrustLevel = decision.trustLevel;
   const effectiveReviewNotes = decision.reviewNotes;
   const evidenceDowngraded = decision.ok ? 0 : 1;
-  const warning: string | null = decision.ok ? null : `Legal record "${title}" could not be source-verified against stored bytes (${decision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`;
+  let warning: string | null = null;
+  if (!decision.ok) {
+    warning = `Legal record "${title}" could not be source-verified against stored bytes (${decision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`;
+  } else if (decision.unverifiedFields.length > 0) {
+    warning = `Legal record "${title}" was source-verified on identity (${decision.verifiedFields.join(", ")}) but ${decision.unverifiedFields.length} inferred field(s) could not be verified: ${decision.unverifiedFields.join(", ")}.`;
+  }
 
   const data = {
     recordType,
@@ -512,7 +567,12 @@ async function upsertFinancialRecord(db: PlanBDb, companyId: string, record: Pla
   const effectiveTrust: TrustLevel = decision.trustLevel;
   const effectiveReviewNotes = decision.reviewNotes;
   const evidenceDowngraded = decision.ok ? 0 : 1;
-  const warning: string | null = decision.ok ? null : `Financial record "${recordType} ${fiscalYear}" could not be source-verified against stored bytes (${decision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`;
+  let warning: string | null = null;
+  if (!decision.ok) {
+    warning = `Financial record "${recordType} ${fiscalYear}" could not be source-verified against stored bytes (${decision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`;
+  } else if (decision.unverifiedFields.length > 0) {
+    warning = `Financial record "${recordType} ${fiscalYear}" was source-verified on identity (${decision.verifiedFields.join(", ")}) but ${decision.unverifiedFields.length} inferred field(s) could not be verified: ${decision.unverifiedFields.join(", ")}.`;
+  }
 
   const data = {
     fiscalYear,
@@ -557,7 +617,12 @@ async function upsertComplianceRecord(db: PlanBDb, companyId: string, record: Pl
   const effectiveTrust: TrustLevel = decision.trustLevel;
   const effectiveReviewNotes = decision.reviewNotes;
   const evidenceDowngraded = decision.ok ? 0 : 1;
-  const warning: string | null = decision.ok ? null : `Compliance record "${title}" could not be source-verified against stored bytes (${decision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`;
+  let warning: string | null = null;
+  if (!decision.ok) {
+    warning = `Compliance record "${title}" could not be source-verified against stored bytes (${decision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`;
+  } else if (decision.unverifiedFields.length > 0) {
+    warning = `Compliance record "${title}" was source-verified on identity (${decision.verifiedFields.join(", ")}) but ${decision.unverifiedFields.length} inferred field(s) could not be verified: ${decision.unverifiedFields.join(", ")}.`;
+  }
 
   const data = {
     complianceType,
@@ -990,6 +1055,13 @@ export async function POST(req: Request) {
       if (!expertDecision.ok) {
         evidenceDowngraded += 1;
         warnings.push(`Expert ${fullName} could not be source-verified against stored bytes (${expertDecision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`);
+      } else if (expertDecision.unverifiedFields.length > 0) {
+        // Defect 4: partial verification — identity verified, some inferred
+        // fields unverified. Record is SOURCE_VERIFIED on identity; the
+        // unverified fields are non-authoritative (canUseVaultRecordField
+        // returns false for them). Surface a per-record warning so the UI
+        // can render the partial-verification state.
+        warnings.push(`Expert ${fullName} was source-verified on identity (${expertDecision.verifiedFields.join(", ")}) but ${expertDecision.unverifiedFields.length} inferred field(s) could not be verified against source text: ${expertDecision.unverifiedFields.join(", ")}. These fields remain non-authoritative.`);
       }
       const data = {
         fullName,
@@ -1045,6 +1117,8 @@ export async function POST(req: Request) {
       if (!projectDecision.ok) {
         evidenceDowngraded += 1;
         warnings.push(`Project ${name} could not be source-verified against stored bytes (${projectDecision.code}) — imported as AI_DRAFT. Upload the source document it came from so the Engine can source-verify it automatically.`);
+      } else if (projectDecision.unverifiedFields.length > 0) {
+        warnings.push(`Project ${name} was source-verified on identity (${projectDecision.verifiedFields.join(", ")}) but ${projectDecision.unverifiedFields.length} inferred field(s) could not be verified against source text: ${projectDecision.unverifiedFields.join(", ")}. These fields remain non-authoritative.`);
       }
       const data = {
         name,

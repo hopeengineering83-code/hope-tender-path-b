@@ -37,7 +37,10 @@ function assertBatchReviewContract(source: string, entity: "expert" | "project")
   assert.match(source, /sourceContentHash/);
   assert.match(source, /sourceByteLength/);
   assert.match(source, /sourceTextHash/);
-  assert.match(source, /accepted: updatedIds\.map/);
+  // Defect 4: accepted is now updatedIds (array of {id, status} objects),
+  // not updatedIds.map(...). The status can be REVIEWED or SOURCE_VERIFIED
+  // (partial verification).
+  assert.match(source, /accepted: updatedIds/);
   assert.match(source, /rejected,/);
 }
 

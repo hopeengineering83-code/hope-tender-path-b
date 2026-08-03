@@ -6,6 +6,7 @@ import { logAction } from "../../../../../lib/audit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import {
   buildReviewProvenance,
+  buildPartialSourceVerificationProvenance,
   expertReviewFields,
   publicVaultIdentifier,
   reviewEvidenceEquals,
@@ -196,10 +197,79 @@ export async function PATCH(
   // exists, the record stays UNVERIFIED — never REVIEWED, never reviewedBy,
   // never reviewedAt, never a fabricated "manual" hash.
   if (!provenance?.ok) {
-    return NextResponse.json(
-      { ok: false, error: "Cannot approve without a verified source document. Upload the source document so the Engine can source-verify it automatically.", code: "SOURCE_REQUIRED_FOR_APPROVAL" },
-      { status: 422 },
-    );
+    // Defect 4: try partial source verification before rejecting. If the
+    // identity field (fullName) IS verified against the source bytes, allow
+    // the approval as SOURCE_VERIFIED (not REVIEWED) with the partial
+    // provenance payload. The human click triggered the check; the authority
+    // is the machine verification of the identity field. Inferred fields
+    // that are not in source text are listed in unverifiedFields and
+    // canUseVaultRecordField returns false for them.
+    const partial = isApprove
+      ? buildPartialSourceVerificationProvenance({
+          recordType: "EXPERT",
+          sourceDocument: ownedSource,
+          fields: expertReviewFields(record),
+          verificationMethod: "HYBRID",
+          verifiedAt: reviewedAt,
+        })
+      : null;
+    if (!partial?.ok) {
+      return NextResponse.json(
+        { ok: false, error: "Cannot approve without a verified source document. Upload the source document so the Engine can source-verify it automatically.", code: "SOURCE_REQUIRED_FOR_APPROVAL" },
+        { status: 422 },
+      );
+    }
+    // Partial verification succeeded — persist SOURCE_VERIFIED with the
+    // partial provenance payload. No reviewer identity (machine-verified,
+    // not human-reviewed).
+    try {
+      const updated = await prisma.$transaction(async (tx) => {
+        const result = await tx.expert.updateMany({
+          where: { id, companyId: company.id, deletedAt: null },
+          data: {
+            trustLevel: "SOURCE_VERIFIED",
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewNotes: partial.serialized,
+            updatedAt: new Date(),
+          },
+        });
+        if (result.count !== 1) throw new Error("CONCURRENT_UPDATE");
+
+        await tx.auditLog.create({
+          data: {
+            userId: actor.id,
+            action: "EXPERT_REVIEW",
+            entityType: "Expert",
+            entityId: id,
+            description: `Expert record was partially source-verified (identity verified, ${partial.unverifiedFields.length} inferred field(s) unverified: ${partial.unverifiedFields.join(", ")}).`,
+            metadata: JSON.stringify({
+              requestId,
+              recordRef: publicVaultIdentifier(id),
+              action: body.action,
+              partialVerification: true,
+              verifiedFields: partial.verifiedFields,
+              unverifiedFields: partial.unverifiedFields,
+              sourceContentHash: partial.sourceContentHash,
+              sourceByteLength: partial.sourceByteLength,
+              sourceTextHash: partial.sourceTextHash,
+            }),
+          },
+        });
+
+        return tx.expert.findUniqueOrThrow({ where: { id } });
+      });
+      return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
+    } catch (error) {
+      if (error instanceof Error && error.message === "CONCURRENT_UPDATE") {
+        return NextResponse.json({ error: "Expert changed during review. Retry.", code: "CONCURRENT_UPDATE", requestId }, { status: 409 });
+      }
+      logger.error("expert partial-verification review failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      return NextResponse.json({ error: "Expert review failed. Retry with the request ID.", code: "EXPERT_REVIEW_FAILED", requestId }, { status: 500 });
+    }
   }
   const durableProvenance = provenance;
   try {

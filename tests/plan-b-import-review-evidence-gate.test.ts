@@ -66,10 +66,16 @@ describe("plan-b-import refuses to persist REVIEWED and routes through source ve
   it("uses decidePlanBTrust helper that returns SOURCE_VERIFIED or AI_DRAFT, never REVIEWED", () => {
     const idx = route.indexOf("function decidePlanBTrust(");
     assert.ok(idx > -1, "decidePlanBTrust must exist");
-    const region = route.slice(idx, idx + 1200);
+    // Defect 4: the function is longer now because it tries full verification
+    // first, then partial, then falls back to AI_DRAFT. Use a larger slice.
+    const region = route.slice(idx, idx + 3000);
     assert.match(region, /buildSourceVerificationProvenance\(/);
     assert.match(region, /trustLevel: "SOURCE_VERIFIED"/);
     assert.match(region, /trustLevel: "AI_DRAFT"/);
+    // Defect 4: the function must also call buildPartialSourceVerificationProvenance
+    // so identity-verified records with unverified inferred fields become
+    // SOURCE_VERIFIED instead of being rejected as AI_DRAFT.
+    assert.match(region, /buildPartialSourceVerificationProvenance\(/);
   });
 
   it("links the created record to a real persisted CompanyDocument via sourceDocumentId", () => {

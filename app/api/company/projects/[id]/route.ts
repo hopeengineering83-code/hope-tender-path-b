@@ -6,6 +6,7 @@ import { logAction } from "../../../../../lib/audit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import {
   buildReviewProvenance,
+  buildPartialSourceVerificationProvenance,
   projectReviewFields,
   publicVaultIdentifier,
   reviewEvidenceEquals,
@@ -191,10 +192,74 @@ export async function PATCH(
   // never reviewedAt, never a fabricated "manual" hash. The user must upload
   // the source document so the Engine can source-verify it automatically.
   if (!provenance?.ok) {
-    return NextResponse.json(
-      { ok: false, error: "Cannot approve without a verified source document. Upload the source document so the Engine can source-verify it automatically.", code: "SOURCE_REQUIRED_FOR_APPROVAL" },
-      { status: 422 },
-    );
+    // Defect 4: try partial source verification before rejecting. If the
+    // identity field (name) IS verified against the source bytes, allow
+    // the approval as SOURCE_VERIFIED (not REVIEWED) with the partial
+    // provenance payload. Inferred fields not in source text are listed in
+    // unverifiedFields; canUseVaultRecordField returns false for them.
+    const partial = isApprove
+      ? buildPartialSourceVerificationProvenance({
+          recordType: "PROJECT",
+          sourceDocument: ownedSource,
+          fields: projectReviewFields(record),
+          verificationMethod: "HYBRID",
+          verifiedAt: reviewedAt,
+        })
+      : null;
+    if (!partial?.ok) {
+      return NextResponse.json(
+        { ok: false, error: "Cannot approve without a verified source document. Upload the source document so the Engine can source-verify it automatically.", code: "SOURCE_REQUIRED_FOR_APPROVAL" },
+        { status: 422 },
+      );
+    }
+    try {
+      const updated = await prisma.$transaction(async (tx) => {
+        const result = await tx.project.updateMany({
+          where: { id, companyId: company.id, deletedAt: null },
+          data: {
+            trustLevel: "SOURCE_VERIFIED",
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewNotes: partial.serialized,
+            updatedAt: new Date(),
+          },
+        });
+        if (result.count !== 1) throw new Error("CONCURRENT_UPDATE");
+
+        await tx.auditLog.create({
+          data: {
+            userId: actor.id,
+            action: "PROJECT_REVIEW",
+            entityType: "Project",
+            entityId: id,
+            description: `Project record was partially source-verified (identity verified, ${partial.unverifiedFields.length} inferred field(s) unverified: ${partial.unverifiedFields.join(", ")}).`,
+            metadata: JSON.stringify({
+              requestId,
+              recordRef: publicVaultIdentifier(id),
+              action: body.action,
+              partialVerification: true,
+              verifiedFields: partial.verifiedFields,
+              unverifiedFields: partial.unverifiedFields,
+              sourceContentHash: partial.sourceContentHash,
+              sourceByteLength: partial.sourceByteLength,
+              sourceTextHash: partial.sourceTextHash,
+            }),
+          },
+        });
+
+        return tx.project.findUniqueOrThrow({ where: { id } });
+      });
+      return NextResponse.json(normalizeProject(updated as unknown as Record<string, unknown>));
+    } catch (error) {
+      if (error instanceof Error && error.message === "CONCURRENT_UPDATE") {
+        return NextResponse.json({ error: "Project changed during review. Retry.", code: "CONCURRENT_UPDATE", requestId }, { status: 409 });
+      }
+      logger.error("project partial-verification review failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      return NextResponse.json({ error: "Project review failed. Retry with the request ID.", code: "PROJECT_REVIEW_FAILED", requestId }, { status: 500 });
+    }
   }
   const durableProvenance = provenance;
   try {

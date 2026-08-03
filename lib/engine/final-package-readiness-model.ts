@@ -18,7 +18,7 @@ import {
   isGroundedEvidenceInActiveFiles,
   type GroundingActiveFile,
 } from "./evidence-grounding";
-import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../vault-review-provenance";
+import { canUseVaultRecord, canUseVaultRecordField, partialVerificationSummary, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../vault-review-provenance";
 
 export type FinalPackageBlocker = {
   area: "requirements" | "evidence" | "documents" | "export";
@@ -141,6 +141,11 @@ export type FinalPackageReadinessModel = {
     projectMatches: number;
     reviewedProjectMatches: number;
     blockers: FinalPackageBlocker[];
+    // Defect 4: per-field trust warnings for partially-verified selected
+    // records. These do NOT block export (the record is source-verified on
+    // identity), but they warn the reviewer that some inferred fields are
+    // non-authoritative and should not be cited in the final package.
+    partialVerificationWarnings: string[];
   };
   documents: {
     planned: PlannedPackageDocument[];
@@ -305,6 +310,45 @@ function selectedReviewedExperts(matches: MatchLike[]): number {
 
 function selectedReviewedProjects(matches: MatchLike[]): number {
   return matches.filter((match) => match.isSelected && match.project && canUseVaultRecord(match.project, "EXPORT")).length;
+}
+
+/**
+ * Defect 4: collect partial-verification warnings for selected experts and
+ * projects. A partially-verified record is SOURCE_VERIFIED on its identity
+ * but has some inferred fields that could not be verified against source
+ * text. The record is still usable for export (identity is proven), but the
+ * unverified inferred fields should not be cited as authoritative in the
+ * final package.
+ *
+ * Returns an array of warning strings, one per partially-verified selected
+ * record, naming the record and its unverified fields.
+ */
+function partialVerificationWarnings(
+  expertMatches: MatchLike[],
+  projectMatches: MatchLike[],
+): string[] {
+  const warnings: string[] = [];
+  for (const match of expertMatches) {
+    if (!match.isSelected || !match.expert) continue;
+    const expert = match.expert as ReviewRecordState;
+    if (!canUseVaultRecord(expert, "EXPORT")) continue;
+    const summary = partialVerificationSummary(expert, "EXPERT");
+    if (summary.partial) {
+      const name = (expert as { fullName?: string }).fullName ?? "unknown";
+      warnings.push(`Expert "${name}" is source-verified on identity but ${summary.unverifiedFields.length} inferred field(s) are unverified: ${summary.unverifiedFields.join(", ")}. Do not cite these fields as authoritative in the final package.`);
+    }
+  }
+  for (const match of projectMatches) {
+    if (!match.isSelected || !match.project) continue;
+    const project = match.project as ReviewRecordState;
+    if (!canUseVaultRecord(project, "EXPORT")) continue;
+    const summary = partialVerificationSummary(project, "PROJECT");
+    if (summary.partial) {
+      const name = (project as { name?: string }).name ?? "unknown";
+      warnings.push(`Project "${name}" is source-verified on identity but ${summary.unverifiedFields.length} inferred field(s) are unverified: ${summary.unverifiedFields.join(", ")}. Do not cite these fields as authoritative in the final package.`);
+    }
+  }
+  return warnings;
 }
 
 function documentOutputBlockReason(document: DocumentLike): string | null {
@@ -956,6 +1000,9 @@ export async function getFinalPackageReadinessModel(
       projectMatches: tender.projectMatches.length,
       reviewedProjectMatches: reviewedSelectedProjects,
       blockers: requirementBlockers,
+      // Defect 4: surface partial-verification warnings for selected experts
+      // and projects. Non-blocking — the record is source-verified on identity.
+      partialVerificationWarnings: partialVerificationWarnings(tender.expertMatches, tender.projectMatches),
     },
     documents: {
       planned,

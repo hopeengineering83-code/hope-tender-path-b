@@ -8,6 +8,7 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";
 import {
   buildReviewProvenance,
+  buildPartialSourceVerificationProvenance,
   projectReviewFields,
   publicVaultIdentifier,
 } from "../../../../../lib/vault-review-provenance";
@@ -85,6 +86,9 @@ export async function PATCH(req: Request) {
   const byId = new Map(records.map((record) => [record.id, record]));
   const reviewedAt = new Date();
   const rejected: RejectedReview[] = [];
+  // Defect 4: candidates now carry a `partial` flag. When true, the record
+  // is persisted as SOURCE_VERIFIED (not REVIEWED) with the partial
+  // provenance payload — identity verified, inferred fields unverified.
   const candidates: Array<{
     id: string;
     serialized: string;
@@ -92,6 +96,9 @@ export async function PATCH(req: Request) {
     sourceByteLength: number;
     sourceTextHash: string;
     evidenceFields: string[];
+    partial?: boolean;
+    verifiedFields?: string[];
+    unverifiedFields?: string[];
   }> = [];
 
   for (const id of ids) {
@@ -109,14 +116,32 @@ export async function PATCH(req: Request) {
       reviewedAt,
     });
     if (!provenance.ok) {
-      // Source-less auto-approval is forbidden (Gap 3). A record without a
-      // verified source document stays UNVERIFIED — never REVIEWED, never a
-      // fabricated "manual" hash. The user must upload the source document so
-      // the Engine can source-verify it automatically.
-      rejected.push({
+      // Defect 4: try partial source verification before rejecting.
+      const partial = buildPartialSourceVerificationProvenance({
+        recordType: "PROJECT",
+        sourceDocument: ownedSource,
+        fields: projectReviewFields(record),
+        verificationMethod: "HYBRID",
+        verifiedAt: reviewedAt,
+      });
+      if (!partial.ok) {
+        rejected.push({
+          id,
+          code: partial.code ?? "FIELD_EVIDENCE_REQUIRED",
+          ...(partial.unverifiedFields.length ? { missingEvidenceFields: partial.unverifiedFields.slice(0, 8) } : {}),
+        });
+        continue;
+      }
+      candidates.push({
         id,
-        code: provenance.code,
-        ...(provenance.missingFields.length ? { missingEvidenceFields: provenance.missingFields.slice(0, 8) } : {}),
+        serialized: partial.serialized!,
+        sourceContentHash: partial.sourceContentHash!,
+        sourceByteLength: partial.sourceByteLength!,
+        sourceTextHash: partial.sourceTextHash!,
+        evidenceFields: partial.verifiedFields,
+        partial: true,
+        verifiedFields: partial.verifiedFields,
+        unverifiedFields: partial.unverifiedFields,
       });
       continue;
     }
@@ -125,16 +150,23 @@ export async function PATCH(req: Request) {
 
   try {
     const updatedIds = await prisma.$transaction(async (tx) => {
-      const completed: string[] = [];
+      const completed: Array<{ id: string; status: "REVIEWED" | "SOURCE_VERIFIED" }> = [];
       for (const candidate of candidates) {
         const updated = await tx.project.updateMany({
           where: { id: candidate.id, companyId: company.id, deletedAt: null },
-          data: {
-            trustLevel: "REVIEWED",
-            reviewedBy: actor.id,
-            reviewedAt,
-            reviewNotes: candidate.serialized,
-          },
+          data: candidate.partial
+            ? {
+                trustLevel: "SOURCE_VERIFIED",
+                reviewedBy: null,
+                reviewedAt: null,
+                reviewNotes: candidate.serialized,
+              }
+            : {
+                trustLevel: "REVIEWED",
+                reviewedBy: actor.id,
+                reviewedAt,
+                reviewNotes: candidate.serialized,
+              },
         });
         if (updated.count !== 1) {
           rejected.push({ id: candidate.id, code: "CONCURRENT_UPDATE" });
@@ -147,20 +179,33 @@ export async function PATCH(req: Request) {
             action: "PROJECT_REVIEW",
             entityType: "Project",
             entityId: candidate.id,
-            description: "Project record was reviewed and approved.",
+            description: candidate.partial
+              ? `Project record was partially source-verified (identity verified, ${candidate.unverifiedFields?.length ?? 0} inferred field(s) unverified: ${candidate.unverifiedFields?.join(", ") ?? ""}).`
+              : "Project record was reviewed and approved.",
             metadata: JSON.stringify({
               requestId,
               recordRef: publicVaultIdentifier(candidate.id),
-              reviewerId: actor.id,
-              sourceContentHash: candidate.sourceContentHash,
-              sourceByteLength: candidate.sourceByteLength,
-              sourceTextHash: candidate.sourceTextHash,
-              evidenceFields: candidate.evidenceFields,
-              reviewedAt: reviewedAt.toISOString(),
+              ...(candidate.partial
+                ? {
+                    partialVerification: true,
+                    verifiedFields: candidate.verifiedFields,
+                    unverifiedFields: candidate.unverifiedFields,
+                    sourceContentHash: candidate.sourceContentHash,
+                    sourceByteLength: candidate.sourceByteLength,
+                    sourceTextHash: candidate.sourceTextHash,
+                  }
+                : {
+                    reviewerId: actor.id,
+                    sourceContentHash: candidate.sourceContentHash,
+                    sourceByteLength: candidate.sourceByteLength,
+                    sourceTextHash: candidate.sourceTextHash,
+                    evidenceFields: candidate.evidenceFields,
+                    reviewedAt: reviewedAt.toISOString(),
+                  }),
             }),
           },
         });
-        completed.push(candidate.id);
+        completed.push({ id: candidate.id, status: candidate.partial ? "SOURCE_VERIFIED" : "REVIEWED" });
       }
       return completed;
     });
@@ -168,7 +213,7 @@ export async function PATCH(req: Request) {
     return NextResponse.json({
       success: rejected.length === 0,
       updated: updatedIds.length,
-      accepted: updatedIds.map((id) => ({ id, status: "REVIEWED" as const })),
+      accepted: updatedIds,
       rejected,
       requestId,
     }, { status: updatedIds.length > 0 ? 200 : 422 });
