@@ -92,6 +92,7 @@ model Company {
   legalRecords      LegalRecord[]
   financialRecords  FinancialRecord[]
   complianceRecords CompanyComplianceRecord[]
+  planBStaging      PlanBStaging[]
   settings          AppSettings?
   createdAt         DateTime                  @default(now())
   updatedAt         DateTime                  @updatedAt
@@ -1617,4 +1618,30 @@ model TenderWorkflowRun {
   @@unique([companyId, tenderId, operation, idempotencyKey], map: "TenderWorkflowRun_companyId_tenderId_operation_idempotencyKey_k")
   @@index([companyId, tenderId, operation, status])
   @@index([tenderId, createdAt])
+}
+
+// Blocker 5: Plan B staging data — synthetic JSON artifacts from Plan B
+// import that must NEVER become an official CompanyDocument source.
+// CompanyDocument is for official uploaded files only. Plan B staging
+// data is diagnostic-only: it stores the parsed rawText, parsedExperts,
+// parsedProjects, and suppliedSha256 for traceability without contaminating
+// the official document authority.
+model PlanBStaging {
+  id               String   @id @default(uuid())
+  companyId        String
+  company          Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  originalFileName String
+  sourceType       String?
+  sourceCategory   String?
+  normalizedCategory String?
+  rawText          String?
+  parsedExperts    Int?
+  parsedProjects   Int?
+  suppliedSha256   String?
+  reviewNotes      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+
+  @@index([companyId])
+  @@index([originalFileName])
 }

@@ -123,31 +123,50 @@ export function GenerationActionButton() {
 }
 
 // Preserve the export name. The panel is now the text-based status surface.
+// Blocker 3: when releaseDecision is provided, use it directly — no
+// client-side recomputation. When not provided (backward compat), fall
+// back to deriveReleaseStatus from the raw readiness data.
 export function GenerationActionPanel({
   tenderId: _tenderId,
   readiness,
   canonicalReadiness,
   canMutate: _canMutate = false,
+  releaseDecision,
 }: {
   tenderId: string;
   readiness: GenerationReadiness | null;
   canonicalReadiness?: CanonicalTenderReadiness | null;
   canMutate?: boolean;
+  // Blocker 3: the server-computed CanonicalReleaseDecision. When provided,
+  // the UI uses it directly — no client-side recomputation.
+  releaseDecision?: {
+    status: ReleaseStatus;
+    blockerCodes: string[];
+  } | null;
 }) {
-  const status = deriveReleaseStatus(readiness, canonicalReadiness);
+  // Blocker 3: prefer the server-computed releaseDecision. Only fall back to
+  // client-side derivation when the server hasn't provided one (backward compat
+  // for routes that haven't been updated yet).
+  const status: ReleaseStatus = releaseDecision?.status
+    ?? deriveReleaseStatus(readiness, canonicalReadiness);
 
-  // Collect any genuine source blockers or legal release items to show
-  // as a plain-text list (no icons, no action links).
+  // Collect blockers for display. Prefer releaseDecision.blockerCodes when
+  // available; otherwise fall back to raw readiness data.
   const visibleBlockers: string[] = [];
-  for (const b of readiness?.blockers ?? []) {
-    if (b.code !== "NO_REQUIREMENTS") visibleBlockers.push(b.message);
-  }
-  for (const b of readiness?.fullProposalBlockers ?? []) {
-    if (b.code !== "NO_REQUIREMENTS") visibleBlockers.push(b.message);
-  }
-  // canonicalReadiness.blockers are string codes — show them as-is.
-  for (const code of canonicalReadiness?.blockers ?? []) {
-    if (code !== "NO_REQUIREMENTS") visibleBlockers.push(code);
+  if (releaseDecision?.blockerCodes) {
+    for (const code of releaseDecision.blockerCodes) {
+      if (code !== "NO_REQUIREMENTS") visibleBlockers.push(code);
+    }
+  } else {
+    for (const b of readiness?.blockers ?? []) {
+      if (b.code !== "NO_REQUIREMENTS") visibleBlockers.push(b.message);
+    }
+    for (const b of readiness?.fullProposalBlockers ?? []) {
+      if (b.code !== "NO_REQUIREMENTS") visibleBlockers.push(b.message);
+    }
+    for (const code of canonicalReadiness?.blockers ?? []) {
+      if (code !== "NO_REQUIREMENTS") visibleBlockers.push(code);
+    }
   }
   const truncatedBlockers = visibleBlockers.slice(0, 8);
 

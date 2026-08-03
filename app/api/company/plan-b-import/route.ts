@@ -959,44 +959,38 @@ export async function POST(req: Request) {
           return false;
         }
       })();
-      const data = {
-        fileName: artifactFileName,
+      // Blocker 5: Plan B staging data goes into PlanBStaging table, NOT
+      // CompanyDocument. CompanyDocument is for official uploaded files only.
+      // The synthetic JSON artifact is stored as a diagnostic-only staging
+      // row. Records link only to official VERIFIED Company Vault documents.
+      const stagingData = {
+        companyId: company.id,
         originalFileName: fileName,
-        mimeType: "application/json",
-        size: artifactBytes.length,
-        fileContent: artifactContent,
-        ...integrity,
-        category,
-        extractedText: exactText,
-        aiExtractionStatus: exactText ? "EXTRACTED" : "FAILED",
-        aiExtractedAt: exactText ? now : null,
-        aiExtractionError: exactText ? null : "No rawText supplied in Plan B JSON",
-        metadata: JSON.stringify({ planB: true, evidenceAuthority: "IMPORTED_JSON_DIAGNOSTIC", sourceType: doc.type, sourceCategory: doc.category, normalizedCategory: category, parsedExperts: doc.parsedExperts, parsedProjects: doc.parsedProjects, sha256: doc.sha256, reviewNotes: notes }),
+        sourceType: doc.type ?? null,
+        sourceCategory: doc.category ?? null,
+        normalizedCategory: category,
+        rawText: exactText,
+        parsedExperts: doc.parsedExperts ?? null,
+        parsedProjects: doc.parsedProjects ?? null,
+        suppliedSha256: doc.sha256 ?? null,
+        reviewNotes: notes,
       };
-      let persistedDocId: string;
-      if (isExistingPlanBArtifact) {
-        // Safe to overwrite a prior Plan B artifact — it was never official.
-        await tx.companyDocument.update({ where: { id: existingPlanB!.id }, data });
-        persistedDocId = existingPlanB!.id;
+      // Check if a PlanBStaging row already exists for this filename.
+      const existingStaging = await tx.planBStaging.findFirst({
+        where: { companyId: company.id, originalFileName: fileName },
+        select: { id: true },
+      });
+      if (existingStaging) {
+        await tx.planBStaging.update({ where: { id: existingStaging.id }, data: stagingData });
         documentsUpdated += 1;
-      } else if (existingPlanB) {
-        // A row exists but is NOT marked planB — treat it as official even if
-        // integrityStatus is not VERIFIED (could be UNKNOWN/MISSING). Refuse
-        // to overwrite; just link to it.
-        persistedDocId = existingPlanB.id;
-        documentsUpdated += 1;
-        warnings.push(`Preserved existing uploaded document "${fileName}" — synthetic Plan B artifact was not written. Upload the document through the Company Vault if you need to replace its bytes.`);
       } else {
-        const created = await tx.companyDocument.create({ data: { companyId: company.id, storagePath: "", ...data } });
-        persistedDocId = created.id;
+        await tx.planBStaging.create({ data: stagingData });
         documentsCreated += 1;
       }
-      // Gap 8: Plan B staging data must NEVER become an official document
-      // source. The synthetic JSON artifact is stored as a diagnostic only —
-      // it is NOT registered in documentByFileName or documentBySha256.
-      // Records can only link to official uploaded Company Vault documents
-      // (integrityStatus === "VERIFIED"). When no official upload exists,
-      // records are imported as AI_DRAFT with no sourceDocumentId — the user
+      // Blocker 5: no CompanyDocument row is created. No persistedDocId.
+      // Records can only link to official VERIFIED Company Vault documents.
+      // When no official upload exists, records are imported as AI_DRAFT
+      // with no sourceDocumentId — the user must upload the real document.
       // must upload the real document so the Engine can source-verify it.
     }
 
