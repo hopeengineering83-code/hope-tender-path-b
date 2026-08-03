@@ -703,7 +703,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     const { runAutoFinalizeAfterGeneration } = await import("./ai-jobs/auto-finalize-continuation-service");
     const result = await runAutoFinalizeAfterGeneration(tenderId, ctx.userId, ctx.jobId);
 
-    const summary = `source repair ${result.sourceRepair.repaired}/${result.sourceRepair.checked}, export repair ${result.exportRepair.repaired} repaired, validation ${result.validation.validated}/${result.validation.failed}/${result.validation.pending}, PDF ${result.pdfFinalization.finalized}/${result.pdfFinalization.skipped}/${result.pdfFinalization.failed}${result.warning ? `, warning: ${result.warning}` : ""}`;
+    const summary = `forms reused ${result.formReuse.reused}/${result.formReuse.reused + result.formReuse.stillMissing}, source repair ${result.sourceRepair.repaired}/${result.sourceRepair.checked}, export repair ${result.exportRepair.repaired} repaired, validation ${result.validation.validated}/${result.validation.failed}/${result.validation.pending}, PDF ${result.pdfFinalization.finalized}/${result.pdfFinalization.skipped}/${result.pdfFinalization.failed}, PDF validation ${result.pdfValidation.validated}/${result.pdfValidation.failed}/${result.pdfValidation.pending}, package ${result.packageReconciliation.requiredTotal - result.packageReconciliation.missing}/${result.packageReconciliation.requiredTotal}${result.warning ? `, warning: ${result.warning}` : ""}`;
 
     // A run that left blockers behind must not be recorded SUCCEEDED. It used
     // to be, unconditionally, so a tender with unresolved source grounding,

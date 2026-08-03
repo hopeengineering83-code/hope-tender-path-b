@@ -51,6 +51,13 @@ export type AutoFinalizeResult = {
    */
   packageReconciliation: { requiredTotal: number; missing: number };
   /**
+   * Tender-issued forms recovered from the user's own uploads. `stillMissing`
+   * is not a blocker on its own — the export gate already refuses a document
+   * left as REPLACE_WITH_ORIGINAL, and repeating it here would say the same
+   * thing twice.
+   */
+  formReuse: { reused: number; stillMissing: number };
+  /**
    * Why the tender did NOT converge to export-ready. Empty exactly when every
    * stage left nothing outstanding. `ok` is derived from this, never set
    * independently, so a stage cannot be added later that quietly leaves work
@@ -124,9 +131,38 @@ export async function runAutoFinalizeAfterGeneration(
     pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
     pdfValidation: { validated: 0, failed: 0, pending: 0 },
     packageReconciliation: { requiredTotal: 0, missing: 0 },
+    formReuse: { reused: 0, stillMissing: 0 },
     blockers: [],
     warning: null,
   };
+
+  // Step 0: reuse tender-issued forms from the uploaded Tender Intake files.
+  //
+  // Generation already tries this for every form it plans, but a user who
+  // uploads the missing annex AFTER the first run would otherwise stay blocked
+  // on "attach the tender-issued original" forever — the run that could have
+  // used it already happened. Retrying discovery here is what makes the second
+  // upload enough, with no re-upload of anything the app already holds.
+  try {
+    await recordStep(jobId, {
+      stepName: "auto-finalize.form-reuse",
+      message: "Looking for tender-issued forms in the uploaded Tender Intake files",
+      status: "RUNNING",
+    });
+    result.formReuse = await reuseAvailableTenderIssuedForms(tenderId, userId);
+    await recordStep(jobId, {
+      stepName: "auto-finalize.form-reuse.complete",
+      message: `Tender-issued forms: ${result.formReuse.reused} reused from uploads, ${result.formReuse.stillMissing} still awaiting the original`,
+      status: "SUCCEEDED",
+    });
+  } catch (error) {
+    logger.warn("[auto-finalize] tender-issued form reuse failed", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    throw error;
+  }
 
   // Step 1: repair source grounding so "source reference not found" never
   // appears in the UI. This re-grounds any requirement whose source trace
@@ -321,6 +357,50 @@ export async function runAutoFinalizeAfterGeneration(
  * invented as a blocker, because the missing plan is already the Engine's
  * blocker upstream and duplicating it here would just be noise.
  */
+/**
+ * Retry tender-issued form discovery for every document still waiting on an
+ * original, and report how many are still waiting afterwards.
+ *
+ * Reuses the same discovery authority the generation route calls, so a form
+ * recovered here is byte-identical and carries the same provenance as one
+ * recovered during generation. Discovery fails closed per document, so a
+ * document whose form genuinely is not in the uploads simply stays as it was.
+ */
+async function reuseAvailableTenderIssuedForms(
+  tenderId: string,
+  userId: string,
+): Promise<{ reused: number; stillMissing: number }> {
+  const { reuseTenderIssuedForm } = await import("../engine/tender-issued-form-discovery");
+  const { getStorageAdapter } = await import("../storage");
+
+  const awaiting = await prisma.generatedDocument.findMany({
+    where: {
+      tenderId,
+      tender: { userId },
+      reviewStatus: "REPLACE_WITH_ORIGINAL",
+      generationStatus: { not: "SUPERSEDED" },
+    },
+    select: { id: true, name: true, exactFileName: true },
+  });
+  if (awaiting.length === 0) return { reused: 0, stillMissing: 0 };
+
+  const storage = getStorageAdapter();
+  let reused = 0;
+  for (const doc of awaiting) {
+    const outcome = await reuseTenderIssuedForm({
+      client: prisma,
+      storage,
+      tenderId,
+      userId,
+      documentId: doc.id,
+      plannedFileName: doc.exactFileName ?? doc.name,
+    });
+    if (outcome.reused) reused += 1;
+  }
+
+  return { reused, stillMissing: awaiting.length - reused };
+}
+
 async function reconcilePackageManifest(
   tenderId: string,
   userId: string,

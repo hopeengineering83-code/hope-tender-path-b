@@ -17,6 +17,8 @@ import { logAction } from "../../../../../lib/audit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createJob, advanceJob, completeInMemoryJob, failInMemoryJob } from "../../../../../lib/job-store";
 import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
+import { reuseTenderIssuedForm } from "../../../../../lib/engine/tender-issued-form-discovery";
+import { getStorageAdapter } from "../../../../../lib/storage";
 import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time, logger } from "../../../../../lib/observability";
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
@@ -147,7 +149,7 @@ const COMPANY_PRODUCED_KINDS: ReadonlySet<SupportDocKind> = new Set<SupportDocKi
   "SECTOR_TECHNICAL_SCOPE",
 ]);
 
-async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: Set<string>): Promise<number> {
+async function fillPlannedSupportDocuments(tenderId: string, userId: string, plannedFileKeys?: Set<string>): Promise<number> {
   const tender = await prisma.tender.findUnique({
     where: { id: tenderId },
     select: {
@@ -200,17 +202,34 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
       });
       filled += 1;
     } else {
-      // Placeholder / form / legal / financial / declaration / annex / submission-rules / generic:
-      // Do NOT generate a fake DOCX. Mark as PLANNED stub so the user knows to attach the real document.
-      // Only update if the record is not already in the correct placeholder state.
-      if (doc.generationStatus !== "PLANNED" || !generatedDocumentHasContent(doc)) {
+      // Tender-issued form / legal / financial / declaration / annex: never
+      // generate a lookalike — a generated file is not the client's form.
+      //
+      // Before asking for the original, look for it in the Tender Intake files
+      // the user already uploaded. When it is there, its bytes are reused
+      // unchanged with full provenance; asking someone to re-upload a file the
+      // app is already holding is the blocker this removes. Discovery is
+      // conservative and fails closed, so an ambiguous or absent match falls
+      // through to the same request as before — now carrying the specific
+      // reason no file could be reused.
+      const reuse = await reuseTenderIssuedForm({
+        client: prisma,
+        storage: getStorageAdapter(),
+        tenderId,
+        userId,
+        documentId: doc.id,
+        plannedFileName: doc.exactFileName ?? doc.name,
+      });
+      if (reuse.reused) {
+        filled += 1;
+      } else if (doc.generationStatus !== "PLANNED" || !generatedDocumentHasContent(doc)) {
         await prisma.generatedDocument.update({
           where: { id: doc.id },
           data: {
             generationStatus: "PLANNED",
             validationStatus: "PENDING",
             reviewStatus: "REPLACE_WITH_ORIGINAL",
-            reviewNotes: "Attach the tender-issued original / signed / stamped / certified document before final export. Do not submit a generated file in place of this item.",
+            reviewNotes: `Attach the tender-issued original / signed / stamped / certified document before final export. Do not submit a generated file in place of this item. Automatic reuse from the uploaded Tender Intake files was not possible: ${reuse.reason}`,
             contentSummary: `Placeholder for ${title}. Replace with the tender-issued original before final export. Do not submit this stub.`,
             updatedAt: new Date(),
           },
@@ -1056,7 +1075,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     advanceJob(job.id, "AI_GENERATE");
     await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
     advanceJob(job.id, "SAVE");
-    const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, plannedFileKeys), { tenderId: id });
+    const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, userId, plannedFileKeys), { tenderId: id });
     if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope ? `${supportDocumentCount} planned package document(s) were generated or marked for original replacement.` : `${supportDocumentCount} remaining package document(s) were generated or marked for original replacement.`);
     advanceJob(job.id, "LETTERHEAD");
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
