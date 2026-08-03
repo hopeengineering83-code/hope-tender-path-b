@@ -20,6 +20,17 @@ type ImportResult = {
   preflightInvalid?: { experts?: number; projects?: number };
   missingCounts?: { experts?: number | null; projects?: number | null };
   validationIssues?: Array<{ path?: string; message?: string; code?: string }>;
+  // Defect 5: structured fields the route already returns — surface them in
+  // the UI so import and verification results are shown separately.
+  requestedTrust?: string;
+  persistedTrustRange?: string[];
+  evidenceDowngraded?: number;
+  documents?: { received: number; created: number; updated: number; skipped: number };
+  legalRecords?: { received: number; created: number; updated: number; skipped: number };
+  financialRecords?: { received: number; created: number; updated: number; skipped: number };
+  complianceRecords?: { received: number; created: number; updated: number; skipped: number };
+  companyProfileUpdated?: boolean;
+  enforceExpectedCounts?: boolean;
 };
 
 const exampleJson = `{
@@ -62,6 +73,42 @@ const exampleJson = `{
   ]
 }`;
 
+// Defect 5: split the warnings array into import-level and verification-level
+// buckets so the UI can show them as two distinct lists.
+function splitWarnings(warnings: string[] | undefined): {
+  importWarnings: string[];
+  verificationWarnings: string[];
+} {
+  if (!warnings || warnings.length === 0) return { importWarnings: [], verificationWarnings: [] };
+  const importWarnings: string[] = [];
+  const verificationWarnings: string[] = [];
+  // Verification warnings are strings that mention a specific record type
+  // and the phrase "could not be source-verified" (the downgraded-to-AI_DRAFT
+  // message the route emits when decidePlanBTrust returns ok=false).
+  const verificationPattern = /^(Expert|Project|Legal record|Financial record|Compliance record)\b.*could not be source-verified/i;
+  for (const w of warnings) {
+    if (verificationPattern.test(w)) {
+      verificationWarnings.push(w);
+    } else {
+      importWarnings.push(w);
+    }
+  }
+  return { importWarnings, verificationWarnings };
+}
+
+function CountRow({ label, counts }: { label: string; counts?: { received: number; created: number; updated: number; skipped: number } }) {
+  if (!counts) return null;
+  return (
+    <tr className="border-b last:border-b-0">
+      <td className="py-2 pr-4 text-sm text-slate-700">{label}</td>
+      <td className="py-2 px-2 text-right text-sm tabular-nums text-slate-600">{counts.received}</td>
+      <td className="py-2 px-2 text-right text-sm tabular-nums text-emerald-700">{counts.created}</td>
+      <td className="py-2 px-2 text-right text-sm tabular-nums text-blue-700">{counts.updated}</td>
+      <td className="py-2 pl-2 text-right text-sm tabular-nums text-amber-700">{counts.skipped}</td>
+    </tr>
+  );
+}
+
 export default function PlanBImportPage() {
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState("");
@@ -102,6 +149,8 @@ export default function PlanBImportPage() {
       setLoading(false);
     }
   }
+
+  const { importWarnings, verificationWarnings } = splitWarnings(result?.warnings);
 
   return (
     <div className="space-y-7">
@@ -186,23 +235,79 @@ export default function PlanBImportPage() {
           </div>
         )}
         {result && (
-          <div className="mt-4 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-            <p className="font-semibold">Import completed</p>
-            <p className="mt-1">Experts: {result.experts?.created ?? 0} created, {result.experts?.updated ?? 0} updated, {result.experts?.skipped ?? 0} skipped.</p>
-            <p>Projects: {result.projects?.created ?? 0} created, {result.projects?.updated ?? 0} updated, {result.projects?.skipped ?? 0} skipped.</p>
-            {result.completeness?.experts ? (
-              <p className={result.completeness.experts.matched ? "text-green-800" : "text-amber-800"}>
-                Expert completeness: expected {result.completeness.experts.expected}, imported {result.completeness.experts.imported}, missing {result.completeness.experts.missing}.
-                {" "}excess {result.completeness.experts.excess}.
+          <div className="mt-6 space-y-5">
+            {/* Defect 5: separate Import results and Verification results panels. */}
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+              <h3 className="font-semibold">Import results</h3>
+              <p className="mt-1 text-emerald-800">
+                {result.companyProfileUpdated ? "Company profile updated. " : ""}
+                Requested trust: <span className="font-mono">{result.requestedTrust ?? "—"}</span>.
+                Persisted trust range: <span className="font-mono">{result.persistedTrustRange?.join(" / ") ?? "—"}</span>.
               </p>
-            ) : null}
-            {result.completeness?.projects ? (
-              <p className={result.completeness.projects.matched ? "text-green-800" : "text-amber-800"}>
-                Project completeness: expected {result.completeness.projects.expected}, imported {result.completeness.projects.imported}, missing {result.completeness.projects.missing}.
-                {" "}excess {result.completeness.projects.excess}.
+              <table className="mt-3 w-full">
+                <thead>
+                  <tr className="border-b text-left text-xs uppercase tracking-wide text-slate-500">
+                    <th className="py-1 pr-4 font-medium">Record type</th>
+                    <th className="py-1 px-2 text-right font-medium">Received</th>
+                    <th className="py-1 px-2 text-right font-medium">Created</th>
+                    <th className="py-1 px-2 text-right font-medium">Updated</th>
+                    <th className="py-1 pl-2 text-right font-medium">Skipped</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <CountRow label="Documents" counts={result.documents} />
+                  <CountRow label="Experts" counts={result.experts} />
+                  <CountRow label="Projects" counts={result.projects} />
+                  <CountRow label="Legal records" counts={result.legalRecords} />
+                  <CountRow label="Financial records" counts={result.financialRecords} />
+                  <CountRow label="Compliance records" counts={result.complianceRecords} />
+                </tbody>
+              </table>
+              {result.completeness?.experts ? (
+                <p className={`mt-3 ${result.completeness.experts.matched ? "text-emerald-800" : "text-amber-800"}`}>
+                  Expert completeness: expected {result.completeness.experts.expected}, imported {result.completeness.experts.imported}, missing {result.completeness.experts.missing}, excess {result.completeness.experts.excess}.
+                </p>
+              ) : null}
+              {result.completeness?.projects ? (
+                <p className={`mt-1 ${result.completeness.projects.matched ? "text-emerald-800" : "text-amber-800"}`}>
+                  Project completeness: expected {result.completeness.projects.expected}, imported {result.completeness.projects.imported}, missing {result.completeness.projects.missing}, excess {result.completeness.projects.excess}.
+                </p>
+              ) : null}
+              {importWarnings.length > 0 ? (
+                <div className="mt-3">
+                  <p className="font-semibold text-amber-900">Import warnings ({importWarnings.length})</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-amber-800">
+                    {importWarnings.slice(0, 30).map((w, idx) => (
+                      <li key={`iw-${idx}`}>{w}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              <h3 className="font-semibold">Verification results</h3>
+              <p className="mt-1 text-blue-800">
+                Evidence downgraded: <span className="font-mono">{result.evidenceDowngraded ?? 0}</span> record(s) could not be source-verified against stored bytes and were persisted as AI_DRAFT.
               </p>
-            ) : null}
-            {result.warnings?.length ? <p className="mt-2 text-amber-800">Warnings: {result.warnings.join(" | ")}</p> : null}
+              {verificationWarnings.length > 0 ? (
+                <div className="mt-3">
+                  <p className="font-semibold text-blue-900">Records downgraded to AI_DRAFT ({verificationWarnings.length})</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-blue-800">
+                    {verificationWarnings.slice(0, 30).map((w, idx) => (
+                      <li key={`vw-${idx}`}>{w}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs text-blue-700">
+                    To source-verify a downgraded record, upload the source document it came from through the Company Vault. The Engine will re-run source verification automatically — no manual approval step required.
+                  </p>
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-blue-700">
+                  All imported records with a linked source document were source-verified against the official bytes. Records without a linked source document stayed at AI_DRAFT.
+                </p>
+              )}
+            </div>
           </div>
         )}
       </section>
