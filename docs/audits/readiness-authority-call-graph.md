@@ -85,3 +85,69 @@ Recording this rather than starting the move: the risk of a partially-migrated
 readiness authority is that generation and export disagree about the same
 tender, which is precisely the class of defect this consolidation exists to
 remove.
+
+---
+
+# Unattended run — what actually happens after upload
+
+Run against real PostgreSQL 16 and a production build, using the seeded
+isolated account. Uploaded a Company Vault PDF and a tender, then drove **only**
+`POST /api/ai-jobs/run-next` — no browser, no UI calls — which is exactly what
+the `drain-ai-job-queue` GitHub Actions cron does every five minutes.
+
+```
+vault upload   : 200  uploaded=1
+tender intake  : 201
+
+--- browser closed; only run-next from here ---
+tick 0: VAULT_INGEST:SUCCEEDED
+tick 1: EXTRACT_TEXT:SUCCEEDED
+tick 2: AI_ANALYZE:FAILED
+tick 3: queue empty
+
+readiness   : PROCESSING_AUTOMATICALLY
+readyToDl   : false
+blockers    : ANALYSIS_REGEX_FALLBACK_UNAPPROVED, COMPANY_INGESTION_NOT_READY,
+              NO_ACTIVE_GENERATED_DOCUMENTS, NO_CURRENT_CONFIRMED_BUILD_PLAN
+ZIP download: 500 DOWNLOAD_ROUTE_RUNTIME_ERROR
+```
+
+## Reading this honestly
+
+`AI_ANALYZE` failed because this environment has no real provider key — the CI
+placeholder is not a working credential. **That failure is expected here and is
+not by itself an application defect.** What matters is everything after it.
+
+1. **The chain stops and nothing re-arms it.** The queue drains to empty. No
+   retry is scheduled, no compensating job is enqueued. `ENGINE_RUN`,
+   `PROPOSAL_GENERATION` and `AUTO_FINALIZE` never run. This is the terminal
+   state, not a snapshot mid-flight.
+
+2. **The reported status is `PROCESSING_AUTOMATICALLY`.** Nothing is
+   processing. This is the same defect class as the corrupted-extraction case
+   fixed in `release-status-classifier.ts`: a terminal condition rendered as
+   work-in-progress, so an unattended tender sits "processing" forever and the
+   user is never told what is wrong or what to do.
+
+3. **`ANALYSIS_REGEX_FALLBACK_UNAPPROVED` is the live blocker, and the
+   classifier does not know that string.** Its `LEGAL_RELEASE_CODES` set
+   contains `FALLBACK_ANALYSIS_APPROVAL_REQUIRED`, which appears nowhere else
+   in `lib/` or `app/`. Checked across the non-automatic vocabulary, most of it
+   is phantom — `LEGAL_SIGNATURE_REQUIRED`, `ADMIN_RELEASE_REQUIRED`,
+   `AUTHORITY_REVIEW_REQUIRED`, `EVALUATOR_OBJECTION_REQUIRES_RESOLUTION`,
+   `CONTENT_HASH_MISMATCH` and `TENANT_SCOPE_VIOLATION` each appear in zero
+   files outside the classifier. In practice the five-status system resolves to
+   two: `PROCESSING_AUTOMATICALLY` or `READY_TO_DOWNLOAD`, plus the one source
+   code now wired.
+
+4. **The ZIP route returns `500 DOWNLOAD_ROUTE_RUNTIME_ERROR`**, not a
+   structured refusal. A fail-closed gate should say which precondition is
+   unmet. A 500 is indistinguishable from a crash, and gives an operator
+   nothing to act on.
+
+## Not yet established
+
+This run does **not** show the chain reaching a downloadable ZIP, so the
+acceptance criterion "browser closed → processing continues → ZIP ready" is
+**unproven**. Whether it completes with a working provider key is untested; the
+three findings above are independent of the key and stand regardless.
