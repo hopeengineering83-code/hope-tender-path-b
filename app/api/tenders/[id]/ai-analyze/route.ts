@@ -2123,7 +2123,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     logger.error("Analysis route error:", { detail: error });
     return safeApiError("ai-analyze", error, {
       status: 500,
-      message: "AI analysis failed. Refresh to retry. If the problem persists, contact support with the Diagnostic ID.",
+      message: "AI analysis failed. If the problem persists, contact support with the Diagnostic ID.",
     });
   }
 }

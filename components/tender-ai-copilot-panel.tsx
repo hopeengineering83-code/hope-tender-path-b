@@ -65,7 +65,7 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
       setResponse(data.response);
       setQuestion(trimmed);
     } catch (err) {
-      setError("Copilot failed".replace("failed", "failed. Refresh to retry."));
+      setError("Copilot failed.");
     } finally {
       setLoading(false);
     }
@@ -118,7 +118,7 @@ export function TenderAICopilotPanel({ tenderId, canMutate = false }: { tenderId
       setRecordedCount(count);
       router.refresh();
     } catch (err) {
-      setError("Failed to record controls".replace("failed", "failed. Refresh to retry."));
+      setError("Failed to record controls.");
     } finally {
       setRecording(false);
     }

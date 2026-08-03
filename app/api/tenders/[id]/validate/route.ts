@@ -110,7 +110,7 @@ export async function POST(
         {
           ok: false,
           success: false,
-          error: "Validation quality gate failed. Documents cannot be safely validated at this time. Refresh to retry, or contact support if the problem persists.",
+          error: "Validation quality gate failed. Documents cannot be safely validated at this time. Contact support if the problem persists.",
           code: "QUALITY_GATE_UNAVAILABLE",
           qualityGateDegraded: true,
         },
@@ -234,6 +234,6 @@ export async function POST(
     });
   } catch (error) {
     logger.error("[validate] failed", { detail: error });
-    return jsonError("Validation failed. Refresh to retry.", 500);
+    return jsonError("Validation failed.", 500);
   }
 }

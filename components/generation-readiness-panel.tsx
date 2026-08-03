@@ -104,7 +104,7 @@ export async function GenerationReadinessPanel({
       return (
         <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Generation readiness unavailable</p>
-          <p className="mt-1 text-sm text-red-800">Generation readiness is loading. Refresh to retry.</p>
+          <p className="mt-1 text-sm text-red-800">Generation readiness is loading.</p>
           <Link href={`/api/tenders/${tenderId}/generation-readiness`} className="mt-2 inline-block text-xs font-semibold text-red-700 underline">Open diagnostic endpoint</Link>
         </section>
       );
@@ -234,7 +234,7 @@ export async function GenerationReadinessPanel({
     });
     return (
       <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
-        <p className="text-xs font-semibold text-red-700">Generation readiness failed to load. Generation remains blocked. Refresh to retry.</p>
+        <p className="text-xs font-semibold text-red-700">Generation readiness failed to load. Generation remains blocked.</p>
       </section>
     );
   }

@@ -66,7 +66,7 @@ export async function GET(
     logger.error("[lifecycle] route failed", { detail: error });
     return safeApiError("lifecycle", error, {
       status: 500,
-      message: "Lifecycle computation failed. Refresh to retry. If the problem persists, file a support request with the Diagnostic ID.",
+      message: "Lifecycle computation failed. If the problem persists, file a support request with the Diagnostic ID.",
     });
   }
 }

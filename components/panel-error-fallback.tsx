@@ -21,7 +21,7 @@ export function PanelErrorFallback({
         <div className="flex-1">
           <p className="text-sm font-semibold text-amber-800">{panelName} unavailable</p>
           <p className="mt-1 text-xs text-amber-800">
-            Refresh to retry. If the problem persists, contact admin.
+            If the problem persists, contact admin.
           </p>
           {diagnosticId && (
             <p className="mt-1 text-[10px] text-amber-500">

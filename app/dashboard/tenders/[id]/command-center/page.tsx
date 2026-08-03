@@ -184,7 +184,7 @@ export default async function TenderCommandCenter({ params }: { params: Promise<
           </div>
         ) : (
           <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
-            Canonical release state is unavailable. Refresh to retry.
+            Canonical release state is unavailable.
           </div>
         )}
       </section>

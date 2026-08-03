@@ -102,7 +102,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
     } catch {
       // Never expose raw Prisma error text to UI.
       // Use safe generic message — raw error details are logged server-side only.
-      setError("Export readiness check failed. Refresh to retry. If the problem persists, contact admin.");
+      setError("Export readiness check failed.");
     } finally {
       setLoading(false);
     }
@@ -144,7 +144,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
         setError((data.error as string | undefined) ?? "Failed to approve fallback analysis");
       }
     } catch {
-      setError("Approve fallback failed. Refresh to retry.");
+      setError("Approve fallback failed.");
     } finally {
       setRepairing(false);
     }
@@ -165,7 +165,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
       setRepairMessage(`Marked advisory ${code} as ${resolution.toLowerCase().replace(/_/g, " ")}. Re-checking readiness.`);
       await refresh();
     } catch (err) {
-      setError("Advisory resolution failed. Refresh to retry.");
+      setError("Advisory resolution failed.");
     } finally {
       setResolvingAdvisory(null);
     }
@@ -234,21 +234,9 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               <ArrowRightIcon /> Go to Generate missing planned docs
             </DisclosureAnchorLink>
           )}
-          {/* Gap 5 + user req C: normal-path repair buttons removed.
-              Safe repairs (source grounding, export gaps, AI traces,
-              placeholders, pricing leakage) now run automatically after
-              PROPOSAL_GENERATION succeeds via runAutoFinalizeAfterGeneration
-              in the run-next worker. The only manual actions remaining are:
-              1. "Go to Generate missing planned docs" (links to Build Plan).
-              2. "Repair prohibited assets" (exceptional, only for
-                 PROHIBITED_ASSET blockers — branding/signature/stamp in
-                 generated docs).
-              3. "Download Final ZIP" (the canonical download, only when
-                 the gate is open).
-              The repeated "Re-check", multi-click "Auto-finalize", "Use
-              vault evidence", "Repair source references", "Fix document
-              types", "Clean duplicate rows", and "Exclude outside-plan
-              files" buttons are removed — their work is done automatically. */}
+          {/* All safe repairs run automatically via AUTO_FINALIZE.
+              Manual actions: Repair prohibited assets (exceptional),
+              Download Final ZIP (canonical download). */}
           {readiness && readiness.tenderLevelBlockers.some((b) => b.category === "PROHIBITED_ASSET") && (
             <button
               type="button"
@@ -374,10 +362,10 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             <div className="rounded-xl border border-sky-100 bg-sky-50 p-3">
               <p className="text-xs font-semibold text-sky-900">How to clear blockers</p>
               <ol className="mt-2 space-y-1 pl-4 text-xs text-sky-800 list-decimal">
-                <li>Click <strong>Generate missing planned docs</strong> to convert any PLANNED rows into draft placeholders.</li>
+                <li>Missing planned documents are generated <strong>automatically</strong> by the AUTO_FINALIZE job — no manual action needed.</li>
                 <li>Safe repairs (AI traces, pricing leakage, placeholders, source grounding) run <strong>automatically</strong> after generation — no manual button needed.</li>
               </ol>
-              <p className="mt-2 text-[10px] text-sky-600">Manual action required only for: tender-issued official forms/templates that must be copied from the tender package. Uploaded Company Vault documents are automatically treated as official after verification.</p>
+              <p className="mt-2 text-[10px] text-sky-600">All safe operations run automatically. The only manual action is downloading the final ZIP when the gate is open.</p>
               <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-sky-200 pt-2">
                 <p className="text-[10px] font-semibold text-sky-700 uppercase tracking-wide">Severity legend:</p>
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE.HIGH}`}>HIGH — blocks export</span>
