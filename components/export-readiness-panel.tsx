@@ -152,16 +152,29 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
   // Safe repairs now run automatically via AUTO_FINALIZE.
 
   async function approveRegexFallback() {
+    // An approval note is a real audit record of why a human accepted
+    // regex-fallback output as authoritative — it must reflect this
+    // reviewer's actual justification, not a canned string every approval
+    // shares (that reduces the audit trail to a checkbox).
+    const note = approvalNote.trim();
+    if (!note) { setError("An approval note is required."); return; }
     setRepairing(true);
     setError(null);
     setRepairMessage(null);
     try {
-      const res = await fetch(`/api/tenders/${tenderId}/approve-analysis`, { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) throw new Error(data.error ?? `Approve fallback failed (${res.status})`);
-      setRepairMessage(`Fallback analysis approved. Re-checking readiness.`);
-      await refresh();
-    } catch (err) {
+      const res = await fetch(`/api/tenders/${tenderId}/approve-analysis`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note }),
+      });
+      const data = (await res.json().catch(() => ({} as Record<string, unknown>))) as { success?: boolean; error?: string };
+      if (data.success) {
+        setRepairMessage("Fallback note saved for audit. Re-checking readiness — generation and export remain blocked until full AI analysis succeeds.");
+        setApprovalNote("");
+      } else {
+        setError((data.error as string | undefined) ?? "Failed to approve fallback analysis");
+      }
+    } catch {
       setError("Approve fallback failed. Refresh to retry.");
     } finally {
       setRepairing(false);
