@@ -18,7 +18,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { RefreshIcon, CheckCircleIcon, WarningIcon, ClockIcon, BanIcon, FolderIcon } from "./icons";
+import { CheckCircleIcon, WarningIcon, ClockIcon, BanIcon, FolderIcon } from "./icons";
 import { BuildSubmissionPlanButton } from "./build-submission-plan-button";
 import { GenerateMissingPlanFilesButton } from "./generate-missing-plan-files-button";
 import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
@@ -256,9 +256,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
           {canMutate && data.summary.totalMissing > 0 && (
             <GenerateMissingPlanFilesButton tenderId={tenderId} missingCount={data.summary.totalMissing} />
           )}
-          <button type="button" onClick={() => void load()} aria-label={loading ? "Refreshing submission scope" : "Re-check submission scope"} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60" disabled={loading || busyKey !== null} title="Re-check the current confirmed plan and output status">
-            <RefreshIcon /> {loading ? "Checking…" : "Re-check"}
-          </button>
+          {/* Re-check button removed — panel auto-refreshes via subscribeTenderWorkflowSync. */}
           {data.summary.totalSuperseded > 0 && (
             <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-slate-500">
               <input type="checkbox" checked={showHistorical} onChange={(e) => setShowHistorical(e.target.checked)} />
