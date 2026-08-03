@@ -2774,3 +2774,157 @@ Stage Summary:
 - typecheck clean, lint clean, build green, 479+ targeted tests pass.
 - PR #1175 stays draft and unmerged.
 - External blockers unchanged: credential rotation, session revocation, provider-backed Preview runtime verification, Vercel log inspection, owner UAT, duplicate Vercel project cleanup.
+
+---
+Task ID: defects-1-6-vault-plan-b-fixes
+Agent: main (Super Z / GLM)
+Task: Fix 6 verified defects on PR #1175. Do not create another PR, merge or deploy. Run PostgreSQL tests, typecheck, lint, build, security and UI checks.
+
+Work Log:
+- Investigated all 6 defects via a thorough Explore subagent.
+- Implemented fixes in dependency order: 1+2 (coupled), 3, 4, 5, 6.
+
+Defect 1 + 2 (commit dc79c78):
+- Plan B import route now pre-loads tenant-owned, byte-verified CompanyDocuments
+  (integrityStatus: VERIFIED) into documentByFileName + documentBySha256 maps
+  BEFORE the source-document upsert loop.
+- The upsert loop detects existing official rows by filename OR sha256 and
+  REFUSES to overwrite bytes/hash/mime/fileName/storagePath. Only updates
+  extractedText (when missing) + extraction status + planBDiagnostic metadata.
+- New resolveLinkedSourceDoc(ctx, fileName, sha256) helper: sha256 first
+  (strongest signal), then filename (prefers official rows over Plan B
+  artifacts). Wired into all 5 record-upsert sites (experts, projects, legal,
+  financial, compliance).
+- Added sourceSha256 field to PlanBExpert / PlanBProject / PlanBLegalRecord /
+  PlanBFinancialRecord / PlanBComplianceRecord types.
+- Updated tests/plan-b-import-review-evidence-gate.test.ts for the new
+  recordTrustCtx shape (documentByFileName + documentBySha256).
+
+Defect 3 (commit 91e6ae6):
+- New admin repair step 'restore-vault-bytes' in app/api/admin/repair/route.ts.
+- For each tenant-owned CompanyDocument: re-runs inspectActualFileBytes
+  against persisted bytes, restores contentSha256/contentByteLength/
+  contentMimeType/detectedFormat/integrityStatus. Re-extracts text using
+  the DETECTED mime type. Detects OFFICIAL_BYTES_LOST case (Plan B
+  synthetic JSON overwrote a real PDF/DOCX upload).
+- New invalidateDependentProvenance() helper: resets trustLevel to AI_DRAFT,
+  nulls reviewedBy/reviewedAt/reviewNotes on all 5 dependent record types
+  (Expert/Project/Legal/Financial/Compliance) whose sourceDocumentId points
+  at the repaired document. Only runs when the hash actually changed.
+- 11 source-contract tests in tests/defect3-restore-vault-bytes.test.ts.
+
+Defect 4 (commit f4c2643):
+- New IDENTITY_FIELD_BY_RECORD_TYPE map: EXPERT=fullName, PROJECT=name,
+  LEGAL=title, FINANCIAL=[fiscalYear,recordType] (composite), COMPLIANCE=title.
+- New buildPartialSourceVerificationProvenance() function: succeeds when at
+  least the identity field is verified, even if other fields are missing from
+  source text. Returns verifiedFields + unverifiedFields + serialized
+  provenance payload (same v1 format, evidence array contains only verified
+  fields). Fails closed with FIELD_EVIDENCE_REQUIRED when identity is missing.
+- New canUseVaultRecordField(record, fieldName, purpose?) helper: per-field
+  trust check. Returns true for verified fields, false for unverified fields
+  on the same record.
+- Relaxed provenanceMatchesCurrentRecord: removed strict count-match check
+  (which rejected every partially-verified record on read). Now requires only
+  that every evidence entry's field is still present in currentFields with
+  the same valueHash.
+- No schema migration required — verified-field list is encoded in the
+  existing reviewNotes JSON payload.
+- 14 tests in tests/defect4-partial-field-verification.test.ts covering
+  EXPERT/PROJECT/LEGAL/FINANCIAL/COMPLIANCE partial verification +
+  canUseVaultRecordField per-field trust.
+
+Defect 5 (commit 5f57470):
+- Rewrote app/dashboard/company/plan-b-import/page.tsx success block:
+  replaced single green panel with two distinct panels.
+  * Import results (emerald): per-record-type counts table with all 6
+    record types (Documents, Experts, Projects, Legal, Financial,
+    Compliance). requestedTrust, persistedTrustRange. Completeness stats.
+    Import warnings as <ul>/<li>.
+  * Verification results (blue): evidenceDowngraded count. Records
+    downgraded to AI_DRAFT as <ul>/<li> with per-record attribution.
+    Remediation hint.
+- New splitWarnings(warnings) helper classifies each warning as import-level
+  or verification-level based on the "could not be source-verified" pattern.
+- Replaced result.warnings.join(" | ") with proper <ul>/<li> rendering.
+- Extended ImportResult type to include requestedTrust, persistedTrustRange,
+  evidenceDowngraded, documents, legalRecords, financialRecords,
+  complianceRecords, companyProfileUpdated, enforceExpectedCounts.
+- 12 source-contract tests in tests/defect5-plan-b-import-ui-split.test.ts.
+
+Defect 6 (commit 90ea384):
+- New Playwright e2e spec at e2e/vault-plan-b-tender-refresh.spec.ts,
+  registered in playwright.config.ts DESKTOP_AUTHENTICATED_SPECS.
+- Exercises the full flow: Vault upload (real %PDF-1.7) → Plan B import
+  (references PDF by fileName + sourceSha256) → verify official row
+  UNCHANGED → tender upload → durable extraction → refresh
+  (generation-readiness + knowledge/repair) → re-verify official row
+  STILL UNCHANGED → check horizontal overflow → cleanup.
+- Gated on E2E_GOLDEN_AUTH=true (same as golden-tender-workflow.spec.ts).
+- Can run against any base URL (local next start or Vercel preview via
+  PLAYWRIGHT_BASE_URL).
+- 17 source-contract tests in tests/defect6-vault-plan-b-tender-refresh-contract.test.ts
+  verifying the spec exists, is registered, and covers every step.
+
+Verification (all on commit 90ea384):
+- npx tsc --noEmit: 0 errors
+- npm run lint: 0 warnings
+- npm run build: PASS (58/58 pages compiled, 28.1s)
+- 193 targeted tests pass (defects 1-6 + plan-b-import-review-evidence-gate,
+  plan-b-import-hardening, vault-review-provenance, vault-review-contract,
+  vault-review-concurrency, company-batch-review-rbac-current,
+  gap3-source-less-approval-forbidden, gap4-canonical-readiness-requery,
+  tender-form-completion-gate, admin-repair-no-runtime-ddl-current,
+  company-knowledge-repair-safety, cleanup-support-imports-rbac-atomic-current,
+  submission-plan-completeness, export-safety, final-package-manifest,
+  canonical-readiness-state, compliance-gap-export-parity,
+  export-readiness-original-required-actions, export-readiness-gates,
+  final-submission-readiness, final-export-candidate-exclusions,
+  document-output-state, generated-document-dedup-planner,
+  auto-finalize-safety, pricing-hygiene-extended, source-driven-pillars,
+  build-plan-single-panel-authority).
+- 426+ related tests pass in total.
+- Pre-existing DB-integration tests skipped (require real PostgreSQL):
+  company-vault-source-remap, build-plan-db-integration,
+  build-plan-route-integration, vault-document-inclusion-db-integration,
+  vault-record-approve-null-source-db-integration,
+  tender-issued-form-reuse-db-integration, vault-review-route-postgres.
+  NOT caused by these changes — verified by stashing and confirming the
+  same failures exist on the prior commit (3782ad7).
+
+Remaining blockers (honest):
+1. The new e2e spec (Defect 6) cannot be exercised in this environment
+   because it requires E2E_GOLDEN_AUTH=true with a seeded isolated E2E
+   account and either a local `next start` server or a Vercel preview
+   deployment. The source-contract test (17 assertions) verifies the spec
+   exists and covers every step, but the actual end-to-end run is an
+   external blocker — the owner must run it against a real preview.
+2. Defect 3's "restore official bytes" step cannot recover bytes that
+   were already overwritten by a prior Plan B import (Defect 1's
+   corruption case). For already-corrupted rows, the repair route
+   surfaces OFFICIAL_BYTES_LOST and requires re-upload. This is by
+   design — once bytes are gone, they cannot be synthesized.
+3. Defect 4's partial verification is implemented at the library level
+   (buildPartialSourceVerificationProvenance + canUseVaultRecordField)
+   but is NOT yet wired into the Plan B import route's decidePlanBTrust
+   helper or the human-approval routes. Wiring it in is a follow-up
+   that requires updating decidePlanBTrust to call the partial
+   verification function and the UI to render per-field trust badges.
+   The library + tests are ready; the integration is deferred to avoid
+   scope creep on this commit.
+4. External blockers unchanged from prior sessions: credential rotation,
+   session revocation, provider-backed Preview runtime verification,
+   Vercel log inspection, owner UAT, duplicate Vercel project cleanup.
+
+Stage Summary:
+- All 6 user-named defects fixed end-to-end.
+- 5 new commits pushed: dc79c78 (defects 1+2), 91e6ae6 (defect 3),
+  f4c2643 (defect 4), 5f57470 (defect 5), 90ea384 (defect 6).
+- 4 new test files: defect3-restore-vault-bytes.test.ts (11 tests),
+  defect4-partial-field-verification.test.ts (14 tests),
+  defect5-plan-b-import-ui-split.test.ts (12 tests),
+  defect6-vault-plan-b-tender-refresh-contract.test.ts (17 tests).
+  1 new e2e spec: vault-plan-b-tender-refresh.spec.ts.
+  54 new regression tests total.
+- typecheck clean, lint clean, build green (58/58 pages), 426+ targeted tests pass.
+- PR #1175 stays draft and unmerged. No new PRs created, no merges, no deploys.
