@@ -1,6 +1,7 @@
 import { prisma, prismaReady } from "./prisma";
 import {
   buildSourceVerificationProvenance,
+  buildPartialSourceVerificationProvenance,
   isDurablySourceVerified,
   type ReviewRecordState,
   expertReviewFields,
@@ -84,22 +85,90 @@ export function deriveAutomaticSourceVerification(input: {
   fields: ReviewEvidenceField[];
   priorTrustLevel: string | null | undefined;
 }) {
-  const provenance = buildSourceVerificationProvenance({
+  const method = verificationMethod(input.priorTrustLevel);
+  const verifiedAt = new Date();
+
+  const full = buildSourceVerificationProvenance({
     recordType: input.recordType,
     sourceDocument: input.sourceDocument,
     fields: input.fields,
-    verificationMethod: verificationMethod(input.priorTrustLevel),
+    verificationMethod: method,
+    verifiedAt,
   });
-  if (!provenance.ok) return provenance;
+  if (full.ok) {
+    return {
+      ok: true as const,
+      provenance: {
+        sourceContentHash: full.sourceContentHash,
+        sourceByteLength: full.sourceByteLength,
+        sourceTextHash: full.sourceTextHash,
+        sourceExtractionRevision: full.sourceExtractionRevision,
+        evidenceFields: full.evidenceFields,
+        unverifiedFields: [] as string[],
+        verifiedAt: full.verifiedAt,
+        partial: false,
+        serialized: full.serialized,
+      },
+      reviewState: {
+        trustLevel: "SOURCE_VERIFIED" as const,
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewNotes: full.serialized,
+      },
+    };
+  }
+
+  // Full verification requires EVERY field to appear in the source text. Real
+  // CVs and certificates routinely fail that on one field — a CV names the
+  // expert and the position but never prints a years-of-experience number.
+  // Refusing the whole record for that left it AI_DRAFT, which the evidence
+  // gate refuses, so the automatic pipeline stopped and the user had to open
+  // the record and click approve. That approve button already fell back to
+  // partial verification, so the click added no judgement: it just ran the
+  // check the automatic pass had declined to run.
+  //
+  // Partial verification is not a weaker claim, it is a narrower one. The
+  // identity field must still be proven or this fails closed exactly as
+  // before, the proven fields carry real quote-level evidence, and the
+  // unproven ones are recorded by name so they are never treated as
+  // authoritative and a field added later cannot pass as verified.
+  const partial = buildPartialSourceVerificationProvenance({
+    recordType: input.recordType,
+    sourceDocument: input.sourceDocument,
+    fields: input.fields,
+    verificationMethod: method,
+    verifiedAt,
+  });
+  // PartialSourceVerificationResult carries `ok: boolean` rather than a
+  // discriminated union, so it cannot narrow a caller's result. Normalize both
+  // outcomes here to the shape this function has always returned, so every
+  // database writer keeps one canonical payload to switch on.
+  if (!partial.ok) {
+    return {
+      ok: false as const,
+      code: partial.code ?? full.code,
+      missingFields: partial.unverifiedFields,
+    };
+  }
 
   return {
     ok: true as const,
-    provenance,
+    provenance: {
+      sourceContentHash: partial.sourceContentHash ?? "",
+      sourceByteLength: partial.sourceByteLength ?? 0,
+      sourceTextHash: partial.sourceTextHash ?? "",
+      sourceExtractionRevision: partial.sourceExtractionRevision ?? "",
+      evidenceFields: partial.verifiedFields,
+      unverifiedFields: partial.unverifiedFields,
+      verifiedAt: verifiedAt.toISOString(),
+      partial: true,
+      serialized: partial.serialized ?? "",
+    },
     reviewState: {
       trustLevel: "SOURCE_VERIFIED" as const,
       reviewedBy: null,
       reviewedAt: null,
-      reviewNotes: provenance.serialized,
+      reviewNotes: partial.serialized ?? "",
     },
   };
 }
@@ -258,6 +327,11 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
           sourceTextHash: provenance.sourceTextHash,
           sourceExtractionRevision: provenance.sourceExtractionRevision,
           evidenceFields: provenance.evidenceFields,
+          // Recorded so the audit says which fields the source did NOT prove.
+          // A partially verified record is real evidence for what it proves
+          // and nothing at all for what it does not.
+          unverifiedFields: provenance.unverifiedFields,
+          partialVerification: provenance.partial,
           verifiedAt: provenance.verifiedAt,
         }),
       },
@@ -310,6 +384,11 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
           sourceTextHash: provenance.sourceTextHash,
           sourceExtractionRevision: provenance.sourceExtractionRevision,
           evidenceFields: provenance.evidenceFields,
+          // Recorded so the audit says which fields the source did NOT prove.
+          // A partially verified record is real evidence for what it proves
+          // and nothing at all for what it does not.
+          unverifiedFields: provenance.unverifiedFields,
+          partialVerification: provenance.partial,
           verifiedAt: provenance.verifiedAt,
         }),
       },
@@ -400,6 +479,11 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
           sourceTextHash: provenance.sourceTextHash,
           sourceExtractionRevision: provenance.sourceExtractionRevision,
           evidenceFields: provenance.evidenceFields,
+          // Recorded so the audit says which fields the source did NOT prove.
+          // A partially verified record is real evidence for what it proves
+          // and nothing at all for what it does not.
+          unverifiedFields: provenance.unverifiedFields,
+          partialVerification: provenance.partial,
           verifiedAt: provenance.verifiedAt,
         }),
       },
@@ -441,6 +525,11 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
           sourceTextHash: provenance.sourceTextHash,
           sourceExtractionRevision: provenance.sourceExtractionRevision,
           evidenceFields: provenance.evidenceFields,
+          // Recorded so the audit says which fields the source did NOT prove.
+          // A partially verified record is real evidence for what it proves
+          // and nothing at all for what it does not.
+          unverifiedFields: provenance.unverifiedFields,
+          partialVerification: provenance.partial,
           verifiedAt: provenance.verifiedAt,
         }),
       },
@@ -482,6 +571,11 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
           sourceTextHash: provenance.sourceTextHash,
           sourceExtractionRevision: provenance.sourceExtractionRevision,
           evidenceFields: provenance.evidenceFields,
+          // Recorded so the audit says which fields the source did NOT prove.
+          // A partially verified record is real evidence for what it proves
+          // and nothing at all for what it does not.
+          unverifiedFields: provenance.unverifiedFields,
+          partialVerification: provenance.partial,
           verifiedAt: provenance.verifiedAt,
         }),
       },

@@ -130,6 +130,35 @@ test.describe.serial("Defect 6 — Vault upload → Plan B import → tender upl
     expect(officialHash).toBe(pdfSha256);
 
     try {
+      // ─── Step 1b: wait for the Vault document's durable extraction ────
+      // Upload persists the bytes and QUEUES extraction on the VAULT_INGEST
+      // job; extractedText is null until that job runs. Plan B can only
+      // source-verify a record against text, so importing before extraction
+      // finishes downgrades every record to AI_DRAFT — not because anything is
+      // wrong, but because the evidence has not been read yet.
+      //
+      // The assertions below are about the settled state, so wait for it. The
+      // same shape as waitForDurableTenderExtraction: poll the read endpoint,
+      // kick the worker between polls.
+      const extractionDeadline = Date.now() + 60_000;
+      let vaultExtracted = false;
+      let lastExtractionState = "not polled";
+      while (Date.now() < extractionDeadline) {
+        const listRes = await page.request.get("/api/company/documents");
+        if (listRes.status() === 200) {
+          const listJson = await listRes.json() as {
+            documents?: Array<{ id: string; aiExtractionStatus?: string | null; extractedTextLength?: number }>;
+          };
+          const row = (listJson.documents ?? []).find((d) => d.id === vaultDocId);
+          lastExtractionState = `status=${row?.aiExtractionStatus ?? "missing"} textLength=${row?.extractedTextLength ?? 0}`;
+          if ((row?.extractedTextLength ?? 0) > 0) { vaultExtracted = true; break; }
+        }
+        const worker = await page.request.post("/api/ai-jobs/run-next?jobType=VAULT_INGEST");
+        expect(worker.status(), await worker.text()).toBeLessThan(500);
+        await page.waitForTimeout(250);
+      }
+      expect(vaultExtracted, `Vault document never finished extraction (${lastExtractionState})`).toBe(true);
+
       // ─── Step 2: Plan B import referencing the uploaded PDF by filename + sha256 ──
       // The Plan B payload declares an expert whose fields appear in the PDF
       // text. The sourceDocument points at the uploaded PDF by filename, and
