@@ -61,7 +61,16 @@ describe("reapStaleQueuedJobs — real PostgreSQL", () => {
     await prisma.user.deleteMany({ where: { id: userId } });
   });
 
-  it("reaps a QUEUED job created more than 30 minutes ago", async () => {
+  it("reaps a QUEUED job the worker demonstrably passed over", async () => {
+    // This used to assert that age alone is enough to reap. It isn't, and
+    // asserting it was pinned a defect: claiming is FIFO within a job type,
+    // the queue drains one job per 5-minute tick, and the cron that drives it
+    // documents 5–15 minutes of drift — so a healthy backlog crossed 30
+    // minutes routinely and had its work destroyed.
+    //
+    // The fixture now supplies the evidence that makes "orphaned" true: a
+    // NEWER job of the same type already started, which under FIFO can only
+    // happen if this one was skipped.
     const staleJob = await prisma.aiJob.create({
       data: {
         tenderId,
@@ -72,15 +81,123 @@ describe("reapStaleQueuedJobs — real PostgreSQL", () => {
         createdAt: new Date(Date.now() - 31 * 60 * 1000),
       },
     });
+    const overtook = await prisma.aiJob.create({
+      data: {
+        tenderId,
+        userId,
+        jobType: "AI_ANALYZE",
+        status: "SUCCEEDED",
+        input: "{}",
+        createdAt: new Date(Date.now() - 20 * 60 * 1000),
+        startedAt: new Date(Date.now() - 20 * 60 * 1000),
+      },
+    });
 
     const result = await reapStaleQueuedJobs();
-    assert.ok(result.reaped >= 1, "must reap at least the one stale job created for this test");
+    assert.ok(result.reaped >= 1, "must reap the job that was skipped while a newer sibling ran");
     assert.equal(result.errors.length, 0);
 
     const refreshed = await prisma.aiJob.findUnique({ where: { id: staleJob.id } });
     assert.equal(refreshed?.status, "FAILED");
-    assert.match(refreshed?.errorMessage ?? "", /never claimed by a worker/);
+    assert.match(refreshed?.errorMessage ?? "", /passed over/);
     assert.ok(refreshed?.finishedAt, "finishedAt must be set on reap");
+
+    await prisma.aiJob.delete({ where: { id: overtook.id } });
+  });
+
+  it("leaves a backlogged job alone — waiting your turn is not being orphaned", async () => {
+    // The product promise is upload once and walk away. The queue drains one
+    // job per tick, so a handful of tenders puts later jobs well past 30
+    // minutes with nothing wrong. Reaping them marked healthy work FAILED and
+    // stopped the automatic chain short of a downloadable ZIP.
+    const ahead = await prisma.aiJob.create({
+      data: {
+        tenderId,
+        userId,
+        jobType: "ENGINE_RUN",
+        status: "QUEUED",
+        input: "{}",
+        createdAt: new Date(Date.now() - 90 * 60 * 1000),
+      },
+    });
+    const behind = await prisma.aiJob.create({
+      data: {
+        tenderId,
+        userId,
+        jobType: "ENGINE_RUN",
+        status: "QUEUED",
+        input: "{}",
+        createdAt: new Date(Date.now() - 40 * 60 * 1000),
+      },
+    });
+
+    await reapStaleQueuedJobs();
+
+    for (const [label, id] of [["head of queue", ahead.id], ["behind it", behind.id]] as const) {
+      const refreshed = await prisma.aiJob.findUnique({ where: { id } });
+      assert.equal(refreshed?.status, "QUEUED", `${label}: a backlogged job must survive the reaper`);
+    }
+
+    await prisma.aiJob.deleteMany({ where: { id: { in: [ahead.id, behind.id] } } });
+  });
+
+  it("leaves a job alone through a worker outage — nothing newer ran either", async () => {
+    // If the GitHub Actions drain is down for an hour, every queued job ages
+    // past the threshold. None of them was skipped; the worker simply never
+    // ran. Failing them turns an outage into permanent data loss for work
+    // that would have completed on the next tick.
+    const outageJob = await prisma.aiJob.create({
+      data: {
+        tenderId,
+        userId,
+        jobType: "AUTO_FINALIZE",
+        status: "QUEUED",
+        input: "{}",
+        createdAt: new Date(Date.now() - 120 * 60 * 1000),
+      },
+    });
+
+    await reapStaleQueuedJobs();
+
+    const refreshed = await prisma.aiJob.findUnique({ where: { id: outageJob.id } });
+    assert.equal(refreshed?.status, "QUEUED", "an outage must not destroy queued work");
+
+    await prisma.aiJob.delete({ where: { id: outageJob.id } });
+  });
+
+  it("a newer sibling of a DIFFERENT type running is not evidence of being skipped", async () => {
+    // Targeted claims are legitimate: the Vault page posts
+    // run-next?jobType=VAULT_INGEST, which correctly takes a VAULT_INGEST
+    // created after a queued EVALUATOR_SIM. That is the type filter working,
+    // not the queue passing anything over.
+    const waiting = await prisma.aiJob.create({
+      data: {
+        tenderId,
+        userId,
+        jobType: "EVALUATOR_SIM",
+        status: "QUEUED",
+        input: "{}",
+        createdAt: new Date(Date.now() - 50 * 60 * 1000),
+      },
+    });
+    const otherType = await prisma.aiJob.create({
+      data: {
+        tenderId,
+        userId,
+        jobType: "VAULT_INGEST",
+        status: "SUCCEEDED",
+        input: "{}",
+        createdAt: new Date(Date.now() - 10 * 60 * 1000),
+        startedAt: new Date(Date.now() - 10 * 60 * 1000),
+      },
+    });
+
+    await reapStaleQueuedJobs();
+
+    const refreshed = await prisma.aiJob.findUnique({ where: { id: waiting.id } });
+    assert.equal(refreshed?.status, "QUEUED", "a type-filtered claim must not condemn another type");
+
+    await prisma.aiJob.deleteMany({ where: { id: { in: [waiting.id, otherType.id] } } });
   });
 
   it("does not touch a QUEUED job created recently", async () => {
@@ -129,6 +246,18 @@ describe("reapStaleQueuedJobs — real PostgreSQL", () => {
         status: "QUEUED",
         input: "{}",
         createdAt: new Date(Date.now() - 45 * 60 * 1000),
+      },
+    });
+    // Same skipped-evidence the reap path now requires.
+    await prisma.aiJob.create({
+      data: {
+        tenderId,
+        userId,
+        jobType: "PROPOSAL_GENERATION",
+        status: "SUCCEEDED",
+        input: "{}",
+        createdAt: new Date(Date.now() - 25 * 60 * 1000),
+        startedAt: new Date(Date.now() - 25 * 60 * 1000),
       },
     });
 
