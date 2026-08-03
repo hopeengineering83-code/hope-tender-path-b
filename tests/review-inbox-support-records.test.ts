@@ -86,7 +86,7 @@ describe("Company Vault support-record automatic verification", () => {
       trustLevel: "MANUAL_DRAFT",
       reviewedBy: null,
       reviewedAt: null,
-      reviewNotes: "Manual legal record awaiting automatic source verification or optional human audit.",
+      reviewNotes: "Manual legal record awaiting automatic source verification. Uploaded Company Vault documents are the official source of truth — no human review is required to establish their official status.",
     });
   });
 
