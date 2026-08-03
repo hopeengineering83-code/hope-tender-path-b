@@ -117,15 +117,14 @@ describe("the second Build Plan panel is gone", () => {
 });
 
 describe("the surviving panel owns the three plan mutations", () => {
-  it("hosts build, generate-missing and reconcile-stale", () => {
+  it("hosts build and reconcile-stale (generate-missing removed — runs automatically)", () => {
     assert.match(PANEL, /<BuildSubmissionPlanButton/);
-    assert.match(PANEL, /<GenerateMissingPlanFilesButton/);
     assert.match(PANEL, /<ReconcileStaleFilesButton/);
+    assert.doesNotMatch(PANEL, /<GenerateMissingPlanFilesButton/);
   });
 
   it("drives each one from the canonical summary, not a local recount", () => {
     assert.match(PANEL, /data\.summary\.automaticPlanPending/);
-    assert.match(PANEL, /missingCount=\{data\.summary\.totalMissing\}/);
     assert.match(PANEL, /staleCount=\{data\.summary\.totalOutsidePlan\}/);
     // The panel must never import the raw reconciliation helpers and start a
     // second count of its own — that is exactly what was just removed. Match
@@ -141,7 +140,6 @@ describe("the surviving panel owns the three plan mutations", () => {
     // panel kept offering the action that just ran.
     assert.match(PANEL, /subscribeTenderWorkflowSync\(tenderId, \(\) => \{ void load\(\); \}\)/);
     for (const path of [
-      "components/generate-missing-plan-files-button.tsx",
       "components/reconcile-stale-files-button.tsx",
       "components/build-submission-plan-button.tsx",
     ]) {

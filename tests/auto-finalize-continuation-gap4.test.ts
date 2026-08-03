@@ -106,16 +106,16 @@ describe("export-readiness panel removes normal-path bureaucracy (Gap 5 + user r
     assert.doesNotMatch(panel, /title="Safely repair generated DOCX/);
   });
 
-  it("keeps the 'Repair prohibited assets' button (exceptional, not normal-path)", () => {
-    assert.match(panel, /Repair prohibited assets/);
+  it("removed the 'Repair prohibited assets' button from the normal path", () => {
+    assert.doesNotMatch(panel, /Repair prohibited assets/);
   });
 
   it("keeps the 'Download Final ZIP' link (canonical download)", () => {
     assert.match(panel, /Download Final ZIP/);
   });
 
-  it("keeps the 'Go to Generate missing planned docs' link (Build Plan navigation)", () => {
-    assert.match(panel, /Go to Generate missing planned docs/);
+  it("removed the 'Go to Generate missing planned docs' link from the export panel", () => {
+    assert.doesNotMatch(panel, /Go to Generate missing planned docs/);
   });
 });
 

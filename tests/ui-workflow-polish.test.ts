@@ -189,14 +189,10 @@ describe("Prisma error redaction — no raw Prisma text in UI", () => {
 
 // ─── 9. Repair prohibited assets button is conditional ──────────────────────
 
-describe("Repair prohibited assets button — conditional rendering", () => {
-  it("export-readiness-panel only shows repair button when prohibited assets exist", () => {
+describe("Repair prohibited assets button — removed from export panel", () => {
+  it("export-readiness-panel no longer has a repair prohibited assets button", () => {
     const src = read("components/export-readiness-panel.tsx");
-    // The button must be guarded by a condition (not always rendered)
-    assert.ok(
-      src.includes("prohibitedAssets") || src.includes("prohibited"),
-      "must check for prohibited assets before showing repair button",
-    );
+    assert.doesNotMatch(src, /Repair prohibited assets/);
   });
 });
 

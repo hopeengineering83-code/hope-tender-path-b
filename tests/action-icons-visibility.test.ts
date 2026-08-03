@@ -75,10 +75,10 @@ describe("document, share, and export affordances", () => {
     assert.match(source, /disabled:opacity-60/);
   });
 
-  it("prohibited-asset repair is conditional", () => {
-    assert.match(readComponent("export-readiness-panel.tsx"), /b\.category === "PROHIBITED_ASSET"/);
-  });
-});
+  it("prohibited-asset repair button removed from export panel", () => {
+    const exportPanel = readComponent("export-readiness-panel.tsx");
+    assert.doesNotMatch(exportPanel, /Repair prohibited assets/);
+  });});
 
 describe("icon registry contract", () => {
   it("exports the required semantic icon set", () => {
