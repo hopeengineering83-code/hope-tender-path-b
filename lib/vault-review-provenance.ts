@@ -218,6 +218,13 @@ type StoredSourceVerificationProvenance = {
   verificationMethod: "AI" | "DETERMINISTIC" | "HYBRID";
   verifiedAt: string;
   evidence: DurableReviewEvidence[];
+  // Defect 4: when true, this provenance was built by
+  // buildPartialSourceVerificationProvenance — only the identity field and
+  // other verified fields are in `evidence`. Unverified inferred fields are
+  // intentionally absent. provenanceMatchesCurrentRecord uses this flag to
+  // decide whether to enforce strict count-match (full verification) or
+  // allow extra unverified fields (partial verification).
+  partial?: boolean;
 };
 
 function sha256(value: string): string {
@@ -617,6 +624,10 @@ export function buildPartialSourceVerificationProvenance(input: {
     verificationMethod: input.verificationMethod,
     verifiedAt,
     evidence: verified,
+    // Defect 4: mark this as partial so provenanceMatchesCurrentRecord
+    // does NOT enforce strict count-match. Unverified inferred fields are
+    // intentionally absent from `evidence`.
+    partial: true,
   };
 
   return {
@@ -891,14 +902,22 @@ function provenanceMatchesCurrentRecord(
 
   const currentFields = currentRecordEvidenceFields(record, provenance.recordType);
   if (!currentFields) return false;
-  // Defect 4: relax the strict count match. For partial source verification
-  // (buildPartialSourceVerificationProvenance), the provenance.evidence array
-  // contains only the VERIFIED fields — not every non-null field on the record.
-  // Requiring currentFields.length === provenance.evidence.length would reject
-  // every partially-verified record on read. Instead, require that every
+  // Defect 4: for partial source verification (provenance.partial === true),
+  // the evidence array contains only VERIFIED fields — not every non-null
+  // field on the record. Do NOT enforce count-match; only require that every
   // evidence entry's field is still present in currentFields with the same
-  // valueHash. (The full-verification path also satisfies this — every
-  // evidence field is in currentFields with matching hash.)
+  // valueHash. This allows unverified inferred fields to exist on the record
+  // without invalidating the provenance.
+  //
+  // For full verification (provenance.partial !== true, including all
+  // buildReviewProvenance and buildSourceVerificationProvenance results),
+  // enforce the STRICT count-match: currentFields.length must equal
+  // provenance.evidence.length. This catches stale provenance when a field
+  // was added or removed after verification (e.g., certifications changed
+  // from [] to ["PMP"] — the record now has a certifications[0] field that
+  // the provenance doesn't cover, so the provenance is stale).
+  const isPartial = (provenance as { partial?: boolean }).partial === true;
+  if (!isPartial && currentFields.length !== provenance.evidence.length) return false;
   const currentValueHashes = new Map(
     currentFields.map((item) => [item.field, evidenceValueHash(item.value)]),
   );
