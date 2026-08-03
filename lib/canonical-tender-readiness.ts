@@ -81,6 +81,21 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   // filters at line 565 before asking the same question, refused the same
   // tender. Readiness must not promise what the export gate will decline.
   const missing = findMissingGeneratedDocuments(plan, filterFinalExportCandidateDocuments(tender.generatedDocuments as never));
+
+  // Gap 1: detect reused tender-issued forms that are still awaiting manual
+  // completion. A reused form carries the machine:tender-issued-form-reuse
+  // provenance marker in contentSummary and is left in PENDING review (never
+  // APPROVED/READY_FOR_EXPORT — that's fabricated human state). It must be
+  // completed and signed by a person. The blocker is more specific than
+  // MISSING_PLANNED_FILES — it tells the reviewer exactly what to do next.
+  const tenderFormsAwaitingCompletion = tender.generatedDocuments.filter((doc) => {
+    const summary = (doc.contentSummary ?? "").toLowerCase();
+    const isReusedTenderForm = summary.includes("machine:tender-issued-form-reuse");
+    if (!isReusedTenderForm) return false;
+    const rev = (doc.reviewStatus ?? "").toUpperCase();
+    return rev !== "READY_FOR_EXPORT" && rev !== "APPROVED";
+  });
+
   const expertRequirementExists = tender.requirements.some((r) => r.requirementType === "EXPERT");
   const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
   const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length;
@@ -113,6 +128,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...(projectRequirementExists && reviewedSelectedProjects === 0 ? ["NO_SELECTED_REVIEWED_PROJECTS"] : []),
     ...(tender.generatedDocuments.length === 0 ? ["NO_ACTIVE_GENERATED_DOCUMENTS"] : []),
     ...(missing.length > 0 ? ["MISSING_PLANNED_FILES"] : []),
+    ...(tenderFormsAwaitingCompletion.length > 0 ? ["MISSING_TENDER_FORM_FIELDS"] : []),
     ...(confirmedPlan.ok ? [] : ["NO_CURRENT_CONFIRMED_BUILD_PLAN"]),
   ];
 
@@ -120,6 +136,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...readiness.fullProposalBlockers.map((b) => b.nextAction).filter(Boolean) as string[],
     ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["RUN_ENGINE"] : []),
     ...(confirmedPlan.ok ? [] : ["BUILD_SUBMISSION_PLAN"]),
+    ...(tenderFormsAwaitingCompletion.length > 0 ? ["COMPLETE_TENDER_FORM_FIELDS"] : []),
   ]));
 
   const states = computeCanonicalModuleStates({
@@ -144,7 +161,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     matchingState: matching.state,
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
-    readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
+    readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
     modules,
     blockers,
     warnings: readiness.warnings.map((w) => w.code),
