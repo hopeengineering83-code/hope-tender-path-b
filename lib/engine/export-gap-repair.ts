@@ -127,7 +127,7 @@ function isManualOnly(doc: RepairDoc): string | null {
   const label = `${doc.name ?? ""} ${doc.exactFileName ?? ""} ${doc.documentType ?? ""} ${doc.format ?? ""} ${doc.reviewStatus ?? ""}`;
 
   if (generation === "SUPERSEDED" || validation === "SUPERSEDED") return "Historical/superseded document; regenerate from the current submission plan instead of repairing.";
-  if (review === "REPLACE_WITH_ORIGINAL") return "Tender-issued original form/template required. Repair must not recreate this file generically.";
+  if (review === "REPLACE_WITH_ORIGINAL") return "Tender-issued original form/template required. This is a tender file, not a Company Vault document — repair must not recreate it generically. Company Vault documents are already official after verification.";
   if (review === "NOT_EXPORTABLE") return "Document is marked not exportable. Manual review or original attachment is required.";
   if (generation === "PLANNED") return "Planned-only row. Generate the document through the main generation flow or attach the required original.";
   if (/QUICK_DRAFT|DRAFT_ONLY|MARKDOWN|CONTROL|PLACEHOLDER/i.test(label)) return "Internal draft/control row. It is not a final submission file.";

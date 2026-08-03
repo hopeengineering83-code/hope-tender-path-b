@@ -120,6 +120,6 @@ export function manualSupportRecordDraftFields(kind: SupportReviewKind) {
     trustLevel: "MANUAL_DRAFT" as const,
     reviewedBy: null,
     reviewedAt: null,
-    reviewNotes: `Manual ${kind.toLowerCase()} record awaiting automatic source verification or optional human audit.`,
+    reviewNotes: `Manual ${kind.toLowerCase()} record awaiting automatic source verification. Uploaded Company Vault documents are the official source of truth — no human review is required to establish their official status.`,
   };
 }

@@ -161,8 +161,8 @@ function recommendedActionFor(status: SubmissionPlanRowStatus, planFile: Submiss
     case "GENERATED_NEEDS_REVIEW": return "Complete reviewer approval — mark READY_FOR_EXPORT.";
     case "GENERATED_QUALITY_FAILED": return "Quality gate failed — rewrite or attach the official original.";
     case "PLANNED": return "Generate the planned document. This row has no final file content yet.";
-    case "OFFICIAL_ORIGINAL_REQUIRED": return "Upload the tender-issued original via Attach official original — do not generate.";
-    case "REPLACE_WITH_ORIGINAL": return "Attach the exact tender-issued original; the current row is a placeholder.";
+    case "OFFICIAL_ORIGINAL_REQUIRED": return "Upload the tender-issued original form/template. Company Vault documents are already official — this only applies to tender-issued forms.";
+    case "REPLACE_WITH_ORIGINAL": return "Attach the exact tender-issued original form/template. Company Vault documents are already official — this only applies to tender-issued forms.";
     case "MISSING": return `Generate the required file (${planFile?.exactFileName ?? "missing file"}) or attach the official original.`;
     case "OUTSIDE_PLAN": return `Map this document into the submission plan or supersede it; it is not part of the tender-required file list (${doc?.exactFileName ?? doc?.name ?? "unmapped doc"}).`;
     case "SUPERSEDED": return "Historical row — already excluded from the final package.";

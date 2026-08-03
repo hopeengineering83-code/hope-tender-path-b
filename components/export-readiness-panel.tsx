@@ -603,10 +603,10 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
               <p className="text-xs font-semibold text-sky-900">How to clear blockers</p>
               <ol className="mt-2 space-y-1 pl-4 text-xs text-sky-800 list-decimal">
                 <li>Click <strong>Generate missing planned docs</strong> to convert any PLANNED rows into draft placeholders.</li>
-                <li>For official-original rows (bid forms, tender templates): click <strong>Attach official original</strong> on each blocker below.</li>
+                <li>For tender-issued original forms/templates only (bid forms, declaration forms): click <strong>Attach official original</strong> on each blocker below. Company Vault documents are already official — no attachment needed.</li>
                 <li>Safe repairs (AI traces, pricing leakage, placeholders, source grounding) run <strong>automatically</strong> after generation — no manual button needed.</li>
               </ol>
-              <p className="mt-2 text-[10px] text-sky-600">Manual action required only for: tender-issued official forms/templates, missing company evidence not in Knowledge Vault, or missing official tender source file.</p>
+              <p className="mt-2 text-[10px] text-sky-600">Manual action required only for: tender-issued official forms/templates that must be copied from the tender package. Uploaded Company Vault documents are automatically treated as official after verification.</p>
               <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-sky-200 pt-2">
                 <p className="text-[10px] font-semibold text-sky-700 uppercase tracking-wide">Severity legend:</p>
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE.HIGH}`}>HIGH — blocks export</span>
