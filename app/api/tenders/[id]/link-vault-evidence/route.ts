@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { includeVaultDocumentInPackage, INCLUDABLE_VAULT_DOCUMENT_WHERE } from "../../../../../lib/engine/vault-document-package-inclusion";
 import { getStorageAdapter } from "../../../../../lib/storage";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -63,5 +64,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ success: false, error: outcome.reason, code: "VAULT_INCLUSION_BLOCKED" }, { status: 400 });
   }
   await logAction({ userId: actor.id, action: "VAULT_EVIDENCE_LINKED", entityType: "GeneratedDocument", entityId: outcome.documentId, description: `Official Vault document included unchanged: ${outcome.vaultFileName}. Awaiting validation and approval.`, metadata: { tenderId: id, packageDocId: outcome.documentId, vaultDocId: outcome.vaultDocumentId, vaultFileName: outcome.vaultFileName, sha256: outcome.sha256, byteLength: outcome.byteLength } });
-  return NextResponse.json({ success: true, sha256: outcome.sha256, byteLength: outcome.byteLength });
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  // The client no longer has to infer final-export readiness from intermediate
+  // signals — this is the authoritative verdict.
+  const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, id);
+  return NextResponse.json({ success: true, sha256: outcome.sha256, byteLength: outcome.byteLength, canonicalReadiness });
 }

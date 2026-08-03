@@ -8,6 +8,7 @@ import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText
 import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 
 // ── DOCX XML hygiene cleaner ──────────────────────────────────────────────────
 // Strips AI traces, placeholders and pricing leakage directly from <w:t> text
@@ -258,6 +259,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     metadata: { tenderId, repairedCount: repaired.length, skippedCount: skipped.length, manualRequiredCount: manualRequired.length, blockedByHygieneCount: blockedByHygiene.length, letterheadAppliedCount, finalExportReady: readiness.ok, remainingDocumentBlockers: readiness.failures.length, remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0 },
   });
 
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tenderId);
   return NextResponse.json({
     success: true,
     repaired: repaired.length,
@@ -273,5 +276,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     },
     files: { repaired, skipped, manualRequired, blockedByHygiene: blockedByHygiene.map((b) => b.name) },
     hygieneBlockers: blockedByHygiene,
+    canonicalReadiness,
   });
 }

@@ -5,6 +5,7 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { includeVaultDocumentInPackage, INCLUDABLE_VAULT_DOCUMENT_WHERE } from "../../../../../lib/engine/vault-document-package-inclusion";
 import { getStorageAdapter } from "../../../../../lib/storage";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -150,5 +151,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         : "No official Vault documents were available to include for this tender's package rows."
       : `${linked} official Vault document(s) included unchanged. They still need canonical validation and approval before final export.`;
 
-  return NextResponse.json({ success: true, linked, skipped, blockedReasons, message });
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, id);
+  return NextResponse.json({ success: true, linked, skipped, blockedReasons, message, canonicalReadiness });
 }

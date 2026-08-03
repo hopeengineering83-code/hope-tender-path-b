@@ -23,6 +23,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "../../../../../lib/engine/transactional-generation-gate";
 import { detectTenderFormatPolicy } from "../../../../../lib/engine/export-format-policy";
@@ -338,6 +339,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }).catch((error) => logger.warn(`finalize-pdf: failed to log action: ${error instanceof Error ? error.constructor.name : "UnknownError"}`));
 
     const ok = blocked.length === 0;
+    // Gap 4: re-query the canonical final-export authority after the mutation.
+    const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tender.id);
     return NextResponse.json(
       {
         ok,
@@ -345,6 +348,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         created,
         blocked,
         requiredPdfFiles: requiredPdfNames,
+        canonicalReadiness,
         ...(created.length
           ? { nextStep: "Run Validate and approve the finalized PDF before final export." }
           : {}),

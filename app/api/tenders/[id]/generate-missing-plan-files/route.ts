@@ -15,6 +15,7 @@ import {
   withTransactionalGenerationGate,
 } from "../../../../../lib/engine/transactional-generation-gate";
 import { logger } from "../../../../../lib/observability";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -586,6 +587,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, id);
   return NextResponse.json({
     success: true,
     created: created.length,
@@ -594,5 +597,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     skipped: skipped.length,
     files: { created, updated, convertedFromPlanned, skipped },
     warning: "Generated narrative drafts/replacement controls require validation and reviewer approval before export. Replace official originals where reviewStatus is REPLACE_WITH_ORIGINAL.",
+    canonicalReadiness,
   });
 }

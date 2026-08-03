@@ -24,6 +24,54 @@ export type CanonicalTenderReadiness = {
   nextActions: string[];
 };
 
+/**
+ * Compact canonical readiness payload for mutation-route responses.
+ *
+ * Mutation routes that change plan state, document state, or evidence
+ * selection should include this in their success response so the client
+ * has the authoritative final-export verdict without a separate round-trip
+ * to /api/tenders/:id/readiness. The full CanonicalTenderReadiness (with
+ * modules, warnings, nextActions) is still available from that endpoint —
+ * this is the trim version that answers "did this mutation unblock export?".
+ */
+export type CanonicalReadinessSummary = {
+  readyForFinalExport: boolean;
+  readyForFullProposal: boolean;
+  readyForSupportPackage: boolean;
+  blockers: string[];
+  nextActions: string[];
+};
+
+/**
+ * Re-query the canonical final-export authority after a mutation.
+ *
+ * Returns null when the tender doesn't exist for this user (the query is
+ * user-scoped, so a cross-tenant id is indistinguishable from a missing one).
+ * Mutation routes should spread this into their success response as
+ * `canonicalReadiness` so the client can update its UI without a separate
+ * round-trip.
+ *
+ * This is the SINGLE authority for "is final export unblocked?" after any
+ * mutation. Routes that previously returned only submission-plan counts or
+ * partial readiness fields now return this — the client no longer has to
+ * infer final-export readiness from intermediate signals.
+ */
+export async function getCanonicalReadinessSummary(
+  client: PrismaClient,
+  userId: string,
+  tenderId: string,
+): Promise<CanonicalReadinessSummary | null> {
+  const full = await getCanonicalTenderReadiness(client, userId, tenderId);
+  if (!full) return null;
+  return {
+    readyForFinalExport: full.readyForFinalExport,
+    readyForFullProposal: full.readyForFullProposal,
+    readyForSupportPackage: full.readyForSupportPackage,
+    blockers: full.blockers,
+    nextActions: full.nextActions,
+  };
+}
+
 export async function getCanonicalTenderReadiness(client: PrismaClient, userId: string, tenderId: string): Promise<CanonicalTenderReadiness | null> {
   const readiness = await getTenderGenerationReadinessStrict(client, userId, tenderId);
   if (!readiness) return null;

@@ -24,6 +24,7 @@ import { validateDocumentQuality } from "../../../../../lib/engine/document-qual
 import { POLISH_TIMEOUT_MS } from "../../../../../lib/timeout-config";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { logger } from "../../../../../lib/observability";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -510,5 +511,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const warning = planEmpty ? "Submission plan empty; outside-plan supersede skipped." : null;
   await logAction({ userId: actor.id, action: "AUTO_FINALIZE_RUN", entityType: "Tender", entityId: tenderId, description: `Auto-finalize processed ${processed} document(s) for ${tender.title}.`, metadata: { tenderId, processed, remaining: Math.max(0, candidates.length - processed), readinessOk: readiness.ok, warning }, requestId });
-  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: candidates.length - processed > 0 ? "CONTINUE_AUTO_FINALIZE" : "RECHECK_EXPORT_READINESS", readinessOk: readiness.ok, warning });
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  // checkFullExportReadiness above is the byte/hygiene gate; this is the
+  // canonical resolver the UI reads from /readiness. Both must agree.
+  const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tenderId);
+  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: candidates.length - processed > 0 ? "CONTINUE_AUTO_FINALIZE" : "RECHECK_EXPORT_READINESS", readinessOk: readiness.ok, warning, canonicalReadiness });
 }
