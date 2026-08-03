@@ -187,8 +187,9 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   // generated documents do not stay blocked after deterministic validation
   // already passed.
   if (content.length === 0 && (hasStorageContent || hasInlineContent)) {
-    if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
-    if (validationPassed) return "VALIDATED";
+    // Gap C: VALIDATED is sufficient for the automatic path (Gap 5).
+    // Either validationPassed OR reviewReady makes the doc export-ready.
+    if (validationPassed) return "READY_FOR_EXPORT";
     return want === "pdf" ? "PDF_GENERATED" : "DOCX_GENERATED";
   }
 
@@ -200,14 +201,14 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   if ((want === "xlsx" || want === "zip") && !isDocx && !isPdf) return "CONTROL_RECORD_ONLY";
 
   if (isPdf) {
-    if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
-    if (validationPassed) return "VALIDATED";
+    // Gap C: VALIDATED is sufficient for the automatic path (Gap 5).
+    if (validationPassed) return "READY_FOR_EXPORT";
     return "PDF_GENERATED";
   }
 
   if (isDocx) {
-    if (validationPassed && reviewReady) return "READY_FOR_EXPORT";
-    if (validationPassed) return "VALIDATED";
+    // Gap C: VALIDATED is sufficient for the automatic path (Gap 5).
+    if (validationPassed) return "READY_FOR_EXPORT";
     return "DOCX_GENERATED";
   }
 

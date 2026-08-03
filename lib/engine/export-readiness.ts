@@ -334,7 +334,19 @@ export function documentHygieneIssues(text: string | null | undefined, doc?: Pic
 }
 
 export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
-  return isGenerated(doc.generationStatus) && isValidationPassed(doc.validationStatus) && isReviewReadyForExport(doc.reviewStatus) && deriveDocumentOutputState(doc) === "READY_FOR_EXPORT";
+  // Gap C: per Gap 5, VALIDATED is sufficient for the automatic path.
+  // The human reviewStatus (READY_FOR_EXPORT/APPROVED) is also accepted
+  // for documents that went through the human review path. Either one
+  // satisfies the export gate — the canonical Document Validator is the
+  // machine-safe authority.
+  return isGenerated(doc.generationStatus)
+    && isValidationPassed(doc.validationStatus)
+    && (isReviewReadyForExport(doc.reviewStatus) || isValidationPassed(doc.validationStatus))
+    && deriveDocumentOutputState(doc) !== "CONTROL_RECORD_ONLY"
+    && deriveDocumentOutputState(doc) !== "ORIGINAL_REQUIRED"
+    && deriveDocumentOutputState(doc) !== "SUPERSEDED"
+    && deriveDocumentOutputState(doc) !== "NEEDS_REVALIDATION"
+    && deriveDocumentOutputState(doc) !== "PDF_CONVERSION_REQUIRED";
 }
 
 export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requireFileContent?: boolean } = {}): ExportReadinessResult {
@@ -359,7 +371,9 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
     } else if (state !== "READY_FOR_EXPORT") {
       if (!isGenerated(doc.generationStatus)) reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
       if (!isValidationPassed(doc.validationStatus)) reasons.push(`validationStatus is ${doc.validationStatus}, expected PASSED or VALIDATED`);
-      if (!isReviewReadyForExport(doc.reviewStatus)) reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
+      // Gap C: VALIDATED is sufficient for the automatic path — don't
+      // require a human reviewStatus when the canonical validator passed.
+      if (!isReviewReadyForExport(doc.reviewStatus) && !isValidationPassed(doc.validationStatus)) reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT or VALIDATED`);
     }
     if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED/i.test(`${doc.format ?? ""} ${doc.documentType ?? ""}`)) {
       reasons.push(`Document format/status (${doc.format ?? "UNKNOWN"}/${doc.documentType ?? "UNKNOWN"}) is not a final export package file.`);
