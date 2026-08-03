@@ -232,7 +232,9 @@ test("PDF required with DOCX blocks; approved uploaded PDF unblocks; wrong/zero/
 test("final ZIP manifest rejects missing, wrong format, unapproved, duplicate and excludes outside-plan workspace docs", () => {
   const tender = { id: "t", requirements: [{ id: "r1", title: "A", description: "", requirementType: "TECHNICAL", priority: "MANDATORY", exactFileName: "A.pdf" }] };
   const docs = [
-    doc({ id: "a", name: "A", exactFileName: "A.pdf", format: "PDF", reviewStatus: "PENDING", storagePath: "uploads/a.pdf" }),
+    // Gap C: use PENDING validationStatus so the doc is genuinely not
+    // export-ready (VALIDATED alone is now sufficient per Gap 5).
+    doc({ id: "a", name: "A", exactFileName: "A.pdf", format: "PDF", reviewStatus: "PENDING", validationStatus: "PENDING", storagePath: "uploads/a.pdf" }),
     doc({ id: "b", name: "B", exactFileName: "B.docx", format: "DOCX", storagePath: "uploads/b.docx" }),
   ];
   const planned = deriveRequiredPackageDocuments(tender, docs);
@@ -240,7 +242,7 @@ test("final ZIP manifest rejects missing, wrong format, unapproved, duplicate an
   const manifest = buildFinalZipManifestFromModel("t", planned, generated);
   assert.equal(manifest.ready, false);
   assert.ok(manifest.extraFilesExcluded.some((reason) => reason.includes("outside submission plan")));
-  assert.ok(generated.some((row) => row.exclusionReason === "not approved"));
+  assert.ok(generated.some((row) => row.exclusionReason === "not validated" || row.exclusionReason === "not approved"), `expected an exclusion reason for the unvalidated doc, got: ${generated.map((r) => r.exclusionReason).join(", ")}`);
 
   const duplicatePlan: PlannedPackageDocument[] = [
     { ...planned[0], key: "a", displayName: "Duplicate.pdf", status: "export_ready", blockerReason: null, generatedDocumentId: "a" },
