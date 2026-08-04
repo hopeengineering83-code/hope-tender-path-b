@@ -35,7 +35,7 @@ describe("upload, extraction, and manual continuation contract", () => {
     const clientPipeline = readFileSync("lib/ui/auto-pipeline.ts", "utf8");
     assert.match(clientPipeline, /\/api\/ai-jobs\/run-next\?jobType=EXTRACT_TEXT/);
     assert.doesNotMatch(clientPipeline, /run-next\?jobType=AI_ANALYZE/);
-    assert.match(clientPipeline, /AI Analyze remains an explicit action/);
+    assert.match(clientPipeline, /AI Analyze remains explicit|select AI Analyze/);
   });
 
   it("never falls back to the full reviewed Vault for positive proposal evidence", () => {
