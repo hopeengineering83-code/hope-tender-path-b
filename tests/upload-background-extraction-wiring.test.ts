@@ -13,14 +13,14 @@ describe("upload requests hand verified bytes to durable extraction", () => {
     ["upload-first", firstUpload],
     ["secure upload", secureUpload],
   ] as const) {
-    it(`${name} never performs OCR/text extraction or queues analysis directly`, () => {
+    it(`${name} never performs extraction or queues analysis directly`, () => {
       assert.doesNotMatch(source, /extractTextFromBuffer/);
       assert.doesNotMatch(source, /queueAutomaticTenderPipeline/);
       assert.match(source, /enqueueTenderFileExtractionJob/);
     });
   }
 
-  it("first-upload source rows and deterministic extraction jobs share one transaction", () => {
+  it("first-upload rows and deterministic extraction jobs share one transaction", () => {
     const transaction = firstUpload.slice(
       firstUpload.indexOf("const persisted = await prisma.$transaction"),
       firstUpload.indexOf("}, { timeout: 30_000 })"),
@@ -31,7 +31,7 @@ describe("upload requests hand verified bytes to durable extraction", () => {
     assert.match(transaction, /extractedText: null/);
   });
 
-  it("append upload queues extraction only after the package state is reconciled", () => {
+  it("append upload queues extraction after package reconciliation", () => {
     const completion = secureUpload.indexOf("await completeTenderPackageBatch");
     const enqueue = secureUpload.indexOf("await enqueueTenderFileExtractionJob(prisma");
     assert.ok(completion >= 0 && enqueue > completion);
@@ -39,17 +39,19 @@ describe("upload requests hand verified bytes to durable extraction", () => {
     assert.match(secureUpload, /pipelineStage: processingStage/);
   });
 
-  it("company uploads re-extract durable bytes in VAULT_INGEST before ingestion", () => {
+  it("company uploads re-extract durable bytes in VAULT_INGEST", () => {
     assert.match(secureUpload, /jobType: "VAULT_INGEST"/);
     assert.match(secureUpload, /reExtractAll: true/);
     assert.match(secureUpload, /aiExtractionStatus: "PENDING"/);
     assert.match(secureUpload, /extractedText: null/);
   });
 
-  it("the browser wakes the extraction worker for an extraction-stage response", () => {
-    assert.match(browserPipeline, /pipelineStage\?: "EXTRACT_TEXT_QUEUED" \| "AI_ANALYZE_QUEUED"/);
+  it("the browser wakes extraction only and recognizes the manual gate", () => {
+    assert.match(browserPipeline, /EXTRACT_TEXT_QUEUED/);
+    assert.match(browserPipeline, /READY_FOR_AI_ANALYZE/);
     assert.match(browserPipeline, /jobType=EXTRACT_TEXT/);
-    assert.match(browserPipeline, /jobType=AI_ANALYZE/);
+    assert.doesNotMatch(browserPipeline, /jobType=AI_ANALYZE/);
+    assert.match(browserPipeline, /select AI Analyze|explicit action/i);
   });
 
   it("has exactly one EXTRACT_TEXT implementation", () => {
