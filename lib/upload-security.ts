@@ -18,6 +18,7 @@ export const MAX_EXTRACTED_TEXT_CHARS = 2_000_000;
 const MAX_ARCHIVE_ENTRIES = 2_000;
 const MAX_ARCHIVE_EXPANDED_BYTES = 80 * 1024 * 1024;
 
+const SUPPORTED_SOURCE_TYPES = "PDF, DOCX, XLSX, CSV, and TXT";
 const extensionToMime: Record<string, string[]> = {
   ".pdf": ["application/pdf"],
   ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/zip", "application/octet-stream"],
@@ -45,28 +46,30 @@ async function validateOpenXml(buffer: Buffer, extension: ".docx" | ".xlsx"): Pr
   try {
     zip = await JSZip.loadAsync(buffer, { checkCRC32: true, createFolders: false });
   } catch {
-    return "The Office archive is corrupt or malformed";
+    return `Invalid ${extension.slice(1).toUpperCase()} file: the Office archive is corrupt or malformed.`;
   }
 
   const entries = Object.values(zip.files);
-  if (entries.length > MAX_ARCHIVE_ENTRIES) return "The Office archive contains too many entries";
+  if (entries.length > MAX_ARCHIVE_ENTRIES) return `Invalid ${extension.slice(1).toUpperCase()} file: the archive contains too many entries.`;
   let expandedBytes = 0;
   for (const entry of entries) {
     if (entry.name.startsWith("/") || entry.name.includes("../") || entry.name.includes("..\\")) {
-      return "The Office archive contains an unsafe path";
+      return `Invalid ${extension.slice(1).toUpperCase()} file: the archive contains an unsafe path.`;
     }
     if (unsafeOfficeEntry(entry.name)) {
-      return "Macro, ActiveX, embedded-object, custom-UI, and external-link content is not permitted";
+      return "This Office file contains macros, ActiveX, embedded objects, custom UI, or external links, which are not permitted.";
     }
     if (entry.dir) continue;
     const data = await entry.async("uint8array");
     expandedBytes += data.byteLength;
-    if (expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) return "The Office archive expands beyond the permitted limit";
+    if (expandedBytes > MAX_ARCHIVE_EXPANDED_BYTES) {
+      return `Invalid ${extension.slice(1).toUpperCase()} file: the expanded archive exceeds the permitted limit.`;
+    }
   }
 
   const expected = extension === ".docx" ? "word/document.xml" : "xl/workbook.xml";
   if (!zip.file("[Content_Types].xml") || !zip.file(expected)) {
-    return `The archive is not a valid ${extension.slice(1).toUpperCase()} document`;
+    return `Invalid ${extension.slice(1).toUpperCase()} file: required Open XML content is missing.`;
   }
   return null;
 }
@@ -87,46 +90,82 @@ export async function validateUploadFile(file: File, buffer: Buffer): Promise<Up
   const safeFileName = safeName(file.name);
   const extension = path.extname(safeFileName).toLowerCase();
 
+  if (extension === ".json") {
+    return {
+      ok: false,
+      safeFileName,
+      normalizedMime: "application/json",
+      error: `JSON is a Plan B staging descriptor, not an official Company Vault source. Use Plan B Import for JSON; upload ${SUPPORTED_SOURCE_TYPES} here.`,
+    };
+  }
+
   if (extension === ".doc" || extension === ".xls") {
     return {
       ok: false,
       safeFileName,
       normalizedMime: "application/octet-stream",
-      error: "Legacy DOC/XLS files cannot be safely inspected. Convert them to DOCX/XLSX before uploading",
+      error: "Legacy DOC/XLS files cannot be safely inspected. Convert DOC to DOCX or XLS to XLSX before uploading.",
     };
   }
 
   const allowedMimes = extensionToMime[extension];
-  if (!allowedMimes) return { ok: false, safeFileName, normalizedMime: "application/octet-stream", error: "Unsupported file extension" };
-  if (buffer.byteLength === 0) return { ok: false, safeFileName, normalizedMime: "application/octet-stream", error: "Empty file" };
-  if (buffer.byteLength > MAX_UPLOAD_FILE_BYTES) return { ok: false, safeFileName, normalizedMime: "application/octet-stream", error: "File exceeds the 10 MB limit" };
+  if (!allowedMimes) {
+    return {
+      ok: false,
+      safeFileName,
+      normalizedMime: "application/octet-stream",
+      error: `Unsupported file type. Company Vault accepts ${SUPPORTED_SOURCE_TYPES}.`,
+    };
+  }
+  if (buffer.byteLength === 0) {
+    return { ok: false, safeFileName, normalizedMime: "application/octet-stream", error: "The selected file is empty." };
+  }
+  if (buffer.byteLength > MAX_UPLOAD_FILE_BYTES) {
+    return { ok: false, safeFileName, normalizedMime: "application/octet-stream", error: "The selected file exceeds the 10 MB per-file limit." };
+  }
 
   const suppliedMime = (file.type || "application/octet-stream").toLowerCase();
   if (!allowedMimes.includes(suppliedMime)) {
-    return { ok: false, safeFileName, normalizedMime: suppliedMime, error: "File extension and MIME type do not match" };
+    return {
+      ok: false,
+      safeFileName,
+      normalizedMime: suppliedMime,
+      error: `Invalid ${extension.slice(1).toUpperCase()} file: the filename extension and MIME type do not match.`,
+    };
   }
 
   if (extension === ".pdf" && !startsWith(buffer, [0x25, 0x50, 0x44, 0x46, 0x2d])) {
-    return { ok: false, safeFileName, normalizedMime: suppliedMime, error: "Invalid PDF signature" };
+    return { ok: false, safeFileName, normalizedMime: suppliedMime, error: "Invalid PDF file: the required PDF signature is missing." };
   }
   if (extension === ".docx" || extension === ".xlsx") {
-    if (!startsWith(buffer, [0x50, 0x4b])) return { ok: false, safeFileName, normalizedMime: suppliedMime, error: "Invalid Office archive signature" };
+    if (!startsWith(buffer, [0x50, 0x4b])) {
+      return {
+        ok: false,
+        safeFileName,
+        normalizedMime: suppliedMime,
+        error: `Invalid ${extension.slice(1).toUpperCase()} file: the required Office archive signature is missing.`,
+      };
+    }
     const archiveError = await validateOpenXml(buffer, extension);
     if (archiveError) return { ok: false, safeFileName, normalizedMime: suppliedMime, error: archiveError };
   }
   if (extension === ".txt" || extension === ".csv") {
-    if (buffer.includes(0)) return { ok: false, safeFileName, normalizedMime: suppliedMime, error: "Binary content is not permitted in text uploads" };
-    if (looksLikeActiveText(buffer)) return { ok: false, safeFileName, normalizedMime: suppliedMime, error: "Active web content is not permitted" };
+    if (buffer.includes(0)) {
+      return { ok: false, safeFileName, normalizedMime: suppliedMime, error: `Invalid ${extension.slice(1).toUpperCase()} file: binary content is not permitted.` };
+    }
+    if (looksLikeActiveText(buffer)) {
+      return { ok: false, safeFileName, normalizedMime: suppliedMime, error: `Invalid ${extension.slice(1).toUpperCase()} file: active web content is not permitted.` };
+    }
   }
 
   return { ok: true, safeFileName, normalizedMime: extensionToMime[extension][0] };
 }
 
 export function validateUploadBatch(files: File[]): string | null {
-  if (files.length === 0) return "No files provided";
-  if (files.length > MAX_UPLOAD_FILES) return `A maximum of ${MAX_UPLOAD_FILES} files is permitted per request`;
+  if (files.length === 0) return "No files were selected.";
+  if (files.length > MAX_UPLOAD_FILES) return `A maximum of ${MAX_UPLOAD_FILES} files is permitted per request.`;
   const total = files.reduce((sum, file) => sum + file.size, 0);
-  if (total > MAX_UPLOAD_TOTAL_BYTES) return "The upload request exceeds the 30 MB aggregate limit";
+  if (total > MAX_UPLOAD_TOTAL_BYTES) return "The upload request exceeds the 30 MB aggregate limit.";
   return null;
 }
 
