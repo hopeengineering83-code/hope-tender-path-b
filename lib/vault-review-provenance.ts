@@ -318,9 +318,58 @@ export function sourceByteIntegrityIsVerified(
     (sourceDocument.contentByteLength ?? 0) > 0;
 }
 
+/**
+ * Honorifics and post-nominals that a source document prints but an AI
+ * extractor strips. A CLOSED list, never a pattern, so this can only ever
+ * ignore these exact tokens.
+ */
+const NAME_AFFIXES = new Set([
+  "mr", "mrs", "ms", "miss", "dr", "prof", "professor", "eng", "engr", "ing",
+  "ato", "wro", "wt", "weyzero", "obo",
+  "msc", "bsc", "phd", "mba", "ma", "ba", "mphil", "pmp", "pe",
+]);
+
+function significantTokens(value: string): string[] {
+  return value
+    .toLocaleLowerCase("en-US")
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((token) => token.length > 0 && !NAME_AFFIXES.has(token));
+}
+
+/**
+ * Order-independent identity match, used ONLY after the ordered pattern has
+ * already failed, and ONLY for a record's identity field.
+ *
+ * An AI extractor normalises "BEKELE, Dawit (MSc)" to "Dawit Bekele".
+ * evidencePattern then builds /Dawit\s+Bekele/i, finds nothing, and the record
+ * stays draft — invisible to matching. That is why a vault of 112 candidates
+ * promoted zero records and the workflow sat on "Match Evidence" forever with
+ * analysis and engine both succeeding.
+ *
+ * The relaxation is deliberately narrow:
+ *   - identity fields only, never inferred fields like yearsExperience, where
+ *     order-independent tokens would falsely match scattered text;
+ *   - EVERY significant token must appear in the source as a whole word;
+ *   - no fuzzy, phonetic or edit-distance matching of any kind;
+ *   - affixes come from the closed NAME_AFFIXES list.
+ * A value with any token absent still fails, so a fabricated name cannot pass.
+ */
+function identityTokensPresent(text: string, value: string): RegExpExecArray | null {
+  const tokens = significantTokens(value);
+  if (tokens.length === 0) return null;
+  let earliest: RegExpExecArray | null = null;
+  for (const token of tokens) {
+    const hit = new RegExp(`(?<![\p{L}\p{N}])${escapeRegExp(token)}(?![\p{L}\p{N}])`, "iu").exec(text);
+    if (!hit) return null;
+    if (!earliest || hit.index < earliest.index) earliest = hit;
+  }
+  return earliest;
+}
+
 function collectEvidence(
   sourceDocument: ReviewSourceDocument,
   fields: ReviewEvidenceField[],
+  recordType?: ReviewRecordType,
 ): ReviewEvidenceAssessment {
   if (!sourceDocument.id) {
     return { ok: false, code: "SOURCE_DOCUMENT_REQUIRED", missingFields: [] };
@@ -340,8 +389,16 @@ function collectEvidence(
   const missingFields: string[] = [];
   const evidence: DurableReviewEvidence[] = [];
 
+  const identitySpec = recordType ? IDENTITY_FIELD_BY_RECORD_TYPE[recordType] : null;
+  const identityFieldNames = new Set(
+    identitySpec == null ? [] : Array.isArray(identitySpec) ? identitySpec : [identitySpec],
+  );
+
   for (const item of normalizedFields) {
-    const match = evidencePattern(item.value).exec(text);
+    let match = evidencePattern(item.value).exec(text);
+    if ((!match || match.index < 0) && identityFieldNames.has(item.field)) {
+      match = identityTokensPresent(text, item.value);
+    }
     if (!match || match.index < 0) {
       missingFields.push(item.field);
       continue;
@@ -381,11 +438,12 @@ function collectEvidence(
 export function assessReviewEvidence(
   sourceDocument: ReviewSourceDocument | null | undefined,
   fields: ReviewEvidenceField[],
+  recordType?: ReviewRecordType,
 ): ReviewEvidenceAssessment {
   if (!sourceDocument) {
     return { ok: false, code: "SOURCE_DOCUMENT_REQUIRED", missingFields: [] };
   }
-  return collectEvidence(sourceDocument, fields);
+  return collectEvidence(sourceDocument, fields, recordType);
 }
 
 export function buildReviewProvenance(input: {
@@ -408,7 +466,7 @@ export function buildReviewProvenance(input: {
       code: ReviewEvidenceFailure["code"];
       missingFields: string[];
     } {
-  const assessment = assessReviewEvidence(input.sourceDocument, input.fields);
+  const assessment = assessReviewEvidence(input.sourceDocument, input.fields, input.recordType);
   if (!assessment.ok) return assessment;
 
   const provenance: StoredReviewProvenance = {
@@ -456,7 +514,7 @@ export function buildSourceVerificationProvenance(input: {
       code: ReviewEvidenceFailure["code"];
       missingFields: string[];
     } {
-  const assessment = assessReviewEvidence(input.sourceDocument, input.fields);
+  const assessment = assessReviewEvidence(input.sourceDocument, input.fields, input.recordType);
   if (!assessment.ok) return assessment;
 
   const verifiedAt = (input.verifiedAt ?? new Date()).toISOString();
