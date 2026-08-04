@@ -5,40 +5,29 @@ import { readFileSync } from "node:fs";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("pipeline authority non-negotiables", () => {
-  it("client upload flow cannot POST AI Analyze", () => {
+  it("client upload wakes extraction only and cannot start AI Analyze", () => {
     const source = read("lib/ui/auto-pipeline.ts");
-    assert.doesNotMatch(source, /fetch\([^)]*ai-analyze/);
-    assert.match(source, /server is the single orchestration owner/i);
+    assert.match(source, /jobType=EXTRACT_TEXT/);
+    assert.doesNotMatch(source, /run-next\?jobType=AI_ANALYZE/);
+    assert.doesNotMatch(source, /manual-ai-analyze/);
+    assert.match(source, /AI Analyze remains an explicit action|select AI Analyze/i);
   });
 
   it("Company Vault repair uses byte re-import, not extracted-text-only repair", () => {
-    // This used to be pinned to a helper in lib/ui/auto-pipeline.ts that no
-    // production file ever imported, so it proved the endpoint of dead code.
-    // The guarantee is unchanged — repair must re-read stored bytes rather than
-    // patch extracted text — but it now has to hold where repair is actually
-    // invoked, which is the two Vault controls.
     for (const path of ["app/dashboard/company/page.tsx", "components/company-vault-verification-page.tsx"]) {
       const source = read(path);
-      assert.match(
-        source,
-        /fetch\("\/api\/company\/reimport",\s*\{\s*method\s*:\s*"POST"/,
-        `${path} must repair through the byte re-import route`,
-      );
-      // knowledge/repair is a diagnostics READ. It must never be the repair
-      // mutation: it reports on extracted text and cannot restore source bytes.
-      assert.doesNotMatch(
-        source,
-        /fetch\("\/api\/company\/knowledge\/repair",\s*\{\s*method\s*:\s*"POST"/,
-        `${path} must not use the diagnostics route as a repair mutation`,
-      );
+      assert.match(source, /fetch\("\/api\/company\/reimport",\s*\{\s*method\s*:\s*"POST"/);
+      assert.doesNotMatch(source, /fetch\("\/api\/company\/knowledge\/repair",\s*\{\s*method\s*:\s*"POST"/);
     }
   });
 
-  it("workflow center cannot directly mutate gated stages", () => {
+  it("workflow center projects action contracts but executes no mutation", () => {
     const source = read("app/api/tenders/[id]/workflow-center/route.ts");
     assert.doesNotMatch(source, /actionUrl\s*:/);
     assert.doesNotMatch(source, /actionMethod\s*:/);
-    assert.match(source, /actionKind: "navigation" as const/);
+    assert.match(source, /actionKind: action\.mutation \? "mutation" as const : "navigation" as const/);
+    assert.match(source, /mutation: action\.mutation/);
+    assert.doesNotMatch(source, /fetch\s*\(|axios\./);
   });
 
   it("partial analysis remains terminally non-successful", () => {
@@ -48,7 +37,7 @@ describe("pipeline authority non-negotiables", () => {
     assert.match(source, /if \(exec\.completedChunks > 0\) return "PARTIAL_SUCCESS"/);
   });
 
-  it("mixed documents are processed and the active Vault page exposes automatic verification", () => {
+  it("mixed documents are processed without fabricating reviewed trust", () => {
     const routePage = read("app/dashboard/company/review/page.tsx");
     const verificationPage = read("components/company-vault-verification-page.tsx");
     const ingestion = read("lib/company-vault-ingestion.ts");
