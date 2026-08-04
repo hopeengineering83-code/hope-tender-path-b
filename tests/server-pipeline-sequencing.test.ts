@@ -17,16 +17,21 @@ describe("upload pipeline sequencing", () => {
     assert.match(upload, /engineQueued: false/);
   });
 
-  it("marks extraction ready without creating a synthetic analysis job", () => {
+  it("parks the prepared analysis checkpoint as canceled and non-runnable", () => {
     assert.match(extractionService, /queueAutomaticTenderPipeline/);
-    assert.match(readyBoundary, /READY_FOR_AI_ANALYZE/);
-    assert.doesNotMatch(readyBoundary, /aiJob\.(?:create|update|find)/);
-    assert.doesNotMatch(readyBoundary, /jobType:\s*"AI_ANALYZE"/);
+    assert.match(readyBoundary, /createAnalysisJob/);
+    assert.match(readyBoundary, /manualRequested !== true/);
+    assert.match(readyBoundary, /status:\s*"CANCELED"/);
+    assert.match(readyBoundary, /autoContinue:\s*false/);
+    assert.match(readyBoundary, /manualGate:\s*"AI_ANALYZE"/);
+    assert.match(readyBoundary, /Awaiting the explicit AI Analyze action/);
+    assert.doesNotMatch(readyBoundary, /run-next\?jobType=AI_ANALYZE/);
   });
 
   it("deduplicates real AI Analyze jobs through the explicit route and service", () => {
     assert.match(manualAnalyze, /createAnalysisJob/);
     assert.match(manualAnalyze, /where:\s*\{ id: tenderId, userId: actor\.id \}/);
+    assert.match(manualAnalyze, /manualRequested:\s*true/);
     const service = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
     assert.match(service, /status: \{ in: \["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"\] \}/);
     assert.match(service, /tenderId/);
