@@ -1,6 +1,6 @@
 import { handleSecureUpload } from "../../../lib/secure-upload-handler";
 import { scheduleRequestScopedWorkerWake } from "../../../lib/ai-jobs/request-scoped-worker-wake";
-import { recoverIdempotentTenderUpload } from "../../../lib/tender-upload-idempotent-recovery";
+import { prepareIdempotentTenderUploadRetry } from "../../../lib/tender-upload-idempotent-recovery";
 
 // Canonical secure upload route for existing tenders and Company Vault files.
 // The handler persists verified bytes and durable jobs. This wrapper starts
@@ -17,13 +17,22 @@ type SecureUploadResponse = {
 };
 
 export async function POST(req: Request) {
-  // Preserve one request copy for the narrow unique-key recovery path. The
-  // canonical handler still owns every normal upload and all byte validation.
-  const recoveryRequest = req.clone();
+  // Preserve independent copies before the canonical handler consumes the
+  // multipart body. The first copy may release a legacy non-active dedup key;
+  // the second is then passed back through the same canonical handler. No
+  // secondary upload implementation is allowed here.
+  const recoveryPreparationRequest = req.clone();
+  const canonicalRetryRequest = req.clone();
+
   const primaryResponse = await handleSecureUpload(req);
-  const response = primaryResponse.ok
-    ? primaryResponse
-    : await recoverIdempotentTenderUpload(recoveryRequest, primaryResponse) ?? primaryResponse;
+  let response = primaryResponse;
+  if (!primaryResponse.ok) {
+    const prepared = await prepareIdempotentTenderUploadRetry(
+      recoveryPreparationRequest,
+      primaryResponse,
+    );
+    if (prepared) response = await handleSecureUpload(canonicalRetryRequest);
+  }
   if (!response.ok) return response;
 
   const payload = await response.clone().json().catch(() => null) as SecureUploadResponse | null;
