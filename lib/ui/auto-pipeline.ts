@@ -70,7 +70,7 @@ export async function triggerTenderUploadAutoPipeline(
       fired: false,
       endpoint,
       status: "queued",
-      message: "Source extraction is queued. The background worker will continue it; AI Analyze remains an explicit action.",
+      message: "Source extraction remains queued because the worker start could not be confirmed. Opening the tender workspace retries this automatic stage; AI Analyze remains explicit.",
     };
   }
 
@@ -91,28 +91,21 @@ export const VAULT_INGEST_WORKER_ENDPOINT = "/api/ai-jobs/run-next?jobType=VAULT
 /**
  * Start the VAULT_INGEST job the server has just queued.
  *
- * Queuing and running are separate steps. Uploading a Company Vault document
- * enqueues VAULT_INGEST (lib/secure-upload-handler.ts) and the UI reports
- * "queued — this completes automatically", but nothing in that path ever
- * claimed the job: the two manual repair controls woke the worker inline while
- * the upload path, the one on the owner's normal route, did not. The only
- * other claimant is .github/workflows/drain-ai-job-queue.yml, which posts to
- * the PRODUCTION host — so on a preview deployment the job had no runner at
- * all and sat QUEUED indefinitely.
- *
- * The visible result was a vault of documents with no extracted text and
- * integrityStatus still at its "UNKNOWN" default, which makes
- * sourceByteIntegrityIsVerified() false, which leaves every Expert and Project
- * record unable to cite a source, which blocks the final ZIP. One unstarted
- * job, the whole pipeline stalled.
- *
- * Waking the worker is best-effort by design: the job is durable, so a failed
- * nudge costs latency, never work. That is why this never throws and never
- * reports failure — there is nothing for a caller to handle.
+ * Queuing and running are separate steps. The durable job is safe to nudge
+ * more than once because the worker claim is transactional and tenant-scoped.
  */
 export async function startQueuedVaultIngestion(): Promise<void> {
   try {
-    await fetch(VAULT_INGEST_WORKER_ENDPOINT, { method: "POST", credentials: "same-origin" });
+    const response = await fetch(VAULT_INGEST_WORKER_ENDPOINT, {
+      method: "POST",
+      credentials: "same-origin",
+    });
+    if (!response.ok) {
+      logger.warn("[auto-pipeline] vault ingestion worker nudge was rejected; job stays queued", {
+        endpoint: VAULT_INGEST_WORKER_ENDPOINT,
+        status: response.status,
+      });
+    }
   } catch (error) {
     logger.warn("[auto-pipeline] vault ingestion worker nudge failed; job stays queued", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
