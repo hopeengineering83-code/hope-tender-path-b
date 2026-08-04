@@ -16,10 +16,12 @@ export async function GET(req: Request) {
   const company = await ensureCompanyForUser(prisma, userId);
   const readiness = await getCompanyIngestionReadiness(company.id);
 
-  // Recovery for CompanyDocuments whose durable VAULT_INGEST job was stored
-  // before a Preview worker could be started. Queue-empty is a safe no-op and
-  // the worker claim remains scoped to this authenticated tenant.
-  scheduleRequestScopedWorkerWake(req, "VAULT_INGEST");
+  if (readiness.totals.pendingDocuments > 0) {
+    // Recovery for CompanyDocuments whose durable VAULT_INGEST job was stored
+    // before a Preview worker could be started. The worker claim remains
+    // scoped to this authenticated tenant.
+    scheduleRequestScopedWorkerWake(req, "VAULT_INGEST");
+  }
 
   return NextResponse.json(readiness);
 }
