@@ -2,8 +2,6 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
-import { decideTenderUploadAutoPipeline } from "../lib/ui/auto-pipeline";
-
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("pipeline authority non-negotiables", () => {
@@ -13,6 +11,14 @@ describe("pipeline authority non-negotiables", () => {
     assert.doesNotMatch(source, /run-next\?jobType=AI_ANALYZE/);
     assert.doesNotMatch(source, /manual-ai-analyze/);
     assert.match(source, /AI Analyze remains an explicit action|select AI Analyze/i);
+  });
+
+  it("reports a failed worker wake honestly instead of promising a scheduler", () => {
+    const source = read("components/workflow-step-links.tsx");
+    assert.match(source, /Queued, but the background worker could not be started from here/);
+    assert.match(source, /It stays queued and runs when a worker next picks it up/);
+    assert.doesNotMatch(source, /scheduled background worker will continue it/);
+    assert.match(source, /if \(!response\.ok\) setMessage\(couldNotStart\)/);
   });
 
   it("Company Vault repair uses byte re-import, not extracted-text-only repair", () => {
@@ -25,9 +31,6 @@ describe("pipeline authority non-negotiables", () => {
 
   it("workflow center projects action contracts but executes no mutation", () => {
     const source = read("app/api/tenders/[id]/workflow-center/route.ts");
-    // The affordance is what matters. Without a URL and a method there is
-    // nothing for a client to invoke, so the Center stays a description of the
-    // workflow rather than a second authority over it.
     assert.doesNotMatch(source, /actionUrl\s*:/);
     assert.doesNotMatch(source, /actionMethod\s*:/);
     assert.match(source, /actionKind: action\.mutation \? "mutation" as const : "navigation" as const/);
