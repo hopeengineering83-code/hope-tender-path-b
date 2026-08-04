@@ -16,13 +16,21 @@ type CapabilityResponse = {
   canMutateTender?: boolean;
 };
 
-function actionForStep(currentIndex: number): ManualAction | null {
-  if (currentIndex === 2) return "AI_ANALYZE";
-  if (currentIndex >= 3 && currentIndex <= 6) return "RUN_ENGINE";
+function actionForCanonicalDecision(currentAction: string): ManualAction | null {
+  if (currentAction === "RUN_AI_ANALYZE" || currentAction === "RESUME_AI_ANALYZE") {
+    return "AI_ANALYZE";
+  }
+  if (currentAction === "RUN_ENGINE") return "RUN_ENGINE";
   return null;
 }
 
-export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
+export function WorkflowStepLinks({
+  currentIndex,
+  currentAction,
+}: {
+  currentIndex: number;
+  currentAction: string;
+}) {
   const params = useParams<{ id?: string | string[] }>();
   const router = useRouter();
   const rawId = params?.id;
@@ -60,7 +68,7 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
   const safeIndex = complete ? STEP_LABELS.length - 1 : Math.max(0, currentIndex);
   const currentStage = TENDER_WORKFLOW_STAGES[safeIndex];
   const currentLabel = currentStage.label;
-  const manualAction = useMemo(() => actionForStep(currentIndex), [currentIndex]);
+  const manualAction = useMemo(() => actionForCanonicalDecision(currentAction), [currentAction]);
 
   async function wakeWorker(jobType: "AI_ANALYZE" | "ENGINE_RUN") {
     try {
