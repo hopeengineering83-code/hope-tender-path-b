@@ -27,6 +27,10 @@ const DESKTOP_AUTHENTICATED_SPECS = [
   // tender upload → refresh flow. Verifies that Plan B import never
   // overwrites official Company Vault bytes/hash/mime/fileName.
   "vault-plan-b-tender-refresh.spec.ts",
+  // Company Vault recovery acceptance: supported uploads use /api/upload,
+  // refresh immediately, wake VAULT_INGEST, and Plan B displays restored
+  // canonical totals without repeated missing-source warnings.
+  "company-vault-plan-b-recovery.spec.ts",
 ];
 
 // Tablet-authenticated contract specs validate responsive UI, role-aware
