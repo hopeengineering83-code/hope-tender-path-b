@@ -5,22 +5,12 @@
 // center, report, and export surfaces so they can never disagree.
 //
 // This module implements NO new gating logic. It aggregates and reconciles
-// the output of the existing fail-closed engines:
-//   - getTenderReleaseSnapshot      (extraction/analysis grounding, eligibility)
-//   - getCanonicalTenderWorkflowDecision (the ONE next action — do not recompute)
-//   - getFinalSubmissionReadiness   (the richest blocker list, category+severity+action)
-//   - evaluateBidDecision           (score/verdict — gated, unmodified)
-//
-// Readiness score and bid verdict are gated behind readinessCalculable:
-// valid source extraction (snapshot.extraction.overallOk) AND grounded AI
-// analysis (snapshot.analysis.eligibleForExport — AI_SUCCEEDED, not regex
-// fallback, content hash current). Before that gate passes, both are null.
-// Consumers must render "Not calculated" / "Decision unavailable" — never a
-// placeholder number or a default verdict.
+// the output of the existing fail-closed engines.
 
 import type { PrismaClient } from "@prisma/client";
 import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
 import { getCanonicalTenderWorkflowDecision } from "./canonical-workflow-decision";
+import { presentTwoActionWorkflowDecision } from "./two-action-workflow-presentation";
 import { getFinalSubmissionReadiness, type FinalSubmissionReadiness } from "./final-submission-readiness";
 import { evaluateBidDecision, type BidDecisionOutcome } from "./bid-decision";
 import { resolveDeploymentEnvironment } from "../deployment-context.cjs";
@@ -37,45 +27,22 @@ export type TenderReleaseBlocker = {
 
 export type TenderReleaseState = {
   tenderId: string;
-  /** Ties to getTenderReleaseSnapshot's revision token — changes whenever any input changes. */
   sourceRevision: string;
   calculatedAt: string;
-
   extractionGrounded: boolean;
   analysisGrounded: boolean;
-  /** extractionGrounded && analysisGrounded — gates readinessScore/verdict below. */
   readinessCalculable: boolean;
-
-  /** null until readinessCalculable — render "Not calculated", never 0 or a stale number. */
   readinessScore: number | null;
-  /** null until readinessCalculable — render "Decision unavailable", never a default verdict. */
   verdict: BidDecisionOutcome | null;
   verdictSummary: string | null;
-
-  /** ONE reconciled, deduped blocker list — category-level dedup collapses
-   *  the same underlying issue when multiple upstream engines independently
-   *  flag it (e.g. EXTRACTION_QUALITY_INSUFFICIENT from both the export gate
-   *  and the final-submission readiness checks). */
   blockers: TenderReleaseBlocker[];
   blockerTotal: number;
   criticalBlockerTotal: number;
-
-  /** ONE primary next action — passthrough of the existing canonical workflow
-   *  decision. Never recompute a competing next action from raw fields. */
   primaryNextAction: { action: string; label: string; reason: string } | null;
-
-  /** Passthrough of the authoritative, unmodified fail-closed gate flags. */
   generationEligible: boolean;
   exportEligible: boolean;
   finalZipEligible: boolean;
-
-  /** Per-field canonical grounding state (resolveCanonicalFieldState), passed
-   *  through from the single getFinalSubmissionReadiness call above — never
-   *  refetched or recomputed by a consumer. Used for field-specific display
-   *  (e.g. currency provenance), not for blocker/score/verdict/action. */
   canonicalFields: CanonicalFieldState[] | undefined;
-
-  /** True whenever this deployment is not production (preview/CI/dev/local-build). */
   fixtureData: boolean;
   deploymentEnvironment: string;
 };
@@ -90,23 +57,6 @@ function normalizeSeverity(value: string): TenderReleaseBlockerSeverity {
 
 const SEVERITY_RANK: Record<TenderReleaseBlockerSeverity, number> = { CRITICAL: 3, HIGH: 2, MEDIUM: 1, LOW: 0 };
 
-// Cross-engine category aliases for the SAME underlying condition, verified
-// by runtime inspection to fire together and render as two unrelated red
-// warnings for one real issue:
-//   - export-readiness.ts's checkFullExportReadiness emits a tenderLevelBlocker
-//     CLIENT_NAME_REQUIRED, while final-submission-readiness.ts's own client
-//     name gate independently emits CLIENT_NAME_MISSING for the same
-//     empty-clientName condition.
-//   - export-readiness.ts's checkFullExportReadiness emits a tenderLevelBlocker
-//     NO_ACTIVE_GENERATED_DOCUMENTS when docs.length === 0, while its sibling
-//     checkExportReadiness independently emits a synthetic __tender__
-//     document failure (mapped below to DOCUMENT_NOT_READY:__tender__) for
-//     the exact same zero-documents condition.
-// Mapped to one dedup key (grouping only — the retained blocker keeps its
-// own original category for display) so the same real issue never renders
-// as two separate blockers here. The underlying engines are left unchanged
-// since export-readiness-panel.tsx still reads its full, undeduped output
-// directly.
 const CATEGORY_DEDUP_KEY: Record<string, string> = {
   CLIENT_NAME_REQUIRED: "CLIENT_NAME_MISSING",
   "DOCUMENT_NOT_READY:__tender__": "NO_ACTIVE_GENERATED_DOCUMENTS",
@@ -116,35 +66,26 @@ function dedupKey(category: string): string {
   return CATEGORY_DEDUP_KEY[category] ?? category;
 }
 
-/** Exported for direct unit testing of the dedup/reconciliation rules — not
- *  meant to be called by UI consumers, which must use getTenderReleaseState. */
 export function reconcileBlockers(finalSubmission: FinalSubmissionReadiness): {
   blockers: TenderReleaseBlocker[];
   blockerTotal: number;
   criticalBlockerTotal: number;
 } {
   const raw: TenderReleaseBlocker[] = [
-    ...finalSubmission.tenderLevelBlockers.map((b) => ({
-      category: b.category,
-      severity: normalizeSeverity(b.severity),
-      title: b.title,
-      nextAction: b.recommendedAction ?? null,
+    ...finalSubmission.tenderLevelBlockers.map((blocker) => ({
+      category: blocker.category,
+      severity: normalizeSeverity(blocker.severity),
+      title: blocker.title,
+      nextAction: blocker.recommendedAction ?? null,
     })),
-    ...finalSubmission.documentBlockers.map((b) => ({
-      category: `DOCUMENT_NOT_READY:${b.documentId}`,
-      severity: normalizeSeverity(b.severity),
-      title: `${b.name}: ${b.reasons.join("; ")}`,
-      nextAction: b.nextActions[0] ?? null,
+    ...finalSubmission.documentBlockers.map((blocker) => ({
+      category: `DOCUMENT_NOT_READY:${blocker.documentId}`,
+      severity: normalizeSeverity(blocker.severity),
+      title: `${blocker.name}: ${blocker.reasons.join("; ")}`,
+      nextAction: blocker.nextActions[0] ?? null,
     })),
   ];
 
-  // Dedupe by category (via dedupKey, which collapses known cross-engine
-  // aliases first) — the same underlying issue is sometimes independently
-  // flagged by more than one upstream engine (e.g.
-  // export-readiness.ts's checkTenderLevelExportBlockers and
-  // final-submission-readiness.ts's own checks both emit
-  // EXTRACTION_QUALITY_INSUFFICIENT under the same category code). Keep the
-  // highest-severity instance; a lower-severity duplicate adds no information.
   const byCategory = new Map<string, TenderReleaseBlocker>();
   for (const blocker of raw) {
     const key = dedupKey(blocker.category);
@@ -153,8 +94,12 @@ export function reconcileBlockers(finalSubmission: FinalSubmissionReadiness): {
       byCategory.set(key, blocker);
     }
   }
-  const blockers = Array.from(byCategory.values()).sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
-  const criticalBlockerTotal = blockers.filter((b) => b.severity === "CRITICAL" || b.severity === "HIGH").length;
+
+  const blockers = Array.from(byCategory.values())
+    .sort((left, right) => SEVERITY_RANK[right.severity] - SEVERITY_RANK[left.severity]);
+  const criticalBlockerTotal = blockers
+    .filter((blocker) => blocker.severity === "CRITICAL" || blocker.severity === "HIGH")
+    .length;
   return { blockers, blockerTotal: blockers.length, criticalBlockerTotal };
 }
 
@@ -163,13 +108,14 @@ export async function getTenderReleaseState(
   tenderId: string,
   userId: string,
 ): Promise<TenderReleaseState | null> {
-  const [snapshot, workflowDecision, finalSubmission] = await Promise.all([
+  const [snapshot, rawWorkflowDecision, finalSubmission] = await Promise.all([
     getTenderReleaseSnapshot(prisma, tenderId, userId),
     getCanonicalTenderWorkflowDecision(prisma, userId, tenderId),
     getFinalSubmissionReadiness(prisma, { tenderId, userId }),
   ]);
   if (!snapshot || !finalSubmission) return null;
 
+  const workflowDecision = presentTwoActionWorkflowDecision(rawWorkflowDecision);
   const extractionGrounded = snapshot.extraction.overallOk;
   const analysisGrounded = snapshot.analysis.eligibleForExport;
   const readinessCalculable = extractionGrounded && analysisGrounded;
@@ -194,26 +140,33 @@ export async function getTenderReleaseState(
         },
       },
     });
+
     if (bidInputs) {
       const decision = evaluateBidDecision({
         deadline: bidInputs.deadline,
         budget: bidInputs.budget,
-        requirements: bidInputs.requirements.map((r) => ({
-          priority: r.priority ?? "",
-          requirementType: r.requirementType ?? "",
-          title: r.title ?? "",
-          description: r.description ?? "",
+        requirements: bidInputs.requirements.map((requirement) => ({
+          priority: requirement.priority ?? "",
+          requirementType: requirement.requirementType ?? "",
+          title: requirement.title ?? "",
+          description: requirement.description ?? "",
         })),
-        complianceGaps: bidInputs.complianceGaps.map((g) => ({
-          severity: g.severity ?? "",
-          isResolved: g.isResolved,
-          title: g.title ?? "",
+        complianceGaps: bidInputs.complianceGaps.map((gap) => ({
+          severity: gap.severity ?? "",
+          isResolved: gap.isResolved,
+          title: gap.title ?? "",
         })),
-        expertMatches: bidInputs.expertMatches.map((m) => ({ score: m.score ?? 0, isSelected: m.isSelected })),
-        projectMatches: bidInputs.projectMatches.map((m) => ({ score: m.score ?? 0, isSelected: m.isSelected })),
-        generatedDocuments: bidInputs.generatedDocuments.map((d) => ({
-          generationStatus: d.generationStatus ?? "",
-          reviewStatus: d.reviewStatus ?? "",
+        expertMatches: bidInputs.expertMatches.map((match) => ({
+          score: match.score ?? 0,
+          isSelected: match.isSelected,
+        })),
+        projectMatches: bidInputs.projectMatches.map((match) => ({
+          score: match.score ?? 0,
+          isSelected: match.isSelected,
+        })),
+        generatedDocuments: bidInputs.generatedDocuments.map((document) => ({
+          generationStatus: document.generationStatus ?? "",
+          reviewStatus: document.reviewStatus ?? "",
         })),
       });
       readinessScore = decision.score;
