@@ -1,16 +1,13 @@
 /**
  * Client workflow visibility helpers.
  *
- * The server owns job creation and continuation. The browser may immediately
- * wake the authenticated worker for a server-created job, but it never creates
- * a second AI_ANALYZE job.
+ * Tender upload may wake durable source extraction immediately. AI Analyze and
+ * Run Engine are the only two normal user actions, so this helper must never
+ * wake either stage from an upload response.
  */
 
 import { emitTenderWorkflowSync } from "./tender-workflow-sync";
 import { logger } from "../observability";
-
-// The server is the single orchestration owner. Browser code may wake a
-// durable server-created job, but it cannot create AI Analyze work.
 
 export type UploadFirstResponse = {
   success?: boolean;
@@ -31,34 +28,23 @@ export type AutoPipelineResult = {
   message: string;
 };
 
-/**
- * Only wake the worker when an upload handler returned the durable job ID it
- * created. A browser response without that proof cannot start anything.
- */
+/** Upload may wake extraction, but never AI Analyze or Run Engine. */
 export function decideTenderUploadAutoPipeline(
   response: UploadFirstResponse,
 ): string | null {
   if (!response.processingJobId) return null;
-  if (response.pipelineStage === "EXTRACT_TEXT_QUEUED") {
-    return "/api/ai-jobs/run-next?jobType=EXTRACT_TEXT";
-  }
-  if (response.pipelineStage === "AI_ANALYZE_QUEUED") {
-    return "/api/ai-jobs/run-next?jobType=AI_ANALYZE";
-  }
-  return null;
+  return response.pipelineStage === "EXTRACT_TEXT_QUEUED"
+    ? "/api/ai-jobs/run-next?jobType=EXTRACT_TEXT"
+    : null;
 }
 
-/**
- * Wake the user-scoped worker for the durable server-created analysis job.
- * Engine and proposal continuation remain server-owned and fail closed.
- */
 export async function triggerTenderUploadAutoPipeline(
   response: UploadFirstResponse,
 ): Promise<AutoPipelineResult> {
   if (response.tenderId) {
     emitTenderWorkflowSync({
       tenderId: response.tenderId,
-      source: "server-owned-tender-upload-pipeline",
+      source: "tender-upload-extraction",
     });
   }
 
@@ -70,27 +56,21 @@ export async function triggerTenderUploadAutoPipeline(
         credentials: "same-origin",
       });
       if (worker.ok) {
-        const extraction = response.pipelineStage === "EXTRACT_TEXT_QUEUED";
         return {
           fired: true,
           endpoint,
           status: "queued",
-          message: extraction
-            ? "Source extraction started. AI analysis will follow only after every verified source file is extracted."
-            : "Automatic AI analysis started. Later stages remain gated by promoted analysis and readiness checks.",
+          message: "Source extraction started. Open the tender and use AI Analyze after extraction completes.",
         };
       }
     } catch {
-      // The durable job remains queued. The configured background queue drain
-      // is the recovery owner when an immediate browser wake-up is unavailable.
+      // The extraction job remains durable and queued.
     }
     return {
       fired: false,
       endpoint,
       status: "queued",
-      message: response.pipelineStage === "EXTRACT_TEXT_QUEUED"
-        ? "Source extraction is queued. The background worker will continue it before AI analysis."
-        : "Automatic AI analysis is queued. The background worker will continue it.",
+      message: "Source extraction is queued. The background worker will continue it; AI Analyze remains an explicit action.",
     };
   }
 
@@ -98,18 +78,19 @@ export async function triggerTenderUploadAutoPipeline(
     fired: false,
     endpoint: null,
     status: "skipped",
-    message: response.nextAction
-      ? `Upload completed. Continue with the canonical ${response.nextAction} workflow action.`
-      : "Upload completed. Open the tender to continue through the canonical workflow.",
+    message: response.pipelineStage === "AI_ANALYZE_QUEUED"
+      ? "Extraction is complete. Open the tender and select AI Analyze."
+      : response.nextAction
+        ? `Upload completed. Continue with the canonical ${response.nextAction} workflow action.`
+        : "Upload completed. Open the tender to continue.",
   };
 }
 
 /**
  * Company Vault repair uses the complete byte re-import route. The route
  * preserves dedicated-source eligibility and never auto-promotes records to
- * REVIEWED. Keep this safety-locked helper even while the current UI has no
- * direct caller; any future repair control must use byte re-import rather than
- * an extracted-text-only shortcut.
+ * REVIEWED. Any future repair control must use byte re-import rather than an
+ * extracted-text-only shortcut.
  */
 export async function triggerCompanyDocumentAutoPipeline(): Promise<AutoPipelineResult> {
   const endpoint = "/api/company/reimport";
@@ -132,7 +113,7 @@ export async function triggerCompanyDocumentAutoPipeline(): Promise<AutoPipeline
       fired: true,
       endpoint,
       status: "queued",
-      message: "Company Vault source re-import completed. The Run Engine will automatically source-verify eligible evidence before using it.",
+      message: "Company Vault source re-import completed. Run Engine will source-verify eligible evidence when explicitly started.",
     };
   } catch (error) {
     logger.warn("[auto-pipeline] triggerCompanyDocumentAutoPipeline failed", {
