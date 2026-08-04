@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 type UploadFirstResponse = {
   pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+  queuedExtractionFiles?: number;
 };
 
 export async function POST(req: Request) {
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
     if (response.ok) {
       const payload = await response.clone().json().catch(() => null) as UploadFirstResponse | null;
       if (payload?.pipelineStage === "EXTRACT_TEXT_QUEUED") {
-        scheduleRequestScopedWorkerWake(req, "EXTRACT_TEXT");
+        scheduleRequestScopedWorkerWake(req, "EXTRACT_TEXT", payload.queuedExtractionFiles ?? 1);
       }
     }
     return response;
