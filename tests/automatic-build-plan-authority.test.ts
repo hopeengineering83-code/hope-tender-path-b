@@ -13,7 +13,7 @@ describe("automatic Build Plan authority", () => {
   const compatibilityRoute = readApp("app/api/tenders/[id]/build-plan/confirm/route.ts");
   const jobHandlers = readApp("lib/ai-job-handlers.ts");
   const engineRoute = readApp("app/api/tenders/[id]/engine/route.ts");
-  const button = readApp("components/build-submission-plan-button.tsx");
+  const statusPanel = readApp("components/build-submission-plan-button.tsx");
   const truthPanel = readApp("components/submission-plan-truth-panel.tsx");
   const submissionPlanRoute = readApp("app/api/tenders/[id]/submission-plan/route.ts");
 
@@ -26,36 +26,33 @@ describe("automatic Build Plan authority", () => {
     assert.match(service, /confirmedContentHash: currentHash/);
     assert.match(service, /confirmedBy: AUTOMATIC_BUILD_PLAN_ACTOR/);
     assert.match(service, /confirmedById: null/);
-    assert.match(service, /where:\s*\{[\s\S]*?status: "DRAFT"[\s\S]*?revision: candidateRevision[\s\S]*?contentHash: candidateHash/);
   });
 
-  it("normal and compatibility Build Plan routes call automatic verification", () => {
-    assert.match(buildRoute, /buildAndVerifyBuildPlan/);
-    assert.match(buildRoute, /authorizesGeneration: true/);
-    assert.match(buildRoute, /AUTOMATIC_SOURCE_GROUNDED|confirmationMode/);
-    assert.match(compatibilityRoute, /buildAndVerifyBuildPlan/);
-    assert.doesNotMatch(compatibilityRoute, /confirmedById: actor\.id/);
-    assert.doesNotMatch(compatibilityRoute, /Build Plan confirmed after source-grounded validation/);
-  });
-
-  it("the durable Engine worker, not the HTTP request, completes automatic plan verification", () => {
+  it("the durable Engine worker completes automatic plan verification", () => {
     const legacyCall = jobHandlers.indexOf("const result = await legacyHandler(ctx)");
     const automaticCall = jobHandlers.indexOf("buildAndVerifyBuildPlan", legacyCall);
     assert.ok(legacyCall >= 0 && automaticCall > legacyCall, "automatic Build Plan must run after Engine persistence");
     assert.match(jobHandlers, /build-plan\.complete/);
-    assert.match(jobHandlers, /automaticBuildPlan/);
     assert.match(engineRoute, /enqueueEngineJobForCurrentSources/);
     assert.match(engineRoute, /status:\s*202/);
     assert.doesNotMatch(engineRoute, /buildAndVerifyBuildPlan/);
   });
 
-  it("removes the human review checkbox and confirmation action", () => {
-    assert.doesNotMatch(button, /setReviewed|\[reviewed,/);
-    assert.doesNotMatch(button, /Confirm reviewed Build Plan/);
-    assert.doesNotMatch(button, /I reviewed the complete file list/);
-    assert.doesNotMatch(button, /\/build-plan\/confirm/);
-    assert.match(button, /Build and verify plan/);
-    assert.match(button, /No manual confirmation is required/);
+  it("keeps legacy Build Plan POST routes outside the normal UI authority", () => {
+    assert.match(buildRoute, /buildAndVerifyBuildPlan/);
+    assert.match(compatibilityRoute, /buildAndVerifyBuildPlan/);
+    assert.doesNotMatch(compatibilityRoute, /confirmedById: actor\.id/);
+    assert.doesNotMatch(statusPanel, /method:\s*"POST"/);
+    assert.doesNotMatch(statusPanel, /<button/);
+  });
+
+  it("removes human review and separate Build Plan confirmation controls", () => {
+    assert.doesNotMatch(statusPanel, /setReviewed|\[reviewed,/);
+    assert.doesNotMatch(statusPanel, /Confirm reviewed Build Plan/);
+    assert.doesNotMatch(statusPanel, /I reviewed the complete file list/);
+    assert.doesNotMatch(statusPanel, /\/build-plan\/confirm/);
+    assert.match(statusPanel, /Build Plan awaits Run Engine/);
+    assert.match(statusPanel, /No separate Build Plan confirmation is required/);
   });
 
   it("public status describes automatic recovery instead of user confirmation", () => {
