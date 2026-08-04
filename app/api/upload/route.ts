@@ -12,6 +12,7 @@ export const maxDuration = 60;
 type SecureUploadResponse = {
   pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
   companyImport?: { status?: string } | null;
+  results?: Array<{ success?: boolean; scope?: string }>;
 };
 
 export async function POST(req: Request) {
@@ -20,7 +21,10 @@ export async function POST(req: Request) {
 
   const payload = await response.clone().json().catch(() => null) as SecureUploadResponse | null;
   if (payload?.pipelineStage === "EXTRACT_TEXT_QUEUED") {
-    scheduleRequestScopedWorkerWake(req, "EXTRACT_TEXT");
+    const queuedTenderFiles = payload.results?.filter((result) =>
+      result.success === true && result.scope === "tender"
+    ).length ?? 1;
+    scheduleRequestScopedWorkerWake(req, "EXTRACT_TEXT", queuedTenderFiles);
   }
   if (payload?.companyImport?.status === "QUEUED") {
     scheduleRequestScopedWorkerWake(req, "VAULT_INGEST");
