@@ -197,10 +197,6 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       orderBy: { createdAt: "desc" },
       select: { id: true },
     }).catch(() => null),
-    // Counterpart to the active-job query above: has analysis ALREADY finished?
-    // tender.analysisSummary was tried first and is empty even after a
-    // successful 100/100 AI run, so it is not a completion signal. The AiJob
-    // row is the same authority the pipeline itself uses.
     prismaClient.aiJob.findFirst({
       where: {
         userId,
@@ -237,7 +233,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       <RequirementTruthBanner tenderId={tender.id} />
       <NextActionPanel tenderId={tender.id} />
 
-      <WorkflowStage number={1} title="Intake and extraction" open description="Manage source documents, extraction quality, and submission-critical Tender Details.">
+      <WorkflowStage number={1} title="Intake and extraction" open description="Manage source documents, automatic extraction quality, and submission-critical Tender Details.">
         <TenderSourceFilesPanel
           tenderId={tender.id}
           initialFiles={tender.files}
@@ -246,7 +242,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         />
         <Disclosure
           title="Extraction quality"
-          description="One canonical report for page coverage, OCR, weak or failed pages, and extraction readiness."
+          description="One canonical report for page coverage, OCR availability, weak or failed pages, and extraction readiness."
         >
           <div id="extraction-quality" className="scroll-mt-24">
             <ExtractionQualityPanel tenderId={tender.id} />
@@ -261,7 +257,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={2} title="Analysis and engine" description="Analysis runs automatically after extraction. Review analysis quality and source-traced requirements here.">
+      <WorkflowStage number={2} title="Analysis and engine" description="Extraction completes automatically. Select AI Analyze, review the grounded result, then select Run Engine; every valid later stage continues automatically.">
         <AIAnalyzePanel
           tenderId={tender.id}
           initialContinueJobId={activeAnalysisJob?.id ?? null}
@@ -274,7 +270,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <BidStrategyPanel tenderId={tender.id} />
         <Disclosure
           title="AI diagnostics and assistance"
-          description="Provider health, recovery tools, suggestions, chat, and Copilot are secondary aids—not separate workflow authorities."
+          description="Provider health, recovery information, suggestions, chat, and Copilot are secondary aids—not separate workflow authorities."
         >
           <AIHealthPanel />
           <AIAnalyzeRecoveryPanel tenderId={tender.id} />
@@ -284,7 +280,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={3} title="Evidence and matching" description="Inspect the persisted evidence selected automatically for this tender.">
+      <WorkflowStage number={3} title="Evidence and matching" description="After Run Engine, inspect the persisted company-owned evidence selected automatically for this tender.">
         <MatchingSelectedEvidencePanel
           experts={tender.expertMatches.map((m): SelectedEvidenceCandidate => ({
             id: m.id,
@@ -307,14 +303,14 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         />
       </WorkflowStage>
 
-      <WorkflowStage number={4} title="Generation and review" description="Confirm the submission plan, generate through the canonical gate, and complete document review.">
+      <WorkflowStage number={4} title="Generation and review" description="Run Engine owns Build Plan verification, matching, generation, validation, and finalization automatically. Review status and resolve only genuine source, quality, or legal blockers.">
         <GenerationActionPanel tenderId={tender.id} readiness={generationReadiness} canonicalReadiness={canonicalReadiness} canMutate={canMutate} />
         <SubmissionPlanTruthPanel tenderId={tender.id} />
         <AuthorityReviewPanel tenderId={tender.id} />
         <DocumentValidatorPanel tenderId={tender.id} />
         <Disclosure
           title="Generation and review diagnostics"
-          description="Detailed readiness, reconciliation, and evaluator simulation remain available without competing with the generation action."
+          description="Detailed readiness, reconciliation, and evaluator simulation remain available without adding another normal workflow action."
         >
           <GenerationReadinessPanel tenderId={tender.id} readiness={generationReadiness} />
           <SubmissionPlanCompletenessPanel tenderId={tender.id} canMutate={canMutate} />
@@ -322,7 +318,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and release the package.">
+      <WorkflowStage number={5} title="Final package and submission" description="Reconcile pricing, inspect the exact manifest, verify export readiness, and download the released package.">
         <PricingWorkbookPanel tenderId={tender.id} canMutate={canMutate} />
         <FinalPackageManifestPanel tenderId={tender.id} />
         <ExportReadinessPanel tenderId={tender.id} canMutate={canMutate} />
