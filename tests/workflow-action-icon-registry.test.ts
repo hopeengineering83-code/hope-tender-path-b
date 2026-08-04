@@ -29,13 +29,9 @@ describe("canonical workflow action registry", () => {
     assert.doesNotThrow(() => assertNoWorkflowActionIconCollisions());
   });
 
-  it("defines every normal, recovery, and navigation action explicitly", () => {
+  it("defines every action explicitly", () => {
     for (const [actionId, action] of listTenderActions()) {
-      // Non-emptiness only. That an owner NAMES A COMPONENT THAT EXISTS, and
-      // that an anchor names an id something renders, are proven in
-      // tests/action-registry-targets-exist.test.ts — this assertion alone let
-      // four deleted components stay referenced here for months.
-      assert.ok(action.owner, `${actionId} is missing a mutation/navigation owner`);
+      assert.ok(action.owner, `${actionId} is missing an owner`);
       assert.match(action.anchor, /^#/);
       assert.ok(action.label.trim().length > 0);
       assert.ok(["NORMAL", "RECOVERY", "NAVIGATION"].includes(action.availability));
@@ -45,35 +41,37 @@ describe("canonical workflow action registry", () => {
     }
   });
 
-  it("keeps AI Analyze as recovery and the durable Engine as navigation", () => {
-    assert.equal(getTenderAction("AI_ANALYZE").availability, "RECOVERY");
-    // NORMAL means "the user does this here". The Engine is server-driven and
-    // has no control, so it is something to navigate to and observe.
-    assert.equal(getTenderAction("RUN_ENGINE").availability, "NAVIGATION");
+  it("keeps AI Analyze and Run Engine as the two normal workflow mutations", () => {
+    assert.equal(getTenderAction("AI_ANALYZE").availability, "NORMAL");
+    assert.equal(getTenderAction("AI_ANALYZE").owner, "WorkflowStepLinks");
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
+    assert.equal(getTenderAction("RUN_ENGINE").owner, "WorkflowStepLinks");
     assert.equal(getTenderAction("MATCH_EVIDENCE").availability, "NAVIGATION");
     assert.equal(getTenderAction("MATCH_EVIDENCE").mutation, null);
   });
 
-  it("keeps normal workflow actions available without nonexistent Match or Approval endpoints", () => {
-    const normal = listTenderActions()
-      .filter(([, action]) => action.availability === "NORMAL")
-      .map(([actionId]) => actionId);
-    assert.deepEqual(normal, [
-      "UPLOAD_TENDER_FILES",
-      "BUILD_SUBMISSION_PLAN",
-      "GENERATE_REQUIRED_DOCUMENTS",
-      "DOWNLOAD_FINAL_ZIP",
-    ]);
+  it("keeps Build Plan, generation and final review automatic/navigation-only", () => {
+    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").availability, "NAVIGATION");
+    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").mutation, null);
+    assert.equal(getTenderAction("GENERATE_REQUIRED_DOCUMENTS").availability, "NAVIGATION");
+    assert.equal(getTenderAction("GENERATE_REQUIRED_DOCUMENTS").mutation, null);
     assert.equal(getTenderAction("FINAL_APPROVAL").availability, "NAVIGATION");
     assert.equal(getTenderAction("FINAL_APPROVAL").mutation, null);
   });
 
-  it("binds executable registry actions to the canonical live route contracts", () => {
-    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/ai-analyze?mode=background");
+  it("binds executable actions to canonical live routes", () => {
+    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/manual-ai-analyze");
     assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
-    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").mutation, "POST /api/tenders/:id/build-plan");
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").mutation, "GET /api/tenders/:id/download?type=zip");
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
+  });
+
+  it("normal POST actions are upload plus exactly the two workflow actions", () => {
+    const normalPost = listTenderActions()
+      .filter(([, action]) => action.availability === "NORMAL" && action.mutation?.startsWith("POST "))
+      .map(([id]) => id)
+      .sort();
+    assert.deepEqual(normalPost, ["AI_ANALYZE", "RUN_ENGINE", "UPLOAD_TENDER_FILES"]);
   });
 });
 
@@ -86,14 +84,14 @@ describe("workflow icon compatibility projection", () => {
     assert.equal(WORKFLOW_ACTION_ICONS.length, listTenderActions().length);
   });
 
-  it("resolves legacy component aliases to the canonical action meaning", () => {
+  it("resolves legacy aliases to canonical meanings", () => {
     assert.equal(getWorkflowActionIcon("execute", "engine-action"), getTenderAction("RUN_ENGINE").iconName);
     assert.equal(getWorkflowActionLabel("execute", "engine-action"), getTenderAction("RUN_ENGINE").label);
     assert.equal(getWorkflowActionIcon("resume", "recovery-command-center"), getTenderAction("AI_ANALYZE").iconName);
     assert.equal(getWorkflowActionLabel("resume", "recovery-command-center"), getTenderAction("AI_ANALYZE").label);
   });
 
-  it("returns null for an unregistered verb and surface pair", () => {
+  it("returns null for an unregistered verb/surface pair", () => {
     assert.equal(getWorkflowActionIcon("upload", "engine-action"), null);
     assert.equal(getWorkflowActionIcon("generate", "tender-files"), null);
   });
@@ -101,22 +99,18 @@ describe("workflow icon compatibility projection", () => {
   it("references only exported SVG icons", () => {
     const iconsSource = read("components/icons.tsx");
     for (const iconName of listWorkflowActionIconNames()) {
-      assert.match(
-        iconsSource,
-        new RegExp(`export function ${iconName}\\b`),
-        `Icon ${iconName} is not exported from components/icons.tsx`,
-      );
+      assert.match(iconsSource, new RegExp(`export function ${iconName}\\b`));
     }
   });
 });
 
 describe("Workflow Center ownership", () => {
-  it("derives labels and targets from the canonical registry and executes no mutation", () => {
+  it("projects registry metadata but executes no mutation", () => {
     const source = read("app/api/tenders/[id]/workflow-center/route.ts");
     assert.match(source, /getTenderAction/);
-    assert.match(source, /actionKind:\s*"navigation"/);
+    assert.match(source, /actionKind: action\.mutation \? "mutation" as const : "navigation" as const/);
     assert.match(source, /mutationOwner:\s*action\.owner/);
-    assert.doesNotMatch(source, /isMutationAction/);
-    assert.doesNotMatch(source, /fetch\s*\(/);
+    assert.match(source, /mutation:\s*action\.mutation/);
+    assert.doesNotMatch(source, /fetch\s*\(|axios\./);
   });
 });
