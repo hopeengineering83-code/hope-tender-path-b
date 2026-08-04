@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "./auth";
 import { prisma, prismaReady } from "./prisma";
+import { ensureCompanyForUser } from "./company-workspace";
 import { validateUploadBatch, validateUploadFile } from "./upload-security";
 import { inspectActualFileBytes } from "./engine/persisted-byte-integrity";
 import { getStorageAdapter } from "./storage";
@@ -69,6 +70,7 @@ export async function recoverIdempotentTenderUpload(
   if (integrity.integrityStatus !== "VERIFIED" || !contentHash) return null;
 
   await prismaReady;
+  const company = await ensureCompanyForUser(prisma, actor.id);
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId: actor.id },
     select: { id: true },
@@ -104,7 +106,7 @@ export async function recoverIdempotentTenderUpload(
     const stored = await storage.putFile(buffer, {
       fileName: validation.safeFileName,
       mimeType: validation.normalizedMime,
-      companyId: undefined,
+      companyId: company.id,
       tenderId,
     });
 
@@ -179,7 +181,7 @@ export async function recoverIdempotentTenderUpload(
   if (fileRecord.contentSha256) {
     const extractionJob = await enqueueTenderFileExtractionJob(prisma, {
       userId: actor.id,
-      companyId: undefined,
+      companyId: company.id,
       tenderId,
       tenderFileId: fileRecord.id,
       sourceContentSha256: fileRecord.contentSha256,
