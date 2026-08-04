@@ -175,8 +175,8 @@ export async function getCanonicalTenderWorkflowState(
   } else if (extractionStatus === "OCR_REQUIRED" || (canonicalModules.extraction === "BLOCKED" && !tender.requirements.length)) {
     nextAction = "RUN_OCR";
     actionEndpoint = `/api/tenders/${tenderId}/run-ocr`;
-    label = "Run OCR";
-    reason = "Extraction is not reliable enough for analysis. Run OCR to improve quality.";
+    label = "Upload a clearer source";
+    reason = "Extraction is not reliable enough for analysis. Upload a clearer, text-based copy to improve quality.";
   } else if (canonicalModules.analysis !== "READY" && !analysisIsApprovedFallback) {
     nextAction = "RUN_AI_ANALYZE";
     actionEndpoint = `/api/tenders/${tenderId}/ai-analyze`;

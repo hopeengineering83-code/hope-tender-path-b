@@ -956,7 +956,7 @@ export async function computeTenderLifecycle(
   } else if (!analysisOk) {
     blocked.push({ action: "GENERATE_DOCS", reason: "No approved analysis exists. Run AI Analyze first." });
   } else if (effectiveFiles.length > 0 && !extractionGenerationOk) {
-    blocked.push({ action: "GENERATE_DOCS", reason: "Tender extraction quality is too low for reliable generation. Re-extract or run OCR first." });
+    blocked.push({ action: "GENERATE_DOCS", reason: "Tender extraction quality is too low for reliable generation. Upload a clearer, text-based copy of the source." });
   } else {
     allowed.push("GENERATE_DOCS");
   }

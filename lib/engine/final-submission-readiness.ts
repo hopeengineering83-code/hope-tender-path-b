@@ -1026,7 +1026,7 @@ export async function getFinalSubmissionReadiness(
       category: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
       severity: "HIGH",
       title: "AI Analyze was skipped because tender extraction was corrupted — requirements and metadata may be incomplete.",
-      recommendedAction: "Re-upload a clearer document or run OCR, then re-run AI Analyze before attempting export.",
+      recommendedAction: "Upload a clearer, text-based document. Extraction and analysis re-run automatically before export.",
     });
   }
   if (analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
@@ -1034,7 +1034,7 @@ export async function getFinalSubmissionReadiness(
       category: "ANALYSIS_FROM_WEAK_EXTRACTION",
       severity: "HIGH",
       title: "Tender analysis used regex/deterministic fallback because extraction was too weak — generated documents may be based on incomplete requirements.",
-      recommendedAction: "Run OCR extraction on the tender file, then re-run AI Analyze before exporting.",
+      recommendedAction: "Upload a clearer, text-based copy of the tender file. Extraction and analysis re-run automatically before export.",
     });
   }
   if (analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
@@ -1042,7 +1042,7 @@ export async function getFinalSubmissionReadiness(
       category: "ANALYSIS_FROM_PARTIAL_EXTRACTION",
       severity: "HIGH",
       title: "AI analysis was performed on a partially-extracted tender — some pages were weak or OCR-only. Exported documents may be missing requirements from unread pages.",
-      recommendedAction: "Re-extract the tender file (run OCR if needed), then re-run AI Analyze to obtain a full-extraction analysis before exporting.",
+      recommendedAction: "Upload a clearer, text-based copy of the tender file so a full-extraction analysis can be produced before export.",
     });
   }
   // NOTE: the deadline-in-the-past check lives in export-readiness.ts, which
@@ -1059,7 +1059,7 @@ export async function getFinalSubmissionReadiness(
       category: "EXTRACTION_QUALITY_INSUFFICIENT",
       severity: "HIGH",
       title: "Page extraction quality is insufficient for export (poor coverage, unknown page count, or failed pages).",
-      recommendedAction: "Re-upload a clearer document or run OCR, then re-run AI Analyze before attempting export.",
+      recommendedAction: "Upload a clearer, text-based document. Extraction and analysis re-run automatically before export.",
     });
   }
 

@@ -323,7 +323,7 @@ export function summarizeExtractionCoverage(files: ExtractionFileForCoverage[]):
       lowConfidencePages.push({ fileName: name, page: null, reason: "Total page count unknown", score });
       blockingReasons.add("Total page count is unknown for one or more tender files.");
       recommendedActions.add("Re-extract PDF");
-      recommendedActions.add("Run OCR");
+      recommendedActions.add("Upload a clearer, text-based copy");
       return;
     }
 
@@ -346,7 +346,7 @@ export function summarizeExtractionCoverage(files: ExtractionFileForCoverage[]):
       blockingReasons.add("Extraction confidence score is unknown for one or more tender files.");
     } else if (score < PARTIAL_EXTRACTION_MIN_SCORE) {
       pushPageRange(lowConfidencePages, name, 1, fileTotal, "Low extraction confidence", score);
-      recommendedActions.add("Run OCR");
+      recommendedActions.add("Upload a clearer, text-based copy");
       recommendedActions.add("Upload clearer scan");
       blockingReasons.add("Extraction score is weak for one or more tender files.");
     } else if (score < FULL_EXTRACTION_MIN_SCORE) {
@@ -357,19 +357,19 @@ export function summarizeExtractionCoverage(files: ExtractionFileForCoverage[]):
     if (fileFailed > 0) {
       pushPageRange(failedPageList, name, Math.max(1, fileExtracted - fileFailed + 1), fileFailed, "Page extraction failed or blank", score);
       recommendedActions.add("Re-extract PDF");
-      recommendedActions.add("Run OCR");
+      recommendedActions.add("Upload a clearer, text-based copy");
       blockingReasons.add("One or more tender pages failed extraction.");
     }
     if (fileCorrupted > 0) {
       pushPageRange(failedPageList, name, 1, fileCorrupted, "Page text corrupted/garbage detected", score);
-      recommendedActions.add("Run OCR");
+      recommendedActions.add("Upload a clearer, text-based copy");
       recommendedActions.add("Upload clearer scan");
       blockingReasons.add("One or more pages contain corrupted or garbage text (OCR likely needed).");
     }
     if (missingPages > 0) {
       pushPageRange(failedPageList, name, fileExtracted + 1, missingPages, "Page not text-extracted", score);
       recommendedActions.add("Re-extract PDF");
-      recommendedActions.add("Run OCR");
+      recommendedActions.add("Upload a clearer, text-based copy");
       blockingReasons.add("One or more tender pages were not extracted.");
     }
     if (fileOcr > 0) recommendedActions.add("Continue only if extraction is acceptable");

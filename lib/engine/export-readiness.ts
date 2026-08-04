@@ -572,7 +572,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "EXTRACTION_QUALITY_INSUFFICIENT",
       "One or more tender files have very poor text extraction. The submission package may be based on incomplete tender information.",
-      "Re-upload the tender file with better quality or run OCR extraction before exporting.",
+      "Upload a clearer, text-based copy of the tender file before exporting.",
       "HIGH",
     ));
   }
@@ -588,7 +588,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "EXTRACTION_PAGE_COUNT_UNKNOWN",
       "One or more tender files have an unknown total page count. Extraction coverage cannot be verified — important pages may have been missed.",
-      "Re-extract the tender file with page detection enabled, or run OCR, before exporting.",
+      "Upload a clearer, text-based copy of the tender file so pages are detected, before exporting.",
       "HIGH",
     ));
   }
@@ -611,7 +611,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       blockers.push(tenderBlocker(
         "SUBMISSION_INSTRUCTIONS_NOT_EXTRACTED",
         "No submission instruction pages were detected in the extracted tender text. The package may be submitted to the wrong address or by the wrong method.",
-        "Re-extract the tender (run OCR if needed), then re-run AI Analyze to recover submission instructions before exporting.",
+        "Upload a clearer, text-based copy of the tender so submission instructions can be recovered before exporting.",
         "HIGH",
       ));
     }
@@ -661,7 +661,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "ANALYSIS_FROM_WEAK_EXTRACTION",
       "Tender analysis used regex/deterministic fallback because extraction was too weak. Generated documents may be based on incomplete requirements.",
-      "Run OCR extraction on the tender file, then re-run AI Analyze before exporting.",
+      "Upload a clearer, text-based copy of the tender file. Extraction and analysis re-run automatically before export.",
       "HIGH",
     ));
   }
@@ -669,7 +669,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "ANALYSIS_FROM_PARTIAL_EXTRACTION",
       "AI analysis was performed on a partially-extracted tender — some pages were weak, blank, or OCR-only. Exported documents may be missing requirements, evaluation criteria, or submission instructions from unread pages.",
-      "Re-extract the tender file (run OCR if needed), then re-run AI Analyze to obtain a full-extraction analysis before exporting.",
+      "Upload a clearer, text-based copy of the tender file so a full-extraction analysis can be produced before export.",
       "HIGH",
     ));
   }
@@ -677,7 +677,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "ANALYSIS_SKIPPED_OCR_REQUIRED",
       "AI analysis was skipped because the tender text is corrupted or unreadable — no reliable analysis has been performed. The generated documents may be empty or invalid.",
-      "Run OCR extraction on the tender file, then re-run AI Analyze before exporting.",
+      "Upload a clearer, text-based copy of the tender file. Extraction and analysis re-run automatically before export.",
       "HIGH",
     ));
   }
@@ -685,7 +685,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "ANALYSIS_FROM_WEAK_EXTRACTION_REVIEW",
       "AI analysis ran on a weak extraction — the tender text had low density or quality. Generated documents may be incomplete — verify before export.",
-      "Re-extract the tender (run OCR if needed), then re-run AI Analyze. If re-extraction is not possible, manually review all generated documents before exporting.",
+      "Upload a clearer, text-based copy of the tender. If a clearer copy is not available, manually review all generated documents before exporting.",
       "HIGH",
     ));
   }

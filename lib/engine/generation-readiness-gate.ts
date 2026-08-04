@@ -264,10 +264,10 @@ export function evaluateGenerationReadiness(
   }
   for (const file of input.extractionFiles) {
     if (file.corrupted) {
-      return fail("EXTRACTION_CORRUPTED", "At least one tender file has corrupted extraction. Re-upload a clearer document or run OCR — corrupted extraction can never be overridden.");
+      return fail("EXTRACTION_CORRUPTED", "At least one tender file has corrupted extraction. Upload a clearer, text-based document — corrupted extraction can never be overridden.");
     }
     if (file.weak && !file.hasOverride) {
-      return fail("EXTRACTION_WEAK_NO_OVERRIDE", "At least one tender file has weak extraction and no override on record. Re-extract (run OCR) or record an explicit extraction-quality override before generating/exporting.");
+      return fail("EXTRACTION_WEAK_NO_OVERRIDE", "At least one tender file has weak extraction and no override on record. Upload a clearer, text-based copy, or record an explicit extraction-quality override before generating/exporting.");
     }
   }
 

@@ -88,7 +88,7 @@ function extractionIsNotReady(input: TenderNextActionInput["extraction"]) {
 
 function extractionBlockers(input: TenderNextActionInput["extraction"]): string[] {
   const blockers: string[] = [];
-  if (input.corrupted) blockers.push("Extraction is corrupted — run OCR or upload a clearer source file");
+  if (input.corrupted) blockers.push("Extraction is corrupted — upload a clearer, text-based source file");
   if (input.ocrRequired) blockers.push("OCR is required before reliable AI analysis");
   if (input.partial) blockers.push("Document is only partially extracted");
   if (typeof input.pageCoveragePercent === "number" && input.pageCoveragePercent < 80) {
@@ -116,7 +116,7 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
     return {
       primary: "FIX_EXTRACTION",
       label: "Fix Extraction First",
-      reason: "Extraction is weak, partial, corrupted, or below readiness coverage. Run OCR / re-extract before AI Analyze.",
+      reason: "Extraction is weak, partial, corrupted, or below readiness coverage. Upload a clearer, text-based copy; extraction and analysis re-run against it automatically.",
       blockers: extractionBlockers(input.extraction),
       tone: input.extraction.corrupted ? "red" : "amber",
     };

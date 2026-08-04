@@ -27,7 +27,8 @@ describe("resolveTenderNextAction", () => {
     });
     assert.equal(decision.primary, "FIX_EXTRACTION");
     assert.match(decision.label, /Fix Extraction First/);
-    assert.match(decision.reason, /Run OCR \/ re-extract before AI Analyze/);
+    // Same rule: the reason must name a remedy the user can actually perform.
+    assert.match(decision.reason, /clearer, text-based copy/);
   });
 
   it("resumable analysis shows Resume AI Analyze when extraction is ready", () => {

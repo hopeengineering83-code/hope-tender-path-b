@@ -133,7 +133,7 @@ export function buildCanonicalWorkflowDecision(input: {
   if (input.hasFiles && input.extractionUnsafe) {
     blockerCodes.push("EXTRACTION_UNSAFE");
     blockerDetails.push(input.extractionCorrupted
-      ? "Extraction is corrupted. Run OCR or re-upload a clearer scan."
+      ? "Extraction is corrupted. Upload a clearer, text-based copy of the source."
       : input.ocrRequired
         ? "OCR is required — the PDF appears to be scanned."
         : "Extraction quality is too low for analysis.");

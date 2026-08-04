@@ -292,7 +292,11 @@ describe("assessExtractionQuality — corrupted PDF text", () => {
     const report = assessExtractionQuality(gibberish, "path-tender.pdf");
     assert.equal(report.corrupted, true);
     assert.equal(report.severity, "FAILED");
-    assert.ok(report.recommendations.some((item) => /Run OCR|cleaner PDF/i.test(item)));
+    // The guarantee is that corrupted extraction yields an ACTIONABLE remedy —
+    // not that it names OCR. No OCR engine exists in this codebase
+    // (tender-text-extractor only marks pages ocr_required), so recommending it
+    // was advice the app could never carry out.
+    assert.ok(report.recommendations.some((item) => /clearer|cleaner|text-based/i.test(item)));
   });
 
   it("does not mark readable tender prose as corrupted", () => {

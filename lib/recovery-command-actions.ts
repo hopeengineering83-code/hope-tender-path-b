@@ -269,7 +269,7 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     message: "Open the Tender edit form and change the bid decision from NO_BID to BID or BID_WITH_CONDITIONS.",
   },
   RUN_OCR_OR_UPLOAD_CLEARER_SCAN: {
-    label: "Re-upload or Run OCR",
+    label: "Upload a clearer source",
     kind: "scroll",
     anchorId: "tender-files",
     message: "Open the Tender Files panel to re-upload a clearer scan or trigger OCR on the current file.",

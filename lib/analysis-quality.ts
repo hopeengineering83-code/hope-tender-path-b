@@ -325,7 +325,7 @@ export function assessTenderAnalysisQuality(params: {
     isUnsafe = true;
   }
   if (extractionPartial) {
-    warnings.push("AI analysis ran on partially-extracted tender pages — results may be missing sections. Re-extract or run OCR for a fully reliable analysis.");
+    warnings.push("AI analysis ran on partially-extracted tender pages — results may be missing sections. Upload a clearer, text-based copy for a fully reliable analysis.");
     score = Math.min(score, 74);
   }
   if (isRegexFallback) {
