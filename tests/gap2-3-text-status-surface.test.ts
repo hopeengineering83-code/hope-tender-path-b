@@ -48,10 +48,13 @@ describe("AI Analyze has one normal-path owner", () => {
     assert.match(aiAnalyzePanelCode, /Ready for AI Analyze/);
   });
 
-  it("renders AI Analyze only in WorkflowStepLinks", () => {
+  it("renders one canonical AI Analyze endpoint in WorkflowStepLinks", () => {
     assert.match(workflowOwnerCode, /manual-ai-analyze/);
     assert.match(workflowOwnerCode, /"AI Analyze"/);
-    assert.equal((workflowOwnerCode.match(/manual-ai-analyze/g) ?? []).length, 1);
+    assert.equal(
+      (workflowOwnerCode.match(/\/api\/tenders\/\$\{tenderId\}\/manual-ai-analyze/g) ?? []).length,
+      1,
+    );
   });
 
   it("keeps provider diagnostics secondary and read-only", () => {
