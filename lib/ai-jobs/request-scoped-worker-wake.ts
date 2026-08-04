@@ -3,6 +3,8 @@ import { logger } from "../observability";
 
 export type RequestScopedUploadJobType = "EXTRACT_TEXT" | "VAULT_INGEST";
 
+const MAX_REQUEST_SCOPED_WAKE_COUNT = 10;
+
 /**
  * Best-effort wake for durable automatic upload stages.
  *
@@ -10,10 +12,15 @@ export type RequestScopedUploadJobType = "EXTRACT_TEXT" | "VAULT_INGEST";
  * so claimJobForCaller remains scoped to the same tenant/user. This helper is
  * deliberately unable to start AI_ANALYZE, ENGINE_RUN, generation, or any
  * other normal/manual workflow stage.
+ *
+ * EXTRACT_TEXT handles one source file per worker request. A secure upload may
+ * persist up to ten files, so callers may request a bounded concurrent wake for
+ * the complete batch. Transactional job claims prevent duplicate execution.
  */
 export function scheduleRequestScopedWorkerWake(
   req: Request,
   jobType: RequestScopedUploadJobType,
+  requestedCount = 1,
 ): boolean {
   const cookie = req.headers.get("cookie");
   if (!cookie) {
@@ -23,6 +30,7 @@ export function scheduleRequestScopedWorkerWake(
     return false;
   }
 
+  const count = Math.max(1, Math.min(MAX_REQUEST_SCOPED_WAKE_COUNT, Math.trunc(requestedCount) || 1));
   const requestUrl = new URL(req.url);
   const workerUrl = new URL("/api/ai-jobs/run-next", requestUrl.origin);
   workerUrl.searchParams.set("jobType", jobType);
@@ -30,30 +38,32 @@ export function scheduleRequestScopedWorkerWake(
   const referer = req.url;
 
   after(async () => {
-    try {
-      const response = await fetch(workerUrl, {
-        method: "POST",
-        cache: "no-store",
-        redirect: "manual",
-        headers: {
-          cookie,
-          origin,
-          referer,
-          "x-requested-with": "XMLHttpRequest",
-        },
-      });
-      if (!response.ok) {
-        logger.warn("[worker-wake] durable upload stage remains queued because the request-scoped worker nudge was rejected", {
+    await Promise.all(Array.from({ length: count }, async () => {
+      try {
+        const response = await fetch(workerUrl, {
+          method: "POST",
+          cache: "no-store",
+          redirect: "manual",
+          headers: {
+            cookie,
+            origin,
+            referer,
+            "x-requested-with": "XMLHttpRequest",
+          },
+        });
+        if (!response.ok) {
+          logger.warn("[worker-wake] durable upload stage remains queued because the request-scoped worker nudge was rejected", {
+            jobType,
+            status: response.status,
+          });
+        }
+      } catch (error) {
+        logger.warn("[worker-wake] durable upload stage remains queued because the request-scoped worker nudge failed", {
           jobType,
-          status: response.status,
+          errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
         });
       }
-    } catch (error) {
-      logger.warn("[worker-wake] durable upload stage remains queued because the request-scoped worker nudge failed", {
-        jobType,
-        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      });
-    }
+    }));
   });
 
   return true;
