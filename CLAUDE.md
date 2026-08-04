@@ -14,6 +14,39 @@ Stack: Next.js 15 · React 19 · TypeScript · Prisma 6.19 (PostgreSQL) · Tailw
 - **Main is stable.** All 5 clusters (A-E) from DECISIONS_NEEDED.md are resolved.
 - **Recent merges:** #1029 (action icons), #1028 (screenshot contradictions), #1027 (generation/buildplan/export truth), #1026 (lifecycle truth), #1025 (canonical readiness counts).
 
+## Product goal (canonical — owner-stated, supersedes earlier phrasing)
+
+The owner uploads exactly two things:
+
+1. **Company Vault documents and Brand Assets — ONCE.** Not per tender.
+2. **Tender files — every time**, for each new tender.
+
+The app must then do **everything else automatically**, through to a
+downloadable ZIP, **with exactly two manual exceptions**:
+
+- **AI Analyze** — user-triggered
+- **Run Engine** — user-triggered
+
+So the shape is:
+
+```
+Vault + Brand Assets (once)  ─┐
+                              ├─→ extraction + source verification   AUTOMATIC
+Tender files (every tender)  ─┘
+        │
+        ├─→ [MANUAL GATE 1]  AI Analyze
+        ├─→ [MANUAL GATE 2]  Run Engine
+        │
+        └─→ Build Plan · evidence matching · DOCX generation · validation ·
+            PDF finalization · package reconciliation · ZIP readiness   AUTOMATIC
+```
+
+Nothing else may require a click. No Generate, Confirm, Repair, Validate,
+Finalize, Refresh or Re-check step on the normal path. Exceptional recovery may
+exist only inside collapsed Diagnostics and Recovery.
+
+Implementation state and every traced gate point: see task #124.
+
 ## Priority order for all sessions
 
 1. Read `operator_handoff.md` Active Workboard before starting — do not overlap another agent's scope.
