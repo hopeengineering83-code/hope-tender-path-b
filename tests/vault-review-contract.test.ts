@@ -96,13 +96,16 @@ describe("Company Vault automatic verification contract", () => {
   it("verifies uploaded bytes before Company Vault persistence, then wakes ingestion", () => {
     const uploadRoute = read("app/api/upload/route.ts");
     const secureUpload = read("lib/secure-upload-handler.ts");
+    const uploadRecovery = read("lib/tender-upload-idempotent-recovery.ts");
     const byteIntegrity = read("lib/engine/persisted-byte-integrity.ts");
 
-    assert.match(uploadRoute, /const response = await handleSecureUpload\(req\)/);
+    assert.match(uploadRoute, /const primaryResponse = await handleSecureUpload\(req\)/);
+    assert.match(uploadRoute, /if \(prepared\) response = await handleSecureUpload\(canonicalRetryRequest\)/);
     assert.match(uploadRoute, /if \(!response\.ok\) return response/);
     assert.match(uploadRoute, /companyImport\?\.status === "QUEUED"/);
     assert.match(uploadRoute, /scheduleRequestScopedWorkerWake\(req, "VAULT_INGEST"\)/);
     assert.match(uploadRoute, /return response/);
+    assert.doesNotMatch(uploadRecovery, /getStorageAdapter|putFile\(|tenderFile\.(?:create|upsert)|enqueueJob|enqueueTenderFileExtractionJob/);
     assert.match(secureUpload, /Buffer\.from\(await file\.arrayBuffer\(\)\)/);
     assert.match(secureUpload, /inspectActualFileBytes/);
     assert.match(secureUpload, /integrity\.integrityStatus !== "VERIFIED"/);
