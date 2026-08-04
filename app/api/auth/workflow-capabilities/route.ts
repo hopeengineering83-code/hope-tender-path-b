@@ -13,9 +13,10 @@ export async function GET(req: Request) {
 
   const canMutateTender = user.role === "ADMIN" || user.role === "PROPOSAL_MANAGER";
   if (canMutateTender) {
-    // Recovery for a verified upload whose durable EXTRACT_TEXT job was stored
-    // before a Preview worker could be started. Queue-empty is a safe no-op.
-    scheduleRequestScopedWorkerWake(req, "EXTRACT_TEXT");
+    // Recovery for verified tender packages whose durable EXTRACT_TEXT jobs
+    // were stored before a Preview worker could be started. The bounded wake
+    // covers the platform's ten-file request batch and queue-empty is a no-op.
+    scheduleRequestScopedWorkerWake(req, "EXTRACT_TEXT", 10);
   }
 
   return NextResponse.json({
