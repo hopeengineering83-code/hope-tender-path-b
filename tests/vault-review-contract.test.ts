@@ -48,11 +48,6 @@ describe("Company Vault automatic verification contract", () => {
   });
 
   it("sends 'manage the vault' calls to action to a page that can actually manage the vault", () => {
-    // These three CTAs all pointed at /dashboard/company/review, which is a
-    // read-only automatic-verification monitor: it can refresh and it can
-    // re-run ingestion, but it has no way to add, edit, or remove an expert,
-    // a project, or a document. A button labelled "Set up Vault" that lands
-    // somewhere you cannot set up a vault is a dead end dressed as an action.
     const panel = read("components/vault-evidence-search-panel.tsx");
     const monitor = read("components/company-vault-verification-page.tsx");
 
@@ -64,9 +59,6 @@ describe("Company Vault automatic verification contract", () => {
       assert.equal(href, "/dashboard/company", `"${label}" must link to the page that owns vault content`);
     }
 
-    // Guards the premise: if the monitor ever grows real record management,
-    // this assertion fails and the retarget above should be reconsidered
-    // rather than left stale.
     assert.doesNotMatch(monitor, /expert\.create|project\.create|method:\s*"DELETE"|method:\s*"PATCH"/);
   });
 
@@ -101,12 +93,16 @@ describe("Company Vault automatic verification contract", () => {
     assert.match(api, /VAULT_REVIEW_CONSUMER_SELECT\.PROJECT/);
   });
 
-  it("verifies uploaded bytes before Company Vault persistence", () => {
+  it("verifies uploaded bytes before Company Vault persistence, then wakes ingestion", () => {
     const uploadRoute = read("app/api/upload/route.ts");
     const secureUpload = read("lib/secure-upload-handler.ts");
     const byteIntegrity = read("lib/engine/persisted-byte-integrity.ts");
 
-    assert.match(uploadRoute, /return handleSecureUpload\(req\)/);
+    assert.match(uploadRoute, /const response = await handleSecureUpload\(req\)/);
+    assert.match(uploadRoute, /if \(!response\.ok\) return response/);
+    assert.match(uploadRoute, /companyImport\?\.status === "QUEUED"/);
+    assert.match(uploadRoute, /scheduleRequestScopedWorkerWake\(req, "VAULT_INGEST"\)/);
+    assert.match(uploadRoute, /return response/);
     assert.match(secureUpload, /Buffer\.from\(await file\.arrayBuffer\(\)\)/);
     assert.match(secureUpload, /inspectActualFileBytes/);
     assert.match(secureUpload, /integrity\.integrityStatus !== "VERIFIED"/);
