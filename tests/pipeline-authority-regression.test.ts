@@ -3,6 +3,9 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
 const read = (path: string) => readFileSync(path, "utf8");
+const codeOnly = (source: string) => source
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/^[ \t]*\/\/.*$/gm, "");
 
 describe("pipeline authority non-negotiables", () => {
   it("client upload wakes extraction only and cannot start AI Analyze", () => {
@@ -14,7 +17,7 @@ describe("pipeline authority non-negotiables", () => {
   });
 
   it("reports a failed worker wake honestly instead of promising a scheduler", () => {
-    const source = read("components/workflow-step-links.tsx");
+    const source = codeOnly(read("components/workflow-step-links.tsx"));
     assert.match(source, /Queued, but the background worker could not be started from here/);
     assert.match(source, /It stays queued and runs when a worker next picks it up/);
     assert.doesNotMatch(source, /scheduled background worker will continue it/);
