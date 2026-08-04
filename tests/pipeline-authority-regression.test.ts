@@ -2,6 +2,8 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
+import { decideTenderUploadAutoPipeline } from "../lib/ui/auto-pipeline";
+
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("pipeline authority non-negotiables", () => {
@@ -23,6 +25,9 @@ describe("pipeline authority non-negotiables", () => {
 
   it("workflow center projects action contracts but executes no mutation", () => {
     const source = read("app/api/tenders/[id]/workflow-center/route.ts");
+    // The affordance is what matters. Without a URL and a method there is
+    // nothing for a client to invoke, so the Center stays a description of the
+    // workflow rather than a second authority over it.
     assert.doesNotMatch(source, /actionUrl\s*:/);
     assert.doesNotMatch(source, /actionMethod\s*:/);
     assert.match(source, /actionKind: action\.mutation \? "mutation" as const : "navigation" as const/);

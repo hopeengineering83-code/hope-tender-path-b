@@ -70,17 +70,31 @@ export function WorkflowStepLinks({
   const currentLabel = currentStage.label;
   const manualAction = useMemo(() => actionForCanonicalDecision(currentAction), [currentAction]);
 
+  /**
+   * Start the job that was just enqueued.
+   *
+   * A failure here must not be reported as reassurance. The previous wording —
+   * "the scheduled background worker will continue it" — is only true where a
+   * scheduler actually reaches this deployment, and the one scheduler that
+   * exists (.github/workflows/drain-ai-job-queue.yml) posts to the PRODUCTION
+   * host. On a preview deployment that sentence promises a runner that is not
+   * there, which is exactly how the Company Vault sat unextracted while its UI
+   * said extraction "completes automatically".
+   *
+   * The job is genuinely durable, so this is a warning and not an error; it
+   * just has to say what actually happened.
+   */
   async function wakeWorker(jobType: "AI_ANALYZE" | "ENGINE_RUN") {
+    const couldNotStart =
+      "Queued, but the background worker could not be started from here. It stays queued and runs when a worker next picks it up.";
     try {
       const response = await fetch(`/api/ai-jobs/run-next?jobType=${jobType}`, {
         method: "POST",
         credentials: "same-origin",
       });
-      if (!response.ok) {
-        setMessage("The durable job is queued. The scheduled background worker will continue it.");
-      }
+      if (!response.ok) setMessage(couldNotStart);
     } catch {
-      setMessage("The durable job is queued. The scheduled background worker will continue it.");
+      setMessage(couldNotStart);
     }
   }
 
