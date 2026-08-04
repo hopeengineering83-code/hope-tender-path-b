@@ -61,15 +61,7 @@ describe("A — diagnostics distinguishes rate limiting from provider exhaustion
   });
 });
 
-describe("M — engine action panel no longer claims false readiness", () => {
-  const source = readFileSync("components/engine-action-panel.tsx", "utf8");
-
-  it("does not publish a bare success claim", () => {
-    assert.doesNotMatch(source, /error:\s*"Engine completed successfully\."/);
-  });
-
-  it("directs the user to the one canonical next action", () => {
-    assert.match(source, /Next Required Action card above/);
-    assert.match(source, /Workflow blockers remain/);
-  });
-});
+// "M — engine action panel no longer claims false readiness" is superseded:
+// the panel claimed a FROZEN readiness ("Pending automatic processing",
+// permanently) because nothing ever set its state, and it was deleted. The
+// canonical claim now comes from NextActionPanel alone.

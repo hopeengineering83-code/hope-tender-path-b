@@ -14,7 +14,6 @@ function stripComments(source: string): string {
 }
 
 const OPERATIONAL_COMPONENTS = [
-  "engine-action-panel.tsx",
   "generation-action-panel.tsx",
   "document-validator-panel.tsx",
   "export-readiness-panel.tsx",
@@ -32,16 +31,10 @@ describe("operational components use SVG icons", () => {
     });
   }
 
-  it("generation and Engine actions use text-based status (no icons)", () => {
+  it("generation actions use text-based status (no icons)", () => {
     const generation = readComponent("generation-action-panel.tsx");
-    const engine = readComponent("engine-action-panel.tsx");
-    // Gap 2+3: buttons and icons removed. Text-based status surface instead.
     assert.match(generation, /PROCESSING_AUTOMATICALLY/);
     assert.match(generation, /READY_TO_DOWNLOAD/);
-    assert.match(engine, /Processing automatically/);
-    assert.match(engine, /Engine complete/);
-    assert.doesNotMatch(engine, /Run Safe Mode/);
-    assert.doesNotMatch(engine, /Full AI/);
   });
 
   it("final ZIP uses DownloadIcon and visible text", () => {

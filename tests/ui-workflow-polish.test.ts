@@ -44,7 +44,6 @@ describe("UI metadata removal — no visible metadata text", () => {
     "components/corrupted-metadata-banner.tsx",
     "components/client-submission-details-panel.tsx",
     "components/analysis-quality-panel.tsx",
-    "components/engine-action-panel.tsx",
     "components/next-action-panel.tsx",
     "components/tender-controls-panel.tsx",
     "components/clean-corrupted-metadata-button.tsx",

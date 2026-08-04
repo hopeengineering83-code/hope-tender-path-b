@@ -45,9 +45,11 @@ describe("canonical workflow action registry", () => {
     }
   });
 
-  it("keeps AI Analyze as recovery and the durable Engine as a normal workflow action", () => {
+  it("keeps AI Analyze as recovery and the durable Engine as navigation", () => {
     assert.equal(getTenderAction("AI_ANALYZE").availability, "RECOVERY");
-    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
+    // NORMAL means "the user does this here". The Engine is server-driven and
+    // has no control, so it is something to navigate to and observe.
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "NAVIGATION");
     assert.equal(getTenderAction("MATCH_EVIDENCE").availability, "NAVIGATION");
     assert.equal(getTenderAction("MATCH_EVIDENCE").mutation, null);
   });
@@ -58,7 +60,6 @@ describe("canonical workflow action registry", () => {
       .map(([actionId]) => actionId);
     assert.deepEqual(normal, [
       "UPLOAD_TENDER_FILES",
-      "RUN_ENGINE",
       "BUILD_SUBMISSION_PLAN",
       "GENERATE_REQUIRED_DOCUMENTS",
       "DOWNLOAD_FINAL_ZIP",

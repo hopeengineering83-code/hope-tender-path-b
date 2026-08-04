@@ -49,25 +49,8 @@ describe("durable Engine route authority", () => {
   });
 });
 
-describe("durable Engine UI honesty", () => {
-  const panel = read("components/engine-action-panel.tsx");
-
-  it("uses one enqueue-and-poll workflow without legacy mode controls", () => {
-    assert.match(panel, /executeEngineRunAsync/);
-    assert.match(panel, /fetch\(`\/api\/tenders\/\$\{tenderId\}\/engine`, \{ method: "POST" \}\)/);
-    assert.match(panel, /fetch\(`\/api\/ai-jobs\/\$\{jobId\}`, \{ method: "GET" \}\)/);
-    assert.match(panel, /TERMINAL_JOB_STATUSES/);
-    assert.doesNotMatch(panel, /Run Safe Mode/);
-    assert.doesNotMatch(panel, /Full AI/);
-    assert.doesNotMatch(panel, /skipAiRematch/);
-    assert.doesNotMatch(panel, /maxChars=/);
-  });
-
-  it("reports partial, failed, canceled, and background-running states honestly (Gap 2: icons removed)", () => {
-    assert.match(panel, /PARTIAL_SUCCESS/);
-    assert.match(panel, /ASYNC_ENGINE_FAILED/);
-    assert.match(panel, /ENGINE_JOB_SUPERSEDED/);
-    assert.match(panel, /ASYNC_POLL_TIMEOUT/);
-    assert.match(panel, /durable worker continues/);
-  });
-});
+// The "durable Engine UI honesty" block asserted enqueue/poll/status strings
+// inside components/engine-action-panel.tsx. That panel could not render its
+// own state and was deleted; the route assertions above are the surviving
+// guarantee, and tests/engine-is-not-a-user-action.test.ts proves no UI
+// invokes the Engine at all.

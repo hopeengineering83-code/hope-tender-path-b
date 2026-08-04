@@ -6,7 +6,6 @@ const read = (path: string) => readFileSync(path, "utf8");
 
 describe("tender Engine mutation RBAC", () => {
   const route = read("app/api/tenders/[id]/engine/route.ts");
-  const panel = read("components/engine-action-panel.tsx");
 
   it("permits only ADMIN and PROPOSAL_MANAGER at the server boundary", () => {
     assert.match(route, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
@@ -29,12 +28,9 @@ describe("tender Engine mutation RBAC", () => {
     assert.match(route, /companyId: vaultPreflight\.companyId/);
   });
 
-  it("blocks read-only UI mutations before a request is sent", () => {
-    assert.match(panel, /if \(!canMutate\)/);
-    assert.match(panel, /ENGINE_MUTATION_BLOCKED_RESULT/);
-    assert.match(panel, /ROLE_READ_ONLY_MUTATION_BLOCKED/);
-    assert.match(panel, /Engine runs require the ADMIN or PROPOSAL_MANAGER role/);
-  });
+  // The client-side canMutate guard was removed with the Engine panel. It
+  // guarded a control that no longer exists, and RBAC was never dependent on
+  // it — requireRole at the route boundary above is the enforcement.
 
   it("does not accept role or policy overrides from the client", () => {
     assert.match(route, /CLIENT_POLICY_OVERRIDE_REJECTED/);

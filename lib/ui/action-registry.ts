@@ -97,15 +97,21 @@ export const TENDER_ACTIONS = {
     iconName: "LinkIcon",
     availability: "NAVIGATION",
   },
+  // The Engine is server-driven: the durable worker owns the mutation and no
+  // UI control invokes it. So this is where the user SEES its result, not a
+  // button they press — availability is NAVIGATION, and the owner is the
+  // surface that renders the persisted selection. The mutation string stays
+  // because the route is real and the worker calls it; it is simply not the
+  // user's to trigger.
   RUN_ENGINE: {
-    anchor: "#run-engine-action",
+    anchor: "#matching-selected-evidence",
     mutation: "POST /api/tenders/:id/engine",
-    owner: "EngineActionPanel",
-    label: "Start or resume Engine",
+    owner: "MatchingSelectedEvidencePanel",
+    label: "View automatic Engine results",
     verb: "engine",
-    surface: "engine-action",
+    surface: "matching-selected-evidence",
     iconName: "BoltIcon",
-    availability: "NORMAL",
+    availability: "NAVIGATION",
   },
   BUILD_SUBMISSION_PLAN: {
     anchor: "#submission-plan-completeness",

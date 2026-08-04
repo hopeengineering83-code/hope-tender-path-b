@@ -22,7 +22,7 @@ describe("canonical tender workspace", () => {
 
   it("renders each authoritative mutation or export action once", async () => {
     const page = await readFile(PAGE_PATH, "utf8");
-    assert.equal((page.match(/<EngineActionPanel\b/g) ?? []).length, 1);
+    assert.equal((page.match(/<EngineActionPanel\b/g) ?? []).length, 0);
     assert.equal((page.match(/<GenerationActionPanel\b/g) ?? []).length, 1);
     assert.equal((page.match(/<ExportReadinessPanel\b/g) ?? []).length, 1);
     assert.equal((page.match(/<NextActionPanel\b/g) ?? []).length, 1);

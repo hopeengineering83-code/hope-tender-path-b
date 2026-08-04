@@ -357,7 +357,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                         here — that path is explicitly documented in the
                         route itself as bounded by the Vercel function limit,
                         the same class of gap fixed by generation-readiness-
-                        panel.tsx's #run-engine-action anchor for RUN_ENGINE. */}
+                        panel.tsx's anchors for the automatic stages. */}
                     {/* "Go to Retry AI Analysis" link removed — AI analysis retries
                         automatically via the durable retry policy. The approve
                         fallback button below is a genuine human legal decision. */}

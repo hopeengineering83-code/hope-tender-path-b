@@ -2,8 +2,8 @@
 //
 // The GenerationActionPanel must now render one of exactly five text
 // statuses — no icons, no badges, no buttons (except the Download ZIP
-// link when READY_TO_DOWNLOAD). The ai-analyze-panel and engine-action-panel
-// must have no normal-path buttons either.
+// link when READY_TO_DOWNLOAD). The ai-analyze-panel must have no
+// normal-path buttons either.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -11,7 +11,6 @@ import { readFileSync } from "node:fs";
 
 const generationPanel = readFileSync("components/generation-action-panel.tsx", "utf8");
 const aiAnalyzePanel = readFileSync("components/ai-analyze-panel.tsx", "utf8");
-const engineActionPanel = readFileSync("components/engine-action-panel.tsx", "utf8");
 const corruptedBanner = readFileSync("components/corrupted-metadata-banner.tsx", "utf8");
 
 // Strip comments before matching — we only care about code, not docs.
@@ -23,7 +22,6 @@ function stripComments(src: string): string {
 
 const generationPanelCode = stripComments(generationPanel);
 const aiAnalyzePanelCode = stripComments(aiAnalyzePanel);
-const engineActionPanelCode = stripComments(engineActionPanel);
 const corruptedBannerCode = stripComments(corruptedBanner);
 
 describe("Gap 3 — text-based automatic status surface", () => {
@@ -98,29 +96,12 @@ describe("Gap 2 — no normal-path workflow buttons in AI Analyze panel", () => 
   });
 });
 
-describe("Gap 2 — no normal-path workflow buttons in Engine Action panel", () => {
-  it("engine-action-panel has NO Start or resume Engine button", () => {
-    assert.doesNotMatch(engineActionPanelCode, /Start or resume Engine/);
-  });
-
-  it("engine-action-panel has NO Repair source evidence button", () => {
-    assert.doesNotMatch(engineActionPanelCode, /Repair source evidence/);
-  });
-
-  it("engine-action-panel has NO Check status now button", () => {
-    assert.doesNotMatch(engineActionPanelCode, /Check status now/);
-  });
-
-  it("engine-action-panel has NO Retry durable Engine button", () => {
-    assert.doesNotMatch(engineActionPanelCode, /Retry durable Engine/);
-  });
-
-  it("engine-action-panel shows text-based status", () => {
-    assert.match(engineActionPanelCode, /Processing automatically/);
-    assert.match(engineActionPanelCode, /Engine complete/);
-    assert.match(engineActionPanelCode, /Pending automatic processing/);
-  });
-});
+// The Engine Action panel block asserted "this file contains no button" five
+// times over. All five were true and none proved anything: the panel had
+// stopped being reachable UI, so it could not have shown a button either way.
+// It was deleted. The guarantee that survives its deletion — that no surface
+// anywhere offers to run the Engine — is in
+// tests/engine-is-not-a-user-action.test.ts.
 
 describe("Gap 2 — no normal-path button in corrupted-metadata-banner", () => {
   it("corrupted-metadata-banner has NO RepairTenderFactsButton in normal path", () => {

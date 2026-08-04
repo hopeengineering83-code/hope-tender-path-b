@@ -58,7 +58,7 @@ describe("H1 UI — mutation role gates remain fail-closed", () => {
     const page = read("app/dashboard/tenders/[id]/page.tsx");
     assert.match(page, /const currentUser = await getCurrentUser\(\)/);
     assert.match(page, /const canMutate = canMutateTender\(currentUser\?\.role\)/);
-    for (const component of ["TenderSourceFilesPanel", "AIAnalyzePanel", "EngineActionPanel", "RequirementCoveragePanel", "GenerationActionPanel", "ExportReadinessPanel", "PricingWorkbookPanel", "TenderSharePanel"]) {
+    for (const component of ["TenderSourceFilesPanel", "AIAnalyzePanel", "RequirementCoveragePanel", "GenerationActionPanel", "ExportReadinessPanel", "PricingWorkbookPanel", "TenderSharePanel"]) {
       const start = page.indexOf(`<${component}`);
       assert.ok(start >= 0, `${component} must be mounted`);
       const end = page.indexOf("/>", start);
@@ -74,13 +74,11 @@ describe("H1 UI — mutation role gates remain fail-closed", () => {
   // consumed) is deleted alongside it as a cascading orphan.
 });
 
-describe("M3 UI — dead EXTRACTION_NOT_READY branch removed", () => {
-  it("does not render force-run bypass controls", () => {
-    const source = stripComments(read("components/engine-action-panel.tsx"));
-    assert.doesNotMatch(source, /const extractionBlocked = result\?\.code === "EXTRACTION_NOT_READY"/);
-    assert.doesNotMatch(source, /Force run once/);
-  });
-});
+// "M3 UI — dead EXTRACTION_NOT_READY branch removed" asserted that
+// components/engine-action-panel.tsx rendered no force-run bypass. The whole
+// panel is gone, so there is no bypass to regress. The guarantee that no UI
+// invokes the Engine at all now lives in
+// tests/engine-is-not-a-user-action.test.ts.
 
 // "M4 UI — dead OCR provider state removed" and "L9 UI — dead MISSING
 // substring removed" describe blocks removed --

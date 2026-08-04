@@ -11,17 +11,9 @@ import { readFileSync } from "node:fs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-describe("Screenshot round 2 — no Unicode dingbats in engine-action-panel", () => {
-  it("does not use ⚡ Unicode dingbat", () => {
-    const src = read("components/engine-action-panel.tsx");
-    assert.ok(!/[⚡]/.test(src), "must not use raw ⚡ Unicode char");
-  });
-
-  it("does not use ⏳ Unicode dingbat", () => {
-    const src = read("components/engine-action-panel.tsx");
-    assert.ok(!/[⏳]/.test(src), "must not use raw ⏳ Unicode char");
-  });
-});
+// The engine-action-panel-specific dingbat cases were removed with the panel
+// itself. They are fully subsumed by the repo-wide sweep below, which checks
+// every component rather than one file.
 
 // "Screenshot round 2 — recovery command center error safety" describe block
 // removed -- components/tender-recovery-command-center.tsx was deleted as

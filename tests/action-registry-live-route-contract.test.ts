@@ -20,15 +20,16 @@ describe("action registry matches production route owners", () => {
 
   it("uses the one durable server-controlled Engine contract", () => {
     const route = read("app/api/tenders/[id]/engine/route.ts");
-    const panel = read("components/engine-action-panel.tsx");
     assert.match(route, /export async function POST/);
     assert.match(route, /enqueueEngineJobForCurrentSources/);
     assert.match(route, /CLIENT_POLICY_OVERRIDE_REJECTED/);
-    // Gap 2: the Engine button was removed from the normal-path panel.
-    // The route still exists — the automatic workflow calls it. The panel
-    // now shows text-based status instead of a button.
-    assert.match(panel, /Processing automatically/);
+    // The route exists and the durable worker calls it, so the mutation stays
+    // recorded — but no UI invokes it, so the action is NAVIGATION and points
+    // at where the result is visible. The panel this used to read could not
+    // render its own state and was deleted.
     assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "NAVIGATION");
+    assert.equal(getTenderAction("RUN_ENGINE").owner, "MatchingSelectedEvidencePanel");
   });
 
   it("uses the automatic Build Plan route and live button owner", () => {

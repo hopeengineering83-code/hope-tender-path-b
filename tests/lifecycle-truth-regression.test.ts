@@ -395,7 +395,6 @@ describe("Spec Test 7 — No 'all good' / release-ready language when blocked", 
       "components/export-readiness-panel.tsx",
       "components/next-action-panel.tsx",
       "components/generation-action-panel.tsx",
-      "components/engine-action-panel.tsx",
     ]) {
       const raw = readFileSync(resolve(process.cwd(), file), "utf8");
       // Strip comments before checking — comments referencing the spec text

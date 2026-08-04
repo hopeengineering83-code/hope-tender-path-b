@@ -184,6 +184,14 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
             {label}
           </h2>
           <p className="mt-1 max-w-2xl text-sm text-slate-700">{reason}</p>
+          {/* The durability promise belongs on the canonical status surface,
+              because it is true of the whole pipeline and not of any one
+              stage. It previously appeared only inside the Engine panel — the
+              one place it was scoped too narrowly and, once that panel's state
+              stopped being set, sat next to a permanently stale heading. */}
+          <p className="mt-2 max-w-2xl text-xs text-slate-600">
+            Verification, extraction, analysis, matching, generation and packaging continue on the server. Closing or refreshing this browser does not stop or restart them.
+          </p>
         </div>
         <div className="text-right">
           <p className="text-xs text-slate-500">Step {Math.min(currentIndex + 1, STEPS.length)} of {STEPS.length}</p>

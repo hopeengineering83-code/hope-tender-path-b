@@ -119,7 +119,6 @@ describe("workflow components contain no raw operational icons or user-facing me
     "next-action-panel.tsx",
     // tender-recovery-command-center.tsx removed -- deleted as unrendered
     // dead code (nothing imports or renders it).
-    "engine-action-panel.tsx",
     "generation-action-panel.tsx",
     "submission-plan-completeness-panel.tsx",
     "requirement-coverage-panel.tsx",

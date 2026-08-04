@@ -30,14 +30,7 @@ describe("latest preview — Engine outcome is canonical and provenance-aware", 
     assert.match(source, /NO_SELECTED_SOURCE_VERIFIED_PROJECTS_AFTER_ENGINE/);
   });
 
-  it("Engine panel presents one blocked outcome and one deduplicated gap list", () => {
-    const source = read("components/engine-action-panel.tsx");
-    assert.match(source, /Engine run completed, but matching is blocked\./);
-    assert.match(source, /Background Engine run completed, but matching is blocked\./);
-    assert.match(source, /const visibleBlockers =/);
-    assert.match(source, /new Set\(result\.blockers\.map/);
-    assert.match(source, /Blocking evidence gaps/);
-    assert.doesNotMatch(source, />Follow-up items</);
-    assert.doesNotMatch(source, /<strong>Detail:<\/strong>/);
-  });
+  // The Engine-panel blocked-outcome case was removed with the panel. The
+  // blocker CODES asserted above are produced server-side and still matter;
+  // how one deleted panel formatted them does not.
 });

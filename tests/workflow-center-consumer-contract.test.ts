@@ -95,7 +95,7 @@ describe("workflow-center consumer contract", () => {
   it("the normal tender page composes five workflow stages in authority order without competing centers", () => {
     const page = readFileSync("app/dashboard/tenders/[id]/page.tsx", "utf8");
     const orderedComponents = [
-      "TenderSourceFilesPanel", "AIAnalyzePanel", "EngineActionPanel",
+      "TenderSourceFilesPanel", "AIAnalyzePanel",
       "RequirementCoveragePanel", "MatchingSelectedEvidencePanel", "GenerationActionPanel",
       "AuthorityReviewPanel", "FinalPackageManifestPanel", "ExportReadinessPanel",
     ];

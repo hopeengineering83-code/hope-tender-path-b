@@ -25,13 +25,13 @@ function actionHref(tenderId: string, action?: string): string {
   if (action === "BUILD_SUBMISSION_PLAN") return `/dashboard/tenders/${tenderId}#submission-plan-completeness`;
   if (action === "OPEN_ANALYSIS_QUALITY") return `/dashboard/tenders/${tenderId}#analysis-quality`;
   if (action === "OPEN_MATCHING_QUALITY") return `/dashboard/tenders/${tenderId}#matching-selected-evidence`;
-  if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
+  if (action === "RUN_ENGINE") return `/dashboard/tenders/${tenderId}#matching-selected-evidence`;
   if (action === "REVIEW_MATCHES") return `/dashboard/tenders/${tenderId}#proposal-evidence-readiness`;
   if (action === "OPEN_KNOWLEDGE_REVIEW") return "/dashboard/company/review";
   if (action === "OPEN_COMPLIANCE_REVIEW") return "/dashboard/compliance";
   if (action === "RESOLVE_COMPLIANCE_GAPS") return "/dashboard/compliance";
-  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return `/dashboard/tenders/${tenderId}#run-engine-action`;
-  if (action === "RETRY_AI_ANALYZE") return `/dashboard/tenders/${tenderId}#run-engine-action`;
+  if (action === "RUN_ENGINE_OR_APPROVE_ANALYSIS") return `/dashboard/tenders/${tenderId}#analysis-quality`;
+  if (action === "RETRY_AI_ANALYZE") return `/dashboard/tenders/${tenderId}#ai-analyze-section`;
   if (action === "REVIEW_ANALYSIS") return `/dashboard/tenders/${tenderId}#analysis-quality`;
   if (action === "REPAIR_OR_EDIT_TENDER") return `/dashboard/tenders/${tenderId}#tender-edit-form`;
   if (action === "OPEN_SETTINGS") return "/dashboard/settings";

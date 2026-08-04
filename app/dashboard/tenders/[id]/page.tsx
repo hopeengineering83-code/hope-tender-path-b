@@ -25,7 +25,6 @@ import { EvaluatorObjectionsPanel } from "../../../../components/evaluator-objec
 import { PricingWorkbookPanel } from "../../../../components/pricing-workbook-panel";
 import { GenerationReadinessPanel } from "../../../../components/generation-readiness-panel";
 import { GenerationActionPanel } from "../../../../components/generation-action-panel";
-import { EngineActionPanel } from "../../../../components/engine-action-panel";
 import { AIHealthPanel } from "../../../../components/ai-health-panel";
 import { ExtractionQualityPanel } from "../../../../components/extraction-quality-panel";
 import { AnalysisQualityPanel } from "../../../../components/analysis-quality-panel";
@@ -248,18 +247,11 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         </Disclosure>
       </WorkflowStage>
 
-      <WorkflowStage number={2} title="Analysis and engine" description="Run the authoritative engine, review analysis quality, and confirm source-traced requirements.">
+      <WorkflowStage number={2} title="Analysis and engine" description="Analysis runs automatically after extraction. Review analysis quality and source-traced requirements here.">
         <AIAnalyzePanel
           tenderId={tender.id}
           initialContinueJobId={activeAnalysisJob?.id ?? null}
           aiEnabled={ai}
-          canMutate={canMutate}
-        />
-        <EngineActionPanel
-          tenderId={tender.id}
-          vaultReviewedExperts={generationReadiness?.matchingQuality?.vaultReviewedExperts ?? 0}
-          vaultReviewedProjects={generationReadiness?.matchingQuality?.vaultReviewedProjects ?? 0}
-          lifecycleBlockersExist={(generationReadiness?.blockers?.length ?? 0) > 0}
           canMutate={canMutate}
         />
         <AnalysisQualityPanel tenderId={tender.id} />

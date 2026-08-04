@@ -109,30 +109,7 @@ describe("Engine route — production dispatch is always durable and enqueue-onl
   });
 });
 
-describe("Engine action panel — SUCCEEDED polling branch surfaces partial results honestly", () => {
-  const src = read("components/engine-action-panel.tsx");
-  const succeededPos = src.indexOf('if (finalStatus === "SUCCEEDED")');
-  const failedPos = src.indexOf('else if (finalStatus === "FAILED")');
-
-  it("reads finalJob.output", () => {
-    const succeededSlice = src.slice(succeededPos, failedPos);
-    assert.match(succeededSlice, /const jobOutput = finalJob\?\.output/);
-    assert.match(succeededSlice, /jobOutput\?\.result \?\? jobOutput/);
-  });
-
-  it("recognizes both partial-result shapes", () => {
-    const succeededSlice = src.slice(succeededPos, failedPos);
-    assert.match(succeededSlice, /engineResult\?\.partial === true \|\| engineResult\?\.code === "ENGINE_COMPLETED_WITH_BLOCKERS"/);
-  });
-
-  it("checks partial output before publishing any success result", () => {
-    const isPartialPos = src.indexOf("if (isPartial)");
-    const successResultPos = src.indexOf("success: true", isPartialPos);
-    assert.ok(isPartialPos > succeededPos && isPartialPos < failedPos);
-    assert.ok(successResultPos > isPartialPos && successResultPos < failedPos);
-    const partialSlice = src.slice(isPartialPos, successResultPos);
-    assert.match(partialSlice, /success: false/);
-    assert.match(partialSlice, /blockers: Array\.isArray\(rawBlockers\) \? rawBlockers : undefined/);
-    assert.match(partialSlice, /matching is blocked/i);
-  });
-});
+// The client-side SUCCEEDED/FAILED polling branches were asserted against
+// components/engine-action-panel.tsx, which was deleted: it could not render
+// its own state, so none of those branches could reach a user. Terminal job
+// state is the ENGINE_RUN worker's responsibility and is asserted there.
