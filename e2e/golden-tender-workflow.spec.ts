@@ -1,8 +1,6 @@
 import { primaryTest as test, expect } from "./auth-helper";
 import { waitForDurableTenderExtraction } from "./durable-tender-extraction";
 const FULL = process.env.E2E_GOLDEN_AUTH === "true";
-const email = process.env.E2E_TEST_EMAIL ?? "e2e-release-integrity@example.test";
-const password = process.env.E2E_TEST_PASSWORD ?? "E2E-release-integrity-password-2026";
 
 const tenderText = `
 REQUEST FOR PROPOSAL
@@ -33,26 +31,11 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
   test.skip(!FULL, "Set E2E_GOLDEN_AUTH=true and seed the isolated E2E account");
   test.setTimeout(120_000);
 
-  test("upload-first → durable extraction → automatic analysis queue → AI fallback → readiness gate", async ({ page }) => {
-    // The storage state is set by the global setup / project config.
-    // Navigate directly to the dashboard — no login needed.
+  test("upload-first → durable extraction → explicit analysis gate → AI fallback → readiness gate", async ({ page }) => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
     await expect(page).toHaveURL(/dashboard/, { timeout: 15_000 });
 
-    // upload-first is the only canonical tender-intake endpoint — it accepts
-    // multiple files in a single call (form.getAll("file") in
-    // lib/tender-upload-first.ts). The addendum file is included here rather
-    // than via a second call to the obsolete, nonexistent POST /api/upload
-    // route: there is no production endpoint that adds a source file to an
-    // already-created tender, so a "second upload" step would either 404
-    // against real code or require inventing a fake compatibility endpoint
-    // that doesn't exist in production. Testing the real contract means
-    // testing what upload-first actually supports.
-    // Playwright's `multipart` shorthand only accepts one value per key, so a
-    // second file under the same "file" field needs the native FormData API
-    // (Node 18+ global) — this still exercises the exact same
-    // form.getAll("file") code path in lib/tender-upload-first.ts.
     const form = new FormData();
     form.append("title", "Golden Release Integrity Tender");
     form.append("reference", "RFP-E2E-2026-001");
@@ -84,9 +67,9 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
 
     const tenderId = intakeJson.tenderId;
     try {
-      // Upload-first creates the durable, user-owned extraction job before
-      // returning. The browser may wake the worker, but it is never the
-      // orchestration authority and a lost tab cannot lose the queued work.
+      // Upload-first persists the durable job before returning. The new
+      // request-scoped wake can legitimately finish it before this read, so
+      // SUCCEEDED is as valid as QUEUED/RUNNING here.
       const queuedJob = await page.request.get(`/api/ai-jobs/${intakeJson.processingJobId}`);
       expect(queuedJob.status(), await queuedJob.text()).toBe(200);
       const queuedJobJson = await queuedJob.json() as {
@@ -95,7 +78,7 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       expect(queuedJobJson.job.id).toBe(intakeJson.processingJobId);
       expect(queuedJobJson.job.tenderId).toBe(tenderId);
       expect(queuedJobJson.job.jobType).toBe("EXTRACT_TEXT");
-      expect(["QUEUED", "RUNNING"]).toContain(queuedJobJson.job.status);
+      expect(["QUEUED", "RUNNING", "SUCCEEDED"]).toContain(queuedJobJson.job.status);
 
       const extraction = await waitForDurableTenderExtraction({
         request: page.request,
@@ -103,22 +86,27 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
         expectedFileCount: 2,
       });
       expect(extraction.files).toHaveLength(2);
-      expect(extraction.workerJobIds.length).toBeGreaterThan(0);
+      expect(extraction.files.every((file) => file.extractedTextLength > 0)).toBe(true);
 
-      const completedExtraction = await page.request.get(
-        `/api/ai-jobs/${extraction.workerJobIds.at(-1)}`,
-      );
-      expect(completedExtraction.status(), await completedExtraction.text()).toBe(200);
-      const completedExtractionJson = await completedExtraction.json() as {
-        job: {
-          jobType: string;
-          status: string;
-          output?: { continuation?: { reason?: string | null } | null } | null;
+      // If the helper itself claimed a job, verify that exact completion and
+      // continuation. When the request-scoped wake already finished the queue,
+      // the persisted upload job above plus extracted source rows are the
+      // durable proof and workerJobIds is correctly empty.
+      const observedWorkerJobId = extraction.workerJobIds.at(-1);
+      if (observedWorkerJobId) {
+        const completedExtraction = await page.request.get(`/api/ai-jobs/${observedWorkerJobId}`);
+        expect(completedExtraction.status(), await completedExtraction.text()).toBe(200);
+        const completedExtractionJson = await completedExtraction.json() as {
+          job: {
+            jobType: string;
+            status: string;
+            output?: { continuation?: { reason?: string | null } | null } | null;
+          };
         };
-      };
-      expect(completedExtractionJson.job.jobType).toBe("EXTRACT_TEXT");
-      expect(completedExtractionJson.job.status).toBe("SUCCEEDED");
-      expect(completedExtractionJson.job.output?.continuation?.reason).toBe("AI_ANALYZE_QUEUED");
+        expect(completedExtractionJson.job.jobType).toBe("EXTRACT_TEXT");
+        expect(completedExtractionJson.job.status).toBe("SUCCEEDED");
+        expect(completedExtractionJson.job.output?.continuation?.reason).toBe("AI_ANALYZE_QUEUED");
+      }
 
       const analyze = await page.request.post(`/api/tenders/${tenderId}/ai-analyze?force=true`);
       expect(analyze.status(), await analyze.text()).toBe(200);
@@ -133,10 +121,6 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       };
       expect(analyzeJson.success).toBe(true);
       expect(analyzeJson.fallback).toBe(true);
-      // In CI all provider keys are absent or invalid; any of these codes is valid:
-      // "AI_NO_PROVIDER_CONFIGURED"  — no keys configured at all
-      // "AI_PROVIDERS_RATE_LIMITED"  — keys present but all in cooldown after attempt
-      // "AI_PROVIDERS_EXHAUSTED"     — providers tried and all failed/exhausted
       expect(["AI_NO_PROVIDER_CONFIGURED", "AI_PROVIDERS_RATE_LIMITED", "AI_PROVIDERS_EXHAUSTED"]).toContain(analyzeJson.code);
       expect(analyzeJson.analysisSource).toBe("REGEX_FALLBACK");
       expect(analyzeJson.requirementCount).toBeGreaterThan(0);
