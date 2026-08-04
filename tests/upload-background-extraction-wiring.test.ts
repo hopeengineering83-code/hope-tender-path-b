@@ -6,6 +6,7 @@ const read = (path: string) => readFileSync(path, "utf8");
 const firstUpload = read("lib/tender-upload-first.ts");
 const secureUpload = read("lib/secure-upload-handler.ts");
 const browserPipeline = read("lib/ui/auto-pipeline.ts");
+const readyBoundary = read("lib/ai-jobs/automatic-tender-pipeline.ts");
 const legacyHandlers = read("lib/ai-job-handlers-legacy.ts");
 
 describe("upload requests hand verified bytes to durable extraction", () => {
@@ -46,12 +47,14 @@ describe("upload requests hand verified bytes to durable extraction", () => {
     assert.match(secureUpload, /extractedText: null/);
   });
 
-  it("the browser wakes extraction only and recognizes the manual gate", () => {
+  it("the browser wakes extraction only and leaves AI Analyze explicit", () => {
     assert.match(browserPipeline, /EXTRACT_TEXT_QUEUED/);
-    assert.match(browserPipeline, /READY_FOR_AI_ANALYZE/);
+    assert.match(browserPipeline, /AI_ANALYZE_QUEUED/);
     assert.match(browserPipeline, /jobType=EXTRACT_TEXT/);
     assert.doesNotMatch(browserPipeline, /jobType=AI_ANALYZE/);
-    assert.match(browserPipeline, /select AI Analyze|explicit action/i);
+    assert.match(browserPipeline, /AI Analyze remains an explicit action|select AI Analyze/i);
+    assert.match(readyBoundary, /status:\s*"CANCELED"/);
+    assert.match(readyBoundary, /manualGate:\s*"AI_ANALYZE"/);
   });
 
   it("has exactly one EXTRACT_TEXT implementation", () => {
