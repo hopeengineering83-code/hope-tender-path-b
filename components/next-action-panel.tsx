@@ -1,15 +1,16 @@
 // Next Required Action panel — server component.
 //
 // CONSUMES THE CANONICAL WORKFLOW DECISION. This panel must NOT compute its
-// own readiness truth. It applies only the product-level two-action
-// presentation contract: AI Analyze and Run Engine are the normal mutations;
-// downstream Build Plan, matching, generation, validation and finalization are
-// server-owned stages.
+// own readiness truth. The shared presentation helper applies only the
+// product-level two-action contract: AI Analyze and Run Engine are the normal
+// mutations; downstream Build Plan, matching, generation, validation and
+// finalization are server-owned stages.
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-completeness";
 import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
+import { presentTwoActionWorkflowDecision } from "../lib/engine/two-action-workflow-presentation";
 import { getTenderReleaseState } from "../lib/engine/tender-release-state";
 import { scoreTone, verdictLabel } from "../lib/ui/tender-release-state-presentation";
 import { CheckCircleIcon, WarningIcon, ArrowRightIcon } from "./icons";
@@ -64,45 +65,6 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
   }
 }
 
-function presentCanonicalAction(decision: {
-  currentBlockingStage: string;
-  nextRequiredAction: string;
-  nextRequiredActionLabel: string;
-  nextRequiredActionReason: string;
-}) {
-  const engineOwnedStages = new Set([
-    "NO_CONFIRMED_BUILD_PLAN",
-    "MANDATORY_NO_COMPLIANCE_ROWS",
-    "REQUIRED_DOCS_NOT_GENERATED",
-  ]);
-  const automaticStages = new Set([
-    "PDF_REQUIRED_UNAVAILABLE",
-    "DOCS_NOT_VALIDATED",
-  ]);
-
-  if (engineOwnedStages.has(decision.currentBlockingStage)) {
-    return {
-      action: "RUN_ENGINE",
-      label: "Run Engine",
-      reason: "Run Engine starts source verification, matching and Build Plan creation. Every valid downstream stage then continues automatically.",
-    };
-  }
-
-  if (automaticStages.has(decision.currentBlockingStage)) {
-    return {
-      action: "AUTOMATIC_PROCESSING",
-      label: "Processing automatically",
-      reason: "The durable worker owns this stage. Closing or refreshing the browser does not stop it; intervene only when a specific source, quality, integrity or legal blocker is reported.",
-    };
-  }
-
-  return {
-    action: decision.nextRequiredAction,
-    label: decision.nextRequiredActionLabel,
-    reason: decision.nextRequiredActionReason,
-  };
-}
-
 function stepColor(step: WorkflowStep) {
   if (step === "COMPLETE" || step === "EXPORT_ZIP") return "border-emerald-200 bg-emerald-50";
   if (step === "RUN_AI_ANALYZE" || step === "BUILD_SUBMISSION_PLAN" || step === "GENERATE_DOCUMENTS" || step === "MATCH_EVIDENCE") return "border-amber-200 bg-amber-50";
@@ -136,14 +98,14 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   if (!tender) return null;
 
-  const [decision, releaseState] = await Promise.all([
+  const [rawDecision, releaseState] = await Promise.all([
     getCanonicalTenderWorkflowDecision(prisma, userId, tenderId),
     getTenderReleaseState(prisma, tenderId, userId),
   ]);
+  const decision = presentTwoActionWorkflowDecision(rawDecision);
   if (!decision) return null;
 
-  const presented = presentCanonicalAction(decision);
-  const step = stepFromCanonicalAction(presented.action);
+  const step = stepFromCanonicalAction(decision.nextRequiredAction);
   const blockers = decision.blockerDetails;
   const currentIndex = STEP_INDEX[step];
 
@@ -194,9 +156,9 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Next required action</p>
           <h2 id="next-required-action-title" className="mt-1 text-xl font-bold text-slate-900">
             <span className="mr-2 text-slate-400" aria-hidden="true">{stepIcon(step)}</span>
-            {presented.label}
+            {decision.nextRequiredActionLabel}
           </h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-700">{presented.reason}</p>
+          <p className="mt-1 max-w-2xl text-sm text-slate-700">{decision.nextRequiredActionReason}</p>
           <p className="mt-2 max-w-2xl text-xs text-slate-600">
             Source verification and extraction are automatic. AI Analyze and Run Engine are the two normal user actions. After Run Engine, matching, Build Plan, generation, validation, finalization and package reconciliation continue on the server.
           </p>
@@ -207,7 +169,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
       </div>
 
-      <WorkflowStepLinks currentIndex={currentIndex} currentAction={presented.action} />
+      <WorkflowStepLinks currentIndex={currentIndex} currentAction={decision.nextRequiredAction} />
 
       {blockers.length > 0 && (
         <div className="mt-3 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm">
