@@ -6,6 +6,16 @@ import { WarningIcon, CheckIcon, CrossIcon, ChevronDownIcon } from "./icons";
 const CLIENT_SHA = process.env.NEXT_PUBLIC_BUILD_SHA ?? "unavailable";
 const CLIENT_ENV = process.env.NEXT_PUBLIC_BUILD_ENV ?? "development";
 const CLIENT_TIME = process.env.NEXT_PUBLIC_BUILD_TIME ?? null;
+// Stable entry points. The per-deployment hostname changes on every commit;
+// these do not.
+const BRANCH_URL = process.env.NEXT_PUBLIC_BRANCH_URL ?? "";
+const PRODUCTION_URL = process.env.NEXT_PUBLIC_PRODUCTION_URL ?? "";
+const GIT_BRANCH = process.env.NEXT_PUBLIC_GIT_BRANCH ?? "";
+
+function asHref(host: string): string {
+  if (!host) return "";
+  return host.startsWith("http") ? host : `https://${host}`;
+}
 
 const ENVIRONMENT_LABELS: Record<string, string> = {
   production: "Production deployment",
@@ -97,6 +107,32 @@ export function BuildVersionBadge() {
       {open && (
         <div className="mt-1 space-y-0.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[10px] text-slate-600">
           <p><span className="font-medium">Deployment context:</span> {environmentLabel}</p>
+          {(BRANCH_URL || PRODUCTION_URL) && (
+            <div className="mt-2 border-t border-current/10 pt-2">
+              <p className="mb-1 font-medium">Always-current links:</p>
+              <ul className="space-y-1">
+                {BRANCH_URL && (
+                  <li>
+                    <a href={asHref(BRANCH_URL)} className="underline underline-offset-2 hover:no-underline">
+                      Latest preview{GIT_BRANCH ? ` for ${GIT_BRANCH}` : ""}
+                    </a>
+                    <span className="block break-all opacity-70">{BRANCH_URL}</span>
+                  </li>
+                )}
+                {PRODUCTION_URL && (
+                  <li>
+                    <a href={asHref(PRODUCTION_URL)} className="underline underline-offset-2 hover:no-underline">
+                      Production
+                    </a>
+                    <span className="block break-all opacity-70">{PRODUCTION_URL}</span>
+                  </li>
+                )}
+              </ul>
+              <p className="mt-1 opacity-70">
+                These stay valid across deployments — bookmark one instead of the per-commit URL.
+              </p>
+            </div>
+          )}
           <p><span className="font-medium">Commit:</span> {identityAvailable ? effectiveSha : "Unavailable — deployment identity is incomplete"}</p>
           {CLIENT_TIME && (
             <p><span className="font-medium">Built:</span> {new Date(CLIENT_TIME).toLocaleString()}</p>

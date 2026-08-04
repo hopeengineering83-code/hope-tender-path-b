@@ -47,6 +47,15 @@ const nextConfig = {
     serverActions: { bodySizeLimit: "10mb" },
   },
   env: {
+    // Vercel mints a NEW hostname for every deployment, so a bookmarked
+    // preview URL goes stale on the next commit. VERCEL_BRANCH_URL is the
+    // stable per-branch alias that always resolves to the newest deployment
+    // for that branch — bookmark it once and it never needs updating. Exposed
+    // here so the build badge can surface it instead of the owner hunting for
+    // a fresh link in the PR comments after every push.
+    NEXT_PUBLIC_BRANCH_URL: process.env.VERCEL_BRANCH_URL ?? "",
+    NEXT_PUBLIC_PRODUCTION_URL: process.env.VERCEL_PROJECT_PRODUCTION_URL ?? "",
+    NEXT_PUBLIC_GIT_BRANCH: process.env.VERCEL_GIT_COMMIT_REF ?? "",
     // Use the shared catalog so the build-time flag agrees with the runtime
     // check in lib/env-check.ts. Previously this hardcoded 8 of the 10
     // canonical providers (omitted ZAI_API_KEY + CEREBRAS_API_KEY), so a
