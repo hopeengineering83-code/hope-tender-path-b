@@ -55,6 +55,7 @@ test.describe("Company Vault upload and Plan B recovery UX", () => {
             extractedTextLength: 0,
             hasInlineFileContent: true,
             hasPrivateStorage: false,
+            createdAt: new Date(2026, 7, 4, 12, index).toISOString(),
           })),
           nextCursor: null,
           hasMore: false,
@@ -102,7 +103,7 @@ test.describe("Company Vault upload and Plan B recovery UX", () => {
     await expect(page.getByText("Document stored. Extraction and source-verification queued", { exact: false })).toBeVisible();
 
     for (const name of ["source.pdf", "source.docx", "source.xlsx", "source.csv", "source.txt"]) {
-      await expect(page.getByText(name, { exact: true }).last()).toBeVisible();
+      await expect(page.getByText(name, { exact: true }).first()).toBeVisible();
     }
   });
 
