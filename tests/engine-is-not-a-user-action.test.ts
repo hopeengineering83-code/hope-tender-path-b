@@ -15,7 +15,7 @@ describe("two-action tender workflow contract", () => {
     assert.equal(action.owner, "WorkflowStepLinks");
     assert.equal(action.mutation, "POST /api/tenders/:id/manual-ai-analyze");
     assert.match(links, /manual-ai-analyze/);
-    assert.match(links, />AI Analyze</);
+    assert.match(links, /"AI Analyze"/);
   });
 
   it("Run Engine is the second explicit normal action with one owner", () => {
@@ -24,7 +24,7 @@ describe("two-action tender workflow contract", () => {
     assert.equal(action.owner, "WorkflowStepLinks");
     assert.equal(action.mutation, "POST /api/tenders/:id/engine");
     assert.match(links, /\/engine`/);
-    assert.match(links, />Run Engine</);
+    assert.match(links, /"Run Engine"/);
   });
 
   it("Build Plan and generation are automatic status surfaces", () => {
