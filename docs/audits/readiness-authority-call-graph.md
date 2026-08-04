@@ -123,6 +123,31 @@ not by itself an application defect.** What matters is everything after it.
    `PROPOSAL_GENERATION` and `AUTO_FINALIZE` never run. This is the terminal
    state, not a snapshot mid-flight.
 
+   **Resolved, and the cause was narrower than this reading suggested.** Every
+   link in the recovery chain already existed and was correct:
+   `recordRetryStateForJob` fires for `FAILED`; `AI_PROVIDERS_EXHAUSTED` and
+   `PROVIDER_EXHAUSTED` are in `RETRYABLE_CATEGORIES`; `findJobsDueForRetry`
+   selects `FAILED` jobs past their backoff; `rearmJobForRetry` returns them to
+   `QUEUED`. The one broken link was that
+   `/api/cron/ai-analyze-retry` — the route driving all of it — was scheduled
+   by nothing, in neither `vercel.json` nor any workflow. It is now a step in
+   `drain-ai-job-queue.yml`, which already runs every five minutes.
+
+   Verified against real PostgreSQL rather than by reading:
+
+   ```
+   provider eligible     : true
+   retry state retryable : true   (bounded backoff recorded)
+   scheduler finds it due: true
+   re-armed              : true   job status now: QUEUED
+   ```
+
+   So `PROCESSING_AUTOMATICALLY` for `ANALYSIS_REGEX_FALLBACK_UNAPPROVED` is
+   now truthful; before the scheduling fix it was not. Pinned by
+   `tests/analysis-provider-exhaustion-recovers-db-integration.test.ts`,
+   including the guard that refuses to resume once the tender content has
+   changed.
+
 2. **The reported status is `PROCESSING_AUTOMATICALLY`.** Nothing is
    processing. This is the same defect class as the corrupted-extraction case
    fixed in `release-status-classifier.ts`: a terminal condition rendered as
