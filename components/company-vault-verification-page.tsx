@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { startQueuedVaultIngestion } from "../lib/ui/auto-pipeline";
 
 type Diagnostics = {
   importVersion?: string;
@@ -73,7 +74,7 @@ export default function CompanyVaultVerificationPage() {
       const response = await fetch("/api/company/reimport", { method: "POST" });
       const data = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Automatic source verification could not be queued.");
-      void fetch("/api/ai-jobs/run-next?jobType=VAULT_INGEST", { method: "POST" }).catch(() => {});
+      void startQueuedVaultIngestion();
       setMessage("Source-byte reprocessing and automatic verification were queued. Matching refreshes source authority again before it runs, so no further action is needed here.");
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : "Automatic source verification could not be queued.");

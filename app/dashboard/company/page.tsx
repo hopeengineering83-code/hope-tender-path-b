@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { classifyDeleteResponse, type DeleteResponse } from "../../../lib/company-vault-delete-classifier";
+import { startQueuedVaultIngestion } from "../../../lib/ui/auto-pipeline";
 import { CheckIcon, CrossIcon, PersonIcon, FolderIcon, ChevronDownIcon } from "../../../components/icons";
 
 type CompanyDoc = {
@@ -388,6 +389,12 @@ export default function CompanyPage() {
               message: "Document stored. Extraction and source-verification queued — this completes automatically, no action needed.",
               at: Date.now(),
             });
+            // Claim the job the upload just queued. Without this the message
+            // above is false: the two repair controls woke the worker but
+            // upload never did, so a vault uploaded on a preview deployment
+            // (where the scheduled drain does not reach) stayed unextracted
+            // and could not source-verify a single record.
+            void startQueuedVaultIngestion();
           } else if (data.companyImport && data.companyImport.status === "FAILED") {
             setVaultPipeline({
               phase: "failed",
@@ -496,10 +503,7 @@ export default function CompanyPage() {
           message: "Re-extraction and re-import queued — large document sets can take a few minutes. Refresh this page shortly to see updated documents, experts, and projects.",
           at: Date.now(),
         });
-        // Best-effort nudge so the worker starts immediately instead of
-        // waiting for the next scheduled drain tick; the job stays queued
-        // and durable either way.
-        void fetch("/api/ai-jobs/run-next?jobType=VAULT_INGEST", { method: "POST" }).catch(() => {});
+        void startQueuedVaultIngestion();
       }
     } catch {
       setError("Network interruption while queuing the Company Vault re-import. Please retry when your connection is stable.");

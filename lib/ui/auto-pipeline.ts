@@ -86,45 +86,37 @@ export async function triggerTenderUploadAutoPipeline(
   };
 }
 
+export const VAULT_INGEST_WORKER_ENDPOINT = "/api/ai-jobs/run-next?jobType=VAULT_INGEST";
+
 /**
- * Company Vault repair uses the complete byte re-import route. The route
- * preserves dedicated-source eligibility and never auto-promotes records to
- * REVIEWED. Any future repair control must use byte re-import rather than an
- * extracted-text-only shortcut.
+ * Start the VAULT_INGEST job the server has just queued.
+ *
+ * Queuing and running are separate steps. Uploading a Company Vault document
+ * enqueues VAULT_INGEST (lib/secure-upload-handler.ts) and the UI reports
+ * "queued — this completes automatically", but nothing in that path ever
+ * claimed the job: the two manual repair controls woke the worker inline while
+ * the upload path, the one on the owner's normal route, did not. The only
+ * other claimant is .github/workflows/drain-ai-job-queue.yml, which posts to
+ * the PRODUCTION host — so on a preview deployment the job had no runner at
+ * all and sat QUEUED indefinitely.
+ *
+ * The visible result was a vault of documents with no extracted text and
+ * integrityStatus still at its "UNKNOWN" default, which makes
+ * sourceByteIntegrityIsVerified() false, which leaves every Expert and Project
+ * record unable to cite a source, which blocks the final ZIP. One unstarted
+ * job, the whole pipeline stalled.
+ *
+ * Waking the worker is best-effort by design: the job is durable, so a failed
+ * nudge costs latency, never work. That is why this never throws and never
+ * reports failure — there is nothing for a caller to handle.
  */
-export async function triggerCompanyDocumentAutoPipeline(): Promise<AutoPipelineResult> {
-  const endpoint = "/api/company/reimport";
+export async function startQueuedVaultIngestion(): Promise<void> {
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      return {
-        fired: false,
-        endpoint,
-        status: "failed",
-        message: body.error ?? `Company Vault re-import failed (HTTP ${response.status}).`,
-      };
-    }
-    return {
-      fired: true,
-      endpoint,
-      status: "queued",
-      message: "Company Vault source re-import completed. Run Engine will source-verify eligible evidence when explicitly started.",
-    };
+    await fetch(VAULT_INGEST_WORKER_ENDPOINT, { method: "POST", credentials: "same-origin" });
   } catch (error) {
-    logger.warn("[auto-pipeline] triggerCompanyDocumentAutoPipeline failed", {
+    logger.warn("[auto-pipeline] vault ingestion worker nudge failed; job stays queued", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
-      endpoint,
+      endpoint: VAULT_INGEST_WORKER_ENDPOINT,
     });
-    return {
-      fired: false,
-      endpoint,
-      status: "failed",
-      message: "Company Vault re-import failed because of a network error.",
-    };
   }
 }

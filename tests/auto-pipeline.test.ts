@@ -1,8 +1,9 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import {
+  VAULT_INGEST_WORKER_ENDPOINT,
   decideTenderUploadAutoPipeline,
-  triggerCompanyDocumentAutoPipeline,
+  startQueuedVaultIngestion,
   triggerTenderUploadAutoPipeline,
   type UploadFirstResponse,
 } from "../lib/ui/auto-pipeline";
@@ -21,11 +22,15 @@ describe("server-owned tender pipeline", () => {
       processingJobId: "job-123",
       pipelineStage: "EXTRACT_TEXT_QUEUED",
     }), "/api/ai-jobs/run-next?jobType=EXTRACT_TEXT");
+    // AI Analyze is one of the two manual gates. Upload may wake extraction
+    // and nothing else, so an AI_ANALYZE_QUEUED stage must NOT hand the client
+    // a worker endpoint — otherwise uploading a file would silently perform
+    // the analysis the owner is supposed to trigger.
     assert.equal(decideTenderUploadAutoPipeline({
       ...response,
       processingJobId: "job-456",
       pipelineStage: "AI_ANALYZE_QUEUED",
-    }), "/api/ai-jobs/run-next?jobType=AI_ANALYZE");
+    }), null);
     assert.equal(decideTenderUploadAutoPipeline({
       ...response,
       processingJobId: "job-without-authority",
@@ -94,14 +99,48 @@ describe("server-owned tender pipeline", () => {
     assert.equal(response.pipelineStage, "EXTRACT_TEXT_QUEUED");
   });
 
-  it("returns automatic Company Vault verification guidance without a human handoff", async () => {
+});
+
+describe("queued Company Vault ingestion is actually started", () => {
+  it("posts to the worker for the VAULT_INGEST job type", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async () => new Response(JSON.stringify({ success: true }), { status: 200 })) as typeof fetch;
+    const calls: Array<{ url: string; method?: string }> = [];
+    globalThis.fetch = (async (input, init) => {
+      calls.push({ url: String(input), method: init?.method });
+      return new Response(JSON.stringify({ ran: 1 }), { status: 200 });
+    }) as typeof fetch;
     try {
-      const result = await triggerCompanyDocumentAutoPipeline();
-      assert.equal(result.status, "queued");
-      assert.match(result.message, /Run Engine will automatically source-verify/i);
-      assert.doesNotMatch(result.message, /human review|attach original|source reference not found/i);
+      await startQueuedVaultIngestion();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, VAULT_INGEST_WORKER_ENDPOINT);
+    assert.equal(calls[0].method, "POST");
+    // A GET would be claimed by the route's GET->POST alias, but the filter is
+    // what matters: without it the worker may claim some other tenant's job
+    // type and leave this vault queued.
+    assert.match(calls[0].url, /jobType=VAULT_INGEST/);
+  });
+
+  it("stays silent when the worker is unreachable, because the job is durable", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => { throw new Error("network down"); }) as typeof fetch;
+    try {
+      // Must not reject: callers use `void startQueuedVaultIngestion()`, so a
+      // rejection here would surface as an unhandled promise rejection and, in
+      // the upload path, would do it on every single uploaded document.
+      await startQueuedVaultIngestion();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("does not throw on a worker error response either", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("{}", { status: 401 })) as typeof fetch;
+    try {
+      await startQueuedVaultIngestion();
     } finally {
       globalThis.fetch = originalFetch;
     }
