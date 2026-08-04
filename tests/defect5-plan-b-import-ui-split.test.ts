@@ -1,16 +1,13 @@
-// Defect 5 contract test: Plan B import page shows separate import and
-// verification results instead of one large warning paragraph.
+// Plan B result contract after Company Vault restoration.
 //
-// The page must:
-//   1. Render two distinct panels — "Import results" and "Verification results".
-//   2. Surface the structured counts the route already returns: documents,
-//      experts, projects, legalRecords, financialRecords, complianceRecords.
-//   3. Show requestedTrust and persistedTrustRange (not a single trustLevel
-//      that could read REVIEWED).
-//   4. Split the warnings array into import-level and verification-level
-//      buckets and render each as a <ul> of <li> items (not a single
-//      paragraph joined by " | ").
-//   5. Surface evidenceDowngraded as a distinct count.
+// The page must keep structured import reporting while presenting the new
+// canonical truth:
+// - sourceDocuments are staged descriptors, never official documents;
+// - restored records are reported distinctly;
+// - canonical Company Vault counts are refreshed immediately;
+// - official-source links and SOURCE_VERIFIED totals are visible;
+// - repeated per-record missing-source warnings are suppressed in favor of
+//   one precise company-level blocker.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -18,97 +15,82 @@ import { readFileSync } from "node:fs";
 
 const page = readFileSync("app/dashboard/company/plan-b-import/page.tsx", "utf8");
 
-describe("Defect 5 — Plan B import page shows separate import and verification results", () => {
-  it("no longer joins warnings into a single paragraph with ' | '", () => {
-    // The old pattern was: result.warnings.join(" | ")
-    // The new pattern renders each warning as its own <li>.
+describe("Plan B import page reports restored Company Vault truth", () => {
+  it("does not join warnings into a single paragraph", () => {
     assert.doesNotMatch(page, /warnings\.join\(["'|]\s*["'|]\s*\)/);
+    assert.match(page, /warnings\.slice\(0, 25\)\.map/);
+    assert.match(page, /<ul/);
+    assert.match(page, /<li/);
   });
 
-  it("renders an 'Import results' panel", () => {
-    assert.match(page, /Import results/);
+  it("labels Plan B sourceDocuments as staging descriptors, not Documents", () => {
+    assert.match(page, /Source descriptors staged/);
+    assert.match(page, /sourceDocuments<\/code> are staging descriptors, not uploaded files/);
+    assert.match(page, /never becomes an official Company Vault document/);
+    assert.doesNotMatch(page, /label="Documents"/);
   });
 
-  it("renders a 'Verification results' panel distinct from the import panel", () => {
-    assert.match(page, /Verification results/);
-    // The two headings must both be present — they are in separate
-    // <div> panels with different border colors.
-    const importIdx = page.indexOf("Import results");
-    const verificationIdx = page.indexOf("Verification results");
-    assert.ok(importIdx > -1 && verificationIdx > -1);
-    assert.ok(verificationIdx > importIdx, "Verification results panel must come after Import results panel");
-  });
-
-  it("surfaces the documents count from the route response", () => {
-    assert.match(page, /result\.documents/);
-  });
-
-  it("surfaces the legalRecords / financialRecords / complianceRecords counts", () => {
-    assert.match(page, /result\.legalRecords/);
-    assert.match(page, /result\.financialRecords/);
-    assert.match(page, /result\.complianceRecords/);
-  });
-
-  it("surfaces requestedTrust and persistedTrustRange (not a single trustLevel)", () => {
-    assert.match(page, /result\.requestedTrust/);
-    assert.match(page, /result\.persistedTrustRange/);
-  });
-
-  it("surfaces evidenceDowngraded as a distinct count in the verification panel", () => {
-    assert.match(page, /result\.evidenceDowngraded/);
-  });
-
-  it("renders import warnings as a <ul> of <li> items (not a joined paragraph)", () => {
-    // The import warnings <ul> is rendered inside the Import results panel.
-    // Find the panel heading "Import warnings" — it only renders when
-    // importWarnings.length > 0.
-    const importWarningsIdx = page.indexOf("Import warnings");
-    assert.ok(importWarningsIdx > -1, "must have an 'Import warnings' heading");
-    const importRegion = page.slice(importWarningsIdx, importWarningsIdx + 1500);
-    assert.match(importRegion, /<ul/);
-    assert.match(importRegion, /<li/);
-    assert.match(importRegion, /importWarnings/);
-  });
-
-  it("renders verification warnings as a <ul> of <li> items in the verification panel", () => {
-    // Find the "Records downgraded to AI_DRAFT" heading — it only renders
-    // when verificationWarnings.length > 0.
-    const downgradedIdx = page.indexOf("Records downgraded to AI_DRAFT");
-    assert.ok(downgradedIdx > -1, "must have a 'Records downgraded to AI_DRAFT' heading");
-    const verificationRegion = page.slice(downgradedIdx, downgradedIdx + 2000);
-    assert.match(verificationRegion, /<ul/);
-    assert.match(verificationRegion, /<li/);
-    assert.match(verificationRegion, /verificationWarnings/);
-  });
-
-  it("splits warnings via a splitWarnings helper that classifies by pattern", () => {
-    assert.match(page, /function splitWarnings/);
-    // The helper must classify "Expert X could not be source-verified" as a
-    // verification warning, not an import warning.
-    assert.match(page, /could not be source-verified/i);
-  });
-
-  it("ImportResult type includes the structured fields the route returns", () => {
-    // The type must include documents, legalRecords, financialRecords,
-    // complianceRecords, requestedTrust, persistedTrustRange, evidenceDowngraded.
-    assert.match(page, /documents\?\:\s*\{\s*received:\s*number;\s*created:\s*number;\s*updated:\s*number;\s*skipped:\s*number\s*\}/);
-    assert.match(page, /legalRecords\?\:/);
-    assert.match(page, /financialRecords\?\:/);
-    assert.match(page, /complianceRecords\?\:/);
-    assert.match(page, /requestedTrust\?\:\s*string/);
-    assert.match(page, /persistedTrustRange\?\:\s*string\[\]/);
-    assert.match(page, /evidenceDowngraded\?\:\s*number/);
-  });
-
-  it("renders a per-record-type counts table (not just experts and projects)", () => {
-    // The old UI only showed experts and projects counts. The new UI must
-    // show a table with all 6 record types.
+  it("shows a structured per-record-type table with RESTORED counts", () => {
     assert.match(page, /CountRow/);
-    assert.match(page, /label="Documents"/);
+    assert.match(page, /Record type/);
+    assert.match(page, /Received/);
+    assert.match(page, /Created/);
+    assert.match(page, /Updated/);
+    assert.match(page, /Restored/);
+    assert.match(page, /Skipped/);
     assert.match(page, /label="Experts"/);
     assert.match(page, /label="Projects"/);
     assert.match(page, /label="Legal records"/);
     assert.match(page, /label="Financial records"/);
     assert.match(page, /label="Compliance records"/);
+    assert.match(page, /restored=\{result\.finalized\.restored\?\.experts\}/);
+    assert.match(page, /restored=\{result\.finalized\.restored\?\.projects\}/);
+  });
+
+  it("keeps the structured legacy response fields used by the result table", () => {
+    assert.match(page, /type LegacyImportResult/);
+    assert.match(page, /documents\?: RecordCounts/);
+    assert.match(page, /experts\?: RecordCounts/);
+    assert.match(page, /projects\?: RecordCounts/);
+    assert.match(page, /legalRecords\?: RecordCounts/);
+    assert.match(page, /financialRecords\?: RecordCounts/);
+    assert.match(page, /complianceRecords\?: RecordCounts/);
+    assert.match(page, /requestedTrust\?: string/);
+    assert.match(page, /persistedTrustRange\?: string\[\]/);
+    assert.match(page, /evidenceDowngraded\?: number/);
+  });
+
+  it("calls the finalization endpoint and refreshes canonical Company Vault counts", () => {
+    assert.match(page, /fetch\("\/api\/company\/plan-b-import\/finalize"/);
+    assert.match(page, /fetch\("\/api\/company", \{ cache: "no-store" \}\)/);
+    assert.match(page, /Active and visible now:/);
+    assert.match(page, /activeCounts\?\.experts/);
+    assert.match(page, /activeCounts\?\.projects/);
+    assert.match(page, /company-vault-refresh/);
+  });
+
+  it("shows official links and source-verification totals separately", () => {
+    assert.match(page, /Official links/);
+    assert.match(page, /result\.finalized\.linked\?\.total/);
+    assert.match(page, /Source verified/);
+    assert.match(page, /result\.finalized\.sourceVerified\?\.total/);
+  });
+
+  it("renders one company-level missing-source blocker", () => {
+    assert.match(page, /Company source blocker/);
+    assert.match(page, /result\.finalized\.sourceBlocker/);
+    assert.equal((page.match(/Company source blocker/g) ?? []).length, 1);
+  });
+
+  it("filters repeated legacy per-record upload-source warnings", () => {
+    assert.match(page, /function visibleWarnings/);
+    assert.match(page, /could not be source-verified\.\*upload the source document/i);
+    assert.match(page, /const warnings = visibleWarnings\(result\?\.imported\.warnings\)/);
+  });
+
+  it("keeps validation issues visible as structured list items", () => {
+    assert.match(page, /validationIssues/);
+    assert.match(page, /validationIssues\.slice\(0, 10\)\.map/);
+    assert.match(page, /<strong>\{issue\.path \|\| "payload"\}:<\/strong>/);
   });
 });
