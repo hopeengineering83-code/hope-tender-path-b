@@ -1505,13 +1505,55 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
 
 function ensureBootstrapped(): Promise<void> {
   if (!g.prismaReady) {
-    g.prismaReady = bootstrap(prisma).catch((err: unknown) => {
-      logger.error("[bootstrap] failed:", { detail: err });
+    g.prismaReady = bootstrapWithRetry(prisma, 0).catch((err: unknown) => {
+      logger.error("[bootstrap] failed after retries:", { detail: err });
       g.prismaReady = undefined; // allow retry on next request
       throw err;
     });
   }
   return g.prismaReady;
+}
+
+/**
+ * Priority 2: Bounded retry with jitter for genuinely transient database
+ * initialization failures (P1001 cold-start, P1002 advisory-lock timeout,
+ * connection reset). Never retries non-transient errors (authorization,
+ * schema, constraint, data-integrity).
+ */
+const MAX_BOOTSTRAP_RETRIES = 2;
+const TRANSIENT_ERROR_CODES = ["P1001", "P1002", "P1003", "P1004", "P1008", "P1009"];
+const TRANSIENT_ERROR_PATTERNS = [
+  /advisory.?lock/i,
+  /connection.?refused/i,
+  /connection.?reset/i,
+  /connection.?terminated/i,
+  /ECONNRESET/i,
+  /ETIMEDOUT/i,
+  /ENOTFOUND/i,
+];
+
+function isTransientError(err: unknown): boolean {
+  const message = String((err as { message?: string })?.message ?? err ?? "");
+  if (TRANSIENT_ERROR_CODES.some((code) => message.includes(code))) return true;
+  return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
+
+async function bootstrapWithRetry(client: PrismaClient, attempt: number): Promise<void> {
+  try {
+    await bootstrap(client);
+  } catch (err: unknown) {
+    if (attempt < MAX_BOOTSTRAP_RETRIES && isTransientError(err)) {
+      const jitter = Math.floor(Math.random() * 1000);
+      const delayMs = 1000 * (attempt + 1) + jitter; // 1-2s with jitter
+      logger.warn(
+        `[bootstrap] transient failure on attempt ${attempt + 1}/${MAX_BOOTSTRAP_RETRIES + 1}, ` +
+          `retrying in ${delayMs}ms...`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return bootstrapWithRetry(client, attempt + 1);
+    }
+    throw err;
+  }
 }
 
 // PromiseLike wrapper — re-evaluates g.prismaReady on every await so a

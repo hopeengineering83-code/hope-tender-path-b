@@ -66,6 +66,11 @@ function errorText(error) {
 // database has time to wake before we give up.
 const MAX_DB_REACH_ATTEMPTS = 5;
 const DB_REACH_ERROR_CODES = ["P1001", "P1002"];
+// P1002 with advisory-lock timeout is a distinct failure from cold-start.
+// Concurrent preview builds can race for the migration advisory lock.
+// Retry with jitter so they don't immediately collide again.
+const MAX_LOCK_ATTEMPTS = 3;
+const LOCK_TIMEOUT_PATTERN = /advisory.?lock|migration.?lock|P1002.*lock/i;
 
 function sleepSync(ms) {
   // Synchronous, dependency-free sleep. Atomics.wait is permitted on the main
@@ -101,7 +106,7 @@ function prewarm() {
   }
 }
 
-function deploy(attempt = 1) {
+function deploy(attempt = 1, lockAttempt = 1) {
   try {
     prisma(["migrate", "deploy"], { capture: true });
     return "ok";
@@ -110,10 +115,23 @@ function deploy(attempt = 1) {
     if (message.includes("P3005") || /database schema is not empty/i.test(message)) return "no-history";
     if (message.includes("P3009") && message.includes(INIT_MIGRATION)) return "failed-init";
     if (message.includes(INIT_MIGRATION) && /already exists/i.test(message)) return "failed-init";
-    // P1001 / P1002 = database unreachable. Most often a suspended serverless
-    // compute that simply needs a few seconds to wake — retry before failing
-    // the build. Both codes cover the same cold-start failure mode on Neon /
-    // Supabase / Railway serverless Postgres.
+
+    // Check for advisory-lock timeout (concurrent preview builds racing migrations).
+    // This is distinct from cold-start P1001/P1002 — the database IS reachable,
+    // but another build holds the migration lock. Retry with jitter.
+    if (LOCK_TIMEOUT_PATTERN.test(message) && lockAttempt < MAX_LOCK_ATTEMPTS) {
+      const jitter = Math.floor(Math.random() * 3000);
+      const delayMs = 3000 + jitter; // 3-6s with jitter to avoid immediate re-collision
+      console.warn(
+        `Migration advisory-lock timeout on lock-attempt ${lockAttempt}/${MAX_LOCK_ATTEMPTS}. ` +
+          `Another build may be running migrations. Waiting ${delayMs}ms with jitter, then retrying...`,
+      );
+      sleepSync(delayMs);
+      return deploy(attempt, lockAttempt + 1);
+    }
+
+    // P1001 / P1002 = database unreachable (cold start). Most often a suspended
+    // serverless compute that simply needs a few seconds to wake.
     const isReachable = DB_REACH_ERROR_CODES.some((code) => message.includes(code));
     if (isReachable && attempt < MAX_DB_REACH_ATTEMPTS) {
       const delayMs = Math.min(2000 * 2 ** (attempt - 1), 16000);
