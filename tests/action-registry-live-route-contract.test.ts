@@ -9,36 +9,43 @@ function read(path: string): string {
 }
 
 describe("action registry matches production route owners", () => {
-  it("uses the real durable AI Analyze background contract", () => {
-    const route = read("app/api/tenders/[id]/ai-analyze/route.ts");
-    const panel = read("components/ai-analyze-panel.tsx");
+  it("uses the explicit durable AI Analyze route and one UI owner", () => {
+    const route = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
+    const owner = read("components/workflow-step-links.tsx");
     assert.match(route, /export async function POST/);
-    assert.match(route, /searchParams\.get\("mode"\)\s*===\s*"background"/);
-    assert.match(panel, /ai-analyze\?mode=background/);
-    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/ai-analyze?mode=background");
+    assert.match(route, /createAnalysisJob/);
+    assert.match(route, /manualRequested:\s*true/);
+    assert.match(route, /autoContinue:\s*false/);
+    assert.match(owner, /manual-ai-analyze/);
+    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/manual-ai-analyze");
+    assert.equal(getTenderAction("AI_ANALYZE").availability, "NORMAL");
+    assert.equal(getTenderAction("AI_ANALYZE").owner, "WorkflowStepLinks");
   });
 
-  it("uses the one durable server-controlled Engine contract", () => {
+  it("uses the one explicit durable Engine contract", () => {
     const route = read("app/api/tenders/[id]/engine/route.ts");
+    const enqueue = read("lib/engine/enqueue-engine-job.ts");
+    const owner = read("components/workflow-step-links.tsx");
     assert.match(route, /export async function POST/);
     assert.match(route, /enqueueEngineJobForCurrentSources/);
     assert.match(route, /CLIENT_POLICY_OVERRIDE_REJECTED/);
-    // The route exists and the durable worker calls it, so the mutation stays
-    // recorded — but no UI invokes it, so the action is NAVIGATION and points
-    // at where the result is visible. The panel this used to read could not
-    // render its own state and was deleted.
+    assert.match(enqueue, /manualRequested:\s*true/);
+    assert.match(enqueue, /autoContinue:\s*true/);
+    assert.match(owner, /\/engine`/);
     assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
-    assert.equal(getTenderAction("RUN_ENGINE").availability, "NAVIGATION");
-    assert.equal(getTenderAction("RUN_ENGINE").owner, "MatchingSelectedEvidencePanel");
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
+    assert.equal(getTenderAction("RUN_ENGINE").owner, "WorkflowStepLinks");
   });
 
-  it("uses the automatic Build Plan route and live button owner", () => {
+  it("keeps Build Plan status-only because Engine owns automatic verification", () => {
     const route = read("app/api/tenders/[id]/build-plan/route.ts");
-    const button = read("components/build-submission-plan-button.tsx");
-    assert.match(route, /export async function POST/);
-    assert.match(button, /Build and verify plan/);
-    assert.match(button, /No manual confirmation is required/);
-    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").mutation, "POST /api/tenders/:id/build-plan");
+    const status = read("components/build-submission-plan-button.tsx");
+    assert.match(route, /export async function GET/);
+    assert.match(status, /method:\s*"GET"/);
+    assert.doesNotMatch(status, /method:\s*"POST"/);
+    assert.doesNotMatch(status, /<button/);
+    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").mutation, null);
+    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").availability, "NAVIGATION");
     assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").owner, "BuildSubmissionPlanButton");
   });
 
@@ -68,7 +75,7 @@ describe("action registry matches production route owners", () => {
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
   });
 
-  it("contains no known nonexistent or client-policy workflow paths", () => {
+  it("contains no nonexistent or client-policy workflow paths", () => {
     const mutations = listTenderActions().flatMap(([, action]) => action.mutation ? [action.mutation] : []);
     const joined = mutations.join("\n");
     assert.doesNotMatch(joined, /ai-analyze\?async=true/);
