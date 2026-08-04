@@ -62,6 +62,55 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      # AI_ANALYZE is the one pipeline stage isDurableRetryJobType does NOT
+      # cover (that list is EXTRACT_TEXT, VAULT_INGEST, ENGINE_RUN,
+      # PROPOSAL_GENERATION, AUTO_FINALIZE). Its recovery lives in
+      # lib/ai-analyze/retry-service.ts behind /api/cron/ai-analyze-retry —
+      # which was registered with no scheduler at all: not in vercel.json's
+      # crons, not here. A failed AI analysis was therefore never retried, so
+      # one transient provider hiccup stranded the tender permanently while the
+      # UI still reported "processing automatically".
+      #
+      # That route already accepts X-Worker-Secret precisely so "an external
+      # scheduler can poll this more frequently than the platform's cron
+      # minimum" — its own words. This is that scheduler. It runs first so any
+      # job it re-arms is claimable by the drain below on the same tick.
+      - name: GET /api/cron/ai-analyze-retry
+        env:
+          WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
+          RETRY_URL: https://hope-tender-path-b.vercel.app/api/cron/ai-analyze-retry
+        run: |
+          if [ -z "$WORKER_SECRET" ]; then
+            echo "::error::AI_JOBS_WORKER_SECRET repo secret is empty."
+            exit 1
+          fi
+
+          response=$(curl -sS \
+            --connect-timeout 30 \
+            --max-time 65 \
+            -H "X-Worker-Secret: $WORKER_SECRET" \
+            -w "\n---STATUS:%{http_code}---" \
+            "$RETRY_URL" \
+            || echo "---STATUS:000---")
+
+          status=$(echo "$response" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          body=$(echo "$response" | sed -E "s/---STATUS:[0-9]+---//")
+          echo "HTTP $status"
+          echo "Body: $body"
+
+          # Auth errors mean the secret wiring is broken — worth surfacing.
+          if [ "$status" = "401" ] || [ "$status" = "403" ]; then
+            echo "::error::Retry scheduler rejected auth. Check AI_JOBS_WORKER_SECRET matches between this repo and Vercel, then redeploy."
+            exit 1
+          fi
+
+          # Everything else is non-fatal: the drain step below still needs to
+          # run, and the next tick is only 5 minutes away.
+          if [ "$status" != "200" ]; then
+            echo "::warning::Retry scheduler returned $status — transient, continuing to the drain step."
+          fi
+          exit 0
+
       - name: POST /api/ai-jobs/run-next
         env:
           WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
