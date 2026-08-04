@@ -1,27 +1,51 @@
 "use client";
 
-// Client component for the tender workflow shortcuts.
-//
-// The current step is the one visible primary action. The complete ten-step
-// workflow remains available inside a closed disclosure so it does not compete
-// with the canonical Next Required Action or make the tender page unnecessarily
-// long. Every link opens closed workflow disclosures before scrolling.
-
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import { openParentDetailsAndScroll } from "@/lib/ui/tender-workflow-sync";
+import { emitTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
 import { TENDER_WORKFLOW_STAGES } from "@/lib/tender-workflow-stages";
-import { CheckCircleIcon, ArrowRightIcon, ChevronDownIcon } from "./icons";
+import { CheckCircleIcon, ArrowRightIcon, ChevronDownIcon, SparklesIcon, BoltIcon } from "./icons";
 
 const STEP_LABELS = TENDER_WORKFLOW_STAGES.map((stage) => stage.label);
 
+type ManualAction = "AI_ANALYZE" | "RUN_ENGINE";
+
+type CapabilityResponse = {
+  authenticated?: boolean;
+  canMutateTender?: boolean;
+};
+
+function actionForStep(currentIndex: number): ManualAction | null {
+  if (currentIndex === 2) return "AI_ANALYZE";
+  if (currentIndex >= 3 && currentIndex <= 6) return "RUN_ENGINE";
+  return null;
+}
+
 export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
-  // A server-rendered href can be activated before React hydrates this client
-  // component. Native hash navigation cannot open closed <details> ancestors,
-  // leaving the destination attached but hidden. Keep anchors non-interactive
-  // until hydration guarantees that the canonical open-and-scroll handler owns
-  // every click.
+  const params = useParams<{ id?: string | string[] }>();
+  const router = useRouter();
+  const rawId = params?.id;
+  const tenderId = Array.isArray(rawId) ? rawId[0] : rawId;
   const [interactive, setInteractive] = useState(false);
-  useEffect(() => setInteractive(true), []);
+  const [canMutate, setCanMutate] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setInteractive(true);
+    let active = true;
+    void fetch("/api/auth/workflow-capabilities", { method: "GET", cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({})) as CapabilityResponse;
+        if (active) setCanMutate(response.ok && body.canMutateTender === true);
+      })
+      .catch(() => {
+        if (active) setCanMutate(false);
+      });
+    return () => { active = false; };
+  }, []);
 
   const handleClick = useCallback((event: React.MouseEvent<HTMLAnchorElement>, selectors: string[]) => {
     event.preventDefault();
@@ -36,6 +60,52 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
   const safeIndex = complete ? STEP_LABELS.length - 1 : Math.max(0, currentIndex);
   const currentStage = TENDER_WORKFLOW_STAGES[safeIndex];
   const currentLabel = currentStage.label;
+  const manualAction = useMemo(() => actionForStep(currentIndex), [currentIndex]);
+
+  async function wakeWorker(jobType: "AI_ANALYZE" | "ENGINE_RUN") {
+    try {
+      const response = await fetch(`/api/ai-jobs/run-next?jobType=${jobType}`, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      if (!response.ok) {
+        setMessage("The durable job is queued. The scheduled background worker will continue it.");
+      }
+    } catch {
+      setMessage("The durable job is queued. The scheduled background worker will continue it.");
+    }
+  }
+
+  async function runManualAction(action: ManualAction) {
+    if (!tenderId || busy) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const endpoint = action === "AI_ANALYZE"
+        ? `/api/tenders/${tenderId}/manual-ai-analyze`
+        : `/api/tenders/${tenderId}/engine`;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string; jobId?: string; status?: string };
+      if (!response.ok || !body.jobId) {
+        throw new Error(body.error ?? `${action === "AI_ANALYZE" ? "AI Analyze" : "Run Engine"} could not be queued.`);
+      }
+
+      setMessage(action === "AI_ANALYZE"
+        ? "AI Analyze queued. Requirements and tender facts will be promoted only after a complete grounded analysis succeeds."
+        : "Run Engine queued. Matching, Build Plan, generation, validation, finalization, and package reconciliation now continue automatically.");
+      emitTenderWorkflowSync({ tenderId, source: action === "AI_ANALYZE" ? "manual-ai-analyze" : "manual-run-engine" });
+      await wakeWorker(action === "AI_ANALYZE" ? "AI_ANALYZE" : "ENGINE_RUN");
+      router.refresh();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Workflow action failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="mt-4 space-y-3">
@@ -43,6 +113,26 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
         <p className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-100 px-3 py-2 text-sm font-semibold text-emerald-800">
           <CheckCircleIcon /> Workflow complete
         </p>
+      ) : manualAction && canMutate ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={busy || !tenderId}
+            onClick={() => void runManualAction(manualAction)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {manualAction === "AI_ANALYZE" ? <SparklesIcon /> : <BoltIcon />}
+            {busy ? "Queuing…" : manualAction === "AI_ANALYZE" ? "AI Analyze" : "Run Engine"}
+          </button>
+          <a
+            href={interactive ? currentStage.targets[0] : undefined}
+            onClick={interactive ? (event) => handleClick(event, currentStage.targets) : undefined}
+            aria-disabled={!interactive}
+            className="text-sm font-semibold text-slate-700 underline decoration-slate-300 underline-offset-4 hover:text-slate-900"
+          >
+            Open {currentLabel} details
+          </a>
+        </div>
       ) : (
         <a
           href={interactive ? currentStage.targets[0] : undefined}
@@ -54,6 +144,9 @@ export function WorkflowStepLinks({ currentIndex }: { currentIndex: number }) {
           <ArrowRightIcon /> Open {currentLabel}
         </a>
       )}
+
+      {message && <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">{message}</p>}
+      {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">{error}</p>}
 
       <details className="group rounded-lg border border-slate-200 bg-white/70">
         <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2 text-xs font-semibold text-slate-700 marker:content-none">
