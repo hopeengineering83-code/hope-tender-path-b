@@ -253,6 +253,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           initialContinueJobId={activeAnalysisJob?.id ?? null}
           aiEnabled={ai}
           canMutate={canMutate}
+          analysisAlreadySucceeded={Boolean(tender.analysisSummary)}
         />
         <AnalysisQualityPanel tenderId={tender.id} />
         <RequirementCoveragePanel tenderId={tender.id} canMutate={canMutate} />

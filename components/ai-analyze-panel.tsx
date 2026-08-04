@@ -11,6 +11,16 @@ type Props = {
   initialContinueJobId?: string | null;
   aiEnabled: boolean;
   canMutate?: boolean;
+  /**
+   * Server-known fact: a completed analysis already exists for this tender.
+   *
+   * Without this the heading below reported "Pending automatic analysis"
+   * FOREVER on any fresh page load, because it was derived purely from this
+   * component's own polling state — which starts null. A finished 100/100 AI
+   * analysis rendered as "pending" directly above the panel showing its score,
+   * which read as "the app is broken" when nothing was wrong.
+   */
+  analysisAlreadySucceeded?: boolean;
 };
 
 const POLL_INTERVAL_MS = 3_000;
@@ -25,6 +35,7 @@ export function AIAnalyzePanel({
   initialContinueJobId = null,
   aiEnabled,
   canMutate = false,
+  analysisAlreadySucceeded = false,
 }: Props) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -254,7 +265,10 @@ export function AIAnalyzePanel({
   }
 
   const busy = analyzing || isPending;
-  const analysisComplete = jobStatus === "SUCCEEDED";
+  // Live polling wins while a job is running; otherwise fall back to the
+  // server's view. Client state alone cannot see work done in an earlier
+  // session, and pretending otherwise is what made this panel lie.
+  const analysisComplete = jobStatus === "SUCCEEDED" || (!analyzing && jobStatus === null && analysisAlreadySucceeded);
 
   return (
     <section id="ai-analyze-section" className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
