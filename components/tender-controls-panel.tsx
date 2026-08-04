@@ -333,7 +333,7 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
   });
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div id="tender-settings" className="rounded-xl border border-gray-200 bg-white shadow-sm">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3">
         <div className="flex items-center gap-3">

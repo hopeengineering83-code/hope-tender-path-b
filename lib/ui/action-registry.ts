@@ -38,7 +38,7 @@ export type TenderActionDefinition = {
 
 export const TENDER_ACTIONS = {
   UPLOAD_TENDER_FILES: {
-    anchor: "#source-files",
+    anchor: "#tender-files",
     mutation: "POST /api/upload",
     owner: "TenderSourceFilesPanel",
     label: "Upload tender package",
@@ -58,9 +58,9 @@ export const TENDER_ACTIONS = {
     availability: "RECOVERY",
   },
   AI_ANALYZE: {
-    anchor: "#tender-understanding",
+    anchor: "#ai-analyze-section",
     mutation: "POST /api/tenders/:id/ai-analyze?mode=background",
-    owner: "TenderUnderstandingPanel",
+    owner: "AIAnalyzePanel",
     label: "Retry AI Analyze",
     verb: "analyze",
     surface: "ai-analyze",
@@ -70,7 +70,7 @@ export const TENDER_ACTIONS = {
   REVIEW_SOURCES: {
     anchor: "#requirement-coverage",
     mutation: null,
-    owner: "TenderUnderstandingPanel",
+    owner: "RequirementCoveragePanel",
     label: "Review source issues",
     verb: "review",
     surface: "requirement-coverage",
@@ -80,7 +80,7 @@ export const TENDER_ACTIONS = {
   MATCH_EVIDENCE: {
     anchor: "#matching-selected-evidence",
     mutation: null,
-    owner: "TenderEngineWorkspace",
+    owner: "MatchingSelectedEvidencePanel",
     label: "View automatic evidence matching",
     verb: "match",
     surface: "matching-selected-evidence",
@@ -90,7 +90,7 @@ export const TENDER_ACTIONS = {
   REVIEW_EVIDENCE: {
     anchor: "#matching-selected-evidence",
     mutation: null,
-    owner: "TenderEngineWorkspace",
+    owner: "MatchingSelectedEvidencePanel",
     label: "View automatically linked evidence",
     verb: "match",
     surface: "matching-selected-evidence",
@@ -150,7 +150,7 @@ export const TENDER_ACTIONS = {
   OPEN_TENDER_SETTINGS: {
     anchor: "#tender-settings",
     mutation: null,
-    owner: "TenderSettingsPanel",
+    owner: "TenderControlsPanel",
     label: "Open tender settings",
     verb: "settings",
     surface: "tender-edit",
@@ -160,7 +160,7 @@ export const TENDER_ACTIONS = {
   REFRESH_WORKFLOW_STATE: {
     anchor: "#workflow-state",
     mutation: null,
-    owner: "TenderWorkflowCenter",
+    owner: "NextActionPanel",
     label: "Refresh workflow state",
     verb: "refresh",
     surface: "tender-edit",

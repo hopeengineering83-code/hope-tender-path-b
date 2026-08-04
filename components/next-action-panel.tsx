@@ -151,7 +151,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
   const verdict = verdictLabel(releaseState?.verdict ?? null);
 
   return (
-    <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${stepColor(step)}`} aria-labelledby="next-required-action-title">
+    <section id="workflow-state" className={`mb-4 rounded-2xl border p-5 shadow-sm ${stepColor(step)}`} aria-labelledby="next-required-action-title">
       {/* Authoritative status row — tender status, readiness score, and bid
           verdict together, so this is the one place a user checks for "where
           does this tender stand" instead of three separate panels below. */}

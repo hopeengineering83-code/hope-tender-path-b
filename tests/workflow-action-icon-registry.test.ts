@@ -31,6 +31,10 @@ describe("canonical workflow action registry", () => {
 
   it("defines every normal, recovery, and navigation action explicitly", () => {
     for (const [actionId, action] of listTenderActions()) {
+      // Non-emptiness only. That an owner NAMES A COMPONENT THAT EXISTS, and
+      // that an anchor names an id something renders, are proven in
+      // tests/action-registry-targets-exist.test.ts — this assertion alone let
+      // four deleted components stay referenced here for months.
       assert.ok(action.owner, `${actionId} is missing a mutation/navigation owner`);
       assert.match(action.anchor, /^#/);
       assert.ok(action.label.trim().length > 0);
