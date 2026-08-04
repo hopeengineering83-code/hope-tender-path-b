@@ -4,12 +4,36 @@ import { requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
-import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
+import { getCanonicalTenderWorkflowDecision, type CanonicalWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
 import { TENDER_WORKFLOW_STAGE_LABELS } from "../../../../../lib/tender-workflow-stages";
 import { getTenderAction, type TenderActionId } from "../../../../../lib/ui/action-registry";
 
 function stageStatusFromCanonical(canonicalState: string | undefined, fallback: string): string {
   return canonicalState || fallback;
+}
+
+function presentDecision(decision: CanonicalWorkflowDecision | null): CanonicalWorkflowDecision | null {
+  if (!decision) return null;
+
+  if (["NO_CONFIRMED_BUILD_PLAN", "MANDATORY_NO_COMPLIANCE_ROWS", "REQUIRED_DOCS_NOT_GENERATED"].includes(decision.currentBlockingStage)) {
+    return {
+      ...decision,
+      nextRequiredAction: "RUN_ENGINE",
+      nextRequiredActionLabel: "Run Engine",
+      nextRequiredActionReason: "Run Engine starts source verification, matching and Build Plan creation. Valid downstream stages then continue automatically.",
+    };
+  }
+
+  if (["PDF_REQUIRED_UNAVAILABLE", "DOCS_NOT_VALIDATED"].includes(decision.currentBlockingStage)) {
+    return {
+      ...decision,
+      nextRequiredAction: "AUTOMATIC_PROCESSING",
+      nextRequiredActionLabel: "Processing automatically",
+      nextRequiredActionReason: "The durable worker owns this stage. Intervene only when a specific source, quality, integrity or legal blocker is reported.",
+    };
+  }
+
+  return decision;
 }
 
 export async function GET(
@@ -23,7 +47,7 @@ export async function GET(
     const { id: tenderId } = await params;
     await prismaReady;
 
-    const [snapshot, workflow, decision] = await Promise.all([
+    const [snapshot, workflow, rawDecision] = await Promise.all([
       getTenderReleaseSnapshot(prisma, tenderId, actor.id),
       getCanonicalTenderWorkflowState(prisma, actor.id, tenderId),
       getCanonicalTenderWorkflowDecision(prisma, actor.id, tenderId),
@@ -31,6 +55,7 @@ export async function GET(
 
     if (!snapshot) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
+    const decision = presentDecision(rawDecision);
     const pageLedgerSummary = (snapshot.pageLedgers ?? []).map((pageLedger, index) => ({
       fileName: snapshot.extraction.files[index]?.fileName ?? `File ${index + 1}`,
       ...pageLedger,
@@ -51,17 +76,16 @@ export async function GET(
       : null;
 
     const analysisExplanation = snapshot.analysis.state === "AI_SUCCEEDED"
-      ? "AI analysis completed and the canonical successful revision is ready for requirement review."
+      ? "AI Analyze completed and the grounded canonical revision is ready for review before Run Engine."
       : snapshot.analysis.state === "RUNNING"
-        ? "AI analysis is running automatically."
-        : snapshot.analysis.blocker ?? "Automatic analysis is blocked and a recovery action is available.";
+        ? "AI Analyze is running as a durable job."
+        : snapshot.analysis.blocker ?? "Extraction is ready. An authorized user must select AI Analyze.";
 
     const requirementExplanation = snapshot.requirements.mandatory > 0
       ? `${snapshot.requirements.total} requirements recorded; ${snapshot.requirements.groundedMandatory}/${snapshot.requirements.mandatory} mandatory requirements are source-traced.`
       : `${snapshot.requirements.total} requirements recorded; no mandatory requirements are currently identified.`;
 
-    const evidenceRecoveryRequired = decision?.currentBlockingStage === "MANDATORY_NO_COMPLIANCE_ROWS" ||
-      decision?.currentBlockingStage === "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE";
+    const evidenceNeedsSourceReview = decision?.currentBlockingStage === "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE";
 
     const stage = (
       number: number,
@@ -79,7 +103,7 @@ export async function GET(
         actionId,
         actionLabel: action.label,
         actionName: actionId,
-        actionKind: "navigation" as const,
+        actionKind: action.mutation ? "mutation" as const : "navigation" as const,
         actionTarget: action.anchor,
         actionAvailability: action.availability,
         mutation: action.mutation,
@@ -93,7 +117,7 @@ export async function GET(
       stage(
         1,
         stageStatusFromCanonical(ds["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"),
-        "Upload the tender package once. The server owns all automatic continuation after upload.",
+        "Upload the tender package once. The server extracts it automatically; AI Analyze and Run Engine remain the two explicit workflow actions.",
         "UPLOAD_TENDER_FILES",
       ),
       stage(
@@ -114,7 +138,7 @@ export async function GET(
         3,
         stageStatusFromCanonical(
           ds["RUN_AI_ANALYZE"],
-          snapshot.analysis.state === "AI_SUCCEEDED" ? "COMPLETE" : snapshot.analysis.state === "RUNNING" ? "IN_PROGRESS" : "BLOCKED",
+          snapshot.analysis.state === "AI_SUCCEEDED" ? "COMPLETE" : snapshot.analysis.state === "RUNNING" ? "IN_PROGRESS" : "READY",
         ),
         analysisExplanation,
         "AI_ANALYZE",
@@ -133,36 +157,42 @@ export async function GET(
       ),
       stage(
         6,
-        stageStatusFromCanonical(ds["BUILD_SUBMISSION_PLAN"], snapshot.buildPlan.gateValid ? "COMPLETE" : "BLOCKED"),
-        snapshot.buildPlan.gateBlocker ?? snapshot.buildPlan.blocker ?? "Submission plan pending.",
-        "BUILD_SUBMISSION_PLAN",
+        stageStatusFromCanonical(ds["BUILD_SUBMISSION_PLAN"], snapshot.buildPlan.gateValid ? "COMPLETE" : "READY"),
+        snapshot.buildPlan.gateValid
+          ? "The current Build Plan is source-verified."
+          : "Run Engine creates and source-verifies the Build Plan automatically.",
+        snapshot.buildPlan.gateValid ? "BUILD_SUBMISSION_PLAN" : "RUN_ENGINE",
       ),
       stage(
         7,
         stageStatusFromCanonical(ds["MATCH_EVIDENCE"], "WAITING_ON_PRIOR_STEP"),
         decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "MANDATORY_NO_COMPLIANCE_ROWS", "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
-          : "Review automatically matched company evidence.",
-        evidenceRecoveryRequired ? "MATCH_EVIDENCE" : "REVIEW_EVIDENCE",
+          : evidenceNeedsSourceReview
+            ? "Automatic matching found insufficient source-verified coverage. Review or add genuine Company Vault evidence."
+            : "Run Engine scores and persists eligible company evidence automatically.",
+        evidenceNeedsSourceReview ? "REVIEW_EVIDENCE" : "RUN_ENGINE",
       ),
       stage(
         8,
-        stageStatusFromCanonical(ds["GENERATE_DOCUMENTS"], snapshot.generationEligible ? "READY" : "BLOCKED"),
-        snapshot.generationBlockers[0] ?? "Ready to generate only tender-required documents.",
-        "GENERATE_REQUIRED_DOCUMENTS",
+        stageStatusFromCanonical(ds["GENERATE_DOCUMENTS"], snapshot.generationEligible ? "IN_PROGRESS" : "BLOCKED"),
+        snapshot.generationBlockers[0] ?? "Document generation continues automatically after Run Engine and the canonical generation gate pass.",
+        snapshot.generationEligible ? "GENERATE_REQUIRED_DOCUMENTS" : "RUN_ENGINE",
       ),
       stage(
         9,
         stageStatusFromCanonical(ds["VALIDATE_DOCS"], "WAITING_ON_PRIOR_STEP"),
         decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "DOCS_NOT_VALIDATED", "DOCS_NOT_APPROVED_EXPORT_READY", "AUTHORITY_OR_QUALITY_BLOCKERS"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
-          : "Validate generated documents and complete genuine final approval.",
+          : decision?.currentBlockingStage === "DOCS_NOT_VALIDATED"
+            ? "Automatic document validation/finalization is in progress."
+            : "Review only genuine final authority, source, quality or legal blockers.",
         "FINAL_APPROVAL",
       ),
       stage(
         10,
         stageStatusFromCanonical(ds["EXPORT_ZIP"], snapshot.exportEligible ? "READY" : "BLOCKED"),
-        snapshot.exportBlockers[0] ?? "Ready for byte-verified final ZIP export.",
+        snapshot.exportBlockers[0] ?? "Ready for byte-verified final ZIP download.",
         "DOWNLOAD_FINAL_ZIP",
       ),
     ];
