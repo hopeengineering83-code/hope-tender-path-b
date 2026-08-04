@@ -4,36 +4,13 @@ import { requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
-import { getCanonicalTenderWorkflowDecision, type CanonicalWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
+import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
+import { presentTwoActionWorkflowDecision } from "../../../../../lib/engine/two-action-workflow-presentation";
 import { TENDER_WORKFLOW_STAGE_LABELS } from "../../../../../lib/tender-workflow-stages";
 import { getTenderAction, type TenderActionId } from "../../../../../lib/ui/action-registry";
 
 function stageStatusFromCanonical(canonicalState: string | undefined, fallback: string): string {
   return canonicalState || fallback;
-}
-
-function presentDecision(decision: CanonicalWorkflowDecision | null): CanonicalWorkflowDecision | null {
-  if (!decision) return null;
-
-  if (["NO_CONFIRMED_BUILD_PLAN", "MANDATORY_NO_COMPLIANCE_ROWS", "REQUIRED_DOCS_NOT_GENERATED"].includes(decision.currentBlockingStage)) {
-    return {
-      ...decision,
-      nextRequiredAction: "RUN_ENGINE",
-      nextRequiredActionLabel: "Run Engine",
-      nextRequiredActionReason: "Run Engine starts source verification, matching and Build Plan creation. Valid downstream stages then continue automatically.",
-    };
-  }
-
-  if (["PDF_REQUIRED_UNAVAILABLE", "DOCS_NOT_VALIDATED"].includes(decision.currentBlockingStage)) {
-    return {
-      ...decision,
-      nextRequiredAction: "AUTOMATIC_PROCESSING",
-      nextRequiredActionLabel: "Processing automatically",
-      nextRequiredActionReason: "The durable worker owns this stage. Intervene only when a specific source, quality, integrity or legal blocker is reported.",
-    };
-  }
-
-  return decision;
 }
 
 export async function GET(
@@ -55,7 +32,7 @@ export async function GET(
 
     if (!snapshot) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
-    const decision = presentDecision(rawDecision);
+    const decision = presentTwoActionWorkflowDecision(rawDecision);
     const pageLedgerSummary = (snapshot.pageLedgers ?? []).map((pageLedger, index) => ({
       fileName: snapshot.extraction.files[index]?.fileName ?? `File ${index + 1}`,
       ...pageLedger,
