@@ -3,7 +3,11 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
 const read = (path: string) => readFileSync(path, "utf8");
+const codeOnly = (source: string) => source
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/^[ \t]*\/\/.*$/gm, "");
 const helper = read("lib/ai-jobs/request-scoped-worker-wake.ts");
+const helperCode = codeOnly(helper);
 const uploadRoute = read("app/api/upload/route.ts");
 const uploadFirstRoute = read("app/api/tenders/upload-first/route.ts");
 const capabilitiesRoute = read("app/api/auth/workflow-capabilities/route.ts");
@@ -11,8 +15,8 @@ const readinessRoute = read("app/api/company/ingestion-readiness/route.ts");
 
 describe("request-scoped upload worker wake", () => {
   it("permits only the two automatic upload-owned stages", () => {
-    assert.match(helper, /RequestScopedUploadJobType = "EXTRACT_TEXT" \| "VAULT_INGEST"/);
-    assert.doesNotMatch(helper, /AI_ANALYZE|ENGINE_RUN|PROPOSAL_GENERATION/);
+    assert.match(helperCode, /RequestScopedUploadJobType = "EXTRACT_TEXT" \| "VAULT_INGEST"/);
+    assert.doesNotMatch(helperCode, /"AI_ANALYZE"|"ENGINE_RUN"|"PROPOSAL_GENERATION"/);
   });
 
   it("uses Next after and forwards only the authenticated same-origin session", () => {
@@ -20,7 +24,7 @@ describe("request-scoped upload worker wake", () => {
     assert.match(helper, /const cookie = req\.headers\.get\("cookie"\)/);
     assert.match(helper, /new URL\("\/api\/ai-jobs\/run-next", requestUrl\.origin\)/);
     assert.match(helper, /headers: \{[\s\S]*cookie,[\s\S]*origin,[\s\S]*referer,/);
-    assert.doesNotMatch(helper, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/);
+    assert.doesNotMatch(helperCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/);
   });
 
   it("bounds concurrent multi-file wakes to the ten-file request limit", () => {
