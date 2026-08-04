@@ -137,7 +137,7 @@ export async function GET(
         stageStatusFromCanonical(ds["BUILD_SUBMISSION_PLAN"], snapshot.buildPlan.gateValid ? "COMPLETE" : "READY"),
         snapshot.buildPlan.gateValid
           ? "The current Build Plan is source-verified."
-          : "Run Engine creates and source-verifies the Build Plan automatically.",
+          : snapshot.buildPlan.gateBlocker ?? "Run Engine creates and source-verifies the Build Plan automatically.",
         snapshot.buildPlan.gateValid ? "BUILD_SUBMISSION_PLAN" : "RUN_ENGINE",
       ),
       stage(
