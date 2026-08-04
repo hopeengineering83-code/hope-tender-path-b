@@ -63,8 +63,9 @@ function normalizeRecordKey(value: unknown): string {
   return clean(value).normalize("NFKC").toLowerCase();
 }
 
-function arrayJson(value: unknown): string {
-  return JSON.stringify(Array.isArray(value) ? value.map(clean).filter(Boolean) : []);
+function declaredArrayJson(value: unknown, current: string): string {
+  if (!Array.isArray(value)) return current;
+  return JSON.stringify(value.map(clean).filter(Boolean));
 }
 
 function normalizedHash(value: unknown): string | null {
@@ -109,13 +110,18 @@ function resolveOfficialDocument(
   return fileName ? byFileName.get(fileName) ?? null : null;
 }
 
-function uniqueMissingNames(payload: PlanBFinalizePayload): string[] {
-  const names = new Set<string>();
-  for (const descriptor of payload.sourceDocuments ?? []) {
-    const name = clean(descriptor.fileName || descriptor.title);
-    if (name) names.add(name);
-  }
-  return [...names];
+function missingSourceKey(sourceSha256: unknown, sourceDocument: unknown): string | null {
+  const hash = normalizedHash(sourceSha256);
+  if (hash) return `sha256:${hash}`;
+  const name = normalizePlanBFileName(sourceDocument);
+  return name ? `filename:${name}` : null;
+}
+
+function displayMissingSource(sourceSha256: unknown, sourceDocument: unknown): string {
+  const name = clean(sourceDocument);
+  if (name) return name;
+  const hash = normalizedHash(sourceSha256);
+  return hash ? `SHA-256 ${hash.slice(0, 12)}…` : "unnamed source";
 }
 
 /**
@@ -129,7 +135,7 @@ function uniqueMissingNames(payload: PlanBFinalizePayload): string[] {
  * - SHA-256 wins, normalized filename is the fallback;
  * - one official source may verify any number of records;
  * - active counts are re-read after the transaction;
- * - missing originals are represented by one company-level blocker.
+ * - genuinely absent originals are represented by one company-level blocker.
  */
 export async function finalizePlanBCompanyVault(
   prisma: PrismaClient,
@@ -202,8 +208,8 @@ export async function finalizePlanBCompanyVault(
   let linkedProjects = 0;
   let verifiedExperts = 0;
   let verifiedProjects = 0;
-  let missingOriginalSources = 0;
   let verificationFailures = 0;
+  const missingSources = new Map<string, string>();
 
   await prisma.$transaction(async (tx) => {
     for (const declared of experts) {
@@ -229,9 +235,9 @@ export async function finalizePlanBCompanyVault(
             fullName: clean(declared.fullName) || row.fullName,
             title: clean(declared.title) || row.title,
             yearsExperience: typeof declared.yearsExperience === "number" ? declared.yearsExperience : row.yearsExperience,
-            disciplines: arrayJson(declared.disciplines) || row.disciplines,
-            sectors: arrayJson(declared.sectors) || row.sectors,
-            certifications: arrayJson(declared.certifications) || row.certifications,
+            disciplines: declaredArrayJson(declared.disciplines, row.disciplines),
+            sectors: declaredArrayJson(declared.sectors, row.sectors),
+            certifications: declaredArrayJson(declared.certifications, row.certifications),
           }),
           verificationMethod: "HYBRID",
         });
@@ -245,8 +251,9 @@ export async function finalizePlanBCompanyVault(
           data.trustLevel = "AI_DRAFT";
           verificationFailures += 1;
         }
-      } else if (declared.sourceDocument || declared.sourceSha256) {
-        missingOriginalSources += 1;
+      } else {
+        const key = missingSourceKey(declared.sourceSha256, declared.sourceDocument);
+        if (key) missingSources.set(key, displayMissingSource(declared.sourceSha256, declared.sourceDocument));
       }
 
       if (Object.keys(data).length > 0) {
@@ -278,7 +285,7 @@ export async function finalizePlanBCompanyVault(
             clientName: clean(declared.clientName) || row.clientName,
             country: clean(declared.country) || row.country,
             sector: clean(declared.sector || declared.sectors?.[0]) || row.sector,
-            serviceAreas: arrayJson(serviceAreas) || row.serviceAreas,
+            serviceAreas: declaredArrayJson(serviceAreas, row.serviceAreas),
           }),
           verificationMethod: "HYBRID",
         });
@@ -292,8 +299,9 @@ export async function finalizePlanBCompanyVault(
           data.trustLevel = "AI_DRAFT";
           verificationFailures += 1;
         }
-      } else if (declared.sourceDocument || declared.sourceSha256) {
-        missingOriginalSources += 1;
+      } else {
+        const key = missingSourceKey(declared.sourceSha256, declared.sourceDocument);
+        if (key) missingSources.set(key, displayMissingSource(declared.sourceSha256, declared.sourceDocument));
       }
 
       if (Object.keys(data).length > 0) {
@@ -308,10 +316,10 @@ export async function finalizePlanBCompanyVault(
     prisma.planBStaging.count({ where: { companyId: input.companyId } }),
   ]);
 
-  const declaredMissingNames = uniqueMissingNames(input.payload);
-  const missingSummary = declaredMissingNames.length > 0
-    ? ` Upload the original file${declaredMissingNames.length === 1 ? "" : "s"}: ${declaredMissingNames.slice(0, 5).join(", ")}${declaredMissingNames.length > 5 ? ` and ${declaredMissingNames.length - 5} more` : ""}.`
-    : " Upload the original Company Vault source file.";
+  const missingNames = [...missingSources.values()];
+  const missingSummary = missingNames.length > 0
+    ? ` Upload the original file${missingNames.length === 1 ? "" : "s"}: ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}.`
+    : "";
 
   return {
     restored: {
@@ -331,9 +339,9 @@ export async function finalizePlanBCompanyVault(
     },
     activeCounts: { experts: activeExperts, projects: activeProjects },
     sourceDescriptorsStaged,
-    missingOriginalSources,
-    sourceBlocker: missingOriginalSources > 0
-      ? `Original source evidence is absent for ${missingOriginalSources} imported record${missingOriginalSources === 1 ? "" : "s"}.${missingSummary}`
+    missingOriginalSources: missingSources.size,
+    sourceBlocker: missingSources.size > 0
+      ? `Original source evidence is absent for ${missingSources.size} declared source${missingSources.size === 1 ? "" : "s"}.${missingSummary}`
       : null,
     verificationBlocker: verificationFailures > 0
       ? `${verificationFailures} imported record${verificationFailures === 1 ? "" : "s"} linked to an official file but did not match the source text closely enough for SOURCE_VERIFIED status.`
