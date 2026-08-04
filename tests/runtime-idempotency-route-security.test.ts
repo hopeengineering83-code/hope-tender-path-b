@@ -79,20 +79,44 @@ describe("1-3. Canonical per-tender operation guard", () => {
 // ─── 4-5. Package revision safety ──────────────────────────────────────────
 
 describe("4-5. Package revision safety", () => {
-  it("lib/engine/package-revision-safety.ts exists and exports required functions", () => {
-    const src = read("lib/engine/package-revision-safety.ts");
-    assert.ok(src.includes("export async function computePackageRevision"), "must export computePackageRevision");
-    assert.ok(src.includes("export async function verifyPackageRevision"), "must export verifyPackageRevision");
-    assert.ok(src.includes("export async function verifySourceFilesNotDeleted"), "must export verifySourceFilesNotDeleted");
+  it("the final archive is rebuilt on every request, never served from storage", () => {
+    // This replaces two assertions that required
+    // lib/engine/package-revision-safety.ts to export computePackageRevision
+    // and verifyPackageRevision. Those fingerprinted requirements + build plan
+    // + generated docs so a previously built package could be checked for
+    // staleness before being served — and they had zero production callers.
+    //
+    // They were unwireable, not merely unwired: ExportPackage has no column to
+    // hold a revision hash, and nothing serves stored package bytes.
+    // packageSha256 is only ever written. So a stored package cannot go stale,
+    // because no stored package is ever handed to a client.
+    //
+    // What actually keeps the archive current is asserted instead: it is
+    // assembled from documents read at request time, after the gates. If that
+    // ever changes to serving a stored archive, this fails — and the revision
+    // check becomes necessary again.
+    const route = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(
+      route.includes("assembleFinalSubmissionZip("),
+      "the ZIP must be assembled during the request, not read from a stored package",
+    );
+    assert.ok(
+      route.includes("persistVerifiedExportPackageDownload("),
+      "the ExportPackage row must be written after assembly, as a record of what was served",
+    );
+    const persistIndex = route.indexOf("persistVerifiedExportPackageDownload(");
+    const assembleIndex = route.indexOf("assembleFinalSubmissionZip(");
+    assert.ok(
+      assembleIndex < persistIndex,
+      "assembly must precede persistence — persisting first would imply serving a stored package",
+    );
   });
 
-  it("computePackageRevision hashes requirements, build plan, and generated docs", () => {
+  it("keeps the source-file safety check that IS wired", () => {
     const src = read("lib/engine/package-revision-safety.ts");
-    assert.ok(src.includes("requirementHash"), "must compute requirement hash");
-    assert.ok(src.includes("buildPlanHash"), "must compute build plan hash");
-    assert.ok(src.includes("generatedDocHash"), "must compute generated doc hash");
-    assert.ok(src.includes("compositeHash"), "must compute composite hash");
-    assert.ok(src.includes("SUPERSEDED"), "must filter SUPERSEDED docs from hash");
+    assert.ok(src.includes("export async function verifySourceFilesNotDeleted"), "must export verifySourceFilesNotDeleted");
+    const route = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(route.includes("verifySourceFilesNotDeleted("), "the download route must still call it");
   });
 
   it("verifySourceFilesNotDeleted checks for active files", () => {

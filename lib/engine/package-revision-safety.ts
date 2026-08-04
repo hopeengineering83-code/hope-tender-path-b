@@ -1,13 +1,29 @@
 /**
- * Package Revision / Fingerprint Safety
+ * Source-file safety for final package actions.
  *
- * Provides revision/fingerprint helpers for final package actions.
- * Reuses existing schema fields (contentHash, analysisInputHash,
- * contentSummary, exactFileNaming) — no new migration needed.
+ * This file used to also carry computePackageRevision / verifyPackageRevision,
+ * which fingerprinted requirements + build plan + generated documents so a
+ * previously built package could be checked for staleness before being served.
  *
- * Used by:
- *   - download/route.ts — to verify a package is still current
- *   - export/route.ts — to deterministically supersede old packages
+ * That guarantee has no subject here. The final archive is assembled fresh on
+ * every request — app/api/tenders/[id]/download/route.ts calls
+ * assembleFinalSubmissionZip from documents read at request time, after the
+ * gates run — and the ExportPackage row is written afterwards as a record.
+ * Nothing ever reads stored package bytes back to a client: ExportPackage is
+ * touched only by that route (writes) and the cleanup cron (purges), and
+ * packageSha256 is only ever written, never served. There is also no column to
+ * hold a revision hash.
+ *
+ * So a stored package cannot go stale, because no stored package is ever
+ * served. Both functions had zero production callers and were kept alive by a
+ * test asserting their source text existed. Removed rather than wired: wiring
+ * them would have required a migration to persist a fingerprint whose only
+ * purpose is guarding a state this architecture cannot reach.
+ *
+ * The invariant that makes this safe is pinned in
+ * tests/runtime-idempotency-route-security.test.ts — if the download route ever
+ * starts serving a stored archive instead of rebuilding it, that test fails and
+ * the revision check becomes necessary again.
  */
 
 import type { PrismaClient } from "@prisma/client";
@@ -15,141 +31,13 @@ import { createHash } from "node:crypto";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type PackageRevisionCheck = {
-  isCurrent: boolean;
-  reason: string | null;
-  details: {
-    requirementHash: string | null;
-    buildPlanHash: string | null;
-    generatedDocHash: string | null;
-    currentRequirementHash: string | null;
-    currentBuildPlanHash: string | null;
-    currentGeneratedDocHash: string | null;
-  };
-};
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function hashString(input: string): string {
-  return createHash("sha256").update(input).digest("hex").slice(0, 16);
-}
 
-function hashRequirements(requirements: Array<{ id: string; title: string; priority: string; requirementType: string; sourceTenderFileId: string | null; sourcePageNumber: number | null; sourceExactQuote: string | null }>): string {
-  const sorted = [...requirements].sort((a, b) => a.id.localeCompare(b.id));
-  return hashString(JSON.stringify(sorted.map(r => ({ id: r.id, title: r.title, priority: r.priority, type: r.requirementType, hasSource: Boolean(r.sourceTenderFileId && r.sourcePageNumber && r.sourceExactQuote) }))));
-}
 
-function hashBuildPlan(exactFileNaming: string | null, exactFileOrder: string | null): string {
-  return hashString(JSON.stringify({ exactFileNaming: exactFileNaming ?? "", exactFileOrder: exactFileOrder ?? "" }));
-}
 
-function hashGeneratedDocs(docs: Array<{ id: string; name: string; exactFileName: string | null; generationStatus: string; validationStatus: string; reviewStatus: string; format: string | null }>): string {
-  const active = docs.filter(d => d.generationStatus !== "SUPERSEDED");
-  const sorted = [...active].sort((a, b) => (a.exactFileName ?? a.name).localeCompare(b.exactFileName ?? b.name));
-  return hashString(JSON.stringify(sorted.map(d => ({ name: d.exactFileName ?? d.name, status: d.generationStatus, validation: d.validationStatus, review: d.reviewStatus, format: d.format }))));
-}
 
 // ─── Public API ─────────────────────────────────────────────────────────────
-
-/**
- * Compute the current package revision fingerprint for a tender.
- * This is a composite hash of requirements, build plan, and generated docs.
- */
-export async function computePackageRevision(
-  prisma: PrismaClient,
-  tenderId: string,
-): Promise<{
-  requirementHash: string;
-  buildPlanHash: string;
-  generatedDocHash: string;
-  compositeHash: string;
-}> {
-  const tender = await (prisma as any).tender.findFirst({
-    where: { id: tenderId },
-    select: {
-      exactFileNaming: true,
-      exactFileOrder: true,
-      requirements: {
-        select: {
-          id: true, title: true, priority: true, requirementType: true,
-          sourceTenderFileId: true, sourcePageNumber: true, sourceExactQuote: true,
-        },
-      },
-      generatedDocuments: {
-        where: { generationStatus: { not: "SUPERSEDED" } },
-        select: {
-          id: true, name: true, exactFileName: true, generationStatus: true,
-          validationStatus: true, reviewStatus: true, format: true,
-        },
-      },
-    },
-  });
-
-  if (!tender) {
-    return { requirementHash: "none", buildPlanHash: "none", generatedDocHash: "none", compositeHash: "none" };
-  }
-
-  const requirementHash = hashRequirements(tender.requirements ?? []);
-  const buildPlanHash = hashBuildPlan(tender.exactFileNaming, tender.exactFileOrder);
-  const generatedDocHash = hashGeneratedDocs(tender.generatedDocuments ?? []);
-  const compositeHash = hashString(`${requirementHash}|${buildPlanHash}|${generatedDocHash}`);
-
-  return { requirementHash, buildPlanHash, generatedDocHash, compositeHash };
-}
-
-/**
- * Verify that an export package is still current by comparing its
- * recorded revision against the current package revision.
- *
- * If the revision has changed (requirements changed, docs changed, etc.),
- * the package is stale and should not be downloaded.
- */
-export async function verifyPackageRevision(
-  prisma: PrismaClient,
-  tenderId: string,
-  packageRevisionHash: string | null,
-): Promise<PackageRevisionCheck> {
-  const current = await computePackageRevision(prisma, tenderId);
-
-  if (!packageRevisionHash) {
-    return {
-      isCurrent: false,
-      reason: "Package has no recorded revision — cannot verify currency.",
-      details: {
-        requirementHash: null,
-        buildPlanHash: null,
-        generatedDocHash: null,
-        currentRequirementHash: current.requirementHash,
-        currentBuildPlanHash: current.buildPlanHash,
-        currentGeneratedDocHash: current.generatedDocHash,
-      },
-    };
-  }
-
-  const isCurrent = packageRevisionHash === current.compositeHash;
-  let reason: string | null = null;
-
-  if (!isCurrent) {
-    // Determine what changed
-    const changes: string[] = [];
-    // We can't compare individual hashes without storing them on the package,
-    // but we can report that the composite changed.
-    reason = "Tender state has changed since the package was created. Regenerate the export package.";
-  }
-
-  return {
-    isCurrent,
-    reason,
-    details: {
-      requirementHash: null, // Not stored on package — only composite
-      buildPlanHash: null,
-      generatedDocHash: null,
-      currentRequirementHash: current.requirementHash,
-      currentBuildPlanHash: current.buildPlanHash,
-      currentGeneratedDocHash: current.generatedDocHash,
-    },
-  };
-}
 
 /**
  * Check if any source files required for grounding have been deleted
