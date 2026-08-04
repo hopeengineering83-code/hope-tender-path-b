@@ -187,16 +187,48 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     : [];
   const overrideByField = new Map(metadataOverrides.map(o => [o.field, o]));
 
-  const queryRaw = (client as unknown as { $queryRaw?: <T = unknown>(strings: TemplateStringsArray, ...values: unknown[]) => Promise<T> }).$queryRaw;
-  const [{ extractedTextLength, totalPageCount }] = queryRaw
-    ? await queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
+  // $queryRaw MUST be invoked on the client, not detached from it.
+  //
+  // This previously read `const queryRaw = (client as …).$queryRaw` and then
+  // called `queryRaw\`SELECT …\``. Prisma's $queryRaw needs its receiver — it
+  // dereferences `this._createPrismaPromise` — so calling the detached
+  // reference threw
+  //
+  //     TypeError: Cannot read properties of undefined (reading '_createPrismaPromise')
+  //
+  // and the `.catch()` beside it could not help, because the throw happens
+  // synchronously while evaluating the tagged template, before any promise
+  // exists. The guard was written to tolerate test mocks that omit $queryRaw,
+  // and it did exactly that — while breaking the real client. Every caller
+  // reaching this line in production crashed, including
+  // app/api/tenders/[id]/download/route.ts:106, which sits on the ZIP path
+  // unconditionally: the final submission package could not be downloaded at
+  // all.
+  //
+  // Kept mock-tolerant, but the capability check is now separate from the call
+  // and the call goes through `client` so the receiver survives. try/catch,
+  // not .catch(), because a synchronous throw is the failure mode that got us
+  // here.
+  const supportsQueryRaw =
+    typeof (client as unknown as { $queryRaw?: unknown }).$queryRaw === "function";
+  let extractedTextLength = 0;
+  let totalPageCount = 0;
+  if (supportsQueryRaw) {
+    try {
+      const rows = await client.$queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
         SELECT
           COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedTextLength",
           COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
         FROM "TenderFile"
         WHERE "tenderId" = ${tenderId}
-      `.catch(() => [{ extractedTextLength: 0, totalPageCount: 0 }])
-    : [{ extractedTextLength: 0, totalPageCount: 0 }];
+      `;
+      extractedTextLength = rows[0]?.extractedTextLength ?? 0;
+      totalPageCount = rows[0]?.totalPageCount ?? 0;
+    } catch {
+      extractedTextLength = 0;
+      totalPageCount = 0;
+    }
+  }
 
   // Check derived-draft plan state (generatedDocuments not in main query).
   // Defensive: test mocks may not implement generatedDocument — default to 0 on any error.
