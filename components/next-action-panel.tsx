@@ -1,14 +1,10 @@
 // Next Required Action panel — server component.
 //
 // CONSUMES THE CANONICAL WORKFLOW DECISION. This panel must NOT compute its
-// own "next action" truth — every other panel (workflow-center, generation
-// action, export readiness, submission plan, requirement coverage, authority
-// review) reads the same `getCanonicalTenderWorkflowDecision` result so the
-// user sees ONE primary blocker, ONE next action, and a coherent set of
-// per-stage states.
-//
-// If you need to add a new stage or change the blocker priority, edit
-// `lib/engine/canonical-workflow-decision.ts` — do not branch the truth here.
+// own readiness truth. It applies only the product-level two-action
+// presentation contract: AI Analyze and Run Engine are the normal mutations;
+// downstream Build Plan, matching, generation, validation and finalization are
+// server-owned stages.
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
@@ -48,12 +44,6 @@ const STEP_INDEX: Record<WorkflowStep, number> = {
   COMPLETE: 10,
 };
 
-// STEPS is now imported from the canonical registry in
-// lib/tender-workflow-stages.ts — no duplicated label arrays.
-
-// Map the canonical decision's nextRequiredAction to the panel's step index.
-// This MUST agree with workflow-center's stageStates — both read the same
-// decision object, so they cannot disagree.
 function stepFromCanonicalAction(action: string): WorkflowStep {
   switch (action) {
     case "UPLOAD_TENDER": return "UPLOAD_TENDER";
@@ -62,14 +52,55 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
     case "RUN_AI_ANALYZE": return "RUN_AI_ANALYZE";
     case "REVIEW_REQUIREMENTS": return "CONFIRM_REQUIREMENTS";
     case "EDIT_TENDER_METADATA": return "EDIT_TENDER_METADATA";
+    case "RUN_ENGINE":
     case "BUILD_SUBMISSION_PLAN": return "BUILD_SUBMISSION_PLAN";
     case "LINK_VAULT_EVIDENCE": return "MATCH_EVIDENCE";
     case "GENERATE_DOCUMENTS": return "GENERATE_DOCUMENTS";
+    case "AUTOMATIC_PROCESSING":
     case "FIX_EXPORT_BLOCKERS":
     case "VALIDATE_DOCS": return "VALIDATE_DOCS";
     case "EXPORT_READY": return "EXPORT_ZIP";
     default: return "UPLOAD_TENDER";
   }
+}
+
+function presentCanonicalAction(decision: {
+  currentBlockingStage: string;
+  nextRequiredAction: string;
+  nextRequiredActionLabel: string;
+  nextRequiredActionReason: string;
+}) {
+  const engineOwnedStages = new Set([
+    "NO_CONFIRMED_BUILD_PLAN",
+    "MANDATORY_NO_COMPLIANCE_ROWS",
+    "REQUIRED_DOCS_NOT_GENERATED",
+  ]);
+  const automaticStages = new Set([
+    "PDF_REQUIRED_UNAVAILABLE",
+    "DOCS_NOT_VALIDATED",
+  ]);
+
+  if (engineOwnedStages.has(decision.currentBlockingStage)) {
+    return {
+      action: "RUN_ENGINE",
+      label: "Run Engine",
+      reason: "Run Engine starts source verification, matching and Build Plan creation. Every valid downstream stage then continues automatically.",
+    };
+  }
+
+  if (automaticStages.has(decision.currentBlockingStage)) {
+    return {
+      action: "AUTOMATIC_PROCESSING",
+      label: "Processing automatically",
+      reason: "The durable worker owns this stage. Closing or refreshing the browser does not stop it; intervene only when a specific source, quality, integrity or legal blocker is reported.",
+    };
+  }
+
+  return {
+    action: decision.nextRequiredAction,
+    label: decision.nextRequiredActionLabel,
+    reason: decision.nextRequiredActionReason,
+  };
 }
 
 function stepColor(step: WorkflowStep) {
@@ -80,8 +111,6 @@ function stepColor(step: WorkflowStep) {
 }
 
 function stepIcon(step: WorkflowStep) {
-  // SVG icons replace raw Unicode (✓ ⚠ →) for consistent rendering across
-  // all browsers and font stacks. Per spec rule 3 & 7.
   if (step === "COMPLETE" || step === "EXPORT_ZIP") return <CheckCircleIcon />;
   if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCS") return <WarningIcon />;
   return <ArrowRightIcon />;
@@ -93,8 +122,6 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   await prismaReady;
 
-  // Tender is fetched only for metadata advisory (deadline). The canonical
-  // decision is the SINGLE source of workflow truth — no local decision logic.
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
     select: {
@@ -109,28 +136,17 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   if (!tender) return null;
 
-  // Fetched alongside the canonical decision (getTenderReleaseState calls the
-  // same getCanonicalTenderWorkflowDecision internally, so this adds one
-  // extra query, not a second competing truth) so this single card can show
-  // tender status + readiness score + verdict together with the next
-  // required action — the four other panels that used to render these
-  // separately (Recovery Command Center, Tender Release State, Final
-  // Submission Control Center) are collapsed into "Advanced diagnostics"
-  // below instead of competing with this card.
   const [decision, releaseState] = await Promise.all([
     getCanonicalTenderWorkflowDecision(prisma, userId, tenderId),
     getTenderReleaseState(prisma, tenderId, userId),
   ]);
   if (!decision) return null;
 
-  const step = stepFromCanonicalAction(decision.nextRequiredAction);
-  const label = decision.nextRequiredActionLabel;
-  const reason = decision.nextRequiredActionReason;
+  const presented = presentCanonicalAction(decision);
+  const step = stepFromCanonicalAction(presented.action);
   const blockers = decision.blockerDetails;
   const currentIndex = STEP_INDEX[step];
 
-  // Metadata advisory — never a blocker per the unified runtime model, but
-  // still surfaced so the user knows a deadline is approaching/passed.
   const metaReport = assessTenderMetadataCompleteness({
     clientName: (tender.clientName || tender.procuringEntityName) ?? null,
     country: tender.country ?? null,
@@ -152,9 +168,6 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
   return (
     <section id="workflow-state" className={`mb-4 rounded-2xl border p-5 shadow-sm ${stepColor(step)}`} aria-labelledby="next-required-action-title">
-      {/* Authoritative status row — tender status, readiness score, and bid
-          verdict together, so this is the one place a user checks for "where
-          does this tender stand" instead of three separate panels below. */}
       <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-black/5 pb-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tender status</p>
@@ -181,16 +194,11 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Next required action</p>
           <h2 id="next-required-action-title" className="mt-1 text-xl font-bold text-slate-900">
             <span className="mr-2 text-slate-400" aria-hidden="true">{stepIcon(step)}</span>
-            {label}
+            {presented.label}
           </h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-700">{reason}</p>
-          {/* The durability promise belongs on the canonical status surface,
-              because it is true of the whole pipeline and not of any one
-              stage. It previously appeared only inside the Engine panel — the
-              one place it was scoped too narrowly and, once that panel's state
-              stopped being set, sat next to a permanently stale heading. */}
+          <p className="mt-1 max-w-2xl text-sm text-slate-700">{presented.reason}</p>
           <p className="mt-2 max-w-2xl text-xs text-slate-600">
-            Verification, extraction, analysis, matching, generation and packaging continue on the server. Closing or refreshing this browser does not stop or restart them.
+            Source verification and extraction are automatic. AI Analyze and Run Engine are the two normal user actions. After Run Engine, matching, Build Plan, generation, validation, finalization and package reconciliation continue on the server.
           </p>
         </div>
         <div className="text-right">
@@ -199,10 +207,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
       </div>
 
-      {/* WorkflowStepLinks renders the current step as the one primary
-          action (highlighted/enabled) with the remaining steps shown as
-          secondary, non-competing context — see components/workflow-step-links.tsx. */}
-      <WorkflowStepLinks currentIndex={currentIndex} />
+      <WorkflowStepLinks currentIndex={currentIndex} currentAction={presented.action} />
 
       {blockers.length > 0 && (
         <div className="mt-3 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm">
@@ -213,9 +218,6 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         </div>
       )}
 
-      {/* Requirement trust split — surfaces raw-vs-trusted distinction without
-          recomputing local truth. The counts come from the canonical decision,
-          which itself reads the snapshot's gate-aligned grounding check. */}
       {decision.mandatoryRequirementCount > 0 && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
           <p className="text-xs font-semibold uppercase">Requirement trust split</p>
@@ -227,19 +229,19 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
       {decision.currentBlockingStage === "EXTRACTION_UNSAFE" && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
-          <strong>Fix Extraction First.</strong> Upload a clearer, text-based copy of the source document — extraction and analysis re-run against it automatically. Analysis on weak extraction can produce incomplete requirements and unsafe downstream guidance.
+          <strong>Fix Extraction First.</strong> Upload a clearer, text-based copy of the source document. Extraction reruns automatically; then select AI Analyze for the new source revision.
         </div>
       )}
 
       {decision.currentBlockingStage === "REQUIRED_DOCS_NOT_GENERATED" && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
-          <strong>All pre-generation gates pass.</strong> You can now generate the proposal. Draft generation proceeds with available data. Optional tender details are omitted from output. Final submission requires strict validation.
+          <strong>Run Engine.</strong> Matching, Build Plan creation, proposal generation, validation and finalization continue automatically after the Engine job succeeds.
         </div>
       )}
 
       {decision.currentBlockingStage === "EXPORT_ZIP_READY" && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
-          <strong>Export ready.</strong> Review the Final Package Manifest below, then click Export to create the submission ZIP.
+          <strong>Ready to download.</strong> Review the Final Package Manifest, then download the exact reconciled ZIP package.
         </div>
       )}
 
