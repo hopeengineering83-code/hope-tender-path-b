@@ -184,7 +184,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   }));
 
   const ai = isAIEnabled();
-  const [generationReadiness, canonicalReadiness, activeAnalysisJob, activeIntakeRun] = await Promise.all([
+  const [generationReadiness, canonicalReadiness, activeAnalysisJob, succeededAnalysisJob, activeIntakeRun] = await Promise.all([
     getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null),
     getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null),
     prismaClient.aiJob.findFirst({
@@ -193,6 +193,20 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         tenderId: tender.id,
         jobType: "AI_ANALYZE",
         status: { in: ["QUEUED", "RUNNING"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    }).catch(() => null),
+    // Counterpart to the active-job query above: has analysis ALREADY finished?
+    // tender.analysisSummary was tried first and is empty even after a
+    // successful 100/100 AI run, so it is not a completion signal. The AiJob
+    // row is the same authority the pipeline itself uses.
+    prismaClient.aiJob.findFirst({
+      where: {
+        userId,
+        tenderId: tender.id,
+        jobType: "AI_ANALYZE",
+        status: "SUCCEEDED",
       },
       orderBy: { createdAt: "desc" },
       select: { id: true },
@@ -253,7 +267,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           initialContinueJobId={activeAnalysisJob?.id ?? null}
           aiEnabled={ai}
           canMutate={canMutate}
-          analysisAlreadySucceeded={Boolean(tender.analysisSummary)}
+          analysisAlreadySucceeded={Boolean(succeededAnalysisJob)}
         />
         <AnalysisQualityPanel tenderId={tender.id} />
         <RequirementCoveragePanel tenderId={tender.id} canMutate={canMutate} />
