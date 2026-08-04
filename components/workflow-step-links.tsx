@@ -73,13 +73,16 @@ export function WorkflowStepLinks({
   /**
    * Start the job that was just enqueued.
    *
-   * A failure here must not be reported as reassurance. The previous wording —
-   * "the scheduled background worker will continue it" — is only true where a
-   * scheduler actually reaches this deployment, and the one scheduler that
+   * A failure here must not be reported as reassurance. The previous wording
+   * told the reader a scheduled worker would take over, which is only true
+   * where a scheduler actually reaches this deployment — and the one that
    * exists (.github/workflows/drain-ai-job-queue.yml) posts to the PRODUCTION
-   * host. On a preview deployment that sentence promises a runner that is not
-   * there, which is exactly how the Company Vault sat unextracted while its UI
-   * said extraction "completes automatically".
+   * host. On a preview deployment that promises a runner which is not there,
+   * exactly how the Company Vault sat unextracted while its UI said extraction
+   * "completes automatically".
+   *
+   * The old sentence is deliberately not quoted here: a sibling test greps this
+   * whole file for it, comments included, so that it cannot creep back.
    *
    * The job is genuinely durable, so this is a warning and not an error; it
    * just has to say what actually happened.
