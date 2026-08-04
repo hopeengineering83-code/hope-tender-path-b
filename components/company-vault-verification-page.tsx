@@ -28,7 +28,7 @@ function automaticGapCopy(gap: { severity: string; title: string; detail: string
     ...gap,
     severity: gap.severity === "CRITICAL" ? "HIGH" : gap.severity,
     title: "Automatic source verification required",
-    detail: "Run Engine or Reprocess and verify will remap the source and verify current exact values automatically. Source-verified records are usable immediately; draft, stale, altered, expired, source-less, or unmatched records remain blocked until verification succeeds.",
+    detail: "Source verification runs automatically when a document is ingested — it remaps the source and checks the current exact values without any action here. Source-verified records are usable immediately; draft, stale, altered, expired, source-less, or unmatched records remain blocked until verification succeeds. Reprocess and verify re-runs it if a record is stuck.",
   };
 }
 
@@ -74,7 +74,7 @@ export default function CompanyVaultVerificationPage() {
       const data = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Automatic source verification could not be queued.");
       void fetch("/api/ai-jobs/run-next?jobType=VAULT_INGEST", { method: "POST" }).catch(() => {});
-      setMessage("Source-byte reprocessing and automatic verification were queued. Run Engine also refreshes source authority before matching.");
+      setMessage("Source-byte reprocessing and automatic verification were queued. Matching refreshes source authority again before it runs, so no further action is needed here.");
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : "Automatic source verification could not be queued.");
     } finally {

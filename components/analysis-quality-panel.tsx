@@ -11,7 +11,7 @@ function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisS
   if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
   if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (draft-approved)", risk: "MEDIUM" as const, detail: "Approved for draft review only. Not approved for final export because extraction is weak; final export requires reliable extraction or an explicit admin override." };
   if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed or were unavailable — regex extraction was used. Review carefully before submission." };
-  return { label: "Unknown", risk: "MEDIUM" as const, detail: "Analysis source not yet determined. Run AI Analyze only after extraction is reliable enough for analysis." };
+  return { label: "Unknown", risk: "MEDIUM" as const, detail: "Analysis source not yet determined. Analysis runs automatically once extraction is reliable enough; the source is recorded here when it completes." };
 }
 
 function isUntrustedAnalysisStatus(status?: string | null) {

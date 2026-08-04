@@ -17,7 +17,7 @@ type GenerateResponse = {
 };
 
 function nextActionLabel(action?: string) {
-  if (action === "RUN_ENGINE") return "Run Engine first, then retry.";
+  if (action === "RUN_ENGINE") return "Matching has not produced evidence for this tender yet. It runs automatically; retry once it completes.";
   if (action === "REVIEW_MATCHES") return "Review/select expert and project evidence, then retry.";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Open Extraction Quality and fix weak files.";
   if (action === "OPEN_ANALYSIS_QUALITY") return "Review Analysis Quality, then retry.";

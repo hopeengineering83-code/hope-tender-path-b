@@ -136,7 +136,7 @@ function getAIHealth(): AIHealthResponse {
   const anyHasRecentSuccess = configuredProviders.some((p) => p.runtime.lastSuccessAt);
   const allConfiguredCooling = anyConfigured && configuredProviders.every((p) => p.runtime.coolingDown);
   if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires.");
-  if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this instance yet — runtime availability is not verified. Run AI Analyze or Generate Docs to confirm.");
+  if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this instance yet — runtime availability is not verified. The first analysis or document generation on this instance will confirm it.");
 
   const nextAction = blockers.length > 0
     ? "CONFIGURE_AI_KEYS"

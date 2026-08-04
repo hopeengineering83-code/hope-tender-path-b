@@ -219,7 +219,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
       {decision.currentBlockingStage === "EXTRACTION_UNSAFE" && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
-          <strong>Fix Extraction First.</strong> Run OCR, re-extract, or upload a clearer PDF before running AI Analyze. AI analysis on weak extraction can produce incomplete requirements and unsafe downstream guidance.
+          <strong>Fix Extraction First.</strong> Upload a clearer, text-based copy of the source document — extraction and analysis re-run against it automatically. Analysis on weak extraction can produce incomplete requirements and unsafe downstream guidance.
         </div>
       )}
 

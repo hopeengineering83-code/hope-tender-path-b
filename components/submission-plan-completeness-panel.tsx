@@ -326,7 +326,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
           <p className="mt-2 font-semibold">Submission plan is derived from weak extraction — verify all required documents against the original tender before finalising.</p>
         )}
         {data.summary.planState === "NO_REQUIREMENTS" && (
-          <p className="mt-2">No tender requirements are extracted yet. Run AI Analyze or add requirements manually before building the submission package.</p>
+          <p className="mt-2">No tender requirements are extracted yet. Extraction and analysis run automatically; requirements appear here once they complete.</p>
         )}
         {data.summary.automaticPlanPending && (
           <div className="mt-3">

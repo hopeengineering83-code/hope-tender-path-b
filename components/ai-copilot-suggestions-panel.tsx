@@ -67,8 +67,8 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     if (!tender.analysisSummary) {
       suggestions.push({
         icon: "search",
-        title: "Run AI Analyze",
-        detail: "No analysis yet — AI Analyze extracts requirements, client details, and evaluation criteria automatically.",
+        title: "Analysis pending",
+        detail: "No analysis yet — analysis extracts requirements, client details, and evaluation criteria automatically once extraction completes.",
         priority: "HIGH",
       });
     }
@@ -80,8 +80,8 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
     ) {
       suggestions.push({
         icon: "warning",
-        title: "Re-run AI Analyze on weak extraction",
-        detail: "Analysis ran on partial extraction. Re-uploading a cleaner PDF and re-running will improve requirement coverage.",
+        title: "Analysis ran on weak extraction",
+        detail: "Analysis ran on partial extraction. Uploading a cleaner copy of the source re-runs extraction and analysis against it automatically, improving requirement coverage.",
         priority: "HIGH",
       });
     }
@@ -129,7 +129,7 @@ export async function AICopilotSuggestionsPanel({ tenderId }: { tenderId: string
           suggestions.push({
             icon: "pin",
             title: "Improve requirement traceability",
-            detail: `${untracedCount} mandatory requirement(s) lack source page/quote. Run AI Analyze again or use the repair tool.`,
+            detail: `${untracedCount} mandatory requirement(s) lack source page/quote. Traceability improves when analysis re-runs against a cleaner extraction of the source file.`,
             priority: "MEDIUM",
           });
         }

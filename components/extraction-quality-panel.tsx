@@ -247,7 +247,7 @@ export async function ExtractionQualityPanel({ tenderId }: { tenderId: string })
 
       {(analysisStatus === "PARTIAL_EXTRACTION_AI_ANALYZED" || analysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || analysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") && (
         <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <strong>Warning: document is only partially extracted.</strong> AI Analyze ran on incomplete extraction ({EXTRACTION_STATUS_LABELS[analysisStatus] ?? analysisStatus}). Results may be missing tender pages. Re-extract or run OCR for a more reliable analysis.
+          <strong>Warning: document is only partially extracted.</strong> AI Analyze ran on incomplete extraction ({EXTRACTION_STATUS_LABELS[analysisStatus] ?? analysisStatus}). Results may be missing tender pages. Uploading a clearer, text-based copy of the file re-runs extraction automatically and gives a more reliable analysis.
         </div>
       )}
       {!ready && !isCorruptionBlocked && <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-xs text-amber-900"><span className="font-semibold">Recommended action: </span>{anyOcrMissing ? "Set PDF_OCR_ENABLED=true and re-extract — the document requires OCR." : pageCoverage.failed > 0 ? "Re-upload or re-extract the file. Blank/failed pages mean extraction is not fully reliable." : pageCoverage.coveragePercent < 80 ? "Review or re-extract before AI Analyze. The page-status coverage is below the safe threshold." : "Continue only if the weak/table-heavy pages are acceptable for this tender."}</div>}
