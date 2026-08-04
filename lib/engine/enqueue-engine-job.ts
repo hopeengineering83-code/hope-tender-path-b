@@ -20,10 +20,10 @@ export type EngineEnqueueResult = {
 /**
  * The one canonical durable Engine enqueue authority.
  *
- * Callers must complete source verification before invoking this function.
- * The function binds the job to a deterministic current source revision,
- * serializes duplicate requests through a transaction-scoped advisory lock,
- * cancels stale active jobs, and returns only a real persisted job row.
+ * Run Engine is the second and final normal user action. Once this job is
+ * explicitly queued, autoContinue=true authorizes the worker to continue
+ * through Build Plan, matching, proposal generation, validation/finalization,
+ * and package reconciliation without further normal-path buttons.
  */
 export async function enqueueEngineJobForCurrentSources(
   client: PrismaClient,
@@ -48,10 +48,6 @@ export async function enqueueEngineJobForCurrentSources(
   });
 
   const job = await client.$transaction(async (tx) => {
-    // pg_advisory_xact_lock returns PostgreSQL `void`, which Prisma cannot
-    // deserialize when it is selected directly. The volatile subquery still
-    // acquires the transaction-scoped lock while the outer projection returns
-    // only a supported integer type.
     await tx.$queryRaw<Array<{ acquired: number }>>`
       SELECT 1 AS acquired
       FROM (SELECT pg_advisory_xact_lock(hashtext(${idempotencyKey}))) AS engine_lock
@@ -100,17 +96,16 @@ export async function enqueueEngineJobForCurrentSources(
         input: JSON.stringify({
           sourceRevision: revision.sourceRevision,
           idempotencyKey,
-          purpose: input.purpose ?? "INTERNAL_ARTIFACT_PREPARATION",
+          purpose: input.purpose ?? "EXPLICIT_RUN_ENGINE",
           executionPolicy: "SERVER_CONTROLLED",
+          manualRequested: true,
+          autoContinue: true,
         }),
       },
       select: { id: true, status: true },
     });
     return { ...created, reusedActiveJob: false };
   }, {
-    // The advisory lock is the serialization authority. READ COMMITTED gives
-    // each statement a fresh snapshot after a waiting transaction acquires the
-    // lock, so it can see and reuse the job committed by the prior request.
     isolationLevel: "ReadCommitted",
   });
 
