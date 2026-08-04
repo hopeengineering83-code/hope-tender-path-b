@@ -9,7 +9,20 @@ function read(relativePath: string): string {
 function stripComments(source: string): string {
   return source.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
 }
-const RAW_OPERATIONAL_ICON = /[✓✗⚡▶↻⊘⏳✦▼▲✕↺↗ℹⓘ]/;
+
+const RAW_UNICODE_PATTERN = /[✓✗⚡▶↻⊘⏳✦▼▲✕↺↗ℹⓘ]/;
+const WORKFLOW_COMPONENTS = [
+  "next-action-panel.tsx",
+  "workflow-step-links.tsx",
+  "build-submission-plan-button.tsx",
+  "generation-action-panel.tsx",
+  "submission-plan-completeness-panel.tsx",
+  "requirement-coverage-panel.tsx",
+  "authority-review-panel.tsx",
+  "document-validator-panel.tsx",
+  "export-readiness-panel.tsx",
+  "score-breakdown-panel.tsx",
+] as const;
 
 describe("Next Required Action icons", () => {
   it("uses SVG icons for complete, warning, and forward states", () => {
@@ -17,7 +30,7 @@ describe("Next Required Action icons", () => {
     assert.match(source, /<CheckCircleIcon \/>/);
     assert.match(source, /<WarningIcon \/>/);
     assert.match(source, /<ArrowRightIcon \/>/);
-    assert.doesNotMatch(stripComments(source), RAW_OPERATIONAL_ICON);
+    assert.doesNotMatch(stripComments(source), RAW_UNICODE_PATTERN);
   });
 });
 
@@ -58,16 +71,9 @@ describe("disabled critical actions remain readable", () => {
   });
 
   it("does not use 40% disabled opacity in priority workflow components", () => {
-    for (const file of [
-      "components/next-action-panel.tsx",
-      "components/workflow-step-links.tsx",
-      "components/generation-action-panel.tsx",
-      "components/submission-plan-completeness-panel.tsx",
-      "components/requirement-coverage-panel.tsx",
-      "components/authority-review-panel.tsx",
-      "components/document-validator-panel.tsx",
-      "components/export-readiness-panel.tsx",
-    ]) assert.doesNotMatch(stripComments(read(file)), /disabled:opacity-40/);
+    for (const file of WORKFLOW_COMPONENTS) {
+      assert.doesNotMatch(stripComments(read(`components/${file}`)), /disabled:opacity-40/);
+    }
   });
 
   it("provides blocked reasons or titles", () => {
@@ -86,13 +92,9 @@ describe("status badges use SVG icons with distinct meanings", () => {
     assert.match(source, /SUPERSEDED: \{ label: "HISTORICAL"[\s\S]*?icon: <FolderIcon \/>/);
   });
 
-  it("key workflow components contain no raw operational icon glyphs", () => {
-    for (const file of [
-      "components/next-action-panel.tsx",
-      "components/workflow-step-links.tsx",
-      "components/build-submission-plan-button.tsx",
-      "components/generation-action-panel.tsx",
-      "components/export-readiness-panel.tsx",
-    ]) assert.doesNotMatch(stripComments(read(file)), RAW_OPERATIONAL_ICON, file);
+  it("priority workflow components contain no raw operational icon glyphs", () => {
+    for (const file of WORKFLOW_COMPONENTS) {
+      assert.doesNotMatch(stripComments(read(`components/${file}`)), RAW_UNICODE_PATTERN, file);
+    }
   });
 });
