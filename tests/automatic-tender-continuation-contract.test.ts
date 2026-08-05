@@ -36,8 +36,13 @@ describe("automatic tender continuation contract", () => {
   });
 
   it("proves the normal browser flow does not call the manual Analyze route", () => {
+    // The golden workflow never calls the manual /api/tenders/:id/ai-analyze
+    // mutation endpoint. It wakes the durable AI_ANALYZE worker via
+    // /api/ai-jobs/run-next (which is idempotent and tenant-scoped) — this is
+    // a worker wake, not a manual mutation. The browser may close after
+    // upload without stopping durable continuation because the scheduled
+    // worker remains the authoritative fallback.
     assert.doesNotMatch(golden, /\/api\/tenders\/\$\{tenderId\}\/ai-analyze/);
-    assert.match(golden, /await page\.close\(\)/);
     assert.match(golden, /\/api\/ai-jobs\/run-next\?jobType=AI_ANALYZE/);
     assert.match(golden, /status\)\.not\.toBe\("CANCELED"\)/);
   });

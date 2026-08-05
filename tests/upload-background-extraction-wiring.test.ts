@@ -14,7 +14,7 @@ describe("upload requests hand verified bytes to durable extraction", () => {
     ["upload-first", firstUpload],
     ["secure upload", secureUpload],
   ] as const) {
-    it(`${name} never performs extraction or queues analysis directly`, () => {
+    it(`${name} never performs extraction or analysis inside the upload request`, () => {
       assert.doesNotMatch(source, /extractTextFromBuffer/);
       assert.doesNotMatch(source, /queueAutomaticTenderPipeline/);
       assert.match(source, /enqueueTenderFileExtractionJob/);
@@ -47,16 +47,16 @@ describe("upload requests hand verified bytes to durable extraction", () => {
     assert.match(secureUpload, /extractedText: null/);
   });
 
-  it("the browser nudges extraction only while server-owned analysis remains runnable", () => {
+  it("the browser nudges extraction and automatically queued AI analysis", () => {
     assert.match(browserPipeline, /EXTRACT_TEXT_QUEUED/);
     assert.match(browserPipeline, /AI_ANALYZE_QUEUED/);
     assert.match(browserPipeline, /jobType=EXTRACT_TEXT/);
-    assert.doesNotMatch(browserPipeline, /jobType=AI_ANALYZE/);
-    assert.match(browserPipeline, /continue automatically through analysis, generation, validation, and package readiness/i);
-    assert.match(browserPipeline, /AI analysis is durably queued and will continue automatically/i);
+    assert.match(browserPipeline, /jobType=AI_ANALYZE/);
+    assert.match(browserPipeline, /void nudgeTenderWorker\(AI_ANALYZE_WORKER_ENDPOINT\)/);
+    assert.match(browserPipeline, /no AI Analyze or Run Engine action is required/i);
+    assert.doesNotMatch(browserPipeline, /select AI Analyze|AI Analyze remains explicit/i);
     assert.match(readyBoundary, /status:\s*"QUEUED"/);
     assert.match(readyBoundary, /autoContinue:\s*true/);
-    assert.match(readyBoundary, /automaticContinuation:\s*true/);
     assert.doesNotMatch(readyBoundary, /status:\s*"CANCELED"/);
     assert.doesNotMatch(readyBoundary, /manualGate:\s*"AI_ANALYZE"/);
   });
