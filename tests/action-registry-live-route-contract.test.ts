@@ -9,44 +9,43 @@ function read(path: string): string {
 }
 
 describe("action registry matches production route owners", () => {
-  it("uses the explicit durable AI Analyze route and one UI owner", () => {
-    const route = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
-    const owner = read("components/workflow-step-links.tsx");
-    assert.match(route, /export async function POST/);
-    assert.match(route, /createAnalysisJob/);
-    assert.match(route, /manualRequested:\s*true/);
-    assert.match(route, /autoContinue:\s*false/);
-    assert.match(owner, /manual-ai-analyze/);
-    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/manual-ai-analyze");
-    assert.equal(getTenderAction("AI_ANALYZE").availability, "NORMAL");
-    assert.equal(getTenderAction("AI_ANALYZE").owner, "WorkflowStepLinks");
+  it("keeps AI Analyze automatic and exposes status/recovery navigation only", () => {
+    const pipeline = read("lib/ai-jobs/automatic-tender-pipeline.ts");
+    const owner = read("components/ai-analyze-panel.tsx");
+    const workflow = read("components/workflow-step-links.tsx");
+
+    assert.match(pipeline, /autoContinue:\s*true/);
+    assert.match(pipeline, /manualRequested:\s*false/);
+    assert.doesNotMatch(pipeline, /status:\s*"CANCELED"/);
+    assert.match(owner, /id="ai-analyze-section"/);
+    assert.doesNotMatch(workflow, /manual-ai-analyze/);
+    assert.equal(getTenderAction("AI_ANALYZE").mutation, null);
+    assert.equal(getTenderAction("AI_ANALYZE").availability, "RECOVERY");
+    assert.equal(getTenderAction("AI_ANALYZE").owner, "AIAnalyzePanel");
   });
 
-  it("uses the one explicit durable Engine contract", () => {
-    const route = read("app/api/tenders/[id]/engine/route.ts");
-    const enqueue = read("lib/engine/enqueue-engine-job.ts");
-    const owner = read("components/workflow-step-links.tsx");
-    assert.match(route, /export async function POST/);
-    assert.match(route, /enqueueEngineJobForCurrentSources/);
-    assert.match(route, /CLIENT_POLICY_OVERRIDE_REJECTED/);
-    assert.match(enqueue, /manualRequested:\s*true/);
-    assert.match(enqueue, /autoContinue:\s*true/);
-    assert.match(owner, /\/engine`/);
-    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
-    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
-    assert.equal(getTenderAction("RUN_ENGINE").owner, "WorkflowStepLinks");
+  it("keeps Engine worker-owned and exposes matching status/recovery navigation only", () => {
+    const worker = read("app/api/ai-jobs/run-next/route.ts");
+    const owner = read("components/matching-selected-evidence-panel.tsx");
+    const workflow = read("components/workflow-step-links.tsx");
+
+    assert.match(worker, /claimed\.jobType === "AI_ANALYZE"/);
+    assert.match(worker, /nextJobType = "ENGINE_RUN"/);
+    assert.match(owner, /matching-selected-evidence/);
+    assert.doesNotMatch(workflow, /method:\s*"POST"/);
+    assert.equal(getTenderAction("RUN_ENGINE").mutation, null);
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "RECOVERY");
+    assert.equal(getTenderAction("RUN_ENGINE").owner, "MatchingSelectedEvidencePanel");
   });
 
   it("keeps Build Plan status-only because Engine owns automatic verification", () => {
     const route = read("app/api/tenders/[id]/build-plan/route.ts");
-    const status = read("components/build-submission-plan-button.tsx");
+    const status = read("components/submission-plan-completeness-panel.tsx");
     assert.match(route, /export async function GET/);
-    assert.match(status, /method:\s*"GET"/);
     assert.doesNotMatch(status, /method:\s*"POST"/);
-    assert.doesNotMatch(status, /<button/);
     assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").mutation, null);
     assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").availability, "NAVIGATION");
-    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").owner, "BuildSubmissionPlanButton");
+    assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").owner, "SubmissionPlanCompletenessPanel");
   });
 
   it("does not invent a POST matching endpoint", () => {
@@ -78,6 +77,8 @@ describe("action registry matches production route owners", () => {
   it("contains no nonexistent or client-policy workflow paths", () => {
     const mutations = listTenderActions().flatMap(([, action]) => action.mutation ? [action.mutation] : []);
     const joined = mutations.join("\n");
+    assert.doesNotMatch(joined, /manual-ai-analyze/);
+    assert.doesNotMatch(joined, /POST \/api\/tenders\/:id\/engine/);
     assert.doesNotMatch(joined, /ai-analyze\?async=true/);
     assert.doesNotMatch(joined, /engine\?.*(?:safe|skip|maxChars|provider)/);
     assert.doesNotMatch(joined, /\/api\/tenders\/:id\/match(?:\s|$)/);
