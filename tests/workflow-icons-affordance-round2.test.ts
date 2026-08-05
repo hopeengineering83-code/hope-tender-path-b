@@ -34,14 +34,15 @@ describe("Next Required Action icons", () => {
   });
 });
 
-describe("the two normal actions have visible semantic icons", () => {
+describe("automatic Analyze and Engine stages are status-only", () => {
   const owner = read("components/workflow-step-links.tsx");
 
-  it("AI Analyze uses SparklesIcon and Run Engine uses BoltIcon", () => {
-    assert.match(owner, /manualAction === "AI_ANALYZE" \? <SparklesIcon \/> : <BoltIcon \/>/);
-    assert.match(owner, /"AI Analyze"/);
-    assert.match(owner, /"Run Engine"/);
-    assert.match(owner, /disabled:opacity-60/);
+  it("shows automatic processing without rendering Analyze or Engine buttons", () => {
+    assert.match(owner, /Processing automatically/);
+    assert.match(owner, /No AI Analyze or Run Engine action is required/);
+    assert.doesNotMatch(owner, /manualAction|runManualAction|wakeWorker/);
+    assert.doesNotMatch(owner, /SparklesIcon|BoltIcon/);
+    assert.doesNotMatch(owner, /<button/);
   });
 
   it("Build Plan is a status surface with status-specific SVGs", () => {
@@ -49,7 +50,8 @@ describe("the two normal actions have visible semantic icons", () => {
     assert.match(source, /<ClockIcon \/>/);
     assert.match(source, /<CheckCircleIcon \/>/);
     assert.match(source, /<WarningIcon \/>/);
-    assert.match(source, /Build Plan awaits Run Engine/);
+    assert.match(source, /Build Plan is waiting for automatic Engine processing/);
+    assert.match(source, /continue automatically after canonical AI analysis succeeds/);
     assert.doesNotMatch(source, /<button/);
   });
 
@@ -64,7 +66,6 @@ describe("the two normal actions have visible semantic icons", () => {
 describe("disabled critical actions remain readable", () => {
   it("uses at least 60% opacity on remaining disabled action controls", () => {
     for (const file of [
-      "components/workflow-step-links.tsx",
       "components/export-readiness-panel.tsx",
       "components/submission-plan-completeness-panel.tsx",
     ]) assert.match(read(file), /disabled:opacity-60/);

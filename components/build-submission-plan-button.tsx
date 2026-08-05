@@ -27,8 +27,8 @@ type BuildPlanStatus = {
 
 /**
  * Backward-compatible export name. This is intentionally status-only: Build
- * Plan creation is owned by the Engine worker after the explicit Run Engine
- * action. It must never become a third normal workflow button.
+ * Plan creation is owned by automatic Engine continuation after canonical AI
+ * analysis succeeds. It must never become a normal workflow button.
  */
 export function BuildSubmissionPlanButton({ tenderId }: { tenderId: string }) {
   const [loading, setLoading] = useState(true);
@@ -79,10 +79,10 @@ export function BuildSubmissionPlanButton({ tenderId }: { tenderId: string }) {
       ) : (
         <div className={`rounded-lg border p-3 text-xs ${stale || error ? "border-red-200 bg-red-50 text-red-800" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
           <p className="inline-flex items-center gap-1.5 font-semibold">
-            <WarningIcon /> {stale ? "Build Plan is stale" : "Build Plan awaits Run Engine"}
+            <WarningIcon /> {stale ? "Build Plan is stale" : "Build Plan is waiting for automatic Engine processing"}
           </p>
           <p className="mt-1">
-            {error ?? plan?.blocker ?? "Run Engine is the only action that starts matching and Build Plan verification. No separate Build Plan confirmation is required."}
+            {error ?? plan?.blocker ?? "Matching and Build Plan verification continue automatically after canonical AI analysis succeeds. No separate Build Plan confirmation is required."}
           </p>
         </div>
       )}

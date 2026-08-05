@@ -35,17 +35,19 @@ describe("canonical workflow action registry", () => {
       assert.match(action.anchor, /^#/);
       assert.ok(action.label.trim().length > 0);
       assert.ok(["NORMAL", "RECOVERY", "NAVIGATION"].includes(action.availability));
-      if (action.availability === "RECOVERY") {
-        assert.ok(action.mutation, `${actionId} is a recovery action without an active mutation`);
+      if (action.mutation) {
+        assert.match(action.mutation, /^(GET|POST|PATCH|PUT|DELETE) /);
       }
     }
   });
 
-  it("keeps AI Analyze and Run Engine as the two normal workflow mutations", () => {
-    assert.equal(getTenderAction("AI_ANALYZE").availability, "NORMAL");
-    assert.equal(getTenderAction("AI_ANALYZE").owner, "WorkflowStepLinks");
-    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
-    assert.equal(getTenderAction("RUN_ENGINE").owner, "WorkflowStepLinks");
+  it("keeps AI Analyze and Run Engine recovery-only", () => {
+    assert.equal(getTenderAction("AI_ANALYZE").availability, "RECOVERY");
+    assert.equal(getTenderAction("AI_ANALYZE").owner, "AiAnalyzeRecoveryPanel");
+    assert.equal(getTenderAction("AI_ANALYZE").mutation, null);
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "RECOVERY");
+    assert.equal(getTenderAction("RUN_ENGINE").owner, "RecoveryCommandCenter");
+    assert.equal(getTenderAction("RUN_ENGINE").mutation, null);
     assert.equal(getTenderAction("MATCH_EVIDENCE").availability, "NAVIGATION");
     assert.equal(getTenderAction("MATCH_EVIDENCE").mutation, null);
   });
@@ -59,19 +61,21 @@ describe("canonical workflow action registry", () => {
     assert.equal(getTenderAction("FINAL_APPROVAL").mutation, null);
   });
 
-  it("binds executable actions to canonical live routes", () => {
-    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/manual-ai-analyze");
-    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
+  it("binds only active executable actions to canonical live routes", () => {
+    assert.equal(getTenderAction("UPLOAD_TENDER_FILES").mutation, "POST /api/upload");
+    assert.equal(getTenderAction("REEXTRACT_SOURCE").mutation, "POST /api/tenders/:id/files/:fileId/reextract");
+    assert.equal(getTenderAction("AI_ANALYZE").mutation, null);
+    assert.equal(getTenderAction("RUN_ENGINE").mutation, null);
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").mutation, "GET /api/tenders/:id/download?type=zip");
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
   });
 
-  it("normal POST actions are upload plus exactly the two workflow actions", () => {
+  it("upload is the only normal POST workflow action", () => {
     const normalPost = listTenderActions()
       .filter(([, action]) => action.availability === "NORMAL" && action.mutation?.startsWith("POST "))
       .map(([id]) => id)
       .sort();
-    assert.deepEqual(normalPost, ["AI_ANALYZE", "RUN_ENGINE", "UPLOAD_TENDER_FILES"]);
+    assert.deepEqual(normalPost, ["UPLOAD_TENDER_FILES"]);
   });
 });
 
@@ -84,7 +88,7 @@ describe("workflow icon compatibility projection", () => {
     assert.equal(WORKFLOW_ACTION_ICONS.length, listTenderActions().length);
   });
 
-  it("resolves legacy aliases to canonical meanings", () => {
+  it("resolves legacy aliases to canonical recovery meanings", () => {
     assert.equal(getWorkflowActionIcon("execute", "engine-action"), getTenderAction("RUN_ENGINE").iconName);
     assert.equal(getWorkflowActionLabel("execute", "engine-action"), getTenderAction("RUN_ENGINE").label);
     assert.equal(getWorkflowActionIcon("resume", "recovery-command-center"), getTenderAction("AI_ANALYZE").iconName);
