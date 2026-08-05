@@ -10,7 +10,7 @@ export default function HomePage() {
       <div className="mx-auto flex w-full max-w-4xl flex-1 items-center justify-center">
         <div className="w-full rounded-2xl border bg-white p-8 shadow-sm space-y-8">
           <div className="space-y-3">
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Hope Tender Platform</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-700">Hope Tender Platform</p>
             <h1 className="text-3xl font-bold text-slate-900 sm:text-4xl">Win-ready proposals, produced faster.</h1>
             <p className="max-w-2xl text-slate-600">
               Build stronger, evidence-backed tender responses with AI-assisted drafting, evaluator simulation, and
@@ -42,24 +42,24 @@ export default function HomePage() {
       </div>
       <footer className="mx-auto mt-6 w-full max-w-4xl shrink-0 px-4 pb-6">
         <div className="flex flex-col items-center justify-between gap-3 border-t border-slate-200 pt-6 sm:flex-row sm:text-left">
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-slate-700">
             <span className="font-medium text-slate-700">Hope Tender</span>
             <span className="mx-2 text-slate-300">&middot;</span>
             Hope Urban Planning Architectural and Engineering Consultancy
           </div>
-          <div className="flex items-center gap-4 text-xs text-slate-500">
+          <div className="flex items-center gap-4 text-xs text-slate-700">
             <Link href="/login" className="font-medium text-slate-700 hover:text-slate-900 hover:underline">
               Sign in
             </Link>
             <Link href="/forgot-password" className="font-medium text-slate-700 hover:text-slate-900 hover:underline">
               Forgot password
             </Link>
-            <span className="text-slate-400">
+            <span className="text-slate-600">
               &copy; {new Date().getFullYear()}
             </span>
           </div>
         </div>
-        <p className="mt-4 text-center text-xs text-slate-400 sm:text-left">
+        <p className="mt-4 text-center text-xs text-slate-600 sm:text-left">
           AI-powered tender proposal generation &amp; compliance engine
         </p>
       </footer>

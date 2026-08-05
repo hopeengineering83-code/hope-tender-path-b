@@ -17,7 +17,7 @@ export default function ErrorPage({
             H
           </div>
           <h1 className="text-2xl font-bold text-slate-900">Hope Tender</h1>
-          <p className="mt-1 text-sm text-slate-500">Hope Urban Planning Architectural and Engineering Consultancy</p>
+          <p className="mt-1 text-sm text-slate-700">Hope Urban Planning Architectural and Engineering Consultancy</p>
         </div>
         <div className="space-y-5 rounded-2xl border bg-white p-8 shadow-sm">
           <div>
@@ -27,7 +27,7 @@ export default function ErrorPage({
               The page could not be rendered. You can retry or return home.
             </p>
             {error?.digest ? (
-              <p className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-500">Error digest: {error.digest}</p>
+              <p className="mt-4 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">Error digest: {error.digest}</p>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-3">
@@ -46,7 +46,7 @@ export default function ErrorPage({
             </Link>
           </div>
         </div>
-        <p className="text-center text-xs text-slate-400">
+        <p className="text-center text-xs text-slate-600">
           AI-powered tender proposal generation &amp; compliance engine
         </p>
       </div>

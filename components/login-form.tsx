@@ -167,7 +167,7 @@ export function LoginForm() {
         {loading ? "Signing In..." : "Sign In"}
       </button>
 
-      <p className="text-center text-sm text-slate-500">
+      <p className="text-center text-sm text-slate-700">
         <Link href="/forgot-password" className="hover:underline">Forgot password?</Link>
       </p>
     </form>

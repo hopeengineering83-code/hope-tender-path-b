@@ -22,20 +22,20 @@ export default async function LoginPage({
             H
           </div>
           <h1 className="text-2xl font-bold text-slate-900">Hope Tender</h1>
-          <p className="mt-1 text-sm text-slate-500">Hope Urban Planning Architectural and Engineering Consultancy</p>
+          <p className="mt-1 text-sm text-slate-700">Hope Urban Planning Architectural and Engineering Consultancy</p>
         </div>
         <LoginRecoveryNote errorCode={errorCode} recovered={recovered} />
         <div className="rounded-2xl border bg-white p-8 shadow-sm space-y-5">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Sign in to your workspace</h2>
-            <p className="mt-0.5 text-sm text-slate-500">Enter your credentials to access the tender engine.</p>
+            <p className="mt-0.5 text-sm text-slate-700">Enter your credentials to access the tender engine.</p>
           </div>
           <LoginForm />
-          <p className="text-center text-xs text-slate-500">
+          <p className="text-center text-xs text-slate-700">
             Already signed in? <Link href="/dashboard" className="font-medium text-slate-900 hover:underline">Open dashboard</Link>
           </p>
         </div>
-        <p className="text-center text-xs text-slate-400">
+        <p className="text-center text-xs text-slate-600">
           AI-powered tender proposal generation &amp; compliance engine
         </p>
       </div>

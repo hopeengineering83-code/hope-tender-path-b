@@ -9,11 +9,11 @@ export default function NotFound() {
             H
           </div>
           <h1 className="text-2xl font-bold text-slate-900">Hope Tender</h1>
-          <p className="mt-1 text-sm text-slate-500">Hope Urban Planning Architectural and Engineering Consultancy</p>
+          <p className="mt-1 text-sm text-slate-700">Hope Urban Planning Architectural and Engineering Consultancy</p>
         </div>
         <div className="space-y-5 rounded-2xl border bg-white p-8 shadow-sm">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">404</p>
+            <p className="text-sm font-semibold uppercase tracking-wide text-slate-700">404</p>
             <h2 className="mt-2 text-xl font-semibold text-slate-900">Page not found</h2>
             <p className="mt-2 text-sm text-slate-600">
               The page you requested does not exist or is no longer available.
@@ -26,7 +26,7 @@ export default function NotFound() {
             Return home
           </Link>
         </div>
-        <p className="text-center text-xs text-slate-400">
+        <p className="text-center text-xs text-slate-600">
           AI-powered tender proposal generation &amp; compliance engine
         </p>
       </div>

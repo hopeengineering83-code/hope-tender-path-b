@@ -44,12 +44,12 @@ export default function ForgotPasswordPage() {
             H
           </div>
           <h1 className="text-2xl font-bold text-slate-900">Hope Tender</h1>
-          <p className="mt-1 text-sm text-slate-500">Hope Urban Planning Architectural and Engineering Consultancy</p>
+          <p className="mt-1 text-sm text-slate-700">Hope Urban Planning Architectural and Engineering Consultancy</p>
         </div>
         <div className="space-y-6 rounded-2xl border bg-white p-8 shadow-sm">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Reset password</h2>
-            <p className="mt-0.5 text-sm text-slate-500">Enter your account email to request password reset instructions.</p>
+            <p className="mt-0.5 text-sm text-slate-700">Enter your account email to request password reset instructions.</p>
           </div>
 
           {!result ? (
@@ -87,11 +87,11 @@ export default function ForgotPasswordPage() {
             </div>
           )}
 
-          <p className="text-center text-sm text-slate-500">
+          <p className="text-center text-sm text-slate-700">
             <Link href="/login" className="font-medium text-slate-900 hover:underline">Back to sign in</Link>
           </p>
         </div>
-        <p className="text-center text-xs text-slate-400">
+        <p className="text-center text-xs text-slate-600">
           AI-powered tender proposal generation &amp; compliance engine
         </p>
       </div>
