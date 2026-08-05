@@ -18,7 +18,6 @@ export type WorkflowActionSurface =
   | "ai-analyze"
   | "requirement-coverage"
   | "matching-selected-evidence"
-  | "engine-action"
   | "submission-plan"
   | "generated-documents"
   | "authority-review"
@@ -58,10 +57,10 @@ export const TENDER_ACTIONS = {
     availability: "RECOVERY",
   },
   AI_ANALYZE: {
-    anchor: "#ai-analyze",
+    anchor: "#ai-analyze-section",
     mutation: null,
-    owner: "AiAnalyzeRecoveryPanel",
-    label: "Open AI analysis recovery",
+    owner: "AIAnalyzePanel",
+    label: "View automatic AI analysis status",
     verb: "analyze",
     surface: "ai-analyze",
     iconName: "SparklesIcon",
@@ -98,19 +97,19 @@ export const TENDER_ACTIONS = {
     availability: "NAVIGATION",
   },
   RUN_ENGINE: {
-    anchor: "#engine-action",
+    anchor: "#matching-selected-evidence",
     mutation: null,
-    owner: "RecoveryCommandCenter",
-    label: "Open Engine recovery",
+    owner: "MatchingSelectedEvidencePanel",
+    label: "View automatic Engine and matching status",
     verb: "engine",
-    surface: "engine-action",
+    surface: "matching-selected-evidence",
     iconName: "BoltIcon",
     availability: "RECOVERY",
   },
   BUILD_SUBMISSION_PLAN: {
     anchor: "#submission-plan-completeness",
     mutation: null,
-    owner: "BuildSubmissionPlanButton",
+    owner: "SubmissionPlanCompletenessPanel",
     label: "View automatic Build Plan status",
     verb: "plan",
     surface: "submission-plan",
