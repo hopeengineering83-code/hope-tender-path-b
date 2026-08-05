@@ -18,6 +18,23 @@ process.env.NEXTAUTH_SECRET ??= "test-nextauth-secret-with-enough-bytes-abcdef01
 process.env.GEMINI_API_KEY ??= "AIzaTestKeyNotUsedAtRuntime12345678901234567890";
 process.env.NODE_ENV ??= "test";
 
+// ─── Fail-closed production-DB guard (audit requirement #5) ───────────────────
+//
+// Block the entire test process BEFORE any test file loads when DATABASE_URL
+// points at a production-designated database. This catches:
+//   - A developer running `npm test` locally with their .env loaded.
+//   - A future workflow change that reintroduces `secrets.DATABASE_URL`.
+//   - A test script inlining a hardcoded production connection string.
+//
+// See lib/test-db-guard.ts for the full rule set. The guard throws
+// synchronously — the spawnSync below never runs.
+//
+// AUDIT REQUIREMENT: GitHub Actions and all automated tests can NEVER connect
+// to the live Neon Production database. This guard enforces that contract at
+// the test-runner entry point.
+import { enforceTestDatabaseGuard } from "../lib/test-db-guard.mjs";
+enforceTestDatabaseGuard(process.env.DATABASE_URL);
+
 const testDir = resolve(process.cwd(), "tests");
 
 // Walk tests/ recursively so test files in subdirectories (e.g.
