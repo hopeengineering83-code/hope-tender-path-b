@@ -84,14 +84,14 @@ export function AIAnalyzePanel({
           if (TERMINAL.includes(job.status)) {
             setAnalyzing(false);
             if (job.status === "SUCCEEDED") {
-              setPhase("AI Analyze completed. Review the grounded result, then select Run Engine.");
+              setPhase("AI Analyze completed. Engine matching and downstream generation continue automatically.");
               router.refresh();
             } else if (job.status === "PARTIAL_SUCCESS") {
-              setError("AI Analyze completed only partially. Run Engine remains blocked until a complete grounded analysis succeeds.");
+              setError("AI Analyze completed only partially. Automatic Engine processing remains blocked until a complete grounded analysis succeeds.");
             } else if (job.status === "CANCELED") {
-              setError(job.errorMessage || "AI Analyze was canceled. Start it again from the canonical AI Analyze action.");
+              setError(job.errorMessage || "AI Analyze was canceled. The durable recovery worker will retry when the blocking condition is resolved.");
             } else {
-              setError(job.errorMessage || "AI Analyze failed. Correct the provider or extraction issue, then select AI Analyze again.");
+              setError(job.errorMessage || "AI Analyze failed. Correct the provider or extraction issue; durable recovery will resume automatically.");
             }
             return;
           }
@@ -143,9 +143,7 @@ export function AIAnalyzePanel({
   const analysisComplete = jobStatus === "SUCCEEDED" || (!analyzing && jobStatus === null && analysisAlreadySucceeded);
   const pendingLabel = !aiEnabled
     ? "AI provider configuration required"
-    : canMutate
-      ? "Ready for AI Analyze"
-      : "AI Analyze awaiting an authorized user";
+    : "Automatic AI analysis pending";
 
   return (
     <section id="ai-analyze-section" className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
@@ -158,12 +156,10 @@ export function AIAnalyzePanel({
           {analyzing
             ? (phase || "Extracting grounded requirements, client details, and evaluation criteria.")
             : analysisComplete
-              ? "The grounded analysis is complete. Review it, then use Run Engine to start matching and the automatic downstream pipeline."
+              ? "The grounded analysis is complete. Engine matching and the downstream proposal pipeline continue automatically."
               : !aiEnabled
-                ? "Configure at least one supported AI provider before starting AI Analyze."
-                : canMutate
-                  ? "Source extraction is automatic. AI Analyze starts only when you select the canonical AI Analyze action above."
-                  : "Only an ADMIN or PROPOSAL_MANAGER can start AI Analyze."}
+                ? "Configure at least one supported AI provider. The durable pipeline will continue automatically when a provider is healthy."
+                : "Source extraction, AI analysis, Engine matching, and downstream generation are handled automatically by durable workers."}
         </p>
       </div>
 
