@@ -17,11 +17,12 @@ describe("upload, extraction, and automatic continuation contract", () => {
     assert.match(firstUpload, /processingJobId/);
   });
 
-  it("arms the prepared AI job for durable automatic continuation", () => {
+  it("leaves the prepared AI job runnable for automatic continuation", () => {
     assert.match(extractionService, /queueAutomaticTenderPipeline/);
     assert.match(automaticPipeline, /status:\s*"QUEUED"/);
     assert.match(automaticPipeline, /manualRequested:\s*false/);
     assert.match(automaticPipeline, /autoContinue:\s*true/);
+    assert.match(automaticPipeline, /automaticContinuation:\s*true/);
     assert.doesNotMatch(automaticPipeline, /status:\s*"CANCELED"/);
     assert.doesNotMatch(automaticPipeline, /manualGate:\s*"AI_ANALYZE"/);
   });
@@ -32,13 +33,12 @@ describe("upload, extraction, and automatic continuation contract", () => {
     assert.match(secureUpload, /sourcePackageComplete && !uploadBatchFailed/);
   });
 
-  it("the browser can nudge extraction and the automatically queued analysis", () => {
+  it("the browser nudges extraction only while later stages remain server-owned", () => {
     const clientPipeline = readFileSync("lib/ui/auto-pipeline.ts", "utf8");
-    assert.match(clientPipeline, /run-next\?jobType=EXTRACT_TEXT/);
-    assert.match(clientPipeline, /run-next\?jobType=AI_ANALYZE/);
-    assert.match(clientPipeline, /void nudgeTenderWorker\(AI_ANALYZE_WORKER_ENDPOINT\)/);
-    assert.match(clientPipeline, /no AI Analyze or Run Engine action is required/i);
-    assert.doesNotMatch(clientPipeline, /AI Analyze remains explicit|select AI Analyze/i);
+    assert.match(clientPipeline, /\/api\/ai-jobs\/run-next\?jobType=EXTRACT_TEXT/);
+    assert.doesNotMatch(clientPipeline, /run-next\?jobType=AI_ANALYZE/);
+    assert.match(clientPipeline, /continue automatically through analysis, generation, validation, and package readiness/i);
+    assert.match(clientPipeline, /AI analysis is durably queued and will continue automatically/i);
   });
 
   it("never falls back to the full reviewed Vault for positive proposal evidence", () => {
