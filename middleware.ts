@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { deriveRoutedRequestOrigin, evaluateCsrf } from "./lib/security/csrf";
-import { getProductionCSP } from "./lib/security/csp";
+import { getProductionCSP, generateCspNonce } from "./lib/security/csp";
 import { extractRequestId, withRequestId } from "./lib/request-id";
 
 const INTERNAL_GUARD_HEADER = "x-hope-internal-rate-guard";
@@ -41,9 +41,9 @@ async function deriveInternalGuardToken(): Promise<string | null> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function withSecurityHeaders(response: NextResponse): NextResponse {
+function withSecurityHeaders(response: NextResponse, nonce?: string): NextResponse {
   if (process.env.NODE_ENV === "production") {
-    response.headers.set("Content-Security-Policy", getProductionCSP());
+    response.headers.set("Content-Security-Policy", getProductionCSP(nonce));
     response.headers.set("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload");
     response.headers.set("X-Content-Type-Options", "nosniff");
     response.headers.set("X-Frame-Options", "DENY");
@@ -67,6 +67,7 @@ function withRequestIdDownstream(requestHeaders: Headers, requestId: string): He
 
 export async function middleware(req: NextRequest) {
   const requestId = extractRequestId(req as unknown as Request);
+  const cspNonce = generateCspNonce();
 
   return withRequestId(requestId, async () => {
     const guardedAiRoute = req.method === "POST" && GUARDED_AI_ROUTE.test(req.nextUrl.pathname);
@@ -109,7 +110,7 @@ export async function middleware(req: NextRequest) {
 
       if (!decision.allowed) {
         return withRequestIdHeader(
-          withSecurityHeaders(NextResponse.json({ error: decision.reason }, { status: 403 })),
+          withSecurityHeaders(NextResponse.json({ error: decision.reason }, { status: 403 }), cspNonce),
           requestId,
         );
       }
@@ -118,17 +119,18 @@ export async function middleware(req: NextRequest) {
     if (guardedAiRoute) {
       if (!guardToken) {
         return withRequestIdHeader(
-          withSecurityHeaders(NextResponse.json({ error: "AI request guard is unavailable" }, { status: 503 })),
+          withSecurityHeaders(NextResponse.json({ error: "AI request guard is unavailable" }, { status: 503 }), cspNonce),
           requestId,
         );
       }
 
       const requestHeaders = withRequestIdDownstream(new Headers(req.headers), requestId);
+      requestHeaders.set("x-nonce", cspNonce);
       requestHeaders.delete(INTERNAL_GUARD_HEADER);
 
       if (trustedInternalGuardHop) {
         return withRequestIdHeader(
-          withSecurityHeaders(NextResponse.next({ request: { headers: requestHeaders } })),
+          withSecurityHeaders(NextResponse.next({ request: { headers: requestHeaders } }), cspNonce),
           requestId,
         );
       }
@@ -141,14 +143,15 @@ export async function middleware(req: NextRequest) {
       requestHeaders.set("x-hope-guard-target", originalTarget);
 
       return withRequestIdHeader(
-        withSecurityHeaders(NextResponse.rewrite(guardUrl, { request: { headers: requestHeaders } })),
+        withSecurityHeaders(NextResponse.rewrite(guardUrl, { request: { headers: requestHeaders } }), cspNonce),
         requestId,
       );
     }
 
     const downstreamHeaders = withRequestIdDownstream(new Headers(req.headers), requestId);
+    downstreamHeaders.set("x-nonce", cspNonce);
     return withRequestIdHeader(
-      withSecurityHeaders(NextResponse.next({ request: { headers: downstreamHeaders } })),
+      withSecurityHeaders(NextResponse.next({ request: { headers: downstreamHeaders } }), cspNonce),
       requestId,
     );
   });
