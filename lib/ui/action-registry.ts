@@ -18,6 +18,7 @@ export type WorkflowActionSurface =
   | "ai-analyze"
   | "requirement-coverage"
   | "matching-selected-evidence"
+  | "engine-action"
   | "submission-plan"
   | "generated-documents"
   | "authority-review"
