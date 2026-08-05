@@ -31,7 +31,7 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
   test.skip(!FULL, "Set E2E_GOLDEN_AUTH=true and seed the isolated E2E account");
   test.setTimeout(120_000);
 
-  test("upload-first → durable extraction → explicit analysis gate → AI fallback → readiness gate", async ({ page }) => {
+  test("upload-first → durable extraction → automatic analysis worker → readiness gate", async ({ page }) => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
     await expect(page).toHaveURL(/dashboard/, { timeout: 15_000 });
@@ -66,11 +66,12 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
     expect(intakeJson.pipelineStage).toBe("EXTRACT_TEXT_QUEUED");
 
     const tenderId = intakeJson.tenderId;
+    const api = page.context().request;
     try {
-      // Upload-first persists the durable job before returning. The new
+      // Upload-first persists the durable job before returning. The
       // request-scoped wake can legitimately finish it before this read, so
       // SUCCEEDED is as valid as QUEUED/RUNNING here.
-      const queuedJob = await page.request.get(`/api/ai-jobs/${intakeJson.processingJobId}`);
+      const queuedJob = await api.get(`/api/ai-jobs/${intakeJson.processingJobId}`);
       expect(queuedJob.status(), await queuedJob.text()).toBe(200);
       const queuedJobJson = await queuedJob.json() as {
         job: { id: string; tenderId: string; jobType: string; status: string };
@@ -81,20 +82,16 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       expect(["QUEUED", "RUNNING", "SUCCEEDED"]).toContain(queuedJobJson.job.status);
 
       const extraction = await waitForDurableTenderExtraction({
-        request: page.request,
+        request: api,
         tenderId,
         expectedFileCount: 2,
       });
       expect(extraction.files).toHaveLength(2);
       expect(extraction.files.every((file) => file.extractedTextLength > 0)).toBe(true);
 
-      // If the helper itself claimed a job, verify that exact completion and
-      // continuation. When the request-scoped wake already finished the queue,
-      // the persisted upload job above plus extracted source rows are the
-      // durable proof and workerJobIds is correctly empty.
       const observedWorkerJobId = extraction.workerJobIds.at(-1);
       if (observedWorkerJobId) {
-        const completedExtraction = await page.request.get(`/api/ai-jobs/${observedWorkerJobId}`);
+        const completedExtraction = await api.get(`/api/ai-jobs/${observedWorkerJobId}`);
         expect(completedExtraction.status(), await completedExtraction.text()).toBe(200);
         const completedExtractionJson = await completedExtraction.json() as {
           job: {
@@ -108,31 +105,48 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
         expect(completedExtractionJson.job.output?.continuation?.reason).toBe("AI_ANALYZE_QUEUED");
       }
 
-      const analyze = await page.request.post(`/api/tenders/${tenderId}/ai-analyze?force=true`);
-      expect(analyze.status(), await analyze.text()).toBe(200);
-      const analyzeJson = await analyze.json() as {
-        success: boolean;
-        fallback: boolean;
-        code: string | null;
-        analysisSource: string | null;
-        requirementCount: number;
-        nextAction: string | null;
-        tender: { files: Array<{ id: string; extractedTextLength: number }> } | null;
+      // The browser is not the workflow owner. Close it before the scheduler
+      // surrogate drains AI_ANALYZE, proving that normal continuation does not
+      // depend on an Analyze button or an open page.
+      await page.close();
+      const worker = await api.post("/api/ai-jobs/run-next?jobType=AI_ANALYZE");
+      expect(worker.status(), await worker.text()).toBe(200);
+      const workerJson = await worker.json() as {
+        processed: boolean;
+        jobId: string | null;
+        terminalStatus: string | null;
+        resultCode: string | null;
+        nextJobType: string | null;
+        continuationReason: string | null;
       };
-      expect(analyzeJson.success).toBe(true);
-      expect(analyzeJson.fallback).toBe(true);
-      expect(["AI_NO_PROVIDER_CONFIGURED", "AI_PROVIDERS_RATE_LIMITED", "AI_PROVIDERS_EXHAUSTED"]).toContain(analyzeJson.code);
-      expect(analyzeJson.analysisSource).toBe("REGEX_FALLBACK");
-      expect(analyzeJson.requirementCount).toBeGreaterThan(0);
-      expect(analyzeJson.nextAction).toBe("RETRY_AI_ANALYZE_OR_APPROVE_FALLBACK");
-      expect(analyzeJson.tender?.files.length).toBe(2);
+      expect(workerJson.processed).toBe(true);
+      expect(workerJson.jobId).toBeTruthy();
+      expect(["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED"]).toContain(workerJson.terminalStatus);
+      expect(workerJson.resultCode).not.toBe("MANUAL_ACTION_REQUIRED");
 
-      const readiness = await page.request.get(`/api/tenders/${tenderId}/generation-readiness`);
+      const persistedAnalysis = await api.get(`/api/ai-jobs/${workerJson.jobId}`);
+      expect(persistedAnalysis.status(), await persistedAnalysis.text()).toBe(200);
+      const persistedAnalysisJson = await persistedAnalysis.json() as {
+        job: { jobType: string; status: string; errorMessage?: string | null };
+      };
+      expect(persistedAnalysisJson.job.jobType).toBe("AI_ANALYZE");
+      expect(persistedAnalysisJson.job.status).not.toBe("CANCELED");
+      expect(persistedAnalysisJson.job.errorMessage).not.toContain("explicit AI Analyze action");
+
+      // A successful provider-backed analysis must immediately expose the
+      // durable Engine continuation. Provider exhaustion remains fail-closed.
+      if (workerJson.terminalStatus === "SUCCEEDED") {
+        expect(workerJson.nextJobType).toBe("ENGINE_RUN");
+      }
+
+      const readiness = await api.get(`/api/tenders/${tenderId}/generation-readiness`);
       expect(readiness.status()).toBeLessThan(500);
       const readinessJson = await readiness.json() as { ready?: boolean; blockers?: unknown[] };
-      expect(readinessJson.ready).not.toBe(true);
+      if (workerJson.terminalStatus !== "SUCCEEDED") {
+        expect(readinessJson.ready).not.toBe(true);
+      }
     } finally {
-      const cleanup = await page.request.delete(`/api/tenders/${tenderId}`);
+      const cleanup = await api.delete(`/api/tenders/${tenderId}`);
       expect([200, 204]).toContain(cleanup.status());
     }
   });
