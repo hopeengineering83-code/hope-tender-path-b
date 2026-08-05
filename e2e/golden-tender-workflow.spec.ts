@@ -68,9 +68,6 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
     const tenderId = intakeJson.tenderId;
     const api = page.context().request;
     try {
-      // Upload-first persists the durable job before returning. The
-      // request-scoped wake can legitimately finish it before this read, so
-      // SUCCEEDED is as valid as QUEUED/RUNNING here.
       const queuedJob = await api.get(`/api/ai-jobs/${intakeJson.processingJobId}`);
       expect(queuedJob.status(), await queuedJob.text()).toBe(200);
       const queuedJobJson = await queuedJob.json() as {
@@ -131,7 +128,7 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       };
       expect(persistedAnalysisJson.job.jobType).toBe("AI_ANALYZE");
       expect(persistedAnalysisJson.job.status).not.toBe("CANCELED");
-      expect(persistedAnalysisJson.job.errorMessage).not.toContain("explicit AI Analyze action");
+      expect(persistedAnalysisJson.job.errorMessage ?? "").not.toContain("explicit AI Analyze action");
 
       // A successful provider-backed analysis must immediately expose the
       // durable Engine continuation. Provider exhaustion remains fail-closed.
