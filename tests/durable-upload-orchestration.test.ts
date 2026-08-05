@@ -11,11 +11,10 @@ const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8"
 describe("durable upload orchestration", () => {
   // The server-side enqueue module (lib/engine/server-side-ai-enqueue.ts)
   // was deleted: its wiring attempt conflicted with the release branch and
-  // was reverted, and the canonical, already-wired, already-tested path
-  // (lib/ai-jobs/automatic-tender-pipeline.ts -> createAnalysisJob, which is
-  // content-hash idempotent) already covers the same "durable server-side
-  // AI_ANALYZE enqueue" concern. Keeping both would have been a competing
-  // authority for the same job type.
+  // was reverted. AI_ANALYZE is now a MANUAL user action triggered via
+  // POST /api/tenders/:id/manual-ai-analyze (which calls createAnalysisJob,
+  // content-hash idempotent). The extraction service no longer auto-queues
+  // AI_ANALYZE — see tests/manual-workflow-regression.test.ts.
 
   it("VAULT_INGEST job type is registered with a real handler, not just declared", () => {
     // Previously this only checked the string appeared in the JobType union

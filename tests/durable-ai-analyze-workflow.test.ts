@@ -52,27 +52,20 @@ describe("run-next preserves durable terminal truth", () => {
   });
 });
 
-describe("AI Analyze has one automatic durable owner", () => {
-  const compatibilityRoute = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
-  const pipeline = read("lib/ai-jobs/automatic-tender-pipeline.ts");
+describe("AI Analyze is a MANUAL user action via the manual-ai-analyze route", () => {
+  const manualRoute = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
   const workflow = read("components/workflow-step-links.tsx");
   const panel = read("components/ai-analyze-panel.tsx");
 
-  it("queues automatically after extraction without a manual gate", () => {
-    assert.match(pipeline, /createAnalysisJob/);
-    assert.match(pipeline, /manualRequested:\s*false/);
-    assert.match(pipeline, /autoContinue:\s*true/);
-    assert.match(pipeline, /status:\s*"QUEUED"/);
-    assert.doesNotMatch(pipeline, /status:\s*"CANCELED"/);
+  it("the manual route creates an AI_ANALYZE job with manualRequested=true and autoContinue=false", () => {
+    assert.match(manualRoute, /createAnalysisJob/);
+    assert.match(manualRoute, /manualRequested:\s*true/);
+    assert.match(manualRoute, /autoContinue:\s*false/);
+    assert.match(manualRoute, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
   });
 
-  it("keeps the compatibility route isolated from the normal workflow", () => {
-    assert.match(compatibilityRoute, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
-    assert.match(compatibilityRoute, /where: \{ id: tenderId, userId: actor\.id \}/);
-    assert.match(compatibilityRoute, /manualRequested:\s*true/);
-    assert.match(compatibilityRoute, /autoContinue:\s*false/);
-    assert.doesNotMatch(workflow, /manual-ai-analyze|method:\s*"POST"|run-next\?jobType/);
-    assert.match(workflow, /Processing automatically/);
+  it("the workflow step links are navigation-only — no AI Analyze mutation", () => {
+    assert.doesNotMatch(workflow, /method:\s*"POST"|run-next\?jobType/);
   });
 
   it("keeps the analysis panel status-only and non-SSE", () => {
