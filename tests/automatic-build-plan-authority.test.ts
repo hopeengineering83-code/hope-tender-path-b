@@ -51,7 +51,7 @@ describe("automatic Build Plan authority", () => {
     assert.doesNotMatch(statusPanel, /Confirm reviewed Build Plan/);
     assert.doesNotMatch(statusPanel, /I reviewed the complete file list/);
     assert.doesNotMatch(statusPanel, /\/build-plan\/confirm/);
-    assert.match(statusPanel, /Build Plan awaits Run Engine/);
+    assert.match(statusPanel, /waiting for automatic Engine processing/);
     assert.match(statusPanel, /No separate Build Plan confirmation is required/);
   });
 
