@@ -16,40 +16,34 @@ Stack: Next.js 15 · React 19 · TypeScript · Prisma 6.19 (PostgreSQL) · Tailw
 
 ## Product goal (canonical — owner-stated, supersedes earlier phrasing)
 
+Read `OWNER_AUTOMATION_CONTRACT.md` first. It is the current workflow authority.
+
 The owner uploads exactly two things:
 
 1. **Company Vault documents and Brand Assets — ONCE.** Not per tender.
 2. **Tender files — every time**, for each new tender.
 
-The app must then do **everything else automatically**, through to a
-downloadable ZIP, **with exactly two manual exceptions**:
-
-- **AI Analyze** — user-triggered
-- **Run Engine** — user-triggered
-
-So the shape is:
+The app must then do **everything else automatically**, through to a downloadable ZIP. AI Analyze and Run Engine are durable server-owned stages, not mandatory normal-path user actions.
 
 ```
 Vault + Brand Assets (once)  ─┐
-                              ├─→ extraction + source verification   AUTOMATIC
+                              ├─→ extraction + source verification
 Tender files (every tender)  ─┘
         │
-        ├─→ [MANUAL GATE 1]  AI Analyze
-        ├─→ [MANUAL GATE 2]  Run Engine
-        │
-        └─→ Build Plan · evidence matching · DOCX generation · validation ·
-            PDF finalization · package reconciliation · ZIP readiness   AUTOMATIC
+        └─→ AI Analyze → Run Engine → Build Plan → evidence matching →
+            DOCX generation → validation → PDF finalization → package
+            reconciliation → ZIP readiness                 AUTOMATIC
 ```
 
-Nothing else may require a click. No Generate, Confirm, Repair, Validate,
-Finalize, Refresh or Re-check step on the normal path. Exceptional recovery may
-exist only inside collapsed Diagnostics and Recovery.
+The browser may display progress and recovery controls, but it must not own orchestration or need to remain open. Automatic continuation may stop only for fail-closed review conditions defined in `OWNER_AUTOMATION_CONTRACT.md`, including unreadable/conflicting sources, unsupported claims, legal-authority decisions, exhausted external credentials after bounded retry, and final owner approval.
+
+No Generate, Confirm, Repair, Validate, Finalize, Refresh, Analyze, Run Engine, or Re-check click may be mandatory on the normal path. Exceptional recovery may exist only inside collapsed Diagnostics and Recovery.
 
 Implementation state and every traced gate point: see task #124.
 
 ## Priority order for all sessions
 
-1. Read `operator_handoff.md` Active Workboard before starting — do not overlap another agent's scope.
+1. Read `OWNER_AUTOMATION_CONTRACT.md` and `operator_handoff.md` Active Workboard before starting — do not overlap another agent's scope.
 2. Wire `TenderFactsLedger` model into downstream consumers (UI, gates, BuildPlan, document generators).
 3. Write + test backfill script (`scripts/backfill-tender-facts-ledger.ts`) to migrate legacy Tender scalars → TenderFactsLedger.
 4. Add `CONDITIONAL_OR_UNSCHEDULED` status to canonical resolver + wire through STATUS_BADGE maps.
