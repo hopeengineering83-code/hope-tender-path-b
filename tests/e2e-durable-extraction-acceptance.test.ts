@@ -51,6 +51,20 @@ describe("durable extraction acceptance helper", () => {
     assert.deepEqual(result.workerJobIds, ["extract-job-1"]);
   });
 
+  it("keeps automatic job visibility and claiming tenant- and tender-scoped", () => {
+    const listRoute = readFileSync("app/api/ai-jobs/route.ts", "utf8");
+    const jobStore = readFileSync("lib/ai-jobs.ts", "utf8");
+    const workerRoute = readFileSync("app/api/ai-jobs/run-next/route.ts", "utf8");
+    const claimPolicy = readFileSync("lib/job-claim-policy.ts", "utf8");
+
+    assert.match(listRoute, /parseJobTypeFilter\(searchParams\.get\("jobType"\)\)/);
+    assert.match(listRoute, /tenderId = searchParams\.get\("tenderId"\)/);
+    assert.match(jobStore, /opts\?\.tenderId \? \{ tenderId: opts\.tenderId \} : \{\}/);
+    assert.match(workerRoute, /claimJobForCaller\(\{[\s\S]*?tenderId,[\s\S]*?userId:/);
+    assert.match(claimPolicy, /if \(options\.tenderId\) conditions\.push\(Prisma\.sql/);
+    assert.match(claimPolicy, /"tenderId" = \$\{options\.tenderId\}/);
+  });
+
   it("all authenticated upload acceptances use the durable helper", () => {
     for (const path of [
       "e2e/golden-tender-workflow.spec.ts",
@@ -65,8 +79,17 @@ describe("durable extraction acceptance helper", () => {
     assert.match(golden, /EXTRACT_TEXT_QUEUED/);
     assert.match(
       golden,
-      /completedExtractionJson\.job\.output\?\.continuation\?\.reason\)\.toBe\("AI_ANALYZE_QUEUED"\)/,
+      /completedExtractionJson\.job\.output\?\.continuation\?\.reason === "AI_ANALYZE_QUEUED"/,
     );
+    assert.match(
+      golden,
+      /jobType=AI_ANALYZE&tenderId=\$\{encodeURIComponent\(tenderId\)\}/,
+    );
+    assert.match(
+      golden,
+      /extraction should persist an automatic AI_ANALYZE job for this tender/,
+    );
+    assert.match(golden, /analysisWorkerJson\.jobId\)\.toBe\(analysisJobId\)/);
     assert.doesNotMatch(golden, /job\.output \?\? ""\)\.toContain/);
     assert.doesNotMatch(golden, /expect\(intakeJson\.nextAction\)\.toBe\("WAIT_FOR_AI_ANALYZE"\)/);
   });
