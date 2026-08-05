@@ -60,12 +60,12 @@ export const TENDER_ACTIONS = {
   AI_ANALYZE: {
     anchor: "#workflow-state",
     mutation: "POST /api/tenders/:id/manual-ai-analyze",
-    owner: "WorkflowStepLinks",
-    label: "AI Analyze",
+    owner: "WorkflowStepLinksRecovery",
+    label: "Retry AI analysis",
     verb: "analyze",
     surface: "ai-analyze",
     iconName: "SparklesIcon",
-    availability: "NORMAL",
+    availability: "RECOVERY",
   },
   REVIEW_SOURCES: {
     anchor: "#requirement-coverage",
@@ -100,12 +100,12 @@ export const TENDER_ACTIONS = {
   RUN_ENGINE: {
     anchor: "#workflow-state",
     mutation: "POST /api/tenders/:id/engine",
-    owner: "WorkflowStepLinks",
-    label: "Run Engine",
+    owner: "WorkflowStepLinksRecovery",
+    label: "Retry Engine",
     verb: "engine",
     surface: "engine-action",
     iconName: "BoltIcon",
-    availability: "NORMAL",
+    availability: "RECOVERY",
   },
   BUILD_SUBMISSION_PLAN: {
     anchor: "#submission-plan-completeness",
