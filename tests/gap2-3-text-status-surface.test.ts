@@ -39,22 +39,21 @@ describe("generation remains an automatic text-status surface", () => {
   });
 });
 
-describe("AI Analyze has one normal-path owner", () => {
+describe("AI Analyze has one automatic status owner", () => {
   it("keeps the detailed AI panel status-only", () => {
     assert.doesNotMatch(aiAnalyzePanelCode, /method:\s*"POST"/);
     assert.doesNotMatch(aiAnalyzePanelCode, /manual-ai-analyze|ai-analyze\?mode=background/);
     assert.match(aiAnalyzePanelCode, /AI Analyze running/);
     assert.match(aiAnalyzePanelCode, /Analysis complete/);
-    assert.match(aiAnalyzePanelCode, /Ready for AI Analyze/);
+    assert.match(aiAnalyzePanelCode, /Automatic AI analysis pending/);
   });
 
-  it("renders one canonical AI Analyze endpoint in WorkflowStepLinks", () => {
-    assert.match(workflowOwnerCode, /manual-ai-analyze/);
-    assert.match(workflowOwnerCode, /"AI Analyze"/);
-    assert.equal(
-      (workflowOwnerCode.match(/\/api\/tenders\/\$\{tenderId\}\/manual-ai-analyze/g) ?? []).length,
-      1,
-    );
+  it("keeps WorkflowStepLinks navigation-only with automatic status copy", () => {
+    assert.doesNotMatch(workflowOwnerCode, /manual-ai-analyze/);
+    assert.doesNotMatch(workflowOwnerCode, /method:\s*"POST"/);
+    assert.doesNotMatch(workflowOwnerCode, /\/api\/tenders\/\$\{tenderId\}\/engine/);
+    assert.match(workflowOwnerCode, /Processing automatically/);
+    assert.match(workflowOwnerCode, /Open \{currentLabel\} details/);
   });
 
   it("keeps provider diagnostics secondary and read-only", () => {

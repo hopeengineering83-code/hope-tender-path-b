@@ -43,10 +43,10 @@ describe("canonical workflow action registry", () => {
 
   it("keeps AI Analyze and Run Engine recovery-only", () => {
     assert.equal(getTenderAction("AI_ANALYZE").availability, "RECOVERY");
-    assert.equal(getTenderAction("AI_ANALYZE").owner, "AiAnalyzeRecoveryPanel");
+    assert.equal(getTenderAction("AI_ANALYZE").owner, "AIAnalyzePanel");
     assert.equal(getTenderAction("AI_ANALYZE").mutation, null);
     assert.equal(getTenderAction("RUN_ENGINE").availability, "RECOVERY");
-    assert.equal(getTenderAction("RUN_ENGINE").owner, "RecoveryCommandCenter");
+    assert.equal(getTenderAction("RUN_ENGINE").owner, "MatchingSelectedEvidencePanel");
     assert.equal(getTenderAction("RUN_ENGINE").mutation, null);
     assert.equal(getTenderAction("MATCH_EVIDENCE").availability, "NAVIGATION");
     assert.equal(getTenderAction("MATCH_EVIDENCE").mutation, null);

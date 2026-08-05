@@ -77,10 +77,10 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     path: "/dashboard/analytics",
   },
   RUN_AI_ANALYZE: {
-    label: "Run AI Analyze",
-    kind: "api",
-    method: "POST",
-    path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
+    label: "View AI Analysis Status",
+    kind: "scroll",
+    anchorId: "ai-analyze-section",
+    message: "AI analysis is queued and resumed automatically by durable workers. Open the status panel to review progress or provider blockers.",
   },
   RETRY_AI_ANALYZE: {
     label: "Retry AI Analyze",
@@ -97,10 +97,10 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
   },
   REVIEW_ANALYSIS: {
-    label: "Review Analysis",
-    kind: "api",
-    method: "POST",
-    path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
+    label: "Review AI Analysis Status",
+    kind: "scroll",
+    anchorId: "ai-analyze-section",
+    message: "Open the automatic AI analysis status and grounded analysis quality surfaces. No routine Analyze action is required.",
   },
   APPROVE_FALLBACK_WITH_NOTE: {
     label: "Approve Fallback Analysis (audit-only — does NOT authorize release)",
@@ -116,10 +116,10 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     path: "/api/tenders/{tenderId}/approve-analysis",
   },
   AI_ANALYZE: {
-    label: "Run AI Analyze",
-    kind: "api",
-    method: "POST",
-    path: "/api/tenders/{tenderId}/ai-analyze?mode=background",
+    label: "View Automatic AI Analysis",
+    kind: "scroll",
+    anchorId: "ai-analyze-section",
+    message: "AI analysis starts automatically after extraction and continues through the durable worker. Open this panel to review status and exceptional blockers.",
     aliases: ["REVIEW_ANALYSIS"],
   },
   COMPLETE_METADATA: {
@@ -135,16 +135,16 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     path: "/api/tenders/{tenderId}/repair-source-grounding",
   },
   BUILD_SUBMISSION_PLAN: {
-    label: "Review and Confirm Build Plan",
+    label: "View Automatic Build Plan Status",
     kind: "scroll",
     anchorId: "submission-plan-completeness",
-    message: "Open the canonical Build Plan panel to build a draft, review the complete ordered file scope, and confirm it.",
+    message: "Build Plan creation and source verification continue automatically after Engine processing. No separate Build Plan confirmation is required.",
   },
   RUN_ENGINE: {
-    label: "Run Engine",
-    kind: "api",
-    method: "POST",
-    path: "/api/tenders/{tenderId}/engine",
+    label: "View Engine and Matching Status",
+    kind: "scroll",
+    anchorId: "matching-selected-evidence",
+    message: "Engine matching starts automatically after complete canonical AI analysis succeeds. Open the matching status panel to review evidence or blockers.",
   },
   LINK_VAULT_EVIDENCE: {
     label: "Link Vault Evidence",
@@ -320,18 +320,18 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     anchorId: "generated-documents",
     message: "Open the Generated Documents panel to review generation readiness and fix blockers.",
   },
-  // Submission plan confirmation ─────────────────────────────────────────────
+  // Submission plan compatibility actions remain navigation-only. ───────────
   CONFIRM_SUBMISSION_PLAN: {
-    label: "Review and Confirm Build Plan",
+    label: "View Automatic Build Plan Status",
     kind: "scroll",
     anchorId: "submission-plan-completeness",
-    message: "Open the canonical Build Plan panel, review the complete ordered file scope, and confirm it.",
+    message: "Build Plan verification is automatic. Open the status panel to review the ordered scope and any genuine source blocker.",
   },
   REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN: {
-    label: "Review Requirements and Build Plan",
+    label: "Review Requirements and Build Plan Status",
     kind: "scroll",
     anchorId: "submission-plan-completeness",
-    message: "Open the canonical Build Plan panel after reviewing tender requirements; build a draft and confirm the exact scope there.",
+    message: "Open the automatic Build Plan status after reviewing tender requirements. No routine manual plan confirmation is required.",
   },
   // Repair source grounding ──────────────────────────────────────────────────
   REPAIR_SOURCE_GROUNDING: {
@@ -341,7 +341,7 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     path: "/api/tenders/{tenderId}/repair-source-grounding",
     aliases: ["REPAIR_OR_EDIT_TENDER"],
   },
-  // AI Analyze resume / retry aliases ───────────────────────────────────────
+  // AI Analyze resume / retry aliases are exceptional failure recovery. ─────
   RERUN_AI_ANALYZE: {
     label: "Re-run AI Analyze",
     kind: "api",
@@ -420,12 +420,12 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     method: "GET",
     path: "/api/tenders/{tenderId}/export-readiness",
   },
-  // Engine / analysis recovery ───────────────────────────────────────────────
+  // Engine / analysis compatibility actions remain status navigation. ───────
   RUN_ENGINE_OR_APPROVE_ANALYSIS: {
-    label: "Run Engine or Approve Analysis",
-    kind: "api",
-    method: "POST",
-    path: "/api/tenders/{tenderId}/engine",
+    label: "Review Analysis and Engine Status",
+    kind: "scroll",
+    anchorId: "analysis-quality",
+    message: "Review grounded analysis quality and automatic Engine status. Engine starts automatically after full canonical AI analysis succeeds; fallback approval does not authorize release.",
     aliases: ["RUN_ENGINE_SAFE_MODE"],
   },
   // Navigation shortcuts for engine/auth error nextActions ──────────────────

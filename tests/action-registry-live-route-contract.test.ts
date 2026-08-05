@@ -40,9 +40,13 @@ describe("action registry matches production route owners", () => {
 
   it("keeps Build Plan status-only because Engine owns automatic verification", () => {
     const route = read("app/api/tenders/[id]/build-plan/route.ts");
-    const status = read("components/submission-plan-completeness-panel.tsx");
+    const status = read("components/build-submission-plan-button.tsx");
+    const panel = read("components/submission-plan-completeness-panel.tsx");
     assert.match(route, /export async function GET/);
+    assert.match(status, /method:\s*"GET"/);
     assert.doesNotMatch(status, /method:\s*"POST"/);
+    assert.doesNotMatch(status, /<button/);
+    assert.equal((panel.match(/<BuildSubmissionPlanButton/g) ?? []).length, 1);
     assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").mutation, null);
     assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").availability, "NAVIGATION");
     assert.equal(getTenderAction("BUILD_SUBMISSION_PLAN").owner, "SubmissionPlanCompletenessPanel");

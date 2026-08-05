@@ -52,24 +52,27 @@ describe("run-next preserves durable terminal truth", () => {
   });
 });
 
-describe("AI Analyze has one explicit durable owner", () => {
-  const route = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
-  const owner = read("components/workflow-step-links.tsx");
+describe("AI Analyze has one automatic durable owner", () => {
+  const compatibilityRoute = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
+  const pipeline = read("lib/ai-jobs/automatic-tender-pipeline.ts");
+  const workflow = read("components/workflow-step-links.tsx");
   const panel = read("components/ai-analyze-panel.tsx");
 
-  it("queues through the role- and tenant-scoped manual route", () => {
-    assert.match(route, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
-    assert.match(route, /where: \{ id: tenderId, userId: actor\.id \}/);
-    assert.match(route, /createAnalysisJob/);
-    assert.match(route, /manualRequested:\s*true/);
-    assert.match(route, /autoContinue:\s*false/);
-    assert.match(route, /status:\s*202/);
+  it("queues automatically after extraction without a manual gate", () => {
+    assert.match(pipeline, /createAnalysisJob/);
+    assert.match(pipeline, /manualRequested:\s*false/);
+    assert.match(pipeline, /autoContinue:\s*true/);
+    assert.match(pipeline, /status:\s*"QUEUED"/);
+    assert.doesNotMatch(pipeline, /status:\s*"CANCELED"/);
   });
 
-  it("is invoked only from WorkflowStepLinks", () => {
-    assert.match(owner, /manual-ai-analyze/);
-    assert.match(owner, /run-next\?jobType=\$\{jobType\}/);
-    assert.match(owner, /"AI Analyze"/);
+  it("keeps the compatibility route isolated from the normal workflow", () => {
+    assert.match(compatibilityRoute, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
+    assert.match(compatibilityRoute, /where: \{ id: tenderId, userId: actor\.id \}/);
+    assert.match(compatibilityRoute, /manualRequested:\s*true/);
+    assert.match(compatibilityRoute, /autoContinue:\s*false/);
+    assert.doesNotMatch(workflow, /manual-ai-analyze|method:\s*"POST"|run-next\?jobType/);
+    assert.match(workflow, /Processing automatically/);
   });
 
   it("keeps the analysis panel status-only and non-SSE", () => {

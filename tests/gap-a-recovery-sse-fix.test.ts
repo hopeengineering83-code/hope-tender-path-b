@@ -1,28 +1,39 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { getTenderAction } from "../lib/ui/action-registry";
+import { getRecoveryCommandActionSpec } from "../lib/recovery-command-actions";
+
 const read = (path: string) => readFileSync(path, "utf8");
 
-describe("AI Analyze dispatch uses the explicit durable route, not SSE", () => {
-  it("the canonical registry points to manual-ai-analyze", () => {
-    const registry = read("lib/ui/action-registry.ts");
-    assert.match(registry, /POST \/api\/tenders\/:id\/manual-ai-analyze/);
-    assert.doesNotMatch(registry, /AI_ANALYZE:[\s\S]*?ai-analyze\?mode=background/);
+describe("AI Analyze normal flow uses automatic durable workers, not SSE or manual dispatch", () => {
+  it("the canonical registry exposes status navigation only", () => {
+    const action = getTenderAction("AI_ANALYZE");
+    const recovery = getRecoveryCommandActionSpec("AI_ANALYZE");
+    assert.equal(action.mutation, null);
+    assert.equal(action.owner, "AIAnalyzePanel");
+    assert.equal(recovery?.kind, "scroll");
+    assert.equal(recovery?.anchorId, "ai-analyze-section");
+    assert.equal(recovery?.method, undefined);
   });
 
-  it("the normal UI owner posts the durable route", () => {
+  it("the normal workflow owner never posts or streams AI analysis", () => {
     const owner = read("components/workflow-step-links.tsx");
-    assert.match(owner, /\/api\/tenders\/\$\{tenderId\}\/manual-ai-analyze/);
-    assert.match(owner, /method:\s*"POST"/);
-    assert.match(owner, /run-next\?jobType=\$\{jobType\}/);
+    assert.doesNotMatch(owner, /manual-ai-analyze/);
+    assert.doesNotMatch(owner, /method:\s*"POST"/);
+    assert.doesNotMatch(owner, /run-next\?jobType/);
+    assert.doesNotMatch(owner, /text\/event-stream|getReader\(\)/);
+    assert.match(owner, /Processing automatically/);
   });
 
-  it("the manual route returns a durable job reference", () => {
+  it("the compatibility manual route remains durable but outside the normal UI", () => {
     const route = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
+    const owner = read("components/workflow-step-links.tsx");
     assert.match(route, /createAnalysisJob/);
     assert.match(route, /jobId: analysis\.jobId/);
     assert.match(route, /statusEndpoint: `\/api\/ai-jobs\/\$\{analysis\.jobId\}`/);
     assert.match(route, /status:\s*202/);
+    assert.doesNotMatch(owner, /manual-ai-analyze/);
   });
 
   it("the rendered analysis panel is status-only and does not use SSE", () => {
