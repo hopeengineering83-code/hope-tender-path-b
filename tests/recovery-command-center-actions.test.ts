@@ -132,6 +132,7 @@ describe("Recovery Command Center — action registry coverage", () => {
       "extraction-quality-detail",
       "analysis-quality",
       "ai-analyze-section",
+      "matching-selected-evidence",
       "submission-plan-completeness",
     ]);
     for (const [action, spec] of Object.entries(RECOVERY_COMMAND_ACTIONS)) {
