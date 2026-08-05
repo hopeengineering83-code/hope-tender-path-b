@@ -118,7 +118,7 @@ describe("action classification follows automatic-pipeline authority", () => {
   it("fails closed for unknown action names", () => {
     assert.equal(isMutationAction("UNKNOWN_ACTION"), false);
     assert.equal(isReadOnlyAction("UNKNOWN_ACTION"), true);
-    assert.equal(getRecoveryCommandActionSpec("UNKNOWN_ACTION"), undefined);
+    assert.equal(getRecoveryCommandActionSpec("UNKNOWN_ACTION"), null);
   });
 });
 
