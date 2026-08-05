@@ -7,16 +7,11 @@ export type AutomaticTenderPipelineResult = {
 };
 
 /**
- * Persist the AI Analyze checkpoint after extraction without making it
- * runnable. AI Analyze is one of the product's two explicit user actions.
+ * Persist a runnable, revision-bound AI Analyze job after source extraction.
  *
- * createAnalysisJob prepares the revision-bound durable job and chunk rows.
- * This function immediately parks a newly queued automatic placeholder as
- * CANCELED. The explicit manual-ai-analyze route creates/re-arms the runnable
- * job and marks its input manualRequested=true before waking the worker.
- *
- * The optimistic input equality in updateMany prevents a replaying extraction
- * worker from canceling a job that the user has already explicitly started.
+ * The durable worker owns continuation. The browser may display progress or
+ * recovery controls, but it is not required to click AI Analyze or remain open
+ * for the normal workflow to proceed.
  */
 export async function queueAutomaticTenderPipeline(input: {
   tenderId: string;
@@ -45,7 +40,12 @@ export async function queueAutomaticTenderPipeline(input: {
   }
 
   const analysisRevision = currentJob?.analysisInputHash ?? null;
-  if (currentJob?.status === "QUEUED" && currentInput.manualRequested !== true) {
+
+  // Preserve createAnalysisJob's concurrency/idempotency contract. Enrich only
+  // the still-queued revision we read; if a worker already claimed it, the
+  // optimistic predicate intentionally becomes a no-op and the runnable job is
+  // left untouched.
+  if (currentJob?.status === "QUEUED") {
     await prisma.aiJob.updateMany({
       where: {
         id: analysis.jobId,
@@ -56,16 +56,15 @@ export async function queueAutomaticTenderPipeline(input: {
         input: currentJob.input,
       },
       data: {
-        status: "CANCELED",
-        finishedAt: new Date(),
-        errorMessage: "Awaiting the explicit AI Analyze action.",
+        finishedAt: null,
+        errorMessage: null,
         input: JSON.stringify({
           ...currentInput,
           source: input.source,
           force: false,
-          autoContinue: false,
+          autoContinue: true,
+          automaticContinuation: true,
           manualRequested: false,
-          manualGate: "AI_ANALYZE",
           companyId: input.companyId,
           analysisRevision,
         }),
