@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import {
+  AI_ANALYZE_WORKER_ENDPOINT,
+  EXTRACT_TEXT_WORKER_ENDPOINT,
   VAULT_INGEST_WORKER_ENDPOINT,
   decideTenderUploadAutoPipeline,
   startQueuedVaultIngestion,
@@ -9,28 +11,23 @@ import {
 } from "../lib/ui/auto-pipeline";
 
 describe("server-owned tender pipeline", () => {
-  it("wakes the worker only for a durable server-created job", () => {
+  it("wakes only durable server-created stages", () => {
     const response: UploadFirstResponse = {
       success: true,
       tenderId: "tender-abc",
-      engineSkipped: true,
-      nextAction: "RUN_AI_ANALYZE",
+      nextAction: "WAIT_FOR_SOURCE_EXTRACTION",
     };
     assert.equal(decideTenderUploadAutoPipeline(response), null);
     assert.equal(decideTenderUploadAutoPipeline({
       ...response,
       processingJobId: "job-123",
       pipelineStage: "EXTRACT_TEXT_QUEUED",
-    }), "/api/ai-jobs/run-next?jobType=EXTRACT_TEXT");
-    // AI Analyze is one of the two manual gates. Upload may wake extraction
-    // and nothing else, so an AI_ANALYZE_QUEUED stage must NOT hand the client
-    // a worker endpoint — otherwise uploading a file would silently perform
-    // the analysis the owner is supposed to trigger.
+    }), EXTRACT_TEXT_WORKER_ENDPOINT);
     assert.equal(decideTenderUploadAutoPipeline({
       ...response,
       processingJobId: "job-456",
       pipelineStage: "AI_ANALYZE_QUEUED",
-    }), null);
+    }), AI_ANALYZE_WORKER_ENDPOINT);
     assert.equal(decideTenderUploadAutoPipeline({
       ...response,
       processingJobId: "job-without-authority",
@@ -48,8 +45,7 @@ describe("server-owned tender pipeline", () => {
       const result = await triggerTenderUploadAutoPipeline({
         success: true,
         tenderId: "tender-abc",
-        engineSkipped: true,
-        nextAction: "RUN_AI_ANALYZE",
+        nextAction: "WAIT_FOR_SOURCE_EXTRACTION",
       });
       assert.equal(calls, 0);
       assert.equal(result.fired, false);
@@ -60,11 +56,11 @@ describe("server-owned tender pipeline", () => {
     }
   });
 
-  it("immediately wakes the worker for a server-created processing job", async () => {
+  it("wakes extraction then best-effort nudges automatic AI analysis", async () => {
     const originalFetch = globalThis.fetch;
-    let endpoint = "";
+    const endpoints: string[] = [];
     globalThis.fetch = (async (input) => {
-      endpoint = String(input);
+      endpoints.push(String(input));
       return new Response(JSON.stringify({ ran: 1 }), { status: 200 });
     }) as typeof fetch;
     try {
@@ -74,10 +70,31 @@ describe("server-owned tender pipeline", () => {
         processingJobId: "job-123",
         pipelineStage: "EXTRACT_TEXT_QUEUED",
       });
-      assert.equal(endpoint, "/api/ai-jobs/run-next?jobType=EXTRACT_TEXT");
+      assert.deepEqual(endpoints, [EXTRACT_TEXT_WORKER_ENDPOINT, AI_ANALYZE_WORKER_ENDPOINT]);
       assert.equal(result.fired, true);
-      assert.equal(result.endpoint, endpoint);
+      assert.equal(result.endpoint, EXTRACT_TEXT_WORKER_ENDPOINT);
       assert.equal(result.status, "queued");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("directly wakes a server-created AI analysis stage", async () => {
+    const originalFetch = globalThis.fetch;
+    const endpoints: string[] = [];
+    globalThis.fetch = (async (input) => {
+      endpoints.push(String(input));
+      return new Response(JSON.stringify({ ran: 1 }), { status: 200 });
+    }) as typeof fetch;
+    try {
+      const result = await triggerTenderUploadAutoPipeline({
+        success: true,
+        tenderId: "tender-abc",
+        processingJobId: "job-456",
+        pipelineStage: "AI_ANALYZE_QUEUED",
+      });
+      assert.deepEqual(endpoints, [AI_ANALYZE_WORKER_ENDPOINT]);
+      assert.equal(result.endpoint, AI_ANALYZE_WORKER_ENDPOINT);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -87,18 +104,15 @@ describe("server-owned tender pipeline", () => {
     const response: UploadFirstResponse = {
       success: true,
       tenderId: "t-1",
-      engineSkipped: true,
-      nextAction: "RUN_AI_ANALYZE",
+      nextAction: "WAIT_FOR_SOURCE_EXTRACTION",
       processingJobId: "job-1",
       pipelineStage: "EXTRACT_TEXT_QUEUED",
       requestId: "req-1",
     };
-    assert.equal(response.engineSkipped, true);
-    assert.equal(response.nextAction, "RUN_AI_ANALYZE");
+    assert.equal(response.nextAction, "WAIT_FOR_SOURCE_EXTRACTION");
     assert.equal(response.processingJobId, "job-1");
     assert.equal(response.pipelineStage, "EXTRACT_TEXT_QUEUED");
   });
-
 });
 
 describe("queued Company Vault ingestion is actually started", () => {
@@ -117,9 +131,6 @@ describe("queued Company Vault ingestion is actually started", () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0].url, VAULT_INGEST_WORKER_ENDPOINT);
     assert.equal(calls[0].method, "POST");
-    // A GET would be claimed by the route's GET->POST alias, but the filter is
-    // what matters: without it the worker may claim some other tenant's job
-    // type and leave this vault queued.
     assert.match(calls[0].url, /jobType=VAULT_INGEST/);
   });
 
@@ -127,9 +138,6 @@ describe("queued Company Vault ingestion is actually started", () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () => { throw new Error("network down"); }) as typeof fetch;
     try {
-      // Must not reject: callers use `void startQueuedVaultIngestion()`, so a
-      // rejection here would surface as an unhandled promise rejection and, in
-      // the upload path, would do it on every single uploaded document.
       await startQueuedVaultIngestion();
     } finally {
       globalThis.fetch = originalFetch;

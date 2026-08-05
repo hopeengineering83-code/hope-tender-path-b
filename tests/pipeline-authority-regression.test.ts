@@ -8,20 +8,23 @@ const codeOnly = (source: string) => source
   .replace(/^[ \t]*\/\/.*$/gm, "");
 
 describe("pipeline authority non-negotiables", () => {
-  it("client upload wakes extraction only and cannot start AI Analyze", () => {
+  it("client upload may nudge durable extraction and AI analysis without owning either job", () => {
     const source = read("lib/ui/auto-pipeline.ts");
     assert.match(source, /jobType=EXTRACT_TEXT/);
-    assert.doesNotMatch(source, /run-next\?jobType=AI_ANALYZE/);
+    assert.match(source, /jobType=AI_ANALYZE/);
+    assert.match(source, /processingJobId/);
+    assert.match(source, /scheduled worker remains the durable fallback/i);
     assert.doesNotMatch(source, /manual-ai-analyze/);
-    assert.match(source, /AI Analyze remains an explicit action|select AI Analyze/i);
+    assert.doesNotMatch(source, /AI Analyze remains an explicit action|select AI Analyze/i);
   });
 
-  it("reports a failed worker wake honestly instead of promising a scheduler", () => {
+  it("workflow step links are navigation-only and execute no pipeline mutations", () => {
     const source = codeOnly(read("components/workflow-step-links.tsx"));
-    assert.match(source, /Queued, but the background worker could not be started from here/);
-    assert.match(source, /It stays queued and runs when a worker next picks it up/);
-    assert.doesNotMatch(source, /scheduled background worker will continue it/);
-    assert.match(source, /if \(!response\.ok\) setMessage\(couldNotStart\)/);
+    assert.match(source, /Processing automatically/);
+    assert.match(source, /No AI Analyze or Run Engine action is required/);
+    assert.doesNotMatch(source, /fetch\s*\(/);
+    assert.doesNotMatch(source, /manual-ai-analyze/);
+    assert.doesNotMatch(source, /runManualAction|wakeWorker/);
   });
 
   it("Company Vault repair uses byte re-import, not extracted-text-only repair", () => {
