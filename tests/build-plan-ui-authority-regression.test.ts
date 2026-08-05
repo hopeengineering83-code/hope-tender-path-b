@@ -21,7 +21,7 @@ describe("Build Plan has one automatic status owner", () => {
     assert.match(status, /items\.map/);
     assert.match(status, /exactOrder/);
     assert.match(status, /exactFileName/);
-    assert.match(status, /Build Plan awaits Run Engine/);
+    assert.match(status, /waiting for automatic Engine processing/);
     assert.match(status, /automatically source-verified/);
     assert.match(status, /No separate Build Plan confirmation is required/);
     assert.doesNotMatch(status, /checked=\{reviewed\}/);
