@@ -9,7 +9,7 @@ const manualAnalyze = readFileSync("app/api/tenders/[id]/manual-ai-analyze/route
 const analyze = readFileSync("lib/ai-job-handlers-legacy.ts", "utf8");
 
 describe("upload pipeline sequencing", () => {
-  it("queues extraction and never performs AI Analyze or Engine inside the upload transaction", () => {
+  it("queues extraction and never queues AI Analyze or Engine directly from the upload request", () => {
     assert.match(upload, /enqueueTenderFileExtractionJob/);
     assert.doesNotMatch(upload, /queueAutomaticTenderPipeline/);
     assert.doesNotMatch(upload, /jobType: "AI_ANALYZE"/);
@@ -17,19 +17,21 @@ describe("upload pipeline sequencing", () => {
     assert.match(upload, /engineQueued: false/);
   });
 
-  it("arms the revision-bound analysis checkpoint for automatic durable continuation", () => {
+  it("prepares a runnable automatic analysis checkpoint after durable extraction", () => {
     assert.match(extractionService, /queueAutomaticTenderPipeline/);
     assert.match(readyBoundary, /createAnalysisJob/);
+    assert.match(readyBoundary, /currentJob\?\.status === "QUEUED"/);
     assert.match(readyBoundary, /status:\s*"QUEUED"/);
     assert.match(readyBoundary, /autoContinue:\s*true/);
+    assert.match(readyBoundary, /automaticContinuation:\s*true/);
     assert.match(readyBoundary, /manualRequested:\s*false/);
-    assert.match(readyBoundary, /input:\s*currentJob\.input/);
     assert.doesNotMatch(readyBoundary, /status:\s*"CANCELED"/);
     assert.doesNotMatch(readyBoundary, /manualGate:\s*"AI_ANALYZE"/);
     assert.doesNotMatch(readyBoundary, /Awaiting the explicit AI Analyze action/);
+    assert.doesNotMatch(readyBoundary, /run-next\?jobType=AI_ANALYZE/);
   });
 
-  it("deduplicates automatic AI Analyze jobs and preserves an explicit recovery route", () => {
+  it("keeps the manual analysis route as an idempotent recovery action, not a normal-path requirement", () => {
     assert.match(manualAnalyze, /createAnalysisJob/);
     assert.match(manualAnalyze, /where:\s*\{ id: tenderId, userId: actor\.id \}/);
     assert.match(manualAnalyze, /manualRequested:\s*true/);
