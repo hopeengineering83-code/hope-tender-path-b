@@ -1,9 +1,9 @@
 /**
  * Client workflow visibility helpers.
  *
- * Tender upload may wake durable source extraction immediately. AI Analyze and
- * Run Engine are the only two normal user actions, so this helper must never
- * wake either stage from an upload response.
+ * Tender upload may wake durable source extraction immediately. Later stages
+ * are owned by the server-side durable queue, so the browser must not invoke
+ * AI Analyze, Run Engine, generation, or finalization directly.
  */
 
 import { emitTenderWorkflowSync } from "./tender-workflow-sync";
@@ -28,7 +28,7 @@ export type AutoPipelineResult = {
   message: string;
 };
 
-/** Upload may wake extraction, but never AI Analyze or Run Engine. */
+/** Upload may nudge extraction; subsequent durable stages continue server-side. */
 export function decideTenderUploadAutoPipeline(
   response: UploadFirstResponse,
 ): string | null {
@@ -60,7 +60,7 @@ export async function triggerTenderUploadAutoPipeline(
           fired: true,
           endpoint,
           status: "queued",
-          message: "Source extraction started. Open the tender and use AI Analyze after extraction completes.",
+          message: "Source extraction started. The durable workflow will continue automatically through analysis, generation, validation, and package readiness; this page does not need to remain open.",
         };
       }
     } catch {
@@ -70,7 +70,7 @@ export async function triggerTenderUploadAutoPipeline(
       fired: false,
       endpoint,
       status: "queued",
-      message: "Source extraction remains queued because the worker start could not be confirmed. Opening the tender workspace retries this automatic stage; AI Analyze remains explicit.",
+      message: "Source extraction remains durably queued because the immediate worker start could not be confirmed. The scheduled worker will retry and continue subsequent stages automatically.",
     };
   }
 
@@ -79,10 +79,10 @@ export async function triggerTenderUploadAutoPipeline(
     endpoint: null,
     status: "skipped",
     message: response.pipelineStage === "AI_ANALYZE_QUEUED"
-      ? "Extraction is complete. Open the tender and select AI Analyze."
+      ? "Extraction is complete. AI analysis is durably queued and will continue automatically."
       : response.nextAction
-        ? `Upload completed. Continue with the canonical ${response.nextAction} workflow action.`
-        : "Upload completed. Open the tender to continue.",
+        ? `Upload completed. The durable ${response.nextAction} workflow stage will continue automatically when its prerequisites are satisfied.`
+        : "Upload completed. The durable workflow will continue automatically when its prerequisites are satisfied.",
   };
 }
 
