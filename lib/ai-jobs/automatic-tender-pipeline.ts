@@ -16,6 +16,12 @@ export type AutomaticTenderPipelineResult = {
  * worker from overwriting a job that has already been claimed or explicitly
  * re-armed. createAnalysisJob remains the idempotency authority for the
  * revision-bound job and chunk rows.
+ *
+ * `automaticContinuation: true` marks the job as server-owned so the durable
+ * worker can distinguish an extraction-triggered continuation from an explicit
+ * manual Analyze action. `autoContinue: true` remains the legacy flag read by
+ * engine-continuation-service and proposal-continuation-service; both must be
+ * present so the existing worker chain continues to fire.
  */
 export async function queueAutomaticTenderPipeline(input: {
   tenderId: string;
@@ -44,7 +50,12 @@ export async function queueAutomaticTenderPipeline(input: {
   }
 
   const analysisRevision = currentJob?.analysisInputHash ?? null;
-  if (currentJob?.status === "QUEUED" && currentInput.manualRequested !== true) {
+
+  // Preserve createAnalysisJob's concurrency/idempotency contract. Enrich only
+  // the still-queued revision we read; if a worker already claimed it, the
+  // optimistic predicate intentionally becomes a no-op and the runnable job is
+  // left untouched.
+  if (currentJob?.status === "QUEUED") {
     await prisma.aiJob.updateMany({
       where: {
         id: analysis.jobId,
@@ -62,6 +73,7 @@ export async function queueAutomaticTenderPipeline(input: {
           source: input.source,
           force: false,
           autoContinue: true,
+          automaticContinuation: true,
           manualRequested: false,
           companyId: input.companyId,
           analysisRevision,
