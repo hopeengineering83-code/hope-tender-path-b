@@ -21,7 +21,7 @@ export type EngineEnqueueResult = {
  * The one canonical durable Engine enqueue authority.
  *
  * Automatic analysis success uses the default server-owned policy. Explicit
- * operator calls are retained only as recovery and must opt into
+ * operator calls are retained only as recovery and may opt into
  * manualRequested=true. Every accepted Engine job continues automatically
  * through matching, Build Plan, proposal generation, validation/finalization,
  * and package reconciliation.
@@ -48,7 +48,8 @@ export async function enqueueEngineJobForCurrentSources(
     tenderId: input.tenderId,
     sourceRevision: revision.sourceRevision,
   });
-  const manualRequested = input.manualRequested === true;
+  const manualRequested = input.manualRequested
+    ?? input.purpose === "INTERNAL_ARTIFACT_PREPARATION";
 
   const job = await client.$transaction(async (tx) => {
     await tx.$queryRaw<Array<{ acquired: number }>>`
