@@ -20,10 +20,11 @@ export type EngineEnqueueResult = {
 /**
  * The one canonical durable Engine enqueue authority.
  *
- * Run Engine is the second and final normal user action. Once this job is
- * explicitly queued, autoContinue=true authorizes the worker to continue
- * through Build Plan, matching, proposal generation, validation/finalization,
- * and package reconciliation without further normal-path buttons.
+ * Automatic analysis success uses the default server-owned policy. Explicit
+ * operator calls are retained only as recovery and must opt into
+ * manualRequested=true. Every accepted Engine job continues automatically
+ * through matching, Build Plan, proposal generation, validation/finalization,
+ * and package reconciliation.
  */
 export async function enqueueEngineJobForCurrentSources(
   client: PrismaClient,
@@ -32,6 +33,7 @@ export async function enqueueEngineJobForCurrentSources(
     tenderId: string;
     companyId: string;
     purpose?: string;
+    manualRequested?: boolean;
   },
 ): Promise<EngineEnqueueResult | null> {
   const revision = await computeEngineSourceRevision(client, {
@@ -46,6 +48,7 @@ export async function enqueueEngineJobForCurrentSources(
     tenderId: input.tenderId,
     sourceRevision: revision.sourceRevision,
   });
+  const manualRequested = input.manualRequested === true;
 
   const job = await client.$transaction(async (tx) => {
     await tx.$queryRaw<Array<{ acquired: number }>>`
@@ -96,9 +99,9 @@ export async function enqueueEngineJobForCurrentSources(
         input: JSON.stringify({
           sourceRevision: revision.sourceRevision,
           idempotencyKey,
-          purpose: input.purpose ?? "EXPLICIT_RUN_ENGINE",
+          purpose: input.purpose ?? (manualRequested ? "RECOVERY_MANUAL_RUN_ENGINE" : "AUTOMATIC_ENGINE_CONTINUATION"),
           executionPolicy: "SERVER_CONTROLLED",
-          manualRequested: true,
+          manualRequested,
           autoContinue: true,
         }),
       },
