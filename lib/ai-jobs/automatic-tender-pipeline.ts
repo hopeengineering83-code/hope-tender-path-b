@@ -7,16 +7,15 @@ export type AutomaticTenderPipelineResult = {
 };
 
 /**
- * Persist the AI Analyze checkpoint after extraction without making it
- * runnable. AI Analyze is one of the product's two explicit user actions.
- *
- * createAnalysisJob prepares the revision-bound durable job and chunk rows.
- * This function immediately parks a newly queued automatic placeholder as
- * CANCELED. The explicit manual-ai-analyze route creates/re-arms the runnable
- * job and marks its input manualRequested=true before waking the worker.
+ * Persist and arm the revision-bound AI Analyze checkpoint immediately after
+ * extraction. The durable worker owns continuation from this point; the
+ * browser may wake the queue, but it is never required to press an Analyze
+ * button or keep the page open.
  *
  * The optimistic input equality in updateMany prevents a replaying extraction
- * worker from canceling a job that the user has already explicitly started.
+ * worker from overwriting a job that has already been claimed or explicitly
+ * re-armed. createAnalysisJob remains the idempotency authority for the
+ * revision-bound job and chunk rows.
  */
 export async function queueAutomaticTenderPipeline(input: {
   tenderId: string;
@@ -56,16 +55,14 @@ export async function queueAutomaticTenderPipeline(input: {
         input: currentJob.input,
       },
       data: {
-        status: "CANCELED",
-        finishedAt: new Date(),
-        errorMessage: "Awaiting the explicit AI Analyze action.",
+        finishedAt: null,
+        errorMessage: null,
         input: JSON.stringify({
           ...currentInput,
           source: input.source,
           force: false,
-          autoContinue: false,
+          autoContinue: true,
           manualRequested: false,
-          manualGate: "AI_ANALYZE",
           companyId: input.companyId,
           analysisRevision,
         }),
