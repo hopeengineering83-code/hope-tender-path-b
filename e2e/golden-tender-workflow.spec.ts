@@ -110,8 +110,7 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
 
       // The browser never calls the manual Analyze endpoint. The analysis job
       // must already exist for this exact tender before the queue is woken.
-      let analysisJobId: string | null = null;
-      await expect.poll(async () => {
+      const findAnalysisJobId = async (): Promise<string | null> => {
         const jobsResponse = await page.request.get(
           `/api/ai-jobs?jobType=AI_ANALYZE&tenderId=${encodeURIComponent(tenderId)}&take=5`,
         );
@@ -122,14 +121,16 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
         const exactJob = jobsJson.jobs?.find((job) =>
           job.tenderId === tenderId && job.jobType === "AI_ANALYZE"
         );
-        analysisJobId = exactJob?.id ?? null;
-        return analysisJobId;
-      }, {
+        return exactJob?.id ?? null;
+      };
+
+      await expect.poll(findAnalysisJobId, {
         message: "extraction should persist an automatic AI_ANALYZE job for this tender",
         timeout: 15_000,
         intervals: [100, 250, 500],
       }).toBeTruthy();
 
+      const analysisJobId = await findAnalysisJobId();
       if (!analysisJobId) throw new Error("Automatic AI_ANALYZE job was not persisted");
       if (continuationAnalysisJobId) {
         expect(analysisJobId).toBe(continuationAnalysisJobId);
@@ -156,24 +157,28 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
         expect(analysisWorkerJson.resultCode).toBeTruthy();
       }
 
-      let analysisJobJson: {
+      type AnalysisJobResponse = {
         job: {
           tenderId: string;
           jobType: string;
           status: string;
         };
-      } | null = null;
-      await expect.poll(async () => {
+      };
+      const fetchAnalysisJob = async (): Promise<AnalysisJobResponse | null> => {
         const analysisJob = await page.request.get(`/api/ai-jobs/${analysisJobId}`);
-        if (analysisJob.status() !== 200) return "NOT_FOUND";
-        analysisJobJson = await analysisJob.json() as typeof analysisJobJson;
-        return analysisJobJson?.job.status ?? "UNKNOWN";
+        if (analysisJob.status() !== 200) return null;
+        return await analysisJob.json() as AnalysisJobResponse;
+      };
+      await expect.poll(async () => {
+        const exactJob = await fetchAnalysisJob();
+        return exactJob?.job.status ?? "NOT_FOUND";
       }, {
         message: "the exact automatic AI_ANALYZE job should reach a terminal state",
         timeout: 60_000,
         intervals: [100, 250, 500, 1_000],
       }).toMatch(/^(SUCCEEDED|PARTIAL_SUCCESS|FAILED)$/);
 
+      const analysisJobJson = await fetchAnalysisJob();
       if (!analysisJobJson) throw new Error("Automatic AI_ANALYZE job status was unavailable");
       expect(analysisJobJson.job.tenderId).toBe(tenderId);
       expect(analysisJobJson.job.jobType).toBe("AI_ANALYZE");
