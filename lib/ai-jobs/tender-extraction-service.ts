@@ -13,11 +13,12 @@ import { prisma } from "../prisma";
 import { getStorageAdapter } from "../storage";
 import {
   parseTenderPackageSessionResult,
-  recordTenderPackageAnalysisJob,
   TENDER_PACKAGE_INTAKE_OPERATION,
 } from "../tender-package-intake-session";
 import { limitExtractedText } from "../upload-security";
-import { queueAutomaticTenderPipeline } from "./automatic-tender-pipeline";
+// queueAutomaticTenderPipeline is intentionally NOT imported. AI Analyze is a
+// manual user action — the extraction service must not queue it automatically.
+// See the MANUAL WORKFLOW CONTRACT comment in continueTenderPipelineAfterExtraction.
 
 export type TenderExtractionJobContext = {
   jobId: string;
@@ -353,27 +354,23 @@ export async function continueTenderPipelineAfterExtraction(input: {
     return { queued: false, reason: "SOURCE_EXTRACTION_REVIEW_REQUIRED" };
   }
 
-  const pipeline = await queueAutomaticTenderPipeline({
-    tenderId: input.tenderId,
-    userId: input.userId,
-    companyId: input.companyId,
-    source: "secure-upload",
-  });
-  if (input.intakeSessionId) {
-    await recordTenderPackageAnalysisJob({
-      prisma,
-      companyId: input.companyId,
-      tenderId: input.tenderId,
-      sessionId: input.intakeSessionId,
-      jobId: pipeline.jobId,
-      analysisRevision: pipeline.analysisRevision,
-    });
-  }
+  // ─── MANUAL WORKFLOW CONTRACT ─────────────────────────────────────────────
+  //
+  // AI Analyze is a MANUAL user action. The extraction service does NOT
+  // queue AI_ANALYZE automatically. After extraction completes, the user
+  // must click "Run AI Analyze" (POST /api/tenders/:id/manual-ai-analyze),
+  // then "Run Engine" (POST /api/tenders/:id/engine). After Run Engine
+  // succeeds, matching, generation, validation, finalization and
+  // Word/PDF/ZIP export continue automatically through durable workers.
+  //
+  // The previous `queueAutomaticTenderPipeline` call was removed per the
+  // owner's explicit workflow requirement. The extraction continuation
+  // returns EXTRACTION_COMPLETE so the UI can prompt the user to click
+  // "Run AI Analyze".
+
   return {
-    queued: true,
-    reason: "AI_ANALYZE_QUEUED",
-    jobId: pipeline.jobId,
-    analysisRevision: pipeline.analysisRevision,
+    queued: false,
+    reason: "EXTRACTION_COMPLETE_MANUAL_AI_ANALYZE_REQUIRED",
   };
 }
 

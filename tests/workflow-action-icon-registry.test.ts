@@ -41,13 +41,13 @@ describe("canonical workflow action registry", () => {
     }
   });
 
-  it("keeps AI Analyze and Run Engine recovery-only", () => {
-    assert.equal(getTenderAction("AI_ANALYZE").availability, "RECOVERY");
+  it("keeps AI Analyze and Run Engine as NORMAL manual user actions", () => {
+    assert.equal(getTenderAction("AI_ANALYZE").availability, "NORMAL");
     assert.equal(getTenderAction("AI_ANALYZE").owner, "AIAnalyzePanel");
-    assert.equal(getTenderAction("AI_ANALYZE").mutation, null);
-    assert.equal(getTenderAction("RUN_ENGINE").availability, "RECOVERY");
+    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/manual-ai-analyze");
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
     assert.equal(getTenderAction("RUN_ENGINE").owner, "MatchingSelectedEvidencePanel");
-    assert.equal(getTenderAction("RUN_ENGINE").mutation, null);
+    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
     assert.equal(getTenderAction("MATCH_EVIDENCE").availability, "NAVIGATION");
     assert.equal(getTenderAction("MATCH_EVIDENCE").mutation, null);
   });
@@ -64,18 +64,18 @@ describe("canonical workflow action registry", () => {
   it("binds only active executable actions to canonical live routes", () => {
     assert.equal(getTenderAction("UPLOAD_TENDER_FILES").mutation, "POST /api/upload");
     assert.equal(getTenderAction("REEXTRACT_SOURCE").mutation, "POST /api/tenders/:id/files/:fileId/reextract");
-    assert.equal(getTenderAction("AI_ANALYZE").mutation, null);
-    assert.equal(getTenderAction("RUN_ENGINE").mutation, null);
+    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/manual-ai-analyze");
+    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").mutation, "GET /api/tenders/:id/download?type=zip");
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
   });
 
-  it("upload is the only normal POST workflow action", () => {
+  it("upload, AI Analyze, and Run Engine are the three NORMAL POST workflow actions", () => {
     const normalPost = listTenderActions()
       .filter(([, action]) => action.availability === "NORMAL" && action.mutation?.startsWith("POST "))
       .map(([id]) => id)
       .sort();
-    assert.deepEqual(normalPost, ["UPLOAD_TENDER_FILES"]);
+    assert.deepEqual(normalPost, ["AI_ANALYZE", "RUN_ENGINE", "UPLOAD_TENDER_FILES"]);
   });
 });
 

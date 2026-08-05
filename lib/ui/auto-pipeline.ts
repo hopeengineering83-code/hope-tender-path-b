@@ -1,10 +1,16 @@
 /**
  * Client workflow visibility helpers.
  *
- * Tender upload starts the durable pipeline. The browser may nudge the first
- * queued stages for responsiveness, while scheduled workers remain the
- * authoritative fallback. AI Analyze and Run Engine are not required routine
- * user actions.
+ * Tender upload starts the durable extraction pipeline automatically. The
+ * browser may nudge the EXTRACT_TEXT worker for responsiveness — that is the
+ * ONLY worker the browser ever nudges.
+ *
+ * AI Analyze and Run Engine are MANUAL user actions. The browser NEVER nudges
+ * the AI_ANALYZE or ENGINE_RUN worker. After extraction completes, the user
+ * must click "Run AI Analyze" and then "Run Engine" explicitly. After Run
+ * Engine succeeds, matching, generation, validation, document assembly,
+ * finalization and Word/PDF/ZIP export continue automatically through durable
+ * workers.
  */
 
 import { emitTenderWorkflowSync } from "./tender-workflow-sync";
@@ -30,9 +36,18 @@ export type AutoPipelineResult = {
 };
 
 export const EXTRACT_TEXT_WORKER_ENDPOINT = "/api/ai-jobs/run-next?jobType=EXTRACT_TEXT";
-export const AI_ANALYZE_WORKER_ENDPOINT = "/api/ai-jobs/run-next?jobType=AI_ANALYZE";
 
-/** Select the first durable stage that the browser can safely nudge. */
+// AI_ANALYZE_WORKER_ENDPOINT is intentionally NOT exported. The browser must
+// never nudge the AI_ANALYZE worker — that is a manual user action triggered
+// via POST /api/tenders/:id/manual-ai-analyze. Exporting this constant would
+// invite future contributors to re-add automatic AI Analyze continuation.
+
+/**
+ * Select the first durable stage that the browser can safely nudge.
+ *
+ * ONLY EXTRACT_TEXT is auto-nudged. AI_ANALYZE is never auto-nudged — it is
+ * a manual user action.
+ */
 export function decideTenderUploadAutoPipeline(
   response: UploadFirstResponse,
 ): string | null {
@@ -40,9 +55,10 @@ export function decideTenderUploadAutoPipeline(
   if (response.pipelineStage === "EXTRACT_TEXT_QUEUED") {
     return EXTRACT_TEXT_WORKER_ENDPOINT;
   }
-  if (response.pipelineStage === "AI_ANALYZE_QUEUED") {
-    return AI_ANALYZE_WORKER_ENDPOINT;
-  }
+  // AI_ANALYZE_QUEUED is intentionally NOT returned — the browser must not
+  // nudge AI Analyze. If the server reports AI_ANALYZE_QUEUED (which it
+  // should NOT after this redesign), the browser returns null and the user
+  // is prompted to click "Run AI Analyze" manually.
   return null;
 }
 
@@ -74,7 +90,7 @@ export async function triggerTenderUploadAutoPipeline(
   if (response.tenderId) {
     emitTenderWorkflowSync({
       tenderId: response.tenderId,
-      source: "tender-upload-pipeline",
+      source: "tender-upload-extraction",
     });
   }
 
@@ -82,19 +98,11 @@ export async function triggerTenderUploadAutoPipeline(
   if (endpoint) {
     const started = await nudgeTenderWorker(endpoint);
     if (started) {
-      // EXTRACT_TEXT persists the revision-bound AI_ANALYZE continuation before
-      // returning. Nudge that next stage without keeping the upload screen
-      // blocked; the scheduled worker remains the durable fallback if this
-      // best-effort browser request is interrupted.
-      if (endpoint === EXTRACT_TEXT_WORKER_ENDPOINT) {
-        void nudgeTenderWorker(AI_ANALYZE_WORKER_ENDPOINT);
-      }
-
       return {
         fired: true,
         endpoint,
         status: "queued",
-        message: "Automatic tender processing started. Extraction, AI analysis, Engine, generation, validation, and final packaging will continue through durable workers.",
+        message: "Source extraction started. After extraction completes, click \"Run AI Analyze\" to analyze the tender, then \"Run Engine\" to generate the proposal. After Run Engine, matching, generation, validation, and final export continue automatically.",
       };
     }
 
@@ -102,7 +110,7 @@ export async function triggerTenderUploadAutoPipeline(
       fired: false,
       endpoint,
       status: "queued",
-      message: "Automatic tender processing remains safely queued. Background workers will continue it; no AI Analyze or Run Engine action is required.",
+      message: "Source extraction remains safely queued. The scheduled worker will start it. After extraction completes, click \"Run AI Analyze\".",
     };
   }
 
@@ -111,10 +119,10 @@ export async function triggerTenderUploadAutoPipeline(
     endpoint: null,
     status: "skipped",
     message: response.pipelineStage === "AI_ANALYZE_QUEUED"
-      ? "AI analysis is queued and will continue automatically."
+      ? "Extraction is complete. Click \"Run AI Analyze\" to analyze the tender."
       : response.nextAction
-        ? `Upload completed. ${response.nextAction} is queued and will continue automatically.`
-        : "Upload completed. Automatic processing will continue in the background.",
+        ? `Upload completed. ${response.nextAction}.`
+        : "Upload completed. Source extraction will continue automatically.",
   };
 }
 

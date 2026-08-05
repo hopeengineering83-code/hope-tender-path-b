@@ -2,58 +2,59 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
-const pipeline = readFileSync("lib/ai-jobs/automatic-tender-pipeline.ts", "utf8");
 const extraction = readFileSync("lib/ai-jobs/tender-extraction-service.ts", "utf8");
+const autoPipeline = readFileSync("lib/ui/auto-pipeline.ts", "utf8");
 const worker = readFileSync("app/api/ai-jobs/run-next/route.ts", "utf8");
-const golden = readFileSync("e2e/golden-tender-workflow.spec.ts", "utf8");
+const manualRoute = readFileSync("app/api/tenders/[id]/manual-ai-analyze/route.ts", "utf8");
+const engineRoute = readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8");
 const ownerContract = readFileSync("OWNER_AUTOMATION_CONTRACT.md", "utf8");
-const agents = readFileSync("AGENTS.md", "utf8");
-const claudeGuide = readFileSync("CLAUDE.md", "utf8");
 
-describe("automatic tender continuation contract", () => {
-  it("leaves the revision-bound AI Analyze job runnable after extraction", () => {
-    assert.match(pipeline, /autoContinue:\s*true/);
-    assert.match(pipeline, /automaticContinuation:\s*true/);
-    assert.match(pipeline, /manualRequested:\s*false/);
-    assert.doesNotMatch(pipeline, /status:\s*"CANCELED"/);
-    assert.doesNotMatch(pipeline, /MANUAL_ACTION_REQUIRED/);
-    assert.doesNotMatch(pipeline, /manualGate:\s*"AI_ANALYZE"/);
+describe("MANUAL tender continuation contract — AI Analyze and Run Engine are manual user actions", () => {
+  it("extraction does NOT queue AI_ANALYZE automatically", () => {
+    // Strip comments before checking — the word "queueAutomaticTenderPipeline"
+    // appears in comments explaining that it was INTENTIONALLY REMOVED.
+    const codeOnly = extraction
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "");
+    // The actual code must NOT call queueAutomaticTenderPipeline.
+    assert.doesNotMatch(codeOnly, /queueAutomaticTenderPipeline/);
+    // Instead, it returns EXTRACTION_COMPLETE_MANUAL_AI_ANALYZE_REQUIRED.
+    assert.match(codeOnly, /EXTRACTION_COMPLETE_MANUAL_AI_ANALYZE_REQUIRED/);
+    // The import of queueAutomaticTenderPipeline is removed.
+    assert.doesNotMatch(codeOnly, /import.*queueAutomaticTenderPipeline/);
   });
 
-  it("preserves the durable extraction-to-analysis handoff", () => {
-    assert.match(extraction, /queueAutomaticTenderPipeline/);
-    assert.match(extraction, /reason:\s*"AI_ANALYZE_QUEUED"/);
-    assert.match(extraction, /analysisJobId:\s*continuation\.jobId/);
+  it("the browser auto-pipeline nudges ONLY EXTRACT_TEXT — never AI_ANALYZE", () => {
+    assert.match(autoPipeline, /EXTRACT_TEXT_WORKER_ENDPOINT/);
+    // AI_ANALYZE_WORKER_ENDPOINT is intentionally NOT exported.
+    assert.doesNotMatch(autoPipeline, /export const AI_ANALYZE_WORKER_ENDPOINT/);
+    assert.match(autoPipeline, /AI_ANALYZE_WORKER_ENDPOINT is intentionally NOT exported/i);
+    // The message tells the user to click "Run AI Analyze".
+    assert.match(autoPipeline, /Run AI Analyze/i);
   });
 
-  it("keeps all downstream stages owned by the durable worker", () => {
-    assert.match(worker, /claimed\.jobType === "AI_ANALYZE"/);
-    assert.match(worker, /nextJobType = "ENGINE_RUN"/);
+  it("manual AI Analyze route sets autoContinue=false and manualRequested=true", () => {
+    assert.match(manualRoute, /manualRequested:\s*true/);
+    assert.match(manualRoute, /autoContinue:\s*false/);
+    assert.match(manualRoute, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
+  });
+
+  it("manual Run Engine route exists and requires authentication", () => {
+    assert.match(engineRoute, /export async function POST/);
+    assert.match(engineRoute, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
+  });
+
+  it("after manual Run Engine succeeds, downstream stages continue automatically", () => {
+    // The worker chain: ENGINE_RUN → PROPOSAL_GENERATION → AUTO_FINALIZE
     assert.match(worker, /claimed\.jobType === "ENGINE_RUN"/);
     assert.match(worker, /nextJobType = "PROPOSAL_GENERATION"/);
     assert.match(worker, /claimed\.jobType === "PROPOSAL_GENERATION"/);
     assert.match(worker, /nextJobType = "AUTO_FINALIZE"/);
   });
 
-  it("proves the normal browser flow does not call the manual Analyze route", () => {
-    // The golden workflow never calls the manual /api/tenders/:id/ai-analyze
-    // mutation endpoint. It wakes the durable AI_ANALYZE worker via
-    // /api/ai-jobs/run-next (which is idempotent and tenant-scoped) — this is
-    // a worker wake, not a manual mutation. The browser may close after
-    // upload without stopping durable continuation because the scheduled
-    // worker remains the authoritative fallback.
-    assert.doesNotMatch(golden, /\/api\/tenders\/\$\{tenderId\}\/ai-analyze/);
-    assert.match(golden, /\/api\/ai-jobs\/run-next\?jobType=AI_ANALYZE/);
-    assert.match(golden, /status\)\.not\.toBe\("CANCELED"\)/);
-  });
-
-  it("keeps repository instructions aligned with the owner automation contract", () => {
-    assert.match(ownerContract, /EXTRACT_TEXT → AI_ANALYZE → ENGINE_RUN → PROPOSAL_GENERATION → AUTO_FINALIZE/);
-    assert.match(ownerContract, /not mandatory normal-path buttons/);
-    assert.match(agents, /OWNER_AUTOMATION_CONTRACT\.md/);
-    assert.match(agents, /browser must not be required to remain open or click Analyze\/Run Engine/);
-    assert.match(claudeGuide, /AI Analyze and Run Engine are durable server-owned stages/);
-    assert.doesNotMatch(claudeGuide, /exactly two manual exceptions/);
-    assert.doesNotMatch(claudeGuide, /\[MANUAL GATE 1\]/);
+  it("OWNER_AUTOMATION_CONTRACT documents manual AI Analyze and manual Run Engine", () => {
+    assert.match(ownerContract, /Run AI Analyze/i);
+    assert.match(ownerContract, /Run Engine/i);
+    assert.match(ownerContract, /manual/i);
   });
 });

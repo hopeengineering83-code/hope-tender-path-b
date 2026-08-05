@@ -27,11 +27,11 @@ Work plan and quality assurance: 15 points.
 Only proposals achieving 70 technical points proceed to financial evaluation.
 `;
 
-test.describe.serial("Golden tender workflow — authenticated release contract", () => {
+test.describe.serial("Golden tender workflow — manual AI Analyze + manual Run Engine", () => {
   test.skip(!FULL, "Set E2E_GOLDEN_AUTH=true and seed the isolated E2E account");
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
 
-  test("upload-first → durable extraction → automatic AI worker → readiness gate", async ({ page }) => {
+  test("upload-first → durable extraction → MANUAL AI Analyze → MANUAL Run Engine → readiness gate", async ({ page }) => {
     await page.goto("/dashboard");
     await page.waitForLoadState("networkidle");
     await expect(page).toHaveURL(/dashboard/, { timeout: 15_000 });
@@ -66,8 +66,12 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
     expect(intakeJson.pipelineStage).toBe("EXTRACT_TEXT_QUEUED");
 
     const tenderId = intakeJson.tenderId;
+    const api = page.context().request;
     try {
-      const queuedJob = await page.request.get(`/api/ai-jobs/${intakeJson.processingJobId}`);
+      // ─── 1. Wait for automatic extraction ────────────────────────────────
+      // Upload-first persists the durable EXTRACT_TEXT job before returning.
+      // The request-scoped wake can legitimately finish it before this read.
+      const queuedJob = await api.get(`/api/ai-jobs/${intakeJson.processingJobId}`);
       expect(queuedJob.status(), await queuedJob.text()).toBe(200);
       const queuedJobJson = await queuedJob.json() as {
         job: { id: string; tenderId: string; jobType: string; status: string };
@@ -78,118 +82,85 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       expect(["QUEUED", "RUNNING", "SUCCEEDED"]).toContain(queuedJobJson.job.status);
 
       const extraction = await waitForDurableTenderExtraction({
-        request: page.request,
+        request: api,
         tenderId,
         expectedFileCount: 2,
       });
       expect(extraction.files).toHaveLength(2);
       expect(extraction.files.every((file) => file.extractedTextLength > 0)).toBe(true);
 
-      let continuationAnalysisJobId: string | null = null;
-      for (const extractionJobId of extraction.workerJobIds) {
-        const completedExtraction = await page.request.get(`/api/ai-jobs/${extractionJobId}`);
-        expect(completedExtraction.status(), await completedExtraction.text()).toBe(200);
-        const completedExtractionJson = await completedExtraction.json() as {
-          job: {
-            jobType: string;
-            status: string;
-            output?: {
-              continuation?: {
-                reason?: string | null;
-                jobId?: string | null;
-              } | null;
-            } | null;
-          };
-        };
-        expect(completedExtractionJson.job.jobType).toBe("EXTRACT_TEXT");
-        expect(completedExtractionJson.job.status).toBe("SUCCEEDED");
-        if (completedExtractionJson.job.output?.continuation?.reason === "AI_ANALYZE_QUEUED") {
-          continuationAnalysisJobId = completedExtractionJson.job.output.continuation.jobId ?? null;
-        }
-      }
-
-      // The browser never calls the manual Analyze endpoint. The analysis job
-      // must already exist for this exact tender before the queue is woken.
-      const findAnalysisJobId = async (): Promise<string | null> => {
-        const jobsResponse = await page.request.get(
-          `/api/ai-jobs?jobType=AI_ANALYZE&tenderId=${encodeURIComponent(tenderId)}&take=5`,
-        );
-        if (jobsResponse.status() !== 200) return null;
-        const jobsJson = await jobsResponse.json() as {
+      // ─── 2. Verify NO AI_ANALYZE job was auto-queued ─────────────────────
+      // The extraction service must NOT queue AI_ANALYZE. Check that no
+      // AI_ANALYZE job exists for this tender yet.
+      const jobsBeforeManualAnalyze = await api.get(
+        `/api/ai-jobs?jobType=AI_ANALYZE&tenderId=${encodeURIComponent(tenderId)}&take=5`,
+      );
+      if (jobsBeforeManualAnalyze.status() === 200) {
+        const jobsJson = await jobsBeforeManualAnalyze.json() as {
           jobs?: Array<{ id: string; tenderId: string | null; jobType: string; status: string }>;
         };
-        const exactJob = jobsJson.jobs?.find((job) =>
-          job.tenderId === tenderId && job.jobType === "AI_ANALYZE"
-        );
-        return exactJob?.id ?? null;
-      };
-
-      await expect.poll(findAnalysisJobId, {
-        message: "extraction should persist an automatic AI_ANALYZE job for this tender",
-        timeout: 15_000,
-        intervals: [100, 250, 500],
-      }).toBeTruthy();
-
-      const analysisJobId = await findAnalysisJobId();
-      if (!analysisJobId) throw new Error("Automatic AI_ANALYZE job was not persisted");
-      if (continuationAnalysisJobId) {
-        expect(analysisJobId).toBe(continuationAnalysisJobId);
+        const aiAnalyzeJobs = jobsJson.jobs?.filter(
+          (j) => j.tenderId === tenderId && j.jobType === "AI_ANALYZE",
+        ) ?? [];
+        // No AI_ANALYZE job should exist before the user manually clicks.
+        expect(aiAnalyzeJobs).toHaveLength(0);
       }
 
-      // Wake only this tender's durable job. If the request-scoped or scheduled
-      // worker won the race, a queue-empty response is valid and the exact job
-      // below must already be RUNNING or terminal.
-      const analysisWorker = await page.request.post(
+      // ─── 3. MANUAL: Click "Run AI Analyze" via the manual route ──────────
+      const manualAnalyze = await api.post(`/api/tenders/${tenderId}/manual-ai-analyze`);
+      expect(manualAnalyze.status(), await manualAnalyze.text()).toBeLessThan(500);
+      const analyzeJson = await manualAnalyze.json() as {
+        jobId?: string;
+        status?: string;
+      };
+      expect(analyzeJson.jobId).toBeTruthy();
+
+      // ─── 4. Wake the AI_ANALYZE worker to process the manual job ─────────
+      // The browser may nudge the worker to process the manually-queued job.
+      // This is a worker wake, not an auto-trigger — the job was queued by
+      // the user's manual click.
+      const analysisWorker = await api.post(
         `/api/ai-jobs/run-next?jobType=AI_ANALYZE&tenderId=${encodeURIComponent(tenderId)}`,
       );
       expect(analysisWorker.status(), await analysisWorker.text()).toBeLessThan(500);
-      const analysisWorkerJson = await analysisWorker.json() as {
-        processed?: boolean;
-        jobId?: string | null;
-        jobType?: string | null;
-        terminalStatus?: string | null;
-        resultCode?: string | null;
-      };
-      if (analysisWorkerJson.processed) {
-        expect(analysisWorkerJson.jobId).toBe(analysisJobId);
-        expect(analysisWorkerJson.jobType).toBe("AI_ANALYZE");
-        expect(["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED"]).toContain(analysisWorkerJson.terminalStatus);
-        expect(analysisWorkerJson.resultCode).toBeTruthy();
-      }
 
-      type AnalysisJobResponse = {
-        job: {
-          tenderId: string;
-          jobType: string;
-          status: string;
-        };
-      };
-      const fetchAnalysisJob = async (): Promise<AnalysisJobResponse | null> => {
-        const analysisJob = await page.request.get(`/api/ai-jobs/${analysisJobId}`);
-        if (analysisJob.status() !== 200) return null;
-        return await analysisJob.json() as AnalysisJobResponse;
-      };
+      // Wait for the AI_ANALYZE job to reach a terminal state.
       await expect.poll(async () => {
-        const exactJob = await fetchAnalysisJob();
-        return exactJob?.job.status ?? "NOT_FOUND";
+        const job = await api.get(`/api/ai-jobs/${analyzeJson.jobId}`);
+        if (job.status() !== 200) return "NOT_FOUND";
+        const j = await job.json() as { job: { status: string } };
+        return j.job.status;
       }, {
-        message: "the exact automatic AI_ANALYZE job should reach a terminal state",
-        timeout: 60_000,
-        intervals: [100, 250, 500, 1_000],
+        message: "the manual AI_ANALYZE job should reach a terminal state",
+        timeout: 90_000,
+        intervals: [500, 1_000, 2_000],
       }).toMatch(/^(SUCCEEDED|PARTIAL_SUCCESS|FAILED)$/);
 
-      const analysisJobJson = await fetchAnalysisJob();
-      if (!analysisJobJson) throw new Error("Automatic AI_ANALYZE job status was unavailable");
+      const analysisJob = await api.get(`/api/ai-jobs/${analyzeJson.jobId}`);
+      const analysisJobJson = await analysisJob.json() as {
+        job: { tenderId: string; jobType: string; status: string };
+      };
       expect(analysisJobJson.job.tenderId).toBe(tenderId);
       expect(analysisJobJson.job.jobType).toBe("AI_ANALYZE");
       expect(analysisJobJson.job.status).not.toBe("CANCELED");
 
-      const readiness = await page.request.get(`/api/tenders/${tenderId}/generation-readiness`);
+      // ─── 5. MANUAL: Click "Run Engine" (only if AI Analyze succeeded) ────
+      if (analysisJobJson.job.status === "SUCCEEDED") {
+        const manualEngine = await api.post(`/api/tenders/${tenderId}/engine`);
+        expect(manualEngine.status(), await manualEngine.text()).toBeLessThan(500);
+
+        // After Run Engine succeeds, matching, generation, validation, and
+        // finalization continue automatically through durable workers. The
+        // e2e test verifies the readiness gate reflects the workflow state.
+      }
+
+      // ─── 6. Verify the generation-readiness gate ─────────────────────────
+      const readiness = await api.get(`/api/tenders/${tenderId}/generation-readiness`);
       expect(readiness.status()).toBeLessThan(500);
       const readinessJson = await readiness.json() as { ready?: boolean; blockers?: unknown[] };
       expect(typeof readinessJson.ready).toBe("boolean");
     } finally {
-      const cleanup = await page.request.delete(`/api/tenders/${tenderId}`);
+      const cleanup = await api.delete(`/api/tenders/${tenderId}`);
       expect([200, 204]).toContain(cleanup.status());
     }
   });

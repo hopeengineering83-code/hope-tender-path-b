@@ -8,33 +8,42 @@ function read(path: string): string {
   return readFileSync(resolve(process.cwd(), path), "utf8");
 }
 
-describe("action registry matches production route owners", () => {
-  it("keeps AI Analyze automatic and exposes status/recovery navigation only", () => {
-    const pipeline = read("lib/ai-jobs/automatic-tender-pipeline.ts");
+describe("action registry matches production route owners — manual AI Analyze / manual Run Engine", () => {
+  it("exposes AI Analyze as a MANUAL user action via POST /api/tenders/:id/manual-ai-analyze", () => {
     const owner = read("components/ai-analyze-panel.tsx");
-    const workflow = read("components/workflow-step-links.tsx");
+    const manualRoute = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
 
-    assert.match(pipeline, /autoContinue:\s*true/);
-    assert.match(pipeline, /manualRequested:\s*false/);
-    assert.doesNotMatch(pipeline, /status:\s*"CANCELED"/);
+    // The AI Analyze panel renders the section anchor.
     assert.match(owner, /id="ai-analyze-section"/);
-    assert.doesNotMatch(workflow, /manual-ai-analyze/);
-    assert.equal(getTenderAction("AI_ANALYZE").mutation, null);
-    assert.equal(getTenderAction("AI_ANALYZE").availability, "RECOVERY");
+
+    // The manual route exists, requires authentication, and sets autoContinue=false.
+    assert.match(manualRoute, /export async function POST/);
+    assert.match(manualRoute, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
+    assert.match(manualRoute, /manualRequested:\s*true/);
+    assert.match(manualRoute, /autoContinue:\s*false/);
+
+    // The action registry exposes AI_ANALYZE as a NORMAL (not RECOVERY) action
+    // with the manual mutation endpoint.
+    assert.equal(getTenderAction("AI_ANALYZE").mutation, "POST /api/tenders/:id/manual-ai-analyze");
+    assert.equal(getTenderAction("AI_ANALYZE").availability, "NORMAL");
     assert.equal(getTenderAction("AI_ANALYZE").owner, "AIAnalyzePanel");
   });
 
-  it("keeps Engine worker-owned and exposes matching status/recovery navigation only", () => {
-    const worker = read("app/api/ai-jobs/run-next/route.ts");
+  it("exposes Run Engine as a MANUAL user action via POST /api/tenders/:id/engine", () => {
     const owner = read("components/matching-selected-evidence-panel.tsx");
-    const workflow = read("components/workflow-step-links.tsx");
+    const engineRoute = read("app/api/tenders/[id]/engine/route.ts");
 
-    assert.match(worker, /claimed\.jobType === "AI_ANALYZE"/);
-    assert.match(worker, /nextJobType = "ENGINE_RUN"/);
     assert.match(owner, /matching-selected-evidence/);
-    assert.doesNotMatch(workflow, /method:\s*"POST"/);
-    assert.equal(getTenderAction("RUN_ENGINE").mutation, null);
-    assert.equal(getTenderAction("RUN_ENGINE").availability, "RECOVERY");
+
+    // The engine route exists, requires authentication, and rejects client-side
+    // policy parameters (safe, skip, maxChars, provider, etc.).
+    assert.match(engineRoute, /export async function POST/);
+    assert.match(engineRoute, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
+
+    // The action registry exposes RUN_ENGINE as a NORMAL action with the
+    // manual mutation endpoint.
+    assert.equal(getTenderAction("RUN_ENGINE").mutation, "POST /api/tenders/:id/engine");
+    assert.equal(getTenderAction("RUN_ENGINE").availability, "NORMAL");
     assert.equal(getTenderAction("RUN_ENGINE").owner, "MatchingSelectedEvidencePanel");
   });
 
@@ -78,11 +87,12 @@ describe("action registry matches production route owners", () => {
     assert.equal(getTenderAction("DOWNLOAD_FINAL_ZIP").owner, "ExportReadinessPanel");
   });
 
-  it("contains no nonexistent or client-policy workflow paths", () => {
+  it("contains no client-policy workflow paths in mutation list", () => {
     const mutations = listTenderActions().flatMap(([, action]) => action.mutation ? [action.mutation] : []);
     const joined = mutations.join("\n");
-    assert.doesNotMatch(joined, /manual-ai-analyze/);
-    assert.doesNotMatch(joined, /POST \/api\/tenders\/:id\/engine/);
+    // manual-ai-analyze and POST /api/tenders/:id/engine ARE now present
+    // (they are the manual mutation endpoints). But client-policy parameters
+    // are still forbidden.
     assert.doesNotMatch(joined, /ai-analyze\?async=true/);
     assert.doesNotMatch(joined, /engine\?.*(?:safe|skip|maxChars|provider)/);
     assert.doesNotMatch(joined, /\/api\/tenders\/:id\/match(?:\s|$)/);

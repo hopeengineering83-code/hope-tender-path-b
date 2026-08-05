@@ -59,13 +59,13 @@ export const TENDER_ACTIONS = {
   },
   AI_ANALYZE: {
     anchor: "#ai-analyze-section",
-    mutation: null,
+    mutation: "POST /api/tenders/:id/manual-ai-analyze",
     owner: "AIAnalyzePanel",
-    label: "View automatic AI analysis status",
+    label: "Run AI Analyze",
     verb: "analyze",
     surface: "ai-analyze",
     iconName: "SparklesIcon",
-    availability: "RECOVERY",
+    availability: "NORMAL",
   },
   REVIEW_SOURCES: {
     anchor: "#requirement-coverage",
@@ -99,13 +99,13 @@ export const TENDER_ACTIONS = {
   },
   RUN_ENGINE: {
     anchor: "#matching-selected-evidence",
-    mutation: null,
+    mutation: "POST /api/tenders/:id/engine",
     owner: "MatchingSelectedEvidencePanel",
-    label: "View automatic Engine and matching status",
+    label: "Run Engine",
     verb: "engine",
     surface: "matching-selected-evidence",
     iconName: "BoltIcon",
-    availability: "RECOVERY",
+    availability: "NORMAL",
   },
   BUILD_SUBMISSION_PLAN: {
     anchor: "#submission-plan-completeness",

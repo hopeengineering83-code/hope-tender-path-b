@@ -7,23 +7,21 @@ const codeOnly = (source: string) => source
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/^[ \t]*\/\/.*$/gm, "");
 
-describe("pipeline authority non-negotiables", () => {
-  it("client upload may nudge durable extraction and AI analysis without owning either job", () => {
+describe("pipeline authority non-negotiables — manual AI Analyze / manual Run Engine", () => {
+  it("client upload nudges ONLY EXTRACT_TEXT — never AI_ANALYZE", () => {
     const source = read("lib/ui/auto-pipeline.ts");
     assert.match(source, /jobType=EXTRACT_TEXT/);
-    assert.match(source, /jobType=AI_ANALYZE/);
     assert.match(source, /processingJobId/);
-    assert.match(source, /scheduled worker remains the durable fallback/i);
-    assert.doesNotMatch(source, /manual-ai-analyze/);
-    assert.doesNotMatch(source, /AI Analyze remains an explicit action|select AI Analyze/i);
+    // The browser must NOT nudge AI_ANALYZE. The comment explicitly documents
+    // that AI_ANALYZE_WORKER_ENDPOINT is intentionally NOT exported.
+    assert.match(source, /AI_ANALYZE_WORKER_ENDPOINT is intentionally NOT exported/i);
+    assert.doesNotMatch(source, /export const AI_ANALYZE_WORKER_ENDPOINT/);
+    assert.match(source, /Run AI Analyze/i);
   });
 
   it("workflow step links are navigation-only and execute no pipeline mutations", () => {
     const source = codeOnly(read("components/workflow-step-links.tsx"));
-    assert.match(source, /Processing automatically/);
-    assert.match(source, /No AI Analyze or Run Engine action is required/);
     assert.doesNotMatch(source, /fetch\s*\(/);
-    assert.doesNotMatch(source, /manual-ai-analyze/);
     assert.doesNotMatch(source, /runManualAction|wakeWorker/);
   });
 

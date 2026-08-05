@@ -6,7 +6,6 @@ const read = (path: string) => readFileSync(path, "utf8");
 const firstUpload = read("lib/tender-upload-first.ts");
 const secureUpload = read("lib/secure-upload-handler.ts");
 const browserPipeline = read("lib/ui/auto-pipeline.ts");
-const readyBoundary = read("lib/ai-jobs/automatic-tender-pipeline.ts");
 const legacyHandlers = read("lib/ai-job-handlers-legacy.ts");
 
 describe("upload requests hand verified bytes to durable extraction", () => {
@@ -47,18 +46,15 @@ describe("upload requests hand verified bytes to durable extraction", () => {
     assert.match(secureUpload, /extractedText: null/);
   });
 
-  it("the browser nudges extraction and automatically queued AI analysis", () => {
+  it("the browser nudges ONLY extraction — never AI_ANALYZE", () => {
     assert.match(browserPipeline, /EXTRACT_TEXT_QUEUED/);
-    assert.match(browserPipeline, /AI_ANALYZE_QUEUED/);
     assert.match(browserPipeline, /jobType=EXTRACT_TEXT/);
-    assert.match(browserPipeline, /jobType=AI_ANALYZE/);
-    assert.match(browserPipeline, /void nudgeTenderWorker\(AI_ANALYZE_WORKER_ENDPOINT\)/);
-    assert.match(browserPipeline, /no AI Analyze or Run Engine action is required/i);
-    assert.doesNotMatch(browserPipeline, /select AI Analyze|AI Analyze remains explicit/i);
-    assert.match(readyBoundary, /status:\s*"QUEUED"/);
-    assert.match(readyBoundary, /autoContinue:\s*true/);
-    assert.doesNotMatch(readyBoundary, /status:\s*"CANCELED"/);
-    assert.doesNotMatch(readyBoundary, /manualGate:\s*"AI_ANALYZE"/);
+    // The browser must NOT nudge AI_ANALYZE. AI_ANALYZE_WORKER_ENDPOINT is
+    // intentionally NOT exported.
+    assert.doesNotMatch(browserPipeline, /export const AI_ANALYZE_WORKER_ENDPOINT/);
+    assert.doesNotMatch(browserPipeline, /void nudgeTenderWorker\(AI_ANALYZE_WORKER_ENDPOINT\)/);
+    // The message tells the user to click "Run AI Analyze".
+    assert.match(browserPipeline, /Run AI Analyze/i);
   });
 
   it("has exactly one EXTRACT_TEXT implementation", () => {
