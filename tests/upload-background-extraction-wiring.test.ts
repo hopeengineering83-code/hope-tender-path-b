@@ -47,14 +47,18 @@ describe("upload requests hand verified bytes to durable extraction", () => {
     assert.match(secureUpload, /extractedText: null/);
   });
 
-  it("the browser wakes extraction only and leaves AI Analyze explicit", () => {
+  it("the browser nudges extraction only while server-owned analysis remains runnable", () => {
     assert.match(browserPipeline, /EXTRACT_TEXT_QUEUED/);
     assert.match(browserPipeline, /AI_ANALYZE_QUEUED/);
     assert.match(browserPipeline, /jobType=EXTRACT_TEXT/);
     assert.doesNotMatch(browserPipeline, /jobType=AI_ANALYZE/);
-    assert.match(browserPipeline, /AI Analyze remains an explicit action|select AI Analyze/i);
-    assert.match(readyBoundary, /status:\s*"CANCELED"/);
-    assert.match(readyBoundary, /manualGate:\s*"AI_ANALYZE"/);
+    assert.match(browserPipeline, /continue automatically through analysis, generation, validation, and package readiness/i);
+    assert.match(browserPipeline, /AI analysis is durably queued and will continue automatically/i);
+    assert.match(readyBoundary, /status:\s*"QUEUED"/);
+    assert.match(readyBoundary, /autoContinue:\s*true/);
+    assert.match(readyBoundary, /automaticContinuation:\s*true/);
+    assert.doesNotMatch(readyBoundary, /status:\s*"CANCELED"/);
+    assert.doesNotMatch(readyBoundary, /manualGate:\s*"AI_ANALYZE"/);
   });
 
   it("has exactly one EXTRACT_TEXT implementation", () => {
