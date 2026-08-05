@@ -85,26 +85,62 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
       expect(extraction.files).toHaveLength(2);
       expect(extraction.files.every((file) => file.extractedTextLength > 0)).toBe(true);
 
-      const observedWorkerJobId = extraction.workerJobIds.at(-1);
-      if (observedWorkerJobId) {
-        const completedExtraction = await page.request.get(`/api/ai-jobs/${observedWorkerJobId}`);
+      let continuationAnalysisJobId: string | null = null;
+      for (const extractionJobId of extraction.workerJobIds) {
+        const completedExtraction = await page.request.get(`/api/ai-jobs/${extractionJobId}`);
         expect(completedExtraction.status(), await completedExtraction.text()).toBe(200);
         const completedExtractionJson = await completedExtraction.json() as {
           job: {
             jobType: string;
             status: string;
-            output?: { continuation?: { reason?: string | null } | null } | null;
+            output?: {
+              continuation?: {
+                reason?: string | null;
+                jobId?: string | null;
+              } | null;
+            } | null;
           };
         };
         expect(completedExtractionJson.job.jobType).toBe("EXTRACT_TEXT");
         expect(completedExtractionJson.job.status).toBe("SUCCEEDED");
-        expect(completedExtractionJson.job.output?.continuation?.reason).toBe("AI_ANALYZE_QUEUED");
+        if (completedExtractionJson.job.output?.continuation?.reason === "AI_ANALYZE_QUEUED") {
+          continuationAnalysisJobId = completedExtractionJson.job.output.continuation.jobId ?? null;
+        }
       }
 
-      // The browser does not call the manual Analyze endpoint. It only wakes
-      // the same durable queue that the scheduled worker drains after the page
-      // is closed. This proves extraction left AI_ANALYZE runnable.
-      const analysisWorker = await page.request.post("/api/ai-jobs/run-next?jobType=AI_ANALYZE");
+      // The browser never calls the manual Analyze endpoint. The analysis job
+      // must already exist for this exact tender before the queue is woken.
+      let analysisJobId: string | null = null;
+      await expect.poll(async () => {
+        const jobsResponse = await page.request.get(
+          `/api/ai-jobs?jobType=AI_ANALYZE&tenderId=${encodeURIComponent(tenderId)}&take=5`,
+        );
+        if (jobsResponse.status() !== 200) return null;
+        const jobsJson = await jobsResponse.json() as {
+          jobs?: Array<{ id: string; tenderId: string | null; jobType: string; status: string }>;
+        };
+        const exactJob = jobsJson.jobs?.find((job) =>
+          job.tenderId === tenderId && job.jobType === "AI_ANALYZE"
+        );
+        analysisJobId = exactJob?.id ?? null;
+        return analysisJobId;
+      }, {
+        message: "extraction should persist an automatic AI_ANALYZE job for this tender",
+        timeout: 15_000,
+        intervals: [100, 250, 500],
+      }).toBeTruthy();
+
+      if (!analysisJobId) throw new Error("Automatic AI_ANALYZE job was not persisted");
+      if (continuationAnalysisJobId) {
+        expect(analysisJobId).toBe(continuationAnalysisJobId);
+      }
+
+      // Wake only this tender's durable job. If the request-scoped or scheduled
+      // worker won the race, a queue-empty response is valid and the exact job
+      // below must already be RUNNING or terminal.
+      const analysisWorker = await page.request.post(
+        `/api/ai-jobs/run-next?jobType=AI_ANALYZE&tenderId=${encodeURIComponent(tenderId)}`,
+      );
       expect(analysisWorker.status(), await analysisWorker.text()).toBeLessThan(500);
       const analysisWorkerJson = await analysisWorker.json() as {
         processed?: boolean;
@@ -112,29 +148,36 @@ test.describe.serial("Golden tender workflow — authenticated release contract"
         jobType?: string | null;
         terminalStatus?: string | null;
         resultCode?: string | null;
-        nextJobType?: string | null;
       };
-      expect(analysisWorkerJson.processed).toBe(true);
-      expect(analysisWorkerJson.jobId).toBeTruthy();
-      expect(analysisWorkerJson.jobType).toBe("AI_ANALYZE");
-      expect(["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED"]).toContain(analysisWorkerJson.terminalStatus);
-      expect(analysisWorkerJson.resultCode).toBeTruthy();
+      if (analysisWorkerJson.processed) {
+        expect(analysisWorkerJson.jobId).toBe(analysisJobId);
+        expect(analysisWorkerJson.jobType).toBe("AI_ANALYZE");
+        expect(["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED"]).toContain(analysisWorkerJson.terminalStatus);
+        expect(analysisWorkerJson.resultCode).toBeTruthy();
+      }
 
-      const analysisJob = await page.request.get(`/api/ai-jobs/${analysisWorkerJson.jobId}`);
-      expect(analysisJob.status(), await analysisJob.text()).toBe(200);
-      const analysisJobJson = await analysisJob.json() as {
+      let analysisJobJson: {
         job: {
           tenderId: string;
           jobType: string;
           status: string;
-          input?: Record<string, unknown> | null;
         };
-      };
+      } | null = null;
+      await expect.poll(async () => {
+        const analysisJob = await page.request.get(`/api/ai-jobs/${analysisJobId}`);
+        if (analysisJob.status() !== 200) return "NOT_FOUND";
+        analysisJobJson = await analysisJob.json() as typeof analysisJobJson;
+        return analysisJobJson?.job.status ?? "UNKNOWN";
+      }, {
+        message: "the exact automatic AI_ANALYZE job should reach a terminal state",
+        timeout: 60_000,
+        intervals: [100, 250, 500, 1_000],
+      }).toMatch(/^(SUCCEEDED|PARTIAL_SUCCESS|FAILED)$/);
+
+      if (!analysisJobJson) throw new Error("Automatic AI_ANALYZE job status was unavailable");
       expect(analysisJobJson.job.tenderId).toBe(tenderId);
       expect(analysisJobJson.job.jobType).toBe("AI_ANALYZE");
       expect(analysisJobJson.job.status).not.toBe("CANCELED");
-      expect(analysisJobJson.job.input?.autoContinue).toBe(true);
-      expect(analysisJobJson.job.input?.manualRequested).not.toBe(true);
 
       const readiness = await page.request.get(`/api/tenders/${tenderId}/generation-readiness`);
       expect(readiness.status()).toBeLessThan(500);

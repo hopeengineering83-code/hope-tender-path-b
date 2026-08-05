@@ -482,13 +482,14 @@ export async function recoverIfStuck(jobId: string, opts?: { stuckAfterMs?: numb
   return updated.count > 0;
 }
 
-export async function listUserJobs(userId: string, opts?: { jobType?: JobType; status?: JobStatus; take?: number }): Promise<Array<{ id: string; jobType: JobType; status: JobStatus; tenderId: string | null; createdAt: Date; finishedAt: Date | null }>> {
+export async function listUserJobs(userId: string, opts?: { jobType?: JobType; status?: JobStatus; tenderId?: string; take?: number }): Promise<Array<{ id: string; jobType: JobType; status: JobStatus; tenderId: string | null; createdAt: Date; finishedAt: Date | null }>> {
   await prismaReady;
   const rows = await prisma.aiJob.findMany({
     where: {
       userId,
       ...(opts?.jobType ? { jobType: opts.jobType } : {}),
       ...(opts?.status ? { status: opts.status } : {}),
+      ...(opts?.tenderId ? { tenderId: opts.tenderId } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: opts?.take ?? 25,

@@ -53,6 +53,7 @@ export async function POST(req: Request) {
     }, { status: 400 });
   }
 
+  const tenderId = searchParams.get("tenderId")?.trim() || undefined;
   const startTime = Date.now();
   const maxRunMs = 40_000;
   type WorkerJobResult = {
@@ -123,6 +124,7 @@ export async function POST(req: Request) {
   while (Date.now() - startTime < maxRunMs) {
     const claimed = await claimJobForCaller({
       jobType: parsedJobType.value,
+      tenderId,
       userId: userId ?? undefined,
       global: isAutomatedCaller,
     });

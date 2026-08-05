@@ -14,6 +14,7 @@ export type ClaimedJob = {
 
 export async function claimJobForCaller(options: {
   jobType?: JobType;
+  tenderId?: string;
   userId?: string;
   global: boolean;
 }): Promise<ClaimedJob | null> {
@@ -30,6 +31,7 @@ export async function claimJobForCaller(options: {
   ];
   if (!options.global && options.userId) conditions.push(Prisma.sql`"userId" = ${options.userId}`);
   if (options.jobType) conditions.push(Prisma.sql`"jobType" = ${options.jobType}`);
+  if (options.tenderId) conditions.push(Prisma.sql`"tenderId" = ${options.tenderId}`);
   const whereClause = Prisma.join(conditions, " AND ");
 
   try {
