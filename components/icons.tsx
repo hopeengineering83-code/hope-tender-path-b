@@ -662,3 +662,21 @@ export function WrenchIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * Trash — Permanent delete. Used by DeleteTenderButton's compact mode so
+ * the action stays available on dense table rows without forcing the row's
+ * Action cell past the table's available width. The full "Permanently
+ * delete" label is exposed via aria-label and the native title tooltip, so
+ * screen readers and hover users still see the verb; only the visible
+ * glyph is compressed.
+ */
+export function TrashIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+    </svg>
+  );
+}

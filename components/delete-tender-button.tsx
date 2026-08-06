@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { TrashIcon } from "./icons";
 
 type Props = {
   tenderId: string;
@@ -39,16 +40,39 @@ export function DeleteTenderButton({ tenderId, tenderTitle = "this tender", comp
     }
   }
 
+  // Compact mode renders an icon-only button. The previous "Permanently delete"
+  // text label forced the tenders list Action column past its available width
+  // at 800px tablet viewport, causing a 16px horizontal overflow that broke
+  // the responsive regression guards. The full verb is still exposed via
+  // aria-label (screen readers) and title (hover tooltip), so the action is
+  // never ambiguous — only the visible glyph is compressed.
+  if (compact) {
+    return (
+      <div className="inline-flex flex-col items-end">
+        <button
+          type="button"
+          onClick={() => void permanentlyDelete()}
+          disabled={deleting}
+          aria-busy={deleting}
+          aria-label={`Permanently delete ${tenderTitle}`}
+          title="Permanently delete"
+          className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-lg border border-red-200 px-2 py-1.5 text-sm text-red-700 hover:bg-red-50 disabled:opacity-60"
+        >
+          {deleting ? <span className="text-xs">…</span> : <TrashIcon />}
+        </button>
+        {error ? <p className="mt-1 max-w-xs text-right text-xs text-red-700" role="alert">{error}</p> : null}
+      </div>
+    );
+  }
+
   return (
-    <div className={compact ? "inline-flex flex-col items-end" : "flex flex-col items-end"}>
+    <div className="flex flex-col items-end">
       <button
         type="button"
         onClick={() => void permanentlyDelete()}
         disabled={deleting}
         aria-busy={deleting}
-        className={compact
-          ? "inline-flex min-h-9 items-center rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
-          : "inline-flex min-h-11 items-center rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"}
+        className="inline-flex min-h-11 items-center rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"
       >
         {deleting ? "Deleting permanently…" : "Permanently delete"}
       </button>
