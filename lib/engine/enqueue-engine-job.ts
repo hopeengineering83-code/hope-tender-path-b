@@ -20,11 +20,11 @@ export type EngineEnqueueResult = {
 /**
  * The one canonical durable Engine enqueue authority.
  *
- * Automatic analysis success uses the default server-owned policy. Explicit
- * operator calls are retained only as recovery and may opt into
- * manualRequested=true. Every accepted Engine job continues automatically
- * through matching, Build Plan, proposal generation, validation/finalization,
- * and package reconciliation.
+ * This function is called only after an authorized user explicitly selects
+ * Run Engine. It binds the durable job to the current source revision and
+ * prevents duplicate jobs. `autoContinue: true` authorizes only the stages
+ * AFTER Engine success: Build Plan, generation, validation/finalization, and
+ * final package reconciliation. It never authorizes automatic Engine start.
  */
 export async function enqueueEngineJobForCurrentSources(
   client: PrismaClient,
@@ -43,13 +43,17 @@ export async function enqueueEngineJobForCurrentSources(
   });
   if (!revision) return null;
 
+  const manualRequested = input.manualRequested
+    ?? input.purpose === "INTERNAL_ARTIFACT_PREPARATION";
+  if (!manualRequested) {
+    throw new Error("MANUAL_RUN_ENGINE_REQUIRED");
+  }
+
   const idempotencyKey = engineIdempotencyKey({
     userId: input.userId,
     tenderId: input.tenderId,
     sourceRevision: revision.sourceRevision,
   });
-  const manualRequested = input.manualRequested
-    ?? input.purpose === "INTERNAL_ARTIFACT_PREPARATION";
 
   const job = await client.$transaction(async (tx) => {
     await tx.$queryRaw<Array<{ acquired: number }>>`
@@ -100,9 +104,9 @@ export async function enqueueEngineJobForCurrentSources(
         input: JSON.stringify({
           sourceRevision: revision.sourceRevision,
           idempotencyKey,
-          purpose: input.purpose ?? (manualRequested ? "RECOVERY_MANUAL_RUN_ENGINE" : "AUTOMATIC_ENGINE_CONTINUATION"),
+          purpose: input.purpose ?? "MANUAL_RUN_ENGINE",
           executionPolicy: "SERVER_CONTROLLED",
-          manualRequested,
+          manualRequested: true,
           autoContinue: true,
         }),
       },
