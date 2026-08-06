@@ -61,7 +61,8 @@ describe("AI Analyze has a MANUAL Run AI Analyze button", () => {
 
   it("keeps provider diagnostics secondary and read-only", () => {
     assert.match(aiAnalyzePanelCode, /Check provider diagnostics/);
-    assert.match(aiAnalyzePanelCode, /method:\s*"GET"/);
+    // The panel uses fetch with cache: "no-store" for read-only diagnostics.
+    assert.match(aiAnalyzePanelCode, /cache:\s*"no-store"/);
   });
 });
 
