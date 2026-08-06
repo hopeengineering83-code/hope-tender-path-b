@@ -1,6 +1,6 @@
 {
   "framework": "nextjs",
-  "buildCommand": "python3 scripts/repair_remaining_production_gaps.py && npm run vercel-build",
+  "buildCommand": "npm run vercel-build",
   "installCommand": "npm ci",
   "git": {
     "deploymentEnabled": {
