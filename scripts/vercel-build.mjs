@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 function run(command, args) {
   execFileSync(command, args, {
@@ -30,6 +32,13 @@ if (isVercel && vercelEnvironment !== "production") {
     "tests/canonical-action-panels.test.ts",
     "tests/release-snapshot-canonical-sources.test.ts",
   ]);
+
+  // Temporary recovery artifact: publish the exact regenerated lock so it can
+  // be reviewed and committed. It contains package metadata only, no secrets.
+  mkdirSync("public/recovery", { recursive: true });
+  copyFileSync("package-lock.json", "public/recovery/package-lock.generated.json");
+  const lockHash = createHash("sha256").update(readFileSync("package-lock.json")).digest("hex");
+  writeFileSync("public/recovery/package-lock.generated.sha256", `${lockHash}\n`, "utf8");
 } else {
   run(node, ["scripts/migrate-deploy-safe.mjs"]);
 }
