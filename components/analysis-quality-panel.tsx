@@ -6,6 +6,7 @@ import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source"
 import { inferSector } from "../lib/engine/proposal-intelligence";
 import { getEffectiveTenderFacts } from "../lib/engine/effective-tender-facts";
 import { getTenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
+import { assessCanonicalTenderSourceReadiness } from "../lib/tender/canonical-source-files";
 
 function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
   if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by an AI provider." };
@@ -33,25 +34,35 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   const [tender, snapshot] = await Promise.all([
     prisma.tender.findFirst({
       where: { id: tenderId, userId },
-      include: { requirements: { orderBy: { createdAt: "asc" } } },
+      include: {
+        requirements: { orderBy: { createdAt: "asc" } },
+        files: {
+          select: {
+            id: true,
+            fileName: true,
+            originalFileName: true,
+            deletionStatus: true,
+            contentSha256: true,
+            integrityStatus: true,
+            extractionScore: true,
+            extractionMethod: true,
+            totalPages: true,
+            extractedPages: true,
+            failedPages: true,
+            extractedText: true,
+            createdAt: true,
+          },
+        },
+      },
     }),
     getTenderReleaseSnapshot(prisma, tenderId, userId).catch(() => null),
   ]);
   if (!tender) return null;
 
-  // Count only canonical source files from the release snapshot. This avoids
-  // duplicate DOCX/PDF representations inflating extracted character totals.
-  const canonicalFileIds = snapshot?.extraction.files.map((file) => file.id) ?? [];
-  const metrics = canonicalFileIds.length > 0
-    ? await prisma.$queryRaw<Array<{ extractedChars: number; totalPageCount: number }>>`
-        SELECT
-          COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedChars",
-          COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
-        FROM "TenderFile"
-        WHERE id = ANY(${canonicalFileIds}::text[])
-      `.catch(() => [{ extractedChars: 0, totalPageCount: 0 }])
-    : [{ extractedChars: 0, totalPageCount: 0 }];
-  const [{ extractedChars, totalPageCount }] = metrics;
+  const sourceReadiness = assessCanonicalTenderSourceReadiness(tender.files);
+  const canonicalFiles = sourceReadiness.canonicalFiles;
+  const extractedChars = canonicalFiles.reduce((total, file) => total + (file.extractedText?.length ?? 0), 0);
+  const totalPageCount = canonicalFiles.reduce((total, file) => total + (file.totalPages ?? 0), 0);
 
   const [rawSource, effectiveFacts] = await Promise.all([
     detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const),
@@ -89,7 +100,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     && snapshot.analysis.contentHashMatch
     && snapshot.analysis.canonicalJobId,
   );
-  const canonicalExtractionReady = snapshot?.extraction.overallOk === true;
+  const canonicalExtractionReady = sourceReadiness.analysisReady;
   const fallbackOnly = quality.isRegexFallback || rawSource !== "AI" || isUntrustedStatus(tender.analysisExtractionStatus);
   const ready = analysisCurrent
     && canonicalExtractionReady
@@ -97,12 +108,8 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     && quality.severity !== "POOR"
     && quality.severity !== "UNSAFE";
   const displayedScore = ready ? quality.score : Math.min(quality.score, 69);
-  const tone = ready
-    ? "border-emerald-200 bg-emerald-50"
-    : "border-amber-200 bg-amber-50";
-  const badge = ready
-    ? "bg-emerald-100 text-emerald-700"
-    : "bg-amber-100 text-amber-800";
+  const tone = ready ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50";
+  const badge = ready ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800";
   const sectorProbe = [tender.analysisSummary, tender.intakeSummary, tender.notes, tender.title, tender.description]
     .filter(Boolean)
     .join("\n\n");
@@ -120,10 +127,22 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
         This score covers canonical extraction, requirements, tender details, submission instructions, and source grounding. Evidence matching remains separate.
       </p>
 
+      {sourceReadiness.duplicateFileCount > 0 ? (
+        <p className="mt-2 text-xs text-slate-500">
+          {sourceReadiness.duplicateFileCount} duplicate or alternate source representation(s) were excluded from this score.
+        </p>
+      ) : null}
+
       {!analysisCurrent ? (
         <div className="mt-3 rounded-xl border border-amber-300 bg-white p-3 text-sm text-amber-900">
           Previous analysis does not match the current canonical source revision. Run AI Analyze again before Run Engine.
           {snapshot?.analysis.blocker ? <p className="mt-1 text-xs text-amber-800">{snapshot.analysis.blocker}</p> : null}
+        </div>
+      ) : null}
+
+      {!canonicalExtractionReady ? (
+        <div className="mt-3 rounded-xl border border-amber-300 bg-white p-3 text-sm text-amber-900">
+          {sourceReadiness.blockers[0] ?? "Canonical source extraction is not ready."}
         </div>
       ) : null}
 
