@@ -184,7 +184,7 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   }));
 
   const ai = isAIEnabled();
-  const [generationReadiness, canonicalReadiness, activeAnalysisJob, succeededAnalysisJob, activeIntakeRun] = await Promise.all([
+  const [generationReadiness, canonicalReadiness, activeAnalysisJob, succeededAnalysisJob, activeEngineJob, succeededEngineJob, activeIntakeRun] = await Promise.all([
     getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null),
     getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null),
     prismaClient.aiJob.findFirst({
@@ -205,6 +205,26 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         status: "SUCCEEDED",
       },
       orderBy: { createdAt: "desc" },
+      select: { id: true, analysisInputHash: true },
+    }).catch(() => null),
+    prismaClient.aiJob.findFirst({
+      where: {
+        userId,
+        tenderId: tender.id,
+        jobType: "ENGINE_RUN",
+        status: { in: ["QUEUED", "RUNNING"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    }).catch(() => null),
+    prismaClient.aiJob.findFirst({
+      where: {
+        userId,
+        tenderId: tender.id,
+        jobType: "ENGINE_RUN",
+        status: "SUCCEEDED",
+      },
+      orderBy: { createdAt: "desc" },
       select: { id: true },
     }).catch(() => null),
     prismaClient.tenderWorkflowRun.findFirst({
@@ -218,6 +238,31 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
     }).catch(() => null),
   ]);
   const activeIntakeSession = parseTenderPackageSessionResult(activeIntakeRun?.resultJson);
+
+  // ─── Truthful workflow state derived from database ─────────────────────────
+  //
+  // sourceIntegrityValid: true when all active files have a non-failed
+  // extraction method and non-null extractionScore. This replaces the
+  // previous hardcoded `sourceIntegrityValid={true}`.
+  const sourceIntegrityValid = tender.files.length > 0
+    && tender.files.every((f) => f.extractionScore !== null && f.extractionScore > 0);
+
+  // extractionComplete: true when at least one file has been successfully
+  // extracted (extractionScore > 0 means text was extracted).
+  const extractionComplete = tender.files.some((f) => f.extractionScore !== null && f.extractionScore > 0);
+
+  // analysisComplete: true when the current source revision has a SUCCEEDED
+  // AI_ANALYZE job. This replaces the previous hardcoded `analysisComplete`
+  // derived only from `analysisExtractionStatus`.
+  const analysisComplete = Boolean(succeededAnalysisJob)
+    && tender.analysisExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED";
+
+  // engineRunning: true when an ENGINE_RUN job is QUEUED or RUNNING.
+  // engineComplete: true when an ENGINE_RUN job has SUCCEEDED.
+  // These replace the previous hardcoded `engineRunning={false}` and
+  // `engineComplete={false}`.
+  const engineRunning = Boolean(activeEngineJob);
+  const engineComplete = Boolean(succeededEngineJob);
 
   return (
     <section className="space-y-5" aria-label="Tender workflow workspace">
@@ -263,9 +308,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           initialContinueJobId={activeAnalysisJob?.id ?? null}
           aiEnabled={ai}
           canMutate={canMutate}
-          analysisAlreadySucceeded={Boolean(succeededAnalysisJob)}
-          extractionComplete={Boolean(tender.files?.some((f) => f.extractionScore !== null && f.extractionScore > 0))}
-          sourceIntegrityValid={true}
+          analysisAlreadySucceeded={analysisComplete}
+          extractionComplete={extractionComplete}
+          sourceIntegrityValid={sourceIntegrityValid}
           hasActiveJob={Boolean(activeAnalysisJob)}
         />
         <AnalysisQualityPanel tenderId={tender.id} />
@@ -287,9 +332,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
         <MatchingSelectedEvidencePanel
           tenderId={tender.id}
           canMutate={canMutate}
-          analysisComplete={tender.analysisExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"}
-          engineRunning={false}
-          engineComplete={false}
+          analysisComplete={analysisComplete}
+          engineRunning={engineRunning}
+          engineComplete={engineComplete}
           experts={tender.expertMatches.map((m): SelectedEvidenceCandidate => ({
             id: m.id,
             name: m.expert.fullName,
