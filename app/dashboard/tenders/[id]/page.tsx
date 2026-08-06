@@ -264,6 +264,9 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
           aiEnabled={ai}
           canMutate={canMutate}
           analysisAlreadySucceeded={Boolean(succeededAnalysisJob)}
+          extractionComplete={Boolean(tender.files?.some((f) => f.extractionScore !== null && f.extractionScore > 0))}
+          sourceIntegrityValid={true}
+          hasActiveJob={Boolean(activeAnalysisJob)}
         />
         <AnalysisQualityPanel tenderId={tender.id} />
         <RequirementCoveragePanel tenderId={tender.id} canMutate={canMutate} />
@@ -282,6 +285,11 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
 
       <WorkflowStage number={3} title="Evidence and matching" description="After Run Engine, inspect the persisted company-owned evidence selected automatically for this tender.">
         <MatchingSelectedEvidencePanel
+          tenderId={tender.id}
+          canMutate={canMutate}
+          analysisComplete={tender.analysisExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"}
+          engineRunning={false}
+          engineComplete={false}
           experts={tender.expertMatches.map((m): SelectedEvidenceCandidate => ({
             id: m.id,
             name: m.expert.fullName,

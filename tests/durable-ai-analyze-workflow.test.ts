@@ -68,12 +68,16 @@ describe("AI Analyze is a MANUAL user action via the manual-ai-analyze route", (
     assert.doesNotMatch(workflow, /method:\s*"POST"|run-next\?jobType/);
   });
 
-  it("keeps the analysis panel status-only and non-SSE", () => {
-    assert.doesNotMatch(panel, /method:\s*"POST"/);
-    assert.doesNotMatch(panel, /manual-ai-analyze|ai-analyze\?mode=background/);
+  it("the analysis panel has a MANUAL Run AI Analyze button and is non-SSE", () => {
+    // The panel now contains a visible "Run AI Analyze" button that calls
+    // the manual-ai-analyze endpoint. This is the MANUAL workflow design.
+    assert.match(panel, /Run AI Analyze/);
+    assert.match(panel, /manual-ai-analyze/);
+    // No SSE streaming — status is polled via GET /api/ai-jobs/:id.
     assert.doesNotMatch(panel, /text\/event-stream|getReader\(\)/);
     assert.match(panel, /\/api\/ai-jobs\/\$\{initialContinueJobId\}/);
-    assert.match(panel, /AI Analyze completed/);
+    // The panel shows truthful status messages.
+    assert.match(panel, /AI Analyze complete\. Run Engine to continue\./);
     assert.match(panel, /Check provider diagnostics/);
   });
 });

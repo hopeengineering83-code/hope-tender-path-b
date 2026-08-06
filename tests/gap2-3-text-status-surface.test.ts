@@ -39,20 +39,23 @@ describe("generation remains an automatic text-status surface", () => {
   });
 });
 
-describe("AI Analyze has one automatic status owner", () => {
-  it("keeps the detailed AI panel status-only", () => {
-    assert.doesNotMatch(aiAnalyzePanelCode, /method:\s*"POST"/);
-    assert.doesNotMatch(aiAnalyzePanelCode, /manual-ai-analyze|ai-analyze\?mode=background/);
+describe("AI Analyze has a MANUAL Run AI Analyze button", () => {
+  it("the detailed AI panel contains a visible Run AI Analyze button", () => {
+    assert.match(aiAnalyzePanelCode, /Run AI Analyze/);
+    assert.match(aiAnalyzePanelCode, /manual-ai-analyze/);
     assert.match(aiAnalyzePanelCode, /AI Analyze running/);
     assert.match(aiAnalyzePanelCode, /Analysis complete/);
-    assert.match(aiAnalyzePanelCode, /Automatic AI analysis pending/);
+    // Must NOT say "Automatic AI analysis pending" — AI Analyze is manual.
+    assert.doesNotMatch(aiAnalyzePanelCode, /Automatic AI analysis pending/);
   });
 
-  it("keeps WorkflowStepLinks navigation-only with automatic status copy", () => {
+  it("keeps WorkflowStepLinks navigation-only with truthful status copy", () => {
+    // workflow-step-links must NOT call manual-ai-analyze or engine.
     assert.doesNotMatch(workflowOwnerCode, /manual-ai-analyze/);
     assert.doesNotMatch(workflowOwnerCode, /method:\s*"POST"/);
     assert.doesNotMatch(workflowOwnerCode, /\/api\/tenders\/\$\{tenderId\}\/engine/);
-    assert.match(workflowOwnerCode, /Processing automatically/);
+    // Must show truthful status messages instead of "Processing automatically".
+    assert.doesNotMatch(workflowOwnerCode, /No AI Analyze or Run Engine action is required/);
     assert.match(workflowOwnerCode, /Open \{currentLabel\} details/);
   });
 

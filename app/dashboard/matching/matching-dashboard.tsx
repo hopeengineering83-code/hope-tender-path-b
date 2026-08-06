@@ -64,6 +64,7 @@ export function MatchingDashboard({ tenders, pagination }: { tenders: Tender[]; 
                 </summary>
                 <div className="mt-4">
                   <MatchingSelectedEvidencePanel
+                    tenderId={tender.id}
                     experts={experts}
                     projects={projects}
                     sectionId={`matching-selected-evidence-${tender.id}`}

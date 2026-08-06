@@ -32,7 +32,7 @@ function code(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 }
 
-describe("normal workflow action vocabulary", () => {
+describe("normal workflow action vocabulary — manual AI Analyze / manual Run Engine", () => {
   it("does not instruct removed or nonexistent actions", () => {
     const offenders: string[] = [];
     for (const file of uiFiles()) {
@@ -44,30 +44,56 @@ describe("normal workflow action vocabulary", () => {
     assert.deepEqual(offenders, []);
   });
 
-  it("uses real status owners for automatic AI Analyze and Engine", () => {
+  it("uses real status owners for MANUAL AI Analyze and MANUAL Run Engine", () => {
     const workflow = readFileSync("components/workflow-step-links.tsx", "utf8");
     const aiPanel = readFileSync("components/ai-analyze-panel.tsx", "utf8");
     const matchingPanel = readFileSync("components/matching-selected-evidence-panel.tsx", "utf8");
     assert.match(aiPanel, /id="ai-analyze-section"/);
     assert.match(matchingPanel, /matching-selected-evidence/);
-    assert.match(workflow, /Processing automatically/);
-    assert.doesNotMatch(workflow, /manual-ai-analyze|method:\s*"POST"/);
-    assert.doesNotMatch(workflow, /\/api\/tenders\/\$\{tenderId\}\/engine/);
+    // The workflow step links must NOT use the old "Processing automatically" message
+    // that told users "No AI Analyze or Run Engine action is required."
+    assert.doesNotMatch(workflow, /No AI Analyze or Run Engine action is required/);
+    // The workflow must show truthful status messages.
+    assert.match(workflow, /Run AI Analyze to continue/);
+    assert.match(workflow, /Run Engine to continue/);
+    assert.match(workflow, /Source extraction is running automatically/);
   });
 
-  it("no normal UI file posts either removed canonical mutation", () => {
-    const offenders = uiFiles().filter((file) => {
-      const src = code(readFileSync(file, "utf8"));
-      return /manual-ai-analyze|\/api\/tenders\/\$\{[^}]+\}\/engine/.test(src);
-    });
-    assert.deepEqual(offenders, []);
+  it("the AI Analyze panel contains a visible Run AI Analyze button", () => {
+    const aiPanel = code(readFileSync("components/ai-analyze-panel.tsx", "utf8"));
+    assert.match(aiPanel, /Run AI Analyze/);
+    assert.match(aiPanel, /manual-ai-analyze/);
+    // The button is disabled when conditions are not met.
+    assert.match(aiPanel, /aria-disabled/);
+    assert.match(aiPanel, /disabled=/);
+  });
+
+  it("the matching panel contains a visible Run Engine button", () => {
+    const matchingPanel = code(readFileSync("components/matching-selected-evidence-panel.tsx", "utf8"));
+    assert.match(matchingPanel, /Run Engine/);
+    assert.match(matchingPanel, /\/api\/tenders\/\$\{tenderId\}\/engine/);
+    assert.match(matchingPanel, /aria-disabled/);
+    assert.match(matchingPanel, /disabled=/);
   });
 
   it("Build Plan is status-only and cannot become a third button", () => {
     const buildPlan = code(readFileSync("components/build-submission-plan-button.tsx", "utf8"));
     assert.doesNotMatch(buildPlan, /method:\s*"POST"/);
     assert.doesNotMatch(buildPlan, /<button/);
-    assert.match(buildPlan, /waiting for automatic Engine processing/);
-    assert.match(buildPlan, /No separate Build Plan confirmation is required/);
+  });
+
+  it("no UI file other than the two manual panels posts manual-ai-analyze or engine", () => {
+    // Only ai-analyze-panel.tsx and matching-selected-evidence-panel.tsx may call
+    // the manual mutation endpoints. All other UI files must not.
+    const allowed = new Set([
+      "components/ai-analyze-panel.tsx",
+      "components/matching-selected-evidence-panel.tsx",
+    ]);
+    const offenders = uiFiles().filter((file) => {
+      if (allowed.has(file)) return false;
+      const src = code(readFileSync(file, "utf8"));
+      return /manual-ai-analyze|\/api\/tenders\/\$\{[^}]+\}\/engine/.test(src);
+    });
+    assert.deepEqual(offenders, []);
   });
 });
