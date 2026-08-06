@@ -18,6 +18,7 @@ import { buildPageLedger, type PageLedger } from "./page-ledger";
 import { classifyTender, type TenderClassification } from "./tender-classification";
 import { buildReleaseSnapshotEligibility } from "./release-snapshot-eligibility";
 import { EXTRACTION_OVERRIDE_MAX_AGE_MS } from "./readiness-overrides";
+import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 import {
   isDurablyReviewed,
   isDurablySourceVerified,
@@ -229,7 +230,10 @@ export async function getTenderReleaseSnapshot(
   });
   if (!tender) return null;
 
-  const activeFiles = tender.files.filter((f) => f.deletionStatus === "ACTIVE");
+  // All release gates must evaluate the same authoritative representation set
+  // used by source-readiness, AI Analyze and Engine. Pending/weak duplicate
+  // DOCX/PDF copies are excluded instead of blocking a valid canonical source.
+  const activeFiles = selectCanonicalTenderFiles(tender.files);
   const fileQualities = activeFiles.map((file) => {
     const quality = assessExtractionQuality(file.extractedText, file.originalFileName);
     const score = Math.min(file.extractionScore ?? quality.score, quality.score);
