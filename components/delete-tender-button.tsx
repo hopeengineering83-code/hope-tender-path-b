@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 
 type Props = {
   tenderId: string;
-  tenderTitle: string;
+  tenderTitle?: string;
   compact?: boolean;
 };
 
-export function DeleteTenderButton({ tenderId, tenderTitle, compact = false }: Props) {
+export function DeleteTenderButton({ tenderId, tenderTitle = "this tender", compact = false }: Props) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -47,7 +47,7 @@ export function DeleteTenderButton({ tenderId, tenderTitle, compact = false }: P
         disabled={deleting}
         aria-busy={deleting}
         className={compact
-          ? "inline-flex min-h-11 items-center rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
+          ? "inline-flex min-h-9 items-center rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
           : "inline-flex min-h-11 items-center rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60"}
       >
         {deleting ? "Deleting permanently…" : "Permanently delete"}
