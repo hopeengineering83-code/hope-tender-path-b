@@ -26,6 +26,8 @@ if (isVercel && vercelEnvironment !== "production") {
     "--test",
     "tests/production-recovery-regression.test.ts",
     "tests/manual-workflow-regression.test.ts",
+    "tests/canonical-action-panels.test.ts",
+    "tests/release-snapshot-canonical-sources.test.ts",
   ]);
 } else {
   run(node, ["scripts/migrate-deploy-safe.mjs"]);
