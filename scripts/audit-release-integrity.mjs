@@ -31,7 +31,7 @@ for (const name of lifecycle) {
   );
 }
 check("manual reconciler remains explicit", scripts["reconcile:ai"]?.includes("reconcile-gap-closure"), "reconciler must remain manual");
-check("PostCSS patched resolution pinned", pkg.overrides?.postcss === "8.5.18", "package.json must pin the patched PostCSS resolution");
+check("PostCSS patched resolution pinned", pkg.overrides?.postcss === "8.5.23", "package.json must pin the patched PostCSS resolution");
 
 const migration = read("scripts/migrate-deploy-safe.mjs");
 check("preview migration guard", migration.includes("ALLOW_PREVIEW_DB_MIGRATIONS") && migration.includes("build-only and is not database-verified"), "previews must not mutate a shared database by default");
