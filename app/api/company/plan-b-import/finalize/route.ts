@@ -7,6 +7,7 @@ import {
   finalizePlanBCompanyVault,
   type PlanBFinalizePayload,
 } from "../../../../../lib/plan-b-vault-finalize";
+import { deduplicateCompanyVaultRecords } from "../../../../../lib/plan-b-deduplicate";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 import { logger } from "../../../../../lib/observability";
 
@@ -57,8 +58,9 @@ export async function POST(req: Request) {
       companyId: company.id,
       payload,
     });
+    const deduplication = await deduplicateCompanyVaultRecords(prisma, company.id);
 
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({ success: true, ...result, deduplication });
   } catch (error) {
     logger.error("[plan-b-finalize] failed", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
