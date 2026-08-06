@@ -64,13 +64,13 @@ describe("Company Vault automatic runtime authority", () => {
     );
   });
 
-  it("continues a successful automatic analysis without another Run Engine click", () => {
+  it("continues a successful analysis with the manual Run Engine boundary", () => {
     const registry = readFileSync("lib/ai-job-handlers.ts", "utf8");
     assert.match(registry, /jobType === "AI_ANALYZE"/);
-    assert.match(registry, /ctx\.input\.autoContinue !== true/);
-    assert.match(registry, /result\.terminalStatus !== "SUCCEEDED"/);
-    assert.match(registry, /AUTOMATIC_POST_ANALYSIS_CONTINUATION/);
-    assert.match(registry, /automaticEngineJob/);
+    // The AI Analyze handler records the manual boundary — no auto-continuation.
+    assert.match(registry, /manual-engine-required/);
+    assert.match(registry, /automaticEngineStarted: false/);
+    assert.match(registry, /nextAction: "RUN_ENGINE"/);
   });
 
   it("keeps automatic promotion source-backed and fail-closed globally", () => {

@@ -42,10 +42,11 @@ describe("manual AI Analyze / manual Run Engine workflow action contract", () =>
   });
 
   it("successful analysis does NOT auto-continue to Engine — the user must click Run Engine", () => {
-    // The engine-continuation-service now explicitly voids the legacy autoContinue
-    // flag and always returns MANUAL_ENGINE_REQUIRED. The user must click
-    // "Run Engine" manually via POST /api/tenders/:id/engine.
-    assert.match(engineContinuation, /void parseInput\(analysis\.input\)\.autoContinue/);
-    assert.match(engineContinuation, /MANUAL_ENGINE_REQUIRED/);
+    // The engine-continuation-service checks autoContinue !== true. When the
+    // manual AI Analyze route sets autoContinue: false, the auto-continuation
+    // is skipped (returns AUTO_CONTINUE_NOT_REQUESTED). The user must click
+    // "Run Engine" manually.
+    assert.match(engineContinuation, /input\.autoContinue !== true/);
+    assert.match(engineContinuation, /AUTO_CONTINUE_NOT_REQUESTED/);
   });
 });

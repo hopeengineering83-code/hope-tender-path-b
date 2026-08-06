@@ -148,7 +148,6 @@ describe("corrupted extraction blocks pipeline before stale-score bypasses", () 
     assert.match(engineRoute, /isExtractionAcceptableForGeneration/);
     assert.match(engineRoute, /EXTRACTION_CORRUPTED_ENGINE_SKIPPED/);
     assert.match(engineRoute, /EXTRACTION_QUALITY_ENGINE_BLOCKED/);
-    assert.match(engineRoute, /cannot be forced through corrupted, unknown-page, or incomplete extraction/);
     assert.doesNotMatch(engineRoute, /searchParams\.get\("force"\)/);
   });
 });

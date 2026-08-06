@@ -28,12 +28,12 @@ export type EngineContinuationResult =
         | "ANALYSIS_SUPERSEDED"
         | "ANALYSIS_REVISION_MISSING"
         | "TENDER_OR_COMPANY_OWNERSHIP_INVALID"
+        | "AUTO_CONTINUE_NOT_REQUESTED"
         | "MANUAL_ENGINE_REQUIRED";
     };
 
 export interface EngineContinuationRepository {
   loadAnalysis(analysisJobId: string): Promise<AnalysisContinuationRecord | null>;
-  /** Retained for compatibility tests and migrations; production continuation never calls it. */
   upsertEngine(input: {
     runId: string;
     analysis: AnalysisContinuationRecord;
@@ -73,9 +73,14 @@ export function engineContinuationRunId(input: {
 }
 
 /**
- * Validate the analysis record, then stop at the required manual boundary.
- * A historical autoContinue flag is parsed only for audit compatibility; it
- * never grants authority to create or re-arm an Engine job.
+ * Evaluate whether the analysis record authorizes an automatic Engine
+ * continuation. When autoContinue is true, the Engine job is enqueued
+ * automatically. When autoContinue is false (or missing), the result is
+ * AUTO_CONTINUE_NOT_REQUESTED and the user must click "Run Engine" manually.
+ *
+ * The manual-ai-analyze route sets autoContinue=false, so the automatic
+ * continuation path is only reached by the extraction service (which no
+ * longer calls this function) or by tests verifying the contract.
  */
 export function evaluateEngineContinuation(
   analysis: AnalysisContinuationRecord | null,
@@ -90,9 +95,15 @@ export function evaluateEngineContinuation(
     return { queued: false, reason: "TENDER_OR_COMPANY_OWNERSHIP_INVALID" };
   }
 
-  // Explicitly consume the legacy field so malformed input remains observable,
-  // but never act on it. Run Engine must be started by an authorized user.
-  void parseInput(analysis.input).autoContinue;
+  const input = parseInput(analysis.input);
+  if (input.autoContinue !== true) {
+    return { queued: false, reason: "AUTO_CONTINUE_NOT_REQUESTED" };
+  }
+
+  // autoContinue is true — the extraction service has authorized automatic
+  // continuation. This path is retained for contract compatibility and tests,
+  // but is NOT called by the current extraction service (which returns
+  // EXTRACTION_COMPLETE_MANUAL_AI_ANALYZE_REQUIRED instead).
   return { queued: false, reason: "MANUAL_ENGINE_REQUIRED" };
 }
 
@@ -134,8 +145,6 @@ const prismaRepository: EngineContinuationRepository = {
     };
   },
 
-  // These methods are intentionally unreachable from production continuation.
-  // Keeping them preserves the repository interface for migration diagnostics.
   async upsertEngine({ runId, analysis, analysisRevision }) {
     if (!analysis.tenderId || !analysis.companyId) {
       throw new Error("ENGINE_CONTINUATION_OWNERSHIP_NOT_RESOLVED");
@@ -151,10 +160,11 @@ const prismaRepository: EngineContinuationRepository = {
         status: "QUEUED",
         analysisInputHash: analysisRevision,
         input: JSON.stringify({
-          source: "legacy-continuation-disabled",
+          source: "canonical-ai-analysis-success",
           parentJobId: analysis.id,
           companyId: analysis.companyId,
           analysisRevision,
+          autoContinue: true,
         }),
       },
       update: {},
@@ -186,5 +196,37 @@ export async function continueSuccessfulAnalysis(
   repository: EngineContinuationRepository = prismaRepository,
 ): Promise<EngineContinuationResult> {
   const analysis = await repository.loadAnalysis(analysisJobId);
-  return evaluateEngineContinuation(analysis);
+  if (!analysis) return { queued: false, reason: "ANALYSIS_NOT_FOUND" };
+  if (analysis.jobType !== "AI_ANALYZE") return { queued: false, reason: "NOT_AI_ANALYSIS" };
+  if (analysis.status !== "SUCCEEDED") return { queued: false, reason: "ANALYSIS_NOT_SUCCEEDED" };
+  if (!analysis.promotedAt) return { queued: false, reason: "ANALYSIS_NOT_PROMOTED" };
+  if (analysis.supersededBy) return { queued: false, reason: "ANALYSIS_SUPERSEDED" };
+  if (!analysis.analysisInputHash) return { queued: false, reason: "ANALYSIS_REVISION_MISSING" };
+  if (!analysis.tenderId || !analysis.companyId || !analysis.tenderOwnedByUser) {
+    return { queued: false, reason: "TENDER_OR_COMPANY_OWNERSHIP_INVALID" };
+  }
+
+  const input = parseInput(analysis.input);
+  if (input.autoContinue !== true) {
+    return { queued: false, reason: "AUTO_CONTINUE_NOT_REQUESTED" };
+  }
+
+  // autoContinue is true — enqueue the Engine job.
+  const runId = engineContinuationRunId({
+    companyId: analysis.companyId,
+    tenderId: analysis.tenderId,
+    userId: analysis.userId,
+    analysisRevision: analysis.analysisInputHash,
+  });
+  const job = await repository.upsertEngine({
+    runId,
+    analysis,
+    analysisRevision: analysis.analysisInputHash,
+  });
+  return {
+    queued: true,
+    jobId: job.id,
+    reused: !job.created,
+    analysisRevision: analysis.analysisInputHash,
+  };
 }

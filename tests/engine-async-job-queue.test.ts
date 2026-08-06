@@ -79,17 +79,12 @@ describe("Engine route — production dispatch is always durable and enqueue-onl
     assert.match(route, /\}, \{ status: 202 \}\);/);
   });
 
-  it("automatically continues promoted AI analysis into a persisted Engine job", () => {
+  it("AI Analyze handler records the manual Run Engine boundary", () => {
     assert.match(handler, /jobType === "AI_ANALYZE"/);
-    assert.match(handler, /ctx\.input\.autoContinue !== true/);
-    assert.match(handler, /result\.terminalStatus !== "SUCCEEDED"/);
-    assert.match(handler, /prepareCompanyVaultForEngine\(ctx\.userId\)/);
-    assert.match(handler, /enqueueEngineJobForCurrentSources\(prisma/);
-    assert.match(handler, /AUTOMATIC_POST_ANALYSIS_CONTINUATION/);
-    assert.match(handler, /automaticEngineJob/);
-    assert.match(worker, /const automaticEngineJob = result\.output\?\.automaticEngineJob/);
-    assert.match(worker, /nextJobId = automaticEngineJob\.jobId/);
-    assert.match(worker, /Compatibility for an older\/custom AI handler/);
+    // The AI Analyze handler records the manual boundary — no automatic Engine continuation.
+    assert.match(handler, /manual-engine-required/);
+    assert.match(handler, /automaticEngineStarted: false/);
+    assert.match(handler, /nextAction: "RUN_ENGINE"/);
   });
 
   it("revalidates source revision before execution and before promotion", () => {
