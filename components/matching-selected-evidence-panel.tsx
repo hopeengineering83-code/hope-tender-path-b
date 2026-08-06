@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDownIcon, WarningIcon, BoltIcon } from "./icons";
 
@@ -14,7 +14,40 @@ export type SelectedEvidenceCandidate = {
   trustLevel: string;
 };
 
+type EngineReadiness = {
+  analysisCurrent: boolean;
+  analysisBlocker: string | null;
+  sourceRevision: string | null;
+  engineRunning: boolean;
+  engineComplete: boolean;
+  engineFailed: boolean;
+  canRunEngine: boolean;
+  blocker: string | null;
+  activeJob: { id: string; status: string; createdAt: string } | null;
+  latestJob: {
+    id: string;
+    status: string;
+    errorMessage: string | null;
+    createdAt: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+  } | null;
+};
+
+type Props = {
+  tenderId: string;
+  experts: SelectedEvidenceCandidate[];
+  projects: SelectedEvidenceCandidate[];
+  sectionId?: string;
+  canMutate?: boolean;
+  /** Legacy server hints retained for call-site compatibility only. */
+  analysisComplete?: boolean;
+  engineRunning?: boolean;
+  engineComplete?: boolean;
+};
+
 const ELIGIBLE_EVIDENCE_TRUST_LEVELS = new Set(["SOURCE_VERIFIED", "REVIEWED"]);
+const POLL_INTERVAL_MS = 3_000;
 
 export function isEligibleSelectedEvidence(row: SelectedEvidenceCandidate): boolean {
   return ELIGIBLE_EVIDENCE_TRUST_LEVELS.has(row.trustLevel);
@@ -54,22 +87,15 @@ export function MatchingSelectedEvidencePanel({
   projects,
   sectionId = "matching-selected-evidence",
   canMutate = false,
-  analysisComplete = false,
-  engineRunning = false,
-  engineComplete = false,
-}: {
-  tenderId: string;
-  experts: SelectedEvidenceCandidate[];
-  projects: SelectedEvidenceCandidate[];
-  sectionId?: string;
-  canMutate?: boolean;
-  analysisComplete?: boolean;
-  engineRunning?: boolean;
-  engineComplete?: boolean;
-}) {
+}: Props) {
   const router = useRouter();
+  const deletedRef = useRef(false);
+  const wasRunningRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [readiness, setReadiness] = useState<EngineReadiness | null>(null);
+  const [readinessLoading, setReadinessLoading] = useState(true);
+  const [readinessError, setReadinessError] = useState("");
 
   // A stale selected flag must never make draft, tampered, or otherwise
   // unpromoted Company Vault data visible as selected evidence. Matching uses
@@ -81,24 +107,93 @@ export function MatchingSelectedEvidencePanel({
   const candidates = [...eligibleExperts, ...eligibleProjects].filter((row) => !row.isSelected);
   const hasSelection = selectedExperts.length + selectedProjects.length > 0;
 
-  // Run Engine button is visible when:
-  // - AI Analyze completed successfully
-  // - the user has the required role
-  // - no duplicate Engine job is queued or running
-  const canRunEngine = canMutate && analysisComplete && !engineRunning && !engineComplete && !submitting;
+  const loadReadiness = useCallback(async () => {
+    if (deletedRef.current) return;
+    try {
+      const response = await fetch(`/api/tenders/${tenderId}/engine-readiness`, { cache: "no-store" });
+      if (response.status === 404 || response.status === 410) {
+        deletedRef.current = true;
+        return;
+      }
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.ok) {
+        throw new Error(body?.error || `Engine readiness check failed (HTTP ${response.status}).`);
+      }
+
+      const next: EngineReadiness = {
+        analysisCurrent: Boolean(body.analysisCurrent),
+        analysisBlocker: body.analysisBlocker ? String(body.analysisBlocker) : null,
+        sourceRevision: body.sourceRevision ? String(body.sourceRevision) : null,
+        engineRunning: Boolean(body.engineRunning),
+        engineComplete: Boolean(body.engineComplete),
+        engineFailed: Boolean(body.engineFailed),
+        canRunEngine: Boolean(body.canRunEngine),
+        blocker: body.blocker ? String(body.blocker) : null,
+        activeJob: body.activeJob ?? null,
+        latestJob: body.latestJob ?? null,
+      };
+
+      const justFinished = wasRunningRef.current && !next.engineRunning;
+      wasRunningRef.current = next.engineRunning;
+      setReadiness(next);
+      setReadinessError("");
+      if (justFinished) router.refresh();
+    } catch (reason) {
+      setReadiness(null);
+      setReadinessError(reason instanceof Error ? reason.message : "Unable to verify Engine readiness.");
+    } finally {
+      setReadinessLoading(false);
+    }
+  }, [router, tenderId]);
+
+  useEffect(() => {
+    void loadReadiness();
+    const markDeleted = (event: Event) => {
+      const detail = (event as CustomEvent<{ tenderId?: string }>).detail;
+      if (!detail?.tenderId || detail.tenderId === tenderId) deletedRef.current = true;
+    };
+    window.addEventListener("tender-deletion-started", markDeleted);
+    window.addEventListener("tender-deleted", markDeleted);
+    return () => {
+      window.removeEventListener("tender-deletion-started", markDeleted);
+      window.removeEventListener("tender-deleted", markDeleted);
+    };
+  }, [loadReadiness, tenderId]);
+
+  useEffect(() => {
+    if (!readiness?.engineRunning || deletedRef.current) return;
+    const timer = window.setInterval(() => void loadReadiness(), POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadReadiness, readiness?.engineRunning]);
+
+  const analysisCurrent = readiness?.analysisCurrent === true;
+  const engineRunning = readiness?.engineRunning === true;
+  const engineComplete = readiness?.engineComplete === true;
+
+  // The button is fail-closed until the canonical endpoint confirms that the
+  // promoted AI Analyze result and Engine source revision are both current.
+  const canRunEngine = canMutate
+    && readiness?.canRunEngine === true
+    && !submitting
+    && !readinessLoading
+    && !readinessError;
 
   const disabledReason = !canMutate
     ? "You do not have permission to run Engine."
-    : !analysisComplete
-      ? "Run AI Analyze first."
-      : engineRunning
-        ? "An Engine job is already running."
-        : engineComplete
-          ? "Engine already completed successfully for this revision."
-          : null;
+    : readinessLoading
+      ? "Checking the current analysis and Engine source revision."
+      : readinessError
+        ? readinessError
+        : !analysisCurrent
+          ? readiness?.analysisBlocker ?? readiness?.blocker ?? "Run AI Analyze successfully for the current source revision."
+          : engineRunning
+            ? "An Engine job is already running for this revision."
+            : engineComplete
+              ? "Engine already completed successfully for this revision."
+              : readiness?.blocker;
 
   const runEngine = useCallback(async () => {
-    if (submitting || engineRunning) return;
+    if (!canRunEngine || deletedRef.current) return;
     setSubmitting(true);
     setError("");
     try {
@@ -109,27 +204,49 @@ export function MatchingSelectedEvidencePanel({
       const body = await response.json().catch(() => null);
       if (!response.ok) {
         setError(body?.error || `Engine could not start (HTTP ${response.status}).`);
+        await loadReadiness();
         return;
       }
-      // Job queued successfully — the durable worker will process it.
-      // The UI will poll for status via the job-watching effect.
+
+      wasRunningRef.current = true;
+      setReadiness((current) => current
+        ? {
+            ...current,
+            engineRunning: true,
+            engineComplete: false,
+            engineFailed: false,
+            canRunEngine: false,
+            blocker: null,
+            activeJob: body?.jobId
+              ? { id: String(body.jobId), status: String(body.status ?? "QUEUED"), createdAt: new Date().toISOString() }
+              : current.activeJob,
+          }
+        : current);
+      await loadReadiness();
       router.refresh();
     } catch {
       setError("Network error. The Engine job may still have been created — reload to check status.");
+      await loadReadiness();
     } finally {
       setSubmitting(false);
     }
-  }, [submitting, engineRunning, tenderId, router]);
+  }, [canRunEngine, loadReadiness, router, tenderId]);
 
-  const statusLabel = engineComplete
-    ? "Engine complete. Downstream processing continues automatically."
-    : engineRunning
-      ? "Engine is running."
-      : !analysisComplete
-        ? "Run AI Analyze first to enable Engine."
-        : hasSelection
-          ? "AI Analyze complete. Run Engine to continue."
-          : "AI Analyze complete. Run Engine to start matching.";
+  const statusLabel = readinessLoading
+    ? "Checking the current analysis and Engine revision."
+    : readinessError
+      ? "Engine readiness could not be verified. Run Engine remains disabled."
+      : engineComplete
+        ? "Engine complete. Downstream processing continues automatically."
+        : engineRunning
+          ? "Engine is running as a durable current-revision job."
+          : !analysisCurrent
+            ? readiness?.analysisBlocker ?? "Run AI Analyze first to enable Engine."
+            : readiness?.engineFailed
+              ? readiness.blocker ?? "The latest Engine run failed. Correct the issue and retry."
+              : hasSelection
+                ? "AI Analyze complete. Run Engine to refresh current-revision matching."
+                : "AI Analyze complete. Run Engine to start matching.";
 
   return (
     <section id={sectionId} className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -139,7 +256,6 @@ export function MatchingSelectedEvidencePanel({
         <p className="mt-1 text-sm text-slate-600">{statusLabel}</p>
       </div>
 
-      {/* Run Engine button — visible when eligible */}
       {canMutate && !engineComplete && (
         <div className="mt-4">
           <button
@@ -147,7 +263,7 @@ export function MatchingSelectedEvidencePanel({
             onClick={() => void runEngine()}
             disabled={!canRunEngine}
             aria-disabled={!canRunEngine}
-            aria-busy={submitting || engineRunning}
+            aria-busy={submitting || engineRunning || readinessLoading}
             title={disabledReason ?? "Run Engine"}
             className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
               canRunEngine
@@ -168,7 +284,7 @@ export function MatchingSelectedEvidencePanel({
         <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
           <p className="font-semibold">Engine did not start</p>
           <p className="mt-1 text-red-700">{error}</p>
-          {canMutate && analysisComplete && !engineRunning && (
+          {canRunEngine && (
             <button
               type="button"
               onClick={() => void runEngine()}
@@ -184,7 +300,7 @@ export function MatchingSelectedEvidencePanel({
       {!hasSelection && !engineRunning && !engineComplete && (
         <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           <WarningIcon className="mt-0.5 shrink-0" />
-          <span>No evidence selected yet. Run Engine to start matching.</span>
+          <span>{analysisCurrent ? "No evidence selected yet. Run Engine to start matching." : "No evidence selected yet. Complete AI Analyze before running Engine."}</span>
         </div>
       )}
 
