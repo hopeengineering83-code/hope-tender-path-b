@@ -21,6 +21,19 @@ try {
   process.exit(1);
 }
 
+function advisoryDetails(via) {
+  if (!Array.isArray(via)) return [];
+  return via
+    .filter((item) => item && typeof item === "object")
+    .map((item) => ({
+      source: item.source ?? null,
+      title: item.title ?? null,
+      url: item.url ?? null,
+      range: item.range ?? null,
+      severity: item.severity ?? null,
+    }));
+}
+
 const findings = Object.values(report.vulnerabilities ?? {}).map((finding) => {
   const nodes = Array.isArray(finding.nodes) ? finding.nodes : [];
   const productionNodes = nodes.filter((node) => {
@@ -31,8 +44,11 @@ const findings = Object.values(report.vulnerabilities ?? {}).map((finding) => {
     name: String(finding.name ?? "unknown"),
     severity: String(finding.severity ?? "unknown").toLowerCase(),
     direct: Boolean(finding.isDirect),
+    range: finding.range ? String(finding.range) : null,
     scope: productionNodes.length > 0 ? "runtime" : "development-only",
     nodes: nodes.length,
+    advisories: advisoryDetails(finding.via),
+    transitiveVia: Array.isArray(finding.via) ? finding.via.filter((item) => typeof item === "string") : [],
     fixAvailable: finding.fixAvailable === true
       ? "yes"
       : finding.fixAvailable && typeof finding.fixAvailable === "object"
@@ -48,7 +64,13 @@ if (findings.length === 0) {
 
 console.log("Dependency audit findings:");
 for (const finding of findings.sort((a, b) => (severityRank[b.severity] ?? 0) - (severityRank[a.severity] ?? 0) || a.name.localeCompare(b.name))) {
-  console.log(`- ${finding.name}: ${finding.severity}; ${finding.scope}; direct=${finding.direct}; nodes=${finding.nodes}; fix=${finding.fixAvailable}`);
+  console.log(`- ${finding.name}: ${finding.severity}; ${finding.scope}; direct=${finding.direct}; range=${finding.range ?? "unknown"}; nodes=${finding.nodes}; fix=${finding.fixAvailable}`);
+  for (const advisory of finding.advisories) {
+    console.log(`  advisory=${advisory.source ?? "unknown"}; severity=${advisory.severity ?? "unknown"}; range=${advisory.range ?? "unknown"}; title=${advisory.title ?? "unknown"}; url=${advisory.url ?? "unknown"}`);
+  }
+  if (finding.transitiveVia.length > 0) {
+    console.log(`  via packages=${finding.transitiveVia.join(", ")}`);
+  }
 }
 
 const blocking = findings.filter((finding) => {
