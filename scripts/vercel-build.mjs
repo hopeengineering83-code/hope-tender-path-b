@@ -15,6 +15,7 @@ const isVercel = process.env.VERCEL === "1";
 
 run(node, ["scripts/check-env.mjs"]);
 run(npm, ["run", "prisma:generate"]);
+run(node, ["scripts/audit-dependencies.mjs"]);
 
 if (isVercel && vercelEnvironment !== "production") {
   console.warn(`Skipping database migrations for Vercel ${vercelEnvironment || "non-production"} build.`);
