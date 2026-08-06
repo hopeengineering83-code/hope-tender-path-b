@@ -1,16 +1,14 @@
 // Single source of truth for building the tender-analysis AI input content and
 // its source revision.
 //
-// Every caller must use this builder. The revision is based on source identity,
-// deterministic ordering, bounded extracted content, and the Company Vault
-// digest. Upload integrity is enforced separately before a source can enter the
-// pipeline. Replacing a source through the supported upload path creates a new
-// source ID, so even byte-different files that extract to identical text receive
-// a new revision without requiring every readiness consumer to load raw-byte
-// metadata.
+// Every caller must use this builder. The revision is based on the canonical
+// active source set, deterministic ordering, bounded extracted content, and the
+// Company Vault digest. Duplicate DOCX/PDF representations and pending copies
+// are excluded before content and hashes are produced.
 
 import crypto from "crypto";
 import { formatTenderFileAnalysisMarker } from "./requirement-source-linkage";
+import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 
 export const MAX_FILE_CHARS_FOR_AI_ANALYSIS = (() => {
   const raw = Number(process.env.TENDER_AI_MAX_FILE_CHARS);
@@ -34,10 +32,19 @@ export const SECTION_KEYWORDS = /evaluation|scoring|criteria|submission|deadline
 
 export type AnalysisContentFile = {
   id: string;
+  fileName?: string | null;
   originalFileName: string;
   extractedText?: string | null;
   classification?: string | null;
   createdAt?: Date;
+  deletionStatus?: string | null;
+  contentSha256?: string | null;
+  integrityStatus?: string | null;
+  extractionScore?: number | null;
+  extractionMethod?: string | null;
+  totalPages?: number | null;
+  extractedPages?: number | null;
+  failedPages?: number | null;
 };
 
 export type AnalysisContentCompanyDocument = {
@@ -98,7 +105,7 @@ export function buildTenderAnalysisContent(
   tender: AnalysisContentTender,
   company?: AnalysisContentCompany,
 ): string {
-  const orderedFiles = [...tender.files].sort((a, b) => {
+  const orderedFiles = selectCanonicalTenderFiles(tender.files).sort((a, b) => {
     const at = a.createdAt ? a.createdAt.getTime() : 0;
     const bt = b.createdAt ? b.createdAt.getTime() : 0;
     if (at !== bt) return at - bt;
@@ -132,10 +139,7 @@ export function buildTenderAnalysisContent(
   ].filter(Boolean).join("\n\n").slice(0, MAX_TOTAL_AI_CHARS);
 }
 
-/**
- * Canonical source revision used by analysis jobs, chunks, promotion, readiness,
- * and Engine continuation. Full SHA-256 avoids truncated-hash collisions.
- */
+/** Canonical source revision for AI Analyze, readiness, and Engine. */
 export function computeAnalysisContentHash(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
