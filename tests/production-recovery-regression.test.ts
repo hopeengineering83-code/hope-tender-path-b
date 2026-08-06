@@ -129,12 +129,29 @@ test("manual AI Analyze uses canonical readiness and stops after deletion", () =
   assert.doesNotMatch(panel, /automatically starts AI Analyze/i);
 });
 
+test("successful AI Analyze terminates at the manual Run Engine boundary", () => {
+  const registry = source("lib/ai-job-handlers.ts");
+  assert.match(registry, /stepName: "manual-engine-required"/);
+  assert.match(registry, /nextAction: "RUN_ENGINE"/);
+  assert.match(registry, /automaticEngineStarted: false/);
+  assert.doesNotMatch(registry, /AUTOMATIC_POST_ANALYSIS_CONTINUATION/);
+  assert.doesNotMatch(registry, /engine\.auto-enqueue/);
+});
+
 test("Run Engine is gated by current canonical analysis", () => {
   const route = source("app/api/tenders/[id]/engine/route.ts");
   assert.match(route, /selectCanonicalTenderFiles/);
   assert.match(route, /contentHashMatch/);
   assert.match(route, /CURRENT_ANALYSIS_REQUIRED/);
   assert.match(route, /integrityStatus !== "VERIFIED"/);
+});
+
+test("Engine reuses promoted manual analysis instead of repeating extraction", () => {
+  const engine = source("lib/engine/run-tender-engine.ts");
+  assert.match(engine, /canReusePromotedAnalysis/);
+  assert.match(engine, /no duplicate AI extraction call was made/);
+  assert.match(engine, /requirementsNeedingSourceExtraction/);
+  assert.match(engine, /hasAuthoritativeDeterministicSelection/);
 });
 
 test("matcher requests are bounded and advance through remaining providers", () => {
