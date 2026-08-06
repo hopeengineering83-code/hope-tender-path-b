@@ -183,7 +183,28 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       return { result: result as unknown as Record<string, unknown> };
     } catch (err) {
       clearInterval(heartbeat);
-      await recordStep(ctx.jobId, { stepName: "engine.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      // If the error looks like a Vercel function timeout or network interruption,
+      // mark the job as retryable so the next worker invocation can resume it.
+      // The Engine's internal stages (load → analyze → match → persist) are
+      // idempotent — re-running them on the same tender revision produces the
+      // same results. The AI rematch stage uses content-hash deduplication.
+      const isTransient = /timeout|timed out|ECONNRESET|fetch failed|network|aborted|socket hang up|FUNCTION_INVOCATION_TIMEOUT/i.test(errorMsg);
+      if (isTransient) {
+        await recordStep(ctx.jobId, {
+          stepName: "engine.transient-error",
+          message: `Engine interrupted by transient error (will resume on next worker invocation): ${errorMsg.slice(0, 200)}`,
+          status: "RUNNING",
+        });
+        // Return a retryable result — the job stays RUNNING and the next
+        // worker invocation (cron or browser poll) will resume it.
+        return {
+          code: "ENGINE_TRANSIENT_RETRY",
+          message: "Engine interrupted by transient error — will resume on next worker invocation",
+          retryable: true,
+        };
+      }
+      await recordStep(ctx.jobId, { stepName: "engine.failed", message: errorMsg, status: "FAILED" });
       throw err;
     }
   },

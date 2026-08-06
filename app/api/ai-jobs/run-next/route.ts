@@ -224,6 +224,38 @@ export async function POST(req: Request) {
           analysisRevision,
         });
       } else {
+        // Check if this is a transient retry result (e.g. Engine interrupted
+        // by Vercel function timeout). If so, leave the job RUNNING so the
+        // next worker invocation can resume it.
+        const isTransientRetry = Boolean(
+          result &&
+            typeof result === "object" &&
+            "retryable" in result &&
+            (result as Record<string, unknown>).retryable === true &&
+            "code" in result &&
+            typeof (result as Record<string, unknown>).code === "string" &&
+            String((result as Record<string, unknown>).code).includes("TRANSIENT_RETRY"),
+        );
+
+        if (isTransientRetry) {
+          // Leave the job RUNNING — do NOT call completeJob or failJob.
+          // The next worker invocation (cron or browser poll) will resume it.
+          processedJobs.push({
+            jobId: claimed.id,
+            jobType: claimed.jobType,
+            status: "RUNNING",
+            terminalStatus: undefined,
+            resultCode: String((result as Record<string, unknown>).code ?? ""),
+            retryable: true,
+            correlationId: undefined,
+            retryScheduled: false,
+            nextJobId: undefined,
+            nextJobType: undefined,
+            continuationReason: "Transient error — job will resume on next worker invocation",
+            continuationReused: undefined,
+            analysisRevision: undefined,
+          });
+        } else {
         await completeJob(claimed.id, result);
 
         let nextJobId: string | undefined;
@@ -303,6 +335,7 @@ export async function POST(req: Request) {
           analysisRevision,
           generationBlockerCode,
         });
+        } // end of else (non-transient result)
       }
     } catch (error) {
       const correlationId = require("crypto").randomUUID().slice(0, 8);
