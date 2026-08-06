@@ -34,14 +34,17 @@ describe("Next Required Action icons", () => {
   });
 });
 
-describe("automatic Analyze and Engine stages are status-only", () => {
+describe("MANUAL Analyze and Engine stages show truthful status", () => {
   const owner = read("components/workflow-step-links.tsx");
 
-  it("shows automatic processing without rendering Analyze or Engine buttons", () => {
-    assert.match(owner, /Processing automatically/);
-    assert.match(owner, /No AI Analyze or Run Engine action is required/);
+  it("shows truthful status messages without the old 'no action required' copy", () => {
+    // The workflow must NOT say "No AI Analyze or Run Engine action is required."
+    assert.doesNotMatch(owner, /No AI Analyze or Run Engine action is required/);
+    // Instead it must show truthful status messages.
+    assert.match(owner, /Run AI Analyze to continue/);
+    assert.match(owner, /Run Engine to continue/);
+    // workflow-step-links is navigation-only — no buttons, no manual actions.
     assert.doesNotMatch(owner, /manualAction|runManualAction|wakeWorker/);
-    assert.doesNotMatch(owner, /SparklesIcon|BoltIcon/);
     assert.doesNotMatch(owner, /<button/);
   });
 
