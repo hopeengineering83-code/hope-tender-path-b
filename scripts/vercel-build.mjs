@@ -19,6 +19,14 @@ run(npm, ["run", "prisma:generate"]);
 if (isVercel && vercelEnvironment !== "production") {
   console.warn(`Skipping database migrations for Vercel ${vercelEnvironment || "non-production"} build.`);
   console.warn("Preview builds are compile-and-test only; they never mutate the shared Production database.");
+  run(npm, [
+    "exec",
+    "--",
+    "tsx",
+    "--test",
+    "tests/production-recovery-regression.test.ts",
+    "tests/manual-workflow-regression.test.ts",
+  ]);
 } else {
   run(node, ["scripts/migrate-deploy-safe.mjs"]);
 }
