@@ -42,11 +42,13 @@ describe("manual AI Analyze / manual Run Engine workflow action contract", () =>
   });
 
   it("successful analysis does NOT auto-continue to Engine — the user must click Run Engine", () => {
-    // The engine-continuation-service checks autoContinue !== true. When the
-    // manual AI Analyze route sets autoContinue: false, the auto-continuation
-    // is skipped (returns AUTO_CONTINUE_NOT_REQUESTED). The user must click
-    // "Run Engine" manually.
-    assert.match(engineContinuation, /input\.autoContinue !== true/);
-    assert.match(engineContinuation, /AUTO_CONTINUE_NOT_REQUESTED/);
+    // The engine-continuation-service NEVER enqueues an Engine job. It always
+    // returns MANUAL_ENGINE_REQUIRED when the analysis is valid. The legacy
+    // autoContinue field is parsed and discarded — never acted upon.
+    assert.match(engineContinuation, /never act on it/i);
+    assert.match(engineContinuation, /MANUAL_ENGINE_REQUIRED/);
+    // The function must not contain any upsertEngine or rearmFailedEngine calls.
+    assert.doesNotMatch(engineContinuation, /upsertEngine\(/);
+    assert.doesNotMatch(engineContinuation, /rearmFailedEngine\(/);
   });
 });

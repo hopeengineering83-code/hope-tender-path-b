@@ -194,17 +194,11 @@ export async function POST(req: Request) {
               ? automaticEngineJob.sourceRevision
               : undefined;
           } else {
-            // Compatibility for an older/custom AI handler that has not yet
-            // adopted canonical automatic enqueueing.
+            // continueSuccessfulAnalysis always returns MANUAL_ENGINE_REQUIRED.
+            // It NEVER creates or enqueues an Engine job. The user must
+            // manually click Run Engine via POST /api/tenders/:id/engine.
             const continuation = await continueSuccessfulAnalysis(claimed.id);
-            if (continuation.queued) {
-              nextJobId = continuation.jobId;
-              nextJobType = "ENGINE_RUN";
-              continuationReused = continuation.reused;
-              analysisRevision = continuation.analysisRevision;
-            } else {
-              continuationReason = continuation.reason;
-            }
+            continuationReason = continuation.reason;
           }
         }
 

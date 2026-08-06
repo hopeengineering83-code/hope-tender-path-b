@@ -95,13 +95,17 @@ describe("REGRESSION: AI Analyze and Run Engine cannot start automatically", () 
   it("compatibility continuation service cannot create Engine automatically", () => {
     const continuation = readCode("lib/ai-jobs/engine-continuation-service.ts");
     assert.match(continuation, /MANUAL_ENGINE_REQUIRED/);
-    assert.match(continuation, /never act on it/);
-    const functionStart = continuation.indexOf("export function evaluateEngineContinuation");
-    const functionEnd = continuation.indexOf("const prismaRepository");
-    assert.ok(functionStart >= 0 && functionEnd > functionStart);
-    const executableContinuation = continuation.slice(functionStart, functionEnd);
-    assert.doesNotMatch(executableContinuation, /upsertEngine\(/);
-    assert.doesNotMatch(executableContinuation, /rearmFailedEngine\(/);
+    assert.match(continuation, /Never act on it/);
+    // The entire file must not contain upsertEngine or rearmFailedEngine.
+    assert.doesNotMatch(continuation, /upsertEngine\(/);
+    assert.doesNotMatch(continuation, /rearmFailedEngine\(/);
+    // continueSuccessfulAnalysis must not enqueue anything.
+    const fnStart = continuation.indexOf("export async function continueSuccessfulAnalysis");
+    assert.ok(fnStart >= 0, "continueSuccessfulAnalysis must exist");
+    const fnBody = continuation.slice(fnStart);
+    assert.doesNotMatch(fnBody, /upsertEngine\(/);
+    assert.doesNotMatch(fnBody, /rearmFailedEngine\(/);
+    assert.doesNotMatch(fnBody, /queued: true/);
   });
 
   it("after explicit Run Engine succeeds, proposal generation and finalization continue automatically", () => {
