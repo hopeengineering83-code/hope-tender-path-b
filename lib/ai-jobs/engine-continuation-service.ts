@@ -23,16 +23,17 @@ export type EngineContinuationResult =
       reason:
         | "ANALYSIS_NOT_FOUND"
         | "NOT_AI_ANALYSIS"
-        | "AUTO_CONTINUE_NOT_REQUESTED"
         | "ANALYSIS_NOT_SUCCEEDED"
         | "ANALYSIS_NOT_PROMOTED"
         | "ANALYSIS_SUPERSEDED"
         | "ANALYSIS_REVISION_MISSING"
-        | "TENDER_OR_COMPANY_OWNERSHIP_INVALID";
+        | "TENDER_OR_COMPANY_OWNERSHIP_INVALID"
+        | "MANUAL_ENGINE_REQUIRED";
     };
 
 export interface EngineContinuationRepository {
   loadAnalysis(analysisJobId: string): Promise<AnalysisContinuationRecord | null>;
+  /** Retained for compatibility tests and migrations; production continuation never calls it. */
   upsertEngine(input: {
     runId: string;
     analysis: AnalysisContinuationRecord;
@@ -47,13 +48,8 @@ function parseInput(value: string): Record<string, unknown> {
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? parsed as Record<string, unknown>
       : {};
-  } catch (e) {
-    // Malformed continuation record JSON.parse — return {} so caller treats
-    // the record as having no input. Surface the failure so malformed
-    // continuation metadata is observable (a series suggests a producer bug).
-    logger.warn("[engine-continuation-service] failed to parse continuation record input — returning {}", {
-      detail: e,
-    });
+  } catch (error) {
+    logger.warn("[engine-continuation-service] failed to parse analysis input", { detail: error });
     return {};
   }
 }
@@ -76,14 +72,16 @@ export function engineContinuationRunId(input: {
   return `pipeline:engine:${digest}`;
 }
 
+/**
+ * Validate the analysis record, then stop at the required manual boundary.
+ * A historical autoContinue flag is parsed only for audit compatibility; it
+ * never grants authority to create or re-arm an Engine job.
+ */
 export function evaluateEngineContinuation(
   analysis: AnalysisContinuationRecord | null,
-): Exclude<EngineContinuationResult, { queued: true }> | null {
+): Exclude<EngineContinuationResult, { queued: true }> {
   if (!analysis) return { queued: false, reason: "ANALYSIS_NOT_FOUND" };
   if (analysis.jobType !== "AI_ANALYZE") return { queued: false, reason: "NOT_AI_ANALYSIS" };
-  if (parseInput(analysis.input).autoContinue !== true) {
-    return { queued: false, reason: "AUTO_CONTINUE_NOT_REQUESTED" };
-  }
   if (analysis.status !== "SUCCEEDED") return { queued: false, reason: "ANALYSIS_NOT_SUCCEEDED" };
   if (!analysis.promotedAt) return { queued: false, reason: "ANALYSIS_NOT_PROMOTED" };
   if (analysis.supersededBy) return { queued: false, reason: "ANALYSIS_SUPERSEDED" };
@@ -91,7 +89,11 @@ export function evaluateEngineContinuation(
   if (!analysis.tenderId || !analysis.companyId || !analysis.tenderOwnedByUser) {
     return { queued: false, reason: "TENDER_OR_COMPANY_OWNERSHIP_INVALID" };
   }
-  return null;
+
+  // Explicitly consume the legacy field so malformed input remains observable,
+  // but never act on it. Run Engine must be started by an authorized user.
+  void parseInput(analysis.input).autoContinue;
+  return { queued: false, reason: "MANUAL_ENGINE_REQUIRED" };
 }
 
 const prismaRepository: EngineContinuationRepository = {
@@ -132,6 +134,8 @@ const prismaRepository: EngineContinuationRepository = {
     };
   },
 
+  // These methods are intentionally unreachable from production continuation.
+  // Keeping them preserves the repository interface for migration diagnostics.
   async upsertEngine({ runId, analysis, analysisRevision }) {
     if (!analysis.tenderId || !analysis.companyId) {
       throw new Error("ENGINE_CONTINUATION_OWNERSHIP_NOT_RESOLVED");
@@ -147,10 +151,7 @@ const prismaRepository: EngineContinuationRepository = {
         status: "QUEUED",
         analysisInputHash: analysisRevision,
         input: JSON.stringify({
-          source: "canonical-ai-analysis-success",
-          safe: true,
-          skipAiRematch: true,
-          autoContinue: true,
+          source: "legacy-continuation-disabled",
           parentJobId: analysis.id,
           companyId: analysis.companyId,
           analysisRevision,
@@ -185,24 +186,5 @@ export async function continueSuccessfulAnalysis(
   repository: EngineContinuationRepository = prismaRepository,
 ): Promise<EngineContinuationResult> {
   const analysis = await repository.loadAnalysis(analysisJobId);
-  const blocked = evaluateEngineContinuation(analysis);
-  if (blocked) return blocked;
-
-  const eligible = analysis!;
-  const analysisRevision = eligible.analysisInputHash!;
-  const runId = engineContinuationRunId({
-    companyId: eligible.companyId!,
-    tenderId: eligible.tenderId!,
-    userId: eligible.userId,
-    analysisRevision,
-  });
-  const engine = await repository.upsertEngine({ runId, analysis: eligible, analysisRevision });
-  await repository.rearmFailedEngine(engine.id);
-
-  return {
-    queued: true,
-    jobId: engine.id,
-    reused: !engine.created,
-    analysisRevision,
-  };
+  return evaluateEngineContinuation(analysis);
 }
