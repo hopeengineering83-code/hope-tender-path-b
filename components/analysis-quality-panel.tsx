@@ -5,22 +5,24 @@ import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
 import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
 import { inferSector } from "../lib/engine/proposal-intelligence";
 import { getEffectiveTenderFacts } from "../lib/engine/effective-tender-facts";
-import { statusToSeverity, severityBgClass, severityBorderClass, severityTextClass, scoreToSeverity } from "../lib/ui-tokens";
+import { getTenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
 
 function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
-  if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by AI provider." };
-  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback (draft-approved)", risk: "MEDIUM" as const, detail: "Approved for draft review only. Not approved for final export because extraction is weak; final export requires reliable extraction or an explicit admin override." };
-  if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed or were unavailable — regex extraction was used. Review carefully before submission." };
-  return { label: "Unknown", risk: "MEDIUM" as const, detail: "Analysis source not yet determined. Analysis runs automatically once extraction is reliable enough; the source is recorded here when it completes." };
+  if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by an AI provider." };
+  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback", risk: "MEDIUM" as const, detail: "Draft-only fallback; not final-export authority." };
+  if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed and regex extraction was used." };
+  return { label: "Not current", risk: "MEDIUM" as const, detail: "Run AI Analyze manually after canonical extraction is ready." };
 }
 
-function isUntrustedAnalysisStatus(status?: string | null) {
-  return status === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION" ||
-    status === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
-    status === "OCR_REQUIRED" ||
-    status === "EXTRACTION_WEAK_REVIEW_REQUIRED" ||
-    status === "AI_ANALYSIS_PARTIAL" ||
-    status === "PARTIAL_EXTRACTION_AI_ANALYZED";
+function isUntrustedStatus(status?: string | null) {
+  return [
+    "REGEX_FALLBACK_FROM_WEAK_EXTRACTION",
+    "EXTRACTION_CORRUPTED_AI_SKIPPED",
+    "OCR_REQUIRED",
+    "EXTRACTION_WEAK_REVIEW_REQUIRED",
+    "AI_ANALYSIS_PARTIAL",
+    "PARTIAL_EXTRACTION_AI_ANALYZED",
+  ].includes(status ?? "");
 }
 
 export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
@@ -28,31 +30,34 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   if (!userId) return null;
 
   await prismaReady;
-  const tender = await prisma.tender.findFirst({
-    where: { id: tenderId, userId },
-    include: {
-      requirements: { orderBy: { createdAt: "asc" } },
-    },
-  });
+  const [tender, snapshot] = await Promise.all([
+    prisma.tender.findFirst({
+      where: { id: tenderId, userId },
+      include: { requirements: { orderBy: { createdAt: "asc" } } },
+    }),
+    getTenderReleaseSnapshot(prisma, tenderId, userId).catch(() => null),
+  ]);
   if (!tender) return null;
 
-  const rawMetrics = await prisma.$queryRaw<Array<{ extractedChars: number; totalPageCount: number }>>`
-    SELECT
-      COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedChars",
-      COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
-    FROM "TenderFile"
-    WHERE "tenderId" = ${tenderId}
-  `.catch(() => [{ extractedChars: 0, totalPageCount: 0 }]);
-  const [{ extractedChars, totalPageCount }] = rawMetrics.length > 0 ? rawMetrics : [{ extractedChars: 0, totalPageCount: 0 }];
+  // Count only canonical source files from the release snapshot. This avoids
+  // duplicate DOCX/PDF representations inflating extracted character totals.
+  const canonicalFileIds = snapshot?.extraction.files.map((file) => file.id) ?? [];
+  const metrics = canonicalFileIds.length > 0
+    ? await prisma.$queryRaw<Array<{ extractedChars: number; totalPageCount: number }>>`
+        SELECT
+          COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedChars",
+          COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
+        FROM "TenderFile"
+        WHERE id = ANY(${canonicalFileIds}::text[])
+      `.catch(() => [{ extractedChars: 0, totalPageCount: 0 }])
+    : [{ extractedChars: 0, totalPageCount: 0 }];
+  const [{ extractedChars, totalPageCount }] = metrics;
 
-  const rawSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
-  const effectiveFacts = await getEffectiveTenderFacts(prisma, tenderId, userId).catch(() => null);
+  const [rawSource, effectiveFacts] = await Promise.all([
+    detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const),
+    getEffectiveTenderFacts(prisma, tenderId, userId).catch(() => null),
+  ]);
 
-  // Analysis Quality is authoritative only for extraction, requirements,
-  // Tender Details, submission instructions, and source grounding. Evidence
-  // matching is intentionally excluded here; Stage 3 Matching Quality owns it.
-  // This prevents two different matching scores and recommendations from being
-  // shown on the same tender workspace.
   const quality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
     analysisSummary: tender.analysisSummary,
@@ -60,7 +65,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     submissionNotes: [tender.notes, tender.intakeSummary].filter(Boolean).join("\n\n"),
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
-    clientName: effectiveFacts?.clientOrProcuringEntity ?? (tender.clientName || (tender as Record<string, unknown>).procuringEntityName as string | null | undefined),
+    clientName: effectiveFacts?.clientOrProcuringEntity ?? tender.procuringEntityName ?? tender.clientName,
     referenceNumber: effectiveFacts?.referenceNumber ?? tender.reference,
     country: effectiveFacts?.country ?? tender.country,
     clientContactName: tender.clientContactName,
@@ -78,128 +83,108 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     analysisSource: rawSource,
   });
 
-  const analysisSource = analysisSourceSummary(rawSource);
-  const sourceIsFallbackOrUnknown = rawSource !== "AI";
-  const untrustedStatus = isUntrustedAnalysisStatus(tender.analysisExtractionStatus);
-  const fallbackOnly = quality.isRegexFallback || sourceIsFallbackOrUnknown || untrustedStatus;
-  const ready = quality.severity !== "POOR" && quality.severity !== "UNSAFE" && analysisSource.risk === "LOW" && !fallbackOnly;
-  const sectorProbeText = [tender.analysisSummary, tender.intakeSummary, tender.notes, tender.title, tender.description].filter(Boolean).join("\n\n");
-  const detectedSector = sectorProbeText.trim().length > 20 ? inferSector(sectorProbeText) : null;
-  const sourceSev = statusToSeverity(fallbackOnly ? (analysisSource.risk === "HIGH" || untrustedStatus ? "HIGH" : "MEDIUM") : "GOOD");
-  const sourceRiskClass = `${severityBgClass(sourceSev).replace("-50", "-100")} ${severityTextClass(sourceSev)}`;
-  const severityClass: Record<string, string> = {
-    GOOD: fallbackOnly ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-700",
-    WARNING: "bg-amber-100 text-amber-800",
-    POOR: "bg-red-100 text-red-700",
-    UNSAFE: "bg-red-200 text-red-800",
-  };
-  const sectionSev = ready ? "good" as const : fallbackOnly ? "warning" as const : "poor" as const;
-  const sectionClass = `${severityBorderClass(sectionSev)} ${severityBgClass(sectionSev)}`;
-  const headerTone = severityTextClass(sectionSev);
-  const analysisSubScores = Object.entries(quality.subScores).filter(([key]) => key !== "matchingReadiness") as [string, number][];
+  const source = analysisSourceSummary(rawSource);
+  const analysisCurrent = Boolean(
+    snapshot?.analysis.state === "AI_SUCCEEDED"
+    && snapshot.analysis.contentHashMatch
+    && snapshot.analysis.canonicalJobId,
+  );
+  const canonicalExtractionReady = snapshot?.extraction.overallOk === true;
+  const fallbackOnly = quality.isRegexFallback || rawSource !== "AI" || isUntrustedStatus(tender.analysisExtractionStatus);
+  const ready = analysisCurrent
+    && canonicalExtractionReady
+    && !fallbackOnly
+    && quality.severity !== "POOR"
+    && quality.severity !== "UNSAFE";
+  const displayedScore = ready ? quality.score : Math.min(quality.score, 69);
+  const tone = ready
+    ? "border-emerald-200 bg-emerald-50"
+    : "border-amber-200 bg-amber-50";
+  const badge = ready
+    ? "bg-emerald-100 text-emerald-700"
+    : "bg-amber-100 text-amber-800";
+  const sectorProbe = [tender.analysisSummary, tender.intakeSummary, tender.notes, tender.title, tender.description]
+    .filter(Boolean)
+    .join("\n\n");
+  const detectedSector = sectorProbe.trim().length > 20 ? inferSector(sectorProbe) : null;
+  const subScores = Object.entries(quality.subScores)
+    .filter(([key]) => key !== "matchingReadiness") as [string, number][];
 
   return (
-    <section id="analysis-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionClass}`}>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className={`text-xs font-semibold uppercase tracking-wide ${headerTone}`}>Analysis quality</p>
-          <h2 className="mt-1 text-lg font-bold text-slate-900">{ready ? "Tender analysis appears usable" : "Tender analysis needs review"}</h2>
-          <p className="mt-1 text-sm text-slate-600">Checks extraction, structured requirements, submission rules, Tender Details, exact file instructions, and source grounding.</p>
-          <p className="mt-1 text-xs text-slate-500">Evidence matching is evaluated separately in Stage 3; this panel does not publish a competing matching score.</p>
+    <section id="analysis-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${tone}`}>
+      <p className={`text-xs font-semibold uppercase tracking-wide ${ready ? "text-emerald-700" : "text-amber-800"}`}>Analysis quality</p>
+      <h2 className="mt-1 text-lg font-bold text-slate-900">
+        {ready ? "Tender analysis is current and usable" : "Tender analysis is stale, incomplete, or blocked"}
+      </h2>
+      <p className="mt-1 text-sm text-slate-600">
+        This score covers canonical extraction, requirements, tender details, submission instructions, and source grounding. Evidence matching remains separate.
+      </p>
+
+      {!analysisCurrent ? (
+        <div className="mt-3 rounded-xl border border-amber-300 bg-white p-3 text-sm text-amber-900">
+          Previous analysis does not match the current canonical source revision. Run AI Analyze again before Run Engine.
+          {snapshot?.analysis.blocker ? <p className="mt-1 text-xs text-amber-800">{snapshot.analysis.blocker}</p> : null}
         </div>
-      </div>
+      ) : null}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-xl bg-white p-3">
           <p className="text-xs text-slate-500">Analysis score</p>
-          <p className="text-xl font-bold text-slate-900">{quality.score}/100</p>
-          <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${severityClass[quality.severity] ?? "bg-slate-100 text-slate-600"}`}>{fallbackOnly && quality.severity === "GOOD" ? "REVIEW" : quality.severity}</span>
-          {quality.isRegexFallback && <p className="mt-0.5 text-[10px] text-amber-800 leading-tight">Score capped — regex fallback</p>}
+          <p className="text-xl font-bold text-slate-900">{displayedScore}/100</p>
+          <span className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${badge}`}>{ready ? "CURRENT" : "REVIEW"}</span>
         </div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Requirements</p><p className="text-xl font-bold text-slate-900">{quality.requirementCount}</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Mandatory</p><p className="text-xl font-bold text-slate-900">{quality.mandatoryCount}</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Source refs</p><p className="text-xl font-bold text-slate-900">{quality.sourceReferencedCount}</p></div>
-        <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">Extracted text</p><p className="text-xl font-bold text-slate-900">{extractedChars.toLocaleString()}</p></div>
+        <Metric label="Requirements" value={quality.requirementCount} />
+        <Metric label="Mandatory" value={quality.mandatoryCount} />
+        <Metric label="Source refs" value={quality.sourceReferencedCount} />
+        <Metric label="Canonical text" value={extractedChars.toLocaleString()} />
       </div>
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        {analysisSubScores.map(([key, val]) => {
-          const label: Record<string, string> = {
-            extractionQuality: "Extraction",
-            requirementExtraction: "Requirements",
-            metadataQuality: "Tender Details",
-            submissionPlanQuality: "Submission",
-            sourceGrounding: "Grounding",
-          };
-          const color = severityTextClass(fallbackOnly ? "warning" : scoreToSeverity(val, { good: 70, warn: 40 }));
-          return (
-            <div key={key} className="rounded-lg bg-white/70 px-2 py-1.5 text-center">
-              <p className="text-[10px] text-slate-500">{label[key] ?? key}</p>
-              <p className={`text-sm font-bold ${color}`}>{val}</p>
-            </div>
-          );
-        })}
-      </div>
-
-      <div className="mt-4 rounded-xl border border-white/70 bg-white p-3 text-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="font-semibold text-slate-900">Analysis source:</p>
-          <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${sourceRiskClass}`}>{analysisSource.label}</span>
-          {tender.analysisExtractionStatus && (() => {
-            const statusLabels: Record<string, { label: string; cls: string }> = {
-              FULL_EXTRACTION_AI_ANALYZED:        { label: "Full extraction", cls: "bg-green-100 text-green-700" },
-              PARTIAL_EXTRACTION_AI_ANALYZED:     { label: "Partial extraction", cls: "bg-amber-100 text-amber-800" },
-              OCR_REQUIRED:                       { label: "OCR required", cls: "bg-amber-100 text-amber-800" },
-              EXTRACTION_WEAK_REVIEW_REQUIRED:    { label: "Weak — review required", cls: "bg-red-100 text-red-700" },
-              REGEX_FALLBACK_FROM_WEAK_EXTRACTION:{ label: "Regex fallback (weak)", cls: "bg-red-100 text-red-700" },
-              EXTRACTION_CORRUPTED_AI_SKIPPED:    { label: "Extraction corrupted", cls: "bg-red-100 text-red-700" },
-              AI_ANALYZED:                        { label: "AI analyzed", cls: "bg-green-100 text-green-700" },
-              AI_ANALYSIS_PARTIAL:                { label: "AI (partial)", cls: "bg-amber-100 text-amber-800" },
-            };
-            const s = statusLabels[tender.analysisExtractionStatus] ?? { label: tender.analysisExtractionStatus, cls: "bg-slate-100 text-slate-600" };
-            return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${s.cls}`}>{s.label}</span>;
-          })()}
-        </div>
-        <p className="mt-1 text-slate-600">{analysisSource.detail}</p>
-        {analysisSource.risk === "HIGH" && (
-          <p className="mt-2 text-red-700">High risk: untrusted extraction can miss exact forms, evaluation scoring, file names, submission instructions, and expert/project requirements. Check extraction quality and AI provider health. The Engine runs automatically.</p>
-        )}
-        {fallbackOnly && analysisSource.risk !== "HIGH" && (
-          <p className="mt-2 text-amber-800">Fallback or partial analysis is for draft review only. Do not treat this as final-export ready until extraction and AI analysis are reliable.</p>
-        )}
-      </div>
-
-      {detectedSector && (
-        <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3 text-sm">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="font-semibold text-slate-900">Detected sector:</p>
-            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">{detectedSector}</span>
+        {subScores.map(([key, value]) => (
+          <div key={key} className="rounded-lg bg-white/80 px-2 py-1.5 text-center">
+            <p className="text-[10px] text-slate-500">{({
+              extractionQuality: "Extraction",
+              requirementExtraction: "Requirements",
+              metadataQuality: "Tender Details",
+              submissionPlanQuality: "Submission",
+              sourceGrounding: "Grounding",
+            } as Record<string, string>)[key] ?? key}</p>
+            <p className={`text-sm font-bold ${value >= 70 && ready ? "text-emerald-700" : value >= 40 ? "text-amber-800" : "text-red-700"}`}>{value}</p>
           </div>
-          <p className={`mt-1 text-xs ${fallbackOnly ? "text-amber-800" : "text-slate-500"}`}>
-            {fallbackOnly
-              ? "Sector inferred from untrusted analysis. Confirm manually before generation."
-              : "Inferred from tender summary. If incorrect, update the tender title/description — sector detection influences proposal methodology framing."}
-          </p>
-        </div>
-      )}
+        ))}
+      </div>
 
-      {quality.metadataIssues.length > 0 && (
-        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+      <div className="mt-4 rounded-xl border border-white bg-white p-3 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-slate-900">Analysis source:</span>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${source.risk === "LOW" && analysisCurrent ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>{source.label}</span>
+          {detectedSector ? <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">{detectedSector}</span> : null}
+        </div>
+        <p className="mt-1 text-slate-600">{source.detail}</p>
+        <p className="mt-2 text-xs text-slate-500">AI Analyze and Run Engine are manual actions. Automatic processing starts only after Run Engine succeeds.</p>
+      </div>
+
+      {quality.metadataIssues.length > 0 ? (
+        <div className="mt-3 rounded-xl border border-amber-200 bg-white p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-semibold text-amber-800">Tender Details issues ({quality.metadataIssues.length})</p>
             <Link href={`/dashboard/tenders/${tenderId}#tender-edit-form`} className="text-xs font-semibold text-amber-800 underline">Review Tender Details</Link>
           </div>
           <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-amber-800">
-            {quality.metadataIssues.map((issue) => <li key={issue}>{issue}</li>)}
+            {quality.metadataIssues.slice(0, 8).map((issue) => <li key={issue}>{issue}</li>)}
           </ul>
         </div>
-      )}
+      ) : null}
 
-      {quality.warnings.length > 0 && (
+      {quality.warnings.length > 0 ? (
         <ul className="mt-4 list-disc space-y-1 pl-5 text-sm text-slate-700">
           {quality.warnings.slice(0, 5).map((warning) => <li key={warning}>{warning}</li>)}
         </ul>
-      )}
+      ) : null}
     </section>
   );
+}
+
+function Metric({ label, value }: { label: string; value: string | number }) {
+  return <div className="rounded-xl bg-white p-3"><p className="text-xs text-slate-500">{label}</p><p className="text-xl font-bold text-slate-900">{value}</p></div>;
 }
