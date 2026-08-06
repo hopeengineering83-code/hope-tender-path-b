@@ -1,10 +1,8 @@
 // Canonical AI job-handler registry.
-import { checkEnginePostconditions } from "./engine/engine-postconditions";
 //
-// The historical handler set remains in ai-job-handlers-legacy.ts for the
-// non-extraction workflows. EXTRACT_TEXT is deliberately owned by the
-// revision-bound background extraction service so upload requests never run
-// extraction/OCR and a stale or cross-tenant source cannot be processed.
+// EXTRACT_TEXT is owned by the revision-bound extraction service. AI Analyze
+// and Run Engine remain two explicit user actions; only work after the manual
+// Engine job continues automatically.
 
 export * from "./ai-job-handlers-legacy";
 
@@ -19,7 +17,6 @@ import { prepareCompanyVaultForEngine } from "./engine/prepare-company-vault";
 import { buildAndVerifyBuildPlan } from "./engine/automatic-build-plan";
 import { reconcileAutomaticRequirementCoverage } from "./engine/reconcile-automatic-requirement-coverage";
 import { computeEngineSourceRevision } from "./engine/engine-source-revision";
-import { enqueueEngineJobForCurrentSources } from "./engine/enqueue-engine-job";
 import { prisma } from "./prisma";
 
 async function assertCurrentEngineSourceRevision(input: {
@@ -62,63 +59,37 @@ export function getHandler(jobType: JobType): JobHandler | null {
   if (jobType === "AI_ANALYZE" && legacyHandler) {
     return async (ctx) => {
       const result = await legacyHandler(ctx);
-      const postconditions = await checkEnginePostconditions(ctx.tenderId!);
+
+      // AI Analyze must never enqueue or invoke Engine. Successful promotion
+      // terminates at a durable manual-action boundary. Any historical
+      // autoContinue value is ignored rather than treated as authority.
       if (
-        !ctx.tenderId ||
-        ctx.input.autoContinue !== true ||
-        !isTerminalHandlerResult(result) ||
-        result.terminalStatus !== "SUCCEEDED"
+        ctx.tenderId
+        && isTerminalHandlerResult(result)
+        && result.terminalStatus === "SUCCEEDED"
       ) {
-        return result;
-      }
-
-      await recordStep(ctx.jobId, {
-        stepName: "engine.auto-enqueue.preflight",
-        message: "AI analysis promoted; verifying Company Vault authority for automatic Engine continuation",
-        status: "RUNNING",
-      });
-      const preflight = await prepareCompanyVaultForEngine(ctx.userId);
-      if (!preflight) {
-        throw new Error("COMPANY_VAULT_REQUIRED_FOR_AUTOMATIC_ENGINE_CONTINUATION");
-      }
-
-      const enqueue = await enqueueEngineJobForCurrentSources(prisma, {
-        userId: ctx.userId,
-        tenderId: ctx.tenderId,
-        companyId: preflight.companyId,
-        purpose: "AUTOMATIC_POST_ANALYSIS_CONTINUATION",
-      });
-      if (!enqueue) {
-        throw new Error("ENGINE_SOURCE_REVISION_UNAVAILABLE_AFTER_ANALYSIS");
-      }
-
-      await recordStep(ctx.jobId, {
-        stepName: "engine.auto-enqueue.complete",
-        message: `Engine job ${enqueue.job.id} persisted for source revision ${enqueue.revision.sourceRevision.slice(0, 12)}`,
-        status: "SUCCEEDED",
-      });
-
-      return {
-        ...result,
-        output: {
-          ...result.output,
-          automaticEngineJob: {
-            jobId: enqueue.job.id,
-            status: enqueue.job.status,
-            reusedActiveJob: enqueue.job.reusedActiveJob,
-            sourceRevision: enqueue.revision.sourceRevision,
-            idempotencyKey: enqueue.idempotencyKey,
+        await recordStep(ctx.jobId, {
+          stepName: "manual-engine-required",
+          message: "AI Analyze completed for the current source revision. An authorized user must select Run Engine to continue.",
+          status: "SUCCEEDED",
+        });
+        return {
+          ...result,
+          output: {
+            ...result.output,
+            nextAction: "RUN_ENGINE",
+            nextActionLabel: "Run Engine",
+            automaticEngineStarted: false,
           },
-        },
-      };
+        };
+      }
+
+      return result;
     };
   }
 
   if (jobType === "ENGINE_RUN" && legacyHandler) {
     return async (ctx) => {
-      // Preserve canonical input validation first. A malformed job must fail
-      // for its missing tender identifier rather than being masked by a Vault
-      // lookup error in test, retry, or operational diagnostics.
       if (!ctx.tenderId) return legacyHandler(ctx);
 
       const expectedRevision = typeof ctx.input.sourceRevision === "string"
@@ -131,13 +102,10 @@ export function getHandler(jobType: JobType): JobHandler | null {
           status: "FAILED",
         });
         throw new Error("ENGINE_SOURCE_REVISION_REQUIRED");
-      // ENGINE_SOURCE_REVISION_CHANGED is handled by assertCurrentEngineSourceRevision
       }
 
-      // The queue may start well after the HTTP request that created the job.
-      // Refresh authority again at execution time so newly repaired records are
-      // promoted automatically and records changed after enqueue remain
-      // fail-closed rather than using stale verification.
+      // Refresh Company Vault verification at actual execution time. This is
+      // automatic work after the user explicitly selected Run Engine.
       const preflight = await prepareCompanyVaultForEngine(ctx.userId);
       if (!preflight) throw new Error("Company Vault profile required before Engine execution");
 
@@ -151,11 +119,9 @@ export function getHandler(jobType: JobType): JobHandler | null {
       });
 
       const result = await legacyHandler(ctx);
-      const postconditions = await checkEnginePostconditions(ctx.tenderId!);
 
-      // Requirement source repair and Vault evidence linking are part of the
-      // Engine transaction chain. No confirmation panel or second Run Engine
-      // action is allowed between canonical matching and persisted coverage.
+      // Requirement source repair and Vault evidence linking are automatic
+      // downstream stages of the manual Engine action.
       await recordStep(ctx.jobId, {
         stepName: "requirement-coverage.automatic",
         message: "Grounding requirements and linking source-verified Company Vault evidence",
@@ -196,10 +162,6 @@ export function getHandler(jobType: JobType): JobHandler | null {
         status: "SUCCEEDED",
       });
 
-      // Build Plan creation is part of Engine completion, not a later human
-      // approval stage. The service re-derives current tender-controlled scope,
-      // validates source grounding, binds revision/hash, and commits the same
-      // fail-closed CONFIRMED authority consumed by generation/export.
       await recordStep(ctx.jobId, {
         stepName: "build-plan.automatic",
         message: "Deriving and source-verifying the submission Build Plan",
@@ -227,10 +189,6 @@ export function getHandler(jobType: JobType): JobHandler | null {
         status: "SUCCEEDED",
       });
 
-      // BuildPlan writes invalidate old planned-output links at the database
-      // layer. Reconcile once more so required output files and methodology
-      // sections become PARTIAL planned coverage immediately, then upgrade to
-      // FULL automatically when validated generated bytes exist.
       const coverageAfterPlan = await reconcileAutomaticRequirementCoverage(
         prisma,
         ctx.tenderId,
@@ -252,9 +210,6 @@ export function getHandler(jobType: JobType): JobHandler | null {
         status: "SUCCEEDED",
       });
 
-      // Revalidate after all long-running work and immediately before returning
-      // the result the worker can mark authoritative. Any source change during
-      // execution invalidates this job instead of promoting stale output.
       await assertCurrentEngineSourceRevision({
         jobId: ctx.jobId,
         tenderId: ctx.tenderId,
