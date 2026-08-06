@@ -7,6 +7,7 @@ import {
   finalizePlanBCompanyVault,
   type PlanBFinalizePayload,
 } from "../../../../../lib/plan-b-vault-finalize";
+import { reconcilePlanBSourcesByUniqueStem } from "../../../../../lib/plan-b-source-reconcile";
 import { deduplicateCompanyVaultRecords } from "../../../../../lib/plan-b-deduplicate";
 import { sanitizeError } from "../../../../../lib/sanitize-error";
 import { logger } from "../../../../../lib/observability";
@@ -58,9 +59,24 @@ export async function POST(req: Request) {
       companyId: company.id,
       payload,
     });
+    const sourceReconciliation = await reconcilePlanBSourcesByUniqueStem(prisma, company.id, payload);
     const deduplication = await deduplicateCompanyVaultRecords(prisma, company.id);
 
-    return NextResponse.json({ success: true, ...result, deduplication });
+    const [activeExperts, activeProjects, verifiedExperts, verifiedProjects] = await Promise.all([
+      prisma.expert.count({ where: { companyId: company.id, deletedAt: null, isActive: true } }),
+      prisma.project.count({ where: { companyId: company.id, deletedAt: null } }),
+      prisma.expert.count({ where: { companyId: company.id, deletedAt: null, isActive: true, trustLevel: { in: ["SOURCE_VERIFIED", "REVIEWED"] } } }),
+      prisma.project.count({ where: { companyId: company.id, deletedAt: null, trustLevel: { in: ["SOURCE_VERIFIED", "REVIEWED"] } } }),
+    ]);
+
+    return NextResponse.json({
+      success: true,
+      ...result,
+      sourceReconciliation,
+      deduplication,
+      activeCounts: { experts: activeExperts, projects: activeProjects },
+      usableCounts: { experts: verifiedExperts, projects: verifiedProjects },
+    });
   } catch (error) {
     logger.error("[plan-b-finalize] failed", {
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
