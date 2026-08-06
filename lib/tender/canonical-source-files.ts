@@ -1,0 +1,132 @@
+export type CanonicalTenderFileInput = {
+  id: string;
+  fileName?: string | null;
+  originalFileName?: string | null;
+  deletionStatus?: string | null;
+  contentSha256?: string | null;
+  integrityStatus?: string | null;
+  extractionScore?: number | null;
+  extractionMethod?: string | null;
+  totalPages?: number | null;
+  extractedPages?: number | null;
+  failedPages?: number | null;
+  extractedText?: string | null;
+  createdAt?: Date | string | null;
+};
+
+export type CanonicalTenderSourceReadiness<T extends CanonicalTenderFileInput> = {
+  canonicalFiles: T[];
+  duplicateFileCount: number;
+  byteIntegrityValid: boolean;
+  extractionComplete: boolean;
+  extractionQualityValid: boolean;
+  analysisReady: boolean;
+  blockers: string[];
+};
+
+const MIN_ANALYSIS_SCORE = 70;
+
+function normalizedLogicalStem(value: unknown): string {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/\\/g, "/")
+    .split("/")
+    .pop()!
+    .toLowerCase()
+    .replace(/\.[a-z0-9]{1,8}$/i, "")
+    .replace(/\s*\((?:copy|duplicate|\d+)\)\s*$/i, "")
+    .replace(/\s*[-_]\s*(?:copy|duplicate)\s*$/i, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function numericDate(value: Date | string | null | undefined): number {
+  if (!value) return 0;
+  const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function coverage(file: CanonicalTenderFileInput): number {
+  const total = file.totalPages ?? 0;
+  const extracted = file.extractedPages ?? 0;
+  const failed = file.failedPages ?? 0;
+  if (total <= 0) return file.extractedText && file.extractedText.trim().length >= 100 ? 1 : 0;
+  return Math.max(0, Math.min(1, (extracted - failed) / total));
+}
+
+function rank(file: CanonicalTenderFileInput): number[] {
+  const score = Number.isFinite(file.extractionScore) ? Number(file.extractionScore) : -1;
+  const textLength = file.extractedText?.trim().length ?? 0;
+  return [
+    file.deletionStatus === "ACTIVE" || !file.deletionStatus ? 1 : 0,
+    file.integrityStatus === "VERIFIED" ? 1 : 0,
+    file.extractionMethod && file.extractionMethod !== "failed" ? 1 : 0,
+    score,
+    coverage(file),
+    Math.min(textLength, 100_000),
+    numericDate(file.createdAt),
+  ];
+}
+
+function compareRank<T extends CanonicalTenderFileInput>(left: T, right: T): number {
+  const a = rank(left);
+  const b = rank(right);
+  for (let index = 0; index < a.length; index += 1) {
+    if (a[index] !== b[index]) return b[index] - a[index];
+  }
+  return left.id.localeCompare(right.id);
+}
+
+/**
+ * Select one authoritative representation for each logical source document.
+ * Exact filename stems collapse the common DOCX/PDF/copy upload pattern. The
+ * best verified, extracted representation wins. Differently named addenda
+ * remain separate sources.
+ */
+export function selectCanonicalTenderFiles<T extends CanonicalTenderFileInput>(files: T[]): T[] {
+  const active = files.filter((file) => !file.deletionStatus || file.deletionStatus === "ACTIVE");
+  const grouped = new Map<string, T[]>();
+  for (const file of active) {
+    const stem = normalizedLogicalStem(file.originalFileName || file.fileName);
+    const key = stem || (file.contentSha256 ? `sha256:${file.contentSha256.toLowerCase()}` : `id:${file.id}`);
+    grouped.set(key, [...(grouped.get(key) ?? []), file]);
+  }
+  return [...grouped.values()]
+    .map((rows) => [...rows].sort(compareRank)[0])
+    .sort((left, right) => numericDate(left.createdAt) - numericDate(right.createdAt) || left.id.localeCompare(right.id));
+}
+
+export function assessCanonicalTenderSourceReadiness<T extends CanonicalTenderFileInput>(
+  files: T[],
+): CanonicalTenderSourceReadiness<T> {
+  const activeCount = files.filter((file) => !file.deletionStatus || file.deletionStatus === "ACTIVE").length;
+  const canonicalFiles = selectCanonicalTenderFiles(files);
+  const blockers: string[] = [];
+
+  const byteIntegrityValid = canonicalFiles.length > 0
+    && canonicalFiles.every((file) => file.integrityStatus === "VERIFIED" && Boolean(file.contentSha256));
+  const extractionComplete = canonicalFiles.length > 0
+    && canonicalFiles.every((file) => {
+      const textLength = file.extractedText?.trim().length ?? 0;
+      const hasSuccessfulMethod = Boolean(file.extractionMethod) && file.extractionMethod !== "failed";
+      const hasPositiveScore = Number.isFinite(file.extractionScore) && Number(file.extractionScore) > 0;
+      return hasSuccessfulMethod && hasPositiveScore && textLength >= 100 && coverage(file) >= 0.95;
+    });
+  const extractionQualityValid = canonicalFiles.length > 0
+    && canonicalFiles.every((file) => Number(file.extractionScore ?? -1) >= MIN_ANALYSIS_SCORE);
+
+  if (canonicalFiles.length === 0) blockers.push("No active canonical tender source exists.");
+  if (!byteIntegrityValid) blockers.push("Canonical source byte integrity is not verified.");
+  if (!extractionComplete) blockers.push("Canonical source extraction is incomplete.");
+  if (!extractionQualityValid) blockers.push(`Canonical source extraction quality is below ${MIN_ANALYSIS_SCORE}/100.`);
+
+  return {
+    canonicalFiles,
+    duplicateFileCount: Math.max(0, activeCount - canonicalFiles.length),
+    byteIntegrityValid,
+    extractionComplete,
+    extractionQualityValid,
+    analysisReady: byteIntegrityValid && extractionComplete && extractionQualityValid,
+    blockers,
+  };
+}
