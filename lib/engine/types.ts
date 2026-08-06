@@ -37,7 +37,11 @@ export type RequirementDraft = {
   // Prisma column has a non-null default of 0 and the create input
   // type does not accept null.
   sourceConfidence?: number;
-  sourceExtractionMethod?: "ocr" | "text" | "mixed" | null;
+  // The database column is a string for backward compatibility. Current
+  // writers use text/ocr/mixed, while legacy rows may contain another
+  // diagnostic label. Consumers must treat unknown values as metadata only,
+  // never as authority to bypass source-coordinate checks.
+  sourceExtractionMethod?: string | null;
 };
 
 export type CompanyDocumentSnapshot = {
