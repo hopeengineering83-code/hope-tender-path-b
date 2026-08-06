@@ -9,6 +9,8 @@ import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/e
 import { rateLimitPersistent, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { prepareCompanyVaultForEngine } from "../../../../../lib/engine/prepare-company-vault";
 import { enqueueEngineJobForCurrentSources } from "../../../../../lib/engine/enqueue-engine-job";
+import { selectCanonicalTenderFiles } from "../../../../../lib/tender/canonical-source-files";
+import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -42,9 +44,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const userId = actor.id;
 
   const requestUrl = new URL(req.url);
-  const rejectedPolicyParameters = CLIENT_POLICY_PARAMETERS.filter((parameter) =>
-    requestUrl.searchParams.has(parameter),
-  );
+  const rejectedPolicyParameters = CLIENT_POLICY_PARAMETERS.filter((parameter) => requestUrl.searchParams.has(parameter));
   if (rejectedPolicyParameters.length > 0) {
     return NextResponse.json({
       error: "Engine execution policy is controlled by the server.",
@@ -54,9 +54,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 400 });
   }
 
-  const rl = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
-  if (!rl.allowed) {
-    const retryAfter = Math.ceil((rl.resetAt - Date.now()) / 1000);
+  const rate = await rateLimitPersistent(`engine:${userId}`, AI_RATE_LIMIT);
+  if (!rate.allowed) {
+    const retryAfter = Math.ceil((rate.resetAt - Date.now()) / 1000);
     return NextResponse.json({
       error: "Rate limit exceeded — too many engine requests. Please wait before retrying.",
       code: "RATE_LIMITED",
@@ -89,45 +89,40 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             fileName: true,
             extractedText: true,
             extractionScore: true,
+            extractionMethod: true,
             totalPages: true,
             extractedPages: true,
             ocrPages: true,
             failedPages: true,
+            deletionStatus: true,
+            contentSha256: true,
+            integrityStatus: true,
+            createdAt: true,
           },
         },
       },
     });
     if (!tender) {
-      return NextResponse.json({
-        error: "Tender not found",
-        code: "TENDER_NOT_FOUND",
-        diagnosticId,
-      }, { status: 404 });
+      return NextResponse.json({ error: "Tender not found", code: "TENDER_NOT_FOUND", diagnosticId }, { status: 404 });
     }
 
-    if (tender.files.length === 0) {
+    const canonicalFiles = selectCanonicalTenderFiles(tender.files);
+    if (canonicalFiles.length === 0) {
       return NextResponse.json({
-        error: "Engine run blocked: no tender file is uploaded.",
+        error: "Engine run blocked: no canonical tender source is available.",
         code: "NO_TENDER_FILES",
         nextAction: "UPLOAD_TENDER_DOCUMENT",
-        hint: "Upload the tender/RFP document first, then run AI Analyze or Run Engine.",
         diagnosticId,
       }, { status: 422 });
     }
 
     const invalidFields = listInvalidStoredFields(tender);
     if (invalidFields.length > 0) {
-      await prisma.tender.update({
-        where: { id: tender.id },
-        data: computeStoredMetadataPatch(tender),
-      });
+      await prisma.tender.update({ where: { id: tender.id }, data: computeStoredMetadataPatch(tender) });
     }
 
-    const effectiveExtractionFiles = tender.files.map((file) => {
-      const quality = assessExtractionQuality(
-        file.extractedText,
-        file.originalFileName || file.fileName,
-      );
+    const effectiveExtractionFiles = canonicalFiles.map((file) => {
+      const quality = assessExtractionQuality(file.extractedText, file.originalFileName || file.fileName);
       return {
         ...file,
         extractionScore: Math.min(file.extractionScore ?? quality.score, quality.score),
@@ -140,25 +135,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       totalPages: file.totalPages,
       extractedPages: file.extractedPages,
       failedPages: file.failedPages,
+      integrityStatus: file.integrityStatus,
     }));
+    const integrityBlockers = effectiveExtractionFiles.filter(
+      (file) => file.integrityStatus !== "VERIFIED" || !file.contentSha256,
+    );
     const blockers = extractionReports.filter(
       (item) => item.quality.severity === "FAILED" || item.quality.severity === "POOR",
     );
-    if (!isExtractionAcceptableForGeneration(effectiveExtractionFiles)) {
+    if (integrityBlockers.length > 0 || !isExtractionAcceptableForGeneration(effectiveExtractionFiles)) {
       const corruptedFiles = effectiveExtractionFiles
         .filter((file) => file.quality.corrupted)
         .map((file) => file.originalFileName || file.fileName || file.id);
       return NextResponse.json({
-        error: "Engine run blocked: tender extraction is not reliable enough for matching or AI work.",
-        code: corruptedFiles.length > 0
-          ? "EXTRACTION_CORRUPTED_ENGINE_SKIPPED"
-          : "EXTRACTION_QUALITY_ENGINE_BLOCKED",
-        nextAction: corruptedFiles.length > 0
-          ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN"
-          : "OPEN_EXTRACTION_QUALITY",
+        error: integrityBlockers.length > 0
+          ? "Engine run blocked: canonical source byte integrity is not verified."
+          : "Engine run blocked: canonical tender extraction is not reliable enough for matching or AI work.",
+        code: integrityBlockers.length > 0
+          ? "SOURCE_INTEGRITY_ENGINE_BLOCKED"
+          : corruptedFiles.length > 0
+            ? "EXTRACTION_CORRUPTED_ENGINE_SKIPPED"
+            : "EXTRACTION_QUALITY_ENGINE_BLOCKED",
+        nextAction: integrityBlockers.length > 0 ? "REUPLOAD_SOURCE" : "OPEN_EXTRACTION_QUALITY",
         blockers,
         corruptedFiles,
-        hint: "Run OCR/re-extract the tender first. Run Engine cannot be forced through corrupted, unknown-page, or incomplete extraction.",
+        duplicateSourceRepresentationsExcluded: Math.max(0, tender.files.length - canonicalFiles.length),
+        diagnosticId,
+      }, { status: 422 });
+    }
+
+    const releaseSnapshot = await getTenderReleaseSnapshot(prisma, id, userId);
+    if (
+      !releaseSnapshot
+      || releaseSnapshot.analysis.state !== "AI_SUCCEEDED"
+      || !releaseSnapshot.analysis.contentHashMatch
+      || !releaseSnapshot.analysis.canonicalJobId
+    ) {
+      return NextResponse.json({
+        error: "Run Engine requires a successful manual AI Analyze result for the current canonical source revision.",
+        code: "CURRENT_ANALYSIS_REQUIRED",
+        nextAction: "RUN_AI_ANALYZE",
+        hint: releaseSnapshot?.analysis.blocker ?? "Run AI Analyze, wait for durable success, then run Engine.",
         diagnosticId,
       }, { status: 422 });
     }
@@ -166,22 +183,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const engineAnalysisStatus = tender.analysisExtractionStatus;
     if (engineAnalysisStatus === "OCR_REQUIRED") {
       return NextResponse.json({
-        error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR before running the engine.",
+        error: "Engine run blocked: AI Analyze was skipped due to corrupted extraction. Re-upload or run OCR first.",
         code: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
         nextAction: "RUN_OCR_OR_UPLOAD_CLEARER_SCAN",
-        hint: "Re-extract or run OCR, then re-run AI Analyze before running the engine.",
         diagnosticId,
       }, { status: 422 });
     }
-    if (
-      engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" ||
-      engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION"
-    ) {
+    if (engineAnalysisStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED" || engineAnalysisStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
       return NextResponse.json({
-        error: "Engine run blocked: tender analysis was produced from weak extraction. Re-extract and re-run AI Analyze before running the engine.",
+        error: "Engine run blocked: analysis was produced from weak extraction. Re-extract and re-run AI Analyze.",
         code: "ANALYSIS_FROM_WEAK_EXTRACTION",
         nextAction: "RERUN_AI_ANALYZE",
-        hint: "Fix extraction quality and re-run AI Analyze before running the engine.",
         diagnosticId,
       }, { status: 422 });
     }
@@ -212,20 +224,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const enqueue = await enqueueEngineJobForCurrentSources(prisma, {
-    tenderId: id,
-    userId,
-    companyId: vaultPreflight.companyId,
-    purpose: "INTERNAL_ARTIFACT_PREPARATION",
-  });
-  if (!enqueue) {
-    return NextResponse.json({
-      error: "Engine source revision could not be established.",
-      code: "ENGINE_SOURCE_REVISION_UNAVAILABLE",
-      nextAction: "RETRY_AFTER_DATABASE_CHECK",
-      diagnosticId,
-    }, { status: 503 });
-  }
-  const { revision, idempotencyKey, job: enqueueResult } = enqueue;
+      tenderId: id,
+      userId,
+      companyId: vaultPreflight.companyId,
+      purpose: "INTERNAL_ARTIFACT_PREPARATION",
+    });
+    if (!enqueue) {
+      return NextResponse.json({
+        error: "Engine source revision could not be established.",
+        code: "ENGINE_SOURCE_REVISION_UNAVAILABLE",
+        nextAction: "RETRY_AFTER_DATABASE_CHECK",
+        diagnosticId,
+      }, { status: 503 });
+    }
+    const { revision, idempotencyKey, job: enqueueResult } = enqueue;
 
     logger.info("[engine route] durable Engine job accepted", {
       diagnosticId,
@@ -249,15 +261,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       vaultVerification: "COMPLETED",
       vaultVerifiedExperts: vaultPreflight.sourceVerification?.expertsVerified ?? 0,
       vaultVerifiedProjects: vaultPreflight.sourceVerification?.projectsVerified ?? 0,
+      duplicateSourceRepresentationsExcluded: Math.max(0, tender.files.length - canonicalFiles.length),
       sourceInventory: {
         tenderFiles: revision.tenderFileCount,
         requirements: revision.requirementCount,
         vaultDocuments: revision.vaultDocumentCount,
         evidenceRecords: revision.evidenceRecordCount,
       },
-      extractionWarnings: extractionReports.filter(
-        (item) => item.quality.severity === "WARNING",
-      ),
+      extractionWarnings: extractionReports.filter((item) => item.quality.severity === "WARNING"),
     }, { status: 202 });
   } catch (error) {
     const errorName = error instanceof Error ? error.constructor.name : typeof error;
