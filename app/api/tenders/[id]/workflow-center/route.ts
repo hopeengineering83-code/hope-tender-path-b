@@ -24,13 +24,32 @@ export async function GET(
     const { id: tenderId } = await params;
     await prismaReady;
 
+    // A deleted or cross-tenant tender is a normal terminal state for polling.
+    // Check ownership before running the parallel workflow resolvers so a poll
+    // that races a successful permanent deletion returns 404, never 500.
+    const ownedTender = await prisma.tender.findFirst({
+      where: { id: tenderId, userId: actor.id },
+      select: { id: true },
+    });
+    if (!ownedTender) {
+      return NextResponse.json(
+        { error: "Tender not found", code: "TENDER_NOT_FOUND", terminal: true },
+        { status: 404 },
+      );
+    }
+
     const [snapshot, workflow, rawDecision] = await Promise.all([
       getTenderReleaseSnapshot(prisma, tenderId, actor.id),
       getCanonicalTenderWorkflowState(prisma, actor.id, tenderId),
       getCanonicalTenderWorkflowDecision(prisma, actor.id, tenderId),
     ]);
 
-    if (!snapshot) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+    if (!snapshot) {
+      return NextResponse.json(
+        { error: "Tender not found", code: "TENDER_NOT_FOUND", terminal: true },
+        { status: 404 },
+      );
+    }
 
     const decision = presentTwoActionWorkflowDecision(rawDecision);
     const pageLedgerSummary = (snapshot.pageLedgers ?? []).map((pageLedger, index) => ({
