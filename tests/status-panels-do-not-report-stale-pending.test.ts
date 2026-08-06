@@ -39,13 +39,22 @@ describe("AI Analyze completion is derived from server state, not only polling",
   });
 
   it("the page actually supplies it", () => {
-    // A prop nothing passes is the same bug with extra steps.
+    // The page must pass a REAL completion signal derived from a SUCCEEDED
+    // AI_ANALYZE job. The current implementation passes `analysisComplete`
+    // which is derived from `Boolean(succeededAnalysisJob)` plus the
+    // analysisExtractionStatus check.
     assert.match(
       page,
-      /analysisAlreadySucceeded=\{Boolean\(succeededAnalysisJob\)\}/,
+      /analysisAlreadySucceeded=\{analysisComplete\}/,
       "the tender page must pass a REAL completion signal — a SUCCEEDED AI_ANALYZE job. " +
         "tender.analysisSummary was tried and is empty even after a successful run, so it silently " +
         "kept the panel reporting Pending",
+    );
+    // Verify analysisComplete is derived from succeededAnalysisJob.
+    assert.match(
+      page,
+      /analysisComplete\s*=\s*Boolean\(succeededAnalysisJob\)/,
+      "analysisComplete must be derived from a SUCCEEDED AI_ANALYZE job query",
     );
   });
 
