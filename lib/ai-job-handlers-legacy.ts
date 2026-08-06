@@ -145,13 +145,14 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
   ENGINE_RUN: async (ctx) => {
     if (!ctx.tenderId) throw new Error("ENGINE_RUN requires tenderId on the job");
     await recordStep(ctx.jobId, { stepName: "engine.start", message: `Starting engine run for tender ${ctx.tenderId}`, status: "RUNNING" });
-    // Heartbeat every 25 s so the stuck-job checker (90 s threshold) never
-    // fires on a legitimately slow but progressing AI call (e.g. analyzeWithAI
-    // on a large tender). If Vercel kills the function at 60 s, the last
-    // heartbeat is at most 25 s old → recovery fires at ~115 s, not 90 s.
+    // Heartbeat every 10 s so the stuck-job checker (180 s threshold) never
+    // fires on a legitimately slow but progressing AI call. If Vercel kills
+    // the function at 60 s, the last heartbeat is at most 10 s old → recovery
+    // fires at ~190 s, giving the next worker invocation plenty of time to
+    // resume the job.
     const heartbeat = setInterval(() => {
       void recordStep(ctx.jobId, { stepName: "engine.heartbeat", message: "Engine running — waiting for AI response", status: "RUNNING" }).catch(() => {});
-    }, 25_000);
+    }, 10_000);
     try {
       // Surface granular pipeline progress to the user via recordStep.
       // The engine emits steps at each major milestone (load → company
@@ -317,13 +318,13 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     }
 
     await recordStep(ctx.jobId, { stepName: "proposal.generate", message: "Generating real DOCX proposal package via the canonical generation pipeline", status: "RUNNING" });
-    // Heartbeat every 25s so the progress-stall stuck-job checker (90s
+    // Heartbeat every 10s so the progress-stall stuck-job checker (180s
     // threshold, see isProgressStuckOnlyType in lib/ai-jobs.ts) never fires
     // on a legitimately slow but progressing multi-section AI generation —
     // mirrors ENGINE_RUN's heartbeat above.
     const heartbeat = setInterval(() => {
       void recordStep(ctx.jobId, { stepName: "proposal.heartbeat", message: "Generation running — waiting for AI section responses", status: "RUNNING" }).catch(() => {});
-    }, 25_000);
+    }, 10_000);
     try {
       await generateTenderDocuments(ctx.tenderId, ctx.userId);
     } finally {
