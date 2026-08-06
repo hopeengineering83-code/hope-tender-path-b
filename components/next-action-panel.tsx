@@ -1,10 +1,9 @@
 // Next Required Action panel — server component.
 //
-// CONSUMES THE CANONICAL WORKFLOW DECISION. This panel must NOT compute its
-// own readiness truth. The shared presentation helper applies only the
-// product-level two-action contract: AI Analyze and Run Engine are the normal
-// mutations; downstream Build Plan, matching, generation, validation and
-// finalization are server-owned stages.
+// The canonical workflow decision remains authoritative. A narrow source
+// reconciliation layer removes only duplicate-representation extraction
+// blockers after a separate canonical source has verified bytes, complete page
+// coverage, and acceptable extraction quality.
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
@@ -12,6 +11,8 @@ import { assessTenderMetadataCompleteness } from "../lib/engine/tender-metadata-
 import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
 import { presentTwoActionWorkflowDecision } from "../lib/engine/two-action-workflow-presentation";
 import { getTenderReleaseState } from "../lib/engine/tender-release-state";
+import { getTenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
+import { assessCanonicalTenderSourceReadiness } from "../lib/tender/canonical-source-files";
 import { scoreTone, verdictLabel } from "../lib/ui/tender-release-state-presentation";
 import { CheckCircleIcon, WarningIcon, ArrowRightIcon } from "./icons";
 import { StatusBadge } from "./status-badge";
@@ -93,16 +94,64 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
       submissionAddress: true, submissionEmails: true,
       submissionMethod: true, deadline: true, currency: true,
       metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
+      files: {
+        select: {
+          id: true,
+          fileName: true,
+          originalFileName: true,
+          deletionStatus: true,
+          contentSha256: true,
+          integrityStatus: true,
+          extractionScore: true,
+          extractionMethod: true,
+          totalPages: true,
+          extractedPages: true,
+          failedPages: true,
+          extractedText: true,
+          createdAt: true,
+        },
+      },
     },
   }).catch(() => null);
 
   if (!tender) return null;
 
-  const [rawDecision, releaseState] = await Promise.all([
+  const [rawDecision, releaseState, snapshot] = await Promise.all([
     getCanonicalTenderWorkflowDecision(prisma, userId, tenderId),
     getTenderReleaseState(prisma, tenderId, userId),
+    getTenderReleaseSnapshot(prisma, tenderId, userId).catch(() => null),
   ]);
-  const decision = presentTwoActionWorkflowDecision(rawDecision);
+
+  const sourceReadiness = assessCanonicalTenderSourceReadiness(tender.files);
+  const analysisCurrent = Boolean(
+    snapshot?.analysis.state === "AI_SUCCEEDED"
+    && snapshot.analysis.contentHashMatch
+    && snapshot.analysis.canonicalJobId,
+  );
+
+  // The legacy release snapshot may still list a weak/pending duplicate as an
+  // extraction blocker. Override only that top-level blocker when a different
+  // canonical representation is fully ready; genuine canonical extraction
+  // failures continue to block fail-closed.
+  const reconciledRawDecision = rawDecision
+    && rawDecision.currentBlockingStage === "EXTRACTION_UNSAFE"
+    && sourceReadiness.analysisReady
+    ? {
+        ...rawDecision,
+        currentBlockingStage: analysisCurrent ? "NO_CONFIRMED_BUILD_PLAN" as const : "AI_ANALYZE_NOT_RUN" as const,
+        nextRequiredAction: analysisCurrent ? "RUN_ENGINE" : "RUN_AI_ANALYZE",
+        nextRequiredActionLabel: analysisCurrent ? "Run Engine" : "Run AI Analyze",
+        nextRequiredActionReason: analysisCurrent
+          ? "Current-revision AI Analyze is complete. Select Run Engine; valid later stages continue automatically."
+          : "Canonical extraction is complete. Select AI Analyze to create the current grounded analysis.",
+        blockingStageCode: analysisCurrent ? "RUN_ENGINE_REQUIRED" : "AI_ANALYZE_NOT_RUN",
+        blockerCodes: rawDecision.blockerCodes.filter((code) => code !== "EXTRACTION_UNSAFE"),
+        blockerDetails: rawDecision.blockerDetails.filter((detail) => !/extraction|ocr/i.test(detail)),
+        downstreamSuppressedBy: analysisCurrent ? "RUN_ENGINE_REQUIRED" : "AI_ANALYZE_NOT_RUN",
+      }
+    : rawDecision;
+
+  const decision = presentTwoActionWorkflowDecision(reconciledRawDecision);
   if (!decision) return null;
 
   const step = stepFromCanonicalAction(decision.nextRequiredAction);
@@ -162,6 +211,11 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
           <p className="mt-2 max-w-2xl text-xs text-slate-600">
             Source verification and extraction are automatic. AI Analyze and Run Engine are the two normal user actions. After Run Engine, matching, Build Plan, generation, validation, finalization and package reconciliation continue on the server.
           </p>
+          {sourceReadiness.duplicateFileCount > 0 ? (
+            <p className="mt-2 max-w-2xl text-xs text-slate-500">
+              {sourceReadiness.duplicateFileCount} duplicate or alternate source representation(s) were excluded from the current workflow decision.
+            </p>
+          ) : null}
         </div>
         <div className="text-right">
           <p className="text-xs text-slate-500">Step {Math.min(currentIndex + 1, STEPS.length)} of {STEPS.length}</p>
@@ -175,7 +229,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
         <div className="mt-3 rounded-lg border border-red-200 bg-white px-4 py-2.5 text-sm">
           <p className="text-xs font-semibold uppercase text-red-700">Blockers to resolve</p>
           <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs text-red-700">
-            {blockers.slice(0, 5).map((b) => <li key={b}>{b}</li>)}
+            {blockers.slice(0, 5).map((blocker) => <li key={blocker}>{blocker}</li>)}
           </ul>
         </div>
       )}
@@ -191,7 +245,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
       {decision.currentBlockingStage === "EXTRACTION_UNSAFE" && (
         <div className="mt-3 rounded-lg border border-amber-200 bg-white px-4 py-2.5 text-sm text-amber-800">
-          <strong>Fix Extraction First.</strong> Upload a clearer, text-based copy of the source document. Extraction reruns automatically; then select AI Analyze for the new source revision.
+          <strong>Fix Extraction First.</strong> Upload a clearer, text-based copy of the canonical source. Extraction reruns automatically; then select AI Analyze.
         </div>
       )}
 
@@ -209,7 +263,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
       {metaReport.deadlinePassed && (
         <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-800">
-          <strong>Submission deadline has passed.</strong> {metaReport.notes.find((n) => n.includes("deadline has passed")) ?? "Confirm with the client whether an extension has been granted before proceeding."}
+          <strong>Submission deadline has passed.</strong> {metaReport.notes.find((note) => note.includes("deadline has passed")) ?? "Confirm with the client whether an extension has been granted before proceeding."}
         </div>
       )}
     </section>
