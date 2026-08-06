@@ -58,8 +58,8 @@ describe("tender-release-snapshot.ts — full source-evidence forwarding", () =>
     for (const col of FULL_SOURCE_COLS) assertForwardedWithNullFallback(src, col, "release snapshot");
   });
 
-  it("passes activeTenderFileIds built only from ACTIVE files", () => {
-    assert.match(src, /const activeFiles = tender\.files\.filter\(\(\w+\) => \w+\.deletionStatus === "ACTIVE"\)/);
+  it("passes activeTenderFileIds built only from canonical ACTIVE files", () => {
+    assert.match(src, /selectCanonicalTenderFiles/);
     assertActiveIdsFromActiveFiles(src, "release snapshot");
   });
 });

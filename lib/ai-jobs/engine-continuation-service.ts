@@ -95,15 +95,16 @@ export function evaluateEngineContinuation(
     return { queued: false, reason: "TENDER_OR_COMPANY_OWNERSHIP_INVALID" };
   }
 
+  // Explicitly consume the legacy autoContinue field so malformed input remains
+  // observable, but never act on it. Run Engine must be started by an authorized user.
   const input = parseInput(analysis.input);
   if (input.autoContinue !== true) {
     return { queued: false, reason: "AUTO_CONTINUE_NOT_REQUESTED" };
   }
 
-  // autoContinue is true — the extraction service has authorized automatic
-  // continuation. This path is retained for contract compatibility and tests,
-  // but is NOT called by the current extraction service (which returns
-  // EXTRACTION_COMPLETE_MANUAL_AI_ANALYZE_REQUIRED instead).
+  // autoContinue is true — retained for contract compatibility and tests.
+  // The extraction service does NOT call this function; it returns
+  // EXTRACTION_COMPLETE_MANUAL_AI_ANALYZE_REQUIRED instead.
   return { queued: false, reason: "MANUAL_ENGINE_REQUIRED" };
 }
 

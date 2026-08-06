@@ -156,8 +156,8 @@ test("Engine reuses promoted manual analysis instead of repeating extraction", (
 
 test("matcher requests are bounded and advance through remaining providers", () => {
   const matcher = source("lib/engine/ai-multi-perspective-matcher.ts");
-  assert.match(matcher, /MAX_CANDIDATES_PER_MATCHER_BATCH = 8/);
-  assert.match(matcher, /MAX_REQUIREMENT_CHARS = 4_000/);
+  assert.match(matcher, /MAX_CANDIDATES_PER_MATCHER_BATCH = 20/);
+  assert.match(matcher, /MAX_REQUIREMENT_CHARS = 8_000/);
   assert.match(matcher, /MAX_FALLBACK_PASSES = 3/);
   assert.match(matcher, /providers attempted in pass one/);
 });

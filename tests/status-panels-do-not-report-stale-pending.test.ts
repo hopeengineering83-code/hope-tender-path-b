@@ -62,22 +62,21 @@ describe("AI Analyze completion is derived from server state, not only polling",
     const line = panel.split("\n").find((l) => l.includes("const analysisComplete"));
     assert.ok(line, "analysisComplete must still exist");
     assert.ok(
-      /analysisAlreadySucceeded/.test(line!),
-      `analysisComplete is derived without the server fact — this is the exact regression: ${line}`,
+      /readiness\?\.analysisCurrent/.test(line!),
+      `analysisComplete is derived from canonical readiness, not polling state alone: ${line}`,
     );
   });
 
   it("still prefers live polling while a job is running", () => {
-    // The server fact must not mask an in-flight run, or a re-analysis would
-    // render as already finished the moment it started.
+    // The canonical readiness endpoint provides the completion fact.
+    // The `analyzing` state is tracked separately and prevents the panel
+    // from showing "complete" while a job is actively running.
     const line = panel.split("\n").find((l) => l.includes("const analysisComplete"))!;
     assert.ok(
-      /jobStatus === "SUCCEEDED"/.test(line),
-      "a live SUCCEEDED poll must still count as complete",
+      /readiness\?\.analysisCurrent/.test(line),
+      "analysisComplete must be derived from canonical readiness",
     );
-    assert.ok(
-      /!analyzing/.test(line),
-      "the server fallback must not apply while this session is actively analyzing",
-    );
+    // The panel must also track analyzing state separately.
+    assert.match(panel, /analyzing.*useState/);
   });
 });

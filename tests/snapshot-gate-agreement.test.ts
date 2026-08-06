@@ -11,11 +11,12 @@ import { evaluateGenerationReadiness } from "../lib/engine/generation-readiness-
 const read = (p: string) => readFileSync(p, "utf8");
 
 function snapshotBuildsActiveIds(src: string): boolean {
-  const activeFilter = /const activeFiles = tender\.files\.filter\(\(\w+\) => \w+\.deletionStatus === "ACTIVE"\)/.test(src);
+  // The snapshot now uses selectCanonicalTenderFiles() instead of inline filter.
+  const usesCanonical = /selectCanonicalTenderFiles/.test(src);
   const inline = /activeTenderFileIds:\s*new Set\(activeFiles\.map\(\(\w+\) => \w+\.id\)\)/.test(src);
   const declared = /const activeTenderFileIds = new Set\(activeFiles\.map\(\(\w+\) => \w+\.id\)\)/.test(src)
     && /activeTenderFileIds,/.test(src);
-  return activeFilter && (inline || declared);
+  return usesCanonical && (inline || declared);
 }
 
 describe("Snapshot ↔ Gate input-shape parity", () => {
