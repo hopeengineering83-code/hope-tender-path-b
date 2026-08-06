@@ -34,7 +34,6 @@ export type RequirementDraft = {
    * field as authority; authority always requires current file ID, page, exact
    * quote, confidence, revision hash, and verified stored bytes.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sourceExtractionMethod?: any;
 };
 
