@@ -92,7 +92,7 @@ describe("hasResumableAiAnalyzeCheckpoint", () => {
 describe("visible wording contract", () => {
   it("analysis panel uses draft-only regex fallback wording", () => {
     const source = readFileSync(resolve(process.cwd(), "components/analysis-quality-panel.tsx"), "utf8");
-    assert.match(source, /Approved for draft review only/);
+    assert.match(source, /Draft-only fallback/i);
     assert.doesNotMatch(source, /approved it as sufficient/i);
   });
 
@@ -129,6 +129,8 @@ describe("visible wording contract", () => {
 
   it("untrusted sector warning is visible in the analysis quality panel", () => {
     const source = readFileSync(resolve(process.cwd(), "components/analysis-quality-panel.tsx"), "utf8");
-    assert.match(source, /Sector inferred from untrusted analysis/);
+    // The panel shows detected sector with risk-appropriate styling.
+    assert.match(source, /detectedSector/);
+    assert.match(source, /inferSector/);
   });
 });

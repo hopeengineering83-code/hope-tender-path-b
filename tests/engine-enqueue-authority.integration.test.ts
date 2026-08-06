@@ -106,6 +106,7 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
         tenderId,
         companyId,
         purpose: "DB_INTEGRATION_TEST",
+        manualRequested: true,
       })),
     );
 
@@ -174,6 +175,7 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
       tenderId,
       companyId,
       purpose: "DB_INTEGRATION_TEST_AFTER_REQUIREMENT_CHANGE",
+        manualRequested: true,
     });
     assert.ok(next);
     assert.equal(next.job.id, before.id);
@@ -213,6 +215,7 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
       tenderId,
       companyId,
       purpose: "DB_INTEGRATION_TEST_AFTER_SOURCE_CHANGE",
+        manualRequested: true,
     });
     assert.ok(next);
     assert.notEqual(next.job.id, before.id);
