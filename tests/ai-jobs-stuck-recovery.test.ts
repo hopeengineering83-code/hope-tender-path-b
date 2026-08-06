@@ -37,9 +37,9 @@ describe("AI_JOB_STUCK_AFTER_MS — env-var parsing", () => {
     assert.ok(AI_JOB_STUCK_AFTER_MS <= 3_600_000, "stuck threshold should be at most 1 hour");
   });
 
-  it("AI_JOB_PROGRESS_STUCK_AFTER_MS defaults to 90s and is bounded", () => {
+  it("AI_JOB_PROGRESS_STUCK_AFTER_MS defaults to 180s and is bounded", () => {
     if (process.env.AI_JOB_PROGRESS_STUCK_AFTER_MS === undefined) {
-      assert.equal(AI_JOB_PROGRESS_STUCK_AFTER_MS, 90_000);
+      assert.equal(AI_JOB_PROGRESS_STUCK_AFTER_MS, 180_000);
     }
     assert.ok(AI_JOB_PROGRESS_STUCK_AFTER_MS >= 30_000);
     assert.ok(AI_JOB_PROGRESS_STUCK_AFTER_MS <= 1_800_000);
