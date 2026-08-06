@@ -11,10 +11,10 @@ import {
 } from "./universal-tender-taxonomy";
 
 /** Hard upper bound for one provider request. */
-export const MAX_CANDIDATES_PER_MATCHER_BATCH = 8;
-const MAX_REQUIREMENT_CHARS = 4_000;
+export const MAX_CANDIDATES_PER_MATCHER_BATCH = 20;
+const MAX_REQUIREMENT_CHARS = 8_000;
 const MAX_METHODOLOGY_CHARS = 2_000;
-const MAX_PROFILE_CHARS = 400;
+const MAX_PROFILE_CHARS = 800;
 const MAX_FALLBACK_PASSES = 3;
 
 export type MatchPerspective =
@@ -177,7 +177,7 @@ function projectText(candidate: ProjectCandidateInput): string {
   ].filter(Boolean).join(" ");
 }
 
-function expertPrompt(opts: {
+export function buildExpertUserPrompt(opts: {
   tenderTitle: string;
   tenderRequirementsText: string;
   evaluationMethodology: string;
@@ -195,15 +195,15 @@ function expertPrompt(opts: {
       `sectors=${candidate.sectors.join(", ") || "unknown"}`,
       `certifications=${candidate.certifications.join(", ") || "none"}`,
       `universalProfile=${universalProfileSummary(profile)}`,
-      `profile=${(candidate.profile ?? "").replace(/\s+/g, " ").slice(0, MAX_PROFILE_CHARS)}`,
+      `profile=${(candidate.profile ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
       `trust=${candidate.trustLevel ?? "unknown"}`,
     ].join("\n");
   }).join("\n---\n");
 
-  return `TENDER=${opts.tenderTitle}\nUNIVERSAL_PROFILE=${universalProfileSummary(required)}\nREQUIREMENTS:\n${opts.tenderRequirementsText.slice(0, MAX_REQUIREMENT_CHARS)}\nMETHODOLOGY:\n${opts.evaluationMethodology.slice(0, MAX_METHODOLOGY_CHARS) || "not provided"}\nEXPERTS (${opts.candidates.length}):\n${candidates}`;
+  return `TENDER=${opts.tenderTitle}\nUNIVERSAL_PROFILE=${universalProfileSummary(required)}\nREQUIREMENTS:\n${opts.tenderRequirementsText.slice(0, 8_000)}\nMETHODOLOGY:\n${opts.evaluationMethodology.slice(0, MAX_METHODOLOGY_CHARS) || "not provided"}\nEXPERTS (${opts.candidates.length}):\n${candidates}`;
 }
 
-function projectPrompt(opts: {
+export function buildProjectUserPrompt(opts: {
   tenderTitle: string;
   tenderRequirementsText: string;
   tenderCategory?: string | null;
@@ -225,12 +225,12 @@ function projectPrompt(opts: {
       `universalProfile=${universalProfileSummary(profile)}`,
       `value=${value}`,
       `period=${candidate.startDate ? new Date(candidate.startDate).getFullYear() : "?"}-${candidate.endDate ? new Date(candidate.endDate).getFullYear() : "ongoing"}`,
-      `summary=${(candidate.summary ?? "").replace(/\s+/g, " ").slice(0, MAX_PROFILE_CHARS)}`,
+      `summary=${(candidate.summary ?? "").replace(/\s+/g, " ").slice(0, 800)}`,
       `trust=${candidate.trustLevel ?? "unknown"}`,
     ].join("\n");
   }).join("\n---\n");
 
-  return `TENDER=${opts.tenderTitle}\nCATEGORY=${opts.tenderCategory ?? "unknown"}\nUNIVERSAL_PROFILE=${universalProfileSummary(required)}\nREQUIREMENTS:\n${opts.tenderRequirementsText.slice(0, MAX_REQUIREMENT_CHARS)}\nPROJECTS (${opts.candidates.length}):\n${candidates}`;
+  return `TENDER=${opts.tenderTitle}\nCATEGORY=${opts.tenderCategory ?? "unknown"}\nUNIVERSAL_PROFILE=${universalProfileSummary(required)}\nREQUIREMENTS:\n${opts.tenderRequirementsText.slice(0, 8_000)}\nPROJECTS (${opts.candidates.length}):\n${candidates}`;
 }
 
 function balancedArrays(value: string): string[] {
@@ -391,8 +391,8 @@ async function assessBatches<T>(
       }
     } catch (error) {
       logger.warn(`[ai-multi-perspective-matcher] ${category} batch failed: ${error instanceof Error ? error.message : String(error)}`);
-      if (assessments.length === 0) return null;
-      break;
+      if (assessments.length > 0) break;
+      return null;
     }
   }
 
@@ -408,12 +408,34 @@ export async function aiRematchExperts(opts: {
   candidates: ExpertCandidateInput[];
 }): Promise<MatchAssessmentBatch | null> {
   const required = tenderProfile(opts.tenderTitle, opts.tenderRequirementsText);
-  return assessBatches(
-    "EXPERT",
-    opts.candidates,
-    (batch) => expertPrompt({ ...opts, candidates: batch }),
-    (candidate, assessment) => calibrate(required, classifyUniversalTender(expertText(candidate)), assessment),
-  );
+  if (opts.candidates.length === 0) return null;
+  const startedAt = Date.now();
+  const allAssessments: CandidateAssessment[] = [];
+
+  for (let i = 0; i < opts.candidates.length; i += MAX_CANDIDATES_PER_MATCHER_BATCH) {
+    const batch = opts.candidates.slice(i, i + MAX_CANDIDATES_PER_MATCHER_BATCH);
+    const batchOpts = { ...opts, candidates: batch };
+    try {
+      const raw = await generateWithFallback(buildExpertUserPrompt(batchOpts), { systemPrompt: SYSTEM_PROMPT });
+      const parsed = parseAssessmentArray(raw);
+      if (!parsed) continue;
+      const byId = new Map(batch.map((c) => [c.id, c]));
+      for (const item of parsed) {
+        const assessment = coerceAssessment(item);
+        if (!assessment) continue;
+        const candidate = byId.get(assessment.candidateId);
+        if (candidate) allAssessments.push(calibrate(required, classifyUniversalTender(expertText(candidate)), assessment));
+      }
+    } catch (error) {
+      logger.warn(`[ai-multi-perspective-matcher] EXPERT batch failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (allAssessments.length > 0) break;
+      return null;
+    }
+  }
+
+  return allAssessments.length > 0
+    ? { category: "EXPERT", assessments: allAssessments, durationMs: Date.now() - startedAt }
+    : null;
 }
 
 export async function aiRematchProjects(opts: {
@@ -423,12 +445,34 @@ export async function aiRematchProjects(opts: {
   candidates: ProjectCandidateInput[];
 }): Promise<MatchAssessmentBatch | null> {
   const required = tenderProfile(opts.tenderTitle, opts.tenderRequirementsText, opts.tenderCategory);
-  return assessBatches(
-    "PROJECT",
-    opts.candidates,
-    (batch) => projectPrompt({ ...opts, candidates: batch }),
-    (candidate, assessment) => calibrate(required, classifyUniversalTender(projectText(candidate)), assessment),
-  );
+  if (opts.candidates.length === 0) return null;
+  const startedAt = Date.now();
+  const allAssessments: CandidateAssessment[] = [];
+
+  for (let i = 0; i < opts.candidates.length; i += MAX_CANDIDATES_PER_MATCHER_BATCH) {
+    const batch = opts.candidates.slice(i, i + MAX_CANDIDATES_PER_MATCHER_BATCH);
+    const batchOpts = { ...opts, candidates: batch };
+    try {
+      const raw = await generateWithFallback(buildProjectUserPrompt(batchOpts), { systemPrompt: SYSTEM_PROMPT });
+      const parsed = parseAssessmentArray(raw);
+      if (!parsed) continue;
+      const byId = new Map(batch.map((c) => [c.id, c]));
+      for (const item of parsed) {
+        const assessment = coerceAssessment(item);
+        if (!assessment) continue;
+        const candidate = byId.get(assessment.candidateId);
+        if (candidate) allAssessments.push(calibrate(required, classifyUniversalTender(projectText(candidate)), assessment));
+      }
+    } catch (error) {
+      logger.warn(`[ai-multi-perspective-matcher] PROJECT batch failed: ${error instanceof Error ? error.message : String(error)}`);
+      if (allAssessments.length > 0) break;
+      return null;
+    }
+  }
+
+  return allAssessments.length > 0
+    ? { category: "PROJECT", assessments: allAssessments, durationMs: Date.now() - startedAt }
+    : null;
 }
 
 export function formatAssessmentRationale(assessment: CandidateAssessment): string {

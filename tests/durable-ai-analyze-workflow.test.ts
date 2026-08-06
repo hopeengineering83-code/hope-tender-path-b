@@ -75,7 +75,8 @@ describe("AI Analyze is a MANUAL user action via the manual-ai-analyze route", (
     assert.match(panel, /manual-ai-analyze/);
     // No SSE streaming — status is polled via GET /api/ai-jobs/:id.
     assert.doesNotMatch(panel, /text\/event-stream|getReader\(\)/);
-    assert.match(panel, /\/api\/ai-jobs\/\$\{initialContinueJobId\}/);
+    // The panel polls job status via /api/ai-jobs/${jobId} (state variable).
+    assert.match(panel, /\/api\/ai-jobs\/\$\{jobId\}/);
     // The panel shows truthful status messages.
     assert.match(panel, /AI Analyze complete\. Run Engine to continue\./);
     assert.match(panel, /Check provider diagnostics/);

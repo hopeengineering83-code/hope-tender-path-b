@@ -13,7 +13,7 @@ import { exactSelectionLimit } from "./scope-policy";
 
 // One bounded provider batch per category. Expert and project batches execute
 // in parallel, keeping optional AI reranking inside Vercel's function budget.
-const PRE_FILTER_LIMIT = 8;
+const PRE_FILTER_LIMIT = 20;
 const PORTFOLIO_ITERATIONS = 20;
 
 type RequirementForLimit = {
@@ -173,11 +173,9 @@ export async function applyAIRematchToMainEngine(params: {
   knowledge: CompanyKnowledgeSnapshot;
 }): Promise<MainEngineAIRematchResult> {
   const expertMatches = [...params.matching.expertMatches]
-    .sort((left, right) => right.score - left.score)
-    .slice(0, PRE_FILTER_LIMIT);
+    .sort((a, b) => b.score - a.score).slice(0, PRE_FILTER_LIMIT);
   const projectMatches = [...params.matching.projectMatches]
-    .sort((left, right) => right.score - left.score)
-    .slice(0, PRE_FILTER_LIMIT);
+    .sort((a, b) => b.score - a.score).slice(0, PRE_FILTER_LIMIT);
 
   if (expertMatches.length === 0 && projectMatches.length === 0) {
     return emptyResult(params.matching, "No deterministic matches available for main-engine AI rematch.");
@@ -278,7 +276,7 @@ export async function applyAIRematchToMainEngine(params: {
             isSelected: selected,
           };
         })
-        .sort((left, right) => right.score - left.score),
+        .sort((a, b) => b.score - a.score),
       projectMatches: params.matching.projectMatches
         .map((match) => {
           const assessment = projectAssessmentsById.get(match.projectId);
@@ -291,7 +289,7 @@ export async function applyAIRematchToMainEngine(params: {
             isSelected: selected,
           };
         })
-        .sort((left, right) => right.score - left.score),
+        .sort((a, b) => b.score - a.score),
     };
 
     return {
