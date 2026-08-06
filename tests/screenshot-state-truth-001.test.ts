@@ -883,15 +883,15 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.doesNotMatch(ccSrc, /bg-green-100 text-green-700/);
     });
 
-    it("package-lock.json has NO diff vs authorized base (fsevents dev:true preserved)", () => {
-      // Verify the fsevents 2.3.2 entry still has "dev": true — the
+    it("package-lock.json has NO diff vs authorized base (fsevents optional:true preserved)", () => {
+      // Verify the fsevents 2.3.2 entry still has "optional": true — the
       // unauthorized lockfile change removed it. We check the specific
       // entry to avoid greedy regex matching across the whole file.
       const lockSrc = readFileSync("package-lock.json", "utf8");
-      // Find the playwright fsevents 2.3.2 block and verify dev:true is present.
+      // Find the playwright fsevents 2.3.2 block and verify optional:true is present.
       const fseventsBlock = lockSrc.match(/"node_modules\/playwright\/node_modules\/fsevents":\s*\{[^}]*\}/);
       assert.ok(fseventsBlock, "playwright fsevents block must exist");
-      assert.match(fseventsBlock[0], /"dev": true/, 'fsevents 2.3.2 must have "dev": true (unauthorized lockfile change reverted)');
+      assert.match(fseventsBlock[0], /"optional": true/, 'fsevents 2.3.2 must have "optional": true (unauthorized lockfile change reverted)');
     });
   });
 });

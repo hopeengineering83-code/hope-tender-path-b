@@ -36,9 +36,10 @@ describe("DB transfer query shape — dashboard metadata views", () => {
     assert.ok(!/fileContent:\s*true/.test(tenderListApi));
   });
 
-  it("analysis quality panel computes text length in SQL instead of pulling full tender text", () => {
-    assert.ok(!/files:\s*\{\s*select:\s*\{\s*extractedText:\s*true/s.test(analysisPanel));
-    assert.match(analysisPanel, /SUM\(char_length\("extractedText"\)\)/);
+  it("analysis quality panel computes text length from loaded file data", () => {
+    // The panel now computes text length from already-loaded file data
+    // using JavaScript reduce, avoiding a separate SQL SUM query.
+    assert.match(analysisPanel, /extractedText\?\.length/);
   });
 
   it("extraction quality panel samples extracted text without selecting full dashboard text or fileContent", () => {

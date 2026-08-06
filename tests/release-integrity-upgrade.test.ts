@@ -19,7 +19,7 @@ describe("release integrity upgrade", () => {
   it("uses one package-owned Vercel build command", () => {
     const vercel = JSON.parse(read("vercel.json")) as { buildCommand?: string; installCommand?: string };
     assert.equal(vercel.buildCommand, "npm run vercel-build");
-    assert.equal(vercel.installCommand, "npm ci");
+    assert.equal(vercel.installCommand, "npm ci --no-audit --no-fund");
   });
 
   it("limits automatic migration recovery to the exact failed init with strict preconditions", () => {

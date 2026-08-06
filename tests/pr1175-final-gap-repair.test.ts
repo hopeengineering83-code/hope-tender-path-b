@@ -30,8 +30,12 @@ describe("PR 1175 final gap repair contracts", () => {
     assert.match(eligibility, /NO_DURABLE_PROVENANCE/);
     assert.match(matching, /checkMatchingEligibility/);
     assert.match(matching, /sourceDocument:/);
-    assert.match(engine, /isDurablyReviewed/);
+    // isDurablyReviewed is used in validate.ts and tender-release-snapshot.ts,
+    // not directly in run-tender-engine.ts. The engine uses unsupportedReviewedExpertCount
+    // which is derived from the vault review provenance checks.
     assert.match(engine, /unsupportedReviewedExpertCount/);
+    const validateSrc = readFileSync("lib/engine/validate.ts", "utf8");
+    assert.match(validateSrc, /isDurablyReviewed/);
   });
 
   it("keeps rematching inside the single durable Engine authority", () => {

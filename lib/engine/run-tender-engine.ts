@@ -508,7 +508,7 @@ export async function runTenderEngine(
         evidenceMatchingBlocker = {
           code: rematchSkippedForDeadline ? "EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE" : fallback.blockerCode!,
           message: rematchSkippedForDeadline
-            ? "AI reranking was skipped and deterministic matching found no authoritative selectable evidence."
+            ? "AI reranking was skipped and deterministic matching found no authoritative selectable evidence. Re-run in background mode for AI multi-perspective scoring."
             : fallback.blockerMessage!,
         };
       }

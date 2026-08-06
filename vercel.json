@@ -1,7 +1,7 @@
 {
   "framework": "nextjs",
   "buildCommand": "npm run vercel-build",
-  "installCommand": "node scripts/install-with-lock-refresh.mjs",
+  "installCommand": "npm ci --no-audit --no-fund",
   "git": {
     "deploymentEnabled": {
       "**": false,
