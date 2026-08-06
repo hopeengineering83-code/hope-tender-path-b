@@ -11,6 +11,7 @@ import { BuildVersionBadge } from "../../components/build-version-badge";
 import { HeaderPageTitle } from "../../components/header-page-title";
 import { SearchIcon } from "../../components/icons";
 import { DashboardGroupSubnav } from "../../components/dashboard-group-subnav";
+import { TenderDetailDeleteControl } from "../../components/tender-detail-delete-control";
 import {
   DASHBOARD_NAV_GROUPS,
   filterDashboardNavGroupsByRole,
@@ -29,6 +30,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   if (!user) redirect("/login");
 
   const groups = filterDashboardNavGroupsByRole(DASHBOARD_NAV_GROUPS, user.role);
+  const canDeleteTenders = user.role === "ADMIN" || user.role === "PROPOSAL_MANAGER";
 
   return (
     <div className="min-h-screen min-w-0 bg-slate-50 xl:flex">
@@ -74,7 +76,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       <main id="main-content" className="min-w-0 flex-1" tabIndex={-1}>
         <div className="sticky top-0 z-30 flex min-w-0 items-center justify-between border-b bg-white/90 px-4 py-2 backdrop-blur-sm xl:px-8">
           <HeaderPageTitle />
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
+            <TenderDetailDeleteControl canDelete={canDeleteTenders} />
             <Link
               href="/dashboard/search"
               aria-label="Global Search"
