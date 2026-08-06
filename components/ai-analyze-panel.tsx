@@ -11,6 +11,7 @@ type Props = {
   initialContinueJobId?: string | null;
   aiEnabled: boolean;
   canMutate?: boolean;
+  /** Legacy server hints retained for call-site compatibility only. */
   analysisAlreadySucceeded?: boolean;
   extractionComplete?: boolean;
   sourceIntegrityValid?: boolean;
@@ -48,9 +49,6 @@ export function AIAnalyzePanel({
   initialContinueJobId = null,
   aiEnabled,
   canMutate = false,
-  analysisAlreadySucceeded = false,
-  extractionComplete = false,
-  sourceIntegrityValid = true,
   hasActiveJob = false,
 }: Props) {
   const router = useRouter();
@@ -63,10 +61,12 @@ export function AIAnalyzePanel({
   const [submitting, setSubmitting] = useState(false);
   const [readiness, setReadiness] = useState<SourceReadiness | null>(null);
   const [readinessLoading, setReadinessLoading] = useState(true);
+  const [readinessError, setReadinessError] = useState("");
   const [diag, setDiag] = useState<{ anyWorking: boolean; summary: string; perProvider: ProviderDiag[] } | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
 
   const loadReadiness = useCallback(async () => {
+    if (deletedRef.current) return;
     try {
       const response = await fetch(`/api/tenders/${tenderId}/source-readiness`, { cache: "no-store" });
       if (response.status === 404 || response.status === 410) {
@@ -74,20 +74,25 @@ export function AIAnalyzePanel({
         return;
       }
       const body = await response.json().catch(() => null);
-      if (response.ok && body?.ok) {
-        setReadiness({
-          analysisReady: Boolean(body.analysisReady),
-          byteIntegrityValid: Boolean(body.byteIntegrityValid),
-          extractionComplete: Boolean(body.extractionComplete),
-          extractionQualityValid: Boolean(body.extractionQualityValid),
-          duplicateFileCount: Number(body.duplicateFileCount ?? 0),
-          blockers: Array.isArray(body.blockers) ? body.blockers.map(String) : [],
-          analysisCurrent: Boolean(body.analysisCurrent),
-          analysisBlocker: body.analysisBlocker ? String(body.analysisBlocker) : null,
-        });
+      if (!response.ok || !body?.ok) {
+        throw new Error(body?.error || `Source readiness check failed (HTTP ${response.status}).`);
       }
-    } catch {
-      // Preserve the server-rendered fallback while the durable status remains readable.
+      setReadiness({
+        analysisReady: Boolean(body.analysisReady),
+        byteIntegrityValid: Boolean(body.byteIntegrityValid),
+        extractionComplete: Boolean(body.extractionComplete),
+        extractionQualityValid: Boolean(body.extractionQualityValid),
+        duplicateFileCount: Number(body.duplicateFileCount ?? 0),
+        blockers: Array.isArray(body.blockers) ? body.blockers.map(String) : [],
+        analysisCurrent: Boolean(body.analysisCurrent),
+        analysisBlocker: body.analysisBlocker ? String(body.analysisBlocker) : null,
+      });
+      setReadinessError("");
+    } catch (reason) {
+      // Fail closed: stale server-rendered booleans must never authorize an AI
+      // action when the canonical source/revision endpoint is unavailable.
+      setReadiness(null);
+      setReadinessError(reason instanceof Error ? reason.message : "Unable to verify canonical source readiness.");
     } finally {
       setReadinessLoading(false);
     }
@@ -155,13 +160,11 @@ export function AIAnalyzePanel({
     return () => { active = false; };
   }, [jobId, loadReadiness, router]);
 
-  const canonicalAnalysisReady = readiness?.analysisReady
-    ?? (extractionComplete && sourceIntegrityValid);
-  const analysisComplete = readiness?.analysisCurrent
-    ?? (jobStatus === "SUCCEEDED" || (!analyzing && jobStatus === null && analysisAlreadySucceeded));
+  const canonicalAnalysisReady = readiness?.analysisReady === true;
+  const analysisComplete = readiness?.analysisCurrent === true;
 
   const runAiAnalyze = useCallback(async () => {
-    if (submitting || analyzing || !canonicalAnalysisReady || deletedRef.current) return;
+    if (submitting || analyzing || !canonicalAnalysisReady || readinessError || deletedRef.current) return;
     setSubmitting(true);
     setError("");
     try {
@@ -172,10 +175,12 @@ export function AIAnalyzePanel({
       const body = await response.json().catch(() => null);
       if (!response.ok) {
         setError(body?.error || `AI Analyze could not start (HTTP ${response.status}).`);
+        await loadReadiness();
         return;
       }
       if (!body?.jobId) {
         setError("AI Analyze was accepted without a durable job ID. Reload and check the workflow status.");
+        await loadReadiness();
         return;
       }
       setJobId(String(body.jobId));
@@ -184,10 +189,11 @@ export function AIAnalyzePanel({
       setPhase("AI Analyze is queued — waiting for the durable worker.");
     } catch {
       setError("Network error. The job may still have been created — reload to check status.");
+      await loadReadiness();
     } finally {
       setSubmitting(false);
     }
-  }, [analyzing, canonicalAnalysisReady, submitting, tenderId]);
+  }, [analyzing, canonicalAnalysisReady, loadReadiness, readinessError, submitting, tenderId]);
 
   async function runProviderDiagnostics() {
     setDiagnosing(true);
@@ -217,7 +223,8 @@ export function AIAnalyzePanel({
     && !analyzing
     && !analysisComplete
     && !submitting
-    && !readinessLoading;
+    && !readinessLoading
+    && !readinessError;
 
   const blocker = readiness?.blockers[0] ?? null;
   const statusLabel = analyzing
@@ -226,9 +233,11 @@ export function AIAnalyzePanel({
       ? "AI Analyze complete. Run Engine to continue."
       : !aiEnabled
         ? "No AI provider is configured."
-        : canonicalAnalysisReady
-          ? "Extraction complete. Run AI Analyze to continue."
-          : blocker ?? "Canonical source extraction is still running or requires correction.";
+        : readinessError
+          ? "Canonical source readiness could not be verified. AI Analyze remains disabled."
+          : canonicalAnalysisReady
+            ? "Extraction complete. Run AI Analyze to continue."
+            : blocker ?? "Canonical source extraction is still running or requires correction.";
 
   const disabledReason = !canMutate
     ? "You do not have permission to run AI Analyze."
@@ -236,13 +245,15 @@ export function AIAnalyzePanel({
       ? "Configure at least one supported AI provider."
       : readinessLoading
         ? "Checking canonical source readiness."
-        : !canonicalAnalysisReady
-          ? blocker ?? "Canonical source extraction is not ready."
-          : analyzing
-            ? "An AI Analyze job is already running."
-            : analysisComplete
-              ? "AI Analyze already completed successfully for this source revision."
-              : null;
+        : readinessError
+          ? readinessError
+          : !canonicalAnalysisReady
+            ? blocker ?? "Canonical source extraction is not ready."
+            : analyzing
+              ? "An AI Analyze job is already running."
+              : analysisComplete
+                ? "AI Analyze already completed successfully for this source revision."
+                : null;
 
   return (
     <section id="ai-analyze-section" className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
@@ -292,7 +303,7 @@ export function AIAnalyzePanel({
           <p className="mt-1 text-red-700">{error}</p>
           {canMutate ? (
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={() => void runAiAnalyze()} disabled={submitting || analyzing || !canonicalAnalysisReady} className="rounded-lg border border-purple-300 bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-60">Retry AI Analyze</button>
+              <button type="button" onClick={() => void runAiAnalyze()} disabled={submitting || analyzing || !canonicalAnalysisReady || Boolean(readinessError)} className="rounded-lg border border-purple-300 bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-60">Retry AI Analyze</button>
               <button type="button" onClick={() => void runProviderDiagnostics()} disabled={diagnosing} className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-800 hover:bg-red-50 disabled:opacity-60">{diagnosing ? "Checking providers…" : "Check provider diagnostics"}</button>
             </div>
           ) : null}
