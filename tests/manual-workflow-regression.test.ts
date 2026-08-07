@@ -78,9 +78,17 @@ describe("REGRESSION: AI Analyze and Run Engine cannot start automatically", () 
   });
 
   it("manual AI Analyze explicitly disables Engine continuation", () => {
+    // FIX 1: After the atomic-manual-authority refactor, the route forwards
+    // a `manualAuthority` parameter. autoContinue=false and manualRequested=true
+    // are persisted atomically by createAnalysisJob() in the service.
     const route = readCode("app/api/tenders/[id]/manual-ai-analyze/route.ts");
-    assert.match(route, /autoContinue:\s*false/);
-    assert.match(route, /manualRequested:\s*true/);
+    const service = readCode("lib/ai-jobs/analysis-job-service.ts");
+    assert.match(route, /manualAuthority:/);
+    assert.match(route, /source: "manual-ai-analyze"/);
+    assert.match(service, /autoContinue:\s*false/);
+    assert.match(service, /manualRequested:\s*true/);
+    // The race-window updateMany patch must NOT exist in the route.
+    assert.doesNotMatch(route, /prisma\.aiJob\.updateMany/);
   });
 
   it("AI Analyze handler terminates at a durable manual Run Engine boundary", () => {

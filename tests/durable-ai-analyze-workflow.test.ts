@@ -58,10 +58,26 @@ describe("AI Analyze is a MANUAL user action via the manual-ai-analyze route", (
   const panel = read("components/ai-analyze-panel.tsx");
 
   it("the manual route creates an AI_ANALYZE job with manualRequested=true and autoContinue=false", () => {
+    // FIX 1: After the atomic-manual-authority refactor, the manual route
+    // passes a `manualAuthority` parameter into createAnalysisJob() (which
+    // persists manualRequested=true, source, actorUserId, authorizedAt, and
+    // autoContinue=false atomically in the same transaction). The route no
+    // longer patches these in a separate updateMany — that race window is
+    // closed. The contract is therefore verified in analysis-job-service.ts
+    // (where the atomic write happens) AND in the route (which forwards the
+    // manual authority).
+    const service = read("lib/ai-jobs/analysis-job-service.ts");
     assert.match(manualRoute, /createAnalysisJob/);
-    assert.match(manualRoute, /manualRequested:\s*true/);
-    assert.match(manualRoute, /autoContinue:\s*false/);
+    assert.match(manualRoute, /manualAuthority:/);
+    assert.match(manualRoute, /source: "manual-ai-analyze"/);
+    assert.match(manualRoute, /actorUserId: actor\.id/);
     assert.match(manualRoute, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)/);
+    // The atomic contract is verified in the service.
+    assert.match(service, /manualRequested: true/);
+    assert.match(service, /autoContinue: false/);
+    assert.match(service, /source: "manual-ai-analyze"/);
+    // The race-window updateMany patch must NOT exist in the route.
+    assert.doesNotMatch(manualRoute, /prisma\.aiJob\.updateMany/);
   });
 
   it("the workflow step links are navigation-only — no AI Analyze mutation", () => {
@@ -87,7 +103,10 @@ describe("durable resume and fail-closed downstream gates", () => {
   it("re-arms retryable partial/failed jobs and preserves non-retryable failures", () => {
     const service = read("lib/ai-jobs/analysis-job-service.ts");
     assert.match(service, /status: \{ in: \["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"\] \}/);
-    assert.match(service, /data: \{ status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null \}/);
+    // FIX 1: the re-arm now also refreshes the manual authority + canonical
+    // snapshot in the same transaction. The data block must include the
+    // core re-arm fields plus the input JSON with manualRequested.
+    assert.match(service, /status: "QUEUED",\s*startedAt: null,\s*finishedAt: null,\s*errorMessage: null,/);
     assert.match(service, /nonRetryable/);
     assert.match(service, /\$transaction/);
   });

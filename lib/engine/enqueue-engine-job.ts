@@ -25,6 +25,13 @@ export type EngineEnqueueResult = {
  * prevents duplicate jobs. `autoContinue: true` authorizes only the stages
  * AFTER Engine success: Build Plan, generation, validation/finalization, and
  * final package reconciliation. It never authorizes automatic Engine start.
+ *
+ * FIX 3: `manualRequested` is a HARD REQUIREMENT. The previous
+ * `?? input.purpose === "INTERNAL_ARTIFACT_PREPARATION"` fallback allowed any
+ * internal service to mint the equivalent of a manual Engine click by setting
+ * a purpose string — bypassing the manual authority contract. Removed.
+ * Recovery may re-arm the SAME manually-authorized Engine job; it must never
+ * create a fresh Engine job automatically.
  */
 export async function enqueueEngineJobForCurrentSources(
   client: PrismaClient,
@@ -32,8 +39,14 @@ export async function enqueueEngineJobForCurrentSources(
     userId: string;
     tenderId: string;
     companyId: string;
+    /** Reserved for backwards compatibility — no longer authorizes enqueue. */
     purpose?: string;
-    manualRequested?: boolean;
+    /**
+     * HARD REQUIREMENT. Only POST /api/tenders/:id/engine may set this to
+     * true, after authentication, role/tenant checks, and current-revision
+     * validation. Internal services must not call this function.
+     */
+    manualRequested: boolean;
   },
 ): Promise<EngineEnqueueResult | null> {
   const revision = await computeEngineSourceRevision(client, {
@@ -43,9 +56,8 @@ export async function enqueueEngineJobForCurrentSources(
   });
   if (!revision) return null;
 
-  const manualRequested = input.manualRequested
-    ?? input.purpose === "INTERNAL_ARTIFACT_PREPARATION";
-  if (!manualRequested) {
+  // FIX 3: manualRequested is required — no purpose-based fallback.
+  if (!input.manualRequested) {
     throw new Error("MANUAL_RUN_ENGINE_REQUIRED");
   }
 

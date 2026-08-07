@@ -27,6 +27,20 @@ import { syncPersistedTenderFactsToLedger } from "../engine/tender-facts-ledger-
 export type AnalysisJobCreateInput = {
   tenderId: string;
   userId: string;
+  /**
+   * FIX 1 (manual AI Analyze authority): every caller must supply explicit
+   * manual-action provenance. Internal services, extraction, cron, workers,
+   * upload handlers, page rendering, polling and recovery must NOT call this
+   * function — only the authenticated manual route
+   * POST /api/tenders/:id/manual-ai-analyze may issue a new user-authorized
+   * AI_ANALYZE job. The worker fails closed if this field is absent.
+   */
+  manualAuthority: {
+    source: "manual-ai-analyze";
+    actorUserId: string;
+    /** ISO timestamp captured at the moment the manual click was authenticated. */
+    authorizedAt: string;
+  };
 };
 
 const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
@@ -45,8 +59,113 @@ export function computeAnalysisJobLockKey(
   return computeAdvisoryLockKey([userId, tenderId, jobType, contentHash]);
 }
 
+/**
+ * FIX 2: Immutable canonical snapshot persisted on the AiJob row at manual
+ * creation time. The worker consumes this snapshot instead of reloading
+ * TenderFile rows, so stale revisions, deleted files, and chunk mismatches
+ * cannot corrupt a running analysis.
+ */
+export type CanonicalAnalysisSnapshot = {
+  /** Ordered list of ACTIVE TenderFile IDs that were hashed into analysisInputHash. */
+  canonicalFileIds: string[];
+  /** Per-file SHA-256 of extractedText — verifies byte integrity at worker time. */
+  fileContentHashes: Record<string, string>;
+  /** The analysisInputHash (SHA-256 of the concatenated canonical content). */
+  analysisInputHash: string;
+  /** Total chunk count produced by the deterministic chunker at snapshot time. */
+  totalChunks: number;
+  /** Per-chunk SHA-256 (chunkIndex → sha256). Worker verifies before processing. */
+  chunkHashes: Record<number, string>;
+  /** Deterministic ordered list of file IDs as joined string (for snapshot integrity check). */
+  snapshotVersion: 1;
+};
+
+/**
+ * Verify a job's persisted canonical snapshot against the current tender
+ * state. Returns `valid` when the snapshot matches (file IDs all still exist
+ * and ACTIVE, file content hashes unchanged, analysisInputHash unchanged).
+ * Returns `superseded` when the canonical source revision has changed — the
+ * caller must mark the old job SUPERSEDED/CANCELED and never promote its
+ * results.
+ */
+export async function verifyAnalysisSnapshot(
+  jobId: string,
+  tenderId: string,
+  userId: string,
+  tx?: Prisma.TransactionClient,
+): Promise<{ valid: boolean; superseded: boolean; reason?: string }> {
+  const client = tx ?? prisma;
+  const job = await client.aiJob.findFirst({
+    where: { id: jobId, tenderId, userId, jobType: AI_ANALYZE_JOB_TYPE },
+    select: { input: true, analysisInputHash: true },
+  });
+  if (!job) return { valid: false, superseded: false, reason: "JOB_NOT_FOUND" };
+
+  let snapshot: CanonicalAnalysisSnapshot | null = null;
+  try {
+    const parsed = JSON.parse(job.input ?? "{}");
+    if (parsed && typeof parsed === "object" && parsed.snapshot && parsed.snapshot.snapshotVersion === 1) {
+      snapshot = parsed.snapshot as CanonicalAnalysisSnapshot;
+    }
+  } catch {
+    // Legacy job without snapshot — treat as superseded (never fabricate).
+    return { valid: false, superseded: true, reason: "LEGACY_JOB_NO_SNAPSHOT" };
+  }
+  if (!snapshot) {
+    return { valid: false, superseded: true, reason: "MISSING_SNAPSHOT" };
+  }
+
+  // Verify canonical file IDs still exist and are ACTIVE.
+  const currentFiles = await client.tenderFile.findMany({
+    where: { tenderId, deletionStatus: "ACTIVE" },
+    select: { id: true, extractedText: true },
+  });
+  const currentFileMap = new Map(currentFiles.map((f) => [f.id, f.extractedText ?? ""]));
+
+  // If any canonical file ID is no longer ACTIVE, the snapshot is superseded.
+  for (const fileId of snapshot.canonicalFileIds) {
+    if (!currentFileMap.has(fileId)) {
+      return { valid: false, superseded: true, reason: "CANONICAL_FILE_REMOVED" };
+    }
+  }
+  // If a new ACTIVE file appeared that wasn't in the snapshot, the source revision changed.
+  if (currentFiles.length !== snapshot.canonicalFileIds.length) {
+    return { valid: false, superseded: true, reason: "CANONICAL_FILE_SET_CHANGED" };
+  }
+
+  // Verify per-file content hashes match (byte integrity).
+  for (const fileId of snapshot.canonicalFileIds) {
+    const currentText = currentFileMap.get(fileId) ?? "";
+    const currentHash = require("crypto").createHash("sha256").update(currentText).digest("hex");
+    if (snapshot.fileContentHashes[fileId] !== currentHash) {
+      return { valid: false, superseded: true, reason: "FILE_CONTENT_DRIFT" };
+    }
+  }
+
+  // Verify analysisInputHash unchanged.
+  if (job.analysisInputHash !== snapshot.analysisInputHash) {
+    return { valid: false, superseded: true, reason: "ANALYSIS_INPUT_HASH_DRIFT" };
+  }
+
+  return { valid: true, superseded: false };
+}
+
 export async function createAnalysisJob(input: AnalysisJobCreateInput) {
-  const { tenderId, userId } = input;
+  const { tenderId, userId, manualAuthority } = input;
+
+  // FIX 1: Hard contract — every caller must supply explicit manual authority.
+  // Internal services, extraction, cron, workers, upload handlers, polling
+  // and recovery must NOT call this function. Only the authenticated manual
+  // route POST /api/tenders/:id/manual-ai-analyze is permitted.
+  if (
+    !manualAuthority ||
+    manualAuthority.source !== "manual-ai-analyze" ||
+    !manualAuthority.actorUserId ||
+    manualAuthority.actorUserId !== userId ||
+    !manualAuthority.authorizedAt
+  ) {
+    throw new Error("MANUAL_AUTHORITY_REQUIRED: createAnalysisJob requires explicit manual-action provenance");
+  }
 
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
@@ -85,6 +204,37 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   }
 
   const contentHash = computeAnalysisContentHash(tenderText);
+
+  // FIX 2: Build the immutable canonical snapshot ONCE at manual creation.
+  // The worker consumes this snapshot instead of reloading TenderFile rows,
+  // so stale revisions, deleted files, and chunk mismatches cannot corrupt
+  // a running analysis. Per-file SHA-256 verifies byte integrity at worker
+  // time; chunkHashes verify deterministic chunk boundaries.
+  const canonicalFileIds = tender.files
+    .filter((f) => f.deletionStatus === "ACTIVE")
+    .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0))
+    .map((f) => f.id);
+  const fileContentHashes: Record<string, string> = {};
+  for (const f of tender.files.filter((f) => f.deletionStatus === "ACTIVE")) {
+    fileContentHashes[f.id] = require("crypto")
+      .createHash("sha256")
+      .update(f.extractedText ?? "")
+      .digest("hex");
+  }
+  const chunks = aiChunkTenderContent(tenderText);
+  const totalChunks = chunks.length;
+  const chunkHashes: Record<number, string> = {};
+  for (let i = 0; i < chunks.length; i++) {
+    chunkHashes[i] = require("crypto").createHash("sha256").update(chunks[i]).digest("hex");
+  }
+  const snapshot: CanonicalAnalysisSnapshot = {
+    canonicalFileIds,
+    fileContentHashes,
+    analysisInputHash: contentHash,
+    totalChunks,
+    chunkHashes,
+    snapshotVersion: 1,
+  };
 
   // Create or reuse resumable job. FAILED is included so a provider-exhausted
   // or partially-completed run can be retried/resumed against the SAME job and
@@ -157,14 +307,51 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       // from the last successful chunk instead of restarting. A RUNNING/QUEUED
       // job is left untouched (this branch never resets the actively-claimed job
       // that executeAnalysis re-resolves mid-run).
+      //
+      // FIX 1+2: persist the manual authority AND the canonical snapshot in the
+      // SAME transaction that re-arms the job. The previous design left a race
+      // window between createAnalysisJob() and a separate updateMany that
+      // patched manualRequested into input.
+      const existingInput = (() => {
+        try {
+          const parsed = JSON.parse(existing.input ?? "{}");
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+          }
+        } catch {
+          // fallthrough
+        }
+        return {} as Record<string, unknown>;
+      })();
       return await tx.aiJob.update({
         where: { id: existing.id },
-        data: { status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null },
+        data: {
+          status: "QUEUED",
+          startedAt: null,
+          finishedAt: null,
+          errorMessage: null,
+          input: JSON.stringify({
+            ...existingInput,
+            tenderId,
+            contentHash,
+            source: "manual-ai-analyze",
+            manualRequested: true,
+            autoContinue: false,
+            actorUserId: manualAuthority.actorUserId,
+            authorizedAt: manualAuthority.authorizedAt,
+            snapshot,
+          }),
+        },
       });
     }
 
     // Step 3: No existing job found — create a new one. The advisory lock
     // ensures exactly one creation across concurrent callers.
+    //
+    // FIX 1+2: persist the manual authority AND the canonical snapshot in the
+    // SAME transaction that creates the job. The previous design left a race
+    // window between createAnalysisJob() and a separate updateMany that
+    // patched manualRequested into input.
     return await tx.aiJob.create({
       data: {
         tenderId,
@@ -173,13 +360,19 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         status: "QUEUED",
         analysisInputHash: contentHash,
         runId: require("crypto").randomUUID(),
-        input: JSON.stringify({ tenderId, contentHash }),
+        input: JSON.stringify({
+          tenderId,
+          contentHash,
+          source: "manual-ai-analyze",
+          manualRequested: true,
+          autoContinue: false,
+          actorUserId: manualAuthority.actorUserId,
+          authorizedAt: manualAuthority.authorizedAt,
+          snapshot,
+        }),
       },
     });
   });
-
-  const chunks = aiChunkTenderContent(tenderText);
-  const totalChunks = chunks.length;
 
   for (let i = 0; i < totalChunks; i++) {
     await prisma.aiAnalyzeChunk.upsert({
@@ -223,6 +416,35 @@ export async function runNextChunk(jobId: string, userId: string) {
     if (!job) throw new Error("Job not found");
     if (job.status === "FAILED" || job.status === "SUCCEEDED") {
         return { completed: true, status: job.status };
+    }
+
+    // FIX 1: Worker must fail closed if an AI_ANALYZE job lacks valid
+    // manual-action provenance. Legacy jobs (created before this contract)
+    // are rejected — never fabricate a manual action for them.
+    if (job.jobType === AI_ANALYZE_JOB_TYPE) {
+      let parsedInput: any = {};
+      try {
+        parsedInput = JSON.parse(job.input ?? "{}");
+      } catch {
+        parsedInput = {};
+      }
+      if (
+        !parsedInput ||
+        parsedInput.manualRequested !== true ||
+        parsedInput.source !== "manual-ai-analyze" ||
+        parsedInput.actorUserId !== userId
+      ) {
+        // Mark the job FAILED with an actionable reason. Do not process it.
+        await tx.aiJob.update({
+          where: { id: jobId },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            errorMessage: "MANUAL_AUTHORITY_MISSING: AI_ANALYZE job lacks valid manual-action provenance",
+          },
+        });
+        return { completed: true, status: "FAILED" as const };
+      }
     }
 
     const chunks = await tx.$queryRaw<any[]>`
@@ -269,18 +491,87 @@ export async function runNextChunk(jobId: string, userId: string) {
   if (result.completed || (result as any).retryLater) return result;
 
   const { chunk } = result as any;
-  const tender = await prisma.tender.findUnique({
-      where: { id: chunk.tenderId },
-      include: { files: true }
-  });
-  if (!tender) throw new Error("Tender lost");
 
-  const fullText = tender.files
-    .sort((a: any, b: any) => a.createdAt.getTime() - b.createdAt.getTime())
-    .map((f: any) => {
-        if (!f.extractedText) return "";
-        return `[FILE_ID:${f.id}|FILE_NAME:${f.originalFileName || f.fileName}]\n${f.extractedText}`;
-    })
+  // FIX 2: Verify the canonical snapshot before processing the chunk.
+  // If the source revision changed, mark the job SUPERSEDED and never promote.
+  const snapshotCheck = await verifyAnalysisSnapshot(jobId, chunk.tenderId, userId).catch(() => ({
+    valid: false,
+    superseded: true,
+    reason: "SNAPSHOT_VERIFY_ERROR",
+  }));
+  if (snapshotCheck.superseded || !snapshotCheck.valid) {
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: `SUPERSEDED: canonical source revision changed (${snapshotCheck.reason ?? "UNKNOWN"}) — run AI Analyze again to start a fresh snapshot`,
+      },
+    });
+    await prisma.aiAnalyzeChunk.update({
+      where: { id: chunk.id },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: `SUPERSEDED (${snapshotCheck.reason ?? "UNKNOWN"})`,
+      },
+    }).catch((chunkUpdateErr: unknown) => {
+      logger.error(
+        `[runNextChunk] Failed to mark chunk ${chunk.id} as SUPERSEDED: ${chunkUpdateErr instanceof Error ? chunkUpdateErr.message : String(chunkUpdateErr)}`,
+      );
+    });
+    return { completed: true, status: "FAILED" as const };
+  }
+
+  // FIX 2: Reconstruct chunk text from the IMMUTABLE SNAPSHOT, not from
+  // current TenderFile rows. The snapshot persists ordered canonical file IDs
+  // and per-file SHA-256 — we reload those exact files and verify each hash.
+  let parsedInput: any = {};
+  try {
+    parsedInput = JSON.parse((await prisma.aiJob.findUnique({ where: { id: jobId }, select: { input: true } }))?.input ?? "{}");
+  } catch {
+    parsedInput = {};
+  }
+  const snapshot: CanonicalAnalysisSnapshot | undefined = parsedInput?.snapshot;
+  if (!snapshot || snapshot.snapshotVersion !== 1) {
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: "SNAPSHOT_MISSING: job input lacks canonical snapshot — refusing to process",
+      },
+    });
+    return { completed: true, status: "FAILED" as const };
+  }
+
+  // Reload the exact canonical files (in deterministic order) and verify each
+  // content hash matches the snapshot. If any hash drifted, fail closed.
+  const canonicalFiles = await prisma.tenderFile.findMany({
+    where: { id: { in: snapshot.canonicalFileIds } },
+    select: { id: true, extractedText: true, originalFileName: true, fileName: true },
+  });
+  const fileMap = new Map(canonicalFiles.map((f) => [f.id, f]));
+  const orderedFiles = snapshot.canonicalFileIds
+    .map((id) => fileMap.get(id))
+    .filter((f): f is NonNullable<typeof f> => Boolean(f));
+  for (const f of orderedFiles) {
+    const currentHash = require("crypto").createHash("sha256").update(f.extractedText ?? "").digest("hex");
+    if (snapshot.fileContentHashes[f.id] !== currentHash) {
+      await prisma.aiJob.update({
+        where: { id: jobId },
+        data: {
+          status: "FAILED",
+          finishedAt: new Date(),
+          errorMessage: `FILE_CONTENT_DRIFT: TenderFile ${f.id} content changed since snapshot — run AI Analyze again`,
+        },
+      });
+      return { completed: true, status: "FAILED" as const };
+    }
+  }
+
+  const fullText = orderedFiles
+    .map((f) => `[FILE_ID:${f.id}|FILE_NAME:${f.originalFileName || f.fileName}]\n${f.extractedText ?? ""}`)
     .filter(Boolean)
     .join("\n\n---\n\n");
 
@@ -296,6 +587,13 @@ export async function runNextChunk(jobId: string, userId: string) {
       const allChunks = aiChunkTenderContent(fullText);
       const chunkText = allChunks[chunk.chunkIndex];
       if (!chunkText) throw new Error(`Chunk ${chunk.chunkIndex} out of bounds (total: ${allChunks.length})`);
+
+      // FIX 2: Verify the deterministic chunk hash matches the snapshot. If
+      // the chunker produced a different chunk text, the snapshot is stale.
+      const currentChunkHash = require("crypto").createHash("sha256").update(chunkText).digest("hex");
+      if (snapshot.chunkHashes[chunk.chunkIndex] && snapshot.chunkHashes[chunk.chunkIndex] !== currentChunkHash) {
+        throw new Error(`CHUNK_HASH_DRIFT: chunk ${chunk.chunkIndex} hash mismatch — snapshot is stale`);
+      }
 
       let providerUsed: string | undefined;
       const res = await analyzeOneChunkWithRetry(chunkText, chunk.chunkIndex, allChunks.length, (p: any) => {

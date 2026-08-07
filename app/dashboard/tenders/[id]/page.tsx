@@ -184,7 +184,15 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   }));
 
   const ai = isAIEnabled();
-  const [generationReadiness, canonicalReadiness, activeAnalysisJob, succeededAnalysisJob, activeEngineJob, succeededEngineJob, activeIntakeRun] = await Promise.all([
+  // FIX 7: Removed unscoped `succeededAnalysisJob` and `succeededEngineJob`
+  // queries — they were legacy readiness sources that could be confused by
+  // stale/deleted/superseded/duplicate historical jobs. The single canonical
+  // readiness service (getCanonicalTenderReadiness) is now the only source
+  // of truth for analysisCurrent/engineCurrent/etc. We still query
+  // `activeAnalysisJob` and `activeEngineJob` (QUEUED/RUNNING only) to surface
+  // the "in-flight" indicator on the page — that is current-state, not
+  // historical truth, and is not used as a workflow authority.
+  const [generationReadiness, canonicalReadiness, activeAnalysisJob, activeEngineJob, activeIntakeRun] = await Promise.all([
     getTenderGenerationReadinessStrict(prismaClient, userId, tender.id).catch(() => null),
     getCanonicalTenderReadiness(prismaClient, userId, tender.id).catch(() => null),
     prismaClient.aiJob.findFirst({
@@ -201,28 +209,8 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
       where: {
         userId,
         tenderId: tender.id,
-        jobType: "AI_ANALYZE",
-        status: "SUCCEEDED",
-      },
-      orderBy: { createdAt: "desc" },
-      select: { id: true, analysisInputHash: true },
-    }).catch(() => null),
-    prismaClient.aiJob.findFirst({
-      where: {
-        userId,
-        tenderId: tender.id,
         jobType: "ENGINE_RUN",
         status: { in: ["QUEUED", "RUNNING"] },
-      },
-      orderBy: { createdAt: "desc" },
-      select: { id: true },
-    }).catch(() => null),
-    prismaClient.aiJob.findFirst({
-      where: {
-        userId,
-        tenderId: tender.id,
-        jobType: "ENGINE_RUN",
-        status: "SUCCEEDED",
       },
       orderBy: { createdAt: "desc" },
       select: { id: true },
@@ -239,30 +227,48 @@ export default async function TenderPage({ params }: { params: Promise<{ id: str
   ]);
   const activeIntakeSession = parseTenderPackageSessionResult(activeIntakeRun?.resultJson);
 
-  // ─── Truthful workflow state derived from database ─────────────────────────
+  // ─── Truthful workflow state derived from ONE canonical readiness service ──
   //
-  // sourceIntegrityValid: true when all active files have a non-failed
-  // extraction method and non-null extractionScore. This replaces the
-  // previous hardcoded `sourceIntegrityValid={true}`.
-  const sourceIntegrityValid = tender.files.length > 0
-    && tender.files.every((f) => f.extractionScore !== null && f.extractionScore > 0);
+  // FIX 7: Removed legacy per-file `extractionScore` booleans and unscoped
+  // succeededAnalysisJob/succeededEngineJob queries. The single canonical
+  // readiness service (getCanonicalTenderReadiness) drives every workflow
+  // decision: AI Analyze panel, Analysis Quality panel, Run Engine panel,
+  // Next Action, workflow navigation, generation readiness, export readiness,
+  // API authorization, worker authorization. Stale/deleted/superseded/
+  // duplicate historical jobs or files can no longer become a second truth
+  // source.
+  //
+  // The canonical service exposes `readyForAnalysis` (extraction + byte
+  // integrity complete and not corrupted), `matchingComplete` (Engine has
+  // produced a current-revision match set), `readyForFullProposal` (Engine
+  // + Build Plan + generation all current), and per-module `state` strings.
+  // We derive the panel props from those — never from raw AiJob queries.
+  const extractionModuleState = canonicalReadiness?.modules?.extraction?.state ?? "NOT_RUN";
+  const analysisModuleState = canonicalReadiness?.modules?.analysis?.state ?? "NOT_RUN";
+  const matchingModuleState = canonicalReadiness?.modules?.matching?.state ?? "NOT_RUN";
 
-  // extractionComplete: true when at least one file has been successfully
-  // extracted (extractionScore > 0 means text was extracted).
-  const extractionComplete = tender.files.some((f) => f.extractionScore !== null && f.extractionScore > 0);
+  // sourceIntegrityValid: true when the canonical extraction module reports
+  // byte integrity is valid for all active files (no extraction BLOCKED/STALE).
+  const sourceIntegrityValid = Boolean(canonicalReadiness?.readyForAnalysis)
+    && extractionModuleState !== "BLOCKED";
 
-  // analysisComplete: true when the current source revision has a SUCCEEDED
-  // AI_ANALYZE job. This replaces the previous hardcoded `analysisComplete`
-  // derived only from `analysisExtractionStatus`.
-  const analysisComplete = Boolean(succeededAnalysisJob)
-    && tender.analysisExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED";
+  // extractionComplete: true when the canonical extraction module has reached
+  // a READY state (text was successfully extracted from at least one file).
+  const extractionComplete = extractionModuleState === "READY"
+    || extractionModuleState === "WARNING";
 
-  // engineRunning: true when an ENGINE_RUN job is QUEUED or RUNNING.
-  // engineComplete: true when an ENGINE_RUN job has SUCCEEDED.
-  // These replace the previous hardcoded `engineRunning={false}` and
-  // `engineComplete={false}`.
-  const engineRunning = Boolean(activeEngineJob);
-  const engineComplete = Boolean(succeededEngineJob);
+  // analysisComplete: true when the canonical analysis module is READY (the
+  // current-revision AI_ANALYZE job has SUCCEEDED and been promoted).
+  const analysisComplete = analysisModuleState === "READY"
+    || analysisModuleState === "WARNING";
+
+  // engineRunning: true when an ENGINE_RUN job is QUEUED or RUNNING but the
+  // canonical matching module has not yet reached READY (Engine still in
+  // flight). engineComplete: true when the canonical matching module reports
+  // READY (Engine has SUCCEEDED for the current source revision).
+  const engineComplete = matchingModuleState === "READY"
+    || matchingModuleState === "WARNING";
+  const engineRunning = Boolean(activeEngineJob) && !engineComplete;
 
   return (
     <section className="space-y-5" aria-label="Tender workflow workspace">

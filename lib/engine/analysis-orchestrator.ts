@@ -35,6 +35,19 @@ export type AnalysisOrchestrationOptions = {
   onChunkStart?: (info: { chunkIndex: number; totalChunks: number }) => void | Promise<void>;
   onChunkComplete?: (info: { chunkIndex: number; totalChunks: number; result: AIAnalysisResult; provider?: string | null }) => void | Promise<void>;
   onChunkFailure?: (info: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => void | Promise<void>;
+  /**
+   * FIX 9: Manual authority forwarded from the authenticated caller. The
+   * legacy `executeAnalysis` path is reachable only via the worker (which
+   * processes a manually-created job) or via the authenticated SSE/streaming
+   * route. Both must forward manual authority so createAnalysisJob() can
+   * atomically persist it. The worker reads it from the job's existing
+   * `input` (already populated by the manual route).
+   */
+  manualAuthority?: {
+    source: "manual-ai-analyze";
+    actorUserId: string;
+    authorizedAt: string;
+  };
 };
 
 export type AnalysisProgressEvent = {
@@ -86,6 +99,7 @@ export async function executeAnalysis(
     onChunkStart,
     onChunkComplete,
     onChunkFailure,
+    manualAuthority,
   } = options;
 
   // Content hash that keys the durable AiAnalyzeChunk rows. Assigned once the
@@ -102,8 +116,18 @@ export async function executeAnalysis(
     message: "Preparing tender content for analysis…",
   });
 
+  // FIX 9: createAnalysisJob now requires explicit manual authority. The
+  // legacy `executeAnalysis` path is reachable via the worker (which has
+  // already claimed a manually-created job) or via the authenticated
+  // SSE/streaming route. In both cases the caller MUST forward manual
+  // authority — if absent, this throws MANUAL_AUTHORITY_REQUIRED and the
+  // worker surfaces a safe error.
+  if (!manualAuthority) {
+    throw new Error("MANUAL_AUTHORITY_REQUIRED: executeAnalysis requires manual authority forwarded from an authenticated caller");
+  }
+
   // Create or resume job
-  const jobInput: AnalysisJobCreateInput = { tenderId, userId };
+  const jobInput: AnalysisJobCreateInput = { tenderId, userId, manualAuthority };
   const jobResult = await createAnalysisJob(jobInput);
   const jobId = jobResult.jobId;
   const totalChunks = jobResult.totalChunks;

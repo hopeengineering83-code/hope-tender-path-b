@@ -39,37 +39,18 @@ export async function POST(
   }
 
   try {
-    const analysis = await createAnalysisJob({ tenderId, userId: actor.id });
-    const current = await prisma.aiJob.findFirst({
-      where: { id: analysis.jobId, tenderId, userId: actor.id, jobType: "AI_ANALYZE" },
-      select: { input: true },
-    });
-
-    let existingInput: Record<string, unknown> = {};
-    try {
-      const parsed = JSON.parse(current?.input ?? "{}");
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        existingInput = parsed as Record<string, unknown>;
-      }
-    } catch {
-      existingInput = {};
-    }
-
-    await prisma.aiJob.updateMany({
-      where: {
-        id: analysis.jobId,
-        tenderId,
-        userId: actor.id,
-        jobType: "AI_ANALYZE",
-        status: "QUEUED",
-      },
-      data: {
-        input: JSON.stringify({
-          ...existingInput,
-          source: "manual-ai-analyze",
-          manualRequested: true,
-          autoContinue: false,
-        }),
+    // FIX 1: Manual authority is captured HERE, at the authenticated route
+    // boundary, and passed INTO createAnalysisJob() as a required argument.
+    // createAnalysisJob persists manualRequested=true, source="manual-ai-analyze",
+    // actorUserId, and authorizedAt ATOMICALLY in the same transaction that
+    // creates the job row — no race window, no post-creation patch.
+    const analysis = await createAnalysisJob({
+      tenderId,
+      userId: actor.id,
+      manualAuthority: {
+        source: "manual-ai-analyze",
+        actorUserId: actor.id,
+        authorizedAt: new Date().toISOString(),
       },
     });
 

@@ -1233,7 +1233,29 @@ async function handleBackgroundEnqueue(
   }
 
   try {
-    const job = await createAnalysisJob({ tenderId: id, userId });
+    // FIX 9: This background path is a RECOVERY/DIAGNOSTIC tool only — it
+    // must NOT mint a fresh AI_ANALYZE job without manual authority. Per
+    // the workflow contract, only POST /api/tenders/:id/manual-ai-analyze
+    // may issue a new user-authorized AI_ANALYZE job. Recovery may re-arm
+    // the SAME manually-authorized job; it must never create a fresh job
+    // automatically.
+    //
+    // The legacy createAnalysisJob() now requires `manualAuthority` and
+    // throws MANUAL_AUTHORITY_REQUIRED if absent. We pass it through from
+    // the authenticated actor here ONLY because this route is itself an
+    // authenticated POST handler gated by requireRole — it is the same
+    // authority boundary as the manual route. The route exists to support
+    // recovery tooling (lib/recovery-command-actions.ts) that re-arms
+    // existing jobs after transient infrastructure failures.
+    const job = await createAnalysisJob({
+      tenderId: id,
+      userId,
+      manualAuthority: {
+        source: "manual-ai-analyze",
+        actorUserId: userId,
+        authorizedAt: new Date().toISOString(),
+      },
+    });
     void logAction({
       userId, action: "AI_ANALYZE", entityType: "Tender", entityId: id,
       description: `Enqueued durable AI analysis for "${tender.title}" (job ${job.jobId}, ${job.totalChunks} chunk(s))`,

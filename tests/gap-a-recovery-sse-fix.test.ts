@@ -24,10 +24,19 @@ describe("AI Analyze is a MANUAL user action via POST /api/tenders/:id/manual-ai
 
   it("the manual AI Analyze route is durable and idempotent", () => {
     const route = read("app/api/tenders/[id]/manual-ai-analyze/route.ts");
+    const service = read("lib/ai-jobs/analysis-job-service.ts");
     assert.match(route, /export async function POST/);
     assert.match(route, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
     assert.match(route, /createAnalysisJob/);
-    assert.match(route, /manualRequested:\s*true/);
-    assert.match(route, /autoContinue:\s*false/);
+    // FIX 1: the route forwards manualAuthority (no separate updateMany patch).
+    assert.match(route, /manualAuthority:/);
+    assert.match(route, /source: "manual-ai-analyze"/);
+    assert.match(route, /actorUserId: actor\.id/);
+    // The atomic write of manualRequested=true and autoContinue=false happens
+    // in the service, in the same transaction as job creation.
+    assert.match(service, /manualRequested: true/);
+    assert.match(service, /autoContinue: false/);
+    // The race-window updateMany patch must NOT exist in the route.
+    assert.doesNotMatch(route, /prisma\.aiJob\.updateMany/);
   });
 });

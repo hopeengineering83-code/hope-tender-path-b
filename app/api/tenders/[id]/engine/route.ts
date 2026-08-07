@@ -227,7 +227,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       tenderId: id,
       userId,
       companyId: vaultPreflight.companyId,
-      purpose: "INTERNAL_ARTIFACT_PREPARATION",
+      // FIX 3: This is the authenticated manual Run Engine route. Only this
+      // route may set manualRequested=true. The previous code passed
+      // purpose="INTERNAL_ARTIFACT_PREPARATION" which the enqueue function
+      // treated as equivalent to manual authority — a bypass that has been
+      // removed. Now manualRequested is a hard requirement.
+      manualRequested: true,
     });
     if (!enqueue) {
       return NextResponse.json({

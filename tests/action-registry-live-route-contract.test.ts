@@ -16,11 +16,18 @@ describe("action registry matches production route owners — manual AI Analyze 
     // The AI Analyze panel renders the section anchor.
     assert.match(owner, /id="ai-analyze-section"/);
 
-    // The manual route exists, requires authentication, and sets autoContinue=false.
+    // The manual route exists, requires authentication, and forwards manualAuthority.
+    // FIX 1: After the atomic-manual-authority refactor, manualRequested=true
+    // and autoContinue=false are persisted by createAnalysisJob() in the
+    // service (atomically in the same transaction), not patched by the route
+    // in a separate updateMany. The route forwards manualAuthority instead.
     assert.match(manualRoute, /export async function POST/);
     assert.match(manualRoute, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
-    assert.match(manualRoute, /manualRequested:\s*true/);
-    assert.match(manualRoute, /autoContinue:\s*false/);
+    assert.match(manualRoute, /manualAuthority:/);
+    assert.match(manualRoute, /source: "manual-ai-analyze"/);
+    assert.match(manualRoute, /actorUserId: actor\.id/);
+    // The race-window updateMany patch must NOT exist in the route.
+    assert.doesNotMatch(manualRoute, /prisma\.aiJob\.updateMany/);
 
     // The action registry exposes AI_ANALYZE as a NORMAL (not RECOVERY) action
     // with the manual mutation endpoint.

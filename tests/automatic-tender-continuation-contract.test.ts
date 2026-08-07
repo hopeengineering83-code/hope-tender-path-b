@@ -34,9 +34,22 @@ describe("MANUAL tender continuation contract — AI Analyze and Run Engine are 
   });
 
   it("manual AI Analyze route sets autoContinue=false and manualRequested=true", () => {
-    assert.match(manualRoute, /manualRequested:\s*true/);
-    assert.match(manualRoute, /autoContinue:\s*false/);
+    // FIX 1: After the atomic-manual-authority refactor, the route forwards
+    // a `manualAuthority` parameter (source, actorUserId, authorizedAt) into
+    // createAnalysisJob(), which persists manualRequested=true and
+    // autoContinue=false atomically in the same transaction. The route no
+    // longer patches these in a separate updateMany.
+    const service = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
+    assert.match(manualRoute, /manualAuthority:/);
+    assert.match(manualRoute, /source: "manual-ai-analyze"/);
+    assert.match(manualRoute, /actorUserId: actor\.id/);
     assert.match(manualRoute, /requireRole\("ADMIN",\s*"PROPOSAL_MANAGER"\)/);
+    // The atomic write of manualRequested=true and autoContinue=false happens
+    // in the service.
+    assert.match(service, /manualRequested: true/);
+    assert.match(service, /autoContinue: false/);
+    // The race-window updateMany patch must NOT exist in the route.
+    assert.doesNotMatch(manualRoute, /prisma\.aiJob\.updateMany/);
   });
 
   it("manual Run Engine route exists and requires authentication", () => {

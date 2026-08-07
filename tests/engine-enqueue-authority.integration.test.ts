@@ -232,6 +232,7 @@ describe("canonical Engine enqueue authority", { skip: !RUN_DB_INTEGRATION }, ()
       tenderId,
       companyId,
       purpose: "CROSS_TENANT_TEST",
+      manualRequested: true,
     });
     assert.equal(result, null);
   });

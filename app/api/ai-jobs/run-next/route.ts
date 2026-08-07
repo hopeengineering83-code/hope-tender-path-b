@@ -8,7 +8,7 @@ import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/prop
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
-import { prismaReady } from "../../../../lib/prisma";
+import { prisma, prismaReady } from "../../../../lib/prisma";
 import { recordRetryStateForJob, findJobsDueForRetry, rearmJobForRetry } from "../../../../lib/ai-analyze/retry-service";
 import { restoreHealthFromDbBounded } from "../../../../lib/ai-provider-health-db";
 import { failStuckJobs } from "../../../../lib/ai-jobs";
@@ -173,33 +173,35 @@ export async function POST(req: Request) {
         let analysisRevision: string | undefined;
 
         if (claimed.jobType === "AI_ANALYZE") {
-          // The canonical AI handler performs Vault verification and persists
-          // a source-revision-bound Engine job before returning success. Reuse
-          // that durable row instead of invoking the historical continuation
-          // service and creating a second ENGINE_RUN job whose input is bound
-          // only to the analysis hash.
-          const automaticEngineJob = result.output?.automaticEngineJob as
+          // FIX 4: The dead `automaticEngineJob` continuation branch has been
+          // removed entirely. The previous code branched on
+          // `result.output?.automaticEngineJob` and, if present, advanced to
+          // `nextJobType = "ENGINE_RUN"` — an automatic Engine continuation
+          // that contradicts the manual workflow contract. Although the
+          // canonical AI handler never returned this field, the branch was a
+          // latent footgun: any future handler (or a malicious test fixture)
+          // returning `output.automaticEngineJob` would have triggered
+          // automatic Engine enqueue.
+          //
+          // After successful AI_ANALYZE, the only valid next Engine state is
+          // MANUAL_ENGINE_REQUIRED. continueSuccessfulAnalysis always returns
+          // that — it NEVER creates or enqueues an Engine job. The user must
+          // manually click Run Engine via POST /api/tenders/:id/engine.
+          //
+          // Defence in depth: if a handler ever returns `automaticEngineJob`
+          // anyway, ignore it. Log a warning so the contract violation is
+          // visible to operators.
+          const maliciousAutomaticEngineJob = result.output?.automaticEngineJob as
             | Record<string, unknown>
             | null
             | undefined;
-          if (
-            automaticEngineJob &&
-            typeof automaticEngineJob === "object" &&
-            typeof automaticEngineJob.jobId === "string"
-          ) {
-            nextJobId = automaticEngineJob.jobId;
-            nextJobType = "ENGINE_RUN";
-            continuationReused = automaticEngineJob.reusedActiveJob === true;
-            analysisRevision = typeof automaticEngineJob.sourceRevision === "string"
-              ? automaticEngineJob.sourceRevision
-              : undefined;
-          } else {
-            // continueSuccessfulAnalysis always returns MANUAL_ENGINE_REQUIRED.
-            // It NEVER creates or enqueues an Engine job. The user must
-            // manually click Run Engine via POST /api/tenders/:id/engine.
-            const continuation = await continueSuccessfulAnalysis(claimed.id);
-            continuationReason = continuation.reason;
+          if (maliciousAutomaticEngineJob && typeof maliciousAutomaticEngineJob === "object") {
+            logger.error(
+              `[run-next] AI_ANALYZE handler returned output.automaticEngineJob — contract violation. Ignoring. job=${claimed.id}`,
+            );
           }
+          const continuation = await continueSuccessfulAnalysis(claimed.id);
+          continuationReason = continuation.reason;
         }
 
         processedJobs.push({
@@ -232,23 +234,86 @@ export async function POST(req: Request) {
         );
 
         if (isTransientRetry) {
-          // Leave the job RUNNING — do NOT call completeJob or failJob.
-          // The next worker invocation (cron or browser poll) will resume it.
-          processedJobs.push({
-            jobId: claimed.id,
-            jobType: claimed.jobType,
-            status: "RUNNING",
-            terminalStatus: undefined,
-            resultCode: String((result as Record<string, unknown>).code ?? ""),
-            retryable: true,
-            correlationId: undefined,
-            retryScheduled: false,
-            nextJobId: undefined,
-            nextJobType: undefined,
-            continuationReason: "Transient error — job will resume on next worker invocation",
-            continuationReused: undefined,
-            analysisRevision: undefined,
-          });
+          // FIX 5: Durable Engine checkpoint state machine. Previously the
+          // worker left the job RUNNING, but `claimJobForCaller` only claims
+          // QUEUED rows — so a RUNNING transient-retry job could never be
+          // resumed by the next normal worker invocation. It relied on
+          // `failStuckJobs()` after ~180s, which is not a real resume path.
+          //
+          // Now: atomically re-arm the job back to QUEUED with a bounded
+          // `nextAttemptAt` (exponential backoff) and an incremented retry
+          // counter. The next worker invocation will claim it via the normal
+          // path and continue from the last safely persisted checkpoint.
+          //
+          // Retry budget: 8 attempts. After the budget is exhausted, the job
+          // transitions to FAILED terminal state with an actionable safe
+          // reason — no infinite loop.
+          const MAX_TRANSIENT_RETRIES = 8;
+          const currentRetries = (claimed.retries ?? 0) + 1;
+          const resultCode = String((result as Record<string, unknown>).code ?? "");
+          if (currentRetries > MAX_TRANSIENT_RETRIES) {
+            // Budget exhausted → terminal FAILED.
+            await failJob(
+              claimed.id,
+              `Transient retry budget exhausted after ${MAX_TRANSIENT_RETRIES} attempts (last code: ${resultCode})`,
+            ).catch((failErr: unknown) => {
+              logger.error(`[run-next] Failed to mark job ${claimed.id} as FAILED after retry budget exhaustion: ${failErr instanceof Error ? failErr.message : String(failErr)}`);
+            });
+            processedJobs.push({
+              jobId: claimed.id,
+              jobType: claimed.jobType,
+              status: "FAILED",
+              terminalStatus: "FAILED",
+              resultCode: "TRANSIENT_RETRY_BUDGET_EXHAUSTED",
+              retryable: false,
+              correlationId: undefined,
+              retryScheduled: false,
+              nextJobId: undefined,
+              nextJobType: undefined,
+              continuationReason: `Retry budget exhausted after ${MAX_TRANSIENT_RETRIES} transient failures`,
+              continuationReused: undefined,
+              analysisRevision: undefined,
+            });
+          } else {
+            // Re-arm QUEUED with bounded backoff: 2^attempt seconds, capped at 60s.
+            // attempt 1 → 2s, 2 → 4s, 3 → 8s, 4 → 16s, 5 → 32s, 6 → 60s, 7 → 60s, 8 → 60s.
+            const backoffSeconds = Math.min(60, Math.pow(2, currentRetries));
+            const nextAttemptAt = new Date(Date.now() + backoffSeconds * 1000);
+            await prisma.aiJob.update({
+              where: { id: claimed.id },
+              data: {
+                status: "QUEUED",
+                // Reset startedAt so failStuckJobs's RUNNING-only sweep doesn't
+                // re-fail the re-armed job before nextAttemptAt elapses.
+                startedAt: null,
+                // Persist the last failure category so the next worker can
+                // surface it in diagnostics.
+                errorMessage: `Transient retry ${currentRetries}/${MAX_TRANSIENT_RETRIES}: ${resultCode}`,
+                nextAttemptAt,
+                retries: currentRetries,
+                // Release the claim/lease so the next worker can claim it.
+                leaseOwner: null,
+                leaseExpiresAt: null,
+              },
+            }).catch((rearmErr: unknown) => {
+              logger.error(`[run-next] Failed to re-arm transient-retry job ${claimed.id}: ${rearmErr instanceof Error ? rearmErr.message : String(rearmErr)}`);
+            });
+            processedJobs.push({
+              jobId: claimed.id,
+              jobType: claimed.jobType,
+              status: "QUEUED",
+              terminalStatus: undefined,
+              resultCode,
+              retryable: true,
+              correlationId: undefined,
+              retryScheduled: true,
+              nextJobId: undefined,
+              nextJobType: undefined,
+              continuationReason: `Transient retry ${currentRetries}/${MAX_TRANSIENT_RETRIES} — re-armed QUEUED with ${backoffSeconds}s backoff`,
+              continuationReused: undefined,
+              analysisRevision: undefined,
+            });
+          }
         } else {
         await completeJob(claimed.id, result);
 

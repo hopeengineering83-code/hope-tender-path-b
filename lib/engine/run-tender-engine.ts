@@ -3,8 +3,8 @@ import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
 import { computeTenderMutationLockKey } from "./advisory-lock-key";
 import { logAction } from "../audit";
-import { analyzeTender, normalizeStrategicRequirements } from "./analysis";
-import { analyzeWithAI, isAIEnabled } from "../ai";
+import { analyzeTender } from "./analysis";
+import { isAIEnabled } from "../ai";
 import { buildCompliance } from "./compliance";
 import { buildDocumentPlan } from "./documents";
 import { buildMatches } from "./matching";
@@ -195,7 +195,12 @@ export async function runTenderEngine(
   try {
     progress("engine.analyze", "Loading current-revision manual AI Analyze output");
     let analysis: ReturnType<typeof analyzeTender>;
-    let analysisMethod: "AI" | "REGEX_FALLBACK_AI_DISABLED" | "REGEX_FALLBACK_NO_TEXT" | "REGEX_FALLBACK_AI_ERROR" = "REGEX_FALLBACK_AI_DISABLED";
+    // FIX 6: analysisMethod can no longer be REGEX_FALLBACK_AI_ERROR or
+    // REGEX_FALLBACK_NO_TEXT — the Engine no longer re-analyzes the tender
+    // (those branches were removed). It's now either AI (reused promoted
+    // analysis) or REGEX_FALLBACK_AI_DISABLED (only when no AI provider is
+    // configured, which is a deployment misconfiguration, not a workflow path).
+    let analysisMethod: "AI" | "REGEX_FALLBACK_AI_DISABLED" = "REGEX_FALLBACK_AI_DISABLED";
     let analysisFallbackReason: string | null = null;
 
     const promotedRequirements = tender.requirements.filter((requirement) =>
@@ -237,51 +242,32 @@ export async function runTenderEngine(
       analysisMethod = "AI";
       progress("engine.analyze", `Reused ${promotedRequirements.length} grounded requirement(s); no duplicate AI extraction call was made`);
     } else if (isAIEnabled()) {
-      let tenderText = canonicalFiles
+      // FIX 6: Engine must NEVER re-analyze the tender. The previous code
+      // called analyzeWithAI(tenderText) directly when promoted analysis was
+      // absent — bypassing the manual AI Analyze boundary. That created a
+      // second analysis path the user explicitly prohibited.
+      //
+      // Now: fail closed with CURRENT_ANALYSIS_REQUIRED. The user must
+      // manually run AI Analyze again. The Engine may use AI for bounded
+      // candidate reranking/matching (in ai-multi-perspective-matcher.ts),
+      // but it must NOT perform a replacement tender-analysis stage.
+      const tenderText = canonicalFiles
         .map((file) => (file.extractedText ?? "").trim())
         .map((text) => text.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, ""))
         .filter((text) => text.length > 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(text))
         .join("\n\n--- NEXT DOCUMENT ---\n\n");
-      tenderText = deduplicatePageText(tenderText);
-      const effectiveMaxChars = options?.maxChars ?? 50_000;
-      if (tenderText.length > effectiveMaxChars) tenderText = tenderText.slice(0, effectiveMaxChars);
-
-      if (tenderText.length > 500) {
-        try {
-          progress("engine.analyze", `No reusable promoted analysis found; analyzing ${Math.round(tenderText.length / 1000)}k canonical characters`);
-          const aiMeta = await analyzeWithAI(tenderText);
-          const aiResult = aiMeta.result;
-          const rawRequirements = aiResult.requirements.map((requirement, index) => ({
-            title: requirement.title,
-            description: requirement.description,
-            requirementType: requirement.requirementType,
-            priority: requirement.priority,
-            requiredQuantity: requirement.requiredQuantity ?? null,
-            pageLimit: requirement.pageLimit ?? null,
-            exactFileName: requirement.exactFileName ?? null,
-            exactOrder: index + 1,
-            restrictions: requirement.restrictions ?? null,
-            sectionReference: requirement.sectionReference ?? null,
-          }));
-          const strategicRequirements = normalizeStrategicRequirements(rawRequirements);
-          analysis = {
-            summary: `Consolidated ${rawRequirements.length} extracted instruction(s) into ${strategicRequirements.length} strategic requirement bundle(s). ${aiResult.summary}`,
-            requirements: strategicRequirements,
-            exactFileNaming: aiResult.exactFileNaming ?? [],
-            exactFileOrder: aiResult.exactFileOrder ?? [],
-          };
-          analysisMethod = "AI";
-        } catch (error) {
-          logger.error("[engine] AI analysis failed; falling back to deterministic extraction", { detail: error });
-          analysisMethod = "REGEX_FALLBACK_AI_ERROR";
-          analysisFallbackReason = error instanceof Error ? error.message : String(error);
-          analysis = analyzeTender({ ...tender, files: canonicalFiles });
-        }
-      } else {
-        analysisMethod = "REGEX_FALLBACK_NO_TEXT";
-        analysisFallbackReason = `Canonical extracted text is only ${tenderText.length} characters.`;
-        analysis = analyzeTender({ ...tender, files: canonicalFiles });
-      }
+      const failureReason = !canReusePromotedAnalysis && promotedRequirements.length === 0
+        ? "No promoted analysis exists for this tender — run AI Analyze first"
+        : promotedRequirements.length === 0
+          ? "Promoted analysis has zero requirements — run AI Analyze again"
+          : "Promoted analysis is stale or incomplete — run AI Analyze again";
+      logger.error("[engine] CURRENT_ANALYSIS_REQUIRED — Engine refusing to re-analyze tender", {
+        tenderId,
+        promotedRequirementCount: promotedRequirements.length,
+        canReusePromotedAnalysis,
+        canonicalTextLength: tenderText.length,
+      });
+      throw new Error(`CURRENT_ANALYSIS_REQUIRED: ${failureReason}. Engine never re-analyzes the tender — manual AI Analyze is the single authority.`);
     } else {
       analysisMethod = "REGEX_FALLBACK_AI_DISABLED";
       analysisFallbackReason = "No AI provider is configured.";
@@ -799,9 +785,7 @@ export async function runTenderEngine(
       ? (evidenceMatchingBlocker.code === "EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE"
         ? "RETRY_ENGINE_SMALLER_BATCH"
         : "REVIEW_MATCHING_INPUTS")
-      : analysisMethod === "REGEX_FALLBACK_AI_ERROR"
-        ? "RETRY_ENGINE_SMALLER_BATCH"
-        : null;
+      : null;
 
     return Object.assign(tenderResult ?? {}, {
       partial,

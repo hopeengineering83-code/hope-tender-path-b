@@ -354,7 +354,15 @@ dbDescribe("AI Analyze analysisInputHash binding (PostgreSQL behavioral)", () =>
     const { tender, files, companyDocs } = await loadCanonicalInputs(prisma, tenderId, user.id);
     const canonical = canonicalHashFor(files, companyDocs, tender);
 
-    const result = await createAnalysisJob({ tenderId, userId: user.id });
+    const result = await createAnalysisJob({
+      tenderId,
+      userId: user.id,
+      manualAuthority: {
+        source: "manual-ai-analyze",
+        actorUserId: user.id,
+        authorizedAt: new Date().toISOString(),
+      },
+    });
     const job = await prisma.aiJob.findUniqueOrThrow({
       where: { id: result.jobId },
       select: { analysisInputHash: true },
