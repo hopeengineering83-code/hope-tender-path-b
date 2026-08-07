@@ -28,14 +28,23 @@ describe("upload pipeline sequencing — manual AI Analyze / manual Run Engine",
   });
 
   it("manual AI Analyze route is idempotent and tenant-safe", () => {
+    // FIX 1: After the atomic-manual-authority refactor, the route forwards
+    // a manualAuthority parameter into createAnalysisJob(). The atomic
+    // persistence of manualRequested=true and autoContinue=false happens in
+    // the service, not in a separate updateMany patch.
     assert.match(manualAnalyze, /createAnalysisJob/);
     assert.match(manualAnalyze, /where:\s*\{ id: tenderId, userId: actor\.id \}/);
-    assert.match(manualAnalyze, /manualRequested:\s*true/);
-    assert.match(manualAnalyze, /autoContinue:\s*false/);
+    assert.match(manualAnalyze, /manualAuthority:/);
+    assert.match(manualAnalyze, /source: "manual-ai-analyze"/);
+    assert.match(manualAnalyze, /actorUserId: actor\.id/);
     const service = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
+    assert.match(service, /manualRequested: true/);
+    assert.match(service, /autoContinue: false/);
     assert.match(service, /status: \{ in: \["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"\] \}/);
     assert.match(service, /tenderId/);
     assert.match(service, /userId/);
+    // The race-window updateMany patch must NOT exist in the route.
+    assert.doesNotMatch(manualAnalyze, /prisma\.aiJob\.updateMany/);
   });
 
   it("requires canonical AI success before generation or export can unlock", () => {

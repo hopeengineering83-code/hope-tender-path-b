@@ -50,11 +50,22 @@ describe("AI Analyze completion is derived from server state, not only polling",
         "tender.analysisSummary was tried and is empty even after a successful run, so it silently " +
         "kept the panel reporting Pending",
     );
-    // Verify analysisComplete is derived from succeededAnalysisJob.
+    // FIX 7: After the canonical-readiness refactor, analysisComplete is
+    // derived from the canonical readiness service's analysis module state
+    // (READY/WARNING), not from a raw succeededAnalysisJob query. The
+    // canonical service internally verifies the current-revision SUCCEEDED
+    // AI_ANALYZE job — that's still the authority, but it's wrapped in the
+    // canonical readiness resolver so stale/superseded jobs can't produce
+    // a false "complete" signal.
     assert.match(
       page,
-      /analysisComplete\s*=\s*Boolean\(succeededAnalysisJob\)/,
-      "analysisComplete must be derived from a SUCCEEDED AI_ANALYZE job query",
+      /analysisComplete\s*=.*analysisModuleState/,
+      "analysisComplete must be derived from the canonical readiness analysis module state",
+    );
+    assert.match(
+      page,
+      /getCanonicalTenderReadiness/,
+      "the page must call getCanonicalTenderReadiness as the single workflow authority",
     );
   });
 
