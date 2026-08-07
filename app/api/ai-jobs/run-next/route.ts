@@ -121,7 +121,23 @@ export async function POST(req: Request) {
     }
   }
 
+  // DIRECTIVE 5: Request-level absolute deadline. Vercel hard-kills at 60s.
+  // We use a 40s soft deadline (maxRunMs) for the worker loop, but also
+  // enforce a MINIMUM_REMAINING_BUDGET before claiming a new job — if less
+  // than 10 seconds remain, we stop claiming to ensure every claimed job
+  // has enough time to either complete or persist its checkpoint safely.
+  const MINIMUM_REMAINING_BUDGET_MS = 10_000;
+  const PERSISTENCE_RESERVE_MS = 5_000;
+  const absoluteDeadline = startTime + maxRunMs;
+
   while (Date.now() - startTime < maxRunMs) {
+    // DIRECTIVE 5: Don't start a new job when insufficient budget remains.
+    const remainingMs = absoluteDeadline - Date.now();
+    if (remainingMs < MINIMUM_REMAINING_BUDGET_MS) {
+      logger.info(`[run-next] Stopping claim loop — only ${remainingMs}ms remaining (minimum ${MINIMUM_REMAINING_BUDGET_MS}ms required)`);
+      break;
+    }
+
     const claimed = await claimJobForCaller({
       jobType: parsedJobType.value,
       tenderId,
@@ -145,16 +161,18 @@ export async function POST(req: Request) {
       continue;
     }
 
+    // DIRECTIVE 5: Pass the remaining time budget (minus persistence reserve)
+    // into the handler so it can cooperatively check and checkpoint before
+    // the hard deadline. The handler should never start an expensive provider
+    // request that cannot safely finish before this budget expires.
+    const handlerBudgetMs = Math.max(5_000, remainingMs - PERSISTENCE_RESERVE_MS);
+
     try {
-      // retryCount threaded through so handlers' own classifyStageRetry
-      // calls (used for telemetry only — the real retry GATE is this
-      // route's catch block below, using claimed.retries directly) report
-      // the genuine attempt number instead of always reading undefined/0.
       const result = await handler({
         jobId: claimed.id,
         userId: claimed.userId,
         tenderId: claimed.tenderId,
-        input: { ...claimed.input, retryCount: claimed.retries },
+        input: { ...claimed.input, retryCount: claimed.retries, deadlineMs: handlerBudgetMs, absoluteDeadline },
       });
       if (isTerminalHandlerResult(result)) {
         if (
