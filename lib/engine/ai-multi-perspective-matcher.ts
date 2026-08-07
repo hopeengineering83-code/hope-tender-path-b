@@ -15,7 +15,11 @@ export const MAX_CANDIDATES_PER_MATCHER_BATCH = 20;
 const MAX_REQUIREMENT_CHARS = 8_000;
 const MAX_METHODOLOGY_CHARS = 2_000;
 const MAX_PROFILE_CHARS = 800;
-const MAX_FALLBACK_PASSES = 3;
+// BLOCKER 11: Reduced from 3 to 1. Running multiple complete provider chains
+// inside one worker request can consume the whole serverless invocation.
+// One pass per batch — if it fails, the durable retry state machine re-arms
+// the job for the next invocation instead of looping inline.
+const MAX_FALLBACK_PASSES = 1;
 
 export type MatchPerspective =
   | "DISCIPLINE_FIT"

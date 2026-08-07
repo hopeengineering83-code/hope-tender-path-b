@@ -36,12 +36,15 @@ export type AnalysisOrchestrationOptions = {
   onChunkComplete?: (info: { chunkIndex: number; totalChunks: number; result: AIAnalysisResult; provider?: string | null }) => void | Promise<void>;
   onChunkFailure?: (info: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => void | Promise<void>;
   /**
-   * FIX 9: Manual authority forwarded from the authenticated caller. The
-   * legacy `executeAnalysis` path is reachable only via the worker (which
-   * processes a manually-created job) or via the authenticated SSE/streaming
-   * route. Both must forward manual authority so createAnalysisJob() can
-   * atomically persist it. The worker reads it from the job's existing
-   * `input` (already populated by the manual route).
+   * BLOCKER 2: When provided, executeAnalysis() loads THIS existing job
+   * instead of calling createAnalysisJob(). The worker should always pass
+   * this — it received the jobId from the claim. When absent (legacy path),
+   * createAnalysisJob() is called for backwards compatibility.
+   */
+  existingJobId?: string;
+  /**
+   * Manual authority forwarded from the authenticated caller. Required when
+   * existingJobId is NOT provided (legacy createAnalysisJob path).
    */
   manualAuthority?: {
     source: "manual-ai-analyze";
@@ -100,6 +103,7 @@ export async function executeAnalysis(
     onChunkComplete,
     onChunkFailure,
     manualAuthority,
+    existingJobId,
   } = options;
 
   // Content hash that keys the durable AiAnalyzeChunk rows. Assigned once the
@@ -116,21 +120,52 @@ export async function executeAnalysis(
     message: "Preparing tender content for analysis…",
   });
 
-  // FIX 9: createAnalysisJob now requires explicit manual authority. The
-  // legacy `executeAnalysis` path is reachable via the worker (which has
-  // already claimed a manually-created job) or via the authenticated
-  // SSE/streaming route. In both cases the caller MUST forward manual
-  // authority — if absent, this throws MANUAL_AUTHORITY_REQUIRED and the
-  // worker surfaces a safe error.
-  if (!manualAuthority) {
-    throw new Error("MANUAL_AUTHORITY_REQUIRED: executeAnalysis requires manual authority forwarded from an authenticated caller");
-  }
+  // BLOCKER 2: When existingJobId is provided, load THAT job instead of
+  // calling createAnalysisJob(). The worker should always pass this — it
+  // received the jobId from the claim. When absent (legacy path),
+  // createAnalysisJob() is called for backwards compatibility.
+  let jobId: string;
+  let totalChunks: number;
 
-  // Create or resume job
-  const jobInput: AnalysisJobCreateInput = { tenderId, userId, manualAuthority };
-  const jobResult = await createAnalysisJob(jobInput);
-  const jobId = jobResult.jobId;
-  const totalChunks = jobResult.totalChunks;
+  if (existingJobId) {
+    // Load the existing job — do NOT create a new one.
+    const existingJob = await prisma.aiJob.findFirst({
+      where: { id: existingJobId, tenderId, userId, jobType: "AI_ANALYZE" },
+      select: { id: true, analysisInputHash: true, input: true },
+    });
+    if (!existingJob) {
+      throw new Error("JOB_NOT_FOUND: executeAnalysis could not find the specified existing AI_ANALYZE job");
+    }
+    // Verify the existing job has valid manual authority.
+    let existingInput: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(existingJob.input ?? "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        existingInput = parsed as Record<string, unknown>;
+      }
+    } catch { /* treat as invalid */ }
+    if (
+      existingInput.manualRequested !== true ||
+      existingInput.source !== "manual-ai-analyze" ||
+      typeof existingInput.actorUserId !== "string" ||
+      existingInput.actorUserId !== userId
+    ) {
+      throw new Error("MANUAL_AUTHORITY_INVALID: existing job lacks valid manual authority for this user");
+    }
+    jobId = existingJob.id;
+    // Derive totalChunks from the snapshot if present; otherwise compute below.
+    const snapshot = (existingInput as any)?.snapshot;
+    totalChunks = snapshot?.totalChunks ?? 0;
+  } else {
+    // Legacy path: create or resume job via createAnalysisJob.
+    if (!manualAuthority) {
+      throw new Error("MANUAL_AUTHORITY_REQUIRED: executeAnalysis requires manual authority forwarded from an authenticated caller (or existingJobId)");
+    }
+    const jobInput: AnalysisJobCreateInput = { tenderId, userId, manualAuthority };
+    const jobResult = await createAnalysisJob(jobInput);
+    jobId = jobResult.jobId;
+    totalChunks = jobResult.totalChunks;
+  }
 
   // Load existing progress if resuming
   let startFromChunk = 0;

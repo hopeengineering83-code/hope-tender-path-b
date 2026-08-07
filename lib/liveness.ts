@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "./prisma";
 import { checkAiProviderHealth } from "./ai-provider-health-check";
 import { getStorageReadiness } from "./storage";
+import { MAX_PROVIDER_ATTEMPTS_PER_REQUEST } from "./ai";
+import { MAX_CANDIDATES_PER_MATCHER_BATCH } from "./engine/ai-multi-perspective-matcher";
+import { PRE_FILTER_LIMIT } from "./engine/main-engine-ai-rematch";
 
 const CRITICAL_TABLES = [
   "RateLimitBucket",
@@ -71,6 +74,19 @@ export async function livenessResponse() {
       tables,
       aiProviders: aiHealth,
       storage: storageHealth,
+      // BLOCKER 10: Expose SAFE non-secret effective runtime configuration so
+      // source, tests, and deployed effective settings agree. No keys, no
+      // secrets — just the effective numeric limits that drive provider
+      // behavior. Authenticated admin diagnostics can use this to verify
+      // MAX_PROVIDER_ATTEMPTS, batch sizes, and prefilter limits match
+      // expectations.
+      effectiveConfig: {
+        providerAttemptBudget: MAX_PROVIDER_ATTEMPTS_PER_REQUEST,
+        matcherBatchSize: MAX_CANDIDATES_PER_MATCHER_BATCH,
+        preFilterLimit: PRE_FILTER_LIMIT,
+        engineInvocationSoftDeadlineMs: 40_000,
+        providerOrder: aiHealth.configuredProviders ?? [],
+      },
       timestamp: new Date().toISOString(),
     },
     { status: httpStatus, headers: { "Cache-Control": "no-store" } },

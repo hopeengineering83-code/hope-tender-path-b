@@ -13,7 +13,7 @@ import { exactSelectionLimit } from "./scope-policy";
 
 // One bounded provider batch per category. Expert and project batches execute
 // in parallel, keeping optional AI reranking inside Vercel's function budget.
-const PRE_FILTER_LIMIT = 20;
+export const PRE_FILTER_LIMIT = 20;
 const PORTFOLIO_ITERATIONS = 20;
 
 type RequirementForLimit = {

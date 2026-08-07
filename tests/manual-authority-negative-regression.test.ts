@@ -106,12 +106,14 @@ describe("FIX 1 — Manual AI Analyze authority (source-text contract)", () => {
       /MANUAL_AUTHORITY_REQUIRED/,
       "analysis-orchestrator must throw if manualAuthority is absent",
     );
-    // Verify the legacy handler reads manualAuthority from job input.
+    // BLOCKER 2: The legacy handler now passes existingJobId instead of
+    // manualAuthority. executeAnalysis() loads the existing job and verifies
+    // its manual authority from the job's input.
     const legacyHandler = read("lib/ai-job-handlers-legacy.ts");
     assert.match(
       legacyHandler,
-      /manualAuthority/,
-      "ai-job-handlers-legacy must forward manualAuthority from job input",
+      /existingJobId: ctx\.jobId/,
+      "BLOCKER 2: ai-job-handlers-legacy must pass existingJobId: ctx.jobId to executeAnalysis",
     );
   });
 });
