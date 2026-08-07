@@ -19,9 +19,8 @@ import {
   type AnalysisWithMeta,
   type AIAnalysisResult,
 } from "../ai";
-// BLOCKER 2: createAnalysisJob import removed — executeAnalysis() no longer
-// creates new AI_ANALYZE jobs. It loads an existing manually-authorized job.
-import { finalizeJob } from "../ai-jobs/analysis-job-service";
+import { createAnalysisJob, finalizeJob } from "../ai-jobs/analysis-job-service";
+import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed, getCompletedChunkResults } from "../ai-analyze-checkpoints";
 import { getMinCooldownExpiryMs } from "../ai-provider-health";
@@ -37,15 +36,12 @@ export type AnalysisOrchestrationOptions = {
   onChunkComplete?: (info: { chunkIndex: number; totalChunks: number; result: AIAnalysisResult; provider?: string | null }) => void | Promise<void>;
   onChunkFailure?: (info: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => void | Promise<void>;
   /**
-   * BLOCKER 2: The worker must receive an existing manually-authorized jobId
-   * and process THAT job. executeAnalysis() no longer calls createAnalysisJob().
-   * The manual route POST /api/tenders/:id/manual-ai-analyze is the ONLY
-   * authority that creates new AI_ANALYZE jobs.
-   */
-  existingJobId?: string;
-  /**
-   * @deprecated Kept for backwards compatibility but no longer used to create
-   * new jobs. The manual authority is verified from the existing job's input.
+   * FIX 9: Manual authority forwarded from the authenticated caller. The
+   * legacy `executeAnalysis` path is reachable only via the worker (which
+   * processes a manually-created job) or via the authenticated SSE/streaming
+   * route. Both must forward manual authority so createAnalysisJob() can
+   * atomically persist it. The worker reads it from the job's existing
+   * `input` (already populated by the manual route).
    */
   manualAuthority?: {
     source: "manual-ai-analyze";
@@ -104,7 +100,6 @@ export async function executeAnalysis(
     onChunkComplete,
     onChunkFailure,
     manualAuthority,
-    existingJobId,
   } = options;
 
   // Content hash that keys the durable AiAnalyzeChunk rows. Assigned once the
@@ -121,45 +116,21 @@ export async function executeAnalysis(
     message: "Preparing tender content for analysis…",
   });
 
-  // BLOCKER 2: The worker must NEVER call createAnalysisJob(). It must
-  // receive an existing jobId (created by the manual route) and load THAT
-  // job. If no existingJobId is provided, fail closed — the manual route
-  // is the ONLY authority that creates new AI_ANALYZE jobs.
-  if (!existingJobId) {
-    throw new Error("EXISTING_JOB_ID_REQUIRED: executeAnalysis requires an existing manually-authorized jobId — workers must never create new AI_ANALYZE jobs");
+  // FIX 9: createAnalysisJob now requires explicit manual authority. The
+  // legacy `executeAnalysis` path is reachable via the worker (which has
+  // already claimed a manually-created job) or via the authenticated
+  // SSE/streaming route. In both cases the caller MUST forward manual
+  // authority — if absent, this throws MANUAL_AUTHORITY_REQUIRED and the
+  // worker surfaces a safe error.
+  if (!manualAuthority) {
+    throw new Error("MANUAL_AUTHORITY_REQUIRED: executeAnalysis requires manual authority forwarded from an authenticated caller");
   }
 
-  // Load the existing job — do NOT create a new one.
-  const existingJob = await prisma.aiJob.findFirst({
-    where: { id: existingJobId, tenderId, userId, jobType: "AI_ANALYZE" },
-    select: { id: true, analysisInputHash: true, input: true, status: true },
-  });
-  if (!existingJob) {
-    throw new Error("JOB_NOT_FOUND: executeAnalysis could not find the specified existing AI_ANALYZE job");
-  }
-
-  // Verify the existing job has valid manual authority.
-  let jobInput: Record<string, unknown> = {};
-  try {
-    const parsed = JSON.parse(existingJob.input ?? "{}");
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      jobInput = parsed as Record<string, unknown>;
-    }
-  } catch { /* treat as invalid */ }
-
-  if (
-    jobInput.manualRequested !== true ||
-    jobInput.source !== "manual-ai-analyze" ||
-    typeof jobInput.actorUserId !== "string" ||
-    jobInput.actorUserId !== userId
-  ) {
-    throw new Error("MANUAL_AUTHORITY_INVALID: existing job lacks valid manual authority for this user");
-  }
-
-  const jobId = existingJob.id;
-  // Derive totalChunks from the snapshot if present; otherwise compute from content.
-  const snapshot = (jobInput as any)?.snapshot;
-  const totalChunks = snapshot?.totalChunks ?? 0;
+  // Create or resume job
+  const jobInput: AnalysisJobCreateInput = { tenderId, userId, manualAuthority };
+  const jobResult = await createAnalysisJob(jobInput);
+  const jobId = jobResult.jobId;
+  const totalChunks = jobResult.totalChunks;
 
   // Load existing progress if resuming
   let startFromChunk = 0;

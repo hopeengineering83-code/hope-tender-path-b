@@ -223,13 +223,26 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
     }, 25_000);
 
     try {
-      // BLOCKER 2: The worker must pass the existing jobId (ctx.jobId) to
-      // executeAnalysis(). executeAnalysis() loads THAT job and verifies its
-      // manual authority — it never calls createAnalysisJob().
+      // FIX 9: Forward manual authority from the job's existing input. The
+      // manual route POST /api/tenders/:id/manual-ai-analyze persisted
+      // manualRequested=true, source="manual-ai-analyze", actorUserId, and
+      // authorizedAt atomically at job creation. The worker reads them here
+      // so executeAnalysis() can forward them to createAnalysisJob() (which
+      // is now idempotent on existing jobs and requires manual authority).
+      const manualAuthority = (ctx.input as any)?.manualRequested === true
+        && (ctx.input as any)?.source === "manual-ai-analyze"
+        && typeof (ctx.input as any)?.actorUserId === "string"
+        && typeof (ctx.input as any)?.authorizedAt === "string"
+        ? {
+            source: "manual-ai-analyze" as const,
+            actorUserId: (ctx.input as any).actorUserId as string,
+            authorizedAt: (ctx.input as any).authorizedAt as string,
+          }
+        : undefined;
       const result = await executeAnalysis(ctx.tenderId, ctx.userId, {
         force: ctx.input?.force === true,
         deadlineMs: 55_000,
-        existingJobId: ctx.jobId,
+        manualAuthority,
         onProgress: async (event) => {
           const msg = event.message || event.status || event.phase;
           void recordStep(ctx.jobId, { stepName: `analyze.${event.phase}`, message: msg, status: "RUNNING" }).catch(() => {});

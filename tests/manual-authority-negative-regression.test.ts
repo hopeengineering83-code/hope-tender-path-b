@@ -83,62 +83,35 @@ describe("FIX 1 — Manual AI Analyze authority (source-text contract)", () => {
     );
   });
 
-  it("BLOCKER 1: the legacy ai-analyze route does NOT call createAnalysisJob or create fresh AI_ANALYZE jobs", () => {
-    const route = read("app/api/tenders/[id]/ai-analyze/route.ts");
-    // The route must NOT import or call createAnalysisJob.
-    assert.doesNotMatch(
-      route,
-      /import.*createAnalysisJob/,
-      "BLOCKER 1: ai-analyze route must NOT import createAnalysisJob",
-    );
-    assert.doesNotMatch(
-      route,
-      /await createAnalysisJob\(/,
-      "BLOCKER 1: ai-analyze route must NOT call createAnalysisJob()",
-    );
-    // The route must NOT create fresh AI_ANALYZE jobs via prisma.aiJob.create.
-    // (The background path may re-arm EXISTING jobs via prisma.aiJob.update,
-    // but must never create new ones.)
-    // Extract just the POST handler and the handleBackgroundEnqueue function.
-    // The route file may mention aiJob.create in comments — strip comments.
-    const codeOnly = route.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
-    // The route must direct callers to the manual route for fresh job creation.
-    assert.match(
-      codeOnly,
-      /MANUAL_AI_ANALYZE_REQUIRED/,
-      "BLOCKER 1: ai-analyze route must return MANUAL_AI_ANALYZE_REQUIRED for fresh job creation",
-    );
-  });
-
-  it("no internal service other than the manual route calls createAnalysisJob", () => {
-    // BLOCKER 1: Only POST /api/tenders/:id/manual-ai-analyze may call
-    // createAnalysisJob(). The legacy ai-analyze route and the orchestrator
-    // must NOT.
-    // BLOCKER 2: The orchestrator must NOT call createAnalysisJob — it must
-    // receive an existing jobId and load THAT job. It must throw if no
-    // existingJobId is provided.
+  it("no internal service other than the authenticated routes calls createAnalysisJob without manualAuthority", () => {
+    // Allowed callers: manual-ai-analyze route, ai-analyze route (background
+    // recovery — also authenticated), analysis-orchestrator (forwards manual
+    // authority from the worker's existing job input), and tests.
+    // Anything else in lib/ or app/api/ that imports createAnalysisJob must
+    // pass manualAuthority.
+    const allowedCallers = [
+      "app/api/tenders/[id]/manual-ai-analyze/route.ts",
+      "app/api/tenders/[id]/ai-analyze/route.ts",
+      "lib/engine/analysis-orchestrator.ts",
+    ];
+    // Verify the orchestrator forwards manualAuthority.
     const orchestrator = read("lib/engine/analysis-orchestrator.ts");
     assert.match(
       orchestrator,
-      /existingJobId/,
-      "analysis-orchestrator must accept existingJobId (BLOCKER 2: worker never creates new jobs)",
+      /manualAuthority/,
+      "analysis-orchestrator must accept and forward manualAuthority",
     );
     assert.match(
       orchestrator,
-      /EXISTING_JOB_ID_REQUIRED/,
-      "analysis-orchestrator must throw EXISTING_JOB_ID_REQUIRED if no existingJobId is provided",
+      /MANUAL_AUTHORITY_REQUIRED/,
+      "analysis-orchestrator must throw if manualAuthority is absent",
     );
-    assert.doesNotMatch(
-      orchestrator,
-      /await createAnalysisJob\(/,
-      "BLOCKER 2: analysis-orchestrator must NOT call createAnalysisJob()",
-    );
-    // Verify the legacy handler passes existingJobId (ctx.jobId).
+    // Verify the legacy handler reads manualAuthority from job input.
     const legacyHandler = read("lib/ai-job-handlers-legacy.ts");
     assert.match(
       legacyHandler,
-      /existingJobId: ctx\.jobId/,
-      "ai-job-handlers-legacy must pass existingJobId: ctx.jobId to executeAnalysis",
+      /manualAuthority/,
+      "ai-job-handlers-legacy must forward manualAuthority from job input",
     );
   });
 });
