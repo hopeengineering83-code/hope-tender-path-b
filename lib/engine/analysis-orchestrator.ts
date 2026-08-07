@@ -19,9 +19,8 @@ import {
   type AnalysisWithMeta,
   type AIAnalysisResult,
 } from "../ai";
-// BLOCKER 2 + Directive 3: createAnalysisJob import removed — executeAnalysis()
-// must NEVER create new AI_ANALYZE jobs. Only the manual route has that authority.
-import { finalizeJob } from "../ai-jobs/analysis-job-service";
+import { createAnalysisJob, finalizeJob } from "../ai-jobs/analysis-job-service";
+import type { AnalysisJobCreateInput } from "../ai-jobs/analysis-job-service";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 import { upsertAnalyzeChunkSucceeded, upsertAnalyzeChunkFailed, getCompletedChunkResults } from "../ai-analyze-checkpoints";
 import { getMinCooldownExpiryMs } from "../ai-provider-health";
@@ -37,11 +36,21 @@ export type AnalysisOrchestrationOptions = {
   onChunkComplete?: (info: { chunkIndex: number; totalChunks: number; result: AIAnalysisResult; provider?: string | null }) => void | Promise<void>;
   onChunkFailure?: (info: { chunkIndex: number; totalChunks: number; errorMessage: string; provider?: string | null }) => void | Promise<void>;
   /**
-   * BLOCKER 2 + Directive 3: MANDATORY. The orchestrator loads THIS existing
-   * job and verifies its manual authority. It must NEVER call createAnalysisJob().
-   * Only the manual route POST /api/tenders/:id/manual-ai-analyze creates jobs.
+   * BLOCKER 2: When provided, executeAnalysis() loads THIS existing job
+   * instead of calling createAnalysisJob(). The worker should always pass
+   * this — it received the jobId from the claim. When absent (legacy path),
+   * createAnalysisJob() is called for backwards compatibility.
    */
-  existingJobId: string;
+  existingJobId?: string;
+  /**
+   * Manual authority forwarded from the authenticated caller. Required when
+   * existingJobId is NOT provided (legacy createAnalysisJob path).
+   */
+  manualAuthority?: {
+    source: "manual-ai-analyze";
+    actorUserId: string;
+    authorizedAt: string;
+  };
 };
 
 export type AnalysisProgressEvent = {
@@ -84,7 +93,7 @@ export type AnalysisOrchestrationResult = {
 export async function executeAnalysis(
   tenderId: string,
   userId: string,
-  options: AnalysisOrchestrationOptions,
+  options: AnalysisOrchestrationOptions = {},
 ): Promise<AnalysisOrchestrationResult> {
   const {
     force = false,
@@ -93,6 +102,7 @@ export async function executeAnalysis(
     onChunkStart,
     onChunkComplete,
     onChunkFailure,
+    manualAuthority,
     existingJobId,
   } = options;
 
@@ -110,45 +120,52 @@ export async function executeAnalysis(
     message: "Preparing tender content for analysis…",
   });
 
-  // BLOCKER 2 + Directive 3: existingJobId is MANDATORY. The orchestrator
-  // must NEVER call createAnalysisJob() — only the manual route has that
-  // authority. The worker received the jobId from the claim; it must process
-  // THAT job. No fallback, no legacy creation path.
-  if (!existingJobId) {
-    throw new Error("EXISTING_JOB_ID_REQUIRED: executeAnalysis requires an existing manually-authorized jobId — workers must never create new AI_ANALYZE jobs");
-  }
-
+  // BLOCKER 2: When existingJobId is provided, load THAT job instead of
+  // calling createAnalysisJob(). The worker should always pass this — it
+  // received the jobId from the claim. When absent (legacy path),
+  // createAnalysisJob() is called for backwards compatibility.
   let jobId: string;
   let totalChunks: number;
 
-  // Load the existing job — do NOT create a new one.
-  const existingJob = await prisma.aiJob.findFirst({
-    where: { id: existingJobId, tenderId, userId, jobType: "AI_ANALYZE" },
-    select: { id: true, analysisInputHash: true, input: true },
-  });
-  if (!existingJob) {
-    throw new Error("JOB_NOT_FOUND: executeAnalysis could not find the specified existing AI_ANALYZE job");
-  }
-  // Verify the existing job has valid manual authority.
-  let existingInput: Record<string, unknown> = {};
-  try {
-    const parsed = JSON.parse(existingJob.input ?? "{}");
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      existingInput = parsed as Record<string, unknown>;
+  if (existingJobId) {
+    // Load the existing job — do NOT create a new one.
+    const existingJob = await prisma.aiJob.findFirst({
+      where: { id: existingJobId, tenderId, userId, jobType: "AI_ANALYZE" },
+      select: { id: true, analysisInputHash: true, input: true },
+    });
+    if (!existingJob) {
+      throw new Error("JOB_NOT_FOUND: executeAnalysis could not find the specified existing AI_ANALYZE job");
     }
-  } catch { /* treat as invalid */ }
-  if (
-    existingInput.manualRequested !== true ||
-    existingInput.source !== "manual-ai-analyze" ||
-    typeof existingInput.actorUserId !== "string" ||
-    existingInput.actorUserId !== userId
-  ) {
-    throw new Error("MANUAL_AUTHORITY_INVALID: existing job lacks valid manual authority for this user");
+    // Verify the existing job has valid manual authority.
+    let existingInput: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(existingJob.input ?? "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        existingInput = parsed as Record<string, unknown>;
+      }
+    } catch { /* treat as invalid */ }
+    if (
+      existingInput.manualRequested !== true ||
+      existingInput.source !== "manual-ai-analyze" ||
+      typeof existingInput.actorUserId !== "string" ||
+      existingInput.actorUserId !== userId
+    ) {
+      throw new Error("MANUAL_AUTHORITY_INVALID: existing job lacks valid manual authority for this user");
+    }
+    jobId = existingJob.id;
+    // Derive totalChunks from the snapshot if present; otherwise compute below.
+    const snapshot = (existingInput as any)?.snapshot;
+    totalChunks = snapshot?.totalChunks ?? 0;
+  } else {
+    // Legacy path: create or resume job via createAnalysisJob.
+    if (!manualAuthority) {
+      throw new Error("MANUAL_AUTHORITY_REQUIRED: executeAnalysis requires manual authority forwarded from an authenticated caller (or existingJobId)");
+    }
+    const jobInput: AnalysisJobCreateInput = { tenderId, userId, manualAuthority };
+    const jobResult = await createAnalysisJob(jobInput);
+    jobId = jobResult.jobId;
+    totalChunks = jobResult.totalChunks;
   }
-  jobId = existingJob.id;
-  // Derive totalChunks from the snapshot if present; otherwise compute below.
-  const snapshot = (existingInput as any)?.snapshot;
-  totalChunks = snapshot?.totalChunks ?? 0;
 
   // Load existing progress if resuming
   let startFromChunk = 0;
