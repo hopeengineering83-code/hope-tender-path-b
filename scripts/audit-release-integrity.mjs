@@ -126,8 +126,15 @@ check("pricing mutations use persistent limits", [pricingHeader, pricingCreate, 
 check("pricing expert references are tenant-owned", pricingCreate.includes("company: { userId: actor.id }") && pricingLine.includes("company: { userId: actor.id }"), "pricing lines must not reference another tenant's experts");
 check("pricing totals are bounded", pricingCreate.includes("MAX_TOTAL") && pricingLine.includes("MAX_TOTAL"), "pricing inputs must not create non-finite or unbounded totals");
 
+// BLOCKER 1: The legacy ai-analyze route no longer creates fresh AI_ANALYZE
+// jobs — that authority was removed. The source-grounding validation now lives
+// in lib/ai-jobs/analysis-job-service.ts (mapToDraft function) and
+// lib/engine/analysis-orchestrator.ts. Check those files instead.
 const aiAnalyze = read("app/api/tenders/[id]/ai-analyze/route.ts");
-check("AI source references validated", aiAnalyze.includes("validTenderFileIds.has(req.sourceFileToken)") && !aiAnalyze.includes("sourceTenderFileId: req.sourceFileToken ?? null"), "AI-returned source IDs must match uploaded tender files");
+const analysisJobService = read("lib/ai-jobs/analysis-job-service.ts");
+check("AI source references validated",
+  analysisJobService.includes("validTenderFileIds.has(req.sourceFileToken)") || analysisJobService.includes("validSet.has(rawFileId)"),
+  "AI-returned source IDs must match uploaded tender files (validated in analysis-job-service.ts)");
 // The vault content digest was moved to lib/engine/tender-analysis-content.ts
 // (the shared content+hash builder) during the Stage 1 unification (PR #821).
 // Check there instead of the route file.
