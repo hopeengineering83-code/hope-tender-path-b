@@ -158,7 +158,9 @@ test("matcher requests are bounded and advance through remaining providers", () 
   const matcher = source("lib/engine/ai-multi-perspective-matcher.ts");
   assert.match(matcher, /MAX_CANDIDATES_PER_MATCHER_BATCH = 20/);
   assert.match(matcher, /MAX_REQUIREMENT_CHARS = 8_000/);
-  assert.match(matcher, /MAX_FALLBACK_PASSES = 3/);
+  // BLOCKER 11: MAX_FALLBACK_PASSES reduced from 3 to 1 to prevent nested
+  // provider retry loops from consuming the whole serverless invocation.
+  assert.match(matcher, /MAX_FALLBACK_PASSES = 1/);
   assert.match(matcher, /providers attempted in pass one/);
 });
 
