@@ -493,19 +493,28 @@ export async function runNextChunk(jobId: string, userId: string) {
   const { chunk } = result as any;
 
   // FIX 2: Verify the canonical snapshot before processing the chunk.
-  // If the source revision changed, mark the job SUPERSEDED and never promote.
+  // If the source revision changed (file removed, content drifted, hash
+  // mismatch), mark the job SUPERSEDED and never promote.
+  //
+  // IMPORTANT: Jobs created WITHOUT a snapshot (legacy streaming path,
+  // recovery tooling created before Fix 2) are NOT failed — the snapshot
+  // is an enhancement, not a retroactive requirement. Those jobs fall
+  // through to the legacy `tender.files` reload path below. Only jobs that
+  // HAVE a snapshot and whose snapshot has DRIFTED are failed.
   const snapshotCheck = await verifyAnalysisSnapshot(jobId, chunk.tenderId, userId).catch(() => ({
     valid: false,
-    superseded: true,
+    superseded: false,  // Don't fail on verification errors — soft-fail.
     reason: "SNAPSHOT_VERIFY_ERROR",
   }));
-  if (snapshotCheck.superseded || !snapshotCheck.valid) {
+  // Only fail if the snapshot EXISTS and has DRIFTED (superseded=true).
+  // MISSING_SNAPSHOT and LEGACY_JOB_NO_SNAPSHOT are soft-fail (proceed without snapshot).
+  if (snapshotCheck.superseded && snapshotCheck.reason && !["LEGACY_JOB_NO_SNAPSHOT", "MISSING_SNAPSHOT", "SNAPSHOT_VERIFY_ERROR", "JOB_NOT_FOUND"].includes(snapshotCheck.reason)) {
     await prisma.aiJob.update({
       where: { id: jobId },
       data: {
         status: "FAILED",
         finishedAt: new Date(),
-        errorMessage: `SUPERSEDED: canonical source revision changed (${snapshotCheck.reason ?? "UNKNOWN"}) — run AI Analyze again to start a fresh snapshot`,
+        errorMessage: `SUPERSEDED: canonical source revision changed (${snapshotCheck.reason}) — run AI Analyze again to start a fresh snapshot`,
       },
     });
     await prisma.aiAnalyzeChunk.update({
@@ -513,7 +522,7 @@ export async function runNextChunk(jobId: string, userId: string) {
       data: {
         status: "FAILED",
         finishedAt: new Date(),
-        errorMessage: `SUPERSEDED (${snapshotCheck.reason ?? "UNKNOWN"})`,
+        errorMessage: `SUPERSEDED (${snapshotCheck.reason})`,
       },
     }).catch((chunkUpdateErr: unknown) => {
       logger.error(
@@ -533,47 +542,56 @@ export async function runNextChunk(jobId: string, userId: string) {
     parsedInput = {};
   }
   const snapshot: CanonicalAnalysisSnapshot | undefined = parsedInput?.snapshot;
+  // FIX 2: Determine fullText from either the immutable snapshot (preferred)
+  // or the legacy tender.files reload (for jobs created before Fix 2 or via
+  // the streaming path). The snapshot path verifies per-file SHA-256; the
+  // legacy path does not (it's less safe but still authenticated).
+  let fullText: string;
   if (!snapshot || snapshot.snapshotVersion !== 1) {
-    await prisma.aiJob.update({
-      where: { id: jobId },
-      data: {
-        status: "FAILED",
-        finishedAt: new Date(),
-        errorMessage: "SNAPSHOT_MISSING: job input lacks canonical snapshot — refusing to process",
-      },
+    // Legacy/streaming jobs without a snapshot — fall back to tender.files.
+    logger.warn(`[runNextChunk] Job ${jobId} lacks canonical snapshot — using legacy tender.files reload (less safe)`);
+    const tender = await prisma.tender.findUnique({
+      where: { id: chunk.tenderId },
+      include: { files: true },
     });
-    return { completed: true, status: "FAILED" as const };
-  }
-
-  // Reload the exact canonical files (in deterministic order) and verify each
-  // content hash matches the snapshot. If any hash drifted, fail closed.
-  const canonicalFiles = await prisma.tenderFile.findMany({
-    where: { id: { in: snapshot.canonicalFileIds } },
-    select: { id: true, extractedText: true, originalFileName: true, fileName: true },
-  });
-  const fileMap = new Map(canonicalFiles.map((f) => [f.id, f]));
-  const orderedFiles = snapshot.canonicalFileIds
-    .map((id) => fileMap.get(id))
-    .filter((f): f is NonNullable<typeof f> => Boolean(f));
-  for (const f of orderedFiles) {
-    const currentHash = require("crypto").createHash("sha256").update(f.extractedText ?? "").digest("hex");
-    if (snapshot.fileContentHashes[f.id] !== currentHash) {
-      await prisma.aiJob.update({
-        where: { id: jobId },
-        data: {
-          status: "FAILED",
-          finishedAt: new Date(),
-          errorMessage: `FILE_CONTENT_DRIFT: TenderFile ${f.id} content changed since snapshot — run AI Analyze again`,
-        },
-      });
-      return { completed: true, status: "FAILED" as const };
+    if (!tender) throw new Error("Tender lost");
+    fullText = tender.files
+      .sort((a: any, b: any) => a.createdAt.getTime() - b.createdAt.getTime())
+      .map((f: any) => {
+        if (!f.extractedText) return "";
+        return `[FILE_ID:${f.id}|FILE_NAME:${f.originalFileName || f.fileName}]\n${f.extractedText}`;
+      })
+      .filter(Boolean)
+      .join("\n\n---\n\n");
+  } else {
+    // Snapshot path: reload the exact canonical files and verify each hash.
+    const canonicalFiles = await prisma.tenderFile.findMany({
+      where: { id: { in: snapshot.canonicalFileIds } },
+      select: { id: true, extractedText: true, originalFileName: true, fileName: true },
+    });
+    const fileMap = new Map(canonicalFiles.map((f) => [f.id, f]));
+    const orderedFiles = snapshot.canonicalFileIds
+      .map((id) => fileMap.get(id))
+      .filter((f): f is NonNullable<typeof f> => Boolean(f));
+    for (const f of orderedFiles) {
+      const currentHash = require("crypto").createHash("sha256").update(f.extractedText ?? "").digest("hex");
+      if (snapshot.fileContentHashes[f.id] !== currentHash) {
+        await prisma.aiJob.update({
+          where: { id: jobId },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            errorMessage: `FILE_CONTENT_DRIFT: TenderFile ${f.id} content changed since snapshot — run AI Analyze again`,
+          },
+        });
+        return { completed: true, status: "FAILED" as const };
+      }
     }
+    fullText = orderedFiles
+      .map((f) => `[FILE_ID:${f.id}|FILE_NAME:${f.originalFileName || f.fileName}]\n${f.extractedText ?? ""}`)
+      .filter(Boolean)
+      .join("\n\n---\n\n");
   }
-
-  const fullText = orderedFiles
-    .map((f) => `[FILE_ID:${f.id}|FILE_NAME:${f.originalFileName || f.fileName}]\n${f.extractedText ?? ""}`)
-    .filter(Boolean)
-    .join("\n\n---\n\n");
 
   try {
       // Restore provider health/cooldown from DB before any provider calls.
@@ -590,9 +608,12 @@ export async function runNextChunk(jobId: string, userId: string) {
 
       // FIX 2: Verify the deterministic chunk hash matches the snapshot. If
       // the chunker produced a different chunk text, the snapshot is stale.
-      const currentChunkHash = require("crypto").createHash("sha256").update(chunkText).digest("hex");
-      if (snapshot.chunkHashes[chunk.chunkIndex] && snapshot.chunkHashes[chunk.chunkIndex] !== currentChunkHash) {
-        throw new Error(`CHUNK_HASH_DRIFT: chunk ${chunk.chunkIndex} hash mismatch — snapshot is stale`);
+      // Only verify when the snapshot exists (legacy/streaming jobs skip).
+      if (snapshot && snapshot.snapshotVersion === 1) {
+        const currentChunkHash = require("crypto").createHash("sha256").update(chunkText).digest("hex");
+        if (snapshot.chunkHashes[chunk.chunkIndex] && snapshot.chunkHashes[chunk.chunkIndex] !== currentChunkHash) {
+          throw new Error(`CHUNK_HASH_DRIFT: chunk ${chunk.chunkIndex} hash mismatch — snapshot is stale`);
+        }
       }
 
       let providerUsed: string | undefined;

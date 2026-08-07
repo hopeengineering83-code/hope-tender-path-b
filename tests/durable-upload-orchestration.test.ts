@@ -10,11 +10,34 @@ const read = (file: string) => readFileSync(resolve(process.cwd(), file), "utf8"
 
 describe("durable upload orchestration", () => {
   // The server-side enqueue module (lib/engine/server-side-ai-enqueue.ts)
-  // was deleted: its wiring attempt conflicted with the release branch and
+  // was DELETED: its wiring attempt conflicted with the release branch and
   // was reverted. AI_ANALYZE is now a MANUAL user action triggered via
   // POST /api/tenders/:id/manual-ai-analyze (which calls createAnalysisJob,
   // content-hash idempotent). The extraction service no longer auto-queues
   // AI_ANALYZE — see tests/manual-workflow-regression.test.ts.
+
+  it("FIX: lib/engine/server-side-ai-enqueue.ts is deleted — no automatic AI_ANALYZE enqueue path exists", () => {
+    // The module file must not exist. If anyone re-creates it, this test
+    // fails. The function it exported (enqueueAiAnalyzeServerSide) was a
+    // bypass of the manual AI Analyze authority contract — it created
+    // AI_ANALYZE jobs with source="upload-first-server" (not "manual-ai-analyze")
+    // and without manualRequested=true. The worker (runNextChunk) now rejects
+    // such jobs with MANUAL_AUTHORITY_MISSING.
+    let fileExists = true;
+    try {
+      read("lib/engine/server-side-ai-enqueue.ts");
+    } catch {
+      fileExists = false;
+    }
+    assert.equal(fileExists, false, "lib/engine/server-side-ai-enqueue.ts must be deleted (automatic AI_ANALYZE bypass)");
+    // The import in tender-upload-first.ts must also be gone.
+    const uploadFirst = read("lib/tender-upload-first.ts");
+    assert.doesNotMatch(
+      uploadFirst,
+      /enqueueAiAnalyzeServerSide/,
+      "tender-upload-first.ts must NOT import enqueueAiAnalyzeServerSide",
+    );
+  });
 
   it("VAULT_INGEST job type is registered with a real handler, not just declared", () => {
     // Previously this only checked the string appeared in the JobType union

@@ -649,16 +649,25 @@ async function handleStreamingAnalyze(
               return existingRunning;
             }
 
-            // No concurrent job exists, safe to create a new one
+            // No concurrent job exists, safe to create a new one.
+            // FIX 1: Forward manual authority — the streaming path is behind
+            // requireRole, so it's the same authority boundary as the manual
+            // route. The worker (runNextChunk) verifies manualRequested/source/
+            // actorUserId before processing; without these fields the job
+            // would be rejected with MANUAL_AUTHORITY_MISSING.
             return await tx.aiJob.create({
               data: {
                 tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date(),
-                // Bind the canonical content hash to the durable AiJob column so the
-                // release snapshot + generation gate can confirm the analysis is
-                // current. Without this the column stays null and every tender is
-                // permanently reported as "content changed since the last analysis".
                 analysisInputHash: contentHash,
-                input: JSON.stringify({ contentLength: tenderContent.length, chunkCount: Math.ceil(tenderContent.length / 50_000), contentHash }),
+                input: JSON.stringify({
+                  contentLength: tenderContent.length,
+                  chunkCount: Math.ceil(tenderContent.length / 50_000),
+                  contentHash,
+                  source: "manual-ai-analyze",
+                  manualRequested: true,
+                  actorUserId: userId,
+                  authorizedAt: new Date().toISOString(),
+                }),
               },
               select: { id: true },
             });
@@ -1017,7 +1026,14 @@ async function handleStreamingAnalyze(
                   data: {
                     tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING",
                     startedAt: new Date(),
-                    input: JSON.stringify({ streamingEmergencyFallback: true, contentHash }),
+                    input: JSON.stringify({
+                      streamingEmergencyFallback: true,
+                      contentHash,
+                      source: "manual-ai-analyze",
+                      manualRequested: true,
+                      actorUserId: userId,
+                      authorizedAt: new Date().toISOString(),
+                    }),
                   },
                   select: { id: true },
                 });
@@ -1573,13 +1589,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               jobType: "AI_ANALYZE",
               status: "RUNNING",
               startedAt: new Date(),
-              // Bind the canonical content hash so downstream gates can confirm
-              // the analysis matches the current tender content (see streaming path).
               analysisInputHash: contentHash,
               input: JSON.stringify({
                 contentLength: tenderContent.length,
                 chunkCount: Math.ceil(tenderContent.length / 50_000),
                 contentHash,
+                source: "manual-ai-analyze",
+                manualRequested: true,
+                actorUserId: userId,
+                authorizedAt: new Date().toISOString(),
               }),
             },
             select: { id: true },
@@ -1909,7 +1927,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             data: {
               tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING",
               startedAt: new Date(),
-              input: JSON.stringify({ noAiProvider: true, contentHash: noAiHash }),
+              input: JSON.stringify({
+                noAiProvider: true,
+                contentHash: noAiHash,
+                source: "manual-ai-analyze",
+                manualRequested: true,
+                actorUserId: userId,
+                authorizedAt: new Date().toISOString(),
+              }),
             },
             select: { id: true },
           });
