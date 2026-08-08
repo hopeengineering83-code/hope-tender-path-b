@@ -94,21 +94,25 @@ describe("FIX 1 — Manual AI Analyze authority (source-text contract)", () => {
       "app/api/tenders/[id]/ai-analyze/route.ts",
       "lib/engine/analysis-orchestrator.ts",
     ];
-    // Verify the orchestrator forwards manualAuthority.
+    // DIRECTIVE 3: The orchestrator must NOT call createAnalysisJob — it must
+    // receive a mandatory existingJobId and load THAT job. It must throw
+    // EXISTING_JOB_ID_REQUIRED if not provided.
     const orchestrator = read("lib/engine/analysis-orchestrator.ts");
     assert.match(
       orchestrator,
-      /manualAuthority/,
-      "analysis-orchestrator must accept and forward manualAuthority",
+      /existingJobId: string;/,
+      "DIRECTIVE 3: analysis-orchestrator must require existingJobId as mandatory",
     );
     assert.match(
       orchestrator,
-      /MANUAL_AUTHORITY_REQUIRED/,
-      "analysis-orchestrator must throw if manualAuthority is absent",
+      /EXISTING_JOB_ID_REQUIRED/,
+      "DIRECTIVE 3: analysis-orchestrator must throw EXISTING_JOB_ID_REQUIRED if no existingJobId",
     );
-    // BLOCKER 2: The legacy handler now passes existingJobId instead of
-    // manualAuthority. executeAnalysis() loads the existing job and verifies
-    // its manual authority from the job's input.
+    assert.doesNotMatch(
+      orchestrator,
+      /await createAnalysisJob\(/,
+      "DIRECTIVE 3: analysis-orchestrator must NOT call createAnalysisJob()",
+    );
     const legacyHandler = read("lib/ai-job-handlers-legacy.ts");
     assert.match(
       legacyHandler,

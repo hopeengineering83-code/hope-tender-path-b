@@ -185,16 +185,22 @@ describe("DIRECTIVE 7 — Behavioral proof: immutable snapshot + fail-closed", (
   it("runNextChunk verifies the snapshot before processing (no tender.files fallback)", () => {
     const service = read("lib/ai-jobs/analysis-job-service.ts");
     assert.match(service, /verifyAnalysisSnapshot/);
-    // The soft-fail list must NOT include LEGACY_JOB_NO_SNAPSHOT or MISSING_SNAPSHOT
-    // as exceptions to the fail-closed rule. (The current code has a soft-fail
-    // for backwards compatibility — this test documents the gap.)
-    const hasSoftFail = service.includes("LEGACY_JOB_NO_SNAPSHOT") && service.includes("soft-fail");
-    if (hasSoftFail) {
-      // This is a known gap — the soft-fail is retained for CI test fixture
-      // compatibility. When the test fixtures are rewritten to include
-      // snapshots, this soft-fail should be removed.
-      assert.ok(true, "Known gap: soft-fail retained for CI compatibility (directives 3-4 require test rewrite first)");
-    }
+    // DIRECTIVE 4: The worker must FAIL CLOSED on any snapshot problem.
+    // No soft-fail for LEGACY_JOB_NO_SNAPSHOT, MISSING_SNAPSHOT, or
+    // SNAPSHOT_VERIFY_ERROR. No tender.files reload fallback.
+    assert.match(service, /SNAPSHOT_FAIL_CLOSED/, "Worker must fail closed on snapshot problems");
+    // The soft-fail exclusion list must NOT be present
+    assert.doesNotMatch(
+      service,
+      /\["LEGACY_JOB_NO_SNAPSHOT", "MISSING_SNAPSHOT", "SNAPSHOT_VERIFY_ERROR", "JOB_NOT_FOUND"\]/,
+      "DIRECTIVE 4: soft-fail exclusion list must be removed",
+    );
+    // No tender.files reload fallback
+    assert.doesNotMatch(
+      service,
+      /logger\.warn.*lacks canonical snapshot.*legacy tender\.files/,
+      "DIRECTIVE 4: tender.files reload fallback must be removed",
+    );
   });
 });
 
