@@ -692,6 +692,13 @@ export async function backfillTenderFactsForTender(
       titleSourceFileId: true, titleSourcePage: true, titleSourceQuote: true,
       referenceSourceFileId: true, referenceSourcePage: true, referenceSourceQuote: true,
       submissionMethodSourceFileId: true, submissionMethodSourcePage: true, submissionMethodSourceQuote: true,
+      // Client / procuring-entity detail. These must be selected explicitly:
+      // buildBackfillCandidates reads them off the row, and an unselected column
+      // arrives as undefined, which would silently skip every one of them.
+      legalClientName: true, donorAgency: true, implementingAgency: true,
+      clientAddress: true, clientContactName: true, clientContactTitle: true,
+      clientContactEmail: true, clientContactPhone: true, clientWebsite: true,
+      preBidChannel: true, clientRepresentative: true,
     },
     ...(options.limit ? { take: options.limit } : {}),
   });
@@ -823,6 +830,59 @@ function buildBackfillCandidates(tender: any): BackfillCandidate[] {
       sourceFileId: tender.clientNameSourceFileId ?? null,
       sourcePage: tender.clientNameSourcePage ?? null,
       sourceQuote: tender.clientNameSourceQuote ?? null,
+    });
+  }
+
+  // ── Remaining client / procuring-entity detail ────────────────────────────
+  //
+  // CLAUDE.md requires a source page and source quote for EVERY extracted
+  // client field. These eleven were extracted and stored as Tender scalars but
+  // never given a ledger row, so they were invisible to every ledger consumer —
+  // readiness, gates, and the review surfaces — and no reviewer could trace them
+  // to a page and quote.
+  //
+  // They have no xSourceFileId/xSourcePage/xSourceQuote companions on Tender, so
+  // they carry null provenance here. That is deliberate and is the point:
+  // upsertTenderFactFromSource derives SOURCE_GROUNDED_CONFIRMED only when the
+  // full triple is present and CANDIDATE_NEEDS_REVIEW otherwise, so these land
+  // as candidates needing review rather than as grounded facts. A field with a
+  // value but no traceable source must look exactly like that — visible, and
+  // visibly ungrounded — instead of being absent and therefore unnoticed.
+  const clientDetailFields: Array<{
+    value: unknown;
+    semanticKey: string;
+    displayLabel: string;
+    category: string;
+    valueType: string;
+    relevance: string;
+  }> = [
+    { value: tender.legalClientName, semanticKey: "legalClientName", displayLabel: "Full Legal Client Name", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.donorAgency, semanticKey: "donorAgency", displayLabel: "Donor / Funding Agency", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.implementingAgency, semanticKey: "implementingAgency", displayLabel: "Implementing Agency / Project Owner", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.clientAddress, semanticKey: "clientAddress", displayLabel: "Client Address", category: "procuring-entity", valueType: "ADDRESS", relevance: "advisory" },
+    { value: tender.clientContactName, semanticKey: "clientContactName", displayLabel: "Client Contact Name", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.clientContactTitle, semanticKey: "clientContactTitle", displayLabel: "Client Contact Title / Role", category: "procuring-entity", valueType: "TEXT", relevance: "informational" },
+    { value: tender.clientContactEmail, semanticKey: "clientContactEmail", displayLabel: "Client Contact Email", category: "procuring-entity", valueType: "EMAIL_LIST", relevance: "advisory" },
+    { value: tender.clientContactPhone, semanticKey: "clientContactPhone", displayLabel: "Client Contact Phone", category: "procuring-entity", valueType: "TEXT", relevance: "informational" },
+    { value: tender.clientWebsite, semanticKey: "clientWebsite", displayLabel: "Client Website / Portal", category: "procuring-entity", valueType: "URL", relevance: "informational" },
+    { value: tender.preBidChannel, semanticKey: "preBidChannel", displayLabel: "Pre-Bid / Contact Channel", category: "pre-bid", valueType: "TEXT", relevance: "advisory" },
+    { value: tender.clientRepresentative, semanticKey: "clientRepresentative", displayLabel: "Client Representative / Authorized Officer", category: "procuring-entity", valueType: "TEXT", relevance: "informational" },
+  ];
+
+  for (const field of clientDetailFields) {
+    const raw = typeof field.value === "string" ? field.value.trim() : "";
+    if (!raw) continue;
+    candidates.push({
+      semanticKey: field.semanticKey,
+      displayLabel: field.displayLabel,
+      category: field.category,
+      valueType: field.valueType,
+      normalizedValue: raw,
+      rawSourceValue: raw,
+      relevance: field.relevance,
+      sourceFileId: null,
+      sourcePage: null,
+      sourceQuote: null,
     });
   }
 
