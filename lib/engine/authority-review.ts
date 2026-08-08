@@ -89,8 +89,16 @@ function firstPatternMatch(patterns: RegExp[], text: string): string {
   return "pattern match";
 }
 
+// "to be confirmed by bid team" is the phrase proposal-benchmark-guard's
+// normalizeWeakText() substitutes in for every placeholder, TBD, TODO, template
+// variable and AI refusal it cannot resolve. It is the same unresolved stub as
+// "Bid-Team to confirm" — the normalizer simply emits it in two phrasings, and
+// only one of them was listed here. So the rarer wording
+// ("Bid-team to confirm before submission.") blocked export as a CRITICAL
+// stub while the dominant wording travelled all the way into a client-facing
+// tender submission untouched. Both must fail closed.
 const INTERNAL_NOTE_RE =
-  /Bid-Team to confirm|MISSING_SOURCE|\[Bid-Team[^\]]*\]|Source-evidence action/i;
+  /Bid-Team to confirm|to be confirmed by bid[-\s]team|MISSING_SOURCE|\[Bid-Team[^\]]*\]|Source-evidence action/i;
 
 const TODO_FIXME_RE =
   /\bTODO\b|\bFIXME\b|\bHACK\b|\bNOTE:\s/;
@@ -165,7 +173,7 @@ function analyseDocument(
   // Internal notes / Bid-Team stubs (check both INTERNAL_NOTE and BID_TEAM)
   if (INTERNAL_NOTE_RE.test(text)) {
     const match = text.match(INTERNAL_NOTE_RE);
-    const isBidTeam = /Bid-Team to confirm|\[Bid-Team[^\]]*\]/i.test(text);
+    const isBidTeam = /Bid-Team to confirm|to be confirmed by bid[-\s]team|\[Bid-Team[^\]]*\]/i.test(text);
     blockers.push({
       code: isBidTeam ? "BID_TEAM_STUB" : "INTERNAL_NOTE",
       severity: "CRITICAL",
