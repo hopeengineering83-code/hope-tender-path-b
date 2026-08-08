@@ -79,18 +79,43 @@ function compareRank<T extends CanonicalTenderFileInput>(left: T, right: T): num
 
 /**
  * Select one authoritative representation for each logical source document.
- * Exact filename stems collapse the common DOCX/PDF/copy upload pattern. The
- * best verified, extracted representation wins. Differently named addenda
- * remain separate sources.
+ *
+ * DIRECTIVE 6: Source identity is now byte-SHA-256 primary, filename-stem
+ * advisory only. The rules are:
+ *   1. Same SHA-256 bytes → exact duplicate; deduplicate (keep best representation).
+ *   2. Same filename but different bytes → separate active logical sources
+ *      (NOT collapsed — the user may have uploaded a revised version).
+ *   3. PDF + DOCX with different bytes → separate sources (no implicit grouping).
+ *   4. Addendum/amendment → independent active logical source.
+ *   5. Filename similarity → advisory only, never authority.
+ *   6. Ambiguous relationship → do not silently collapse.
+ *
+ * The previous implementation used normalizedLogicalStem as the primary
+ * grouping key, which incorrectly collapsed different-byte files with the
+ * same filename stem. The new implementation groups by contentSha256 first,
+ * then by file ID as a unique fallback. Files without contentSha256 are
+ * grouped by ID only (never by filename stem).
  */
 export function selectCanonicalTenderFiles<T extends CanonicalTenderFileInput>(files: T[]): T[] {
   const active = files.filter((file) => !file.deletionStatus || file.deletionStatus === "ACTIVE");
   const grouped = new Map<string, T[]>();
+
   for (const file of active) {
-    const stem = normalizedLogicalStem(file.originalFileName || file.fileName);
-    const key = stem || (file.contentSha256 ? `sha256:${file.contentSha256.toLowerCase()}` : `id:${file.id}`);
+    // DIRECTIVE 6: Primary identity is byte SHA-256. Files with the same
+    // contentSha256 are exact duplicates and are deduplicated.
+    // Files with different contentSha256 are separate logical sources,
+    // even if they have the same filename.
+    let key: string;
+    if (file.contentSha256) {
+      key = `sha256:${file.contentSha256.toLowerCase()}`;
+    } else {
+      // No contentSha256 — use file ID as unique identity (never filename).
+      // This prevents collapsing two unverified files with the same name.
+      key = `id:${file.id}`;
+    }
     grouped.set(key, [...(grouped.get(key) ?? []), file]);
   }
+
   return [...grouped.values()]
     .map((rows) => [...rows].sort(compareRank)[0])
     .sort((left, right) => numericDate(left.createdAt) - numericDate(right.createdAt) || left.id.localeCompare(right.id));
