@@ -19,7 +19,7 @@ describe("Behavioral DB: snapshot drift detection (Category 1)", { skip: !RUN },
   it("verifyAnalysisSnapshot returns valid=true when sources are unchanged", async () => {
     const { prisma } = await import("../lib/prisma");
     const { createAnalysisJob, verifyAnalysisSnapshot } = await import("../lib/ai-jobs/analysis-job-service");
-    const bcrypt = await import("bcryptjs");
+    const bcrypt = (await import("bcryptjs")).default;
 
     const email = `snaptest-${Date.now()}@example.test`;
     const password = "Snaptest-password-2026-secure!";
@@ -82,7 +82,7 @@ describe("Behavioral DB: snapshot drift detection (Category 1)", { skip: !RUN },
   it("verifyAnalysisSnapshot returns superseded when file content changes", async () => {
     const { prisma } = await import("../lib/prisma");
     const { createAnalysisJob, verifyAnalysisSnapshot } = await import("../lib/ai-jobs/analysis-job-service");
-    const bcrypt = await import("bcryptjs");
+    const bcrypt = (await import("bcryptjs")).default;
 
     const email = `snapdrift-${Date.now()}@example.test`;
     const password = "Snapdrift-password-2026-secure!";
@@ -149,7 +149,7 @@ describe("Behavioral DB: snapshot drift detection (Category 1)", { skip: !RUN },
   it("verifyAnalysisSnapshot returns superseded when a file is deleted", async () => {
     const { prisma } = await import("../lib/prisma");
     const { createAnalysisJob, verifyAnalysisSnapshot } = await import("../lib/ai-jobs/analysis-job-service");
-    const bcrypt = await import("bcryptjs");
+    const bcrypt = (await import("bcryptjs")).default;
 
     const email = `snapdel-${Date.now()}@example.test`;
     const password = "Snapdel-password-2026-secure!";
@@ -287,17 +287,41 @@ describe("Behavioral DB: orchestrator never creates jobs (Category 2)", { skip: 
 
 describe("Behavioral DB: engine authority (Category 2)", { skip: !RUN }, () => {
   it("enqueueEngineJobForCurrentSources throws MANUAL_RUN_ENGINE_REQUIRED without manualRequested", async () => {
+    const { prisma } = await import("../lib/prisma");
     const { enqueueEngineJobForCurrentSources } = await import("../lib/engine/enqueue-engine-job");
 
-    await assert.rejects(
-      () => enqueueEngineJobForCurrentSources({} as any, {
-        userId: "fake-user",
-        tenderId: "fake-tender",
-        companyId: "fake-company",
-        manualRequested: false,
-      }),
-      /MANUAL_RUN_ENGINE_REQUIRED/,
-      "enqueueEngineJobForCurrentSources must throw when manualRequested is false",
-    );
+    // Use real prisma — computeEngineSourceRevision will return null for
+    // non-existent tender/company, so the function returns null before
+    // reaching the manualRequested check. We test with a real tender
+    // to reach the manualRequested gate.
+    const bcrypt = (await import("bcryptjs")).default;
+    const email = `engauth-${Date.now()}@example.test`;
+    const password = "Engauth-password-2026-secure!";
+    const user = await prisma.user.create({
+      data: { email, passwordHash: await bcrypt.hash(password, 10), role: "ADMIN", name: "Eng Auth Test" },
+    });
+    const company = await prisma.company.create({
+      data: { userId: user.id, name: "Eng Auth Co", legalName: "Eng Auth Co", setupCompletedAt: new Date() },
+    });
+    const tender = await prisma.tender.create({
+      data: { userId: user.id, title: "Eng Auth Test Tender" },
+    });
+
+    try {
+      await assert.rejects(
+        () => enqueueEngineJobForCurrentSources(prisma, {
+          userId: user.id,
+          tenderId: tender.id,
+          companyId: company.id,
+          manualRequested: false,
+        }),
+        /MANUAL_RUN_ENGINE_REQUIRED/,
+        "enqueueEngineJobForCurrentSources must throw when manualRequested is false",
+      );
+    } finally {
+      await prisma.tender.deleteMany({ where: { userId: user.id } });
+      await prisma.company.deleteMany({ where: { userId: user.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+    }
   });
 });
