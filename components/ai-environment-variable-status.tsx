@@ -1,7 +1,18 @@
 import React from "react";
 import type { AIEnvironmentVariableStatus } from "../lib/ai-environment-readiness";
 
-const GROUPS = [
+/**
+ * Grouping for the environment-variable readiness list.
+ *
+ * The provider entries must stay in `CANONICAL_AI_PROVIDER_ORDER`, which the
+ * project guide marks NEVER-change and requires docs, gates, health routes and
+ * UI to match. This list is a second place that order is written down, so it is
+ * exported purely so a test can hold it against the catalog — see
+ * tests/ai-provider-ui-order-drift.test.ts. It is deliberately NOT derived by
+ * importing the provider registry: that module resolves API keys from the
+ * environment at module scope, and this component renders in the browser.
+ */
+export const ENVIRONMENT_VARIABLE_GROUPS = [
   { key: "zai", label: "Z.ai", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("ZAI_") },
   { key: "cerebras", label: "Cerebras", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("CEREBRAS_") },
   { key: "mistral", label: "Mistral", matches: (variable: AIEnvironmentVariableStatus) => variable.scope === "ai" && variable.name.startsWith("MISTRAL_") },
@@ -45,7 +56,7 @@ function StatusPill({ variable }: { variable: AIEnvironmentVariableStatus }) {
 
 export function groupEnvironmentVariables(variables: AIEnvironmentVariableStatus[]) {
   const remaining = new Set(variables);
-  return GROUPS.map((group) => {
+  return ENVIRONMENT_VARIABLE_GROUPS.map((group) => {
     const matches = variables.filter((variable) => remaining.has(variable) && group.matches(variable));
     matches.forEach((variable) => remaining.delete(variable));
     return { key: group.key, label: group.label, variables: matches };
