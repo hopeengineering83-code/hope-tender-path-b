@@ -220,7 +220,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
   }
 
   const client = new (Anthropic as new (config: { apiKey: string }) => {
-    messages: { create: (input: unknown) => Promise<{ content: Array<{ type: string; text?: string }> }> };
+    messages: { create: (input: unknown, options?: { signal?: AbortSignal }) => Promise<{ content: Array<{ type: string; text?: string }> }> };
   })({ apiKey: anthropicApiKey });
 
   // Per-call max_tokens. When the section-parallel generator passes a tight
@@ -245,7 +245,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
           max_tokens: effectiveMaxTokens,
           system: systemPrompt,
           messages: [{ role: "user", content: prompt }],
-        });
+        }, { signal: AbortSignal.timeout(45_000) });
         const text = response.content
           .filter((c) => c.type === "text")
           .map((c) => c.text ?? "")
@@ -2671,7 +2671,7 @@ export async function generateWithClaudeTools(
   }
 
   const client = new (Anthropic as new (config: { apiKey: string }) => {
-    messages: { create: (input: unknown) => Promise<{ content: AnthropicContentBlock[]; stop_reason?: string }> };
+    messages: { create: (input: unknown, options?: { signal?: AbortSignal }) => Promise<{ content: AnthropicContentBlock[]; stop_reason?: string }> };
   })({ apiKey: anthropicApiKey });
 
   const effectiveMaxTokens = (typeof maxTokensOverride === "number" && Number.isFinite(maxTokensOverride) && maxTokensOverride > 0)
@@ -2697,7 +2697,7 @@ export async function generateWithClaudeTools(
           system: systemPrompt,
           tools,
           messages,
-        });
+        }, { signal: AbortSignal.timeout(45_000) });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         attemptError = `${modelName}: ${msg}`;
