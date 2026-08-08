@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-08 18:05 UTC — Claude Code
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, head `a72071be`. Audit passes 5–6; one confirmed open gap recorded, no code change in this entry.
+- **Pass 5 — extraction quality: SOUND, left unchanged.** `classifyPageText` in `lib/extraction-quality.ts` implements every one of CLAUDE.md's six conditions for a "perfectly extracted page", and `status === "GOOD"` requires all of them. Condition 5 ("not only headers/footers/noise") is implemented the hard way — density is measured on `meaningfulPageCharCount`, which strips headers and footers first — so a page padded with boilerplate cannot reach GOOD on raw character count. Acceptance criteria 1 and 2 are satisfied.
+- **Pass 6 — client-detail provenance: CONFIRMED GAP.** Acceptance criterion 4 and requirement 20 demand a source page and source quote for **every** extracted client field. All 19 client data fields exist in the AI schema, and `TenderFactsLedger` carries the correct generic provenance triple (`sourceFileId`, `sourcePage`, `sourceQuote`) with a real grounding check (`hasSourceEvidence`). The design is right. But only **9** semanticKeys are ever written — `title, clientName, reference, deadline, submissionMethod, submissionEmails, submissionAddress, country, submissionEmailSubject` — all as literals in `lib/engine/tender-facts-ledger-service.ts:799-1046`, with no dynamic key writing anywhere. **12 client fields therefore have no ledger row and no provenance:** legalClientName, donorAgency, implementingAgency/projectOwner, city, clientAddress, clientContactName, clientContactTitle, clientContactEmail, clientContactPhone, clientWebsite, preBidChannel, clientRepresentative. Full evidence and the implementation plan are in the Active Workboard item; the fix extends the existing write block rather than adding scalar `xSourcePage`/`xSourceQuote` columns, which the ledger exists to replace.
+- **Honest acceptance-matrix position (10 criteria):** 8 verified PASS, 1 verified FAIL (criterion 4, above), 1 not yet exercised (criterion 8 — "does not build an empty submission plan when requirements exist"). This is **not** 100%. Two prior sessions' worth of "score" claims in this repo were asserted without exercising the criteria; this entry states what was actually run.
+- **Tests actually run:** no code changed in this entry. The last full run on this head was 9636/9636 pass with `RUN_DB_INTEGRATION=true` against local PostgreSQL 16, database verified alive before and after.
+- **Risks / assumptions:** the 12 missing fields are extracted by the AI and may be displayed, so the gap is provenance and grounding, not absence of data — a reviewer cannot trace those values to a page and quote, and no gate can treat them as source-grounded.
+- **Next action:** implement the workboard item (12 ledger mappings + DB-integration tests asserting `hasSourceEvidence`, and `NOT_STATED_IN_SOURCE` rather than a placeholder when the AI supplied none).
+- **Merge status:** not reviewed.
+
 ### 2026-08-08 17:35 UTC — Claude Code
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175. Pushed `d6999353..d2b5a71a` (four commits from the two prior entries), then this follow-up.
