@@ -578,9 +578,16 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
             }).catch(() => {});
           },
         });
+        // Documents with no recoverable bytes are called out separately: they
+        // are not a transient failure that another run could clear, so the
+        // message has to name re-upload as the only remedy rather than let
+        // them disappear into a "0 re-extracted" with no stated cause.
+        const unrecoverable = reextraction.unrecoverable;
         await recordStep(ctx.jobId, {
           stepName: "vault.reextract",
-          message: `Re-extracted ${reextraction.reextracted} document(s); ${reextraction.failedFiles.length} failed.`,
+          message: unrecoverable.length > 0
+            ? `Re-extracted ${reextraction.reextracted} document(s); ${reextraction.failedFiles.length} failed, of which ${unrecoverable.length} have no stored bytes left and must be uploaded again: ${unrecoverable.map((doc) => doc.name).join(", ")}.`
+            : `Re-extracted ${reextraction.reextracted} document(s); ${reextraction.failedFiles.length} failed.`,
           status: "RUNNING",
         });
       }
@@ -691,6 +698,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
         metadata: {
           docsReextracted: reextraction?.reextracted ?? 0,
           docsFailed: reextraction?.failedFiles.length ?? 0,
+          docsUnrecoverable: reextraction?.unrecoverable.length ?? 0,
           expertsCreated: result.expertsCreated,
           projectsCreated: result.projectsCreated,
           expertsUpdated: result.expertsUpdated,
@@ -708,7 +716,13 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
 
     return {
       ...result,
-      ...(reextraction ? { docsReextracted: reextraction.reextracted, reextractionFailedFiles: reextraction.failedFiles } : {}),
+      ...(reextraction
+        ? {
+            docsReextracted: reextraction.reextracted,
+            reextractionFailedFiles: reextraction.failedFiles,
+            reextractionUnrecoverableFiles: reextraction.unrecoverable,
+          }
+        : {}),
       ...(supportAudit ? { supportAudit } : {}),
     } as unknown as Record<string, unknown>;
   },

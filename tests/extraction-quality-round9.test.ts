@@ -66,9 +66,16 @@ describe("extraction quality round 9 — reimport surfaces failures", () => {
     assert.match(src, /failedFiles\.push\(/);
     assert.match(src, /FILE_INTEGRITY_NOT_VERIFIED/);
   });
-  it("returns reextracted + failedFiles from reextractAllCompanyDocuments", () => {
+  it("returns reextracted + failedFiles + unrecoverable from reextractAllCompanyDocuments", () => {
     assert.match(src, /export async function reextractAllCompanyDocuments/);
-    assert.match(src, /return \{ reextracted, failedFiles \}/);
+    assert.match(src, /return \{ reextracted, failedFiles, unrecoverable \}/);
+  });
+  // Documents whose stored bytes are gone are reported rather than skipped —
+  // a run that processes nothing must not return a clean success. Behavioral
+  // coverage lives in tests/vault-reextraction-unrecoverable-bytes.test.ts.
+  it("never silently skips documents that have no recoverable bytes", () => {
+    assert.match(src, /SOURCE_BYTES_UNAVAILABLE/);
+    assert.doesNotMatch(src, /if \(!doc\.fileContent && !doc\.storagePath\) continue;/);
   });
 });
 

@@ -74,6 +74,21 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-08 13:40 UTC — Claude Code
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175. Fast-forwarded local to the exact remote head `977831ae` before editing; no other agent's commits were rebased, discarded, or amended.
+- **Scope / files:** Company Vault re-extraction reported success for documents it never processed. `reextractAllCompanyDocuments` excluded rows with no inline `fileContent` and no `storagePath` in its `where` clause and `continue`d past any that got through, so those rows landed in neither `reextracted` nor `failedFiles` — a vault made entirely of them returned `{ reextracted: 0, failedFiles: [] }`, a clean success for a run that did nothing. That is the reported "DOCUMENTS 6 — 0 extracted" with an unverified-integrity banner, no stated cause, and no action that could ever change it.
+  - `lib/company-vault-reextraction.ts` — stopped filtering byteless rows out of the query; classify them as a terminal `SOURCE_BYTES_UNAVAILABLE` state on the row (`integrityStatus: "MISSING"`, `contentSha256: null`, `aiExtractionStatus: "FAILED"`, explicit `aiExtractionError`, metadata `extractionStatus: "SOURCE_BYTES_MISSING"`); added an `unrecoverable` array to `ReextractAllResult`.
+  - `lib/ai-job-handlers-legacy.ts` — VAULT_INGEST step message, audit metadata (`docsUnrecoverable`) and job output (`reextractionUnrecoverableFiles`) now name the affected files and state re-upload as the remedy.
+  - `app/api/company/knowledge/repair/route.ts` — per-document `SOURCE_BYTES_MISSING` status plus a separate CRITICAL gap, so it is no longer folded into "unverified until their bytes have a digest" (wording that implies a pending fix that will never arrive).
+  - `tests/vault-reextraction-unrecoverable-bytes.test.ts` (new, 4 behavioral DB tests), `tests/extraction-quality-round9.test.ts` (return-shape assertion updated + a guard against the skip returning).
+  - No schema/migration change. No new user-facing click: the two manual gates remain AI Analyze and Run Engine.
+- **Tests actually run:** local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, migrations deployed. `npx tsc --noEmit` PASS (exit 0). `next lint --dir lib --dir tests` PASS (no warnings or errors). Full suite `npm test` **9601/9601 pass, 0 fail** (2391 suites, 237s). `npx next build` PASS (compiled in 91s, 57/57 static pages). New test verified to genuinely catch the defect: 3 of its 4 cases fail against the pre-fix code and all 4 pass after.
+- **CI / deployment:** not yet run for this commit. On the previous head the `hope-tender-path-b` Vercel project reported Ready/DEPLOYED. The `pr1175` and `repo` Vercel projects report Error with empty preview URLs; they were already failing before this work and are stray projects, not a signal from this branch.
+- **Risks / assumptions:** documents that already carried `extractedText` but lost their bytes keep that text rather than having it deleted — destroying stored data was judged out of scope, and downstream evidence already refuses text without a verified digest. Re-upload is the only real remedy for these rows; nothing here recovers bytes that are gone.
+- **Next action:** watch PR #1175 CI on this commit.
+- **Merge status:** not reviewed.
+
 ### 2026-08-02 16:25 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; re-fetched and verified exact starting head `2f90c465e7207159b0dba7211509f94fc7760f82` before editing.

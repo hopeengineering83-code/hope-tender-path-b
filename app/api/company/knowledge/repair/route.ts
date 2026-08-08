@@ -119,6 +119,7 @@ async function buildDiagnostics(
         contentSha256: true,
         contentByteLength: true,
         integrityStatus: true,
+        integrityFailureCode: true,
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -254,12 +255,20 @@ async function buildDiagnostics(
   const documentDiagnostics = docs.map((doc, index) => {
     const extractedChars = doc.extractedText?.length ?? 0;
     const byteIntegrityVerified = sourceByteIntegrityIsVerified(doc);
+    // A document whose stored bytes are gone is a different problem from one
+    // that merely has not been verified yet: no amount of re-running the
+    // vault job can produce a digest for bytes that no longer exist, so it
+    // gets its own status and its own remedy rather than sitting in
+    // UNVERIFIED where the wording implies it is still pending.
+    const bytesUnavailable = doc.integrityFailureCode === "SOURCE_BYTES_UNAVAILABLE";
     return {
       id: publicVaultIdentifier(doc.id),
       fileName: safeVaultFileLabel(doc.category, index),
       category: doc.category,
       extractedChars,
-      status: !byteIntegrityVerified ? "UNVERIFIED" : usableText(doc.extractedText) ? "EXTRACTED" : extractedChars > 0 ? "WARNING" : "EMPTY",
+      status: bytesUnavailable
+        ? "SOURCE_BYTES_MISSING"
+        : !byteIntegrityVerified ? "UNVERIFIED" : usableText(doc.extractedText) ? "EXTRACTED" : extractedChars > 0 ? "WARNING" : "EMPTY",
       isExpertSource: byteIntegrityVerified && isExpertSource(doc.originalFileName, doc.category, doc.extractedText),
       isProjectSource: byteIntegrityVerified && isProjectSource(doc.originalFileName, doc.category, doc.extractedText),
       aiExtractionStatus: doc.aiExtractionStatus,
@@ -271,6 +280,7 @@ async function buildDiagnostics(
   const extractedDocuments = documentDiagnostics.filter((document) => document.status === "EXTRACTED").length;
   const documentsWithUsableText = docs.filter((document) => usableText(document.extractedText)).length;
   const unverifiedDocuments = documentDiagnostics.filter((document) => document.status === "UNVERIFIED").length;
+  const bytesMissingDocuments = documentDiagnostics.filter((document) => document.status === "SOURCE_BYTES_MISSING").length;
 
   const reviewedExperts = expertReviewStates.filter(isDurablyReviewed).length;
   const sourceVerifiedExperts = expertReviewStates.filter(isDurablySourceVerified).length;
@@ -303,6 +313,9 @@ async function buildDiagnostics(
   if (docs.length === 0) gaps.push({ severity: "CRITICAL", title: "No company documents uploaded", detail: "Upload company evidence, CVs, and project references." });
   if (docs.length > 0 && documentsWithUsableText === 0) gaps.push({ severity: "CRITICAL", title: "No usable extracted text", detail: "Documents exist, but none contain usable extracted text." });
   if (unverifiedDocuments > 0) gaps.push({ severity: "CRITICAL", title: "Source byte integrity is unverified", detail: `${unverifiedDocuments} document(s) cannot support evidence until their stored bytes have a verified SHA-256 digest.` });
+  // Stated separately from the gap above, because that one resolves itself
+  // once the vault job verifies the bytes and this one never will.
+  if (bytesMissingDocuments > 0) gaps.push({ severity: "CRITICAL", title: "Stored document bytes are missing", detail: `${bytesMissingDocuments} document(s) no longer have stored bytes, so they can never be re-extracted or verified. Upload each of these files again to restore them as usable evidence.` });
   if (unsupportedReviewedExperts > 0) gaps.push({ severity: "CRITICAL", title: "Expert records need re-verification", detail: `${unsupportedReviewedExperts} expert record(s) should be re-verified against current source evidence.` });
   if (unsupportedReviewedProjects > 0) gaps.push({ severity: "CRITICAL", title: "Project records need re-verification", detail: `${unsupportedReviewedProjects} project record(s) should be re-verified against current source evidence.` });
   if (unsupportedReviewedLegalRecords > 0) gaps.push({ severity: "CRITICAL", title: "Legal records need re-verification", detail: `${unsupportedReviewedLegalRecords} legal record(s) should be re-verified against current source evidence.` });
