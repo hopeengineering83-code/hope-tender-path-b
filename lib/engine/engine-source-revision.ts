@@ -15,11 +15,20 @@ export type EngineSourceRevision = {
   requirementCount: number;
   vaultDocumentCount: number;
   evidenceRecordCount: number;
+  /** DIRECTIVE 7: The promoted AI_ANALYZE jobId that this Engine run binds to. */
+  promotedAnalysisJobId: string | null;
+  /** DIRECTIVE 7: The analysisInputHash from the promoted AI_ANALYZE job. */
+  analysisInputHash: string | null;
 };
 
 /**
  * Computes the canonical Engine input revision from current tender source
  * bytes and the complete tenant-owned Company Vault evidence revision set.
+ *
+ * DIRECTIVE 7: The revision now includes the promoted AI_ANALYZE jobId and
+ * analysisInputHash. A new successful AI Analyze for the same tender bytes
+ * produces a different promoted analysis identity, which invalidates an old
+ * Engine job if its promoted analysis/requirement-set identity differs.
  *
  * The value is deliberately deterministic: duplicate requests for unchanged
  * source state converge on the same idempotency key, while any file-byte,
@@ -151,8 +160,22 @@ export async function computeEngineSourceRevision(
     }),
   ]);
 
+  // DIRECTIVE 7: Query the promoted (SUCCEEDED) AI_ANALYZE job for this tender.
+  // The Engine input revision must bind to the exact promoted analysis identity
+  // so a new AI Analyze invalidates old Engine jobs.
+  const promotedAnalysis = await client.aiJob.findFirst({
+    where: {
+      tenderId: input.tenderId,
+      userId: input.userId,
+      jobType: "AI_ANALYZE",
+      status: "SUCCEEDED",
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, analysisInputHash: true },
+  }).catch(() => null);
+
   const payload = {
-    version: 3,
+    version: 4, // DIRECTIVE 7: version bumped to include promoted analysis binding
     tender: {
       id: tender.id,
       analysisExtractionStatus: tender.analysisExtractionStatus,
@@ -167,6 +190,13 @@ export async function computeEngineSourceRevision(
         deletionStatus: file.deletionStatus,
       })),
     },
+    // DIRECTIVE 7: Bind to the exact promoted AI_ANALYZE job. If the analysis
+    // job changes (new manual AI Analyze), this produces a different revision,
+    // invalidating old Engine jobs.
+    promotedAnalysis: promotedAnalysis ? {
+      jobId: promotedAnalysis.id,
+      analysisInputHash: promotedAnalysis.analysisInputHash ?? null,
+    } : null,
     company: {
       id: company.id,
       updatedAt: iso(company.updatedAt),
@@ -221,6 +251,10 @@ export async function computeEngineSourceRevision(
     vaultDocumentCount: documents.length,
     evidenceRecordCount:
       experts.length + projects.length + legalRecords.length + financialRecords.length + complianceRecords.length,
+    // DIRECTIVE 7: Expose the promoted analysis identity so callers can verify
+    // the Engine job is bound to the correct analysis.
+    promotedAnalysisJobId: promotedAnalysis?.id ?? null,
+    analysisInputHash: promotedAnalysis?.analysisInputHash ?? null,
   };
 }
 
