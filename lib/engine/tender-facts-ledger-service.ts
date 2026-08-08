@@ -699,6 +699,12 @@ export async function backfillTenderFactsForTender(
       clientAddress: true, clientContactName: true, clientContactTitle: true,
       clientContactEmail: true, clientContactPhone: true, clientWebsite: true,
       preBidChannel: true, clientRepresentative: true,
+      // Per-field source evidence for those client details. finalizeJob already
+      // resolves {fileId, page, quote} for every contactDetailsSource entry
+      // (attributeMetadataSourceFileId + locateQuoteProvenPage) and persists it
+      // here. Without selecting it the ledger cannot see provenance that the
+      // database already holds, and every client field would stay ungrounded.
+      contactDetailsSourceJson: true,
     },
     ...(options.limit ? { take: options.limit } : {}),
   });
@@ -797,6 +803,54 @@ type BackfillCandidate = {
   sourceQuote: string | null;
 };
 
+/**
+ * Read the per-field client-detail source evidence that promotion persisted on
+ * `Tender.contactDetailsSourceJson`.
+ *
+ * Fail-closed by construction: an entry is returned ONLY when it carries the
+ * complete triple — a source file id, a positive integer page, and a quote of
+ * meaningful length. `locateQuoteProvenPage` (used when this JSON is written)
+ * returns null whenever the quote cannot be located in the file, or when
+ * multiple occurrences resolve to different pages, so a non-null page here means
+ * the quote was actually found in that file. Anything partial or malformed is
+ * dropped, leaving the fact to land as CANDIDATE_NEEDS_REVIEW.
+ *
+ * This never invents provenance: it only surfaces evidence the database already
+ * holds.
+ */
+function parseContactDetailsSourceEvidence(
+  raw: string | null,
+): Map<string, { fileId: string; page: number; quote: string }> {
+  const out = new Map<string, { fileId: string; page: number; quote: string }>();
+  if (!raw) return out;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return out;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return out;
+
+  for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const entry = value as { fileId?: unknown; page?: unknown; quote?: unknown };
+
+    const fileId = typeof entry.fileId === "string" ? entry.fileId.trim() : "";
+    const page = typeof entry.page === "number" ? entry.page : NaN;
+    const quote = typeof entry.quote === "string" ? entry.quote.trim() : "";
+
+    if (!fileId) continue;
+    if (!Number.isInteger(page) || page < 1) continue;
+    // Matches the minimum meaningful-quote length the Build Plan gate enforces.
+    if (quote.length < 10) continue;
+
+    out.set(key, { fileId, page, quote });
+  }
+
+  return out;
+}
+
 function buildBackfillCandidates(tender: any): BackfillCandidate[] {
   const candidates: BackfillCandidate[] = [];
 
@@ -841,8 +895,16 @@ function buildBackfillCandidates(tender: any): BackfillCandidate[] {
   // readiness, gates, and the review surfaces — and no reviewer could trace them
   // to a page and quote.
   //
-  // They have no xSourceFileId/xSourcePage/xSourceQuote companions on Tender, so
-  // they carry null provenance here. That is deliberate and is the point:
+  // They have no xSourceFileId/xSourcePage/xSourceQuote companions on Tender,
+  // but that does NOT mean they have no provenance: promotion resolves a
+  // {fileId, page, quote} triple for each of them into
+  // `Tender.contactDetailsSourceJson`, keyed by these same semanticKeys. That
+  // evidence is now read below, so a client field the AI genuinely traced to a
+  // page and quote can reach SOURCE_GROUNDED_CONFIRMED instead of being pinned
+  // to CANDIDATE_NEEDS_REVIEW forever.
+  //
+  // A field with no complete, defensible triple still carries null provenance,
+  // and that remains the point:
   // upsertTenderFactFromSource derives SOURCE_GROUNDED_CONFIRMED only when the
   // full triple is present and CANDIDATE_NEEDS_REVIEW otherwise, so these land
   // as candidates needing review rather than as grounded facts. A field with a
@@ -869,9 +931,22 @@ function buildBackfillCandidates(tender: any): BackfillCandidate[] {
     { value: tender.clientRepresentative, semanticKey: "clientRepresentative", displayLabel: "Client Representative / Authorized Officer", category: "procuring-entity", valueType: "TEXT", relevance: "informational" },
   ];
 
+  // Per-field source evidence resolved during promotion. finalizeJob binds each
+  // contactDetailsSource entry to a real ACTIVE TenderFile via
+  // attributeMetadataSourceFileId and proves the page via locateQuoteProvenPage,
+  // which returns null when the quote cannot be located. The keys used there are
+  // the same semanticKeys used below.
+  const contactSourceEvidence = parseContactDetailsSourceEvidence(
+    (tender as { contactDetailsSourceJson?: string | null }).contactDetailsSourceJson ?? null,
+  );
+
   for (const field of clientDetailFields) {
     const raw = typeof field.value === "string" ? field.value.trim() : "";
     if (!raw) continue;
+    // Only a COMPLETE, defensible triple counts. A partial entry (quote without
+    // a proven page, or a page with no file) stays null so the fact lands as
+    // CANDIDATE_NEEDS_REVIEW. Never invent a page or a quote.
+    const evidence = contactSourceEvidence.get(field.semanticKey) ?? null;
     candidates.push({
       semanticKey: field.semanticKey,
       displayLabel: field.displayLabel,
@@ -880,9 +955,9 @@ function buildBackfillCandidates(tender: any): BackfillCandidate[] {
       normalizedValue: raw,
       rawSourceValue: raw,
       relevance: field.relevance,
-      sourceFileId: null,
-      sourcePage: null,
-      sourceQuote: null,
+      sourceFileId: evidence?.fileId ?? null,
+      sourcePage: evidence?.page ?? null,
+      sourceQuote: evidence?.quote ?? null,
     });
   }
 
@@ -1055,6 +1130,18 @@ export async function syncPersistedTenderFactsToLedger(
         submissionEmailSubjectSourcePage: true,
         submissionEmailSubjectSourceQuote: true,
         contactDetailsSourceJson: true,
+        // Client / procuring-entity detail. The backfill select carries these
+        // with an explicit warning that "an unselected column arrives as
+        // undefined, which would silently skip every one of them" — but this
+        // LIVE sync path (the one finalizeJob calls after every promotion) did
+        // not select them. buildBackfillCandidates skips a candidate whose value
+        // is falsy, so all eleven client fields silently received no ledger row
+        // at all on the live path, while the backfill script produced them. Only
+        // the backfilled tenders had these facts; freshly analyzed ones did not.
+        legalClientName: true, donorAgency: true, implementingAgency: true,
+        clientAddress: true, clientContactName: true, clientContactTitle: true,
+        clientContactEmail: true, clientContactPhone: true, clientWebsite: true,
+        preBidChannel: true, clientRepresentative: true,
         files: {
           where: { deletionStatus: "ACTIVE" },
           select: {
