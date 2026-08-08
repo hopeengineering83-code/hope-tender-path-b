@@ -74,6 +74,20 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-08 15:20 UTC — Claude Code
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, rebased onto exact head `d6999353`. No other agent's commits rebased or discarded.
+- **Scope / files:** deep audit pass. Two confirmed defects, both the same failure mode — the system asserting confidence it had not earned.
+  - `lib/engine/proposal-benchmark-guard.ts` — **placeholder laundering.** `normalizeWeakText()` rewrites every placeholder, TBD, TODO, template variable and AI refusal into the phrase "to be confirmed by bid team", and runs *before* `hasForbiddenWeakness()` scores the document. That detector tested for `placeholder|tbd|todo|to be determined` — none of which survive the rewrite. A proposal left full of unresolved spots therefore scored **+5 and collected the strength "No obvious AI/placeholder/TBD language detected"**, while the module's own reviewer checklist ("Confirm that no placeholder wording remains") was guaranteed to be answered wrongly. Added `countUnresolvedPlaceholders()`, taught the detector the substituted phrase, replaced the false strength with a gap stating the count, and exposed `unresolvedPlaceholderCount` on `ClientReadyProposal`. Rewriting a raw `${var}` into readable wording is still done — only the claim that the result is clean is removed.
+  - `CLAUDE.md` — **the guide contradicted the contract it names as authority.** Its Product-goal section said AI Analyze and Run Engine are "durable server-owned stages, not mandatory normal-path user actions", while `OWNER_AUTOMATION_CONTRACT.md` and the shipped code make both explicit manual gates (`createAnalysisJob()` requires `manualAuthority`; the engine route requires `manualRequested: true`; `continueSuccessfulAnalysis()` always returns `MANUAL_ENGINE_REQUIRED`). This sent successive sessions back and forth undoing each other. Rewrote the section to match, with an explicit note not to re-automate them.
+  - `CLAUDE.md` — removed a pinned "Current Main State (SHA: 63369f03 … 6000+ tests)" block (the suite is now 9628) and a four-item priority list whose every engineering item had already shipped (`TenderFactsLedger` wiring, `scripts/backfill-tender-facts-ledger.ts`, `CONDITIONAL_OR_UNSCHEDULED`, the 800×1280 E2E viewport). Both were sending each new session to redo finished work or to trust a status nobody had re-run.
+  - `tests/proposal-placeholder-laundering.test.ts` (new, 4 behavioral tests).
+- **Verified clean in the same pass (no change needed):** the placeholder ban on tender metadata is genuinely enforced end to end — every occurrence of "Bid-Team to confirm"/TBD/N/A in `lib/` is detection or rejection (AI prompt prohibition, `tender-metadata-completeness.ts`, `final-submission-readiness.ts`), none produce placeholders as values. All 32 TODO/FIXME hits in production code are content-detection regexes, not developer debt.
+- **Tests actually run:** local PostgreSQL 16, `RUN_DB_INTEGRATION=true`. `npx tsc --noEmit` PASS. Full suite `npm test` **9628/9628 pass, 0 fail**; database verified alive before and after the run. The new test fails 4/4 against the pre-fix guard.
+- **Risks / assumptions:** the benchmark score now drops 5 points and reports NEEDS REVIEW for any document carrying unresolved spots. `score.passed` gates nothing downstream (its only consumer, `generate-elite.ts`, uses `finalized.markdown`), so this changes reporting, not generation. Open question for the owner: whether a document with `unresolvedPlaceholderCount > 0` should additionally fail-close the final export gate. Not changed here — that is a behavioral decision, not a defect fix.
+- **Next action:** owner decision on the export-gate question above; continue the audit into the Vault review UI items on this workboard.
+- **Merge status:** not reviewed.
+
 ### 2026-08-08 13:40 UTC — Claude Code
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175. Fast-forwarded local to the exact remote head `977831ae` before editing; no other agent's commits were rebased, discarded, or amended.

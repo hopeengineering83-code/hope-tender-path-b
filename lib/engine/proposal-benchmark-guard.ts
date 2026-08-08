@@ -25,6 +25,12 @@ export type ClientReadyProposal = {
   score: BenchmarkScore;
   firstScore: BenchmarkScore;
   internalSummary: string;
+  /**
+   * Spots in the delivered document that read "to be confirmed by bid team"
+   * because the pipeline could not resolve a real value. Reported explicitly
+   * so a caller never has to infer completeness from a score alone.
+   */
+  unresolvedPlaceholderCount: number;
 };
 
 const BENCHMARK_SECTIONS = [
@@ -63,7 +69,26 @@ function headingExists(markdown: string, label: string): boolean {
     });
 }
 
+// The phrase normalizeWeakText() substitutes in for every placeholder, TBD,
+// TODO, template variable and AI refusal it finds. It must be detectable here.
+//
+// It previously was not, and the ordering made that a laundering step rather
+// than a repair: normalizeWeakText() runs first and rewrites every pattern
+// hasForbiddenWeakness() looks for into this phrase, which matched none of its
+// tests. A proposal left full of unresolved spots therefore scored +5 and
+// collected the strength "No obvious AI/placeholder/TBD language detected" —
+// the document asserting confidence precisely where it had none. Substituting
+// readable wording for a raw `${var}` is still worth doing; claiming the result
+// is clean is not.
+const UNRESOLVED_PLACEHOLDER_RX = /\bto be confirmed by bid[-\s]team\b|\bbid[-\s]team to confirm\b/gi;
+
+/** How many unresolved spots the client-ready document still carries. */
+export function countUnresolvedPlaceholders(markdown: string): number {
+  return markdown.match(UNRESOLVED_PLACEHOLDER_RX)?.length ?? 0;
+}
+
 function hasForbiddenWeakness(markdown: string): boolean {
+  if (countUnresolvedPlaceholders(markdown) > 0) return true;
   if (/\b(as an ai|i am an ai|language model|placeholder|tbd|todo|insert name|insert date|n\/a \(pending\)|to be determined|i apologize but)\b/i.test(markdown)) return true;
   if (/\bI cannot\b|\bI'm unable\b|\bI am unable\b/i.test(markdown)) return true;
   // Square-bracket stubs — extended to 200 chars to catch verbose placeholders
@@ -273,9 +298,15 @@ export function scoreBenchmarkProposalMarkdown(markdown: string, input: Benchmar
     }
   }
 
+  const unresolved = countUnresolvedPlaceholders(markdown);
   if (!hasForbiddenWeakness(markdown)) {
     score += 5;
     strengths.push("No obvious AI/placeholder/TBD language detected.");
+  } else if (unresolved > 0) {
+    // Named separately from raw placeholder text: these are spots the pipeline
+    // already rewrote into readable wording, so a reader skimming the document
+    // will not recognise them as gaps. The count is the whole point.
+    gaps.push(`Proposal still has ${unresolved} unresolved spot(s) reading "to be confirmed by bid team" — each one needs a real value before submission.`);
   } else gaps.push("Proposal contains placeholder or AI-disclaimer language that must be removed.");
 
   const finalScore = Math.max(0, Math.min(100, score));
@@ -360,6 +391,7 @@ export function finalizeClientReadyProposalMarkdown(markdown: string, input: Ben
   const repaired = repairClientReadyMarkdown(completed, input, firstScore);
   const clientReady = removeInternalQualityHeadings(normalizeWeakText(repaired));
   const score = scoreBenchmarkProposalMarkdown(clientReady, input);
-  const internalSummary = `Benchmark score ${score.score}/100 (${score.passed ? "PASS" : "NEEDS REVIEW"}); first score ${firstScore.score}/100; strengths: ${score.strengths.length}; gaps: ${score.gaps.length}${score.gaps.length ? ` — ${score.gaps.join(" | ")}` : ""}`;
-  return { markdown: clientReady, score, firstScore, internalSummary };
+  const unresolvedPlaceholderCount = countUnresolvedPlaceholders(clientReady);
+  const internalSummary = `Benchmark score ${score.score}/100 (${score.passed ? "PASS" : "NEEDS REVIEW"}); first score ${firstScore.score}/100; strengths: ${score.strengths.length}; gaps: ${score.gaps.length}${unresolvedPlaceholderCount > 0 ? `; unresolved placeholders: ${unresolvedPlaceholderCount}` : ""}${score.gaps.length ? ` — ${score.gaps.join(" | ")}` : ""}`;
+  return { markdown: clientReady, score, firstScore, internalSummary, unresolvedPlaceholderCount };
 }
