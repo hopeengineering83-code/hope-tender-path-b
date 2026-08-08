@@ -74,6 +74,21 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-08 17:35 UTC — Claude Code
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175. Pushed `d6999353..d2b5a71a` (four commits from the two prior entries), then this follow-up.
+- **CORRECTION to the previous entry.** Commit `d2b5a71a` claimed the phrase "to be confirmed by bid team" "travelled all the way into a client-facing tender submission with nothing objecting." **That was wrong, and the claim overstated the defect.** Re-checking the export path end to end shows the delivered content *was* already gated:
+  - `PLACEHOLDER_PATTERNS` (= `DOCUMENT_PLACEHOLDER_PATTERNS`) contains `/to\s+be\s+(?:added|filled|completed|provided|confirmed|determined)\b/i`, which matches that phrase;
+  - `app/api/tenders/[id]/download` extracts each DOCX's **real visible text** via `extractDocxVisibleText` and runs `validateDocumentQuality`, returning 409 `QUALITY_VALIDATION_BLOCKED` on BLOCKED;
+  - `lib/engine/workflow/pdf-finalizer.ts` runs the same validator plus hygiene and internal-artifact scans on the extracted text **before** a PDF is produced, so failing content never becomes a deliverable.
+  `d2b5a71a` is still correct and worth keeping — it makes Authority Review agree with itself, since one phrasing of the identical stub was classified CRITICAL and the other was invisible — but it is defense in depth, **not** the closure of an open export hole. The export gate was sound. Recording this because the earlier wording would leave the next reader believing a shipped submission had been possible.
+- **Scope / files:** `lib/engine/authority-review.ts` — documented the module's actual scope. It reads `contentSummary` and `reviewNotes` only, never document bytes or rendered text, while its blocker names imply otherwise (`TODO_FIXME_IN_CONTENT` says "IN_CONTENT" outright). The note names the two checks that do carry the content guarantee and warns against collapsing the export path into this module on the assumption that it covers the same categories.
+- **Verified sound, deliberately left unchanged:** the layered content gate above. This is proven-good work; the correct action was to document it, not to add a redundant fourth check.
+- **Tests actually run:** local PostgreSQL 16, `RUN_DB_INTEGRATION=true`. `npx tsc --noEmit` PASS. Full suite **9636/9636 pass, 0 fail**, database verified alive before and after.
+- **Risks / assumptions:** comment-only change to `authority-review.ts`; no behavior altered. The residual (accepted) limitation is that a non-DOCX final artifact is not re-scanned at ZIP time — `visibleText` is extracted for `.docx` only and base64 content is deliberately skipped to avoid false negatives. That is safe **because** `pdf-finalizer` gates the content before the PDF exists; it would stop being safe if any path ever produced a final PDF without going through that finalizer.
+- **Next action:** continue the audit into the Vault review UI items on this workboard.
+- **Merge status:** not reviewed.
+
 ### 2026-08-08 15:20 UTC — Claude Code
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, rebased onto exact head `d6999353`. No other agent's commits rebased or discarded.

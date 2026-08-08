@@ -12,6 +12,30 @@
  *   - Required sections that have no matching generated document
  *
  * All detection is deterministic regex — no AI calls, no external I/O.
+ *
+ * SCOPE — read this before trusting a result.
+ *
+ * This module inspects `contentSummary` and `reviewNotes` ONLY. It never sees a
+ * document's bytes or its rendered text. `contentSummary` is a short sentence
+ * the app writes about a document ("Professional CV for …", "Machine export
+ * repair completed for …", truncated to 500 chars on at least one path), so a
+ * clean result here says nothing about what the delivered file contains. The
+ * blocker names read as if they cover document content — `TODO_FIXME_IN_CONTENT`
+ * says so outright — and they do not.
+ *
+ * Real document content IS gated, by a different pair of checks, and those are
+ * the ones that carry the guarantee:
+ *   - lib/engine/workflow/pdf-finalizer.ts extracts the DOCX text and runs
+ *     validateDocumentQuality + hygiene + internal-artifact scans BEFORE a PDF
+ *     is produced, so failing content never becomes a deliverable;
+ *   - the ZIP route (app/api/tenders/[id]/download) re-extracts each DOCX's
+ *     visible text and re-runs validateDocumentQuality, returning 409 on
+ *     BLOCKED.
+ *
+ * So this module is a metadata-level layer on top of those, not a substitute
+ * for them. Do not "simplify" the export path by dropping the content checks
+ * because Authority Review appears to cover the same categories — it does not,
+ * and the export would silently stop inspecting anything a client will read.
  */
 
 import { AI_TRACE_PATTERNS, PLACEHOLDER_PATTERNS } from "./detection-patterns";
