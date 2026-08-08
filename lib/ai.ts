@@ -355,7 +355,14 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL, maxTok
     try {
       const text = await withRateLimitRetry(async () => {
         const model = getModel(candidate);
-        const config = { timeout: GEMINI_TIMEOUT_MS } as Record<string, unknown>;
+        // Clamped to the parent deadline like every other adapter. This one was
+        // missed when the others were converted, and it is the worst place to
+        // miss: the call sits inside withRateLimitRetry AND a loop over
+        // uniqueModels(), so a static timeout could be spent again per retry and
+        // per fallback model, overrunning the parent's remaining budget several
+        // times over. resolveEffectiveTimeoutMs returns the static value
+        // unchanged when no deadline is armed, so standalone calls are unaffected.
+        const config = { timeout: resolveEffectiveTimeoutMs(GEMINI_TIMEOUT_MS) } as Record<string, unknown>;
         if (maxTokens !== undefined) config.maxOutputTokens = maxTokens;
         const result = await model.generateContent(prompt, config);
         const t = result.response.text();
@@ -1449,7 +1456,7 @@ async function generateWithBestModel(prompt: string): Promise<string> {
     try {
       return await withRateLimitRetry(async () => {
         const model = getModel(modelName);
-        const result = await model.generateContent(prompt, { timeout: GEMINI_TIMEOUT_MS });
+        const result = await model.generateContent(prompt, { timeout: resolveEffectiveTimeoutMs(GEMINI_TIMEOUT_MS) });
         const text = result.response.text();
         if (!text || text.trim().length === 0) throw new Error("Empty response from Gemini API");
         return text;
