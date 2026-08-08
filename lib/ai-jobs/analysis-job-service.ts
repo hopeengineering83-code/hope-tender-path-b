@@ -18,8 +18,11 @@ import { locateQuoteProvenPage } from "../engine/page-provenance";
 import { RequirementDraft } from "../engine/types";
 import {
   canPromoteToCanonical,
+  findSupersedingJobId,
   promoteAnalysisToCanonical,
-  stagePartialResult
+  stagePartialResult,
+  ANALYSIS_SUPERSEDED_STATUS,
+  STALE_JOB_SUPERSEDED_SENTINEL
 } from "../ai-analyze-promotion";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health-db";
 import { syncPersistedTenderFactsToLedger } from "../engine/tender-facts-ledger-service";
@@ -548,7 +551,15 @@ export async function runNextChunk(jobId: string, userId: string) {
 
   const canonicalFiles = await prisma.tenderFile.findMany({
     where: { id: { in: snapshot.canonicalFileIds } },
-    select: { id: true, extractedText: true, originalFileName: true, fileName: true },
+    select: {
+      id: true,
+      extractedText: true,
+      originalFileName: true,
+      fileName: true,
+      classification: true,
+      createdAt: true,
+      deletionStatus: true,
+    },
   });
   const fileMap = new Map(canonicalFiles.map((f) => [f.id, f]));
   const orderedFiles = snapshot.canonicalFileIds
@@ -579,10 +590,73 @@ export async function runNextChunk(jobId: string, userId: string) {
       return { completed: true, status: "FAILED" as const };
     }
   }
-  const fullText = orderedFiles
-    .map((f) => `[FILE_ID:${f.id}|FILE_NAME:${f.originalFileName || f.fileName}]\n${f.extractedText ?? ""}`)
-    .filter(Boolean)
-    .join("\n\n---\n\n");
+  // SINGLE CANONICAL ANALYSIS INPUT.
+  //
+  // This must be byte-identical to what `createAnalysisJob` hashed into
+  // `analysisInputHash` and what the orchestrator sends to the provider, so the
+  // canonical builder is the ONLY algorithm allowed to define it. A previous
+  // version reconstructed the input here with an ad-hoc
+  // `[FILE_ID:…|FILE_NAME:…]` concatenation that omitted the tender title,
+  // description, intake notes and the Company Vault digest, applied no
+  // per-file/total truncation, and used a different separator — a second
+  // algorithm that merely hoped to agree with the first. It could not: every
+  // chunk it produced hashed differently from the snapshot, so the chunk-hash
+  // check below rejected it.
+  //
+  // The tender/company rows are loaded exactly as `createAnalysisJob` loads
+  // them (ACTIVE files only, unbounded vault documents); deterministic ordering
+  // and duplicate exclusion are the builder's job.
+  const canonicalTender = await prisma.tender.findUnique({
+    where: { id: chunk.tenderId },
+    select: { title: true, description: true, intakeSummary: true },
+  });
+  if (!canonicalTender) {
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: "CANONICAL_TENDER_MISSING: tender no longer exists — run AI Analyze again",
+      },
+    });
+    return { completed: true, status: "FAILED" as const };
+  }
+  const canonicalCompany = await prisma.company.findUnique({
+    where: { userId },
+    include: { documents: { select: { category: true, originalFileName: true, extractedText: true } } },
+  });
+  const fullText = buildTenderAnalysisContent(
+    { ...canonicalTender, files: orderedFiles },
+    canonicalCompany,
+  );
+
+  // The reconstructed canonical input must hash to the value the manual click
+  // authorized. Anything else is drift — fail closed rather than spending
+  // provider tokens on content the user never approved.
+  const reconstructedHash = computeAnalysisContentHash(fullText);
+  if (reconstructedHash !== snapshot.analysisInputHash) {
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: `ANALYSIS_INPUT_HASH_DRIFT: canonical input no longer matches the authorized revision — run AI Analyze again`,
+      },
+    });
+    await prisma.aiAnalyzeChunk.update({
+      where: { id: chunk.id },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: "ANALYSIS_INPUT_HASH_DRIFT",
+      },
+    }).catch((chunkUpdateErr: unknown) => {
+      logger.error(
+        `[runNextChunk] Failed to mark chunk ${chunk.id} FAILED after input-hash drift: ${chunkUpdateErr instanceof Error ? chunkUpdateErr.message : String(chunkUpdateErr)}`,
+      );
+    });
+    return { completed: true, status: "FAILED" as const };
+  }
 
   try {
       // Restore provider health/cooldown from DB before any provider calls.
@@ -789,17 +863,34 @@ export async function finalizeJob(jobId: string, userId: string) {
     const canPromote = await canPromoteToCanonical(jobId, job.tenderId!);
 
     if (!canPromote) {
+        // INVARIANT: a superseded run NEVER claims a success status.
+        // `SUCCEEDED` means "this exact job became the canonical promoted
+        // analysis for its exact authorized source revision". This job did not
+        // promote anything, so writing SUCCEEDED (or PARTIAL_SUCCESS) here
+        // produced a self-contradictory row: a success status alongside
+        // `superseded: true` and "Not promoted to canonical". Record the
+        // explicit non-success terminal state instead, and stamp `supersededBy`
+        // so the canonical state resolver reports SUPERSEDED precisely.
+        const supersededBy = await findSupersedingJobId(jobId, job.tenderId!).catch((lookupErr) => {
+            // Best-effort enrichment only: the non-success terminal status below
+            // is what blocks generation. Losing the winning job's id degrades the
+            // UI message, never the gate.
+            logger.warn(`[finalizeJob] Could not resolve superseding job for ${jobId}: ${lookupErr instanceof Error ? lookupErr.message : String(lookupErr)}`);
+            return null;
+        });
         await prisma.aiJob.update({
             where: { id: jobId },
             data: {
-                status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                status: ANALYSIS_SUPERSEDED_STATUS,
                 finishedAt: new Date(),
+                ...(supersededBy ? { supersededBy } : {}),
                 errorMessage: "Analysis finished but was superseded by a newer run. Not promoted to canonical.",
                 output: JSON.stringify({
                     requirementCount: merged.requirements.length,
                     succeededChunks: succeeded.length,
                     failedChunks: failed.length,
                     superseded: true,
+                    promoted: false,
                     chunkResults: succeeded.map(c => ({
                         index: c.chunkIndex,
                         result: JSON.parse(c.resultJson!),
@@ -808,7 +899,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 })
             }
         });
-        return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
+        return { status: ANALYSIS_SUPERSEDED_STATUS, code: "SUPERSEDED_BEFORE_PROMOTION" };
     }
 
     // ─── PRE-TRANSACTION PREPARATION (outside interactive tx) ──────────
@@ -948,7 +1039,7 @@ export async function finalizeJob(jobId: string, userId: string) {
         //    between the pre-check and the write.
         const stillPromotable = await canPromoteToCanonical(jobId, job.tenderId!, tx);
         if (!stillPromotable) {
-            throw new Error("STALE_JOB_SUPERSeded");
+            throw new Error(STALE_JOB_SUPERSEDED_SENTINEL);
         }
 
         // 2. Mark job as RUNNING to claim it (single write).
@@ -1038,20 +1129,33 @@ export async function finalizeJob(jobId: string, userId: string) {
         const correlationId = require("crypto").randomUUID().slice(0, 8);
         const errMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
 
-        if (errMsg.includes("STALE_JOB_SUPERSeded")) {
+        if (errMsg.includes(STALE_JOB_SUPERSEDED_SENTINEL)) {
+            // Same invariant as the pre-transaction branch: the transactional
+            // re-check refused promotion, so this job never became canonical and
+            // must not report a success status. Previously this wrote SUCCEEDED
+            // to the row while returning "SUPERSEDED" to the caller — the row and
+            // the return value disagreed about the same run.
             logger.warn(`[finalizeJob] job=${jobId} superseded by newer run — not promoted`);
+            const supersededBy = await findSupersedingJobId(jobId, job.tenderId!).catch((lookupErr) => {
+            // Best-effort enrichment only: the non-success terminal status below
+            // is what blocks generation. Losing the winning job's id degrades the
+            // UI message, never the gate.
+            logger.warn(`[finalizeJob] Could not resolve superseding job for ${jobId}: ${lookupErr instanceof Error ? lookupErr.message : String(lookupErr)}`);
+            return null;
+        });
             await prisma.aiJob.update({
                 where: { id: jobId },
                 data: {
-                    status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                    status: ANALYSIS_SUPERSEDED_STATUS,
                     finishedAt: new Date(),
+                    ...(supersededBy ? { supersededBy } : {}),
                     errorMessage: "Superseded by newer run during promotion. Not promoted to canonical.",
                     output: outputJson,
                 },
             }).catch((cleanupErr) => {
                 logger.error(`[finalizeJob] Failed to mark superseded job ${jobId}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
             });
-            return { status: "SUPERSEDED", code: "STALE_JOB_SUPERSeded" };
+            return { status: ANALYSIS_SUPERSEDED_STATUS, code: "STALE_JOB_SUPERSEDED" };
         }
 
         logger.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId} tender=${job.tenderId}: ${errMsg}`);

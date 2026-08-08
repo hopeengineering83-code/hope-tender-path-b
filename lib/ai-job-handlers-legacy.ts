@@ -21,7 +21,7 @@ import { recordStep, type JobType } from "./ai-jobs";
 import { resolveProposalNarrativeText } from "./engine/proposal-narrative-resolver";
 import { checkEnginePostconditions } from "./engine/engine-postconditions";
 import { runTenderEngine } from "./engine/run-tender-engine";
-import { executeAnalysis, finalizeAnalysisJob } from "./engine/analysis-orchestrator";
+import { executeAnalysis, finalizeAnalysisJob, ANALYSIS_SOURCE_DRIFT_ERROR } from "./engine/analysis-orchestrator";
 import { prisma } from "./prisma";
 import { simulateEvaluatorPanel } from "./engine/evaluator-simulator";
 import { answerTenderCopilotQuestion, type TenderCopilotContext } from "./engine/tender-ai-copilot";
@@ -104,6 +104,58 @@ export type AnalyzeFinalizeOutcome = {
 
 export function isFullAiSuccess(exec: AnalyzeExecOutcome): boolean {
   return exec.success === true && exec.isPartial === false && !exec.errorMessage;
+}
+
+// ─── Deadline propagation (pure, unit-tested) ────────────────────────────────
+// The worker (/api/ai-jobs/run-next) owns the only real deadline: it runs a
+// 40s soft loop inside a 60s platform hard limit, and for every claimed job it
+// passes down `deadlineMs` (its remaining budget minus a 5s persistence
+// reserve) and `absoluteDeadline` (the epoch ms at which its loop must stop).
+//
+// A child operation must never create more time than its parent has left. This
+// resolver takes the TIGHTER of the parent's stated budget and the time
+// actually remaining to the parent's absolute deadline, then keeps a reserve so
+// the analysis can still persist checkpoints and a terminal status before the
+// parent's loop ends.
+//
+// Previously this handler hardcoded 55_000ms — longer than the parent's entire
+// 40s loop — so a slow provider call could be killed by the platform mid-write,
+// stranding the job in RUNNING with no checkpoint.
+export const ANALYZE_PERSISTENCE_RESERVE_MS = 5_000;
+export const ANALYZE_MIN_BUDGET_MS = 5_000;
+/**
+ * Used only when the handler is invoked without parent budget information
+ * (direct calls and tests). Matches the largest budget run-next can ever hand
+ * out (40s loop − 5s persistence reserve), so the fallback is never larger than
+ * a real parent's maximum.
+ */
+export const ANALYZE_FALLBACK_BUDGET_MS = 35_000;
+
+export function resolveAnalyzeDeadlineMs(
+  input: Record<string, unknown> | undefined,
+  now: number = Date.now(),
+): number {
+  const parentBudget =
+    typeof input?.deadlineMs === "number" && Number.isFinite(input.deadlineMs)
+      ? input.deadlineMs
+      : null;
+  const absoluteDeadline =
+    typeof input?.absoluteDeadline === "number" && Number.isFinite(input.absoluteDeadline)
+      ? input.absoluteDeadline
+      : null;
+
+  // Time genuinely left before the parent's loop must stop.
+  const remainingToAbsolute = absoluteDeadline === null ? null : absoluteDeadline - now;
+
+  const candidates = [parentBudget, remainingToAbsolute].filter(
+    (value): value is number => value !== null,
+  );
+  if (candidates.length === 0) return ANALYZE_FALLBACK_BUDGET_MS;
+
+  // Never exceed the tightest parent constraint, and always leave room to
+  // persist the terminal status.
+  const budget = Math.min(...candidates) - ANALYZE_PERSISTENCE_RESERVE_MS;
+  return Math.max(ANALYZE_MIN_BUDGET_MS, budget);
 }
 
 export function resolveAnalyzeTerminalStatus(
@@ -230,7 +282,8 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       // authority (manualRequested/source/actorUserId) from its input.
       const result = await executeAnalysis(ctx.tenderId, ctx.userId, {
         force: ctx.input?.force === true,
-        deadlineMs: 55_000,
+        // Parent-derived: never more time than the worker itself has left.
+        deadlineMs: resolveAnalyzeDeadlineMs(ctx.input),
         existingJobId: ctx.jobId,
         onProgress: async (event) => {
           const msg = event.message || event.status || event.phase;
@@ -298,7 +351,29 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       return { terminalStatus, output: { ...baseOutput, errorMessage: result.errorMessage ?? null } };
     } catch (err) {
       clearInterval(heartbeat);
-      await recordStep(ctx.jobId, { stepName: "analyze.failed", message: err instanceof Error ? err.message : String(err), status: "FAILED" });
+      const message = err instanceof Error ? err.message : String(err);
+
+      // Source drift is not a failure of this run — it means the tender's
+      // sources changed after the user authorized this analysis. The
+      // orchestrator has already persisted the terminal SUPERSEDED state and
+      // spent ZERO provider tokens. Surface it as a terminal non-success result
+      // so the worker reports it without overwriting the row, and so nothing
+      // downstream can read it as a success.
+      if (message.includes(ANALYSIS_SOURCE_DRIFT_ERROR)) {
+        await recordStep(ctx.jobId, {
+          stepName: "analyze.superseded",
+          message: `Tender sources changed after this analysis was authorized — no provider call was made and nothing was promoted. Run AI Analyze again. (${message})`,
+          status: "FAILED",
+        });
+        return {
+          terminalStatus: "SUPERSEDED",
+          output: { superseded: true, promoted: false, providerCallsMade: 0, reason: message },
+          code: ANALYSIS_SOURCE_DRIFT_ERROR,
+          retryable: false,
+        };
+      }
+
+      await recordStep(ctx.jobId, { stepName: "analyze.failed", message, status: "FAILED" });
       throw err;
     }
   },
