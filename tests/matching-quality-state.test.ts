@@ -91,8 +91,33 @@ describe("matching-quality state machine", () => {
     assert.ok(r.score <= 30, `Expected <= 30 with no vault, got ${r.score}`);
   });
 
-  it("MATCHES_AVAILABLE when matches exist (all auto-approved)", () => {
-    // All records are auto-approved — matches are always usable
-    assert.ok(true);
+  // These two cases previously shared a single test whose entire body was
+  // `assert.ok(true)`, under a name referencing a "MATCHES_AVAILABLE" state
+  // that does not exist in the state machine. It asserted nothing and would
+  // have passed against any implementation, including one that returned
+  // NO_VAULT for a fully reviewed match set.
+  it("MATCHES_REVIEWED when matches exist and are usable for generation", () => {
+    const r = assessMatchingQuality({
+      requirements: [{ requirementType: "EXPERT" }],
+      expertMatches: [{ expert: durableReviewedExpert("Amina Yusuf"), isSelected: true, score: 0.9 }],
+      projectMatches: [],
+      vaultReviewedExperts: 1,
+      vaultReviewedProjects: 0,
+    });
+    assert.equal(r.state, "MATCHES_REVIEWED");
+  });
+
+  it("MATCHES_WEAK when matches exist but none are usable for generation", () => {
+    // An AI_DRAFT record with no durable review provenance must not count as
+    // reviewed evidence — matching stays weak and generation stays blocked.
+    const r = assessMatchingQuality({
+      requirements: [{ requirementType: "EXPERT" }],
+      expertMatches: [{ expert: { id: "expert-draft", trustLevel: "AI_DRAFT" }, isSelected: true, score: 0.9 } as never],
+      projectMatches: [],
+      vaultReviewedExperts: 0,
+      vaultReviewedProjects: 0,
+    });
+    assert.equal(r.state, "MATCHES_WEAK");
+    assert.notEqual(r.state, "MATCHES_REVIEWED", "an unreviewed draft must never read as reviewed evidence");
   });
 });

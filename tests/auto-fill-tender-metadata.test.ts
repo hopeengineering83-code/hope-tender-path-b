@@ -207,11 +207,15 @@ describe("autoFillTenderMetadata — fills missing fields", () => {
 
     const result: MetadataAutoFillResult = await autoFillTenderMetadata(tender, prismaMock as never);
     const patch = prismaMock.getLastPatch();
-    if (result.filled.includes("category")) {
-      assert.ok(patch && patch["category"] !== "General", "category should be upgraded from General");
-    }
-    // It's OK if category wasn't changed — not all texts produce a specific category.
-    assert.ok(true);
+
+    // RICH_TEXT is a fixed fixture, so this outcome is deterministic. The
+    // assertion was previously wrapped in `if (result.filled.includes(...))`
+    // and followed by `assert.ok(true)`, so a regression that stopped
+    // inferring the category entirely would have passed silently.
+    assert.ok(result.filled.includes("category"), "category must be inferred from the fixture text");
+    assert.ok(patch, "a patch must be written");
+    assert.notEqual(patch!["category"], "General", "category must be upgraded away from the General default");
+    assert.equal(patch!["category"], "Healthcare", "the fixture text must infer the Healthcare category");
   });
 });
 

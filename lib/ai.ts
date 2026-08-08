@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
@@ -245,7 +246,7 @@ async function generateWithClaude(prompt: string, systemPrompt: string = DEFAULT
           max_tokens: effectiveMaxTokens,
           system: systemPrompt,
           messages: [{ role: "user", content: prompt }],
-        }, { signal: AbortSignal.timeout(45_000) });
+        }, { signal: AbortSignal.timeout(resolveEffectiveTimeoutMs(45_000)) });
         const text = response.content
           .filter((c) => c.type === "text")
           .map((c) => c.text ?? "")
@@ -478,6 +479,51 @@ export const MAX_PROVIDER_ATTEMPTS_PER_REQUEST = (() => {
 // database state updates, so a provider call never consumes the time needed to
 // persist failure state and return a structured error.
 export const ERROR_HANDLING_RESERVE_MS = 5_000;
+
+// ─── Parent-bounded provider cancellation ────────────────────────────────────
+//
+// Every provider adapter already aborts its own `fetch` through a real
+// AbortController, but each one armed that controller from a STATIC per-provider
+// timeout (e.g. 45s). The shared `deadlineAt` was only consulted as a
+// "should I start this attempt?" pre-flight guard, so an attempt begun with 6s
+// of worker budget left could still hold the socket open for its full static
+// timeout. The abort was real; it was just bound to the wrong clock. The worker
+// would then be hard-killed by the platform mid-write instead of cancelling
+// cooperatively and persisting its checkpoint.
+//
+// `providerDeadlineStore` carries the caller's absolute deadline down to the
+// adapters through async context, so every existing AbortController fires at
+// `min(staticProviderTimeout, timeRemainingToParentDeadline)` — real socket
+// cancellation on the parent's clock, with no adapter signature changes.
+//
+// AsyncLocalStorage (not a module-level variable) so concurrent provider calls
+// — e.g. parallel proposal sections — each keep their own budget instead of
+// clamping one another.
+const providerDeadlineStore = new AsyncLocalStorage<number>();
+
+/** Smallest budget worth starting a provider request with. */
+export const MIN_PROVIDER_TIMEOUT_MS = 1_000;
+
+/**
+ * Run `fn` with an absolute provider deadline (epoch ms) bound to the async
+ * context, so adapter timeouts clamp to it.
+ */
+export function withProviderDeadline<T>(deadlineAt: number | undefined, fn: () => T): T {
+  if (typeof deadlineAt !== "number" || !Number.isFinite(deadlineAt)) return fn();
+  return providerDeadlineStore.run(deadlineAt, fn);
+}
+
+/**
+ * Clamp an adapter's static timeout to the time actually remaining before the
+ * caller's deadline. Returns the static value unchanged when no deadline is
+ * armed, so standalone adapter calls keep their existing behaviour exactly.
+ */
+export function resolveEffectiveTimeoutMs(staticTimeoutMs: number, now: number = Date.now()): number {
+  const deadlineAt = providerDeadlineStore.getStore();
+  if (typeof deadlineAt !== "number") return staticTimeoutMs;
+  const remaining = deadlineAt - now;
+  return Math.max(MIN_PROVIDER_TIMEOUT_MS, Math.min(staticTimeoutMs, remaining));
+}
 
 export class NoAiProviderReadyError extends Error {
   readonly code = "NO_AI_PROVIDER_READY" as const;
@@ -843,7 +889,15 @@ export async function generateWithFallback(
     tried.push(provider);
     actualAttempts++;
     const attemptStartedAt = Date.now();
-    const result = await callProvider(provider, trustBoundary.protectedPrompt, { ...opts, useCase });
+    // Bind the shared deadline to this attempt's async context so the adapter's
+    // own AbortController cancels the real socket at the parent's clock rather
+    // than at its static per-provider timeout. The error-handling reserve is
+    // withheld so a cancelled attempt still leaves time to record the failure
+    // and return a structured error.
+    const result = await withProviderDeadline(
+      typeof opts?.deadlineAt === "number" ? opts.deadlineAt - ERROR_HANDLING_RESERVE_MS : undefined,
+      () => callProvider(provider, trustBoundary.protectedPrompt, { ...opts, useCase }),
+    );
     const attemptLatencyMs = Date.now() - attemptStartedAt;
     if (result) {
       opts?.onProviderUsed?.(provider);
@@ -917,7 +971,7 @@ async function generateWithOpenAI(
 
   const controller = new AbortController();
   const openaiTimeoutMs = (model.includes("o1") || model.includes("o3")) ? O1_O3_TIMEOUT_MS : OPENAI_COMPAT_DEFAULT_TIMEOUT_MS;
-  const timeoutId = setTimeout(() => controller.abort(), openaiTimeoutMs);
+  const timeoutId = setTimeout(() => controller.abort(), resolveEffectiveTimeoutMs(openaiTimeoutMs));
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -1014,7 +1068,7 @@ async function generateWithDeepSeek(
 
   const model = modelOverride || getDeepSeekModel();
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), DEEPSEEK_DEFAULT_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), resolveEffectiveTimeoutMs(DEEPSEEK_DEFAULT_TIMEOUT_MS));
 
   try {
     const res = await fetch("https://api.deepseek.com/v1/chat/completions", {
@@ -1147,7 +1201,7 @@ async function generateOpenAICompatible(params: {
     if (providerName) recordProviderFailure(providerName, new Error(`${providerLabel} ${reason}`));
   };
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs ?? OPENAI_COMPAT_DEFAULT_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), resolveEffectiveTimeoutMs(timeoutMs ?? OPENAI_COMPAT_DEFAULT_TIMEOUT_MS));
   try {
     const res = await fetch(endpoint, {
       method: "POST",
@@ -2697,7 +2751,7 @@ export async function generateWithClaudeTools(
           system: systemPrompt,
           tools,
           messages,
-        }, { signal: AbortSignal.timeout(45_000) });
+        }, { signal: AbortSignal.timeout(resolveEffectiveTimeoutMs(45_000)) });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         attemptError = `${modelName}: ${msg}`;

@@ -23,9 +23,30 @@ describe("company knowledge repair safety and diagnostics", () => {
     assert.doesNotMatch(repairRoute, /dedicated source docs optional/);
   });
 
-  it("allows all records (auto-approved, no blocking)", () => {
-    // All records are auto-approved — no blocking for unverified bytes
-    assert.ok(true);
+  // This previously asserted nothing (`assert.ok(true)`) under the claim "all
+  // records are auto-approved — no blocking for unverified bytes". That claim
+  // is also stale: the repair route does NOT auto-approve, and unverified bytes
+  // ARE surfaced. Assert the behaviour that actually exists and must be kept.
+  it("does not auto-approve records and surfaces unrecoverable source bytes", () => {
+    // A record may claim REVIEWED/SOURCE_VERIFIED, but the route re-derives
+    // trust from durable provenance rather than trusting the stored label.
+    assert.match(
+      repairRoute,
+      /trustLevel === "REVIEWED" && !isDurablyReviewed\(record\)/,
+      "REVIEWED records without durable provenance must be counted as unsupported",
+    );
+    assert.match(
+      repairRoute,
+      /trustLevel === "SOURCE_VERIFIED" && !isDurablySourceVerified\(record\)/,
+      "SOURCE_VERIFIED records without durable provenance must be counted as unsupported",
+    );
+    // Documents whose original bytes no longer exist must be reported as such,
+    // not silently treated as healthy.
+    assert.match(
+      repairRoute,
+      /integrityFailureCode === "SOURCE_BYTES_UNAVAILABLE"/,
+      "unrecoverable source bytes must be detected explicitly",
+    );
   });
 
   it("sanitizes provider errors before storing extraction warnings", () => {
