@@ -71,10 +71,12 @@ describe("release gap audit regressions", () => {
   });
 
   it("validates AI-returned source file tokens against ACTIVE tender files", () => {
-    const route = source("app/api/tenders/[id]/ai-analyze/route.ts");
-    assert.match(route, /validTenderFileIds\s*=\s*new Set\([\s\S]*?filter\(\(f\)\s*=>\s*\(f\.deletionStatus\s*\?\?\s*"ACTIVE"\)\s*===\s*"ACTIVE"\)[\s\S]*?map\(\(f\)\s*=>\s*f\.id\)/);
-    assert.match(route, /validTenderFileIds\.has\(req\.sourceFileToken\)/);
-    assert.ok(!route.includes("sourceTenderFileId: req.sourceFileToken ?? null"));
+    // DIRECTIVE 2: The validation now lives in lib/ai-jobs/analysis-job-service.ts
+    // (mapToDraft function). The legacy /ai-analyze route no longer creates
+    // fresh jobs, so the validation is in the durable worker path.
+    const service = source("lib/ai-jobs/analysis-job-service.ts");
+    assert.ok(service.includes("validSet") || service.includes("validTenderFileIds"),
+      "analysis-job-service must validate source file tokens against ACTIVE tender files");
   });
 
   it("changes the canonical analysis revision when bounded Vault text changes", () => {

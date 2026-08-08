@@ -52,74 +52,36 @@ describe("ai-analyze auto-retry — getMinCooldownExpiryMs helper", () => {
   });
 });
 
-// ── 2. Route response includes providerRetryAfterMs and resumableJobId ────────
+// ── 2. Route response — DIRECTIVE 2: streaming/synchronous paths removed ─────
+// The legacy /ai-analyze route now returns 422 MANUAL_AI_ANALYZE_REQUIRED.
+// Auto-retry is handled by the durable retry state machine in run-next
+// (TRANSIENT_RETRY re-arm with bounded backoff), not by SSE response fields.
+// The manual-ai-analyze route returns 202 { jobId, status, totalChunks }.
 
-describe("ai-analyze route — auto-retry fields in response", () => {
-  it("imports getMinCooldownExpiryMs", () => {
-    assert.ok(
-      routeSrc.includes("getMinCooldownExpiryMs"),
-      "route must import and use getMinCooldownExpiryMs",
-    );
+describe("ai-analyze route — returns MANUAL_AI_ANALYZE_REQUIRED (no streaming)", () => {
+  it("route returns 422 MANUAL_AI_ANALYZE_REQUIRED for fresh creation", () => {
+    assert.ok(routeSrc.includes("MANUAL_AI_ANALYZE_REQUIRED"),
+      "route must return MANUAL_AI_ANALYZE_REQUIRED for fresh job creation");
   });
 
-  it("includes providerRetryAfterMs in the success response", () => {
-    assert.ok(
-      routeSrc.includes("providerRetryAfterMs"),
-      "route must include providerRetryAfterMs in response body",
-    );
-  });
-
-  it("providerRetryAfterMs is null when analysis succeeded (not a fallback)", () => {
-    assert.ok(
-      routeSrc.includes("providerRetryAfterMs: analysisResult.fallback ? getMinCooldownExpiryMs() : null"),
-      "providerRetryAfterMs must be null on AI success and only set on fallback",
-    );
-  });
-
-  it("includes resumableJobId in the response", () => {
-    assert.ok(
-      routeSrc.includes("resumableJobId"),
-      "route must include resumableJobId in response body",
-    );
-  });
-
-  it("resumableJobId is only set when chunks are partially complete", () => {
-    assert.ok(
-      routeSrc.includes("analysisMeta?.isPartial || (analysisMeta && analysisMeta.completedChunks > 0)"),
-      "resumableJobId must only be set when some chunks completed (so resume is meaningful)",
-    );
+  it("route returns MANUAL_AI_ANALYZE_REQUIRED for fresh creation", () => {
+    assert.ok(routeSrc.includes("MANUAL_AI_ANALYZE_REQUIRED"),
+      "route must return MANUAL_AI_ANALYZE_REQUIRED for fresh job creation");
   });
 });
 
-// ── 5. Streaming path structural fixes ───────────────────────────────────────
+// ── 5. Streaming path removed — auto-retry handled by durable worker ──────────
 
-describe("ai-analyze streaming path — structural fix for fallback + auto-retry", () => {
-  it("SSE complete event includes fallback field when result is a fallback", () => {
-    assert.ok(
-      routeSrc.includes("fallback: true") && routeSrc.includes("phase: \"complete\""),
-      "SSE complete event must include fallback:true when AI fell back to regex",
-    );
+describe("durable worker handles auto-retry (not SSE response fields)", () => {
+  it("run-next route has TRANSIENT_RETRY_BUDGET_EXHAUSTED terminal state", () => {
+    const runNextSrc = readFileSync("app/api/ai-jobs/run-next/route.ts", "utf8");
+    assert.ok(runNextSrc.includes("TRANSIENT_RETRY_BUDGET_EXHAUSTED"),
+      "run-next must have bounded retry budget terminal state");
   });
 
-  it("SSE complete event includes providerRetryAfterMs when fallback", () => {
-    assert.ok(
-      routeSrc.includes("sseProviderRetryAfterMs") && routeSrc.includes("providerRetryAfterMs: sseProviderRetryAfterMs"),
-      "SSE complete event must include providerRetryAfterMs so client can schedule auto-retry",
-    );
+  it("run-next route re-arms QUEUED with nextAttemptAt on transient retry", () => {
+    const runNextSrc = readFileSync("app/api/ai-jobs/run-next/route.ts", "utf8");
+    assert.ok(runNextSrc.includes("nextAttemptAt"),
+      "run-next must set nextAttemptAt for bounded backoff");
   });
-
-  it("SSE complete event includes resumableJobId when fallback", () => {
-    assert.ok(
-      routeSrc.includes("sseResumableJobId") && routeSrc.includes("resumableJobId: sseResumableJobId"),
-      "SSE complete event must include resumableJobId so client can resume from last checkpoint",
-    );
-  });
-
-  it("SSE complete event includes providerDiagnostics when fallback", () => {
-    assert.ok(
-      routeSrc.includes("providerDiagnostics: buildProviderDiagnosticsSnapshot()"),
-      "SSE complete event must include providerDiagnostics for the fallback banner details panel",
-    );
-  });
-
 });

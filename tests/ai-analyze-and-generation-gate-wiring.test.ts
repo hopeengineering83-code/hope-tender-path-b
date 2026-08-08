@@ -223,28 +223,24 @@ describe("bid strategy unavailable on unsafe extraction/analysis", () => {
   });
 });
 
-describe("SSE streaming wiring — AI Analyze endpoint", () => {
+// DIRECTIVE 2: The SSE streaming path (handleStreamingAnalyze) was removed.
+// The legacy /ai-analyze route now returns 422 MANUAL_AI_ANALYZE_REQUIRED for
+// streaming/synchronous requests. These tests were updated to verify the new
+// architecture instead of the deleted streaming path.
+describe("Legacy ai-analyze route refuses fresh job creation", () => {
   const routeSource = readFileSync("app/api/tenders/[id]/ai-analyze/route.ts", "utf8");
 
-  it("route has handleStreamingAnalyze function", () => {
-    assert.match(routeSource, /handleStreamingAnalyze/);
+  it("route returns MANUAL_AI_ANALYZE_REQUIRED for fresh creation", () => {
+    assert.match(routeSource, /MANUAL_AI_ANALYZE_REQUIRED/);
   });
 
-  it("route responds with text/event-stream content type and no-cache", () => {
-    assert.match(routeSource, /text\/event-stream/);
-    assert.match(routeSource, /Cache-Control.*no-cache/);
+  it("route returns 422 status for fresh creation", () => {
+    assert.match(routeSource, /status: 422/);
   });
 
-  it("route branches on Accept: text/event-stream header", () => {
-    assert.match(routeSource, /wantsStream/);
+  it("route returns MANUAL_AI_ANALYZE_REQUIRED for fresh creation", () => {
+    assert.match(routeSource, /MANUAL_AI_ANALYZE_REQUIRED/);
   });
-
-  it("route emits all required phase events", () => {
-    for (const phase of ["starting", "extracting", "analyzing", "saving", "complete", "error"]) {
-      assert.match(routeSource, new RegExp(`phase:\\s*"${phase}"`), `missing phase: ${phase}`);
-    }
-  });
-
 });
 
 describe("clientContactName validation in AI Analyze save path", () => {
