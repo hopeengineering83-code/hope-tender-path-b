@@ -95,7 +95,41 @@ for table in "${CRITICAL_TABLES[@]}"; do
 done
 
 echo ""
-echo "=== 6. Cleanup ==="
+echo "=== 6. Verify Blob storage backup (Vercel Blob) ==="
+# DIRECTIVE 22: Blob backup rehearsal. Verify that a controlled test object
+# can be written, read back, and its hash matches.
+BLOB_TOKEN="${BLOB_READ_WRITE_TOKEN:-}"
+if [[ -n "$BLOB_TOKEN" ]]; then
+  TEST_CONTENT="rehearsal-test-$(date +%s)"
+  TEST_HASH=$(echo -n "$TEST_CONTENT" | sha256sum | cut -d' ' -f1)
+  echo "  Writing test object to Blob..."
+  BLOB_RESP=$(curl -s -X POST "https://blob.vercel.com/" \
+    -H "Authorization: Bearer $BLOB_TOKEN" \
+    -d "test=$TEST_CONTENT" 2>/dev/null || echo "FAILED")
+  if [[ "$BLOB_RESP" == *"url"* ]]; then
+    BLOB_URL=$(echo "$BLOB_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('url',''))" 2>/dev/null || echo "")
+    if [[ -n "$BLOB_URL" ]]; then
+      READ_BACK=$(curl -s "$BLOB_URL" 2>/dev/null || echo "READ_FAILED")
+      READ_HASH=$(echo -n "$READ_BACK" | sha256sum | cut -d' ' -f1)
+      if [[ "$TEST_HASH" == "$READ_HASH" ]]; then
+        echo "  PASS: Blob write/read/hash verification successful"
+      else
+        echo "  FAIL: Blob hash mismatch (expected $TEST_HASH, got $READ_HASH)"
+      fi
+      # Clean up test object
+      curl -s -X DELETE "$BLOB_URL" -H "Authorization: Bearer $BLOB_TOKEN" 2>/dev/null || true
+    else
+      echo "  WARN: Could not parse Blob URL from response"
+    fi
+  else
+    echo "  WARN: Blob write failed (token may be invalid or not configured)"
+  fi
+else
+  echo "  SKIP: BLOB_READ_WRITE_TOKEN not set (set it to test Blob backup)"
+fi
+
+echo ""
+echo "=== 7. Cleanup ==="
 rm -f "$BACKUP_FILE"
 echo "  Backup file removed"
 

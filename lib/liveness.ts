@@ -3,7 +3,7 @@ import { prisma, prismaReady } from "./prisma";
 import { checkAiProviderHealth } from "./ai-provider-health-check";
 import { getStorageReadiness } from "./storage";
 import { MAX_PROVIDER_ATTEMPTS_PER_REQUEST } from "./ai";
-import { MAX_CANDIDATES_PER_MATCHER_BATCH } from "./engine/ai-multi-perspective-matcher";
+import { MAX_CANDIDATES_PER_MATCHER_BATCH, adaptiveBatchSize } from "./engine/ai-multi-perspective-matcher";
 import { PRE_FILTER_LIMIT } from "./engine/main-engine-ai-rematch";
 
 const CRITICAL_TABLES = [
@@ -83,6 +83,7 @@ export async function livenessResponse() {
       effectiveConfig: {
         providerAttemptBudget: MAX_PROVIDER_ATTEMPTS_PER_REQUEST,
         matcherBatchSize: MAX_CANDIDATES_PER_MATCHER_BATCH,
+        adaptiveBatchSizeAvailable: true,
         preFilterLimit: PRE_FILTER_LIMIT,
         engineInvocationSoftDeadlineMs: 40_000,
         providerOrder: aiHealth.configuredProviders ?? [],

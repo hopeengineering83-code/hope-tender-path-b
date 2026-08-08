@@ -12,6 +12,27 @@ import {
 
 /** Hard upper bound for one provider request. */
 export const MAX_CANDIDATES_PER_MATCHER_BATCH = 20;
+
+/**
+ * DIRECTIVE 15: Adaptive batch size by provider. Groq returned HTTP 413 with
+ * 20 candidates — the payload exceeded the provider's request size limit. This
+ * function returns a smaller batch size for providers known to have tighter
+ * TPM/context limits, and the default 20 for providers with generous limits.
+ *
+ * A 413 must trigger deterministic rebatching, not repeated identical calls.
+ */
+export function adaptiveBatchSize(provider: string | null | undefined, requirementLength: number, profileLength: number): number {
+  const max = MAX_CANDIDATES_PER_MATCHER_BATCH;
+  if (!provider) return max;
+  // Estimate total payload size: candidates × (requirement + profile) chars.
+  // If the estimate exceeds 100KB, reduce the batch size.
+  const estimatedPayloadChars = max * (requirementLength + profileLength);
+  if (estimatedPayloadChars > 200_000) return 5;   // Very large requirements → small batches
+  if (estimatedPayloadChars > 100_000) return 10;   // Large requirements → medium batches
+  // Provider-specific limits (Groq is known to 413 on large payloads)
+  if (provider === "groq") return Math.min(10, max);
+  return max;
+}
 const MAX_REQUIREMENT_CHARS = 8_000;
 const MAX_METHODOLOGY_CHARS = 2_000;
 const MAX_PROFILE_CHARS = 800;
