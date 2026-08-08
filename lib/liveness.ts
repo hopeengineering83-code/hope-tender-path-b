@@ -33,7 +33,12 @@ async function tableStatus(): Promise<Record<string, boolean>> {
   }
 }
 
-export async function livenessResponse() {
+/**
+ * Everything the health check knows. Split out from `livenessResponse()` so the
+ * PUBLIC endpoint and the ADMIN diagnostics view derive `ok`/`status`/HTTP code
+ * from one implementation while exposing different amounts of detail.
+ */
+async function computeLivenessSnapshot() {
   const tables = await tableStatus();
   const allCriticalTablesExist = CRITICAL_TABLES.every((name) => tables[name] === true);
   const aiHealth = checkAiProviderHealth();
@@ -63,33 +68,78 @@ export async function livenessResponse() {
   // configuration degrades uploads, not the whole app.
   const httpStatus = allCriticalTablesExist ? 200 : 503;
 
+  return { tables, allCriticalTablesExist, aiHealth, storageHealth, ok, status, httpStatus };
+}
+
+/**
+ * PUBLIC, UNAUTHENTICATED liveness/readiness.
+ *
+ * Carries only what real monitoring actually consumes, verified against every
+ * caller in this repository:
+ *   • `ok`                      — e2e/anonymous, e2e/tablet, production-smoke
+ *   • `status`                  — verify-deployment, verify-production-health
+ *   • `release`                 — verify-deployment, verify-production-health,
+ *                                 verify-production-artifacts, production-smoke
+ *   • `tables[...]`             — verify-deployment, verify-production-health,
+ *                                 production-smoke (critical-table readiness)
+ *   • `deploymentId`            — verify-production-health (reporting)
+ *   • HTTP 200 / 503            — every monitor
+ *
+ * Deliberately NOT public any more: the AI provider names and canonical order,
+ * storage provider internals, engine tuning constants (attempt budget, matcher
+ * batch size, pre-filter limit, soft deadline) and the internal deployment URL.
+ * No caller in this repository read any of them, and together they described
+ * the system's internal topology to anonymous callers. They are still available
+ * to authenticated ADMINs via `detailedLivenessPayload()`.
+ */
+export async function livenessResponse() {
+  const snapshot = await computeLivenessSnapshot();
+
   return NextResponse.json(
     {
-      ok,
-      status,
-      environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown",
+      ok: snapshot.ok,
+      status: snapshot.status,
       release: process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
       deploymentId: process.env.VERCEL_DEPLOYMENT_ID || "unknown",
-      deploymentUrl: process.env.VERCEL_URL || "unknown",
-      tables,
-      aiProviders: aiHealth,
-      storage: storageHealth,
-      // BLOCKER 10: Expose SAFE non-secret effective runtime configuration so
-      // source, tests, and deployed effective settings agree. No keys, no
-      // secrets — just the effective numeric limits that drive provider
-      // behavior. Authenticated admin diagnostics can use this to verify
-      // MAX_PROVIDER_ATTEMPTS, batch sizes, and prefilter limits match
-      // expectations.
-      effectiveConfig: {
-        providerAttemptBudget: MAX_PROVIDER_ATTEMPTS_PER_REQUEST,
-        matcherBatchSize: MAX_CANDIDATES_PER_MATCHER_BATCH,
-        adaptiveBatchSizeAvailable: true,
-        preFilterLimit: PRE_FILTER_LIMIT,
-        engineInvocationSoftDeadlineMs: 40_000,
-        providerOrder: aiHealth.configuredProviders ?? [],
-      },
+      tables: snapshot.tables,
       timestamp: new Date().toISOString(),
     },
-    { status: httpStatus, headers: { "Cache-Control": "no-store" } },
+    { status: snapshot.httpStatus, headers: { "Cache-Control": "no-store" } },
   );
+}
+
+/**
+ * Full diagnostic payload for AUTHENTICATED ADMIN callers only.
+ *
+ * Never return this from an unauthenticated route. It still contains no keys or
+ * secrets — only effective non-secret configuration — but it does describe
+ * internal topology (provider order, storage provider, tuning limits) that
+ * anonymous callers have no need for.
+ */
+export async function detailedLivenessPayload() {
+  const snapshot = await computeLivenessSnapshot();
+  const { aiHealth, storageHealth } = snapshot;
+
+  return {
+    ok: snapshot.ok,
+    status: snapshot.status,
+    environment: process.env.VERCEL_ENV || process.env.NODE_ENV || "unknown",
+    release: process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
+    deploymentId: process.env.VERCEL_DEPLOYMENT_ID || "unknown",
+    deploymentUrl: process.env.VERCEL_URL || "unknown",
+    tables: snapshot.tables,
+    aiProviders: aiHealth,
+    storage: storageHealth,
+    // Effective non-secret runtime configuration, so source, tests and the
+    // deployed effective settings can be reconciled by an admin.
+    effectiveConfig: {
+      providerAttemptBudget: MAX_PROVIDER_ATTEMPTS_PER_REQUEST,
+      matcherBatchSize: MAX_CANDIDATES_PER_MATCHER_BATCH,
+      adaptiveBatchSizeAvailable: true,
+      preFilterLimit: PRE_FILTER_LIMIT,
+      engineInvocationSoftDeadlineMs: 40_000,
+      providerOrder: aiHealth.configuredProviders ?? [],
+    },
+    timestamp: new Date().toISOString(),
+  };
 }

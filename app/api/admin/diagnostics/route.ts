@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
 import { isAIEnabled, isAIConfigured } from "../../../../lib/env-check";
+import { detailedLivenessPayload } from "../../../../lib/liveness";
 
 function sanitizeDiagnosticMessage(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -118,8 +119,15 @@ export async function GET() {
   if (orphanedProjects > 0) actionItems.push({ severity: "LOW", message: `${orphanedProjects} project draft(s) reference a deleted source document.` });
   if (gapSummary.some((g) => g.critical > 0)) actionItems.push({ severity: "HIGH", message: "One or more tenders have unresolved CRITICAL compliance gaps blocking generation." });
 
+  // Full runtime topology (provider order, storage provider, effective tuning
+  // limits, deployment identifiers). This used to be served to anonymous
+  // callers by the public /api/health endpoint; it is admin-only now. Failure
+  // to compute it must not take down the rest of the diagnostics view.
+  const runtime = await detailedLivenessPayload().catch(() => null);
+
   return NextResponse.json({
     timestamp: new Date().toISOString(),
+    runtime,
     database: { ok: dbOk, error: dbError ? "Database connectivity check failed; details redacted." : null },
     ai: { enabled: isAIEnabled(), configured: isAIConfigured() },
     knowledge: {
