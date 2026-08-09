@@ -23,7 +23,7 @@ function planReason(summary: PlanSummary): string {
   if (summary.planState === "DERIVED_DRAFT_UNCONFIRMED") {
     return "A provisional scope was derived from current requirements. The server will validate and promote it automatically when the source evidence is sufficient.";
   }
-  return "The authoritative Build Plan has not been created yet. Run the Engine or use the automatic recovery action below.";
+  return "The authoritative Build Plan has not been created yet. Run Engine creates and source-verifies it automatically; recovery is available below if it does not appear.";
 }
 
 export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
@@ -86,12 +86,23 @@ export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
         <span className="text-slate-500">{verified ? "Verified required" : "Derived scope files"}: {summary.totalRequired}</span>
         <span className="text-slate-500">Current outputs: {summary.totalGenerated}</span>
         {!verified && (
+          // Recovery affordance, not a step on the normal path.
+          //
+          // The Engine already derives and source-verifies the Build Plan on its
+          // own: the ENGINE_RUN handler calls buildAndVerifyBuildPlan, and the
+          // sentence above this row says so. Labelling this link "Build and
+          // verify automatically" made it read as a required action competing
+          // with the real next action (Run Engine) — a third mandatory click on
+          // a workflow whose contract allows exactly two, and one this link does
+          // not even perform: it is an anchor to the recovery disclosure, not a
+          // mutation. The label now matches what it does, and what its own title
+          // attribute always said.
           <DisclosureAnchorLink
             href="#submission-plan-completeness"
-            className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2.5 py-1 text-[10px] font-semibold text-amber-800 hover:bg-amber-100"
+            className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-white px-2.5 py-1 text-[10px] font-medium text-amber-700 hover:bg-amber-100"
             title="Open automatic Build Plan recovery"
           >
-            Build and verify automatically <ArrowRightIcon />
+            Open Build Plan recovery <ArrowRightIcon />
           </DisclosureAnchorLink>
         )}
       </div>
