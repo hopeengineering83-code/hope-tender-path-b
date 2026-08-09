@@ -190,3 +190,59 @@ jobs:
 
           echo "::warning::Unexpected HTTP status $status from worker. Body: $body"
           exit 0
+
+      # ─── Preview deployment drain ────────────────────────────────────────
+      #
+      # Every step above targets PRODUCTION only. The Preview deployment had no
+      # worker driver at all, so a job enqueued there stayed QUEUED forever:
+      # Vercel runtime logs for the preview environment showed ZERO
+      # /api/ai-jobs/run-next invocations over six hours while the browser
+      # polled /engine-readiness every three seconds. Pressing Run Engine
+      # created the job and nothing ever claimed it, so the UI reported
+      # "Engine running…" indefinitely with zero selected evidence.
+      #
+      # The branch preview URL is stable for this release branch, so the same
+      # secret-authenticated drain works against it.
+      #
+      # Deliberately non-fatal in every outcome. Preview is not the release
+      # surface, its secret may not be configured, and the deployment may be
+      # absent or rebuilding — none of which should turn the Production drain
+      # red or spam the owner. Failures are surfaced as warnings only.
+      - name: POST /api/ai-jobs/run-next (preview)
+        continue-on-error: true
+        env:
+          WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
+          PREVIEW_WORKER_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app/api/ai-jobs/run-next
+        run: |
+          if [ -z "$WORKER_SECRET" ]; then
+            echo "::warning::AI_JOBS_WORKER_SECRET is empty — skipping the preview drain."
+            exit 0
+          fi
+
+          response=$(curl -sS \
+            --connect-timeout 30 \
+            --max-time 65 \
+            -X POST \
+            -H "X-Worker-Secret: $WORKER_SECRET" \
+            -H "Content-Type: application/json" \
+            -w "\n---STATUS:%{http_code}---" \
+            "$PREVIEW_WORKER_URL" \
+            || echo "---STATUS:000---")
+
+          status=$(echo "$response" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          body=$(echo "$response" | sed -E "s/---STATUS:[0-9]+---//")
+          echo "Preview HTTP $status"
+          echo "Preview body: $body"
+
+          if [ "$status" = "401" ] || [ "$status" = "403" ]; then
+            echo "::warning::Preview worker rejected auth. Set AI_JOBS_WORKER_SECRET for the Preview environment in Vercel and redeploy, or preview jobs will never run."
+            exit 0
+          fi
+
+          if [ "$status" != "200" ]; then
+            echo "::warning::Preview worker returned $status — preview queue not drained on this tick."
+            exit 0
+          fi
+
+          echo "Preview queue drained."
+          exit 0
