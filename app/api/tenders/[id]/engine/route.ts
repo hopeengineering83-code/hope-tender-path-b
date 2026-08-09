@@ -166,17 +166,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const releaseSnapshot = await getTenderReleaseSnapshot(prisma, id, userId);
-    if (
-      !releaseSnapshot
-      || releaseSnapshot.analysis.state !== "AI_SUCCEEDED"
-      || !releaseSnapshot.analysis.contentHashMatch
-      || !releaseSnapshot.analysis.canonicalJobId
-    ) {
+    if (!releaseSnapshot?.analysis.eligibleForExport) {
       return NextResponse.json({
         error: "Run Engine requires a successful manual AI Analyze result for the current canonical source revision.",
         code: "CURRENT_ANALYSIS_REQUIRED",
         nextAction: "RUN_AI_ANALYZE",
         hint: releaseSnapshot?.analysis.blocker ?? "Run AI Analyze, wait for durable success, then run Engine.",
+        contentHashMatch: releaseSnapshot?.analysis.contentHashMatch ?? false,
         diagnosticId,
       }, { status: 422 });
     }

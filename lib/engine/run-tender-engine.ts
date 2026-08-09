@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
 import { computeTenderMutationLockKey } from "./advisory-lock-key";
 import { logAction } from "../audit";
-import { analyzeTender } from "./analysis";
+import type { analyzeTender } from "./analysis";
 import { isAIEnabled } from "../ai";
 import { buildCompliance } from "./compliance";
 import { buildDocumentPlan } from "./documents";
@@ -18,6 +18,7 @@ import { REMATCH_TIMEOUT_MS } from "../timeout-config";
 import { canUseVaultRecord } from "../vault-review-provenance";
 import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
 import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
+import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
 
 const DB_PERSISTENCE_BUFFER_MS = 8_000;
 const RESPONSE_SERIALIZATION_BUFFER_MS = 2_000;
@@ -195,13 +196,10 @@ export async function runTenderEngine(
   try {
     progress("engine.analyze", "Loading current-revision manual AI Analyze output");
     let analysis: ReturnType<typeof analyzeTender>;
-    // FIX 6: analysisMethod can no longer be REGEX_FALLBACK_AI_ERROR or
-    // REGEX_FALLBACK_NO_TEXT — the Engine no longer re-analyzes the tender
-    // (those branches were removed). It's now either AI (reused promoted
-    // analysis) or REGEX_FALLBACK_AI_DISABLED (only when no AI provider is
-    // configured, which is a deployment misconfiguration, not a workflow path).
-    let analysisMethod: "AI" | "REGEX_FALLBACK_AI_DISABLED" = "REGEX_FALLBACK_AI_DISABLED";
-    let analysisFallbackReason: string | null = null;
+    // Engine analysis is always the promoted output of manual AI Analyze.
+    // Provider availability may affect bounded matching, never this authority.
+    const analysisMethod = "AI" as const;
+    const analysisFallbackReason: string | null = null;
 
     const promotedRequirements = tender.requirements.filter((requirement) =>
       Boolean(
@@ -211,8 +209,14 @@ export async function runTenderEngine(
         && requirement.sourceExactQuote.trim().length > 0,
       ),
     );
-    const canReusePromotedAnalysis = tender.analysisExtractionStatus === "FULL_EXTRACTION_AI_ANALYZED"
-      && promotedRequirements.length > 0;
+    // This is the same canonical authority used by POST /engine. The legacy
+    // analysisExtractionStatus field is descriptive metadata and may lag a
+    // successfully promoted analysis; it must not become a second gate.
+    // Re-resolving here also protects the enqueue-to-claim boundary: source or
+    // Company Vault drift after the route returned 202 changes the canonical
+    // content hash and fails closed before any stale analysis is reused.
+    const releaseSnapshot = await getTenderReleaseSnapshot(prisma, tenderId, userId);
+    const canReusePromotedAnalysis = Boolean(releaseSnapshot?.analysis.eligibleForExport);
 
     if (canReusePromotedAnalysis) {
       analysis = {
@@ -239,9 +243,8 @@ export async function runTenderEngine(
         exactFileNaming: parseStringArray(tender.exactFileNaming),
         exactFileOrder: parseStringArray(tender.exactFileOrder),
       };
-      analysisMethod = "AI";
       progress("engine.analyze", `Reused ${promotedRequirements.length} grounded requirement(s); no duplicate AI extraction call was made`);
-    } else if (isAIEnabled()) {
+    } else {
       // FIX 6: Engine must NEVER re-analyze the tender. The previous code
       // called analyzeWithAI(tenderText) directly when promoted analysis was
       // absent — bypassing the manual AI Analyze boundary. That created a
@@ -256,22 +259,18 @@ export async function runTenderEngine(
         .map((text) => text.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, ""))
         .filter((text) => text.length > 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(text))
         .join("\n\n--- NEXT DOCUMENT ---\n\n");
-      const failureReason = !canReusePromotedAnalysis && promotedRequirements.length === 0
-        ? "No promoted analysis exists for this tender — run AI Analyze first"
-        : promotedRequirements.length === 0
-          ? "Promoted analysis has zero requirements — run AI Analyze again"
-          : "Promoted analysis is stale or incomplete — run AI Analyze again";
+      const failureReason = releaseSnapshot?.analysis.blocker
+        ?? "No current promoted analysis exists for this tender — run AI Analyze first";
       logger.error("[engine] CURRENT_ANALYSIS_REQUIRED — Engine refusing to re-analyze tender", {
         tenderId,
         promotedRequirementCount: promotedRequirements.length,
         canReusePromotedAnalysis,
         canonicalTextLength: tenderText.length,
+        canonicalAnalysisState: releaseSnapshot?.analysis.state ?? null,
+        canonicalJobId: releaseSnapshot?.analysis.canonicalJobId ?? null,
+        contentHashMatch: releaseSnapshot?.analysis.contentHashMatch ?? false,
       });
       throw new Error(`CURRENT_ANALYSIS_REQUIRED: ${failureReason}. Engine never re-analyzes the tender — manual AI Analyze is the single authority.`);
-    } else {
-      analysisMethod = "REGEX_FALLBACK_AI_DISABLED";
-      analysisFallbackReason = "No AI provider is configured.";
-      analysis = analyzeTender({ ...tender, files: canonicalFiles });
     }
 
     const reviewedExperts = company.experts.filter((expert) => canUseVaultRecord(expert, "GENERATION"));
@@ -698,7 +697,7 @@ export async function runTenderEngine(
             "Deterministic matching uses source-verified Company Vault evidence and broad capability/sector equivalence.",
             mainEngineAIRematch.aiApplied ? `Bounded AI reranking assessed ${mainEngineAIRematch.expertAssessments} expert and ${mainEngineAIRematch.projectAssessments} project candidate(s).` : null,
             mainEngineAIRematch.warning ? `AI reranking warning: ${mainEngineAIRematch.warning}` : null,
-            analysisMethod === "AI" ? "Analysis source: current AI Analyze output." : `Analysis source: deterministic fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
+            "Analysis source: current AI Analyze output.",
             hardGaps > 0 ? `${hardGaps} critical evidence gap(s) remain.` : null,
             reviewGaps > 0 ? `${reviewGaps} review item(s) remain.` : null,
             knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} SOURCE_VERIFIED/REVIEWED expert(s) are eligible.` : null,
