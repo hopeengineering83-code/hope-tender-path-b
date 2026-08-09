@@ -281,7 +281,7 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     NOT_STARTED: "Run AI Analyze to extract requirements and metadata.",
     QUEUED: "AI Analyze queued. Processing will start shortly.",
     RUNNING: `Processing: ${succeededChunks}/${totalChunks} chunks completed. Current chunk in progress...`,
-    AI_SUCCEEDED: "Analysis complete. Proceed to Build Submission Plan.",
+    AI_SUCCEEDED: "Analysis complete. Run Engine to continue automatic processing.",
     PARTIAL_NEEDS_RESUME: `Resume Analysis: ${succeededChunks}/${totalChunks} chunks done. Click Resume to complete.`,
     REGEX_FALLBACK_UNAPPROVED:
       "Provider exhausted. Regex fallback available (lower quality). Review and approve with a note, or retry AI Analyze.",

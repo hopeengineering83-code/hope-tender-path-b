@@ -110,6 +110,16 @@ test("derive: SUCCEEDED with all chunks succeeded → AI_SUCCEEDED", () => {
   assert.equal(canExportWithAnalysisState(d.state), true);
 });
 
+test("AI_SUCCEEDED directs the user to Run Engine, not a manual Submission Plan step", () => {
+  const d = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({ status: "SUCCEEDED", promotedAt: new Date() }),
+    chunks: [chunk("SUCCEEDED")],
+  }));
+  assert.equal(d.state, "AI_SUCCEEDED");
+  assert.match(d.nextAction, /Run Engine/i);
+  assert.doesNotMatch(d.nextAction, /Build|Confirm.*Submission Plan|Submission Plan/i);
+});
+
 test("derive: SUCCEEDED single-shot with zero chunks → AI_SUCCEEDED only after promotion", () => {
   const d = deriveAnalysisStateDetail(makeInput({
     job: makeJob({ status: "SUCCEEDED", analysisInputHash: null, promotedAt: new Date() }),
