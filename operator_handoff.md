@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-09 16:35 UTC — Codex (GPT-5.6 Sol), PR #1175 diff-review safeguard
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
+- **Scope / files:** Investigated the reported diff-extraction size warning and updated this handoff only. PR #1175 is a long-lived consolidation with 1,052 changed files (82,227 additions / 43,983 deletions), while the Run Engine handoff is isolated to commits `cdae73cb` and `9f621545`. No production or test code changed in this follow-up.
+- **Tests / checks:** `npx prisma generate` — passed; `npx tsx --test tests/engine-worker-handoff.test.ts` — environment warning because the configured non-production Neon database was unreachable before fixture creation; `npm run typecheck` and `git diff --check` — passed; `gh pr view 1175 --json ...` and `gh pr checks 1175` — confirmed the exact PR/head and current checks; GitHub reports no inline review comments.
+- **CI / deployment:** Exact-head dependency audit, screenshot audit, and Vercel Preview passed; the duplicated CI jobs were still pending when checked. No merge, approval, force-push, base change, new PR, or production deployment performed.
+- **Risks / assumptions:** GitHub cannot render/extract the complete consolidation diff reliably at this size. Review automation must use the two-commit incremental range (`b35cb7f5..9f621545`) rather than requesting the full PR diff. Shrinking the PR itself would require rewriting or retargeting its established consolidation history, which was not owner-authorized.
+- **Next action:** Review the incremental Run Engine range and require exact-head PostgreSQL CI before merge consideration.
+- **Merge status:** Not reviewed; not merged.
+
 ### 2026-08-09 16:23 UTC — Codex (GPT-5.6 Sol), PR #1175 review correction
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
