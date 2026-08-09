@@ -49,6 +49,65 @@ type Props = {
 const ELIGIBLE_EVIDENCE_TRUST_LEVELS = new Set(["SOURCE_VERIFIED", "REVIEWED"]);
 const POLL_INTERVAL_MS = 3_000;
 
+/**
+ * How long a QUEUED Engine job may wait before the wait itself is the story.
+ *
+ * The queue's only unattended driver is the GitHub Actions cron on a 5-minute
+ * schedule, whose own documentation notes 5–15 minutes of drift. Past that, a
+ * job that no worker has claimed is not "slow" — nothing is running it.
+ */
+const ENGINE_QUEUE_STALL_MS = 15 * 60 * 1000;
+
+/**
+ * Say what the Engine is actually doing, rather than asserting it is running.
+ *
+ * `engineRunning` is true for QUEUED *and* RUNNING jobs — the readiness route
+ * groups them under one flag — so the panel reported "Engine is running as a
+ * durable current-revision job." for a job that no worker had ever claimed. On
+ * a deployment whose queue has no driver that sentence never stops being
+ * displayed and never becomes true: the owner sees an Engine that "takes a long
+ * time and doesn't work", with no elapsed time and nothing distinguishing
+ * executing from abandoned.
+ *
+ * The readiness payload already carries `activeJob.status` and
+ * `activeJob.createdAt`; only the panel ignored them. Nothing here changes a
+ * gate — the Run Engine button stays disabled while a job is genuinely active.
+ */
+export function describeEngineActivity(
+  activeJob: { status: string; createdAt: string } | null | undefined,
+  now: number = Date.now(),
+): string {
+  const RUNNING = "Engine is running as a durable current-revision job.";
+  if (!activeJob) return RUNNING;
+
+  // The third status the readiness route counts as active. Nothing currently
+  // writes PARTIAL_SUCCESS to an ENGINE_RUN row — only the AI Analyze route
+  // produces it — so this is defensive. It is worth stating plainly because
+  // PARTIAL_SUCCESS is terminal-but-unsuccessful: claimJobForCaller takes only
+  // QUEUED rows, failStuckJobs and rearmDurableStageJob touch only RUNNING ones,
+  // and reapStaleQueuedJobs only QUEUED — so no path would ever move it, while
+  // `canRunEngine` stays false because `engineRunning` is true. Calling that
+  // "running" would be the same lie this function exists to stop telling.
+  if (activeJob.status === "PARTIAL_SUCCESS") {
+    return "Engine stopped after partial progress and is not running. Open Diagnostics and Recovery to resume it.";
+  }
+  if (activeJob.status !== "QUEUED") return RUNNING;
+
+  const startedAt = Date.parse(activeJob.createdAt);
+  if (!Number.isFinite(startedAt)) {
+    return "Engine job is queued — waiting for a worker to start it.";
+  }
+
+  const waitedMs = Math.max(0, now - startedAt);
+  const waitedMin = Math.floor(waitedMs / 60_000);
+  if (waitedMs >= ENGINE_QUEUE_STALL_MS) {
+    return `Engine job has been queued for ${waitedMin} min without being claimed by a worker. Processing has not started. Open Diagnostics and Recovery to check the job queue worker.`;
+  }
+  return waitedMin >= 1
+    ? `Engine job is queued (${waitedMin} min) — waiting for a worker to start it.`
+    : "Engine job is queued — waiting for a worker to start it.";
+}
+
 export function isEligibleSelectedEvidence(row: SelectedEvidenceCandidate): boolean {
   return ELIGIBLE_EVIDENCE_TRUST_LEVELS.has(row.trustLevel);
 }
@@ -187,7 +246,9 @@ export function MatchingSelectedEvidencePanel({
         : !analysisCurrent
           ? readiness?.analysisBlocker ?? readiness?.blocker ?? "Run AI Analyze successfully for the current source revision."
           : engineRunning
-            ? "An Engine job is already running for this revision."
+            ? readiness?.activeJob?.status === "QUEUED"
+              ? "An Engine job is already queued for this revision."
+              : "An Engine job is already running for this revision."
             : engineComplete
               ? "Engine already completed successfully for this revision."
               : readiness?.blocker;
@@ -239,7 +300,7 @@ export function MatchingSelectedEvidencePanel({
       : engineComplete
         ? "Engine complete. Downstream processing continues automatically."
         : engineRunning
-          ? "Engine is running as a durable current-revision job."
+          ? describeEngineActivity(readiness?.activeJob)
           : !analysisCurrent
             ? readiness?.analysisBlocker ?? "Run AI Analyze first to enable Engine."
             : readiness?.engineFailed
