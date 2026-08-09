@@ -272,11 +272,19 @@ describe("FIX 2 — Immutable canonical snapshot persisted at manual creation", 
       /where: \{ id: \{ in: snapshot\.canonicalFileIds \} \}/,
       "runNextChunk must reload files by snapshot.canonicalFileIds",
     );
-    // The worker must verify each file's content hash matches the snapshot.
+    // The worker must verify each file against the snapshot. The old single
+    // FILE_CONTENT_DRIFT reason has been split into two, because extracted text
+    // and original source bytes are DIFFERENT identities that can drift
+    // independently — the old name did not say which content had changed.
     assert.match(
       source,
-      /FILE_CONTENT_DRIFT/,
-      "runNextChunk must fail closed with FILE_CONTENT_DRIFT when a hash mismatches",
+      /EXTRACTED_TEXT_DRIFT/,
+      "runNextChunk must fail closed when a file's extracted text drifts",
+    );
+    assert.match(
+      source,
+      /SOURCE_BYTE_DRIFT/,
+      "runNextChunk must fail closed when a file's original source bytes drift",
     );
   });
 });

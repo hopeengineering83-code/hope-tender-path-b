@@ -71,8 +71,27 @@ export function computeAnalysisJobLockKey(
 export type CanonicalAnalysisSnapshot = {
   /** Ordered list of ACTIVE TenderFile IDs that were hashed into analysisInputHash. */
   canonicalFileIds: string[];
-  /** Per-file SHA-256 of extractedText — verifies byte integrity at worker time. */
+  /**
+   * Per-file SHA-256 of the NORMALIZED EXTRACTED TEXT (`TenderFile.extractedText`).
+   *
+   * This is `extractedTextSha256`, NOT byte integrity. It was previously
+   * documented as verifying "byte integrity", conflating two different
+   * identities: the original uploaded bytes are hashed separately into
+   * `TenderFile.contentSha256` (computeByteSha256 in persisted-byte-integrity.ts).
+   * Extracted text is a derived artifact — re-extraction, OCR changes, or a
+   * different source document that happens to yield the same text all move one
+   * of these without moving the other.
+   */
   fileContentHashes: Record<string, string>;
+  /**
+   * Per-file SHA-256 of the ORIGINAL UPLOADED BYTES (`TenderFile.contentSha256`).
+   *
+   * Optional: snapshots written before this field existed do not carry it, and
+   * are verified on extracted text alone exactly as before. When present, the
+   * source bytes must also match, so replacing a file's bytes invalidates the
+   * analysis even if the extracted text is unchanged.
+   */
+  fileSourceByteHashes?: Record<string, string | null>;
   /** The analysisInputHash (SHA-256 of the concatenated canonical content). */
   analysisInputHash: string;
   /** Total chunk count produced by the deterministic chunker at snapshot time. */
@@ -121,9 +140,10 @@ export async function verifyAnalysisSnapshot(
   // Verify canonical file IDs still exist and are ACTIVE.
   const currentFiles = await client.tenderFile.findMany({
     where: { tenderId, deletionStatus: "ACTIVE" },
-    select: { id: true, extractedText: true },
+    select: { id: true, extractedText: true, contentSha256: true },
   });
   const currentFileMap = new Map(currentFiles.map((f) => [f.id, f.extractedText ?? ""]));
+  const currentSourceByteMap = new Map(currentFiles.map((f) => [f.id, f.contentSha256 ?? null]));
 
   // If any canonical file ID is no longer ACTIVE, the snapshot is superseded.
   for (const fileId of snapshot.canonicalFileIds) {
@@ -136,12 +156,32 @@ export async function verifyAnalysisSnapshot(
     return { valid: false, superseded: true, reason: "CANONICAL_FILE_SET_CHANGED" };
   }
 
-  // Verify per-file content hashes match (byte integrity).
+  // Verify per-file EXTRACTED-TEXT hashes match. This is the input the provider
+  // actually sees, so it must be identical to the authorized revision.
   for (const fileId of snapshot.canonicalFileIds) {
     const currentText = currentFileMap.get(fileId) ?? "";
     const currentHash = require("crypto").createHash("sha256").update(currentText).digest("hex");
     if (snapshot.fileContentHashes[fileId] !== currentHash) {
-      return { valid: false, superseded: true, reason: "FILE_CONTENT_DRIFT" };
+      return { valid: false, superseded: true, reason: "EXTRACTED_TEXT_DRIFT" };
+    }
+  }
+
+  // Verify per-file SOURCE BYTE hashes when the snapshot carries them. This is a
+  // DIFFERENT identity from the extracted text: replacing a file's bytes with a
+  // different document that extracts to the same text leaves the check above
+  // satisfied, so without this the analysis could stay "valid" for a source the
+  // owner never authorized. Snapshots written before this field existed skip it
+  // rather than failing closed, so no in-flight job is invalidated by deploying
+  // this.
+  if (snapshot.fileSourceByteHashes) {
+    for (const fileId of snapshot.canonicalFileIds) {
+      const snapshotByteHash = snapshot.fileSourceByteHashes[fileId] ?? null;
+      // A file that had no recorded byte hash at snapshot time cannot be
+      // compared; the extracted-text check above still applies.
+      if (!snapshotByteHash) continue;
+      if (currentSourceByteMap.get(fileId) !== snapshotByteHash) {
+        return { valid: false, superseded: true, reason: "SOURCE_BYTE_DRIFT" };
+      }
     }
   }
 
@@ -217,12 +257,17 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
     .filter((f) => f.deletionStatus === "ACTIVE")
     .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0))
     .map((f) => f.id);
+  // Two DISTINCT identities are frozen per file, because they can move
+  // independently: the normalized extracted text (what the provider reads) and
+  // the original uploaded bytes (what the owner actually supplied).
   const fileContentHashes: Record<string, string> = {};
+  const fileSourceByteHashes: Record<string, string | null> = {};
   for (const f of tender.files.filter((f) => f.deletionStatus === "ACTIVE")) {
     fileContentHashes[f.id] = require("crypto")
       .createHash("sha256")
       .update(f.extractedText ?? "")
       .digest("hex");
+    fileSourceByteHashes[f.id] = f.contentSha256 ?? null;
   }
   const chunks = aiChunkTenderContent(tenderText);
   const totalChunks = chunks.length;
@@ -233,6 +278,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   const snapshot: CanonicalAnalysisSnapshot = {
     canonicalFileIds,
     fileContentHashes,
+    fileSourceByteHashes,
     analysisInputHash: contentHash,
     totalChunks,
     chunkHashes,
@@ -559,6 +605,9 @@ export async function runNextChunk(jobId: string, userId: string) {
       classification: true,
       createdAt: true,
       deletionStatus: true,
+      // Original uploaded bytes — a distinct identity from extractedText, and
+      // an unselected column would arrive undefined and silently skip the check.
+      contentSha256: true,
     },
   });
   const fileMap = new Map(canonicalFiles.map((f) => [f.id, f]));
@@ -577,6 +626,7 @@ export async function runNextChunk(jobId: string, userId: string) {
     return { completed: true, status: "FAILED" as const };
   }
   for (const f of orderedFiles) {
+    // Extracted text — the bytes the provider actually reads.
     const currentHash = require("crypto").createHash("sha256").update(f.extractedText ?? "").digest("hex");
     if (snapshot.fileContentHashes[f.id] !== currentHash) {
       await prisma.aiJob.update({
@@ -584,7 +634,20 @@ export async function runNextChunk(jobId: string, userId: string) {
         data: {
           status: "FAILED",
           finishedAt: new Date(),
-          errorMessage: `FILE_CONTENT_DRIFT: TenderFile ${f.id} changed — run AI Analyze again`,
+          errorMessage: `EXTRACTED_TEXT_DRIFT: TenderFile ${f.id} extracted text changed — run AI Analyze again`,
+        },
+      });
+      return { completed: true, status: "FAILED" as const };
+    }
+    // Original uploaded bytes — a separate identity, checked when recorded.
+    const snapshotByteHash = snapshot.fileSourceByteHashes?.[f.id] ?? null;
+    if (snapshotByteHash && (f as { contentSha256?: string | null }).contentSha256 !== snapshotByteHash) {
+      await prisma.aiJob.update({
+        where: { id: jobId },
+        data: {
+          status: "FAILED",
+          finishedAt: new Date(),
+          errorMessage: `SOURCE_BYTE_DRIFT: TenderFile ${f.id} source bytes changed — run AI Analyze again`,
         },
       });
       return { completed: true, status: "FAILED" as const };
