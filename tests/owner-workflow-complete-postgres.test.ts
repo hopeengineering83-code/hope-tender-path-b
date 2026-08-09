@@ -52,7 +52,7 @@ test("manual AI Analyze and Run Engine once continue automatically to a real fin
     await prisma.expert.create({ data: { companyId: company.id, fullName: "No Source Expert", trustLevel: "AI_DRAFT" } });
 
     const tenderText = [
-      `[Page 1] REQUEST FOR PROPOSALS RFP-${nonce} — WATER SUPPLY DESIGN for Ministry of Water`,
+      "[Page 1] REQUEST FOR PROPOSALS RFP-2026-001 — WATER SUPPLY DESIGN for Ministry of Water",
       "The bidder shall submit Technical-Proposal.docx and Technical-Proposal.pdf.",
       "The Senior Water Engineer shall have at least fifteen years of water engineering experience.",
       "The bidder shall demonstrate a regional water supply design project for a public client.",
@@ -78,7 +78,7 @@ test("manual AI Analyze and Run Engine once continue automatically to a real fin
       submissionEmailSourceFileId: source.id, submissionEmailSourcePage: 1, submissionEmailSourceQuote: "procurement@example.test",
       deadlineSourceFileId: source.id, deadlineSourcePage: 1, deadlineSourceQuote: "30 September 2026",
       titleSourceFileId: source.id, titleSourcePage: 1, titleSourceQuote: "WATER SUPPLY DESIGN",
-      referenceSourceFileId: source.id, referenceSourcePage: 1, referenceSourceQuote: `RFP-${nonce}`,
+      referenceSourceFileId: source.id, referenceSourcePage: 1, referenceSourceQuote: "RFP-2026-001",
     } });
     for (const requirement of [
       { title: "Senior Water Engineer", type: "EXPERT", quote: "The Senior Water Engineer shall have at least fifteen years of water engineering experience." },
