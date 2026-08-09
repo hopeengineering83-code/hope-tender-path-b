@@ -136,9 +136,16 @@ test("Bid Strategy counts persisted file/page/quote provenance when sourceConfid
   const response = await route.GET(new Request(`http://localhost/api/tenders/${tender.id}/bid-strategy`), {
     params: Promise.resolve({ id: tender.id }),
   });
-  const body = await response.json() as { blockers?: string[]; sourceRefCount?: number };
+  const body = await response.json() as {
+    strategy?: Record<string, unknown> | null;
+    blocked?: boolean;
+    unavailable?: boolean;
+    blockers?: string[];
+  };
 
-  assert.equal(body.sourceRefCount, undefined, "successful Bid Strategy responses do not expose blocker diagnostics");
-  assert.ok(!(body.blockers ?? []).includes("Extracted requirements have no source traceability."));
   assert.equal(response.status, 200);
+  assert.notEqual(body.blocked, true, "the extraction gate must not short-circuit this regression");
+  assert.notEqual(body.unavailable, true, "traceable requirements must not make Bid Strategy unavailable");
+  assert.ok(body.strategy, "the route must compute Bid Strategy end to end");
+  assert.ok(!(body.blockers ?? []).includes("Extracted requirements have no source traceability."));
 });
