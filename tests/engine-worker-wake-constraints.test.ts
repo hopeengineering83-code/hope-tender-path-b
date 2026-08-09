@@ -118,10 +118,22 @@ describe("Run Engine wake — exactly-once under contention", () => {
     const { claimJobForCaller } = await import("../lib/job-claim-policy");
     const user = await makeUser("engine-wake-race");
 
+    // The cron claims with global: true, which is deliberately NOT user-scoped —
+    // it takes the oldest claimable ENGINE_RUN row in the whole table. Left
+    // unfiltered here, this test stole other suites' queued Engine jobs when the
+    // runner executed them concurrently, and their own claims then found
+    // nothing. Scoping every claim to this test's own tender keeps the global
+    // (non-user-scoped) path under test while making the row set exclusively
+    // ours.
+    const tender = await prisma.tender.create({
+      data: { userId: user.id, title: `Engine wake race ${Date.now()}` },
+    });
+
     try {
       const job = await prisma.aiJob.create({
         data: {
           userId: user.id,
+          tenderId: tender.id,
           jobType: "ENGINE_RUN",
           status: "QUEUED",
           input: JSON.stringify({ manualRequested: true, executionPolicy: "SERVER_CONTROLLED" }),
@@ -131,10 +143,10 @@ describe("Run Engine wake — exactly-once under contention", () => {
       // The wake claims tenant-scoped (session cookie -> global:false + userId);
       // the cron claims globally. Both reach the row at the same instant.
       const claims = await Promise.all([
-        claimJobForCaller({ jobType: "ENGINE_RUN", userId: user.id, global: false }),
-        claimJobForCaller({ jobType: "ENGINE_RUN", global: true }),
-        claimJobForCaller({ jobType: "ENGINE_RUN", userId: user.id, global: false }),
-        claimJobForCaller({ jobType: "ENGINE_RUN", global: true }),
+        claimJobForCaller({ jobType: "ENGINE_RUN", tenderId: tender.id, userId: user.id, global: false }),
+        claimJobForCaller({ jobType: "ENGINE_RUN", tenderId: tender.id, global: true }),
+        claimJobForCaller({ jobType: "ENGINE_RUN", tenderId: tender.id, userId: user.id, global: false }),
+        claimJobForCaller({ jobType: "ENGINE_RUN", tenderId: tender.id, global: true }),
       ]);
 
       const winners = claims.filter((c) => c && c.id === job.id);
@@ -145,6 +157,7 @@ describe("Run Engine wake — exactly-once under contention", () => {
       );
     } finally {
       await prisma.aiJob.deleteMany({ where: { userId: user.id } });
+      await prisma.tender.deleteMany({ where: { userId: user.id } });
       await prisma.user.delete({ where: { id: user.id } });
     }
   });
