@@ -3,6 +3,7 @@ import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { after, before, test } from "node:test";
 import { countTraceable } from "../lib/engine/requirement-source-traceability";
 import { prisma, prismaReady } from "../lib/prisma";
+import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../lib/engine/tender-analysis-content";
 
 if (process.env.RUN_DB_INTEGRATION !== "true") {
   throw new Error("RUN_DB_INTEGRATION=true is required for the Bid Strategy traceability regression");
@@ -116,6 +117,42 @@ test("Bid Strategy counts persisted file/page/quote provenance when sourceConfid
       sourceExactQuote: "The bidder shall provide a signed technical methodology.",
       sectionReference: "Technical Requirements",
       sourceConfidence: 0,
+    },
+  });
+  const canonicalHash = computeAnalysisContentHash(buildTenderAnalysisContent({
+    title: tender.title,
+    description: tender.description,
+    intakeSummary: tender.intakeSummary,
+    files: [{
+      id: source.id,
+      fileName: source.fileName,
+      originalFileName: source.originalFileName,
+      extractedText: source.extractedText,
+      classification: source.classification,
+      createdAt: source.createdAt,
+      deletionStatus: source.deletionStatus,
+      contentSha256: source.contentSha256,
+      integrityStatus: source.integrityStatus,
+      extractionScore: source.extractionScore,
+      extractionMethod: source.extractionMethod,
+      totalPages: source.totalPages,
+      extractedPages: source.extractedPages,
+      failedPages: source.failedPages,
+    }],
+  }));
+  await prisma.aiJob.create({
+    data: {
+      tenderId: tender.id,
+      userId: user.id,
+      jobType: "AI_ANALYZE",
+      status: "SUCCEEDED",
+      analysisInputHash: canonicalHash,
+      promotedAt: new Date(),
+      promotedBy: user.id,
+      startedAt: new Date(Date.now() - 1_000),
+      finishedAt: new Date(),
+      input: JSON.stringify({ contentHash: canonicalHash }),
+      output: JSON.stringify({ analysisSource: "AI", contentHash: canonicalHash, isPartial: false }),
     },
   });
   const persistedRequirements = await prisma.tenderRequirement.findMany({

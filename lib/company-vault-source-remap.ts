@@ -2,6 +2,7 @@ import { prisma } from "./prisma";
 import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "./company-document-durable-deletion";
 import {
   assessReviewEvidence,
+  buildPartialSourceVerificationProvenance,
   complianceReviewFields,
   expertReviewFields,
   financialReviewFields,
@@ -9,6 +10,7 @@ import {
   projectReviewFields,
   publicVaultIdentifier,
   type ReviewEvidenceField,
+  type ReviewRecordType,
   type ReviewSourceDocument,
 } from "./vault-review-provenance";
 
@@ -47,18 +49,39 @@ async function loadCandidateDocuments(companyId: string): Promise<ReviewSourceDo
 }
 
 // Finds an owned, byte-verified document whose extracted text genuinely
-// contains every one of the record's claimed field values (the same
-// quote-containment check the automatic source-verification path and
-// autoVerifyCompanyKnowledge already require) — never a guess, never a
-// looser match than the durable-provenance gate itself uses.
+// contains either every claimed field or the canonical identity fields needed
+// for partial verification. A partial identity match is accepted only when it
+// is unique across the tenant's byte-verified documents — never a guess and
+// never looser than autoVerifyCompanyKnowledge's durable-provenance gate.
 function findMatchingDocument(
   documents: ReviewSourceDocument[],
   fields: ReviewEvidenceField[],
+  recordType: ReviewRecordType,
 ): ReviewSourceDocument | null {
   for (const document of documents) {
     if (assessReviewEvidence(document, fields).ok) return document;
   }
-  return null;
+
+  // Imported records commonly contain AI-inferred secondary attributes that
+  // are absent from the original CV/project sheet. The downstream canonical
+  // verifier already handles that safely as partial SOURCE_VERIFIED evidence:
+  // identity must be present, every proven field is recorded, and absent
+  // fields remain explicitly unverified. Rebinding previously demanded every
+  // inferred field, so that verifier was unreachable and owned source bytes
+  // remained stranded beside unlinked drafts.
+  //
+  // Bind a partial match only when it is unambiguous across this tenant's
+  // byte-verified documents. Zero or multiple identity matches stay blocked.
+  const partialMatches = documents.filter((document) =>
+    buildPartialSourceVerificationProvenance({
+      recordType,
+      sourceDocument: document,
+      fields,
+      verificationMethod: "HYBRID",
+      verifiedAt: new Date(0),
+    }).ok,
+  );
+  return partialMatches.length === 1 ? partialMatches[0] : null;
 }
 
 async function auditLink(userId: string, action: string, entityType: string, entityId: string, sourceDocumentId: string) {
@@ -81,7 +104,7 @@ async function remapExperts(companyId: string, userId: string, documents: Review
   });
   let linked = 0;
   for (const expert of experts) {
-    const match = findMatchingDocument(documents, expertReviewFields(expert));
+    const match = findMatchingDocument(documents, expertReviewFields(expert), "EXPERT");
     if (!match) continue;
     const updated = await prisma.expert.updateMany({
       where: { id: expert.id, companyId, sourceDocumentId: null },
@@ -101,7 +124,7 @@ async function remapProjects(companyId: string, userId: string, documents: Revie
   });
   let linked = 0;
   for (const project of projects) {
-    const match = findMatchingDocument(documents, projectReviewFields(project));
+    const match = findMatchingDocument(documents, projectReviewFields(project), "PROJECT");
     if (!match) continue;
     const updated = await prisma.project.updateMany({
       where: { id: project.id, companyId, sourceDocumentId: null },
@@ -121,7 +144,7 @@ async function remapLegalRecords(companyId: string, userId: string, documents: R
   });
   let linked = 0;
   for (const record of records) {
-    const match = findMatchingDocument(documents, legalReviewFields(record));
+    const match = findMatchingDocument(documents, legalReviewFields(record), "LEGAL");
     if (!match) continue;
     const updated = await prisma.legalRecord.updateMany({
       where: { id: record.id, companyId, sourceDocumentId: null },
@@ -141,7 +164,7 @@ async function remapFinancialRecords(companyId: string, userId: string, document
   });
   let linked = 0;
   for (const record of records) {
-    const match = findMatchingDocument(documents, financialReviewFields(record));
+    const match = findMatchingDocument(documents, financialReviewFields(record), "FINANCIAL");
     if (!match) continue;
     const updated = await prisma.financialRecord.updateMany({
       where: { id: record.id, companyId, sourceDocumentId: null },
@@ -161,7 +184,7 @@ async function remapComplianceRecords(companyId: string, userId: string, documen
   });
   let linked = 0;
   for (const record of records) {
-    const match = findMatchingDocument(documents, complianceReviewFields(record));
+    const match = findMatchingDocument(documents, complianceReviewFields(record), "COMPLIANCE");
     if (!match) continue;
     const updated = await prisma.companyComplianceRecord.updateMany({
       where: { id: record.id, companyId, sourceDocumentId: null },
@@ -178,10 +201,10 @@ async function remapComplianceRecords(companyId: string, userId: string, documen
 // sourceDocumentId (for example, records from an import that persisted the
 // company's own uploaded documents but never declared which one produced
 // each individual record) by searching the company's OWN already-uploaded,
-// byte-verified documents for one whose extracted text genuinely contains
-// every one of the record's claimed field values. No new document upload is
-// required or requested — this only completes the missing link between an
-// existing record and the evidence that was already uploaded for it.
+// byte-verified documents for one whose extracted text genuinely proves the
+// record identity (and records every additional field it proves). No new
+// document upload is required or requested — this only completes the missing
+// link between an existing record and evidence already uploaded for it.
 //
 // This never fabricates evidence: a record with no matching document is left
 // untouched (still a draft, still blocked from REVIEWED/SOURCE_VERIFIED).

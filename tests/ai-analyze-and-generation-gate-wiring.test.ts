@@ -102,8 +102,11 @@ describe("metadataContaminated blocks generation-readiness and generate route", 
 describe("bid strategy confidence cap under unapproved fallback (Part 12)", () => {
   const source = readFileSync("app/api/tenders/[id]/bid-strategy/route.ts", "utf8");
 
-  it("detects the analysis source and caps confidence when it's an unapproved fallback", () => {
-    assert.match(source, /detectAnalysisSourceWithApproval/);
+  it("uses canonical current analysis and caps confidence when it is unavailable", () => {
+    assert.match(source, /getTenderReleaseSnapshot/);
+    assert.match(source, /analysis\.state === "AI_SUCCEEDED"/);
+    assert.match(source, /analysis\.contentHashMatch/);
+    assert.match(source, /analysis\.canonicalJobId/);
     assert.match(source, /REGEX_FALLBACK_AI_ERROR|confidenceCapped/);
     assert.match(source, /FALLBACK_CONFIDENCE_CEILING/);
   });

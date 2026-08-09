@@ -18,7 +18,7 @@ import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../.
 import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
 import { countTraceable } from "../../../../../lib/engine/requirement-source-traceability";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
-import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import {
   VAULT_REVIEW_CONSUMER_SELECT,
@@ -170,7 +170,15 @@ export async function GET(
 
   const historicalTotal = pastTenders.length;
   const historicalWins = pastTenders.filter((t) => t.bidOutcome === "WON").length;
-  const analysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => "UNKNOWN" as const);
+  // Use the same durable, hash-bound authority shown by Analysis Quality and
+  // enforced by release gates. Legacy notes can describe an old AI run but
+  // cannot prove that the promoted result belongs to the current source set.
+  const releaseSnapshot = await getTenderReleaseSnapshot(prisma, id, actor.id).catch(() => null);
+  const analysisSource = releaseSnapshot?.analysis.state === "AI_SUCCEEDED"
+    && releaseSnapshot.analysis.contentHashMatch
+    && releaseSnapshot.analysis.canonicalJobId
+    ? "AI" as const
+    : "UNKNOWN" as const;
 
   // ── Bid Strategy extraction gate ─────────────────────────────────────────
   // Block bid strategy when extraction or analysis is unreliable. Bid strategy

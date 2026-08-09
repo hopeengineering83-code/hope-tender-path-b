@@ -22,6 +22,7 @@ import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 import { prisma, prismaReady } from "../lib/prisma";
 import { remapUnlinkedVaultSources } from "../lib/company-vault-source-remap";
+import { autoVerifyCompanyKnowledge } from "../lib/company-auto-verification";
 
 if (process.env.RUN_DB_INTEGRATION !== "true") {
   console.error("FATAL: RUN_DB_INTEGRATION=true is required for this test suite.");
@@ -70,6 +71,8 @@ describe("remapUnlinkedVaultSources — real PostgreSQL", () => {
   let financialRecordId: string;
   let complianceRecordId: string;
   let unmatchedExpertId: string;
+  let partialExpertId: string;
+  let partialProjectId: string;
 
   before(async () => {
     await prismaReady;
@@ -174,6 +177,50 @@ describe("remapUnlinkedVaultSources — real PostgreSQL", () => {
       },
     });
     unmatchedExpertId = unmatchedExpert.id;
+
+    // These mirror the deployed failure: imported records often contain
+    // inferred attributes that the original CV/project sheet does not print,
+    // while the record identity itself is present in the owned source bytes.
+    // The canonical verifier already supports this as narrow, partial
+    // SOURCE_VERIFIED provenance, so source rebinding must be able to reach it.
+    const partialDocumentText = [
+      "OWNED COMPANY CV AND PROJECT EXPERIENCE REGISTER",
+      "EXPERT: Partial Evidence Engineer",
+      "PROJECT: Partial Evidence Water Scheme",
+      "This source record is retained by the company as supporting evidence for tender matching.",
+    ].join("\n");
+    await prisma.companyDocument.create({
+      data: {
+        companyId,
+        fileName: "partial-owned-source.txt",
+        originalFileName: "partial-owned-source.txt",
+        mimeType: "text/plain",
+        size: Buffer.byteLength(partialDocumentText),
+        storagePath: "",
+        extractedText: partialDocumentText,
+        contentSha256: createHash("sha256").update(partialDocumentText).digest("hex"),
+        contentByteLength: Buffer.byteLength(partialDocumentText),
+        integrityStatus: "VERIFIED",
+      },
+    });
+    const partialExpert = await prisma.expert.create({
+      data: {
+        companyId,
+        fullName: "Partial Evidence Engineer",
+        title: "Inferred title absent from source",
+        trustLevel: "AI_DRAFT",
+      },
+    });
+    partialExpertId = partialExpert.id;
+    const partialProject = await prisma.project.create({
+      data: {
+        companyId,
+        name: "Partial Evidence Water Scheme",
+        clientName: "Inferred client absent from source",
+        trustLevel: "AI_DRAFT",
+      },
+    });
+    partialProjectId = partialProject.id;
   });
 
   after(async () => {
@@ -189,8 +236,8 @@ describe("remapUnlinkedVaultSources — real PostgreSQL", () => {
 
   it("links every draft whose exact field values genuinely appear in an already-uploaded document", async () => {
     const result = await remapUnlinkedVaultSources(companyId);
-    assert.equal(result.expertsLinked, 1);
-    assert.equal(result.projectsLinked, 1);
+    assert.equal(result.expertsLinked, 2);
+    assert.equal(result.projectsLinked, 2);
     assert.equal(result.legalRecordsLinked, 1);
     assert.equal(result.financialRecordsLinked, 1);
     assert.equal(result.complianceRecordsLinked, 1);
@@ -201,6 +248,19 @@ describe("remapUnlinkedVaultSources — real PostgreSQL", () => {
 
     const project = await prisma.project.findUnique({ where: { id: projectId } });
     assert.equal(project?.sourceDocumentId, documentId);
+
+    const partialExpert = await prisma.expert.findUnique({ where: { id: partialExpertId } });
+    assert.ok(partialExpert?.sourceDocumentId, "identity-grounded expert must reach partial verification");
+    const partialProject = await prisma.project.findUnique({ where: { id: partialProjectId } });
+    assert.ok(partialProject?.sourceDocumentId, "identity-grounded project must reach partial verification");
+
+    const verification = await autoVerifyCompanyKnowledge(companyId);
+    assert.equal(verification.expertsVerified, 2);
+    assert.equal(verification.projectsVerified, 2);
+    const verifiedExpert = await prisma.expert.findUnique({ where: { id: partialExpertId } });
+    const verifiedProject = await prisma.project.findUnique({ where: { id: partialProjectId } });
+    assert.equal(verifiedExpert?.trustLevel, "SOURCE_VERIFIED");
+    assert.equal(verifiedProject?.trustLevel, "SOURCE_VERIFIED");
 
     const legalRecord = await prisma.legalRecord.findUnique({ where: { id: legalRecordId } });
     assert.equal(legalRecord?.sourceDocumentId, documentId);
@@ -230,6 +290,6 @@ describe("remapUnlinkedVaultSources — real PostgreSQL", () => {
     const logs = await prisma.auditLog.findMany({
       where: { userId, action: { in: ["EXPERT_SOURCE_REMAPPED", "PROJECT_SOURCE_REMAPPED", "LEGAL_RECORD_SOURCE_REMAPPED", "FINANCIAL_RECORD_SOURCE_REMAPPED", "COMPLIANCE_RECORD_SOURCE_REMAPPED"] } },
     });
-    assert.equal(logs.length, 5);
+    assert.equal(logs.length, 7);
   });
 });

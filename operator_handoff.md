@@ -74,6 +74,18 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-09 19:35 UTC — Codex (GPT-5.6 Sol), post-Engine Vault transition and Bid Strategy authority
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175.
+- **Scope / files:** Fixed the first reproduced post-Engine transition in `lib/company-vault-source-remap.ts`; made `app/api/tenders/[id]/bid-strategy/route.ts` consume `getTenderReleaseSnapshot`; removed the misleading normal-path “Confirm evidence coverage” wording in `lib/engine/canonical-workflow-decision.ts`; updated three focused existing tests plus this handoff.
+- **Real PostgreSQL reproduction:** A byte-verified owned CompanyDocument contained the exact expert/project identity but not AI-inferred secondary fields. Before the fix `remapUnlinkedVaultSources` returned 1 instead of 2 for both experts and projects, leaving the identity-grounded rows unbound and therefore unreachable by the existing partial SOURCE_VERIFIED verifier.
+- **Fix / safety:** Full-field matching remains preferred. When that fails, remap uses the canonical partial source-verification predicate and binds only when exactly one owned, byte-verified document proves the record identity. Zero or ambiguous matches remain untouched. The following canonical verifier promotes the bound identity only, records unverified fields, never fabricates REVIEWED metadata, and repeated remap remains idempotent. Bid Strategy now accepts only promoted `AI_SUCCEEDED` plus matching canonical content hash and canonical job ID, exactly like Analysis Quality/release gates; stale/fallback/missing states remain blocked.
+- **Tests:** Focused PostgreSQL/relevant set — 33/33 passed; typecheck passed; lint passed with one pre-existing unused-disable warning; production build passed with an explicit test-only provider placeholder and local PostgreSQL. Full `RUN_DB_INTEGRATION=true npm test` passed: 9,773/9,773, 0 failed.
+- **CI / deployment:** Not pushed yet at entry time. No merge, approval, force-push, rebase, base change, manual Preview request, or Production deployment.
+- **Known limitation / remaining proof:** The focused database coverage proves owned-byte remap → SOURCE_VERIFIED, source-less blocking, idempotent remap, current-analysis Bid Strategy agreement, worker handoff, AUTO_FINALIZE retry/PDF, and ZIP assembly across the relevant executed suites. It does not yet constitute one monolithic provider-backed test executing AI Analyze through final ZIP; no live provider credential was available locally.
+- **Next action:** Push the bounded commit, require exact-head CI, and inspect only the automatically created Preview for the five truthful Vault states.
+- **Merge status:** Not reviewed; not merged.
+
 ### 2026-08-09 19:20 UTC — Codex (GPT-5.6 Sol), PR #1175 bounded-review verification
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175.
