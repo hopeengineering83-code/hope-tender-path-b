@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-09 16:19 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
+- **Scope / files:** Run Engine worker handoff only: `app/api/tenders/[id]/engine/route.ts`, new `lib/ai-jobs/request-scoped-engine-worker-wake.ts`, new `tests/engine-worker-handoff.test.ts`, and this handoff entry.
+- **Fix:** After the authenticated manual route durably enqueues or reuses a claimable `ENGINE_RUN`, it schedules exactly one authenticated, tender-scoped server wake of the existing `run-next` worker. RUNNING jobs are not woken; failed wakes leave persisted state unchanged for recovery.
+- **Tests:** `npx tsx --test tests/engine-worker-handoff.test.ts` — 1 passed; `npx prisma generate` — passed without tracked generated output; `npm run typecheck` — passed.
+- **CI / deployment:** Existing PR #1175 head checks were green before this change. New exact-head CI not yet run. No merge, approval, or production deployment performed.
+- **Risks / assumptions:** Wake delivery is best-effort through Next.js `after()`; durability remains in the `AiJob` row. The tender-scoped worker filter prevents another queued Engine job for the same user from consuming this wake.
+- **Next action:** Push this commit directly to PR #1175 and review its exact-head CI.
+- **Merge status:** Not reviewed; not merged.
+
 ### 2026-08-08 18:05 UTC — Claude Code
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, head `a72071be`. Audit passes 5–6; one confirmed open gap recorded, no code change in this entry.

@@ -11,6 +11,7 @@ import { prepareCompanyVaultForEngine } from "../../../../../lib/engine/prepare-
 import { enqueueEngineJobForCurrentSources } from "../../../../../lib/engine/enqueue-engine-job";
 import { selectCanonicalTenderFiles } from "../../../../../lib/tender/canonical-source-files";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
+import { scheduleRequestScopedEngineWorkerWake } from "../../../../../lib/ai-jobs/request-scoped-engine-worker-wake";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -253,6 +254,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       reusedActiveJob: enqueueResult.reusedActiveJob,
       companyId: vaultPreflight.companyId,
     });
+
+    // Manual authority ends at durable enqueue. The server, not the browser,
+    // immediately wakes the existing worker; atomic claim logic still owns the
+    // QUEUED -> RUNNING transition. A rejected wake does not mutate the row.
+    if (enqueueResult.status === "QUEUED") {
+      scheduleRequestScopedEngineWorkerWake(req, id);
+    }
 
     return NextResponse.json({
       jobId: enqueueResult.id,
