@@ -1047,3 +1047,5 @@ Never claim a fix is complete unless the stated tests passed.
 - **Risks / blockers:** full PostgreSQL suite, build, authenticated Playwright, exact-SHA Preview golden path/runtime logs, and artifact validation remain unverified until exact-head CI/Preview completes. Owner-only Production UAT, credential rotation, backup/restore, rollback, merge, and Production deploy remain explicitly outstanding.
 - **Next action:** push the focused commit, require exact-head CI green, then inspect only its automatically generated exact-SHA Preview and logs; do not merge.
 - **Merge status:** DO NOT MERGE — draft; no Production deployment performed.
+
+Follow-up exact-head CI exposed legitimate test-suite contention: another real global worker can atomically win the focused job before its injected wake callback. The regression now accepts either claimant only when the same durable job is already `RUNNING`, then completes and verifies the single job; it still fails if no worker claimed it. No production behavior changed.
