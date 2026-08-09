@@ -110,7 +110,7 @@ test("derive: SUCCEEDED with all chunks succeeded → AI_SUCCEEDED", () => {
   assert.equal(canExportWithAnalysisState(d.state), true);
 });
 
-test("failed and fallback next actions require re-running AI Analyze while AI_SUCCEEDED directs Run Engine", () => {
+test("non-current analysis next actions require re-running AI Analyze while AI_SUCCEEDED directs Run Engine", () => {
   const succeeded = deriveAnalysisStateDetail(makeInput({
     job: makeJob({ status: "SUCCEEDED", promotedAt: new Date() }),
     chunks: [chunk("SUCCEEDED")],
@@ -131,6 +131,12 @@ test("failed and fallback next actions require re-running AI Analyze while AI_SU
   const failed = deriveAnalysisStateDetail(makeInput({
     job: makeJob({ status: "FAILED" }),
   }));
+  const unstructured = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({ status: "SUCCEEDED", promotedAt: new Date() }),
+    chunks: [chunk("SUCCEEDED")],
+    sectionsDetectedButNoRequirements: true,
+    requirementsExtracted: 0,
+  }));
 
   assert.equal(succeeded.state, "AI_SUCCEEDED");
   assert.match(succeeded.nextAction, /Run Engine/i);
@@ -142,6 +148,9 @@ test("failed and fallback next actions require re-running AI Analyze while AI_SU
   assert.equal(failed.state, "FAILED");
   assert.match(failed.nextAction, /Re-run AI Analyze/i);
   assert.doesNotMatch(failed.nextAction, /manual entry/i);
+  assert.equal(unstructured.state, "SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED");
+  assert.match(unstructured.nextAction, /Re-run AI Analyze/i);
+  assert.doesNotMatch(unstructured.nextAction, /manually add requirements|manual requirement/i);
 });
 
 test("derive: SUCCEEDED single-shot with zero chunks → AI_SUCCEEDED only after promotion", () => {

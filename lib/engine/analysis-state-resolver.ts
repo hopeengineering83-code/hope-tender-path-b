@@ -289,7 +289,7 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     FAILED: "Analysis failed. Check provider status and re-run AI Analyze before Run Engine.",
     SUPERSEDED: "This analysis was replaced by a newer run. Review the latest analysis.",
     SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED:
-      "Tender sections detected but no structured requirements found. Retry AI extraction or manually add requirements.",
+      "Tender sections were detected but structured requirements are missing. Resolve the extraction issue and re-run AI Analyze before Run Engine.",
   };
 
   // ─── Safe diagnostic summary (no secrets, no raw errors) ─────────────────
