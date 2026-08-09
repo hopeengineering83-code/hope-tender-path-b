@@ -176,7 +176,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         // generic "failed" message. These fields give the panel everything
         // it needs to show actionable guidance.
         primaryBlockerReason: (() => {
-          if (!submissionPlanBuilt) return "No confirmed Build Plan. Build and confirm the submission plan first.";
+          if (!submissionPlanBuilt) return "No confirmed Build Plan for this revision. Run Engine creates and source-verifies it.";
           const ungenerated = finalPackage.documents.missingRequired.length;
           if (ungenerated > 0) return `${ungenerated} required document(s) are planned but not generated.`;
           if (finalPackageDocumentBlockers > 0) return `${finalPackageDocumentBlockers} document blocker(s) remain.`;

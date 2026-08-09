@@ -185,7 +185,12 @@ export function buildCanonicalWorkflowDecision(input: {
   const requirementsOK = analysisOK && input.criticalTenderDetailsValid && input.requirementsTrusted;
   if (requirementsOK && !input.confirmedBuildPlanExists) {
     blockerCodes.push("NO_CONFIRMED_BUILD_PLAN");
-    blockerDetails.push("No current confirmed Build Plan. Build and confirm the submission plan.");
+    // Run Engine creates and source-verifies the Build Plan (the ENGINE_RUN
+    // handler calls buildAndVerifyBuildPlan). Naming a manual "build and
+    // confirm" step invented a third required action, and contradicted the
+    // very next blocker below, which correctly says "Run Engine to link
+    // evidence".
+    blockerDetails.push("No current confirmed Build Plan for this revision. Run Engine creates and source-verifies it.");
   }
 
   // ── Priority 9: Mandatory no compliance rows ─────────────────────────
