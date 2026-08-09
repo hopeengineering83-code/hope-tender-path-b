@@ -587,12 +587,11 @@ async function runPdfFinalization(
     exactFileOrder: tender.exactFileOrder,
   });
 
-  // Get the list of required PDF names from exactFileNaming.
-  const requiredPdfNames = (tender.exactFileNaming ?? "")
-    .split(/[;,\n]/)
-    .map((s) => s.trim())
-    .filter((s) => s.toLowerCase().endsWith(".pdf"))
-    .filter(Boolean);
+  // Reuse the canonical format parser so JSON-array storage (the normal
+  // analysis representation) and legacy plain-text lists resolve identically.
+  const requiredPdfNames = policy.perFile
+    .filter((entry) => entry.format === "pdf")
+    .map((entry) => entry.exactFileName);
 
   if (requiredPdfNames.length === 0 && !policy.requiresPdf) {
     return { finalized: 0, skipped: 0, failed: 0 };
@@ -727,4 +726,3 @@ async function runPdfFinalization(
 
   return { finalized, skipped, failed };
 }
-

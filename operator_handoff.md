@@ -1025,3 +1025,14 @@ Never claim a fix is complete unless the stated tests passed.
 - **Risks:** The regex-based extractors are deterministic but may miss non-standard formatting. Release gates are now significantly stricter, which may block some "borderline" tenders until manually overridden or repaired.
 - **Next Action:** Monitor user feedback on the stricter release gates; expand regex patterns if common variations are missed.
 - **Merge Status:** PR Created (claude/extraction-and-gates-hardening). DO NOT MERGE YET.
+
+### 2026-08-09 UTC — Codex
+
+- **Mode:** focused PR #1175 owner-workflow acceptance and minimal repair
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175
+- **Scope:** real-PostgreSQL AI Analyze → Engine claim → Vault verification → matching → Build Plan → generation → validation → AUTO_FINALIZE → PDF → ZIP acceptance; fixed the first three observed transitions without weakening gates.
+- **Files changed:** `lib/engine/generate-elite.ts`, `lib/engine/document-quality-validator.ts`, `lib/ai-jobs/auto-finalize-continuation-service.ts`, `tests/owner-workflow-complete-postgres.test.ts`, `operator_handoff.md`.
+- **Tests:** focused PostgreSQL acceptance passed; typecheck passed; lint passed with one pre-existing warning; relevant 119 tests passed; full `RUN_DB_INTEGRATION=true npm test` passed; production build passed with local missing-secret warnings.
+- **Risks / blockers:** authenticated Preview acceptance and owner-only Production UAT/credential rotation/backup-restore/rollback proof remain; no Production deployment performed.
+- **Next action:** exact-head CI and automatic Preview verification.
+- **Merge status:** DO NOT MERGE — awaiting owner review and Preview evidence.

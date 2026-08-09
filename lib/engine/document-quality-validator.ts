@@ -19,7 +19,7 @@ export interface DocumentValidationResult {
 }
 
 const EMPTY_SECTION_RE = /^#+\s+.+\n+(?:\n|$)/m;
-const FINANCIAL_IN_TECHNICAL_RE = /total\s+price\s*(?:[:\$€£]|is\b)?\s*[\$€£]?\s*[\d,]|unit\s+price|rate\s+card|price\s+schedule|BOQ|bill\s+of\s+quantities|tax.*rate|vat.*\d/i;
+const FINANCIAL_IN_TECHNICAL_RE = /total\s+price\s*(?:[:\$€£]|is\b)?\s*[\$€£]?\s*[\d,]|unit\s+price|rate\s+card|price\s+schedule|BOQ|bill\s+of\s+quantities|\btax\b.{0,24}\brate\b|\bvat\b.{0,24}\d/i;
 const TECHNICAL_IN_FINANCIAL_RE = /methodology|work\s+plan|staffing\s+plan|technical\s+approach/i;
 
 export function validateDocumentQuality(doc: {

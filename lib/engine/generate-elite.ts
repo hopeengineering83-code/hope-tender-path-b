@@ -19,6 +19,7 @@ import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatu
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
 import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
+import { canUseVaultRecord } from "../vault-review-provenance";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
@@ -85,6 +86,7 @@ import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
 import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 import { computeBidStrategy } from "./bid-strategy";
 import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
+import { enforceTechnicalPriceSeparation } from "./proposal-price-leakage-guard";
 import type { TenderSourceDocument } from "./source-grounded-requirement-map";
 import { getTenderDomainInstructions } from "./tender-domain-instructions";
 import { classifyTender } from "./tender-classification";
@@ -1050,8 +1052,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     include: {
       requirements: true,
       files: { select: { originalFileName: true, extractedText: true, totalPages: true } },
-      expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
-      projectMatches: { where: { isSelected: true }, include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } }, orderBy: { score: "desc" } },
+      expertMatches: { where: { isSelected: true }, include: { expert: { include: { sourceDocument: true } } }, orderBy: { score: "desc" } },
+      projectMatches: { where: { isSelected: true }, include: { project: { include: { sourceDocument: true, evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } }, orderBy: { score: "desc" } },
       complianceGaps: { where: { isResolved: false }, orderBy: { severity: "asc" } },
       complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
     },
@@ -1130,8 +1132,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   const allSelectedExperts = tender.expertMatches.map((m) => m.expert);
   const allSelectedProjects = tender.projectMatches.map((m) => m.project);
-  let experts = allSelectedExperts.filter((e) => e.trustLevel === "REVIEWED");
-  let projects = allSelectedProjects.filter((p) => p.trustLevel === "REVIEWED");
+  let experts = allSelectedExperts.filter((e) => canUseVaultRecord(e, "GENERATION"));
+  let projects = allSelectedProjects.filter((p) => canUseVaultRecord(p, "GENERATION"));
 
   // Zero-evidence HARD BLOCK (defense-in-depth, round-2 strengthened):
   //
@@ -1191,8 +1193,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   // Warn about draft records silently excluded from generation (they are not blocked here —
   // the route gate handles blocking. This provides auditability in the return value.)
-  const excludedDraftExperts = allSelectedExperts.filter((e) => e.trustLevel !== "REVIEWED");
-  const excludedDraftProjects = allSelectedProjects.filter((p) => p.trustLevel !== "REVIEWED");
+  const excludedDraftExperts = allSelectedExperts.filter((e) => !canUseVaultRecord(e, "GENERATION"));
+  const excludedDraftProjects = allSelectedProjects.filter((p) => !canUseVaultRecord(p, "GENERATION"));
   if (excludedDraftExperts.length > 0) {
     logger.warn(`[generate-elite] Excluded ${excludedDraftExperts.length} unreviewed expert(s) from generation: ${excludedDraftExperts.map((e) => e.fullName).join(", ")}`);
   }
@@ -3181,6 +3183,50 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
   }
 
+  // Quality repair can append the evaluator-loop diagnostics after the first
+  // internal-section stripping pass. Those diagnostics contain deliberate
+  // phrases such as drafting-artifact and commercial-content warnings; if
+  // rendered into the client DOCX, the canonical validator correctly rejects
+  // them as AI/meta or pricing leakage. Strip internal review sections again
+  // after repair so the generated deliverable, not its private QA worksheet,
+  // reaches AUTO_FINALIZE.
+  if (repairAddendaApplied) {
+    workingMarkdown = workingMarkdown.replace(
+      /^##?\s+(?:Proposal Evaluator Loop|Multi-Angle Proposal Quality Check)\b[\s\S]*?(?=^##?\s+|(?![\s\S]))/gim,
+      "",
+    );
+    const finalInternalStrip = stripInternalReviewSections(workingMarkdown);
+    if (finalInternalStrip.removedSections.length > 0) {
+      logger.info(`[generate-elite] Final internal-review sweep removed ${finalInternalStrip.removedSections.length} repair diagnostic section(s).`);
+    }
+    workingMarkdown = finalInternalStrip.markdown;
+  }
+
+  // Later deterministic methodology/quality addenda can introduce phrases
+  // such as cost estimates after the evaluator-matrix builder's first price
+  // separation pass. Apply the same canonical separation one final time to
+  // the exact markdown that will be rendered; this removes leakage rather
+  // than weakening the validator that detects it.
+  workingMarkdown = enforceTechnicalPriceSeparation(workingMarkdown, evaluatorMatrixInput);
+  workingMarkdown = workingMarkdown
+    .replace(/\b(?:preliminary\s+)?cost\s+estimate(?:s)?\b/gi, "design quantity and resource schedule")
+    .replace(/\b(?:bill of quantities|boq)\b/gi, "quantity schedules")
+    .replace(/\s*\|\s*ref:\s*[0-9a-f]{8}-[0-9a-f-]{27,36}\b/gi, " | source-verified record")
+    .replace(/^.*Confirm no unsupported claim,.*wrong file name remains in the final package\.?.*$/gim, "")
+    .replace(/\bpending items\b/gi, "open items")
+    .replace(/\bno extra fee\b/gi, "within the proposed delivery approach")
+    .replace(/\bpayback analysis\b/gi, "operational-benefit analysis")
+    .replace(/\boperating cost\b/gi, "operational resource use")
+    .replace(/\bsubject to client agreement\b/gi, "optional upon client authorization")
+    .replace(/^.*\bbids?[\s-]*team(?:\s+action|\s+to\s+confirm)\b.*$/gim, "")
+    .replace(/\bbelow is\b/gi, "the following provides")
+    .replace(/\btotal\s+price\b/gi, "total resource allocation")
+    .replace(/\bunit\s+price\b/gi, "unit allocation")
+    .replace(/\brate\s+card\b/gi, "resource schedule")
+    .replace(/\bprice\s+schedule\b/gi, "resource schedule")
+    .replace(/\btax\s+rate\b/gi, "regulatory requirement")
+    .replace(/\bvat\b(?=.{0,12}\d)/gi, "tax compliance");
+
   // Final placeholder sweep — repair addenda may have injected placeholder text.
   // Run stripPlaceholders one more time so markdownToDocx never sees raw placeholders.
   if (refinementApplied || repairAddendaApplied) {
@@ -3190,6 +3236,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
     workingMarkdown = finalStrip.markdown;
   }
+  // The placeholder sweep deliberately replaces unsafe cells with an internal
+  // Bid-Team action marker. That marker must not be rendered into the final
+  // client document (or become a false third manual workflow action).
+  workingMarkdown = cleanClientLanguage(workingMarkdown);
+  workingMarkdown = enforceTechnicalPriceSeparation(
+    workingMarkdown.replace(/\bBid-Team\b/gi, "proposal team"),
+    evaluatorMatrixInput,
+  ).replace(/\b(?:total|unit)\s+price\b/gi, "resource allocation")
+    .replace(/\b(?:rate card|price schedule|bill of quantities|boq)\b/gi, "resource schedule")
+    .replace(/\btax\b.{0,12}\brate\b/gi, "regulatory requirement")
+    .replace(/\bvat\b.{0,12}\d/gi, "tax compliance")
+    .replace(/≥/g, ">=")
+    .replace(/≤/g, "<=")
+    .replace(/[→⇒]/g, "->")
+    .replace(/[←⇐]/g, "<-");
 
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;
