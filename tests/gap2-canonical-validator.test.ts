@@ -33,8 +33,26 @@ describe("Gap 2 — canonical Document Validator is the single VALIDATED authori
   });
 
   it("collects failed documentIds from the readiness result", () => {
-    assert.match(service, /readiness\.failures\.map/);
+    assert.match(service, /readiness\.failures/);
+    assert.match(service, /\.map\(\(f\) => f\.documentId\)/);
     assert.match(service, /failedDocIds/);
+  });
+
+  it("excludes only circular workflow reasons, never real rejections", () => {
+    // The failed set is built from readiness.failures, but two of those reasons
+    // are not rejections: "reviewStatus is ..." is a review-workflow state, and
+    // "validationStatus is ..." is the very field this function decides, so
+    // using it as evidence is circular. Counting them downgraded freshly
+    // finalized, byte-verified documents to FAILED.
+    //
+    // This pins the narrowing itself: content and integrity reasons — the ones
+    // that matter — must still land a document in the failed set.
+    assert.match(service, /isReviewWorkflowReason/);
+    assert.match(service, /\^reviewStatus is /);
+    assert.match(service, /\^validationStatus is /);
+    // A document is failed when it has ANY reason that is not one of those two
+    // workflow reasons, so every content and integrity rejection still counts.
+    assert.match(service, /some\(\(reason\) => !isReviewWorkflowReason\(reason\)\)/);
   });
 
   it("persists VALIDATED only for documents NOT in the failed set", () => {
