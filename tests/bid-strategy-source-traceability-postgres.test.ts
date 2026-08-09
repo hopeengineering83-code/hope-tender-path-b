@@ -1,0 +1,144 @@
+import assert from "node:assert/strict";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
+import { after, before, test } from "node:test";
+import { countTraceable } from "../lib/engine/requirement-source-traceability";
+import { prisma, prismaReady } from "../lib/prisma";
+
+if (process.env.RUN_DB_INTEGRATION !== "true") {
+  throw new Error("RUN_DB_INTEGRATION=true is required for the Bid Strategy traceability regression");
+}
+
+let sessionCookie: string | undefined;
+const Module = require("module");
+const originalResolve = Module._resolveFilename;
+const nextHeadersMockPath = "__bid_strategy_traceability_next_headers_mock__";
+Module._resolveFilename = function (request: string, ...args: unknown[]) {
+  if (request === "next/headers") return nextHeadersMockPath;
+  return originalResolve.call(this, request, ...args);
+};
+require.cache[nextHeadersMockPath] = {
+  id: nextHeadersMockPath,
+  filename: nextHeadersMockPath,
+  loaded: true,
+  exports: {
+    cookies: async () => ({
+      get: (name: string) => name === "hope_session" && sessionCookie
+        ? { name, value: sessionCookie }
+        : undefined,
+    }),
+  },
+} as unknown as NodeModule;
+
+const createdUserIds: string[] = [];
+
+function sessionSecret(): string {
+  const secret = process.env.SESSION_SECRET ?? process.env.AUTH_SECRET;
+  if (!secret || secret.length < 32) throw new Error("A test session secret of at least 32 characters is required");
+  return secret;
+}
+
+async function authenticate(userId: string): Promise<void> {
+  const expiresAt = new Date(Date.now() + 60_000);
+  const payload = {
+    userId,
+    exp: Math.floor(expiresAt.getTime() / 1000),
+    nonce: randomBytes(24).toString("base64url"),
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", sessionSecret()).update(encoded).digest("base64url");
+  sessionCookie = `${encoded}.${signature}`;
+  await prisma.session.create({
+    data: {
+      token: createHash("sha256").update(sessionCookie).digest("hex"),
+      userId,
+      expiresAt,
+    },
+  });
+}
+
+before(async () => {
+  await prismaReady;
+});
+
+after(async () => {
+  sessionCookie = undefined;
+  if (createdUserIds.length > 0) {
+    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+  }
+  Module._resolveFilename = originalResolve;
+  delete require.cache[nextHeadersMockPath];
+});
+
+test("Bid Strategy counts persisted file/page/quote provenance when sourceConfidence is zero", async () => {
+  const suffix = randomUUID();
+  const user = await prisma.user.create({
+    data: {
+      email: `bid-strategy-traceability-${suffix}@example.test`,
+      name: "Bid Strategy Traceability Test",
+      passwordHash: "unused",
+      role: "PROPOSAL_MANAGER",
+    },
+  });
+  createdUserIds.push(user.id);
+  await prisma.company.create({ data: { userId: user.id, name: "Traceable Bid Company" } });
+  const tender = await prisma.tender.create({
+    data: {
+      userId: user.id,
+      title: "Traceable Bid Strategy Tender",
+      notes: "Analysis source: AI.",
+      status: "AI_ANALYZED",
+      analysisExtractionStatus: "FULL_EXTRACTION_AI_ANALYZED",
+    },
+  });
+  const source = await prisma.tenderFile.create({
+    data: {
+      tenderId: tender.id,
+      fileName: "traceable-tender.pdf",
+      originalFileName: "traceable-tender.pdf",
+      mimeType: "application/pdf",
+      size: 256,
+      extractedText: "The bidder shall provide a signed technical methodology.",
+      totalPages: 1,
+      extractedPages: 1,
+      extractionScore: 100,
+      integrityStatus: "VERIFIED",
+    },
+  });
+  await prisma.tenderRequirement.create({
+    data: {
+      tenderId: tender.id,
+      title: "Signed technical methodology",
+      description: "Provide a signed technical methodology.",
+      requirementType: "DOCUMENT",
+      priority: "MANDATORY",
+      sourceTenderFileId: source.id,
+      sourcePageNumber: 1,
+      sourceExactQuote: "The bidder shall provide a signed technical methodology.",
+      sectionReference: "Technical Requirements",
+      sourceConfidence: 0,
+    },
+  });
+  const persistedRequirements = await prisma.tenderRequirement.findMany({
+    where: { tenderId: tender.id },
+    select: {
+      sourceTenderFileId: true,
+      sourcePageNumber: true,
+      sourceExactQuote: true,
+      sectionReference: true,
+      sourceConfidence: true,
+    },
+  });
+  assert.equal(persistedRequirements[0]?.sourceConfidence, 0);
+  assert.equal(countTraceable(persistedRequirements), 1);
+  await authenticate(user.id);
+
+  const route = await import("../app/api/tenders/[id]/bid-strategy/route");
+  const response = await route.GET(new Request(`http://localhost/api/tenders/${tender.id}/bid-strategy`), {
+    params: Promise.resolve({ id: tender.id }),
+  });
+  const body = await response.json() as { blockers?: string[]; sourceRefCount?: number };
+
+  assert.equal(body.sourceRefCount, undefined, "successful Bid Strategy responses do not expose blocker diagnostics");
+  assert.ok(!(body.blockers ?? []).includes("Extracted requirements have no source traceability."));
+  assert.equal(response.status, 200);
+});
