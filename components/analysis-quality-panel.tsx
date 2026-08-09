@@ -2,17 +2,43 @@ import Link from "next/link";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { assessTenderAnalysisQuality } from "../lib/analysis-quality";
-import { detectAnalysisSourceWithApproval } from "../lib/engine/analysis-source";
 import { inferSector } from "../lib/engine/proposal-intelligence";
 import { getEffectiveTenderFacts } from "../lib/engine/effective-tender-facts";
-import { getTenderReleaseSnapshot } from "../lib/engine/tender-release-snapshot";
+import { getTenderReleaseSnapshot, type SnapshotAnalysisState } from "../lib/engine/tender-release-snapshot";
 import { assessCanonicalTenderSourceReadiness } from "../lib/tender/canonical-source-files";
 
-function analysisSourceSummary(source: Awaited<ReturnType<typeof detectAnalysisSourceWithApproval>>) {
-  if (source === "AI") return { label: "AI", risk: "LOW" as const, detail: "Analysis produced by an AI provider." };
-  if (source === "HUMAN_APPROVED_REGEX_FALLBACK") return { label: "Regex fallback", risk: "MEDIUM" as const, detail: "Draft-only fallback; not final-export authority." };
-  if (source === "REGEX_FALLBACK_AI_ERROR") return { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed and regex extraction was used." };
-  return { label: "Not current", risk: "MEDIUM" as const, detail: "Run AI Analyze manually after canonical extraction is ready." };
+export function resolveCanonicalAnalysisPresentation(analysis: SnapshotAnalysisState | null | undefined) {
+  const current = Boolean(
+    analysis?.state === "AI_SUCCEEDED"
+    && analysis.contentHashMatch
+    && analysis.canonicalJobId,
+  );
+  if (current) {
+    return {
+      current,
+      rawSource: "AI" as const,
+      source: { label: "AI", risk: "LOW" as const, detail: "Current promoted AI analysis matches the canonical tender source." },
+    };
+  }
+  if (analysis?.state === "HUMAN_APPROVED_FALLBACK") {
+    return {
+      current,
+      rawSource: "HUMAN_APPROVED_REGEX_FALLBACK" as const,
+      source: { label: "Regex fallback", risk: "MEDIUM" as const, detail: "Draft-only fallback; not final-export authority." },
+    };
+  }
+  if (analysis?.state === "REGEX_FALLBACK_UNAPPROVED") {
+    return {
+      current,
+      rawSource: "REGEX_FALLBACK_AI_ERROR" as const,
+      source: { label: "Regex fallback", risk: "HIGH" as const, detail: "AI providers failed and regex extraction was used." },
+    };
+  }
+  return {
+    current,
+    rawSource: "UNKNOWN" as const,
+    source: { label: "Not current", risk: "MEDIUM" as const, detail: "Run AI Analyze manually after canonical extraction is ready." },
+  };
 }
 
 function isUntrustedStatus(status?: string | null) {
@@ -64,10 +90,9 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   const extractedChars = canonicalFiles.reduce((total, file) => total + (file.extractedText?.length ?? 0), 0);
   const totalPageCount = canonicalFiles.reduce((total, file) => total + (file.totalPages ?? 0), 0);
 
-  const [rawSource, effectiveFacts] = await Promise.all([
-    detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const),
-    getEffectiveTenderFacts(prisma, tenderId, userId).catch(() => null),
-  ]);
+  const effectiveFacts = await getEffectiveTenderFacts(prisma, tenderId, userId).catch(() => null);
+  const canonicalAnalysis = resolveCanonicalAnalysisPresentation(snapshot?.analysis);
+  const { current: analysisCurrent, rawSource, source } = canonicalAnalysis;
 
   const quality = assessTenderAnalysisQuality({
     requirements: tender.requirements,
@@ -94,14 +119,8 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     analysisSource: rawSource,
   });
 
-  const source = analysisSourceSummary(rawSource);
-  const analysisCurrent = Boolean(
-    snapshot?.analysis.state === "AI_SUCCEEDED"
-    && snapshot.analysis.contentHashMatch
-    && snapshot.analysis.canonicalJobId,
-  );
   const canonicalExtractionReady = sourceReadiness.analysisReady;
-  const fallbackOnly = quality.isRegexFallback || rawSource !== "AI" || isUntrustedStatus(tender.analysisExtractionStatus);
+  const fallbackOnly = quality.isRegexFallback || !analysisCurrent || isUntrustedStatus(tender.analysisExtractionStatus);
   const ready = analysisCurrent
     && canonicalExtractionReady
     && !fallbackOnly
