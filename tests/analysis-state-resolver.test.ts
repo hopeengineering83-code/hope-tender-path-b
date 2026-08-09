@@ -110,14 +110,32 @@ test("derive: SUCCEEDED with all chunks succeeded → AI_SUCCEEDED", () => {
   assert.equal(canExportWithAnalysisState(d.state), true);
 });
 
-test("AI_SUCCEEDED directs the user to Run Engine, not a manual Submission Plan step", () => {
-  const d = deriveAnalysisStateDetail(makeInput({
+test("fallback next actions require re-running AI Analyze while AI_SUCCEEDED directs Run Engine", () => {
+  const succeeded = deriveAnalysisStateDetail(makeInput({
     job: makeJob({ status: "SUCCEEDED", promotedAt: new Date() }),
     chunks: [chunk("SUCCEEDED")],
   }));
-  assert.equal(d.state, "AI_SUCCEEDED");
-  assert.match(d.nextAction, /Run Engine/i);
-  assert.doesNotMatch(d.nextAction, /Build|Confirm.*Submission Plan|Submission Plan/i);
+  const fallback = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({
+      status: "FAILED",
+      stagedMergedResult: JSON.stringify({ analysisSource: "FALLBACK_DRAFT" }),
+    }),
+  }));
+  const reviewedFallback = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({
+      status: "FAILED",
+      stagedMergedResult: JSON.stringify({ analysisSource: "FALLBACK_DRAFT" }),
+      promotedAt: new Date(),
+    }),
+  }));
+
+  assert.equal(succeeded.state, "AI_SUCCEEDED");
+  assert.match(succeeded.nextAction, /Run Engine/i);
+  for (const result of [fallback, reviewedFallback]) {
+    assert.match(result.nextAction, /Re-run AI Analyze/i);
+    assert.doesNotMatch(result.nextAction, /Review and approve|Proceed with caution/i);
+  }
+  assert.match(reviewedFallback.nextAction, /audit only/i);
 });
 
 test("derive: SUCCEEDED single-shot with zero chunks → AI_SUCCEEDED only after promotion", () => {

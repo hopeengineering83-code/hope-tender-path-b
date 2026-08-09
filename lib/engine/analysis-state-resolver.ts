@@ -284,8 +284,8 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     AI_SUCCEEDED: "Analysis complete. Run Engine to continue automatic processing.",
     PARTIAL_NEEDS_RESUME: `Resume Analysis: ${succeededChunks}/${totalChunks} chunks done. Click Resume to complete.`,
     REGEX_FALLBACK_UNAPPROVED:
-      "Provider exhausted. Regex fallback available (lower quality). Review and approve with a note, or retry AI Analyze.",
-    HUMAN_APPROVED_FALLBACK: "Fallback analysis approved. Proceed with caution (lower confidence).",
+      "AI fallback was used. Re-run AI Analyze with a healthy provider before Run Engine.",
+    HUMAN_APPROVED_FALLBACK: "Fallback review is recorded for audit only. Re-run AI Analyze successfully before Run Engine.",
     FAILED: "Analysis failed. Check provider status and retry, or proceed with manual entry.",
     SUPERSEDED: "This analysis was replaced by a newer run. Review the latest analysis.",
     SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED:
