@@ -110,7 +110,7 @@ test("derive: SUCCEEDED with all chunks succeeded → AI_SUCCEEDED", () => {
   assert.equal(canExportWithAnalysisState(d.state), true);
 });
 
-test("fallback next actions require re-running AI Analyze while AI_SUCCEEDED directs Run Engine", () => {
+test("failed and fallback next actions require re-running AI Analyze while AI_SUCCEEDED directs Run Engine", () => {
   const succeeded = deriveAnalysisStateDetail(makeInput({
     job: makeJob({ status: "SUCCEEDED", promotedAt: new Date() }),
     chunks: [chunk("SUCCEEDED")],
@@ -128,6 +128,9 @@ test("fallback next actions require re-running AI Analyze while AI_SUCCEEDED dir
       promotedAt: new Date(),
     }),
   }));
+  const failed = deriveAnalysisStateDetail(makeInput({
+    job: makeJob({ status: "FAILED" }),
+  }));
 
   assert.equal(succeeded.state, "AI_SUCCEEDED");
   assert.match(succeeded.nextAction, /Run Engine/i);
@@ -136,6 +139,9 @@ test("fallback next actions require re-running AI Analyze while AI_SUCCEEDED dir
     assert.doesNotMatch(result.nextAction, /Review and approve|Proceed with caution/i);
   }
   assert.match(reviewedFallback.nextAction, /audit only/i);
+  assert.equal(failed.state, "FAILED");
+  assert.match(failed.nextAction, /Re-run AI Analyze/i);
+  assert.doesNotMatch(failed.nextAction, /manual entry/i);
 });
 
 test("derive: SUCCEEDED single-shot with zero chunks → AI_SUCCEEDED only after promotion", () => {

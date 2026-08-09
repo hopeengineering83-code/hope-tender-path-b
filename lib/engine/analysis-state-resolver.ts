@@ -286,7 +286,7 @@ export function deriveAnalysisStateDetail(input: DeriveAnalysisStateInput): Tend
     REGEX_FALLBACK_UNAPPROVED:
       "AI fallback was used. Re-run AI Analyze with a healthy provider before Run Engine.",
     HUMAN_APPROVED_FALLBACK: "Fallback review is recorded for audit only (lower confidence). Re-run AI Analyze successfully before Run Engine.",
-    FAILED: "Analysis failed. Check provider status and retry, or proceed with manual entry.",
+    FAILED: "Analysis failed. Check provider status and re-run AI Analyze before Run Engine.",
     SUPERSEDED: "This analysis was replaced by a newer run. Review the latest analysis.",
     SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED:
       "Tender sections detected but no structured requirements found. Retry AI extraction or manually add requirements.",
