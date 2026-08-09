@@ -453,6 +453,19 @@ async function runCanonicalValidation(
   }
 
   // Load all non-superseded documents with their content for validation.
+  //
+  // The persisted byte-integrity columns are part of this select because
+  // checkFullExportReadiness re-verifies bytes through verifyPersistedFileBytes,
+  // which compares the persisted contentSha256, contentByteLength,
+  // contentMimeType and detectedFormat against a fresh inspection. Omitting
+  // them did not skip that check — Prisma simply returned the fields as
+  // undefined, so `persisted.integrityStatus !== "VERIFIED"` was always true
+  // and every document, including intact ones, came back
+  // FILE_BYTES_NOT_VERIFIED: LEGACY_INTEGRITY_UNKNOWN. This function then
+  // persisted validationStatus FAILED for documents whose bytes were fine.
+  //
+  // Selecting them makes the existing verification run against real data; it
+  // does not relax it. A document whose bytes genuinely fail still fails.
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
@@ -461,6 +474,8 @@ async function runCanonicalValidation(
       documentType: true, format: true, generationStatus: true,
       validationStatus: true, reviewStatus: true,
       fileContent: true, storagePath: true,
+      contentSha256: true, contentByteLength: true, contentMimeType: true,
+      detectedFormat: true, integrityStatus: true,
     },
   });
 
@@ -471,8 +486,32 @@ async function runCanonicalValidation(
     requireFileContent: false,
   });
 
-  // Collect the set of documentIds that have validation failures.
-  const failedDocIds = new Set(readiness.failures.map((f) => f.documentId).filter(Boolean));
+  // Collect the documentIds the validator actually REJECTS.
+  //
+  // Not every readiness failure is a rejection. checkFullExportReadiness also
+  // reports workflow states — "reviewStatus is PENDING, expected
+  // READY_FOR_EXPORT or VALIDATED" — for a document that is perfectly valid
+  // and merely awaiting review. Treating those as rejections wrote
+  // validationStatus FAILED onto a freshly finalized required PDF whose bytes
+  // were verified and whose content was fine, which contradicts this
+  // function's own contract below (FAILED only when "the validator explicitly
+  // rejects them") and left the tender showing a failed required deliverable.
+  //
+  // Export readiness is NOT relaxed by this: checkFullExportReadiness still
+  // reports the review-status failure and still blocks export until the
+  // document is reviewed. Only the persisted validationStatus changes — a
+  // document awaiting review stays PENDING instead of being recorded FAILED.
+  // `validationStatus is ...` is circular here — this function is what decides
+  // validationStatus, so a document being PENDING (or already FAILED from an
+  // earlier pass) is not evidence that its content is bad.
+  const isReviewWorkflowReason = (reason: string) =>
+    /^reviewStatus is /.test(reason) || /^validationStatus is /.test(reason);
+  const failedDocIds = new Set(
+    readiness.failures
+      .filter((f) => (f.reasons ?? []).some((reason) => !isReviewWorkflowReason(reason)))
+      .map((f) => f.documentId)
+      .filter(Boolean),
+  );
 
   // Persist VALIDATED for documents that pass, FAILED for documents with
   // failures, and leave PENDING for documents that were not checked.
@@ -628,10 +667,35 @@ async function runPdfFinalization(
 
       if (result.ok) {
         // Persist the finalized PDF as a new GeneratedDocument.
+        //
+        // Integrity is DERIVED from the rendered bytes by the same canonical
+        // producer normal generation uses (generate-elite.ts), not asserted.
+        //
+        // This block previously hand-rolled the integrity columns: it computed
+        // contentSha256/contentByteLength itself, hardcoded
+        // integrityStatus: "VERIFIED", and left detectedFormat and
+        // integrityVerifiedAt unset. verifyPersistedFileBytes compares the
+        // persisted contentSha256, contentByteLength, contentMimeType AND
+        // detectedFormat against a fresh inspection of the same bytes, so a
+        // null detectedFormat could never match the "PDF" it derives — every
+        // auto-finalized PDF failed byte verification the moment it was
+        // written. runCanonicalValidation then persisted validationStatus
+        // FAILED on a PDF whose bytes were in fact intact, and the next
+        // AUTO_FINALIZE attempt (the job is durably retried) went on to
+        // clobber the row, leaving the tender with no usable required PDF.
+        //
+        // verifiedIntegrityDataFromBase64 inspects the actual bytes and throws
+        // unless they genuinely verify, so this is strictly stronger than the
+        // hardcoded assertion it replaces: unknown or corrupt bytes now fail
+        // closed into the surrounding catch (failed++) instead of being
+        // recorded as VERIFIED.
         const pdfBase64 = result.bytes.toString("base64");
-        const { createHash } = await import("crypto");
-        const contentSha256 = createHash("sha256").update(result.bytes).digest("hex");
-        const contentByteLength = result.bytes.byteLength;
+        const { verifiedIntegrityDataFromBase64 } = await import("../engine/persisted-byte-integrity");
+        const pdfIntegrity = verifiedIntegrityDataFromBase64({
+          fileContent: pdfBase64,
+          filename: requiredName,
+          claimedMimeType: "application/pdf",
+        });
         await prisma.generatedDocument.create({
           data: {
             tenderId,
@@ -644,10 +708,7 @@ async function runPdfFinalization(
             validationStatus: "PENDING",
             reviewStatus: "PENDING",
             reviewNotes: "machine:auto-finalize-pdf — rendered from validated DOCX source. Awaiting canonical validation.",
-            contentSha256,
-            contentByteLength,
-            integrityStatus: "VERIFIED",
-            contentMimeType: "application/pdf",
+            ...pdfIntegrity,
           },
         });
         finalized++;

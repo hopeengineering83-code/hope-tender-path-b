@@ -137,6 +137,24 @@ function isManualOnly(doc: RepairDoc): string | null {
 
 function needsSafeRepair(doc: RepairDoc): boolean {
   if (isManualOnly(doc)) return false;
+  // This pass is DOCX hygiene: it rewrites the row with format "DOCX" and DOCX
+  // bytes. A finalized PDF must never enter it.
+  //
+  // isManualOnly already rejects a `.pdf` file whose format is NOT yet PDF
+  // ("upload the final PDF instead of repairing to DOCX"), but that guard is
+  // the wrong way round for a PDF that is already correct: a healthy row with
+  // exactFileName "X.pdf" and format "PDF" passed it, and — because its
+  // reviewNotes carry the auto-finalize marker rather than the
+  // `machine:safe-export-repair` one — fell straight through to the repair,
+  // which overwrote format to "DOCX". A required PDF rendered by
+  // runPdfFinalization was therefore destroyed by the next AUTO_FINALIZE
+  // attempt, and the job is durably retried, so the tender ended with no
+  // usable required PDF.
+  //
+  // Skipping (not manualRequired) is the honest classification: there is
+  // nothing for a DOCX hygiene pass to repair here, and a healthy final PDF
+  // must not be reported as needing manual work.
+  if (normalizeStatus(doc.format) === "PDF") return false;
   if (!generatedDocumentHasContent(doc)) return true;
   if (normalizeStatus(doc.generationStatus) !== "GENERATED") return true;
   // Gap 1: the machine repair writes a `machine:safe-export-repair` marker
