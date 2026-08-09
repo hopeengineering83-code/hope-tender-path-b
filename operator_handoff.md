@@ -108,6 +108,38 @@ Never claim a fix is complete unless the stated tests passed.
   assembleFinalSubmissionZip` route end-to-end; it remains the last open engineering item.
 - **Merge status:** Not reviewed; not merged.
 
+### 2026-08-09 18:20 UTC — Claude Code (Opus), auto-finalize chain behavioural coverage
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175.
+- **Scope / files:** One new test file, `tests/auto-finalize-pipeline-behavioral-db.test.ts`. No
+  production source changed.
+- **Gap closed:** `runAutoFinalizeAfterGeneration` is the application's real bridge from generated
+  DOCX documents to a downloadable package, and its only coverage
+  (`gap3-durable-auto-finalize.test.ts`, `auto-finalize-continuation-gap4.test.ts`) was `readFileSync`
+  plus regex over the source. Those assert the calls are *written*, not that the chain *works* — they
+  would stay green if the renderer emitted zero bytes or an unvalidated DOCX were promoted into the
+  package. The new tests run the real function against real PostgreSQL with real `docx`-generated
+  bytes and assert on persisted rows: a required PDF is rendered from a VALIDATED DOCX and persisted
+  with a real `%PDF-` header plus a matching SHA-256; an unvalidated source finalizes nothing and
+  creates no PDF row; a missing source is skipped rather than thrown, so the durable worker survives.
+- **Tests actually run:** `npx tsc --noEmit` — passed.
+  `RUN_DB_INTEGRATION=true npx tsx --test tests/auto-finalize-pipeline-behavioral-db.test.ts` —
+  3/3 passed against local PostgreSQL 16.
+- **OPEN LEAD (not a confirmed defect, do not treat as one):** while writing these I observed that a
+  freshly finalized PDF is persisted and then marked `validationStatus = FAILED` by
+  `runCanonicalValidation`, and that a second `runAutoFinalizeAfterGeneration` on the same tender
+  reported `failed: 1` with the PDF row no longer present. `checkFullExportReadiness` reported
+  `FILE_BYTES_NOT_VERIFIED: LEGACY_INTEGRITY_UNKNOWN` for the finalized PDF — but it reported the
+  same for the seeded source DOCX despite `integrityStatus: "VERIFIED"`, which strongly suggests my
+  hand-built fixture does not carry whatever real generation sets for byte verification. So this may
+  be fixture fidelity rather than a product bug. It is worth resolving because, if real, an
+  AUTO_FINALIZE retry would destroy a finalized PDF and never converge. The idempotency assertion was
+  therefore NOT committed: a red test would block CI on an unproven claim.
+- **CI / deployment:** No merge, approval, force-push, base change, new PR, or production deployment.
+- **Next action:** Seed a generated document through the real generation path (not a hand-built row)
+  and re-check whether the finalized-PDF retry behaviour above reproduces.
+- **Merge status:** Not reviewed; not merged.
+
 ### 2026-08-09 16:35 UTC — Codex (GPT-5.6 Sol), PR #1175 diff-review safeguard
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
