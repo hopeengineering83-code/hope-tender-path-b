@@ -16,6 +16,7 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
+import { countTraceable } from "../../../../../lib/engine/requirement-source-traceability";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
@@ -190,7 +191,15 @@ export async function GET(
   const evidenceCoverageRatio = computeMandatoryEvidenceCoverageRatio(tender.requirements);
   const totalPages = extractedPageTotal(tender.files);
   const mandatoryCount = tender.requirements.filter((req) => String(req.priority ?? "").toUpperCase() === "MANDATORY").length;
-  const sourceRefCount = tender.requirements.filter((req) => (req.sourceConfidence ?? 0) > 0).length;
+  // Canonical predicate. This previously counted only requirements whose
+  // AI-supplied `sourceConfidence` was > 0, which is not a source anchor at all:
+  // mapToDraft stores `sourceTenderFileId ? (req.sourceConfidence ?? 0) : 0`, so
+  // a requirement with a real active file, a proven page and a verbatim quote
+  // still scores 0 whenever the model omitted the field. That made this route
+  // report "Extracted requirements have no source traceability" on the very same
+  // tender where the workflow panel showed 4/4 mandatory requirements traced and
+  // the analysis panel showed Grounding 100.
+  const sourceRefCount = countTraceable(tender.requirements);
   const requiredDocsKnown = Boolean(
     (tender.exactFileNaming ?? "").trim() ||
       (tender.exactFileOrder ?? "").trim() ||

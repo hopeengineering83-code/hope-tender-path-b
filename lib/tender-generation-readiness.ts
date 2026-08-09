@@ -408,7 +408,15 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (matchingQuality.state === "VAULT_AWAITS_ENGINE") {
     fullProposalBlockers.push({
       code: "FULL_PROPOSAL_ENGINE_NOT_RUN",
-      message: `Full proposal generation is blocked: Run Engine has not been triggered for this tender (vault has ${matchingQuality.vaultReviewedExperts} reviewed expert(s) and ${matchingQuality.vaultReviewedProjects} reviewed project(s) ready).`,
+      // State only what is actually known here. VAULT_AWAITS_ENGINE means "the
+      // vault holds reviewed evidence but no tender-specific matches exist yet".
+      // It does NOT mean the user never pressed Run Engine: this function has no
+      // knowledge of job state, and the condition stays true for the whole time
+      // an Engine job is running. The previous wording asserted "Run Engine has
+      // not been triggered for this tender", which contradicted the evidence
+      // panel ("An Engine job is already running for this revision") and the
+      // release banner ("Processing automatically") on the same screen.
+      message: `Full proposal generation is blocked: no tender-specific evidence matches exist yet (vault has ${matchingQuality.vaultReviewedExperts} reviewed expert(s) and ${matchingQuality.vaultReviewedProjects} reviewed project(s) ready). Run Engine if it has not been started; if it is already running, matching will populate automatically.`,
       nextAction: "RUN_ENGINE",
     });
   } else if (matchingQuality.state === "NO_VAULT" && (expertRequirementExists || projectRequirementExists)) {
