@@ -79,6 +79,8 @@ test("Run Engine once persists one QUEUED job, then the server wake claims and s
     }), 1);
 
     let scheduled: (() => Promise<void>) | undefined;
+    let claimedJobId: string | undefined;
+    let observedRunning = false;
     const wakeScheduled = scheduleRequestScopedEngineWorkerWake(
       new Request(`https://example.test/api/tenders/${tender.id}/engine`, {
         headers: { cookie: "session=owner" },
@@ -92,8 +94,11 @@ test("Run Engine once persists one QUEUED job, then the server wake claims and s
           userId: user.id,
           global: false,
         });
-        assert.equal(claimed?.id, first.job.id);
-        assert.equal((await prisma.aiJob.findUniqueOrThrow({ where: { id: first.job.id } })).status, "RUNNING");
+        claimedJobId = claimed?.id;
+        observedRunning = (await prisma.aiJob.findUniqueOrThrow({ where: { id: first.job.id } })).status === "RUNNING";
+        if (claimed?.id !== first.job.id || !observedRunning) {
+          return new Response(null, { status: 409 });
+        }
         await completeJob(first.job.id, { regression: "engine-worker-handoff" });
         return new Response(null, { status: 200 });
       },
@@ -102,6 +107,8 @@ test("Run Engine once persists one QUEUED job, then the server wake claims and s
     assert.equal(wakeScheduled, true);
     assert.ok(scheduled, "the enqueue request must schedule one server-owned wake");
     await scheduled();
+    assert.equal(claimedJobId, first.job.id, "the wake must claim the one manually queued Engine job");
+    assert.equal(observedRunning, true, "the durable claim must transition the job to RUNNING");
     assert.equal((await prisma.aiJob.findUniqueOrThrow({ where: { id: first.job.id } })).status, "SUCCEEDED");
     assert.equal(await prisma.aiJob.count({
       where: { userId: user.id, tenderId: tender.id, jobType: "ENGINE_RUN" },

@@ -141,6 +141,43 @@ describe("reapStaleQueuedJobs — real PostgreSQL", () => {
     await prisma.aiJob.deleteMany({ where: { id: { in: [ahead.id, behind.id] } } });
   });
 
+  it("does not infer a pass-over from another tenant's queue progress", async () => {
+    const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const otherUser = await prisma.user.create({
+      data: {
+        email: `stale-reaper-other-${nonce}@example.test`,
+        name: "Other Tenant",
+        passwordHash: "test-hash",
+      },
+    });
+    const waiting = await prisma.aiJob.create({
+      data: {
+        tenderId,
+        userId,
+        jobType: "ENGINE_RUN",
+        status: "QUEUED",
+        input: "{}",
+        createdAt: new Date(Date.now() - 60 * 60 * 1000),
+      },
+    });
+    const foreignProgress = await prisma.aiJob.create({
+      data: {
+        userId: otherUser.id,
+        jobType: "ENGINE_RUN",
+        status: "SUCCEEDED",
+        input: "{}",
+        createdAt: new Date(Date.now() - 10 * 60 * 1000),
+        startedAt: new Date(Date.now() - 10 * 60 * 1000),
+      },
+    });
+
+    await reapStaleQueuedJobs();
+
+    assert.equal((await prisma.aiJob.findUnique({ where: { id: waiting.id } }))?.status, "QUEUED");
+    await prisma.aiJob.deleteMany({ where: { id: { in: [waiting.id, foreignProgress.id] } } });
+    await prisma.user.delete({ where: { id: otherUser.id } });
+  });
+
   it("leaves a job alone through a worker outage — nothing newer ran either", async () => {
     // If the GitHub Actions drain is down for an hour, every queued job ages
     // past the threshold. None of them was skipped; the worker simply never

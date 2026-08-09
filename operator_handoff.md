@@ -1036,3 +1036,14 @@ Never claim a fix is complete unless the stated tests passed.
 - **Risks / blockers:** authenticated Preview acceptance and owner-only Production UAT/credential rotation/backup-restore/rollback proof remain; no Production deployment performed.
 - **Next action:** exact-head CI and automatic Preview verification.
 - **Merge status:** DO NOT MERGE — awaiting owner review and Preview evidence.
+
+### 2026-08-09 UTC — Codex (release-hardening continuation)
+
+- **Mode:** exact-head CI failure triage and narrow reliability repair.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting at `8a46f05c57d6cac396cde3caecbcc6731a3a018a`.
+- **Scope:** inspected failed run `31337251918` attempt 2 without requesting the consolidated PR diff. The run reported two behavioral failures (not five): the Engine wake regression swallowed an assertion inside the production best-effort wake boundary, and the stale-queue reaper treated another tenant's newer job as proof that this tenant's job was passed over. Preserved canonical AI Analyze authority and all fail-closed gates.
+- **Files changed:** `lib/engine/stale-job-reaper.ts` (tenant-scope pass-over evidence), `tests/stale-job-reaper.test.ts` (cross-tenant regression), `tests/engine-worker-handoff.test.ts` (make claim/RUNNING assertions observable outside the intentional wake catch), `.github/workflows/ci.yml` (Node-24-compatible checkout/setup/upload action majors), `operator_handoff.md`.
+- **Tests:** `npx prisma generate`, `npm run typecheck`, and `npm run lint` passed (one pre-existing unused-disable warning). Local PostgreSQL-focused execution is blocked by the configured Neon host being unreachable; exact-head CI must supply the real-PostgreSQL result. Non-database worker authority checks passed; database subtests failed only at connection setup.
+- **Risks / blockers:** full PostgreSQL suite, build, authenticated Playwright, exact-SHA Preview golden path/runtime logs, and artifact validation remain unverified until exact-head CI/Preview completes. Owner-only Production UAT, credential rotation, backup/restore, rollback, merge, and Production deploy remain explicitly outstanding.
+- **Next action:** push the focused commit, require exact-head CI green, then inspect only its automatically generated exact-SHA Preview and logs; do not merge.
+- **Merge status:** DO NOT MERGE — draft; no Production deployment performed.

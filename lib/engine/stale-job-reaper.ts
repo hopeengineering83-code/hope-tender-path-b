@@ -50,10 +50,13 @@ const STALE_THRESHOLD_MS = 30 * 60 * 1000;
  * has not reached this job yet (backlog). Both resolve on their own, so the
  * job is left alone.
  */
-async function wasPassedOver(job: { id: string; jobType: string; createdAt: Date }): Promise<boolean> {
+async function wasPassedOver(job: { id: string; userId: string; jobType: string; createdAt: Date }): Promise<boolean> {
   const overtakenBy = await prisma.aiJob.count({
     where: {
       id: { not: job.id },
+      // Queue progress in another tenant is not evidence that this tenant's
+      // worker ever inspected (or could claim) the waiting job.
+      userId: job.userId,
       jobType: job.jobType,
       createdAt: { gt: job.createdAt },
       startedAt: { not: null },
@@ -75,7 +78,7 @@ export async function reapStaleQueuedJobs(): Promise<{ reaped: number; errors: s
         status: "QUEUED",
         createdAt: { lt: cutoff },
       },
-      select: { id: true, tenderId: true, createdAt: true, jobType: true },
+      select: { id: true, tenderId: true, userId: true, createdAt: true, jobType: true },
     });
 
     for (const job of staleQueued) {
