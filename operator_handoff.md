@@ -74,6 +74,40 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-09 18:05 UTC — Claude Code (Opus), PR #1175 Engine wake constraint coverage
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175.
+- **Scope / files:** One new test file, `tests/engine-worker-wake-constraints.test.ts`. No production
+  source changed.
+- **Duplicate avoided:** I had independently written a manual-Engine wake
+  (`lib/ai-jobs/manual-engine-worker-wake.ts` plus its own route wiring and tests) before fetching.
+  Codex had already shipped the same feature in `cdae73cb` as
+  `lib/ai-jobs/request-scoped-engine-worker-wake.ts`. Committing mine would have left two competing
+  wake modules on one route, so I deleted mine and kept Codex's — theirs additionally skips the wake
+  when the reused job is already RUNNING. The new tests target Codex's module.
+- **Gap closed:** `tests/engine-worker-handoff.test.ts` proves the sequential happy path (one QUEUED
+  job across duplicate enqueue, claimed, SUCCEEDED). It does not cover the properties the wake newly
+  puts at risk. The added file covers only those, with no overlapping assertions: exactly-once when
+  the wake races the cron (exactly 1 winner of 4 mixed racers; 1 of 12 concurrent wakes), the wake
+  sitting behind all six fail-closed source gates, the wake never authenticating as an automated
+  caller (so `failStuckJobs` / `reapStaleQueuedJobs` / `findJobsDueForRetry` stay cron-only), and
+  tenant / tender / jobType scope.
+- **Tests actually run:** `npx prisma generate` — passed. `npx tsc --noEmit` — passed.
+  `npx next lint` — no warnings or errors. Full `npm test` against a real local PostgreSQL 16 with
+  `RUN_DB_INTEGRATION=true` — **9767/9767 passed, 0 failed**. This includes
+  `tests/engine-worker-handoff.test.ts`, which the two Codex entries below record as **not executed
+  locally** because the configured Neon host was unreachable; it is now verified against a real
+  database and passes.
+- **CI / deployment:** PR #1175 exact-head CI was re-running when checked; the earlier `d7d93afc`
+  failures are superseded by `3d53eb6a`. No merge, approval, force-push, base change, new PR, or
+  production deployment performed.
+- **Risks / assumptions:** The wake keeps the engine route's invocation alive until `run-next`
+  responds (bounded by its `maxDuration = 60`). If Vercel kills it first the job is left for
+  `failStuckJobs`, which is the intended cron-as-recovery path.
+- **Next action:** Prove the gated `generateTenderDocuments -> finalizeRequiredPdf ->
+  assembleFinalSubmissionZip` route end-to-end; it remains the last open engineering item.
+- **Merge status:** Not reviewed; not merged.
+
 ### 2026-08-09 16:35 UTC — Codex (GPT-5.6 Sol), PR #1175 diff-review safeguard
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
