@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-09 16:23 UTC — Codex (GPT-5.6 Sol), PR #1175 review correction
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
+- **Scope / files:** Replaced the source-text/simulated worker assertion in `tests/engine-worker-handoff.test.ts` with one real PostgreSQL behavioral regression using the canonical Engine enqueue authority, atomic claim policy, and durable completion API. No production source changed in this follow-up; this entry records the correction.
+- **Tests:** `npm run typecheck` — passed. `RUN_DB_INTEGRATION=true npx tsx --test tests/engine-worker-handoff.test.ts` — environment warning: the configured non-production Neon test database was unreachable before fixture creation, so the behavioral test did not execute locally.
+- **CI / deployment:** PR #1175 exact-head CI was still pending when checked. No merge, approval, or production deployment performed.
+- **Risks / assumptions:** The new regression requires PostgreSQL by design and will run in CI's isolated PostgreSQL service. It proves one persisted job across duplicate enqueue, actual `QUEUED -> RUNNING -> SUCCEEDED` database transitions, and no third user action.
+- **Next action:** Push the correction to PR #1175 and require its PostgreSQL CI result before calling the defect complete.
+- **Merge status:** Not reviewed; not merged.
+
 ### 2026-08-09 16:19 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
