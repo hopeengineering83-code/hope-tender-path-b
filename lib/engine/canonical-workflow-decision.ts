@@ -205,7 +205,7 @@ export function buildCanonicalWorkflowDecision(input: {
   if (requirementsOK && input.confirmedBuildPlanExists && input.mandatoryRequirementCount > 0 && input.mandatoryComplianceRowsCount > 0) {
     if (input.mandatoryFullOrSubstantialCoverageCount < input.mandatoryRequirementCount) {
       blockerCodes.push("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE");
-      blockerDetails.push(`${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have FULL/SUBSTANTIAL coverage. Confirm more evidence.`);
+      blockerDetails.push(`${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have FULL/SUBSTANTIAL coverage. Add genuine owned source evidence for unsupported requirements.`);
     }
   }
 

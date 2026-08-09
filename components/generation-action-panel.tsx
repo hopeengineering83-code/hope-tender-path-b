@@ -1,5 +1,3 @@
-"use client";
-
 // Gap 2 + Gap 3: Text-based automatic status surface.
 //
 // Replaces the old GenerationActionPanel that had Generate Docs button,
@@ -21,6 +19,8 @@ import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness
 import type { CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 import { classifyReleaseStatus } from "../lib/release-status-classifier";
 import { releaseBlockerLabel } from "../lib/ui/human-labels";
+import { getSession } from "../lib/auth";
+import { prisma, prismaReady } from "../lib/prisma";
 
 type GenerationReadiness = {
   ready: boolean;
@@ -71,6 +71,71 @@ export function deriveReleaseStatus(
   return classifyReleaseStatus(blockerCodes, readyForFinalExport);
 }
 
+const EVIDENCE_BLOCKER_CODES = new Set([
+  "NO_EXPERT_MATCHES_FOUND",
+  "NO_REVIEWED_EXPERT_MATCHES",
+  "ALL_EXPERTS_UNREVIEWED",
+  "NO_PROJECT_MATCHES_FOUND",
+  "NO_REVIEWED_PROJECT_MATCHES",
+  "ALL_PROJECTS_UNREVIEWED",
+  "NO_SELECTED_REVIEWED_EXPERTS",
+  "NO_SELECTED_REVIEWED_PROJECTS",
+  "FULL_PROPOSAL_NO_VAULT",
+  "FULL_PROPOSAL_MATCHES_WEAK",
+  "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE",
+]);
+
+function collectedBlockerCodes(
+  readiness: GenerationReadiness | null,
+  canonicalReadiness?: CanonicalTenderReadiness | null,
+  releaseDecision?: { blockerCodes: string[] } | null,
+): string[] {
+  return [
+    ...(readiness?.blockers ?? []).map((blocker) => blocker.code),
+    ...(readiness?.fullProposalBlockers ?? []).map((blocker) => blocker.code),
+    ...(releaseDecision?.blockerCodes ?? []),
+    ...(canonicalReadiness?.blockers ?? []),
+  ];
+}
+
+/** Presentation-only truth reconciliation. Eligibility remains owned by the
+ * server readiness calculator and its canonical canUseVaultRecord predicate. */
+export function deriveTruthfulReleaseStatus(
+  readiness: GenerationReadiness | null,
+  canonicalReadiness: CanonicalTenderReadiness | null | undefined,
+  releaseDecision: { status: ReleaseStatus; blockerCodes: string[] } | null | undefined,
+  activeDownstreamWork: boolean,
+): ReleaseStatus {
+  const status = releaseDecision?.status ?? deriveReleaseStatus(readiness, canonicalReadiness);
+  const evidenceBlocked = collectedBlockerCodes(readiness, canonicalReadiness, releaseDecision)
+    .some((code) => EVIDENCE_BLOCKER_CODES.has(code));
+  return status === "PROCESSING_AUTOMATICALLY" && evidenceBlocked && !activeDownstreamWork
+    ? "GENUINE_SOURCE_BLOCKED"
+    : status;
+}
+
+export function truthfulEvidenceMessage(
+  code: string | undefined,
+  message: string,
+  counts: GenerationReadiness["counts"],
+): string {
+  if ((code === "ALL_EXPERTS_UNREVIEWED" || code === "NO_SELECTED_REVIEWED_EXPERTS")
+      && (counts?.selectedExperts ?? 0) === 0) {
+    return (counts?.reviewedExpertMatches ?? 0) > 0
+      ? "Eligible source-backed expert matches exist, but none are selected."
+      : "No eligible source-backed expert evidence exists for the required roles. Add genuine owned source evidence for unsupported requirements.";
+  }
+  if (code === "ALL_EXPERTS_UNREVIEWED" || code === "NO_SELECTED_REVIEWED_EXPERTS") {
+    return "Selected expert evidence is stale or ineligible. Add genuine owned source evidence for unsupported requirements.";
+  }
+  return message
+    .replace(/Confirm\s+more\s+evidence\.?/gi, "Add genuine owned source evidence for unsupported requirements.")
+    .replace(/reviewed expert(?:\/project)? evidence/gi, "SOURCE_VERIFIED / current REVIEWED evidence")
+    .replace(/reviewed expert matches/gi, "eligible source-backed expert matches")
+    .replace(/reviewed experts/gi, "eligible source-backed experts")
+    .replace(/reviewed projects/gi, "eligible source-backed projects");
+}
+
 /**
  * The status label shown to the user. Plain text — no icons, no badges.
  */
@@ -79,7 +144,7 @@ function statusLabel(status: ReleaseStatus): string {
     case "PROCESSING_AUTOMATICALLY":
       return "Processing automatically";
     case "GENUINE_SOURCE_BLOCKED":
-      return "Genuine source blocked";
+      return "Blocked — source evidence required";
     case "LEGAL_RELEASE_REQUIRED":
       return "Legal release required";
     case "READY_TO_DOWNLOAD":
@@ -97,7 +162,7 @@ function statusExplanation(status: ReleaseStatus): string {
     case "PROCESSING_AUTOMATICALLY":
       return "The workflow is running. Byte verification, extraction, analysis, matching, generation, validation, PDF finalization, and package reconciliation proceed automatically. You may close or refresh this page — processing continues server-side.";
     case "GENUINE_SOURCE_BLOCKED":
-      return "A genuine source blocker exists. Upload the missing source document or tender intake file, then processing resumes automatically.";
+      return "The automatic workflow is stopped at its first authoritative blocker. Add genuine owned source evidence for unsupported requirements.";
     case "LEGAL_RELEASE_REQUIRED":
       return "A legal signature, declaration, or ADMIN release decision is required. No further automatic processing can occur until this is resolved.";
     case "READY_TO_DOWNLOAD":
@@ -127,12 +192,13 @@ export function GenerationActionButton() {
 // Blocker 3: when releaseDecision is provided, use it directly — no
 // client-side recomputation. When not provided (backward compat), fall
 // back to deriveReleaseStatus from the raw readiness data.
-export function GenerationActionPanel({
+export async function GenerationActionPanel({
   tenderId: _tenderId,
   readiness,
   canonicalReadiness,
   canMutate: _canMutate = false,
   releaseDecision,
+  activeDownstreamWork = false,
 }: {
   tenderId: string;
   readiness: GenerationReadiness | null;
@@ -144,12 +210,33 @@ export function GenerationActionPanel({
     status: ReleaseStatus;
     blockerCodes: string[];
   } | null;
+  activeDownstreamWork?: boolean;
 }) {
+  let hasActiveDownstreamWork = activeDownstreamWork;
+  if (!hasActiveDownstreamWork) {
+    const userId = await getSession();
+    if (userId) {
+      await prismaReady;
+      hasActiveDownstreamWork = Boolean(await prisma.aiJob.findFirst({
+        where: {
+          userId,
+          tenderId: _tenderId,
+          jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"] },
+          status: { in: ["QUEUED", "RUNNING"] },
+        },
+        select: { id: true },
+      }).catch(() => null));
+    }
+  }
   // Blocker 3: prefer the server-computed releaseDecision. Only fall back to
   // client-side derivation when the server hasn't provided one (backward compat
   // for routes that haven't been updated yet).
-  const status: ReleaseStatus = releaseDecision?.status
-    ?? deriveReleaseStatus(readiness, canonicalReadiness);
+  const status = deriveTruthfulReleaseStatus(
+    readiness,
+    canonicalReadiness,
+    releaseDecision,
+    hasActiveDownstreamWork,
+  );
 
   // Collect blockers for display, keyed by code so the SAME blocker cannot be
   // listed twice in two different forms.
@@ -168,11 +255,13 @@ export function GenerationActionPanel({
   const addMessage = (code: string | undefined, message: string) => {
     const key = code ?? message;
     if (key === "NO_REQUIREMENTS") return;
-    if (!blockersByCode.has(key)) blockersByCode.set(key, message);
+    if (!blockersByCode.has(key)) blockersByCode.set(key, truthfulEvidenceMessage(code, message, readiness?.counts));
   };
   const addCode = (code: string) => {
     if (code === "NO_REQUIREMENTS") return;
-    if (!blockersByCode.has(code)) blockersByCode.set(code, releaseBlockerLabel(code));
+    if (!blockersByCode.has(code)) {
+      blockersByCode.set(code, truthfulEvidenceMessage(code, releaseBlockerLabel(code), readiness?.counts));
+    }
   };
 
   for (const b of readiness?.blockers ?? []) addMessage(b.code, b.message);
