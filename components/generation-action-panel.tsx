@@ -20,6 +20,7 @@ import React from "react";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 import type { CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 import { classifyReleaseStatus } from "../lib/release-status-classifier";
+import { releaseBlockerLabel } from "../lib/ui/human-labels";
 
 type GenerationReadiness = {
   ready: boolean;
@@ -150,25 +151,36 @@ export function GenerationActionPanel({
   const status: ReleaseStatus = releaseDecision?.status
     ?? deriveReleaseStatus(readiness, canonicalReadiness);
 
-  // Collect blockers for display. Prefer releaseDecision.blockerCodes when
-  // available; otherwise fall back to raw readiness data.
-  const visibleBlockers: string[] = [];
-  if (releaseDecision?.blockerCodes) {
-    for (const code of releaseDecision.blockerCodes) {
-      if (code !== "NO_REQUIREMENTS") visibleBlockers.push(code);
-    }
-  } else {
-    for (const b of readiness?.blockers ?? []) {
-      if (b.code !== "NO_REQUIREMENTS") visibleBlockers.push(b.message);
-    }
-    for (const b of readiness?.fullProposalBlockers ?? []) {
-      if (b.code !== "NO_REQUIREMENTS") visibleBlockers.push(b.message);
-    }
-    for (const code of canonicalReadiness?.blockers ?? []) {
-      if (code !== "NO_REQUIREMENTS") visibleBlockers.push(code);
-    }
-  }
-  const truncatedBlockers = visibleBlockers.slice(0, 8);
+  // Collect blockers for display, keyed by code so the SAME blocker cannot be
+  // listed twice in two different forms.
+  //
+  // Previously this pushed raw UPPER_SNAKE codes from the code-bearing sources
+  // and human sentences from the message-bearing ones, into one flat list. The
+  // owner saw "Full proposal generation is blocked: …" followed by
+  // FULL_PROPOSAL_ENGINE_NOT_RUN, ENGINE_NOT_COMPLETED,
+  // NO_TENDER_SPECIFIC_EXPERT_MATCHES, NO_SELECTED_REVIEWED_EXPERTS,
+  // NO_ACTIVE_GENERATED_DOCUMENTS and NO_CURRENT_CONFIRMED_BUILD_PLAN — the
+  // first item restated as an internal identifier, next to five more.
+  //
+  // Message sources are read FIRST so a real sentence always wins; code sources
+  // only fill codes nothing has described yet, and are humanised on the way out.
+  const blockersByCode = new Map<string, string>();
+  const addMessage = (code: string | undefined, message: string) => {
+    const key = code ?? message;
+    if (key === "NO_REQUIREMENTS") return;
+    if (!blockersByCode.has(key)) blockersByCode.set(key, message);
+  };
+  const addCode = (code: string) => {
+    if (code === "NO_REQUIREMENTS") return;
+    if (!blockersByCode.has(code)) blockersByCode.set(code, releaseBlockerLabel(code));
+  };
+
+  for (const b of readiness?.blockers ?? []) addMessage(b.code, b.message);
+  for (const b of readiness?.fullProposalBlockers ?? []) addMessage(b.code, b.message);
+  for (const code of releaseDecision?.blockerCodes ?? []) addCode(code);
+  for (const code of canonicalReadiness?.blockers ?? []) addCode(code);
+
+  const truncatedBlockers = [...blockersByCode.values()].slice(0, 8);
 
   return (
     <section id="generated-documents" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

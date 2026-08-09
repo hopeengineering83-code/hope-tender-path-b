@@ -88,10 +88,37 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   IGNORED_WITH_REASON: "Ignored with reason",
   EXPORT_BLOCKED: "Export is blocked",
   TENDER_DELETE_FAILED: "Failed to delete tender",
+  // ─── Release / readiness blockers ────────────────────────────────────────
+  // These reached the owner as raw UPPER_SNAKE codes in the release panel's
+  // "Pending items" list, sitting directly beneath a properly worded sentence
+  // about the same problem. They describe workflow state, so they say what is
+  // missing and what produces it — without asserting who did or did not act,
+  // which the readiness layer cannot know.
+  FULL_PROPOSAL_ENGINE_NOT_RUN: "Full proposal is waiting for evidence matching from Run Engine",
+  ENGINE_NOT_COMPLETED: "Engine has not finished for this tender revision",
+  NO_TENDER_SPECIFIC_EXPERT_MATCHES: "No expert matches exist for this tender yet",
+  NO_TENDER_SPECIFIC_PROJECT_MATCHES: "No project matches exist for this tender yet",
+  NO_SELECTED_REVIEWED_EXPERTS: "No reviewed experts have been selected as evidence yet",
+  NO_SELECTED_REVIEWED_PROJECTS: "No reviewed projects have been selected as evidence yet",
+  NO_ACTIVE_GENERATED_DOCUMENTS: "No documents have been generated yet",
+  NO_CURRENT_CONFIRMED_BUILD_PLAN: "The submission Build Plan has not been confirmed for this revision",
+  NO_REQUIREMENTS: "No tender requirements have been extracted yet",
 };
 
 export function errorCodeLabel(code: string): string {
   return ERROR_CODE_LABELS[code] ?? code;
+}
+
+/**
+ * Label for a release/readiness blocker code shown to the owner.
+ *
+ * Unlike errorCodeLabel, this NEVER falls through to the raw code: an unmapped
+ * blocker is humanised rather than rendered as UPPER_SNAKE next to sentences.
+ * A new code added by the readiness layer should read like a gap, not like a log
+ * line leaking into the product.
+ */
+export function releaseBlockerLabel(code: string): string {
+  return ERROR_CODE_LABELS[code] ?? humanizeEnumValue(code);
 }
 
 /**
