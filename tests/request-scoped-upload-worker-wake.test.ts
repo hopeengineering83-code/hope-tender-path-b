@@ -16,7 +16,44 @@ const readinessRoute = read("app/api/company/ingestion-readiness/route.ts");
 describe("request-scoped upload worker wake", () => {
   it("permits only the two automatic upload-owned stages", () => {
     assert.match(helperCode, /RequestScopedUploadJobType = "EXTRACT_TEXT" \| "VAULT_INGEST"/);
-    assert.doesNotMatch(helperCode, /"AI_ANALYZE"|"ENGINE_RUN"|"PROPOSAL_GENERATION"/);
+    // Absolute: the two manual gates may never be woken by anything here.
+    assert.doesNotMatch(helperCode, /"AI_ANALYZE"|"ENGINE_RUN"/);
+
+    // PROPOSAL_GENERATION used to be banned outright because this helper served
+    // upload routes only. It now also carries the worker's own hand-off from one
+    // finished stage to the stage it just enqueued — without which a successful
+    // Run Engine left PROPOSAL_GENERATION queued forever and the workflow sat on
+    // "No documents have been generated yet" while claiming to be processing.
+    //
+    // The property that actually protects uploads is unchanged and asserted
+    // below: an upload route may pass only an upload stage. The continuation
+    // stages are reachable solely from the worker, for a job the worker itself
+    // enqueued under the owner's original Run Engine authority.
+    assert.match(helperCode, /RequestScopedContinuationJobType = "PROPOSAL_GENERATION" \| "AUTO_FINALIZE"/);
+  });
+
+  it("never lets an upload route wake a post-Engine stage", () => {
+    for (const [name, route] of Object.entries({
+      uploadRoute,
+      uploadFirstRoute,
+      capabilitiesRoute,
+      readinessRoute,
+    })) {
+      const wakeCalls = route.match(/scheduleRequestScopedWorkerWake\([^)]*\)/g) ?? [];
+      assert.ok(wakeCalls.length > 0, `${name} should still nudge its own upload stage`);
+      for (const call of wakeCalls) {
+        assert.match(
+          call,
+          /"EXTRACT_TEXT"|"VAULT_INGEST"/,
+          `${name} may only wake an upload-owned stage, got: ${call}`,
+        );
+        assert.doesNotMatch(
+          call,
+          /PROPOSAL_GENERATION|AUTO_FINALIZE|AI_ANALYZE|ENGINE_RUN/,
+          `${name} must not reach a post-Engine or manual stage, got: ${call}`,
+        );
+      }
+    }
   });
 
   it("uses Next after and forwards only the authenticated same-origin session", () => {

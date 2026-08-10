@@ -3,6 +3,20 @@ import { logger } from "../observability";
 
 export type RequestScopedUploadJobType = "EXTRACT_TEXT" | "VAULT_INGEST";
 
+/**
+ * Stages the worker may hand on to itself after finishing one.
+ *
+ * These are continuations the worker enqueued server-side, never entry points:
+ * PROPOSAL_GENERATION exists only because a manual Run Engine succeeded, and
+ * AUTO_FINALIZE only because generation succeeded. Waking them carries the
+ * owner's original authority forward — it cannot manufacture new authority,
+ * because a job that was never enqueued cannot be claimed.
+ *
+ * AI_ANALYZE and ENGINE_RUN are deliberately absent: those are the two manual
+ * gates, and nothing here may start them.
+ */
+export type RequestScopedContinuationJobType = "PROPOSAL_GENERATION" | "AUTO_FINALIZE";
+
 const MAX_REQUEST_SCOPED_WAKE_COUNT = 10;
 
 /**
@@ -19,7 +33,7 @@ const MAX_REQUEST_SCOPED_WAKE_COUNT = 10;
  */
 export function scheduleRequestScopedWorkerWake(
   req: Request,
-  jobType: RequestScopedUploadJobType,
+  jobType: RequestScopedUploadJobType | RequestScopedContinuationJobType,
   requestedCount = 1,
 ): boolean {
   const cookie = req.headers.get("cookie");

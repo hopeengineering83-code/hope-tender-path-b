@@ -6,6 +6,7 @@ import { classifyStageRetry, isDurableRetryJobType, isSupersededStageFailure } f
 import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
 import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
+import { scheduleRequestScopedWorkerWake } from "../../../../lib/ai-jobs/request-scoped-worker-wake";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
 import { parseJobTypeFilter, SUPPORTED_JOB_TYPES } from "../../../../lib/job-type-policy";
 import { prisma, prismaReady } from "../../../../lib/prisma";
@@ -498,6 +499,31 @@ export async function POST(req: Request) {
     const worstPriority = statusPriority[worstSoFar.terminalStatus ?? ""] ?? 0;
     return priority > worstPriority ? job : worstSoFar;
   });
+
+  // Hand the pipeline on to itself.
+  //
+  // The claim loop above is pinned to one jobType for its whole run — the wake
+  // that started it set `jobType=ENGINE_RUN`, so a PROPOSAL_GENERATION job this
+  // invocation just enqueued can never be claimed by this invocation. Nothing
+  // else was waking it either: the request-scoped wakes cover EXTRACT_TEXT,
+  // VAULT_INGEST and ENGINE_RUN only, and the drain cron fires from the default
+  // branch, so on a Preview deployment there is no driver at all.
+  //
+  // The visible result was a workflow that reported "Processing automatically —
+  // the workflow is running" while sitting on "No documents have been generated
+  // yet" indefinitely, because Run Engine genuinely succeeded and the stage
+  // after it was never claimed by anyone.
+  //
+  // This carries the owner's original authority forward rather than creating
+  // any: only a continuation the worker already enqueued can be claimed, and
+  // the chain terminates on its own when a stage produces no successor.
+  const continuationJobType = processedJobs
+    .map((job) => job.nextJobType)
+    .find((type): type is "PROPOSAL_GENERATION" | "AUTO_FINALIZE" =>
+      type === "PROPOSAL_GENERATION" || type === "AUTO_FINALIZE");
+  if (continuationJobType) {
+    scheduleRequestScopedWorkerWake(req, continuationJobType);
+  }
 
   return NextResponse.json({
     ran: processedJobs.length,
