@@ -61,7 +61,10 @@ function promotedRationale(original: string, score: number, authority: string): 
 
 function bestAvailableBelowThresholdRationale(original: string, score: number, authority: string): string {
   const pct = Math.round(score * 100);
-  return `${original} [BEST-AVAILABLE BELOW THRESHOLD] Auto-selected ${authority} at ${pct}% — every authoritative record scored below the 55% safe floor. The selection remains visibly low-confidence so the proposal cannot misrepresent relevance, but no separate human promotion step is required for evidence whose provenance is already authoritative.`;
+  const provenanceSpecificNote = authority === "reviewed evidence"
+    ? " Bid team MUST verify this record's relevance before submission."
+    : " The selection remains visibly low-confidence, but no separate human promotion step is required because the evidence provenance is already source-verified.";
+  return `${original} [BEST-AVAILABLE BELOW THRESHOLD] Auto-selected ${authority} at ${pct}% — every authoritative record scored below the 55% safe floor.${provenanceSpecificNote}`;
 }
 
 function selectBestAuthoritativeExperts(matches: ExpertMatch[], expertTrust: TrustLookup, limit: number): ExpertMatch[] {
