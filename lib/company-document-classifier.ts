@@ -5,8 +5,11 @@ const PP = [/\bproject\s+(name|title|description|references?|experience)\b/i, /\
 function ma(text: string, p: RegExp[]): boolean { return p.some((r) => r.test(text)); }
 export function classifyDocumentContent(fn: string, cat: string, t: string | null | undefined): DocumentClassification {
   const text = t ?? "";
-  const hasExpertData = ma(text, EP) || /cv|expert|staff|resume|personnel|curriculum/i.test(fn);
-  const hasProjectData = ma(text, PP) || /project|portfolio|reference|contract/i.test(fn);
+  // An explicit owner-selected category is itself scanning authority. AUTO is
+  // deliberately different: it may be corrected from the extracted bytes or
+  // filename, but it never suppresses a strong content signal.
+  const hasExpertData = cat === "EXPERT_CV" || ma(text, EP) || /cv|expert|staff|resume|personnel|curriculum/i.test(fn);
+  const hasProjectData = ["PROJECT_REFERENCE", "PROJECT_CONTRACT", "PORTFOLIO"].includes(cat) || ma(text, PP) || /project|portfolio|reference|contract/i.test(fn);
   const hasCompanyFacts = /\b(founded|established|company\s+profile|registration\s+number)\b/i.test(text);
   const hasLegalData = /\b(trade\s+license|business\s+license|registration\s+certificate)\b/i.test(text);
   const hasFinancialData = /\b(financial\s+statement|balance\s+sheet|audit\s+report)\b/i.test(text);

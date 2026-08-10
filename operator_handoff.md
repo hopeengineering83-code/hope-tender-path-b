@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-10 15:19 UTC — Codex (GPT-5.6 Sol), P0 continuation
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; fetched the PR ref and verified that its head had advanced from the owner's starting SHA `b6d6ee26ba9b704ac167a945992ca5deff350498` to `e549885952d0384604edec9e18de5a8d20456320`, then inspected only that single intervening commit.
+- **Scope / files changed:** continued the Company Vault zero-bureaucracy repair by fixing the canonical classifier to honor explicit `EXPERT_CV`, `PROJECT_REFERENCE`, `PROJECT_CONTRACT`, and `PORTFOLIO` owner categories even when generic filenames/text have no classifier keyword; added `tests/company-document-classifier-vault-scan.test.ts`; updated this handoff. No UI, PDF, ZIP, CSP, provider-order, or unrelated workflow files were touched.
+- **Tests:** 35 focused provenance, classifier, Vault-preflight, durable-engine-enqueue, and request-scoped worker-wake tests passed. The requested real PostgreSQL regression was attempted with `RUN_DB_INTEGRATION=true` but the configured Neon endpoint was unreachable, so its setup hook failed before assertions and real 28/112 acceptance is still unverified.
+- **Risks / assumptions:** no Preview was deployed (Hope approval is required), no owner data was accessed, and live 28/112 reconciliation is not proven. The preceding commit's realistic DB test remains substantially narrower than the full requested acceptance matrix (tie blocker persistence, two-tenant falsification, replacement/delete/re-extraction, deterministic matching under provider outage, and selected matches still need executable DB coverage).
+- **Next action:** run the expanded PostgreSQL acceptance suite against a reachable isolated database, close the remaining acceptance gaps, then deploy and validate the exact final SHA only after Hope authorizes a Preview.
+- **Merge status:** unsafe — partial code repair with focused tests only; DB and live acceptance remain outstanding.
+
 ### 2026-08-10 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / governing draft PR #1175; verified exact starting head `b6d6ee26ba9b704ac167a945992ca5deff350498` before editing.
