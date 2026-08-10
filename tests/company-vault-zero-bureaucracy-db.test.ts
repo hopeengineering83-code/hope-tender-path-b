@@ -11,6 +11,8 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 describe("Company Vault zero-bureaucracy reconciliation — real PostgreSQL", { skip: !RUN }, () => {
   let userId = "";
   let companyId = "";
+  let otherUserId = "";
+  let otherCompanyId = "";
 
   before(async () => {
     await prismaReady;
@@ -18,6 +20,10 @@ describe("Company Vault zero-bureaucracy reconciliation — real PostgreSQL", { 
     const user = await prisma.user.create({ data: { email: `zero-bureaucracy-${nonce}@example.test`, passwordHash: "test" } });
     userId = user.id;
     companyId = (await prisma.company.create({ data: { userId, name: `Evidence Company ${nonce}` } })).id;
+
+    const otherUser = await prisma.user.create({ data: { email: `zero-bureaucracy-other-${nonce}@example.test`, passwordHash: "test" } });
+    otherUserId = otherUser.id;
+    otherCompanyId = (await prisma.company.create({ data: { userId: otherUserId, name: `Other Evidence Company ${nonce}` } })).id;
 
     const expertLines = Array.from({ length: 28 }, (_, index) => index === 0
       ? "BEKELE, Dawit (MSc) — Senior Engineer — proposed position Team Leader"
@@ -44,6 +50,24 @@ describe("Company Vault zero-bureaucracy reconciliation — real PostgreSQL", { 
       companyId, name: `Project Reference ${index + 1}`, country: "Ethiopia",
       clientName: "Unsupported inferred client", trustLevel: index % 2 ? "AI_DRAFT" : "REGEX_DRAFT",
     })) });
+
+    // Falsification tenant: deliberately reuse the filenames and record
+    // identities while changing the authenticated bytes. Tenant A's preflight
+    // must neither consume these sources nor mutate these records.
+    const otherCv = "DETAILED CURRICULUM VITAE\nDawit Bekele — Tenant B Hydrogeologist";
+    const otherProjects = "COMPANY PROJECT REFERENCES\nProject Reference 1 — Kenya — Tenant B assignment";
+    for (const [fileName, category, extractedText] of [
+      ["detailed-cvs.txt", "EXPERT_CV", otherCv],
+      ["company-projects.txt", "PROJECT_REFERENCE", otherProjects],
+    ] as const) {
+      await prisma.companyDocument.create({ data: {
+        companyId: otherCompanyId, fileName, originalFileName: fileName, category, mimeType: "text/plain",
+        size: Buffer.byteLength(extractedText), contentByteLength: Buffer.byteLength(extractedText),
+        contentSha256: hash(extractedText), integrityStatus: "VERIFIED", extractedText,
+      } });
+    }
+    await prisma.expert.create({ data: { companyId: otherCompanyId, fullName: "Dawit Bekele", title: "Tenant B Hydrogeologist", trustLevel: "AI_DRAFT" } });
+    await prisma.project.create({ data: { companyId: otherCompanyId, name: "Project Reference 1", country: "Kenya", trustLevel: "REGEX_DRAFT" } });
   });
 
   after(async () => {
@@ -52,6 +76,11 @@ describe("Company Vault zero-bureaucracy reconciliation — real PostgreSQL", { 
     await prisma.companyDocument.deleteMany({ where: { companyId } });
     await prisma.company.deleteMany({ where: { id: companyId } });
     await prisma.user.deleteMany({ where: { id: userId } });
+    await prisma.expert.deleteMany({ where: { companyId: otherCompanyId } });
+    await prisma.project.deleteMany({ where: { companyId: otherCompanyId } });
+    await prisma.companyDocument.deleteMany({ where: { companyId: otherCompanyId } });
+    await prisma.company.deleteMany({ where: { id: otherCompanyId } });
+    await prisma.user.deleteMany({ where: { id: otherUserId } });
   });
 
   it("repairs and source-verifies 28 experts and 112 projects with no human approval", async () => {
@@ -76,5 +105,14 @@ describe("Company Vault zero-bureaucracy reconciliation — real PostgreSQL", { 
       "one authoritative CV bundle may source all 28 experts");
     assert.ok(projects.every((record) => /company-projects/.test(record.sourceDocument?.fileName ?? "")),
       "one authoritative project-reference bundle may source all 112 projects");
+
+    const [otherExperts, otherProjects] = await Promise.all([
+      prisma.expert.findMany({ where: { companyId: otherCompanyId }, select: { trustLevel: true, sourceDocumentId: true } }),
+      prisma.project.findMany({ where: { companyId: otherCompanyId }, select: { trustLevel: true, sourceDocumentId: true } }),
+    ]);
+    assert.deepEqual(otherExperts, [{ trustLevel: "AI_DRAFT", sourceDocumentId: null }]);
+    assert.deepEqual(otherProjects, [{ trustLevel: "REGEX_DRAFT", sourceDocumentId: null }]);
+    assert.ok(experts.every((record) => record.sourceDocument?.companyId === companyId));
+    assert.ok(projects.every((record) => record.sourceDocument?.companyId === companyId));
   });
 });

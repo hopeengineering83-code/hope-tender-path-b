@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-10 16:10 UTC — Codex (GPT-5.6 Sol), P0 cross-tenant acceptance continuation
+
+- **Branch / PR:** `codex/p0-vault-end-to-end`, based on current governing PR #1175 head `55ec95dcd3ed44978399157990860224cf0ba758`; verified the owner-supplied starting SHA and inspected only the four later commits.
+- **Scope / files:** strengthened `tests/company-vault-zero-bureaucracy-db.test.ts` with a second authenticated tenant using the same Expert/Project identities and filenames but different bytes, proving Tenant A's automatic 28/112 reconciliation neither consumes Tenant B sources nor mutates Tenant B drafts; updated this handoff. No production trust gate was relaxed.
+- **Tests:** Prisma generation passed; 17 focused non-DB provenance/classifier assertions passed; typecheck and lint passed. The focused real-PostgreSQL suite was attempted but the configured Neon host was unreachable, so its setup hook failed before assertions.
+- **CI / deployment:** PR #1175 checks and Vercel Preview were green at the fetched head. No deployment was created, promoted, or live-owner-tested from this continuation.
+- **Risks / next action:** the new two-tenant DB assertions require reachable PostgreSQL/CI execution; exact Preview owner totals and Engine candidate/selection counts remain mandatory before GO.
+- **Merge status:** unsafe pending PostgreSQL and exact-Preview owner acceptance.
+
 ### 2026-08-10 15:40 UTC — Codex (GPT-5.6 Sol), P0 acceptance strengthening
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / #1175; verified remote head moved from the supplied `b6d6ee26ba9b704ac167a945992ca5deff350498` to `a5c001529619423f79fc194b97d71d8369f31997` and inspected only the three intervening commits.
