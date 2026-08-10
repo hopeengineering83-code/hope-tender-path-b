@@ -115,4 +115,33 @@ describe("Company Vault zero-bureaucracy reconciliation — real PostgreSQL", { 
     assert.ok(experts.every((record) => record.sourceDocument?.companyId === companyId));
     assert.ok(projects.every((record) => record.sourceDocument?.companyId === companyId));
   });
+
+  it("fails closed when two owned CV sources have indistinguishable authority", async () => {
+    const text = [
+      "CURRICULUM VITAE AND DETAILED PROFESSIONAL PERSONNEL RECORD",
+      "Tie Case Engineer — Senior Engineer",
+      "Proposed position: Senior Engineer; professional team assignment and detailed experience record.",
+    ].join("\n");
+    const documents = await Promise.all(["tie-cv-a.txt", "tie-cv-b.txt"].map((fileName) =>
+      prisma.companyDocument.create({ data: {
+        companyId, fileName, originalFileName: fileName, category: "EXPERT_CV", mimeType: "text/plain",
+        size: Buffer.byteLength(text), contentByteLength: Buffer.byteLength(text),
+        contentSha256: hash(text), integrityStatus: "VERIFIED", extractedText: text,
+      } }),
+    ));
+    const expert = await prisma.expert.create({ data: {
+      companyId, fullName: "Tie Case Engineer", title: "Senior Engineer", trustLevel: "AI_DRAFT",
+    } });
+
+    const result = await prepareCompanyVaultForEngine(userId);
+    assert.deepEqual(result?.sourceRemap.blockers, [{
+      recordType: "EXPERT",
+      recordId: expert.id,
+      reason: "AMBIGUOUS_SOURCE_MATCH",
+    }]);
+    const unchanged = await prisma.expert.findUniqueOrThrow({ where: { id: expert.id } });
+    assert.equal(unchanged.sourceDocumentId, null);
+    assert.equal(unchanged.trustLevel, "AI_DRAFT");
+    assert.ok(documents.every((document) => document.companyId === companyId));
+  });
 });

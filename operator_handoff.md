@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-10 16:18 UTC — Codex (GPT-5.6 Sol), P0 PostgreSQL acceptance continuation
+
+- **Branch / PR:** `codex/p0-vault-end-to-end` / #1291, based on governing PR #1175 head `55ec95dcd3ed44978399157990860224cf0ba758`; verified the five commits after the owner-supplied starting SHA and did not touch frozen/quarantined work.
+- **Scope / files:** strengthened `tests/company-vault-zero-bureaucracy-db.test.ts` so the single realistic 28-Expert/112-Project PostgreSQL acceptance also proves that two equally authoritative owned CVs fail closed with `AMBIGUOUS_SOURCE_MATCH`; updated this handoff. No production gate was weakened or unrelated file changed.
+- **Tests:** installed and started isolated local PostgreSQL 16, applied all 47 migrations, and passed the realistic 28/112 reconciliation, source-remap, Vault-ingest execution, Engine worker handoff, claim concurrency/tenant isolation, and complete owner-workflow DB tests (23/23 focused assertions before the tie addition; the final zero-bureaucracy test passes 2/2). Prisma generation passed; typecheck and lint were run after the test-only change.
+- **CI / deployment:** governing PR #1175 was green at inspection; #1291 dependency audit was green and its main CI was in progress. No deployment was created, promoted, or merged by this session.
+- **Risks / next action:** exact deployed Preview owner data (28/112 live counts and real tender candidate/selection counts) remains mandatory and unproven locally. Await #1291 CI, then validate the exact final-SHA Preview with the owner's authenticated data.
+- **Merge status:** unsafe until final CI and exact-Preview owner acceptance complete.
+
 ### 2026-08-10 16:10 UTC — Codex (GPT-5.6 Sol), P0 cross-tenant acceptance continuation
 
 - **Branch / PR:** `codex/p0-vault-end-to-end`, based on current governing PR #1175 head `55ec95dcd3ed44978399157990860224cf0ba758`; verified the owner-supplied starting SHA and inspected only the four later commits.
