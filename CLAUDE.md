@@ -73,6 +73,22 @@ owner authority. `createAnalysisJob()` rejects any call without a
 extraction ends at `EXTRACTION_COMPLETE_MANUAL_AI_ANALYZE_REQUIRED`. Negative
 regression tests pin all of it.
 
+## Resuming after an interrupted session — ask first
+
+If a session ended because a tool/usage limit was reached, **do not resume work on
+the next session automatically.** Report the current state and wait for Hope's
+explicit go-ahead before editing, committing, or pushing anything.
+
+Hope continues the work with a different coding tool while a limit is in effect.
+An agent that picks its previous task back up on refresh is therefore editing on
+top of changes it has not seen, which is how two tools end up fixing the same
+thing at once. That has already happened on PR #1175: `1d746caa` and `f8dd0eb5`
+were concurrent independent fixes to the same test-contention bug, and nothing
+was lost only because they were merged rather than force-pushed.
+
+This applies to autonomous continuation only. A fresh instruction from Hope is
+always permission to proceed.
+
 ## Priority order for all sessions
 
 1. Read `OWNER_AUTOMATION_CONTRACT.md` and `operator_handoff.md` Active Workboard before starting — do not overlap another agent's scope. More than one agent pushes to this repo, so re-fetch and confirm the exact head before editing, and rebase rather than discarding someone else's commits.
