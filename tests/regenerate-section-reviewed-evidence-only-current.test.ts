@@ -10,30 +10,30 @@ const route = readFileSync("app/api/tenders/[id]/regenerate-section/route.ts", "
 const evidenceSource = readFileSync("lib/engine/regenerate-section-evidence.ts", "utf8");
 const vercel = JSON.parse(readFileSync("vercel.json", "utf8"));
 
-describe("reviewed-only section evidence resolver", () => {
-  it("prefers reviewed selected evidence over reviewed Vault fallback", () => {
+describe("authoritative section evidence resolver", () => {
+  it("prefers authoritative selected evidence over Vault fallback", () => {
     const result = resolveReviewedSectionEvidence({
       selectedExperts: [
-        { id: "unreviewed-selected", trustLevel: "DRAFT" },
-        { id: "reviewed-selected", trustLevel: "REVIEWED" },
+        { id: "draft-selected", trustLevel: "AI_DRAFT" },
+        { id: "source-verified-selected", trustLevel: "SOURCE_VERIFIED" },
       ],
       selectedProjects: [{ id: "reviewed-project", trustLevel: "REVIEWED" }],
       vaultExperts: [{ id: "vault-expert", trustLevel: "REVIEWED" }],
-      vaultProjects: [{ id: "vault-project", trustLevel: "REVIEWED" }],
+      vaultProjects: [{ id: "vault-project", trustLevel: "SOURCE_VERIFIED" }],
     });
 
-    assert.deepEqual(result.experts.map((item) => item.id), ["reviewed-selected"]);
+    assert.deepEqual(result.experts.map((item) => item.id), ["source-verified-selected"]);
     assert.deepEqual(result.projects.map((item) => item.id), ["reviewed-project"]);
     assert.equal(result.expertSource, "SELECTED_REVIEWED");
     assert.equal(result.projectSource, "SELECTED_REVIEWED");
   });
 
-  it("uses reviewed Vault evidence when selected records are unreviewed", () => {
+  it("uses SOURCE_VERIFIED Vault evidence without a human-review requirement", () => {
     const result = resolveReviewedSectionEvidence({
-      selectedExperts: [{ id: "selected-expert", trustLevel: "UNREVIEWED" }],
-      selectedProjects: [{ id: "selected-project", trustLevel: "UNREVIEWED" }],
-      vaultExperts: [{ id: "vault-expert", trustLevel: "REVIEWED" }],
-      vaultProjects: [{ id: "vault-project", trustLevel: "REVIEWED" }],
+      selectedExperts: [{ id: "selected-expert", trustLevel: "AI_DRAFT" }],
+      selectedProjects: [{ id: "selected-project", trustLevel: "REGEX_DRAFT" }],
+      vaultExperts: [{ id: "vault-expert", trustLevel: "SOURCE_VERIFIED" }],
+      vaultProjects: [{ id: "vault-project", trustLevel: "SOURCE_VERIFIED" }],
     });
 
     assert.deepEqual(result.experts.map((item) => item.id), ["vault-expert"]);
@@ -42,12 +42,12 @@ describe("reviewed-only section evidence resolver", () => {
     assert.equal(result.projectSource, "VAULT_REVIEWED");
   });
 
-  it("never returns unreviewed selected or Vault records", () => {
+  it("never returns draft/unverified selected or Vault records", () => {
     const result = resolveReviewedSectionEvidence({
-      selectedExperts: [{ id: "selected-expert", trustLevel: "PENDING" }],
+      selectedExperts: [{ id: "selected-expert", trustLevel: "AI_DRAFT" }],
       selectedProjects: [{ id: "selected-project", trustLevel: null }],
-      vaultExperts: [{ id: "vault-expert", trustLevel: "DRAFT" }],
-      vaultProjects: [{ id: "vault-project", trustLevel: "UNREVIEWED" }],
+      vaultExperts: [{ id: "vault-expert", trustLevel: "REGEX_DRAFT" }],
+      vaultProjects: [{ id: "vault-project", trustLevel: "MANUAL_DRAFT" }],
     });
 
     assert.deepEqual(result.experts, []);
@@ -56,7 +56,7 @@ describe("reviewed-only section evidence resolver", () => {
     assert.equal(result.projectSource, "NONE");
   });
 
-  it("blocks evidence-dependent sections when reviewed proof is absent", () => {
+  it("blocks evidence-dependent sections when authoritative proof is absent", () => {
     assert.deepEqual(sectionEvidenceBlocker({
       sectionId: "technical-approach",
       expertCount: 0,
@@ -88,11 +88,12 @@ describe("section regeneration release authority", () => {
     assert.match(route, /Resolve the canonical generation-readiness blocker/);
   });
 
-  it("contains no unreviewed evidence fallback path", () => {
+  it("contains no draft-evidence fallback path", () => {
     assert.doesNotMatch(route, /using .*unreviewed selected/i);
     assert.doesNotMatch(route, /experts\s*=\s*tender\.expertMatches\.map/);
     assert.doesNotMatch(route, /projects\s*=\s*tender\.projectMatches\.map/);
     assert.match(route, /resolveReviewedSectionEvidence/);
+    assert.match(evidenceSource, /SOURCE_VERIFIED/);
     assert.match(evidenceSource, /NO_REVIEWED_EXPERT_EVIDENCE/);
     assert.match(evidenceSource, /NO_REVIEWED_PROJECT_EVIDENCE/);
   });
