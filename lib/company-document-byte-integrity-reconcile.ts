@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { logger } from "./observability";
-import { verifiedIntegrityDataFromBase64 } from "./engine/persisted-byte-integrity";
+import { getStorageAdapter } from "./storage";
+import { inspectActualFileBytes } from "./engine/persisted-byte-integrity";
 
 /**
  * Establishes byte integrity for owned Company Vault documents that never had
@@ -53,6 +54,7 @@ export async function reconcileCompanyDocumentByteIntegrity(
       originalFileName: true,
       mimeType: true,
       fileContent: true,
+      storagePath: true,
     },
   });
 
@@ -60,17 +62,47 @@ export async function reconcileCompanyDocumentByteIntegrity(
   let unrecoverable = 0;
 
   for (const document of candidates) {
-    if (!document.fileContent) {
-      // No recoverable bytes — cannot be proven, so it stays blocked.
+    const filename = document.originalFileName || document.fileName;
+    if (!document.fileContent && !document.storagePath) {
+      // No recoverable bytes at all — cannot be proven, so it stays blocked.
       unrecoverable += 1;
       continue;
     }
     try {
-      const integrity = verifiedIntegrityDataFromBase64({
-        fileContent: document.fileContent,
-        filename: document.originalFileName || document.fileName,
+      // Inline base64 and blob-backed documents both have real bytes; only the
+      // route to them differs. Reading just `fileContent` would silently skip
+      // every document stored in Blob, which is the majority on a deployment
+      // that has object storage configured.
+      const bytes = document.fileContent
+        ? Buffer.from(document.fileContent, "base64")
+        : await getStorageAdapter().getFile({
+            storagePath: document.storagePath,
+            fileContent: null,
+            fileName: filename,
+          });
+
+      const integrity = inspectActualFileBytes({
+        bytes,
+        filename,
         claimedMimeType: document.mimeType,
       });
+      if (integrity.integrityStatus !== "VERIFIED") {
+        // Bytes are readable but do not inspect clean. Stays blocked, with the
+        // reason recorded rather than silently swallowed.
+        unrecoverable += 1;
+        await prisma.companyDocument
+          .update({
+            where: { id: document.id },
+            data: { integrityFailureCode: integrity.integrityFailureCode ?? "FILE_INTEGRITY_NOT_VERIFIED" },
+          })
+          .catch((updateError: unknown) => {
+            logger.warn("[vault-integrity] could not record integrity failure code", {
+              documentId: document.id,
+              detail: updateError,
+            });
+          });
+        continue;
+      }
       await prisma.companyDocument.update({
         where: { id: document.id },
         data: {
@@ -85,7 +117,8 @@ export async function reconcileCompanyDocumentByteIntegrity(
       });
       verified += 1;
     } catch (error) {
-      // Bytes exist but do not inspect clean. Record why and leave it blocked.
+      // Bytes could not be read at all (blob fetch failed, base64 malformed).
+      // Record why and leave it blocked.
       unrecoverable += 1;
       const failureCode = error instanceof Error ? error.message : "FILE_INTEGRITY_NOT_VERIFIED";
       await prisma.companyDocument
