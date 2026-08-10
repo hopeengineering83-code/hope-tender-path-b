@@ -74,6 +74,54 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-10 18:40 UTC — Claude Code (Opus), restore green CI on the Company Vault P0
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. Started from
+  head `028e0aaf` (21 commits of Company Vault P0 work by Codex and the owner's account).
+- **Problem:** exact-head CI was red at step 19 for six consecutive pushes (`8e75e437`, `a5c00152`,
+  `89888d9d`, `d0cd261a`, `028e0aaf`). Build, Playwright and the two-user isolation stage were
+  *skipped* as a consequence, so nothing past the test step was proven on any of those heads.
+- **Diagnosis:** four failures, all owner-facing wording colliding with the reviewed→verified
+  rename the P0 deliberately makes. **None was a product regression.** Note the first local run
+  showed six failures because PostgreSQL died mid-run — restarted and re-ran before believing it,
+  per the rule in CLAUDE.md.
+  1. `main-engine-source-verified-selection` — test bans the substring `human promotion`; the new
+     rationale *denies* it ("no separate human promotion step is required…"). Fixed in the
+     **implementation** (→ "no separate approval step"), so the assertion stays strict.
+  2. `matching-quality-state` — expected `/await\s+engine\s+run/`; the message now says "await Run
+     Engine". The durable human-REVIEWED record is still counted correctly; only word order moved.
+  3. `panel-route-parity` — expected "28 reviewed vault expert(s)"; now "28 verified/source-backed
+     Vault expert(s)".
+  4. `pipeline-authority-regression` — pinned `findSourceDocument` and an old warning string in
+     `lib/company-vault-ingestion.ts`; both moved when source binding was unified onto
+     `remapUnlinkedVaultSources` (P0 §7). Re-pointed at the delegation, which is a stronger guard.
+     The safety assertion (`doesNotMatch(/trustLevel:\s*"REVIEWED"/)`) was **not** touched and
+     still passes — ingestion never fabricates human review.
+- **Tests actually run:** full `RUN_DB_INTEGRATION=true npm test` against real PostgreSQL 16 —
+  **9,811/9,811 passed, 0 failed, 0 skipped**, exit 0 (was 9,807/9,811 before). `npx tsc --noEmit`
+  exit 0. `npm run lint` 0 errors, 1 pre-existing unused-disable warning. `npm run build` exit 0 —
+  the first time the build has been proven on this head, since CI skipped it.
+- **P0 audit — already implemented by the other tool, verified not re-done:** §2 one canonical
+  matcher (`matchReviewEvidenceField`, consumed by both `collectEvidence` and
+  `buildPartialSourceVerificationProvenance`; NFC, strict-ordered first, identity-token fallback
+  for identity fields only, every token required, no fuzzy/phonetic matching); §3 `recordType`
+  passed through; §5 deadlock broken by ordering `remapUnlinkedVaultSources` before
+  `autoVerifyCompanyKnowledge` in both `lib/engine/prepare-company-vault.ts` and
+  `lib/company-vault-ingestion.ts`; §7 classifier unified on
+  `shouldScanForExperts`/`shouldScanForProjects`; §8 `VAULT_INGEST` is woken by
+  `scheduleRequestScopedWorkerWake` from `app/api/upload/route.ts:46` and
+  `app/api/company/ingestion-readiness/route.ts:23`. Affix stripping covers the owner's real
+  context including Ethiopian honorifics (`ato`, `wro`, `weyzero`, `obo`).
+- **Not done — cannot be done from here:** the deployed-Preview proof that the owner's real
+  0/28 and 0/112 screenshots no longer reproduce. This session's egress policy denies CONNECT to
+  `*.vercel.app`, so no authenticated browser run against the Preview is possible. Reported, not
+  routed around; no internal-function run substituted for it.
+- **CI / deployment:** No merge, force-push, rebase, base change, history rewrite, new PR,
+  credential rotation, Production migration, or Production deployment.
+- **Next action:** owner re-runs the real tender on the exact-head Preview and reports Vault
+  verified counts and Engine candidate counts.
+- **Merge status:** Not reviewed; not merged. Draft.
+
 ### 2026-08-10 15:40 UTC — Codex (GPT-5.6 Sol), P0 acceptance strengthening
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / #1175; verified remote head moved from the supplied `b6d6ee26ba9b704ac167a945992ca5deff350498` to `a5c001529619423f79fc194b97d71d8369f31997` and inspected only the three intervening commits.

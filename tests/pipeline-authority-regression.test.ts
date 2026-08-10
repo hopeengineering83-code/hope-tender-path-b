@@ -56,8 +56,16 @@ describe("pipeline authority non-negotiables — manual AI Analyze / manual Run 
     assert.match(routePage, /company-vault-verification-page/);
     assert.match(verificationPage, /Automatic Verification/);
     assert.match(verificationPage, /No human approval step is required/);
-    assert.match(ingestion, /findSourceDocument/);
-    assert.match(ingestion, /source quote did not bind to one owned document/);
+    // Ingestion no longer carries its own findSourceDocument helper: source
+    // binding was unified onto the canonical remapper so full and partial
+    // verification cannot disagree about what "identity verified" means.
+    // Pinning the delegation is stronger than pinning the old private helper
+    // — a second in-file matcher reappearing is exactly the regression this
+    // guards against.
+    assert.match(ingestion, /remapUnlinkedVaultSources/);
+    assert.match(ingestion, /source quote did not bind unambiguously to one strongest owned document/);
+    // The one assertion here that is about safety rather than structure:
+    // ingestion must never manufacture human review.
     assert.doesNotMatch(ingestion, /trustLevel:\s*"REVIEWED"/);
   });
 });

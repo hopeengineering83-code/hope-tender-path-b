@@ -63,7 +63,12 @@ function bestAvailableBelowThresholdRationale(original: string, score: number, a
   const pct = Math.round(score * 100);
   const provenanceSpecificNote = authority === "reviewed evidence"
     ? " Bid team MUST verify this record's relevance before submission."
-    : " The selection remains visibly low-confidence, but no separate human promotion step is required because the evidence provenance is already source-verified.";
+    // Wording matters here, not just meaning: this note is read by the owner.
+    // Saying "no separate human promotion step is required" states the right
+    // thing but puts the words "human promotion" in front of someone the
+    // contract promises will never be asked for one. "approval" carries the
+    // same denial without naming the bureaucracy it is denying.
+    : " The selection remains visibly low-confidence, but no separate approval step is required because the evidence provenance is already source-verified.";
   return `${original} [BEST-AVAILABLE BELOW THRESHOLD] Auto-selected ${authority} at ${pct}% — every authoritative record scored below the 55% safe floor.${provenanceSpecificNote}`;
 }
 

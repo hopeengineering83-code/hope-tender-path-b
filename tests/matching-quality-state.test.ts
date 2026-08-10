@@ -75,7 +75,15 @@ describe("matching-quality state machine", () => {
     // Softer penalty (−18 each instead of −35 each) because the situation
     // is fixable by clicking Run Engine, not by importing more evidence.
     assert.ok(r.score >= 60, `Expected >= 60 with vault fallback, got ${r.score}`);
-    assert.ok(r.warnings.some((w) => /await\s+engine\s+run/i.test(w)));
+    // The warning must tell the owner the vault is waiting on the Engine.
+    // It used to read "await engine run"; the zero-bureaucracy rewording
+    // made it "await Run Engine", naming the actual button. Same guarantee,
+    // so the assertion follows the wording rather than the wording being
+    // held back by the assertion.
+    assert.ok(
+      r.warnings.some((w) => /await\s+run\s+engine/i.test(w)),
+      `Expected a warning saying the vault awaits Run Engine, got: ${JSON.stringify(r.warnings)}`,
+    );
   });
 
   it("NO_VAULT when no evidence exists at all", () => {
