@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-10 15:40 UTC — Codex (GPT-5.6 Sol), P0 acceptance strengthening
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175; verified remote head moved from the supplied `b6d6ee26ba9b704ac167a945992ca5deff350498` to `a5c001529619423f79fc194b97d71d8369f31997` and inspected only the three intervening commits.
+- **Scope / files:** audited the P0 reconciliation already on the governing PR; strengthened `tests/company-vault-zero-bureaucracy-db.test.ts` to require zero blockers and prove 28 Experts/112 Projects can share their respective authoritative bundles; strengthened `tests/identity-verification-accepts-normalised-names.test.ts` to pin stable canonical identity-fallback quotes and coordinates; updated this handoff. No production gate was relaxed.
+- **Tests:** Prisma generation passed. The focused real-PostgreSQL run was attempted, but the configured Neon host was unreachable; focused non-DB tests, typecheck, lint, and build results are recorded in the final PR report.
+- **CI / deployment:** #1175 CI was running at session start; dependency audit and the existing Vercel check were green. Codex created no deployment and did not promote or merge anything.
+- **Risk / next action:** authenticated live owner totals (28/112) and live Engine candidate/selection counts remain unproven. Re-run the full matrix with reachable PostgreSQL, then test the exact final-SHA Preview with owner data.
+- **Merge status:** unsafe pending PostgreSQL and live Preview acceptance.
+
 ### 2026-08-10 UTC — Codex (P0 Vault reconciliation follow-up)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / #1175; started from current PR head `8e75e437fc5073756f020646988d313c157da21d` after inspecting only the two commits after the owner-supplied SHA.

@@ -24,6 +24,7 @@ import { strict as assert } from "node:assert";
 import { createHash } from "node:crypto";
 
 import { deriveAutomaticSourceVerification } from "../lib/company-auto-verification";
+import { matchReviewEvidenceField } from "../lib/vault-review-provenance";
 
 const SOURCE = `HOPE ENGINEERING PLC — COMPANY PROFILE
 Established 2009 in Addis Ababa, Ethiopia. TIN 0001234567.
@@ -100,6 +101,16 @@ describe("identity verification tolerates extractor normalisation", () => {
       ["yearsExperience"],
       "the unsupported field must remain explicitly unverified",
     );
+  });
+
+  it("returns one canonical quote and coordinates for identity-token fallback", () => {
+    const text = "CV register: Dr. BEKELE,   Dawit, MSc — Team Leader.";
+    const first = matchReviewEvidenceField(text, "fullName", "Dawit Bekele", "EXPERT");
+    const second = matchReviewEvidenceField(text, "fullName", "Dawit Bekele", "EXPERT");
+
+    assert.equal(first?.matchMode, "IDENTITY_TOKENS");
+    assert.deepEqual(second, first, "every verifier must receive identical evidence coordinates and quote data");
+    assert.match(first?.quote ?? "", /BEKELE, Dawit/i);
   });
 
   it("treats canonically equivalent Unicode identity text consistently", () => {

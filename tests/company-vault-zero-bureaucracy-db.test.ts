@@ -60,6 +60,7 @@ describe("Company Vault zero-bureaucracy reconciliation — real PostgreSQL", { 
     assert.equal(result?.sourceRemap.projectsLinked, 112);
     assert.equal(result?.sourceVerification.expertsVerified, 28);
     assert.equal(result?.sourceVerification.projectsVerified, 112);
+    assert.deepEqual(result?.sourceRemap.blockers, [], "every uniquely provable record must reconcile without a human action");
 
     const [experts, projects] = await Promise.all([
       prisma.expert.findMany({ where: { companyId }, select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT }),
@@ -71,7 +72,9 @@ describe("Company Vault zero-bureaucracy reconciliation — real PostgreSQL", { 
     assert.ok(projects.every((record) => record.reviewedBy === null && record.reviewedAt === null));
     assert.equal(canUseVaultRecordField(experts[0], "yearsExperience"), false);
     assert.equal(canUseVaultRecordField(projects[0], "clientName"), false);
-    assert.match(experts[0].sourceDocument?.fileName ?? "", /detailed-cvs/);
-    assert.match(projects[0].sourceDocument?.fileName ?? "", /company-projects/);
+    assert.ok(experts.every((record) => /detailed-cvs/.test(record.sourceDocument?.fileName ?? "")),
+      "one authoritative CV bundle may source all 28 experts");
+    assert.ok(projects.every((record) => /company-projects/.test(record.sourceDocument?.fileName ?? "")),
+      "one authoritative project-reference bundle may source all 112 projects");
   });
 });
