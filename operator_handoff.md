@@ -74,6 +74,78 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-10 13:50 UTC — Claude Code (Opus), PR #1175 release-hardening audit at exact head
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. Audit started
+  from head `fe612ab0`; no Codex commits had landed after it.
+- **Scope / files:** One new test file, `tests/job-claim-concurrency-stress-db.test.ts`, plus this
+  handoff entry. **No production source changed** — the audit found no defect that justified one.
+- **Gap closed:** the queue's exactly-once claim had small-scale coverage only
+  (`tests/engine-worker-wake-constraints.test.ts`: 4 mixed racers, 12 concurrent wakes, ENGINE_RUN
+  only). The new file stresses `claimJobForCaller` at 2, 10 and 25 concurrent callers with the two
+  real caller shapes interleaved (cron `global: true`, request wake tenant-scoped), then covers
+  25-callers-vs-25-jobs (no double-hand-out, no starvation), FIFO order, 20-way two-tenant
+  contention with ownership assertions, cross-tender isolation inside one tenant, job-type
+  isolation, the fail-closed unidentified caller, and the `nextAttemptAt` backoff window against a
+  25-caller stampede. 12 tests, all pinned to tenders the file creates — an unpinned `global: true`
+  claim steals other suites' rows, which is what broke `not ok 814` on this branch before.
+- **Correction to the record:** the full-suite count previously reported as 9,779 on this head is
+  wrong. Measured twice today on the same tree: **9,777** without the new file, **9,789** with it.
+  9,777 + 12 = 9,789 exactly.
+- **Tests actually run:** full `RUN_DB_INTEGRATION=true npm test` against real PostgreSQL 16 —
+  9,789/9,789 passed, 0 failed, 0 skipped, exit 0. Baseline re-measurement 9,777/9,777, exit 0.
+  Focused new file standalone 12/12. `npx tsc --noEmit` exit 0. `npm run lint` 0 errors, 1
+  pre-existing unused-disable warning in `tests/superseded-job-status-projection.test.ts`
+  (threshold is 50). Note `npx next lint` is not this project's lint entry point and crashes on
+  module load — use `npm run lint`.
+- **Exact-head CI verified by inspection, not badge:** run `31391888387`, job `93465334960`,
+  head_sha `fe612ab07c9e1b9204ea63ca4eece0402f22d7c6`, conclusion success. 27 steps executed; the
+  only `skipped` step is #28, the failure-only diagnostics upload. Step 19 (unit + DB integration)
+  ran 3m03s; step 24 (authenticated browser: smoke, intake, golden workflow, cross-user isolation)
+  ran 3m39s and is separate from step 22's 22s Playwright install — so the browser stage executes
+  tests rather than merely booting.
+- **Deployed Preview identity proven:** `dpl_GbNQUmCWCxQfpT8t8oMr4tQDbGAa` is READY and its own
+  `/api/health` returns `release: fe612ab07c9e1b9204ea63ca4eece0402f22d7c6`, matching the head.
+- **Blocked — deployed Preview golden path NOT performed.** This session's egress policy denies
+  CONNECT to `*.vercel.app` (proxy `connect_rejected`, gateway 403), so no browser or authenticated
+  multi-step HTTP run against the Preview is possible from here. Only single-shot reads via the
+  Vercel MCP fetch tool work. Per the standing rule this was reported, not routed around, and no
+  internal-function run was substituted for it. This remains the largest open verification gap and
+  is owner-executable — see the PR body.
+- **Audited, no change made (no defect found):** workflow action versions (all v4/v5, DataDog
+  SHA-pinned, no `@v1/@v2/@v3`, no node12/16 runtimes) — but CI still emits
+  `Node.js 20 is deprecated … actions/upload-artifact@v5 … forced to run on Node.js 24`, which is a
+  property of the published action, not of this repository, and has no newer major to move to;
+  `CREATE INDEX` errors in the CI Postgres log (`Expert.deletedAt`, `Project.deletedAt`,
+  `TenderRequirement.sourceTenderFileId`) are `lib/prisma.ts`'s deliberately-tolerated bootstrap
+  failures on a non-migrated scratch database — on the migrated schema all three columns and all
+  three indexes exist, verified directly with `psql`.
+- **Findings recorded as healthy:** `enqueueEngineJobForCurrentSources` has exactly one caller
+  (the manual Run Engine route) and `createAnalysisJob` exactly one (the manual AI Analyze route);
+  run-next additionally logs and ignores any handler returning `output.automaticEngineJob`.
+  Handlers receive `userId`/`tenderId` from the claimed row, never from the request — there is no
+  `userId` query parameter anywhere in run-next. A PostgreSQL trigger
+  (`enforce_ai_job_tender_owner` → `AI_JOB_TENDER_OWNER_MISMATCH`) rejects tenant-mismatched AiJob
+  inserts *and* userId updates at the database. Vault records reach matching eligibility
+  automatically via `SOURCE_VERIFIED` (`lib/company-auto-verification.ts`,
+  `lib/plan-b-source-reconcile.ts` promote on `provenance.ok` and demote to `AI_DRAFT` otherwise),
+  so `REVIEWED` is the optional human path, not a mandatory promotion gate. No secret shapes in
+  `.next/static`, no client source maps emitted, and `NEXT_PUBLIC_ANTHROPIC_API_KEY` /
+  `NEXT_PUBLIC_DATABASE_URL` / `NEXT_PUBLIC_SESSION_SECRET` appear only in tests asserting they are
+  never exposed. Zero unresolved PR review threads and zero Vercel toolbar threads.
+- **Runtime logs:** no error cluster in the last 7 days belongs to `dpl_GbNQUmCWCxQfpT8t8oMr4tQDbGAa`
+  — but that is because no workload has been driven against it, not proof of health. The named
+  historical timeouts (`/api/tenders/[id]/evaluator-objections` and
+  `/api/tenders/[id]/requirement-coverage` at `maxDuration = 10`, `/api/ai-jobs/run-next` at 60)
+  last occurred 2026-08-09 16:33 on `dpl_5k9qJYdpr5WaUUqoMntxttQQB6R6`: **not reproduced, not
+  disproven.** run-next's budget is counted from request start (`startTime` precedes the recovery
+  sweeps), leaving 20s of headroom, so an overrun means a handler outran its `deadlineMs`.
+- **CI / deployment:** No merge, force-push, rebase, base change, history rewrite, new PR,
+  credential rotation, Production migration, or Production deployment.
+- **Next action:** owner runs the deployed-Preview golden path (steps in the PR body) on this exact
+  SHA; nothing else in the audit is blocked.
+- **Merge status:** Not reviewed; not merged. Draft.
+
 ### 2026-08-09 19:35 UTC — Codex (GPT-5.6 Sol), post-Engine Vault transition and Bid Strategy authority
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175.
