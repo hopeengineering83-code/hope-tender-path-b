@@ -101,6 +101,24 @@ describe("identity verification tolerates extractor normalisation", () => {
       "the unsupported field must remain explicitly unverified",
     );
   });
+
+  it("treats canonically equivalent Unicode identity text consistently", () => {
+    const decomposed = "DETAILED CURRICULUM VITAE AND PROFESSIONAL PERSONNEL REGISTER. Dr. Jose\u0301  Ayele, PhD — proposed position: Team Leader and senior engineer.";
+    const bytes = Buffer.from(decomposed);
+    const result = deriveAutomaticSourceVerification({
+      recordType: "EXPERT",
+      sourceDocument: {
+        ...(sourceDocument as object),
+        id: "unicode-cv",
+        extractedText: decomposed,
+        contentSha256: createHash("sha256").update(bytes).digest("hex"),
+        contentByteLength: bytes.byteLength,
+      },
+      fields: [{ field: "fullName", value: "José Ayele" }],
+      priorTrustLevel: "REGEX_DRAFT",
+    });
+    assert.equal(result.ok, true);
+  });
 });
 
 describe("the anti-fabrication gate still holds", () => {

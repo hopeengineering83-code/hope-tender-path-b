@@ -21,14 +21,17 @@ export type VaultSourceRemapResult = {
   legalRecordsLinked: number;
   financialRecordsLinked: number;
   complianceRecordsLinked: number;
+  blockers: Array<{ recordType: ReviewRecordType; recordId: string; reason: "NO_SOURCE_MATCH" | "AMBIGUOUS_SOURCE_MATCH" }>;
 };
 
 // Draft/regex-imported records that predate a sourceDocument binding (for
 // example the Plan-B legacy-data import, which persists uploaded company
 // documents but does not always declare which one produced each record) are
-// eligible for remap. REVIEWED/SOURCE_VERIFIED records already carry a real
-// binding and are left untouched.
+// eligible for remap. SOURCE_VERIFIED records are also reconciled so deleted,
+// replaced, or re-extracted bytes cannot retain stale authority. Authenticated
+// human REVIEWED records remain outside machine reconciliation.
 const REMAP_ELIGIBLE_TRUST_LEVELS = ["REGEX_DRAFT", "AI_DRAFT"];
+const RECONCILE_ELIGIBLE_TRUST_LEVELS = [...REMAP_ELIGIBLE_TRUST_LEVELS, "SOURCE_VERIFIED"];
 
 async function loadCandidateDocuments(companyId: string): Promise<ReviewSourceDocument[]> {
   return prisma.companyDocument.findMany({
@@ -77,7 +80,8 @@ function findMatchingDocument(
   documents: ReviewSourceDocument[],
   fields: ReviewEvidenceField[],
   recordType: ReviewRecordType,
-): ReviewSourceDocument | null {
+  currentSourceDocumentId?: string | null,
+): { document: ReviewSourceDocument | null; reason: "NO_SOURCE_MATCH" | "AMBIGUOUS_SOURCE_MATCH" | null } {
   const candidates = documents.flatMap((document) => {
     const full = assessReviewEvidence(document, fields, recordType);
     const partial = buildPartialSourceVerificationProvenance({
@@ -95,6 +99,7 @@ function findMatchingDocument(
     return [{
       document,
       rank: [
+        document.id === currentSourceDocumentId ? 1 : 0,
         full.ok ? 1 : 0,
         partial.verifiedFields.length,
         identityMatch?.matchMode === "STRICT_ORDERED" ? 1 : 0,
@@ -110,10 +115,12 @@ function findMatchingDocument(
     }
     return 0;
   });
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) return { document: null, reason: "NO_SOURCE_MATCH" };
   const best = candidates[0];
   const tied = candidates[1]?.rank.every((value, index) => value === best.rank[index]);
-  return tied ? null : best.document;
+  return tied
+    ? { document: null, reason: "AMBIGUOUS_SOURCE_MATCH" }
+    : { document: best.document, reason: null };
 }
 
 async function auditLink(userId: string, action: string, entityType: string, entityId: string, sourceDocumentId: string) {
@@ -129,42 +136,58 @@ async function auditLink(userId: string, action: string, entityType: string, ent
   });
 }
 
-async function remapExperts(companyId: string, userId: string, documents: ReviewSourceDocument[]): Promise<number> {
+async function remapExperts(companyId: string, userId: string, documents: ReviewSourceDocument[], blockers: VaultSourceRemapResult["blockers"]): Promise<number> {
   const experts = await prisma.expert.findMany({
-    where: { companyId, deletedAt: null, sourceDocumentId: null, trustLevel: { in: REMAP_ELIGIBLE_TRUST_LEVELS } },
-    select: { id: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true },
+    where: { companyId, deletedAt: null, trustLevel: { in: RECONCILE_ELIGIBLE_TRUST_LEVELS } },
+    select: { id: true, sourceDocumentId: true, trustLevel: true, fullName: true, title: true, yearsExperience: true, disciplines: true, sectors: true, certifications: true },
   });
   let linked = 0;
   for (const expert of experts) {
-    const match = findMatchingDocument(documents, expertReviewFields(expert), "EXPERT");
-    if (!match) continue;
+    const match = findMatchingDocument(documents, expertReviewFields(expert), "EXPERT", expert.sourceDocumentId);
+    if (!match.document) {
+      blockers.push({ recordType: "EXPERT", recordId: expert.id, reason: match.reason! });
+      if (expert.trustLevel === "SOURCE_VERIFIED") await prisma.expert.updateMany({
+        where: { id: expert.id, companyId, trustLevel: "SOURCE_VERIFIED" },
+        data: { trustLevel: "AI_DRAFT", sourceDocumentId: null, reviewNotes: null, reviewedBy: null, reviewedAt: null },
+      });
+      continue;
+    }
+    if (expert.sourceDocumentId === match.document.id) continue;
     const updated = await prisma.expert.updateMany({
-      where: { id: expert.id, companyId, sourceDocumentId: null },
-      data: { sourceDocumentId: match.id },
+      where: { id: expert.id, companyId, sourceDocumentId: expert.sourceDocumentId },
+      data: { sourceDocumentId: match.document.id, ...(expert.trustLevel === "SOURCE_VERIFIED" ? { trustLevel: "AI_DRAFT", reviewNotes: null } : {}) },
     });
     if (updated.count !== 1) continue;
     linked += 1;
-    await auditLink(userId, "EXPERT_SOURCE_REMAPPED", "Expert", expert.id, match.id);
+    await auditLink(userId, "EXPERT_SOURCE_REMAPPED", "Expert", expert.id, match.document.id);
   }
   return linked;
 }
 
-async function remapProjects(companyId: string, userId: string, documents: ReviewSourceDocument[]): Promise<number> {
+async function remapProjects(companyId: string, userId: string, documents: ReviewSourceDocument[], blockers: VaultSourceRemapResult["blockers"]): Promise<number> {
   const projects = await prisma.project.findMany({
-    where: { companyId, deletedAt: null, sourceDocumentId: null, trustLevel: { in: REMAP_ELIGIBLE_TRUST_LEVELS } },
-    select: { id: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, contractValue: true, currency: true },
+    where: { companyId, deletedAt: null, trustLevel: { in: RECONCILE_ELIGIBLE_TRUST_LEVELS } },
+    select: { id: true, sourceDocumentId: true, trustLevel: true, name: true, clientName: true, country: true, sector: true, serviceAreas: true, contractValue: true, currency: true },
   });
   let linked = 0;
   for (const project of projects) {
-    const match = findMatchingDocument(documents, projectReviewFields(project), "PROJECT");
-    if (!match) continue;
+    const match = findMatchingDocument(documents, projectReviewFields(project), "PROJECT", project.sourceDocumentId);
+    if (!match.document) {
+      blockers.push({ recordType: "PROJECT", recordId: project.id, reason: match.reason! });
+      if (project.trustLevel === "SOURCE_VERIFIED") await prisma.project.updateMany({
+        where: { id: project.id, companyId, trustLevel: "SOURCE_VERIFIED" },
+        data: { trustLevel: "AI_DRAFT", sourceDocumentId: null, reviewNotes: null, reviewedBy: null, reviewedAt: null },
+      });
+      continue;
+    }
+    if (project.sourceDocumentId === match.document.id) continue;
     const updated = await prisma.project.updateMany({
-      where: { id: project.id, companyId, sourceDocumentId: null },
-      data: { sourceDocumentId: match.id },
+      where: { id: project.id, companyId, sourceDocumentId: project.sourceDocumentId },
+      data: { sourceDocumentId: match.document.id, ...(project.trustLevel === "SOURCE_VERIFIED" ? { trustLevel: "AI_DRAFT", reviewNotes: null } : {}) },
     });
     if (updated.count !== 1) continue;
     linked += 1;
-    await auditLink(userId, "PROJECT_SOURCE_REMAPPED", "Project", project.id, match.id);
+    await auditLink(userId, "PROJECT_SOURCE_REMAPPED", "Project", project.id, match.document.id);
   }
   return linked;
 }
@@ -176,7 +199,7 @@ async function remapLegalRecords(companyId: string, userId: string, documents: R
   });
   let linked = 0;
   for (const record of records) {
-    const match = findMatchingDocument(documents, legalReviewFields(record), "LEGAL");
+    const { document: match } = findMatchingDocument(documents, legalReviewFields(record), "LEGAL");
     if (!match) continue;
     const updated = await prisma.legalRecord.updateMany({
       where: { id: record.id, companyId, sourceDocumentId: null },
@@ -196,7 +219,7 @@ async function remapFinancialRecords(companyId: string, userId: string, document
   });
   let linked = 0;
   for (const record of records) {
-    const match = findMatchingDocument(documents, financialReviewFields(record), "FINANCIAL");
+    const { document: match } = findMatchingDocument(documents, financialReviewFields(record), "FINANCIAL");
     if (!match) continue;
     const updated = await prisma.financialRecord.updateMany({
       where: { id: record.id, companyId, sourceDocumentId: null },
@@ -216,7 +239,7 @@ async function remapComplianceRecords(companyId: string, userId: string, documen
   });
   let linked = 0;
   for (const record of records) {
-    const match = findMatchingDocument(documents, complianceReviewFields(record), "COMPLIANCE");
+    const { document: match } = findMatchingDocument(documents, complianceReviewFields(record), "COMPLIANCE");
     if (!match) continue;
     const updated = await prisma.companyComplianceRecord.updateMany({
       where: { id: record.id, companyId, sourceDocumentId: null },
@@ -245,23 +268,22 @@ async function remapComplianceRecords(companyId: string, userId: string, documen
 // let automatic source verification promote the record next, exactly the same as
 // any other evidence-linked draft.
 export async function remapUnlinkedVaultSources(companyId: string): Promise<VaultSourceRemapResult> {
-  const empty: VaultSourceRemapResult = { expertsLinked: 0, projectsLinked: 0, legalRecordsLinked: 0, financialRecordsLinked: 0, complianceRecordsLinked: 0 };
+  const empty: VaultSourceRemapResult = { expertsLinked: 0, projectsLinked: 0, legalRecordsLinked: 0, financialRecordsLinked: 0, complianceRecordsLinked: 0, blockers: [] };
 
   const company = await prisma.company.findUnique({ where: { id: companyId }, select: { userId: true } });
   if (!company) return empty;
 
   const documents = await loadCandidateDocuments(companyId);
-  if (documents.length === 0) return empty;
-
   const userId = company.userId;
 
+  const blockers: VaultSourceRemapResult["blockers"] = [];
   const [expertsLinked, projectsLinked, legalRecordsLinked, financialRecordsLinked, complianceRecordsLinked] = await Promise.all([
-    remapExperts(companyId, userId, documents),
-    remapProjects(companyId, userId, documents),
+    remapExperts(companyId, userId, documents, blockers),
+    remapProjects(companyId, userId, documents, blockers),
     remapLegalRecords(companyId, userId, documents),
     remapFinancialRecords(companyId, userId, documents),
     remapComplianceRecords(companyId, userId, documents),
   ]);
 
-  return { expertsLinked, projectsLinked, legalRecordsLinked, financialRecordsLinked, complianceRecordsLinked };
+  return { expertsLinked, projectsLinked, legalRecordsLinked, financialRecordsLinked, complianceRecordsLinked, blockers };
 }

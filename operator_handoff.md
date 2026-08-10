@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-10 UTC — Codex (P0 Vault reconciliation follow-up)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175; started from current PR head `8e75e437fc5073756f020646988d313c157da21d` after inspecting only the two commits after the owner-supplied SHA.
+- **Scope / files:** completed stale/existing Expert and Project reconciliation in `lib/company-vault-source-remap.ts` (current-binding priority, deterministic ambiguity/no-match diagnostics, automatic stale authority demotion/rebinding, including the zero-current-documents case); fixed canonical Unicode identity matching and Unicode property boundaries in `lib/vault-review-provenance.ts`; added a decomposed/precomposed Unicode identity regression in `tests/identity-verification-accepts-normalised-names.test.ts`.
+- **Tests:** focused non-DB provenance/classifier suites pass; `tsc --noEmit` passes. The required PostgreSQL regression was attempted with `RUN_DB_INTEGRATION=true` but the configured Neon host was unreachable from this environment, so no live DB, Preview, authenticated Playwright, or owner-data counts are claimed by this follow-up.
+- **CI / deployment:** PR checks were in progress when inspected. No deployment was created or promoted.
+- **Risks / assumptions:** Legal/Financial/Compliance source-less stale-row reconciliation remains in the pre-existing support-record path rather than the new Expert/Project blocker diagnostics. Exact deployed Preview acceptance remains mandatory before a GO decision.
+- **Next action:** run the full PostgreSQL/Playwright/build matrix and validate the exact final SHA on PR #1175's Preview with the owner's 28 Experts, 112 Projects, and tender.
+- **Merge status:** unsafe until CI and exact-Preview owner acceptance complete.
+
 ### 2026-08-10 15:19 UTC — Codex (GPT-5.6 Sol), P0 continuation
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; fetched the PR ref and verified that its head had advanced from the owner's starting SHA `b6d6ee26ba9b704ac167a945992ca5deff350498` to `e549885952d0384604edec9e18de5a8d20456320`, then inspected only that single intervening commit.

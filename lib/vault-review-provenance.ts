@@ -361,7 +361,7 @@ function identityTokensPresent(text: string, value: string): RegExpExecArray | n
   if (tokens.length === 0) return null;
   let earliest: RegExpExecArray | null = null;
   for (const token of tokens) {
-    const hit = new RegExp(`(?<![\p{L}\p{N}])${escapeRegExp(token)}(?![\p{L}\p{N}])`, "iu").exec(text);
+    const hit = new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(token)}(?![\\p{L}\\p{N}])`, "iu").exec(text);
     if (!hit) return null;
     if (!earliest || hit.index < earliest.index) earliest = hit;
   }
@@ -379,24 +379,30 @@ export function matchReviewEvidenceField(
   value: string,
   recordType?: ReviewRecordType,
 ): ReviewEvidenceFieldMatch | null {
-  let match = evidencePattern(value).exec(text);
+  // NFC makes canonically equivalent Unicode spellings (for example a
+  // precomposed accented letter versus letter + combining mark) obey the
+  // same deterministic evidence rules. Both callers receive coordinates and
+  // quotes in this one canonical evidence-text representation.
+  const evidenceText = text.normalize("NFC");
+  const evidenceValue = value.normalize("NFC");
+  let match = evidencePattern(evidenceValue).exec(evidenceText);
   let matchMode: ReviewEvidenceFieldMatch["matchMode"] = "STRICT_ORDERED";
   const identitySpec = recordType ? IDENTITY_FIELD_BY_RECORD_TYPE[recordType] : null;
   const identityFields = new Set(identitySpec == null ? [] : Array.isArray(identitySpec) ? identitySpec : [identitySpec]);
   if ((!match || match.index < 0) && identityFields.has(field)) {
-    match = identityTokensPresent(text, value);
+    match = identityTokensPresent(evidenceText, evidenceValue);
     matchMode = "IDENTITY_TOKENS";
   }
   if (!match || match.index < 0) return null;
   const start = Math.max(0, match.index - 80);
-  const end = Math.min(text.length, match.index + match[0].length + 80);
-  const quote = normalizedQuote(text.slice(start, end));
+  const end = Math.min(evidenceText.length, match.index + match[0].length + 80);
+  const quote = normalizedQuote(evidenceText.slice(start, end));
   return {
     field,
     valueHash: evidenceValueHash(value),
     quoteHash: sha256(quote),
     quote,
-    page: sourcePageAtOffset(text, match.index),
+    page: sourcePageAtOffset(evidenceText, match.index),
     start,
     end,
     matchMode,
