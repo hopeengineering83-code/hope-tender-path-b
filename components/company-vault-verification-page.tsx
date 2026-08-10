@@ -75,7 +75,15 @@ export default function CompanyVaultVerificationPage() {
       const data = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(data.error || "Automatic source verification could not be queued.");
       void startQueuedVaultIngestion();
-      setMessage("Source-byte reprocessing and automatic verification were queued. Matching refreshes source authority again before it runs, so no further action is needed here.");
+      // Reprocessing re-reads stored file bytes. With no documents there are no
+      // bytes to re-read, so it will complete and verify nothing — promising
+      // "no further action is needed" there is how an owner ends up clicking
+      // Reprocess repeatedly against a vault that can never move off zero.
+      setMessage(
+        (diagnostics?.totals?.documents ?? 0) === 0
+          ? "Reprocessing was queued, but this vault has no uploaded documents, so there is nothing to verify against and the verified counts will stay at zero. Upload the original source files under Company Vault → Documents; verification then runs automatically, with no approval step."
+          : "Source-byte reprocessing and automatic verification were queued. Matching refreshes source authority again before it runs, so no further action is needed here.",
+      );
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : "Automatic source verification could not be queued.");
     } finally {

@@ -810,9 +810,22 @@ export default function CompanyPage() {
                 <span>Projects: <span className="font-medium text-slate-700">{allProjects.length} record{allProjects.length === 1 ? "" : "s"}</span>{usableEvidence ? <> · <span className="font-medium text-slate-700">{usableEvidence.projects}</span> source-verified and usable</> : " · automatically verified before use"}</span>
               </div>
               {usableEvidence && (usableEvidence.experts < allExperts.length || usableEvidence.projects < allProjects.length) && (
-                <p className="mt-1.5 text-xs text-slate-400">
-                  Records that are not yet source-verified are excluded from matching and generation. Run Engine verifies them automatically against the uploaded documents — no action is needed here.
-                </p>
+                docs.length === 0 ? (
+                  // "Run Engine will verify them, no action needed" is only true
+                  // when there is something to verify against. With no owned
+                  // documents there is nothing to match these records to, so
+                  // Run Engine will verify exactly zero of them however many
+                  // times it runs — and saying otherwise sends the owner round
+                  // a loop that cannot terminate. Records imported with declared
+                  // sources whose files were never uploaded land here.
+                  <p className="mt-1.5 text-xs text-amber-700">
+                    None of these records can be source-verified yet: this vault has <span className="font-medium">no uploaded documents</span> to verify them against, so matching and generation will keep excluding all {allExperts.length + allProjects.length} of them. Run Engine cannot change that. Upload the original source files (for example the expert CV bundle and the project reference document) under Documents — verification then runs automatically, with no approval step.
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-xs text-slate-400">
+                    Records that are not yet source-verified are excluded from matching and generation. Run Engine verifies them automatically against the uploaded documents — no action is needed here.
+                  </p>
+                )
               )}
             </div>
           </div>
@@ -993,7 +1006,13 @@ export default function CompanyPage() {
           {(() => {
             const totalExperts = (company.experts ?? []).length;
             if (totalExperts === 0) return null;
-            return (
+            // With no owned documents no record is eligible, so the reassuring
+            // version of this banner describes something that cannot happen.
+            return docs.length === 0 ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                These {totalExperts} expert record{totalExperts === 1 ? "" : "s"} cannot be source-verified until their original document is uploaded — this vault currently has none, so Run Engine will keep excluding them from matching and generation.
+              </div>
+            ) : (
               <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
                 Run Engine automatically source-verifies eligible expert records before matching and generation.
               </div>
