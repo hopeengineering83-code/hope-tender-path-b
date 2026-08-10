@@ -80,7 +80,11 @@ function extractionRevision(document: ReviewSourceDocument): number {
 }
 
 // Rank evidence authority per record. Database order and document id are never
-// tie-breakers: indistinguishable authority remains fail-closed.
+// tie-breakers: indistinguishable authority remains fail-closed. An existing
+// sourceDocumentId is only a stability preference AFTER evidence quality and
+// dedicated-source authority have been compared; otherwise a weak profile
+// chosen by an earlier importer could permanently pin a record away from a
+// richer dedicated CV/project source that proves more of the current record.
 function findMatchingDocument(
   documents: ReviewSourceDocument[],
   fields: ReviewEvidenceField[],
@@ -104,11 +108,11 @@ function findMatchingDocument(
     return [{
       document,
       rank: [
-        document.id === currentSourceDocumentId ? 1 : 0,
         full.ok ? 1 : 0,
         partial.verifiedFields.length,
         identityMatch?.matchMode === "STRICT_ORDERED" ? 1 : 0,
         dedicatedAuthority(document, recordType),
+        document.id === currentSourceDocumentId ? 1 : 0,
         extractionRevision(document),
       ],
     }];
