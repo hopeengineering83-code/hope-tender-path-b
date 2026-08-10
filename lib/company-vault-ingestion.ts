@@ -20,7 +20,7 @@ import { sanitizeError } from "./sanitize-error";
 const DEDICATED_EXPERT_CATEGORIES = new Set(["EXPERT_CV"]);
 const DEDICATED_PROJECT_CATEGORIES = new Set(["PROJECT_REFERENCE", "PROJECT_CONTRACT", "PORTFOLIO"]);
 
-type VaultDocument = {
+export type VaultDocument = {
   id: string;
   originalFileName: string;
   category: string;
@@ -54,20 +54,53 @@ function sourceAuthority(document: VaultDocument, kind: "EXPERT" | "PROJECT"): n
   return 2;
 }
 
-function findSourceDocument(documents: VaultDocument[], sourceQuote: string): VaultDocument | null {
+type QuoteBindingCandidate = {
+  document: VaultDocument;
+  quoteStrength: 1 | 2;
+  authority: number;
+};
+
+/**
+ * Bind an AI-returned source quote to exactly one owned document without ever
+ * using database/list order as authority. The quote match itself is mandatory;
+ * among matching documents a dedicated CV/project source outranks a generic
+ * profile/summary. If the strongest candidates are genuinely tied, return
+ * null and leave the draft unpersisted rather than attaching unverifiable
+ * provenance to whichever row Prisma happened to return first.
+ */
+export function resolveQuotedSourceDocument(
+  documents: VaultDocument[],
+  sourceQuote: string,
+  kind: "EXPERT" | "PROJECT",
+): VaultDocument | null {
   const quote = normalizedText(sourceQuote);
   if (quote.length < 10) return null;
-
-  const exact = documents.find((document) =>
-    normalizedText(document.extractedText ?? "").includes(quote),
-  );
-  if (exact) return exact;
-
   const bounded = quote.slice(0, Math.min(160, quote.length));
-  if (bounded.length < 40) return null;
-  return documents.find((document) =>
-    normalizedText(document.extractedText ?? "").includes(bounded),
-  ) ?? null;
+
+  const candidates: QuoteBindingCandidate[] = [];
+  for (const document of documents) {
+    const text = normalizedText(document.extractedText ?? "");
+    if (!text) continue;
+    const exact = text.includes(quote);
+    const boundedMatch = !exact && bounded.length >= 40 && text.includes(bounded);
+    if (!exact && !boundedMatch) continue;
+    candidates.push({
+      document,
+      quoteStrength: exact ? 2 : 1,
+      authority: sourceAuthority(document, kind),
+    });
+  }
+
+  candidates.sort((a, b) =>
+    b.quoteStrength - a.quoteStrength ||
+    b.authority - a.authority,
+  );
+  if (candidates.length === 0) return null;
+  const best = candidates[0];
+  const tied = candidates[1] &&
+    candidates[1].quoteStrength === best.quoteStrength &&
+    candidates[1].authority === best.authority;
+  return tied ? null : best.document;
 }
 
 function expertCandidate(draft: AIExpertDraft, document: VaultDocument): CompanyExpertCandidate {
@@ -163,17 +196,17 @@ export async function ingestCompanyVault(companyId: string): Promise<CompanyVaul
       aiFailures += extraction.warnings.filter((warning) => /failed/i.test(warning)).length;
 
       for (const draft of extraction.experts) {
-        const source = findSourceDocument(expertDocuments, draft.sourceQuote);
+        const source = resolveQuotedSourceDocument(expertDocuments, draft.sourceQuote, "EXPERT");
         if (!source) {
-          warnings.push(`An expert candidate was not persisted because its source quote did not bind to one owned document.`);
+          warnings.push(`An expert candidate was not persisted because its source quote did not bind unambiguously to one strongest owned document.`);
           continue;
         }
         aiExperts.push(expertCandidate(draft, source));
       }
       for (const draft of extraction.projects) {
-        const source = findSourceDocument(projectDocuments, draft.sourceQuote);
+        const source = resolveQuotedSourceDocument(projectDocuments, draft.sourceQuote, "PROJECT");
         if (!source) {
-          warnings.push(`A project candidate was not persisted because its source quote did not bind to one owned document.`);
+          warnings.push(`A project candidate was not persisted because its source quote did not bind unambiguously to one strongest owned document.`);
           continue;
         }
         aiProjects.push(projectCandidate(draft, source));
