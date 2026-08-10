@@ -1,6 +1,7 @@
 import { prisma } from "../prisma";
 import { remapUnlinkedVaultSources } from "../company-vault-source-remap";
 import { autoVerifyCompanyKnowledge } from "../company-auto-verification";
+import { reconcileCompanyDocumentByteIntegrity } from "../company-document-byte-integrity-reconcile";
 
 export type CompanyVaultEnginePreflight = {
   companyId: string;
@@ -29,6 +30,13 @@ export async function prepareCompanyVaultForEngine(
     select: { id: true },
   });
   if (!company) return null;
+
+  // Establish byte integrity first. The remapper only accepts VERIFIED
+  // documents as evidence sources, so a vault whose documents were never
+  // integrity-checked has no eligible sources at all and reconciles to zero —
+  // which is exactly what "4 extracted / 0 verified experts / 0 verified
+  // projects" looks like from the outside.
+  await reconcileCompanyDocumentByteIntegrity(company.id);
 
   const sourceRemap = await remapUnlinkedVaultSources(company.id);
   const sourceVerification = await autoVerifyCompanyKnowledge(company.id);

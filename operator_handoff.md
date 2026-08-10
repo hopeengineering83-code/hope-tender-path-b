@@ -74,6 +74,57 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-10 19:40 UTC — Claude Code (Opus), root cause of the live 0/28 · 0/112 Company Vault
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, from head `d35b8130`.
+- **Symptom (owner's live Preview):** Company Vault showed `DOCUMENTS 4 / 4 extracted` beside
+  `VERIFIED EXPERTS 0 (28 total)`, `VERIFIED PROJECTS 0 (112 total)`, `VERIFIED SUPPORT 0`, and Run
+  Engine then selected 0 experts and 0 projects. Every automatic reconciliation path from the P0 was
+  already implemented and `tests/company-vault-zero-bureaucracy-db.test.ts` was green.
+- **Root cause — byte integrity, not identity matching.** `CompanyDocument.integrityStatus` defaults
+  to `"UNKNOWN"` and `remapUnlinkedVaultSources` filters `integrityStatus: "VERIFIED"`, so a vault
+  whose documents were persisted before integrity was computed has **no eligible evidence source at
+  all**. Extraction and byte integrity are independent, so the page truthfully reports "4 extracted"
+  while nothing can bind, and every verified count is 0.
+- **Reproduced by measurement, not inference.** Same 28 experts / 112 projects / 4 documents /
+  169 KB of source text through `prepareCompanyVaultForEngine`:
+  | documents | experts | projects | elapsed |
+  |---|---|---|---|
+  | byte-VERIFIED | 11/28 | **112/112** | 2988 ms |
+  | `LEGACY_INTEGRITY_UNKNOWN` | **0/28** | **0/112** | 223 ms |
+  | VERIFIED but `contentSha256` missing | **0/28** | **0/112** | 236 ms |
+  The 223 ms is the tell: it returns immediately because no document qualifies as a source. (11/28
+  in the healthy row is a fixture artifact — those synthetic names carry numeric suffixes absent
+  from the CV text, so failing closed was correct.)
+- **Fix:** new `lib/company-document-byte-integrity-reconcile.ts`, called before the remap in both
+  `lib/engine/prepare-company-vault.ts` and `lib/company-vault-ingestion.ts`. For owned documents
+  whose integrity was never established it inspects the **persisted bytes** and records their real
+  hash, length, MIME type and detected format via the production producer
+  `verifiedIntegrityDataFromBase64` — which throws unless the bytes inspect clean. This does not
+  bypass the gate and does not mark unknown bytes verified: it performs, once, the verification that
+  was never performed. A document whose bytes are unrecoverable or corrupt stays blocked and records
+  an `integrityFailureCode`. Documents stored only via `storagePath` with no `fileContent` are still
+  out of scope and remain blocked.
+- **Regression:** `tests/company-vault-legacy-integrity-db.test.ts`. Proven **RED before the fix**
+  (0/2, failing on "both documents must establish byte integrity from their stored bytes") and
+  **GREEN after** (2/2). It also pins the honest half — a document with no recoverable bytes must
+  stay blocked, invent no hash, and leave its dependent experts blocked — and asserts zero
+  manufactured human review.
+- **Tests actually run:** full `RUN_DB_INTEGRATION=true npm test` — **9,813/9,813 passed, 0 failed**,
+  exit 0. An earlier full run showed one failure in
+  `tests/owner-workflow-complete-postgres.test.ts` ("1 auto-finalized PDF(s) failed canonical
+  validation"); it passes in isolation and in the clean full re-run, and touches
+  `GeneratedDocument`, not `CompanyDocument` — recorded here as an observed concurrency flake rather
+  than hidden. `npx tsc --noEmit` exit 0; `npm run lint` 0 errors, 1 pre-existing warning;
+  `npm run build` exit 0.
+- **Disproved and reverted:** I had theorised the route's Vault preflight caused the 60s
+  `POST /engine` timeout and moved it to the worker. That broke two tests deliberately pinning
+  "Vault verification before enqueue", so I measured instead of arguing: the preflight takes ~1.5 s
+  at owner scale. Hypothesis wrong, change reverted, route unchanged.
+- **CI / deployment:** No merge, force-push, rebase, base change, history rewrite, new PR,
+  credential rotation, Production migration, or Production deployment.
+- **Merge status:** Not reviewed; not merged. Draft.
+
 ### 2026-08-10 18:40 UTC — Claude Code (Opus), restore green CI on the Company Vault P0
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. Started from
