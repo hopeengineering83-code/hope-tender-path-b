@@ -26,7 +26,21 @@ describe("Plan B import page reports restored Company Vault truth", () => {
   it("labels Plan B sourceDocuments as staging descriptors, not Documents", () => {
     assert.match(page, /Source descriptors staged/);
     assert.match(page, /sourceDocuments<\/code> are staging descriptors, not uploaded files/);
-    assert.match(page, /never becomes an official Company Vault document/);
+    // The descriptor count must still not be presented as uploaded Documents —
+    // that distinction is what this test exists to protect, and it is asserted
+    // above and below.
+    //
+    // What changed deliberately: the page used to promise the import "never
+    // becomes an official Company Vault document", which forced the owner to
+    // re-upload files the import had already read and left 28 experts and 114
+    // projects permanently unverifiable. The staged source text is now
+    // persisted as vault evidence and records verify against it automatically,
+    // so the page states that instead. Verification is unchanged in strictness:
+    // a staged source carrying no readable text still has nothing to verify
+    // against and stays blocked.
+    assert.match(page, /persisted as Company Vault evidence/);
+    assert.match(page, /no separate upload and no approval step/);
+    assert.match(page, /carried no readable text/);
     assert.doesNotMatch(page, /label="Documents"/);
   });
 

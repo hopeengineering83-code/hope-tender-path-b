@@ -819,7 +819,7 @@ export default function CompanyPage() {
                   // a loop that cannot terminate. Records imported with declared
                   // sources whose files were never uploaded land here.
                   <p className="mt-1.5 text-xs text-amber-700">
-                    None of these records can be source-verified yet: this vault has <span className="font-medium">no uploaded documents</span> to verify them against, so matching and generation will keep excluding all {allExperts.length + allProjects.length} of them. Run Engine cannot change that. Upload the original source files (for example the expert CV bundle and the project reference document) under Documents — verification then runs automatically, with no approval step.
+                    None of these records can be source-verified yet: this vault has <span className="font-medium">no uploaded documents</span> to verify them against, so matching and generation will keep excluding all {allExperts.length + allProjects.length} of them. Run Engine cannot change that. Add your company documents under Documents — verification then runs automatically, with no approval step.
                   </p>
                 ) : (
                   <p className="mt-1.5 text-xs text-slate-400">

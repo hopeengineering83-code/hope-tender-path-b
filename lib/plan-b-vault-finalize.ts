@@ -6,6 +6,7 @@ import {
   projectReviewFields,
   type ReviewSourceDocument,
 } from "./vault-review-provenance";
+import { materializeLegacyImportSources, legacySourceFileName } from "./company-vault-legacy-source-materialize";
 
 export type PlanBFinalizeExpert = {
   fullName?: string;
@@ -144,6 +145,12 @@ export async function finalizePlanBCompanyVault(
   const experts = Array.isArray(input.payload.experts) ? input.payload.experts : [];
   const projects = Array.isArray(input.payload.projects) ? input.payload.projects : [];
 
+  // The text this import parsed is already owned company evidence. Persist it
+  // as vault documents before resolving declared sources, so a record whose
+  // source was read here resolves to it instead of being reported as an absent
+  // original the owner is asked to upload again.
+  await materializeLegacyImportSources(input.companyId);
+
   const officialDocs = await prisma.companyDocument.findMany({
     where: {
       companyId: input.companyId,
@@ -166,10 +173,27 @@ export async function finalizePlanBCompanyVault(
   for (const doc of officialDocs) {
     const hash = normalizedHash(doc.contentSha256);
     if (hash && !byHash.has(hash)) byHash.set(hash, doc);
+
     for (const candidate of [doc.originalFileName, doc.fileName]) {
       const name = normalizePlanBFileName(candidate);
       if (name && !byFileName.has(name)) byFileName.set(name, doc);
     }
+  }
+
+  // A record declares its source by the original filename ("Expert CVS.pdf"),
+  // but a source materialized from this import's own staged text is stored
+  // under a text name, because that is what its bytes are. Alias the declared
+  // name onto it so the declaration resolves to the evidence it actually came
+  // from instead of being reported as an absent original.
+  const stagedNames = await prisma.planBStaging.findMany({
+    where: { companyId: input.companyId },
+    select: { originalFileName: true },
+  });
+  for (const staged of stagedNames) {
+    const declared = normalizePlanBFileName(staged.originalFileName);
+    if (!declared || byFileName.has(declared)) continue;
+    const stored = byFileName.get(normalizePlanBFileName(legacySourceFileName(staged.originalFileName)));
+    if (stored) byFileName.set(declared, stored);
   }
 
   const currentExperts = await prisma.expert.findMany({
@@ -318,7 +342,7 @@ export async function finalizePlanBCompanyVault(
 
   const missingNames = [...missingSources.values()];
   const missingSummary = missingNames.length > 0
-    ? ` Upload the original file${missingNames.length === 1 ? "" : "s"}: ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}.`
+    ? ` No readable content was imported for: ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}.`
     : "";
 
   return {

@@ -44,7 +44,8 @@ describe("Company Vault — zero-document honesty", () => {
     assert.match(vaultPage, /Run Engine cannot change that/i);
     // It must point at the one action that actually unblocks the vault, and
     // must not invent an approval step to go with it.
-    assert.match(vaultPage, /Upload the original source files/i);
+    assert.match(vaultPage, /Add your company documents/i);
+    assert.doesNotMatch(vaultPage, /Upload the original/i);
     assert.match(vaultPage, /no approval step/i);
   });
 

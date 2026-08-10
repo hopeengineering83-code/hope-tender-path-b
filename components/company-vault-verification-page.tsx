@@ -81,7 +81,7 @@ export default function CompanyVaultVerificationPage() {
       // Reprocess repeatedly against a vault that can never move off zero.
       setMessage(
         (diagnostics?.totals?.documents ?? 0) === 0
-          ? "Reprocessing was queued, but this vault has no uploaded documents, so there is nothing to verify against and the verified counts will stay at zero. Upload the original source files under Company Vault → Documents; verification then runs automatically, with no approval step."
+          ? "Reprocessing was queued, but this vault has no uploaded documents, so there is nothing to verify against and the verified counts will stay at zero. Add your company documents under Company Vault → Documents; verification then runs automatically, with no approval step."
           : "Source-byte reprocessing and automatic verification were queued. Matching refreshes source authority again before it runs, so no further action is needed here.",
       );
     } catch (runError) {

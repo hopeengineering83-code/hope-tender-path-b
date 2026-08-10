@@ -2,6 +2,7 @@ import { prisma } from "../prisma";
 import { remapUnlinkedVaultSources } from "../company-vault-source-remap";
 import { autoVerifyCompanyKnowledge } from "../company-auto-verification";
 import { reconcileCompanyDocumentByteIntegrity } from "../company-document-byte-integrity-reconcile";
+import { materializeLegacyImportSources } from "../company-vault-legacy-source-materialize";
 
 export type CompanyVaultEnginePreflight = {
   companyId: string;
@@ -30,6 +31,12 @@ export async function prepareCompanyVaultForEngine(
     select: { id: true },
   });
   if (!company) return null;
+
+  // A Legacy Data Import stages the source text it read but never creates a
+  // CompanyDocument, so records imported that way have no source to verify
+  // against and the app ends up asking for files it has already read. Persist
+  // that staged text as owned evidence first; verification below is unchanged.
+  await materializeLegacyImportSources(company.id);
 
   // Establish byte integrity first. The remapper only accepts VERIFIED
   // documents as evidence sources, so a vault whose documents were never

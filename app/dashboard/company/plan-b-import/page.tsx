@@ -212,7 +212,7 @@ export default function PlanBImportPage() {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Plan B structured recovery</p>
           <h1 className="mt-1 text-2xl font-bold text-slate-900">Exact JSON Knowledge Import</h1>
           <p className="mt-1 max-w-3xl text-sm text-slate-600">
-            Plan B JSON stages structured descriptors. It never becomes an official Company Vault document. Upload the original PDF, DOCX, XLSX, CSV or TXT file in Company Vault for source verification.
+            Plan B JSON stages structured records together with the source text it was parsed from. That text is persisted as Company Vault evidence and records are source-verified against it automatically — no separate upload and no approval step. A staged source that carried no readable text has nothing to verify against and stays blocked.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">

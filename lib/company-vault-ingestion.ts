@@ -16,6 +16,7 @@ import { autoVerifyCompanyKnowledge } from "./company-auto-verification";
 import { COMPANY_DOCUMENT_PENDING_DELETE_MARKER } from "./company-document-durable-deletion";
 import { remapUnlinkedVaultSources } from "./company-vault-source-remap";
 import { reconcileCompanyDocumentByteIntegrity } from "./company-document-byte-integrity-reconcile";
+import { materializeLegacyImportSources } from "./company-vault-legacy-source-materialize";
 import { sanitizeError } from "./sanitize-error";
 
 const DEDICATED_EXPERT_CATEGORIES = new Set(["EXPERT_CV"]);
@@ -229,6 +230,10 @@ export async function ingestCompanyVault(companyId: string): Promise<CompanyVaul
   // uploaded documents but do not always declare which one produced each
   // record) before running the same source-verification pass that already
   // covers freshly-ingested candidates.
+  // Legacy Data Import stages source text without creating a CompanyDocument,
+  // leaving its imported records with nothing to verify against. Persist that
+  // owned text as evidence before reconciling.
+  await materializeLegacyImportSources(companyId);
   // Documents that were persisted before byte integrity was computed are
   // invisible to the remapper, which accepts VERIFIED sources only. Establish
   // that baseline from the stored bytes first so legacy vaults reconcile
