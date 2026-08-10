@@ -1,7 +1,7 @@
 export type DocumentCapability = "EXPERT_CV" | "PROJECT_REFERENCE" | "COMPANY_PROFILE" | "LEGAL_REGISTRATION" | "FINANCIAL_STATEMENT" | "COMPLIANCE_RECORD" | "OTHER";
 export type DocumentClassification = { capabilities: DocumentCapability[]; hasExpertData: boolean; hasProjectData: boolean; hasCompanyFacts: boolean; hasLegalData: boolean; hasFinancialData: boolean; hasComplianceData: boolean; confidence: number; };
-const EP = [/\bcurriculum\s*vitae\b/i, /\bcv\b\s*(of|for|:)/i, /\bname\s+of\s+(expert|key\s+staff|personnel)\b/i, /\bproposed\s+(position|role)\b/i, /\byears?\s+of\s+experience\b/i, /\bqualifications?\s*:/i, /\bkey\s+(staff|personnel|experts?)\b/i];
-const PP = [/\bproject\s+(name|title|description)\b/i, /\bclient\s+name\b/i, /\bcontract\s+(value|amount)\b/i, /\bselected\s+projects?\b/i, /\bpast\s+projects?\b/i, /\bportfolio\b/i];
+const EP = [/\bcurriculum\s*vitae\b/i, /\bcvs?\b/i, /\bresumes?\b/i, /\bname\s+of\s+(expert|key\s+staff|personnel)\b/i, /\bproposed\s+(position|role)\b/i, /\byears?\s+of\s+experience\b/i, /\bqualifications?\s*:/i, /\b(key|professional)\s+(staff|personnel|experts?|team)\b/i];
+const PP = [/\bproject\s+(name|title|description|references?|experience)\b/i, /\bsimilar\s+assignments?\b/i, /\bclient\s+references?\b/i, /\bcontracts?\b/i, /\bassignments?\b/i, /\bclient\s+name\b/i, /\bcontract\s+(value|amount)\b/i, /\bselected\s+projects?\b/i, /\bpast\s+projects?\b/i, /\bportfolio\b/i];
 function ma(text: string, p: RegExp[]): boolean { return p.some((r) => r.test(text)); }
 export function classifyDocumentContent(fn: string, cat: string, t: string | null | undefined): DocumentClassification {
   const text = t ?? "";

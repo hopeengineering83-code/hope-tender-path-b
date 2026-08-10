@@ -14,6 +14,8 @@ export type ReviewEvidenceField = {
 export type ReviewSourceDocument = {
   id: string;
   fileName?: string | null;
+  originalFileName?: string | null;
+  category?: string | null;
   companyId?: string | null;
   extractedText: string | null | undefined;
   contentSha256?: string | null;
@@ -366,6 +368,41 @@ function identityTokensPresent(text: string, value: string): RegExpExecArray | n
   return earliest;
 }
 
+export type ReviewEvidenceFieldMatch = DurableReviewEvidence & {
+  matchMode: "STRICT_ORDERED" | "IDENTITY_TOKENS";
+};
+
+/** The single field-evidence primitive used by full and partial verification. */
+export function matchReviewEvidenceField(
+  text: string,
+  field: string,
+  value: string,
+  recordType?: ReviewRecordType,
+): ReviewEvidenceFieldMatch | null {
+  let match = evidencePattern(value).exec(text);
+  let matchMode: ReviewEvidenceFieldMatch["matchMode"] = "STRICT_ORDERED";
+  const identitySpec = recordType ? IDENTITY_FIELD_BY_RECORD_TYPE[recordType] : null;
+  const identityFields = new Set(identitySpec == null ? [] : Array.isArray(identitySpec) ? identitySpec : [identitySpec]);
+  if ((!match || match.index < 0) && identityFields.has(field)) {
+    match = identityTokensPresent(text, value);
+    matchMode = "IDENTITY_TOKENS";
+  }
+  if (!match || match.index < 0) return null;
+  const start = Math.max(0, match.index - 80);
+  const end = Math.min(text.length, match.index + match[0].length + 80);
+  const quote = normalizedQuote(text.slice(start, end));
+  return {
+    field,
+    valueHash: evidenceValueHash(value),
+    quoteHash: sha256(quote),
+    quote,
+    page: sourcePageAtOffset(text, match.index),
+    start,
+    end,
+    matchMode,
+  };
+}
+
 function collectEvidence(
   sourceDocument: ReviewSourceDocument,
   fields: ReviewEvidenceField[],
@@ -389,32 +426,14 @@ function collectEvidence(
   const missingFields: string[] = [];
   const evidence: DurableReviewEvidence[] = [];
 
-  const identitySpec = recordType ? IDENTITY_FIELD_BY_RECORD_TYPE[recordType] : null;
-  const identityFieldNames = new Set(
-    identitySpec == null ? [] : Array.isArray(identitySpec) ? identitySpec : [identitySpec],
-  );
-
   for (const item of normalizedFields) {
-    let match = evidencePattern(item.value).exec(text);
-    if ((!match || match.index < 0) && identityFieldNames.has(item.field)) {
-      match = identityTokensPresent(text, item.value);
-    }
-    if (!match || match.index < 0) {
+    const match = matchReviewEvidenceField(text, item.field, item.value, recordType);
+    if (!match) {
       missingFields.push(item.field);
       continue;
     }
-    const start = Math.max(0, match.index - 80);
-    const end = Math.min(text.length, match.index + match[0].length + 80);
-    const quote = normalizedQuote(text.slice(start, end));
-    evidence.push({
-      field: item.field,
-      valueHash: evidenceValueHash(item.value),
-      quoteHash: sha256(quote),
-      quote,
-      page: sourcePageAtOffset(text, match.index),
-      start,
-      end,
-    });
+    const { matchMode: _matchMode, ...durableEvidence } = match;
+    evidence.push(durableEvidence);
   }
 
   if (normalizedFields.length === 0 || missingFields.length > 0) {
@@ -651,23 +670,13 @@ export function buildPartialSourceVerificationProvenance(input: {
   const unverifiedFields: string[] = [];
 
   for (const item of normalizedFields) {
-    const match = evidencePattern(item.value).exec(text);
-    if (!match || match.index < 0) {
+    const match = matchReviewEvidenceField(text, item.field, item.value, input.recordType);
+    if (!match) {
       unverifiedFields.push(item.field);
       continue;
     }
-    const start = Math.max(0, match.index - 80);
-    const end = Math.min(text.length, match.index + match[0].length + 80);
-    const quote = normalizedQuote(text.slice(start, end));
-    verified.push({
-      field: item.field,
-      valueHash: evidenceValueHash(item.value),
-      quoteHash: sha256(quote),
-      quote,
-      page: sourcePageAtOffset(text, match.index),
-      start,
-      end,
-    });
+    const { matchMode: _matchMode, ...durableEvidence } = match;
+    verified.push(durableEvidence);
   }
 
   // Check identity verification.

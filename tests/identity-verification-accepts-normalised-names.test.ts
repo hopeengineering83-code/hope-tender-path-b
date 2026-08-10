@@ -73,6 +73,34 @@ describe("identity verification tolerates extractor normalisation", () => {
       { field: "yearsExperience", value: "15" },
     ]).ok, true);
   });
+
+  it("uses the same normalised identity semantics in partial verification", () => {
+    const surnameFirstText = "DETAILED CURRICULUM VITAE — COMPANY PERSONNEL REGISTER. " +
+      "BEKELE, Dawit (MSc). Proposed position: Team Leader. Civil engineering and water supply specialist.";
+    const bytes = Buffer.from(surnameFirstText);
+    const result = deriveAutomaticSourceVerification({
+      recordType: "EXPERT",
+      sourceDocument: {
+        ...(sourceDocument as object),
+        id: "surname-first-cv",
+        extractedText: surnameFirstText,
+        contentSha256: createHash("sha256").update(bytes).digest("hex"),
+        contentByteLength: bytes.byteLength,
+      },
+      fields: [
+        { field: "fullName", value: "Dawit Bekele" },
+        { field: "yearsExperience", value: "99" },
+      ],
+      priorTrustLevel: "AI_DRAFT",
+    });
+
+    assert.equal(result.ok, true, "partial verification must not redefine identity matching");
+    assert.deepEqual(
+      result.ok ? result.provenance.unverifiedFields : [],
+      ["yearsExperience"],
+      "the unsupported field must remain explicitly unverified",
+    );
+  });
 });
 
 describe("the anti-fabrication gate still holds", () => {

@@ -7,6 +7,7 @@ import {
   expertReviewFields,
   financialReviewFields,
   legalReviewFields,
+  matchReviewEvidenceField,
   projectReviewFields,
   publicVaultIdentifier,
   type ReviewEvidenceField,
@@ -38,6 +39,9 @@ async function loadCandidateDocuments(companyId: string): Promise<ReviewSourceDo
     },
     select: {
       id: true,
+      fileName: true,
+      originalFileName: true,
+      category: true,
       companyId: true,
       extractedText: true,
       contentSha256: true,
@@ -48,40 +52,68 @@ async function loadCandidateDocuments(companyId: string): Promise<ReviewSourceDo
   });
 }
 
-// Finds an owned, byte-verified document whose extracted text genuinely
-// contains either every claimed field or the canonical identity fields needed
-// for partial verification. A partial identity match is accepted only when it
-// is unique across the tenant's byte-verified documents — never a guess and
-// never looser than autoVerifyCompanyKnowledge's durable-provenance gate.
+function identityField(recordType: ReviewRecordType): string {
+  return recordType === "EXPERT" ? "fullName" : recordType === "PROJECT" ? "name" : recordType === "FINANCIAL" ? "fiscalYear" : "title";
+}
+
+function dedicatedAuthority(document: ReviewSourceDocument, recordType: ReviewRecordType): number {
+  if (recordType === "EXPERT" && document.category === "EXPERT_CV") return 1;
+  if (recordType === "PROJECT" && ["PROJECT_REFERENCE", "PROJECT_CONTRACT", "PORTFOLIO"].includes(document.category ?? "")) return 1;
+  return 0;
+}
+
+function extractionRevision(document: ReviewSourceDocument): number {
+  try {
+    const revision = Number(JSON.parse(document.metadata ?? "{}").extractionRevision);
+    return Number.isInteger(revision) && revision > 0 ? revision : 1;
+  } catch {
+    return 1;
+  }
+}
+
+// Rank evidence authority per record. Database order and document id are never
+// tie-breakers: indistinguishable authority remains fail-closed.
 function findMatchingDocument(
   documents: ReviewSourceDocument[],
   fields: ReviewEvidenceField[],
   recordType: ReviewRecordType,
 ): ReviewSourceDocument | null {
-  for (const document of documents) {
-    if (assessReviewEvidence(document, fields).ok) return document;
-  }
-
-  // Imported records commonly contain AI-inferred secondary attributes that
-  // are absent from the original CV/project sheet. The downstream canonical
-  // verifier already handles that safely as partial SOURCE_VERIFIED evidence:
-  // identity must be present, every proven field is recorded, and absent
-  // fields remain explicitly unverified. Rebinding previously demanded every
-  // inferred field, so that verifier was unreachable and owned source bytes
-  // remained stranded beside unlinked drafts.
-  //
-  // Bind a partial match only when it is unambiguous across this tenant's
-  // byte-verified documents. Zero or multiple identity matches stay blocked.
-  const partialMatches = documents.filter((document) =>
-    buildPartialSourceVerificationProvenance({
+  const candidates = documents.flatMap((document) => {
+    const full = assessReviewEvidence(document, fields, recordType);
+    const partial = buildPartialSourceVerificationProvenance({
       recordType,
       sourceDocument: document,
       fields,
       verificationMethod: "HYBRID",
       verifiedAt: new Date(0),
-    }).ok,
-  );
-  return partialMatches.length === 1 ? partialMatches[0] : null;
+    });
+    if (!partial.ok) return [];
+    const identity = fields.find((field) => field.field === identityField(recordType));
+    const identityMatch = identity && document.extractedText
+      ? matchReviewEvidenceField(document.extractedText, identity.field, String(identity.value ?? ""), recordType)
+      : null;
+    return [{
+      document,
+      rank: [
+        full.ok ? 1 : 0,
+        partial.verifiedFields.length,
+        identityMatch?.matchMode === "STRICT_ORDERED" ? 1 : 0,
+        dedicatedAuthority(document, recordType),
+        extractionRevision(document),
+      ],
+    }];
+  });
+  candidates.sort((a, b) => {
+    for (let i = 0; i < a.rank.length; i += 1) {
+      const delta = b.rank[i] - a.rank[i];
+      if (delta !== 0) return delta;
+    }
+    return 0;
+  });
+  if (candidates.length === 0) return null;
+  const best = candidates[0];
+  const tied = candidates[1]?.rank.every((value, index) => value === best.rank[index]);
+  return tied ? null : best.document;
 }
 
 async function auditLink(userId: string, action: string, entityType: string, entityId: string, sourceDocumentId: string) {

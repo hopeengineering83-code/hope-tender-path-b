@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-10 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / governing draft PR #1175; verified exact starting head `b6d6ee26ba9b704ac167a945992ca5deff350498` before editing.
+- **Scope:** P0 Company Vault automatic reconciliation. Added one canonical identity-aware field matcher shared by full and partial provenance, passed `recordType` through source remapping, replaced database-order/unique-document selection with deterministic evidence-authority ranking and fail-closed ties, unified ingestion scan decisions on the canonical classifier, expanded CV/project indicators, and added the requested 28-Expert/112-Project PostgreSQL fixture plus a focused RED→GREEN partial-identity regression.
+- **Files changed:** `lib/vault-review-provenance.ts`, `lib/company-vault-source-remap.ts`, `lib/company-vault-ingestion.ts`, `lib/company-document-classifier.ts`, `tests/identity-verification-accepts-normalised-names.test.ts`, `tests/company-vault-zero-bureaucracy-db.test.ts`, and this handoff.
+- **Tests:** focused identity regression passed (11/11) after first reproducing the new partial-verifier case RED; `npx prisma generate`, `npm run typecheck`, lint, and `git diff --check` passed. Real PostgreSQL tests were attempted but the configured Neon endpoint was unreachable, so database acceptance remains unverified in this environment.
+- **Risks / assumptions:** this is not live acceptance. No Preview was deployed or owner data inspected; queue dispatch and Engine timeout code were already wired on this exact starting SHA and were not changed. The new DB regression could not execute against PostgreSQL here. Explicit auto-detected category persistence, blocker-code persistence for ambiguous matches, source replacement scenarios, provider-outage matching, and exact live 28/112 reconciliation remain to be proven.
+- **Next action:** restore a reachable PostgreSQL test database, run the new regression and full required suite, then deploy the exact SHA only with Hope's approval and validate the real Preview owner state before calling the P0 fixed.
+- **Merge status:** unsafe — partial root-cause repair only; live and DB acceptance outstanding.
+
 ### 2026-08-10 13:50 UTC — Claude Code (Opus), PR #1175 release-hardening audit at exact head
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. Audit started

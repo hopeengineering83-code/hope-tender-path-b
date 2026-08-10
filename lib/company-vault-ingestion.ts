@@ -41,15 +41,11 @@ function usableDocument(document: VaultDocument): boolean {
 }
 
 function hasExpertEvidence(document: VaultDocument): boolean {
-  if (DEDICATED_EXPERT_CATEGORIES.has(document.category)) return true;
-  const sample = `${document.originalFileName}\n${document.extractedText ?? ""}`;
-  return /curriculum\s+vitae|resume|name\s+of\s+(?:expert|key\s+staff|personnel)|expert\s+name|proposed\s+position|professional\s+experience/i.test(sample);
+  return shouldScanForExperts(document.originalFileName, document.category, document.extractedText);
 }
 
 function hasProjectEvidence(document: VaultDocument): boolean {
-  if (DEDICATED_PROJECT_CATEGORIES.has(document.category)) return true;
-  const sample = `${document.originalFileName}\n${document.extractedText ?? ""}`;
-  return /project\s+name|assignment\s+name|name\s+of\s+assignment|contract\s+title|project\s+reference|scope\s+of\s+services|contract\s+value/i.test(sample);
+  return shouldScanForProjects(document.originalFileName, document.category, document.extractedText);
 }
 
 function sourceAuthority(document: VaultDocument, kind: "EXPERT" | "PROJECT"): number {
