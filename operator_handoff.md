@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-11 UTC — Claude Code (Opus), AI Analyze never woke its worker
+
+- **Reported live:** Hope pressed Run AI Analyze on the Preview and the panel sat on "AI Analyze is queued" for minutes. The panel was telling the truth.
+- **Root cause.** `POST /api/tenders/[id]/manual-ai-analyze` created the job under verified manual authority and then nothing claimed it. Run Engine has had `scheduleRequestScopedEngineWorkerWake` since it was written; AI Analyze had no equivalent. The request-scoped upload wakes are forbidden from naming a manual gate (correctly — a wake must never *start* one), and the drain cron fires only from the repository default branch, so on a Preview deployment an authorized AI_ANALYZE job stayed QUEUED indefinitely.
+- **Fix.** `lib/ai-jobs/request-scoped-engine-worker-wake.ts` now serves both manual gates through a shared internal `scheduleManualJobWake`, exporting `scheduleRequestScopedAnalyzeWorkerWake` alongside the unchanged Engine one. The analyze route calls it immediately after `createAnalysisJob` returns. This follows the precedent the Engine route already set rather than widening `request-scoped-worker-wake.ts`, whose ban on naming a manual gate stays exactly as it was — that module and its tests are untouched.
+- **Why this is not a gate crossing.** The wake creates nothing and authorizes nothing. It runs only after the route has checked `manualAuthority` and persisted the row, and a job that does not exist cannot be claimed. The atomic claim still owns QUEUED to RUNNING, so a duplicate wake cannot run the work twice. Without a session cookie the wake declines rather than throwing, so the owner still receives their job id.
+- **A source-text assertion was re-pointed, not removed.** `tests/engine-worker-wake-constraints.test.ts` matched the literal `searchParams.set("jobType", "ENGINE_RUN")`, which is now a parameter. It calls the real function and asserts the URL it builds instead — same property, no longer dependent on one spelling.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, DB verified alive after): new `tests/manual-ai-analyze-wakes-its-worker.test.ts` 5/5, driving the real wake with an injected scheduler and fetch — it proves the request asks for `AI_ANALYZE` on the right tender, forwards the caller's own cookie and no worker secret, declines without a session, and that the route calls it after job creation. `tests/engine-worker-wake-constraints.test.ts` 12/12. Full suite **9,883/9,883, 0 failures**; typecheck clean; lint clean but for the one standing warning. The database died mid-run once (82 fail / 328 cancelled) and was restarted and re-run before any result was believed; one intermediate run showed the documented `owner-workflow-complete-postgres` flake and the following clean run had no failures at all.
+- **Not verified by me:** that Hope's next Run AI Analyze completes promptly on the deployed Preview. That is the click that proves it.
+- **Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration.
+
 ### 2026-08-11 UTC — Claude Code (Opus), the generation deadlock
 
 - **Owner-approved scope.** Hope chose "exempt at the generation gate only" from two options after I presented the deadlock proof; the alternative (counting a plan row as SUBSTANTIAL) was rejected because it shifts evidence semantics for every consumer.

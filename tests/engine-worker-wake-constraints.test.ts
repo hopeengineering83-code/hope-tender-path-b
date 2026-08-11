@@ -196,9 +196,36 @@ describe("Run Engine wake — exactly-once under contention", () => {
 });
 
 describe("Run Engine wake — scope", () => {
-  it("pins the request to ENGINE_RUN and the requested tender", () => {
-    assert.match(wakeCode, /searchParams\.set\("jobType", "ENGINE_RUN"\)/);
-    assert.match(wakeCode, /searchParams\.set\("tenderId", tenderId\)/);
+  // Previously a source-text match on the literal
+  // `searchParams.set("jobType", "ENGINE_RUN")`. The helper now serves both
+  // manual gates — AI Analyze needed the identical wake and had none, so its
+  // authorized jobs sat QUEUED — and the job type is a parameter. Asserted here
+  // by calling the real function and reading the URL it builds, which pins the
+  // property this test exists for rather than one way of spelling it.
+  it("pins the request to ENGINE_RUN and the requested tender", async () => {
+    const { scheduleRequestScopedEngineWorkerWake } = await import(
+      "../lib/ai-jobs/request-scoped-engine-worker-wake"
+    );
+    const seen: URL[] = [];
+    const tasks: Array<() => Promise<void>> = [];
+    scheduleRequestScopedEngineWorkerWake(
+      new Request("https://example.test/api/tenders/t-9/engine", {
+        method: "POST",
+        headers: { cookie: "session=abc" },
+      }),
+      "t-9",
+      (task) => { tasks.push(task); },
+      (async (input: URL | RequestInfo) => {
+        seen.push(new URL(String(input)));
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof fetch,
+    );
+    for (const task of tasks) await task();
+
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].pathname, "/api/ai-jobs/run-next");
+    assert.equal(seen[0].searchParams.get("jobType"), "ENGINE_RUN");
+    assert.equal(seen[0].searchParams.get("tenderId"), "t-9");
   });
 
   it("cannot start another tenant's Engine job", { skip: !RUN }, async () => {

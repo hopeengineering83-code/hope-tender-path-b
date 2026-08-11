@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { createAnalysisJob } from "../../../../../lib/ai-jobs/analysis-job-service";
+import { scheduleRequestScopedAnalyzeWorkerWake } from "../../../../../lib/ai-jobs/request-scoped-engine-worker-wake";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { AI_RATE_LIMIT, rateLimitPersistent } from "../../../../../lib/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   let actor;
@@ -53,6 +54,14 @@ export async function POST(
         authorizedAt: new Date().toISOString(),
       },
     });
+
+    // The job now exists under verified manual authority. Nudge the durable
+    // worker to claim it in this same request, or nothing will: the drain cron
+    // fires only from the repository default branch, so on a Preview
+    // deployment an authorized AI Analyze sat QUEUED indefinitely while the
+    // panel truthfully reported "AI Analyze is queued". This starts no gate —
+    // the row is already created and already authorized above.
+    scheduleRequestScopedAnalyzeWorkerWake(req, tenderId);
 
     return NextResponse.json({
       jobId: analysis.jobId,
