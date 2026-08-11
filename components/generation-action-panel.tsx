@@ -11,6 +11,9 @@
 //                                  release decision is required
 //   READY_TO_DOWNLOAD            — the final ZIP is ready
 //   FAILED_SECURITY_OR_INTEGRITY — a security or integrity failure occurred
+//   MANUAL_ACTION_REQUIRED       — the workflow is stopped at a gate only a
+//                                  person can open (AI Analyze, Run Engine,
+//                                  an upload, a metadata correction)
 //
 // No icons, badges, emoji, icon packages or decorative graphics.
 
@@ -23,6 +26,7 @@ import { releaseBlockerLabel } from "../lib/ui/human-labels";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
+import { presentTwoActionWorkflowDecision } from "../lib/engine/two-action-workflow-presentation";
 
 type GenerationReadiness = {
   ready: boolean;
@@ -44,7 +48,13 @@ export type ReleaseStatus =
   | "GENUINE_SOURCE_BLOCKED"
   | "LEGAL_RELEASE_REQUIRED"
   | "READY_TO_DOWNLOAD"
-  | "FAILED_SECURITY_OR_INTEGRITY";
+  | "FAILED_SECURITY_OR_INTEGRITY"
+  // The workflow is stopped at a gate only a human can open (AI Analyze, Run
+  // Engine, an upload, a metadata correction). Distinct from
+  // PROCESSING_AUTOMATICALLY, whose explanation promises server-side progress
+  // that will never arrive at such a gate, and from GENUINE_SOURCE_BLOCKED,
+  // which specifically means missing source evidence.
+  | "MANUAL_ACTION_REQUIRED";
 
 /**
  * Derive the single release status from the canonical readiness and
@@ -92,7 +102,24 @@ const EVIDENCE_BLOCKER_CODES = new Set([
 export type PanelWorkflowDecision = {
   blockerCodes: string[];
   blockerDetails: string[];
+  nextRequiredAction: string;
+  nextRequiredActionLabel: string;
+  nextRequiredActionReason: string;
 };
+
+/**
+ * The two workflow actions the server owns end to end. Everything else in the
+ * canonical action map is a gate only a person can open — AI Analyze and Run
+ * Engine are deliberate manual gates, and uploads, metadata corrections and
+ * export fixes obviously are.
+ */
+const AUTOMATIC_NEXT_ACTIONS = new Set(["AUTOMATIC_PROCESSING", "EXPORT_READY"]);
+
+function requiresManualAction(workflowDecision?: PanelWorkflowDecision | null): boolean {
+  if (!workflowDecision) return false;
+  if (workflowDecision.blockerCodes.length === 0) return false;
+  return !AUTOMATIC_NEXT_ACTIONS.has(workflowDecision.nextRequiredAction);
+}
 
 /**
  * Load the canonical workflow decision's blockers for this panel.
@@ -119,12 +146,20 @@ export async function resolveGenerationPanelWorkflowDecision(
   userId: string,
   tenderId: string,
 ): Promise<PanelWorkflowDecision | null> {
-  const decision = await getCanonicalTenderWorkflowDecision(client, userId, tenderId)
+  const raw = await getCanonicalTenderWorkflowDecision(client, userId, tenderId)
     .catch(() => null);
+  // The header renders the PRESENTED decision (see
+  // app/api/tenders/[id]/workflow-center/route.ts). Applying the same mapping
+  // here is what makes "the panel echoes the header" true by construction
+  // rather than by two lists that drift apart.
+  const decision = presentTwoActionWorkflowDecision(raw);
   if (!decision) return null;
   return {
     blockerCodes: decision.blockerCodes ?? [],
     blockerDetails: decision.blockerDetails ?? [],
+    nextRequiredAction: decision.nextRequiredAction,
+    nextRequiredActionLabel: decision.nextRequiredActionLabel,
+    nextRequiredActionReason: decision.nextRequiredActionReason,
   };
 }
 
@@ -153,11 +188,18 @@ export function deriveTruthfulReleaseStatus(
   workflowDecision?: PanelWorkflowDecision | null,
 ): ReleaseStatus {
   const status = releaseDecision?.status ?? deriveReleaseStatus(readiness, canonicalReadiness);
+  if (status !== "PROCESSING_AUTOMATICALLY" || activeDownstreamWork) return status;
+
+  // Missing source evidence is the more specific truth, so it still wins.
   const evidenceBlocked = collectedBlockerCodes(readiness, canonicalReadiness, releaseDecision, workflowDecision)
     .some((code) => EVIDENCE_BLOCKER_CODES.has(code));
-  return status === "PROCESSING_AUTOMATICALLY" && evidenceBlocked && !activeDownstreamWork
-    ? "GENUINE_SOURCE_BLOCKED"
-    : status;
+  if (evidenceBlocked) return "GENUINE_SOURCE_BLOCKED";
+
+  // Otherwise: if the canonical decision is stopped at a gate only a person
+  // can open, claiming "processing continues server-side" is false.
+  if (requiresManualAction(workflowDecision)) return "MANUAL_ACTION_REQUIRED";
+
+  return status;
 }
 
 export function truthfulEvidenceMessage(
@@ -185,7 +227,7 @@ export function truthfulEvidenceMessage(
 /**
  * The status label shown to the user. Plain text — no icons, no badges.
  */
-function statusLabel(status: ReleaseStatus): string {
+function statusLabel(status: ReleaseStatus, workflowDecision?: PanelWorkflowDecision | null): string {
   switch (status) {
     case "PROCESSING_AUTOMATICALLY":
       return "Processing automatically";
@@ -197,13 +239,24 @@ function statusLabel(status: ReleaseStatus): string {
       return "Ready to download";
     case "FAILED_SECURITY_OR_INTEGRITY":
       return "Security or integrity failure";
+    case "MANUAL_ACTION_REQUIRED":
+      // The canonical decision's own label — the same words the header shows.
+      return workflowDecision?.nextRequiredActionLabel
+        ? `Waiting for you — ${workflowDecision.nextRequiredActionLabel}`
+        : "Waiting for you";
   }
 }
 
 /**
  * A plain-text explanation of what the status means. No icons.
  */
-function statusExplanation(status: ReleaseStatus): string {
+function statusExplanation(status: ReleaseStatus, workflowDecision?: PanelWorkflowDecision | null): string {
+  if (status === "MANUAL_ACTION_REQUIRED") {
+    // Verbatim from the canonical decision, so this panel and the header
+    // cannot state different reasons for the same stop.
+    return workflowDecision?.nextRequiredActionReason
+      ?? "The workflow is stopped until you take the required action. Nothing is running server-side.";
+  }
   switch (status) {
     case "PROCESSING_AUTOMATICALLY":
       return "The workflow is running. Byte verification, extraction, analysis, matching, generation, validation, PDF finalization, and package reconciliation proceed automatically. You may close or refresh this page — processing continues server-side.";
@@ -346,8 +399,8 @@ export async function GenerationActionPanel({
   return (
     <section id="generated-documents" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Release status</p>
-      <h2 className="mt-1 text-lg font-bold text-slate-900">{statusLabel(status)}</h2>
-      <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{statusExplanation(status)}</p>
+      <h2 className="mt-1 text-lg font-bold text-slate-900">{statusLabel(status, resolvedWorkflowDecision)}</h2>
+      <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{statusExplanation(status, resolvedWorkflowDecision)}</p>
       {truncatedBlockers.length > 0 && (
         <div className="mt-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pending items</p>

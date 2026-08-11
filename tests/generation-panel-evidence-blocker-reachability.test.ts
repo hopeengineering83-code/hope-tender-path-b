@@ -102,11 +102,45 @@ describe("generation panel evidence blockers are reachable", () => {
   });
 
   it("only a genuinely running job may keep the 'processing automatically' claim", () => {
+    // Asserted as the invariant rather than one literal expression: any
+    // reclassification must be reachable ONLY from PROCESSING_AUTOMATICALLY
+    // and ONLY when no downstream job is queued, so a real running worker can
+    // never be overridden into a blocked state.
     assert.match(
       panelSource,
-      /status === "PROCESSING_AUTOMATICALLY" && evidenceBlocked && !activeDownstreamWork/,
+      /if \(status !== "PROCESSING_AUTOMATICALLY" \|\| activeDownstreamWork\) return status;/,
+      "the status guard must short-circuit before any reclassification",
     );
+    assert.match(panelSource, /if \(evidenceBlocked\) return "GENUINE_SOURCE_BLOCKED";/);
+    assert.match(panelSource, /if \(requiresManualAction\(workflowDecision\)\) return "MANUAL_ACTION_REQUIRED";/);
+    // And "queued downstream work" must keep meaning a real job row.
     assert.match(panelSource, /jobType: \{ in: \["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"\] \}/);
     assert.match(panelSource, /status: \{ in: \["QUEUED", "RUNNING"\] \}/);
+  });
+
+  it("a manual gate can never be presented as automatic server-side processing", () => {
+    // The panel must treat only the server-owned actions as automatic. If a
+    // future stage is added to this set, that is a deliberate claim that a
+    // worker owns it end to end.
+    const automatic = panelSource.match(/const AUTOMATIC_NEXT_ACTIONS = new Set\(\[([\s\S]*?)\]\)/);
+    assert.ok(automatic, "AUTOMATIC_NEXT_ACTIONS must remain a literal set");
+    const actions = [...automatic[1].matchAll(/"([A-Z0-9_]+)"/g)].map((match) => match[1]).sort();
+    assert.deepEqual(actions, ["AUTOMATIC_PROCESSING", "EXPORT_READY"]);
+
+    // AI Analyze and Run Engine are deliberate manual gates and must not be
+    // in it, or the false "processing continues server-side" claim returns.
+    for (const manual of ["RUN_AI_ANALYZE", "RESUME_AI_ANALYZE", "RUN_ENGINE"]) {
+      assert.ok(!actions.includes(manual), `${manual} is a manual gate`);
+    }
+  });
+
+  it("the panel and the header read the same presented decision", () => {
+    // Both must apply presentTwoActionWorkflowDecision, or they can word the
+    // same stop differently again.
+    const route = read("app/api/tenders/[id]/workflow-center/route.ts");
+    assert.match(route, /presentTwoActionWorkflowDecision\(/);
+    assert.match(panelSource, /presentTwoActionWorkflowDecision\(raw\)/);
+    assert.match(panelSource, /nextRequiredActionLabel: decision\.nextRequiredActionLabel/);
+    assert.match(panelSource, /nextRequiredActionReason: decision\.nextRequiredActionReason/);
   });
 });
