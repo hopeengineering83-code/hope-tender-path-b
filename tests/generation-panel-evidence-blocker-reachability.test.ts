@@ -94,11 +94,56 @@ describe("generation panel evidence blockers are reachable", () => {
     // capability gap. This test exists so a future "fix" for the
     // contradiction cannot resolve it by relaxing the gate instead.
     const workflowSource = read("lib/engine/canonical-workflow-decision.ts");
+
+    // This assertion used to pin the literal comparison
+    // `input.mandatoryFullOrSubstantialCoverageCount < input.mandatoryRequirementCount`.
+    // The comparison now allows exactly one exemption — mandatory requirements
+    // whose outstanding evidence is a file this workflow itself generates —
+    // because without it the tender was unsatisfiable: a submission requirement
+    // is answered by a generated document, and this gate was refusing to let
+    // generation start until that document existed.
+    //
+    // The intent of the test is unchanged and is asserted more strictly below:
+    // the gate still exists, still fires on genuinely unsupported requirements,
+    // is still unbypassable by a confirmation click, and the one exemption is
+    // counted from the database rather than assumed. Behavioural proof of all
+    // four lives in tests/planned-output-generation-deadlock.test.ts.
     assert.match(
       workflowSource,
-      /if \(input\.mandatoryFullOrSubstantialCoverageCount < input\.mandatoryRequirementCount\) \{\s*\n\s*blockerCodes\.push\("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"\);/,
+      /blockerCodes\.push\("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"\);/,
+      "the gate must still exist",
     );
     assert.match(workflowSource, /no confirmation click can bypass this gate/);
+
+    // The exemption may only ever be the planned-output count. If a future
+    // change widens what is subtracted from the coverage requirement, this
+    // fails and the author has to justify it here.
+    assert.match(
+      workflowSource,
+      /const mandatoryCoveredForGeneration =\s*\n?\s*input\.mandatoryFullOrSubstantialCoverageCount \+ \(input\.mandatoryAwaitingPlannedOutputCount \?\? 0\);/,
+      "the only relaxation permitted is requirements awaiting a file this workflow generates",
+    );
+
+    // Fail closed when the count is absent: an unsupplied exemption must mean
+    // "nothing is exempt", never "exempt everything".
+    assert.match(
+      workflowSource,
+      /mandatoryAwaitingPlannedOutputCount \?\? 0/,
+      "an absent exemption count must default to zero",
+    );
+
+    // And it must be measured, not asserted: the count comes from requirements
+    // that actually carry a planned-artifact row and are not otherwise covered.
+    assert.match(
+      workflowSource,
+      /evidenceType: "AUTO_PLANNED_ARTIFACT"/,
+      "the exemption must be derived from real compliance rows",
+    );
+    assert.match(
+      workflowSource,
+      /NOT: \{ complianceMatrixRows: \{ some: \{ supportLevel: \{ in: \["FULL", "SUBSTANTIAL"\] \} \} \} \}/,
+      "a requirement already covered by real evidence must not also be counted as exempt",
+    );
   });
 
   it("only a genuinely running job may keep the 'processing automatically' claim", () => {

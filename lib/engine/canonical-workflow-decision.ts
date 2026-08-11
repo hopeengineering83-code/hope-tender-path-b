@@ -61,6 +61,25 @@ export type CanonicalWorkflowDecision = {
   mandatoryTracedCount: number;
   mandatoryComplianceRowsCount: number;
   mandatoryFullOrSubstantialCoverageCount: number;
+  /**
+   * Mandatory requirements whose outstanding evidence is a planned output this
+   * workflow will generate, and which are not otherwise covered.
+   *
+   * These are the requirements that made the tender unsatisfiable. A submission
+   * requirement is answered by a document the app generates, so its only
+   * automatic evidence is the confirmed Build Plan row for that exact file. A
+   * plan row is correctly never FULL or SUBSTANTIAL — the bytes do not exist —
+   * so the requirement stayed uncovered, and the coverage blocker refused to
+   * let generation start. The app declined to generate a file until the file
+   * already existed, and no Company Vault upload could resolve it, because the
+   * missing item was an output rather than a source.
+   *
+   * Counted toward the GENERATION gate only. Nothing here touches export: the
+   * bytes still do not exist, and MISSING_PLANNED_FILES,
+   * NO_ACTIVE_GENERATED_DOCUMENTS, package reconciliation and the ZIP byte
+   * gates remain independent and still fire.
+   */
+  mandatoryAwaitingPlannedOutputCount?: number;
 
   // Documents
   requiredDocumentsTotal: number;
@@ -102,6 +121,7 @@ export function buildCanonicalWorkflowDecision(input: {
   mandatoryTracedCount: number;
   mandatoryComplianceRowsCount: number;
   mandatoryFullOrSubstantialCoverageCount: number;
+  mandatoryAwaitingPlannedOutputCount?: number;
 
   // Build plan
   confirmedBuildPlanExists: boolean;
@@ -202,8 +222,15 @@ export function buildCanonicalWorkflowDecision(input: {
   }
 
   // ── Priority 10: Mandatory no FULL/SUBSTANTIAL coverage ──────────────
+  // Requirements waiting only on a file this workflow generates count as
+  // satisfied HERE, at the generation gate, and nowhere else. See
+  // mandatoryAwaitingPlannedOutputCount for why: without it the tender is
+  // unsatisfiable by construction, because the evidence it demands is an
+  // output the same gate is preventing.
+  const mandatoryCoveredForGeneration =
+    input.mandatoryFullOrSubstantialCoverageCount + (input.mandatoryAwaitingPlannedOutputCount ?? 0);
   if (requirementsOK && input.confirmedBuildPlanExists && input.mandatoryRequirementCount > 0 && input.mandatoryComplianceRowsCount > 0) {
-    if (input.mandatoryFullOrSubstantialCoverageCount < input.mandatoryRequirementCount) {
+    if (mandatoryCoveredForGeneration < input.mandatoryRequirementCount) {
       blockerCodes.push("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE");
       blockerDetails.push(`${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have FULL/SUBSTANTIAL coverage. Add genuine owned source evidence for unsupported requirements.`);
     }
@@ -211,7 +238,7 @@ export function buildCanonicalWorkflowDecision(input: {
 
   // ── Priority 11: PDF required but unavailable ────────────────────────
   const complianceOK = requirementsOK && input.confirmedBuildPlanExists &&
-    (input.mandatoryRequirementCount === 0 || (input.mandatoryComplianceRowsCount > 0 && input.mandatoryFullOrSubstantialCoverageCount >= input.mandatoryRequirementCount));
+    (input.mandatoryRequirementCount === 0 || (input.mandatoryComplianceRowsCount > 0 && mandatoryCoveredForGeneration >= input.mandatoryRequirementCount));
   if (complianceOK && input.pdfRequiredButUnavailable) {
     blockerCodes.push("PDF_REQUIRED_UNAVAILABLE");
     blockerDetails.push("Required PDF output is unavailable. Finalize the required PDF or upload the tender-issued PDF.");
@@ -378,7 +405,11 @@ export function buildCanonicalWorkflowDecision(input: {
   if (isSuppressed("MANDATORY_NO_COMPLIANCE_ROWS")) {
     stageStates["MATCH_EVIDENCE"] = "BLOCKED_BY_PRIOR_STEP";
     stageAvailability["MATCH_EVIDENCE"] = false;
-  } else if (input.mandatoryRequirementCount > 0 && input.mandatoryFullOrSubstantialCoverageCount < input.mandatoryRequirementCount) {
+  } else if (
+    input.mandatoryRequirementCount > 0
+    && input.mandatoryFullOrSubstantialCoverageCount + (input.mandatoryAwaitingPlannedOutputCount ?? 0)
+       < input.mandatoryRequirementCount
+  ) {
     stageStates["MATCH_EVIDENCE"] = "BLOCKED";
     stageAvailability["MATCH_EVIDENCE"] = true;
   } else {
@@ -440,6 +471,7 @@ export function buildCanonicalWorkflowDecision(input: {
     mandatoryTracedCount: input.mandatoryTracedCount,
     mandatoryComplianceRowsCount: input.mandatoryComplianceRowsCount,
     mandatoryFullOrSubstantialCoverageCount: input.mandatoryFullOrSubstantialCoverageCount,
+    mandatoryAwaitingPlannedOutputCount: input.mandatoryAwaitingPlannedOutputCount ?? 0,
     requiredDocumentsTotal: input.requiredDocumentsTotal,
     generatedDocumentsTotal: input.generatedDocumentsTotal,
     exportReadyDocumentsTotal: input.exportReadyDocumentsTotal,
@@ -520,6 +552,23 @@ export async function getCanonicalTenderWorkflowDecision(
     return anyRowCount;
   })();
   const mandatoryFullOrSubstantialCoverageCount = snapshot.evidence.covered;
+
+  // Mandatory requirements whose outstanding evidence is a file this workflow
+  // will generate. AUTO_PLANNED_ARTIFACT is the evidenceType the automatic
+  // coverage writer uses for a confirmed Build Plan row, so this asks exactly:
+  // is this requirement waiting on generation, and on nothing else?
+  //
+  // The NOT clause keeps it from double counting a requirement that is already
+  // covered by real evidence, so the sum with evidence.covered can never exceed
+  // the mandatory total.
+  const mandatoryAwaitingPlannedOutputCount = await prisma.tenderRequirement.count({
+    where: {
+      tenderId,
+      priority: { in: ["MANDATORY", "CRITICAL"] },
+      complianceMatrixRows: { some: { evidenceType: "AUTO_PLANNED_ARTIFACT" } },
+      NOT: { complianceMatrixRows: { some: { supportLevel: { in: ["FULL", "SUBSTANTIAL"] } } } },
+    },
+  }).catch(() => 0);
   const requirementsTrusted =
     snapshot.requirements.total > 0 &&
     snapshot.requirements.allMandatoryGrounded;
