@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
-import { primaryTest as test, expect } from "./auth-helper";
+import { test, expect } from "@playwright/test";
+import bcrypt from "bcryptjs";
 
 import {
   cleanupTender,
+  cleanupUser,
   seedComplianceRow,
   seedRequirement,
   seedTender,
@@ -38,17 +40,35 @@ const SOURCE_TEXT = [
 
 test.describe("Phase 2 rendered 2/4 evidence workflow truth", () => {
   let tenderId = "";
+  let userId = "";
+  const email = `phase2-rendered-${Date.now()}@example.test`;
+  const password = "Phase2-Rendered-Workflow-A9!secure";
   const companyRecordIds: { experts: string[]; projects: string[]; documents: string[] } = {
     experts: [], projects: [], documents: [],
   };
 
   test.beforeAll(async () => {
-    const email = process.env.E2E_TEST_EMAIL;
-    if (!email) throw new Error("E2E_TEST_EMAIL is required for the Phase 2 rendered fixture");
-    const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-    if (!user) throw new Error("Primary E2E user is not seeded");
-    const company = await prisma.company.findUnique({ where: { userId: user.id }, select: { id: true } });
-    if (!company) throw new Error("Primary E2E company is not seeded");
+    const user = await prisma.user.create({
+      data: {
+        email,
+        passwordHash: await bcrypt.hash(password, 10),
+        role: "ADMIN",
+        name: "Phase 2 Rendered Fixture",
+      },
+      select: { id: true },
+    });
+    userId = user.id;
+    const company = await prisma.company.create({
+      data: {
+        userId: user.id,
+        name: "Phase 2 Rendered Fixture Company",
+        legalName: "Phase 2 Rendered Fixture Company",
+        country: "ET",
+        sectors: "Engineering",
+        setupCompletedAt: new Date(),
+      },
+      select: { id: true },
+    });
 
     const tender = await seedTender(prisma, {
       userId: user.id,
@@ -228,10 +248,18 @@ test.describe("Phase 2 rendered 2/4 evidence workflow truth", () => {
     await prisma.expert.deleteMany({ where: { id: { in: companyRecordIds.experts } } });
     await prisma.project.deleteMany({ where: { id: { in: companyRecordIds.projects } } });
     await prisma.companyDocument.deleteMany({ where: { id: { in: companyRecordIds.documents } } });
+    if (userId) await cleanupUser(prisma, userId);
     await prisma.$disconnect();
   });
 
   test("all rendered panels agree that Engine completed and source evidence is required", async ({ page }, testInfo) => {
+    await page.goto("/login");
+    await page.locator('input[type="email"]').fill(email);
+    await page.locator('input[type="password"]').fill(password);
+    await Promise.all([
+      page.waitForURL((url) => url.pathname.startsWith("/dashboard"), { timeout: 30_000 }),
+      page.locator('button[type="submit"]').click(),
+    ]);
     await page.goto(`/dashboard/tenders/${tenderId}`, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Source evidence required" })).toBeVisible({ timeout: 30_000 });
 
