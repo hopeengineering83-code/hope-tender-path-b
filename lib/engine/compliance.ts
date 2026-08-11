@@ -70,6 +70,24 @@ export function buildCompliance(
 
   const expertCount = knowledge.experts.length;
   const projectCount = knowledge.projects.length;
+
+  // Evidence references must name the record, not its primary key.
+  //
+  // Every other branch below already writes something a person can check — a
+  // registration number, a fiscal year, an original file name. The expert and
+  // project branches wrote raw UUIDs, so the evidence panel showed a mandatory
+  // requirement supported by "PROJECT e6ed6bac-1811-49b8-a245-fe8f4c27411e,
+  // cccb66a6-…, 324cd171-…". The records were real and correctly matched; they
+  // were simply unreadable, so a reviewer could not tell whether the right
+  // projects had been cited, which is the entire point of a compliance matrix.
+  const expertNameById = new Map<string, string>(
+    knowledge.experts.map((expert: { id: string; fullName?: string | null }) => [expert.id, (expert.fullName ?? "").trim()]),
+  );
+  const projectNameById = new Map<string, string>(
+    knowledge.projects.map((project: { id: string; name?: string | null }) => [project.id, (project.name ?? "").trim()]),
+  );
+  /** Prefer the record's own name; fall back to the id rather than losing the reference. */
+  const nameOrId = (lookup: Map<string, string>, id: string): string => lookup.get(id) || id;
   const legalDocument = findCategorizedSupportDocument(knowledge, ["LEGAL_REGISTRATION"], [/LEGAL_REGISTRATION/i, /registration/i, /licen[cs]e/i, /certificate/i, /\btin\b/i, /\bvat\b/i]);
   const financialDocument = findCategorizedSupportDocument(knowledge, ["FINANCIAL_STATEMENT"], [/FINANCIAL_STATEMENT/i, /audit/i, /financial/i, /turnover/i, /balance sheet/i]);
   const complianceDocument = findCategorizedSupportDocument(knowledge, ["CERTIFICATION", "COMPLIANCE_RECORD", "MANUAL"], [/CERTIFICATION/i, /COMPLIANCE_RECORD/i, /MANUAL/i, /declaration/i, /certificate/i, /policy/i, /manual/i]);
@@ -105,7 +123,10 @@ export function buildCompliance(
         : `${seniorRelevant} expert candidate(s) scored 75%+ from ${expertCount} expert record(s); senior review/selection required if no candidate reaches 90%.`;
       evidenceType = "EXPERT";
       evidenceSource = strongSelected > 0 ? "Selected expert library" : "Expert library candidates";
-      evidenceReference = (strongSelected > 0 ? selectedExperts : highScoringExperts).map((match) => match.expertId).slice(0, 3).join(", ") || undefined;
+      evidenceReference = (strongSelected > 0 ? selectedExperts : highScoringExperts)
+        .map((match) => nameOrId(expertNameById, match.expertId))
+        .slice(0, 3)
+        .join(", ") || undefined;
     } else if (req.requirementType === "PROJECT_EXPERIENCE") {
       const denominator = Math.max(req.requiredQuantity || 1, 1);
       const strongSelected = selectedProjects.length;
@@ -117,7 +138,10 @@ export function buildCompliance(
         : `${seniorRelevant} project candidate(s) scored 75%+ from ${projectCount} available project record(s); senior review/selection required if no candidate reaches 90%.`;
       evidenceType = "PROJECT";
       evidenceSource = strongSelected > 0 ? "Selected project references" : "Project library candidates";
-      evidenceReference = (strongSelected > 0 ? selectedProjects : highScoringProjects).map((match) => match.projectId).slice(0, 3).join(", ") || undefined;
+      evidenceReference = (strongSelected > 0 ? selectedProjects : highScoringProjects)
+        .map((match) => nameOrId(projectNameById, match.projectId))
+        .slice(0, 3)
+        .join(", ") || undefined;
     } else if (["LEGAL", "ELIGIBILITY", "REGISTRATION"].includes(req.requirementType)) {
       supportStrength = legalCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
@@ -162,7 +186,9 @@ export function buildCompliance(
         : "No generated, source-linked proposal response exists yet; the Run Engine must draft and automatically verify it.";
       evidenceType = "PROPOSAL_RESPONSE";
       evidenceSource = draftingEvidenceExists ? "Company evidence available for drafting" : "No generated response evidence";
-      evidenceReference = requirementDocument?.originalFileName ?? selectedExperts[0]?.expertId ?? selectedProjects[0]?.projectId;
+      evidenceReference = requirementDocument?.originalFileName
+        ?? (selectedExperts[0] ? nameOrId(expertNameById, selectedExperts[0].expertId) : undefined)
+        ?? (selectedProjects[0] ? nameOrId(projectNameById, selectedProjects[0].projectId) : undefined);
     } else {
       supportStrength = requirementDocument || selectedEvidenceCount > 0 ? 0.9 : 0.55;
       supportStatus = supportStrength >= 0.9 ? "SUPPORTED" : "PARTIAL";
@@ -171,7 +197,9 @@ export function buildCompliance(
         : "No mapped company evidence yet; proposal narrative can be drafted but should be verified.";
       evidenceType = requirementDocument ? "COMPANY_DOCUMENT" : selectedEvidenceCount > 0 ? "SELECTED_COMPANY_EVIDENCE" : "UNMAPPED";
       evidenceSource = requirementDocument ? "Relevant Company Vault document" : selectedEvidenceCount > 0 ? "Selected Company Vault expert/project evidence" : "No mapped evidence";
-      evidenceReference = requirementDocument?.originalFileName ?? selectedExperts[0]?.expertId ?? selectedProjects[0]?.projectId;
+      evidenceReference = requirementDocument?.originalFileName
+        ?? (selectedExperts[0] ? nameOrId(expertNameById, selectedExperts[0].expertId) : undefined)
+        ?? (selectedProjects[0] ? nameOrId(projectNameById, selectedProjects[0].projectId) : undefined);
     }
 
     matrices.push({

@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-11 UTC — Claude Code (Opus), compliance evidence that names the record
+
+- **The gap, closed.** The Match Evidence panel showed a mandatory requirement supported by `PROJECT e6ed6bac-1811-49b8-a245-fe8f4c27411e, cccb66a6-…, 324cd171-…`. My earlier note called that a "legacy row the automatic writer never reconciles". That framing was wrong and is corrected here: the row is written by `run-tender-engine.ts` on every run from `lib/engine/compliance.ts`, and the matching behind it was correct. The defect was purely that the expert and project branches wrote primary keys as `evidenceReference` while every other branch already wrote something checkable — a registration number, a fiscal year, an original file name.
+- **Why it mattered.** Those two branches are the ones a reviewer most needs to read, because they are where the proposal claims particular people and particular past work. A compliance matrix citing UUIDs cannot be checked, so a correctly matched hospital and an unrelated record are indistinguishable on the page.
+- **Fix.** `lib/engine/compliance.ts` builds `expertNameById` / `projectNameById` from the same `knowledge` records the matcher used — so the panel and the match cannot disagree about which record was cited — and resolves references through `nameOrId`, which falls back to the id rather than dropping the reference. Losing it would be worse than showing an id: the requirement would read as unsupported when it is not. The `requirementDocument` fallback branches were updated the same way.
+- **Not changed.** No support level, no coverage count, no gate, no matching score. This is what the row says, not what it is worth.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, DB verified alive after): new `tests/evidence-reference-names-the-record.test.ts` 4/4, pinning both lookups, both resolutions, the id fallback, and the absence of the two expressions that produced the unreadable row. Full suite **9,893/9,893, 0 failures**; typecheck clean; lint clean but for the one standing warning.
+- **Still open, and honestly stated.** Whether the Engine's own compliance row and the automatic coverage writer's row should agree on a support level for the same requirement is unresolved. They are written by different subsystems (`run-tender-engine.ts` via `compliance.ts`, and `automatic-requirement-coverage.ts` with its `automatic-requirement-evidence:v1:` prefix, which reconciles only its own rows), and on the reported tender they disagreed — the Engine linked the selected projects at PARTIAL while the coverage writer linked a different record. Choosing the single authority changes what the release gate counts as supported evidence, so it needs a deliberate decision rather than a drive-by change. The manual confirm route (`evidenceSource: "VAULT_CONFIRMED"`) must stay untouched by whatever is decided.
+- **Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration.
+
 
 ### 2026-08-11 UTC — Codex (PR #1175 final remaining-gap closure)
 
