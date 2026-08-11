@@ -17,6 +17,55 @@ export type CurrentEnginePresentationState = {
   activeJob: { id?: string; status: string; createdAt: string } | null;
 };
 
+/**
+ * Presentation-safe projection of the existing canonical workflow-center
+ * decision plus observed durable successor activity. It contains no readiness
+ * calculations: labels/reasons come from the canonical decision and activity
+ * comes from persisted current-pipeline jobs.
+ */
+export type CanonicalDownstreamPresentationState = {
+  nextRequiredAction: string;
+  nextRequiredActionLabel: string;
+  nextRequiredActionReason: string;
+  currentBlockingStage: string;
+  downstreamSuppressedBy: string | null;
+  finalExportAllowed: boolean;
+  activeJob: { jobType: string; status: "QUEUED" | "RUNNING" } | null;
+};
+
+export type DownstreamActivityCandidate = {
+  jobType: string;
+  status: string;
+  analysisInputHash: string | null;
+  input: string;
+};
+
+function inputAnalysisRevision(input: string): string | null {
+  try {
+    const parsed = JSON.parse(input) as { analysisRevision?: unknown };
+    return typeof parsed.analysisRevision === "string" ? parsed.analysisRevision : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Select observed successor activity for this exact Engine source revision. */
+export function selectCurrentDownstreamActivity(
+  sourceRevision: string | null,
+  candidates: DownstreamActivityCandidate[],
+): CanonicalDownstreamPresentationState["activeJob"] {
+  if (!sourceRevision) return null;
+  const current = candidates.find((job) => {
+    if (job.status !== "QUEUED" && job.status !== "RUNNING") return false;
+    if (job.jobType === "PROPOSAL_GENERATION") return job.analysisInputHash === sourceRevision;
+    if (job.jobType === "AUTO_FINALIZE") return inputAnalysisRevision(job.input) === sourceRevision;
+    return false;
+  });
+  return current
+    ? { jobType: current.jobType, status: current.status as "QUEUED" | "RUNNING" }
+    : null;
+}
+
 const ENGINE_QUEUE_STALL_MS = 15 * 60 * 1000;
 
 export function describeEngineActivity(
@@ -61,11 +110,38 @@ export function describeAIAnalyzeWorkflowState(state: CurrentEnginePresentationS
 export function describeMatchingEngineState(
   state: CurrentEnginePresentationState,
   hasSelection: boolean,
+  downstream: CanonicalDownstreamPresentationState | null = null,
 ): string {
-  if (state.engineComplete) return "Engine complete. Downstream processing continues automatically.";
   if (state.engineRunning) return describeEngineActivity(state.activeJob);
   if (!state.analysisCurrent) return state.analysisBlocker ?? "Run AI Analyze first to enable Engine.";
   if (state.engineFailed) return state.blocker ?? "The latest Engine run failed. Correct the issue and retry.";
+  if (state.engineComplete) {
+    // Engine success and downstream permission are deliberately independent.
+    // When canonical workflow truth is unavailable, fail closed in copy rather
+    // than promising that any work is occurring.
+    if (!downstream) return "Engine is complete. Checking the current downstream workflow state.";
+
+    if (downstream.activeJob?.status === "QUEUED") {
+      return "Engine complete. Downstream processing is queued and will continue automatically.";
+    }
+    if (downstream.activeJob?.status === "RUNNING") {
+      return "Engine complete. Downstream processing is continuing automatically.";
+    }
+    if (downstream.nextRequiredAction === "AUTOMATIC_PROCESSING") {
+      return `Engine complete. Downstream processing is continuing automatically. ${downstream.nextRequiredActionReason}`;
+    }
+    if (downstream.nextRequiredAction === "WORKFLOW_COMPLETE" || downstream.nextRequiredAction === "COMPLETE") {
+      return "Engine complete. Workflow is fully complete.";
+    }
+    if (downstream.nextRequiredAction === "EXPORT_READY" || downstream.finalExportAllowed) {
+      return "Engine complete. Workflow is complete and export ready.";
+    }
+
+    const label = downstream.nextRequiredActionLabel
+      ? `${downstream.nextRequiredActionLabel.charAt(0).toLocaleLowerCase()}${downstream.nextRequiredActionLabel.slice(1)}`
+      : "the next required action";
+    return `Engine complete. Downstream processing is paused — ${label}. ${downstream.nextRequiredActionReason}`;
+  }
   return hasSelection
     ? "AI Analyze complete. Run Engine to refresh current-revision matching."
     : "AI Analyze complete. Run Engine to start matching.";

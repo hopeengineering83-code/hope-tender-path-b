@@ -1,0 +1,254 @@
+import { createHash } from "node:crypto";
+import { PrismaClient } from "@prisma/client";
+import { primaryTest as test, expect } from "./auth-helper";
+
+import {
+  cleanupTender,
+  seedComplianceRow,
+  seedRequirement,
+  seedTender,
+  seedTenderFile,
+} from "../tests/helpers/db-acceptance-harness";
+import {
+  buildSourceVerificationProvenance,
+  expertReviewFields,
+  projectReviewFields,
+} from "../lib/vault-review-provenance";
+import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../lib/engine/tender-analysis-content";
+import { buildAndVerifyBuildPlan } from "../lib/engine/automatic-build-plan";
+import { computeEngineSourceRevision } from "../lib/engine/engine-source-revision";
+
+const prisma = new PrismaClient();
+const SUFFIX = "phase2-rendered-2-of-4";
+const QUOTES = [
+  "The Contractor shall provide a licensed Water Engineer with 10 years experience.",
+  "The Contractor shall provide a licensed Structural Engineer with 12 years experience.",
+  "The Bidder shall demonstrate three completed water supply projects.",
+  "The Bidder shall demonstrate two completed sanitation projects.",
+];
+const FILLER = "The Employer requires a complete technical and financial submission supported only by genuine source evidence. ";
+const SOURCE_TEXT = [
+  "SECTION 1 - INSTRUCTIONS TO BIDDERS",
+  FILLER.repeat(15),
+  "SECTION 2 - MANDATORY REQUIREMENTS",
+  ...QUOTES,
+  "Submission shall be by email to submit@example.com before the stated deadline.",
+  FILLER.repeat(15),
+].join("\n");
+
+test.describe("Phase 2 rendered 2/4 evidence workflow truth", () => {
+  let tenderId = "";
+  const companyRecordIds: { experts: string[]; projects: string[]; documents: string[] } = {
+    experts: [], projects: [], documents: [],
+  };
+
+  test.beforeAll(async () => {
+    const email = process.env.E2E_TEST_EMAIL;
+    if (!email) throw new Error("E2E_TEST_EMAIL is required for the Phase 2 rendered fixture");
+    const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (!user) throw new Error("Primary E2E user is not seeded");
+    const company = await prisma.company.findUnique({ where: { userId: user.id }, select: { id: true } });
+    if (!company) throw new Error("Primary E2E company is not seeded");
+
+    const tender = await seedTender(prisma, {
+      userId: user.id,
+      suffix: SUFFIX,
+      title: "Phase 2 — Engine Complete, Source Evidence Required",
+      status: "MATCHED",
+      stage: "COMPLIANCE",
+      exactFileNaming: JSON.stringify(["Technical Proposal.docx", "Financial Proposal.docx"]),
+    });
+    tenderId = tender.id;
+    const file = await seedTenderFile(prisma, {
+      tenderId,
+      suffix: SUFFIX,
+      extractedText: SOURCE_TEXT,
+      extractionScore: 95,
+      totalPages: 2,
+      extractedPages: 2,
+    });
+    await prisma.tenderFile.update({
+      where: { id: file.id },
+      data: {
+        pageStatusJson: JSON.stringify([
+          { page: 1, status: "OK", charCount: 2000, hasContent: true },
+          { page: 2, status: "OK", charCount: 2000, hasContent: true },
+        ]),
+      },
+    });
+
+    const requirements = [];
+    for (let index = 0; index < QUOTES.length; index += 1) {
+      requirements.push(await seedRequirement(prisma, {
+        tenderId,
+        title: `Mandatory requirement ${index + 1}`,
+        description: QUOTES[index],
+        requirementType: index < 2 ? "EXPERT" : "PROJECT_EXPERIENCE",
+        priority: "MANDATORY",
+        sourceTenderFileId: file.id,
+        sourcePageNumber: 1,
+        sourceExactQuote: QUOTES[index],
+        sourceConfidence: 95,
+      }));
+    }
+    for (let index = 0; index < requirements.length; index += 1) {
+      await seedComplianceRow(prisma, {
+        tenderId,
+        requirementId: requirements[index].id,
+        supportLevel: index < 2 ? "FULL" : "PARTIAL",
+        evidenceType: index < 2 ? "EXPERT" : "PROJECT",
+      });
+    }
+
+    const seedVaultDocument = async (name: string, text: string, category: string) => {
+      const document = await prisma.companyDocument.create({
+        data: {
+          companyId: company.id,
+          fileName: name,
+          originalFileName: name,
+          mimeType: "application/pdf",
+          size: Buffer.byteLength(text),
+          category,
+          extractedText: text,
+          contentSha256: createHash("sha256").update(text).digest("hex"),
+          contentByteLength: Buffer.byteLength(text),
+          integrityStatus: "VERIFIED",
+          metadata: JSON.stringify({ extractionRevision: 1 }),
+        },
+      });
+      companyRecordIds.documents.push(document.id);
+      return document;
+    };
+
+    for (const spec of [
+      { fullName: "Amina Phase Two", title: "Water Engineer", yearsExperience: 12, disciplines: ["Water Engineering"] },
+      { fullName: "Bekele Phase Two", title: "Structural Engineer", yearsExperience: 14, disciplines: ["Structural Engineering"] },
+    ]) {
+      const text = `CURRICULUM VITAE\nName: ${spec.fullName}\nTitle: ${spec.title}\n${spec.fullName} has ${spec.yearsExperience} years of ${spec.disciplines[0]} experience.`;
+      const document = await seedVaultDocument(`${spec.fullName}.pdf`, text, "CV");
+      const fields = { ...spec, disciplines: JSON.stringify(spec.disciplines) };
+      const provenance = buildSourceVerificationProvenance({
+        recordType: "EXPERT",
+        sourceDocument: document,
+        fields: expertReviewFields(fields),
+        verificationMethod: "HYBRID",
+      });
+      if (!provenance.ok) throw new Error("Phase 2 expert provenance fixture is invalid");
+      const expert = await prisma.expert.create({
+        data: {
+          companyId: company.id,
+          ...fields,
+          trustLevel: "SOURCE_VERIFIED",
+          reviewNotes: provenance.serialized,
+          sourceDocumentId: document.id,
+        },
+      });
+      companyRecordIds.experts.push(expert.id);
+      await prisma.tenderExpertMatch.create({
+        data: { tenderId, expertId: expert.id, score: 0.88, rationale: "Source-verified discipline match.", isSelected: true },
+      });
+    }
+
+    for (const spec of [
+      { name: "Phase Two Water Project", clientName: "Water Utility", country: "ET", sector: "Water" },
+      { name: "Phase Two Sanitation Project", clientName: "Municipality", country: "ET", sector: "Sanitation" },
+    ]) {
+      const text = `PROJECT COMPLETION CERTIFICATE\nProject: ${spec.name}\nClient: ${spec.clientName}\nCountry: ${spec.country}\nSector: ${spec.sector}\nThe works were completed and accepted.`;
+      const document = await seedVaultDocument(`${spec.name}.pdf`, text, "PROJECT");
+      const provenance = buildSourceVerificationProvenance({
+        recordType: "PROJECT",
+        sourceDocument: document,
+        fields: projectReviewFields(spec),
+        verificationMethod: "HYBRID",
+      });
+      if (!provenance.ok) throw new Error("Phase 2 project provenance fixture is invalid");
+      const project = await prisma.project.create({
+        data: {
+          companyId: company.id,
+          ...spec,
+          trustLevel: "SOURCE_VERIFIED",
+          reviewNotes: provenance.serialized,
+          sourceDocumentId: document.id,
+        },
+      });
+      companyRecordIds.projects.push(project.id);
+      await prisma.tenderProjectMatch.create({
+        data: { tenderId, projectId: project.id, score: 0.86, rationale: "Source-verified sector match.", isSelected: true },
+      });
+    }
+
+    const tenderRow = await prisma.tender.findUniqueOrThrow({
+      where: { id: tenderId },
+      select: { title: true, description: true, intakeSummary: true },
+    });
+    const companyForHash = await prisma.company.findUnique({
+      where: { userId: user.id },
+      select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
+    });
+    const analysisInputHash = computeAnalysisContentHash(buildTenderAnalysisContent({
+      ...tenderRow,
+      files: [{ id: file.id, extractedText: SOURCE_TEXT, originalFileName: `Tender Document ${SUFFIX}.pdf` }],
+    } as never, companyForHash ?? undefined));
+    await prisma.aiJob.create({
+      data: {
+        userId: user.id,
+        tenderId,
+        jobType: "AI_ANALYZE",
+        status: "SUCCEEDED",
+        analysisInputHash,
+        promotedAt: new Date(),
+        startedAt: new Date(Date.now() - 60_000),
+        finishedAt: new Date(Date.now() - 30_000),
+      },
+    });
+
+    const plan = await buildAndVerifyBuildPlan(prisma, tenderId, user.id);
+    if (!plan.ok) throw new Error(`Phase 2 Build Plan fixture failed: ${plan.message}`);
+    const engineRevision = await computeEngineSourceRevision(prisma, {
+      tenderId,
+      userId: user.id,
+      companyId: company.id,
+    });
+    if (!engineRevision) throw new Error("Phase 2 Engine source revision is unavailable");
+    await prisma.aiJob.create({
+      data: {
+        userId: user.id,
+        tenderId,
+        jobType: "ENGINE_RUN",
+        status: "SUCCEEDED",
+        analysisInputHash: engineRevision.sourceRevision,
+        startedAt: new Date(Date.now() - 20_000),
+        finishedAt: new Date(Date.now() - 10_000),
+      },
+    });
+  });
+
+  test.afterAll(async () => {
+    if (tenderId) await cleanupTender(prisma, tenderId);
+    await prisma.expert.deleteMany({ where: { id: { in: companyRecordIds.experts } } });
+    await prisma.project.deleteMany({ where: { id: { in: companyRecordIds.projects } } });
+    await prisma.companyDocument.deleteMany({ where: { id: { in: companyRecordIds.documents } } });
+    await prisma.$disconnect();
+  });
+
+  test("all rendered panels agree that Engine completed and source evidence is required", async ({ page }, testInfo) => {
+    await page.goto(`/dashboard/tenders/${tenderId}`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Source evidence required" })).toBeVisible({ timeout: 30_000 });
+
+    for (const stage of ["Analysis and engine", "Evidence and matching", "Generation and review"]) {
+      await page.getByText(stage, { exact: true }).click();
+    }
+
+    await expect(page.getByText("AI Analysis is complete and current.", { exact: true })).toBeVisible({ timeout: 30_000 });
+    const matchingStatus = page.getByText(/Engine complete\. Downstream processing is paused — source evidence required\./);
+    await expect(matchingStatus).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Blocked — source evidence required", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText("Engine complete. Downstream processing continues automatically.", { exact: true })).toHaveCount(0);
+
+    const screenshot = await page.screenshot({ fullPage: true, animations: "disabled" });
+    await testInfo.attach("phase2-engine-complete-source-evidence-required", {
+      body: screenshot,
+      contentType: "image/png",
+    });
+  });
+});

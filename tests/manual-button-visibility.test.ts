@@ -182,8 +182,20 @@ describe("truthful status messages", () => {
       /Engine is running/,
     );
     assert.equal(
-      describeMatchingEngineState({ ...base, analysisCurrent: true, engineComplete: true }, true),
-      "Engine complete. Downstream processing continues automatically.",
+      describeMatchingEngineState(
+        { ...base, analysisCurrent: true, engineComplete: true },
+        true,
+        {
+          nextRequiredAction: "AUTOMATIC_PROCESSING",
+          nextRequiredActionLabel: "Processing automatically",
+          nextRequiredActionReason: "The durable worker owns this stage.",
+          currentBlockingStage: "DOCS_NOT_VALIDATED",
+          downstreamSuppressedBy: "DOCS_NOT_VALIDATED",
+          finalExportAllowed: false,
+          activeJob: { jobType: "AUTO_FINALIZE", status: "RUNNING" },
+        },
+      ),
+      "Engine complete. Downstream processing is continuing automatically.",
     );
   });
 

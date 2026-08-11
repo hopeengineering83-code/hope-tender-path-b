@@ -112,12 +112,21 @@ describe("cross-panel next-action semantics", () => {
       ...engine,
       analysisBlocker: null,
       blocker: null,
-    }, true);
+    }, true, {
+      nextRequiredAction: decision.nextRequiredAction,
+      nextRequiredActionLabel: decision.nextRequiredActionLabel,
+      nextRequiredActionReason: decision.nextRequiredActionReason,
+      currentBlockingStage: decision.currentBlockingStage,
+      downstreamSuppressedBy: decision.downstreamSuppressedBy,
+      finalExportAllowed: decision.finalExportAllowed,
+      activeJob: null,
+    });
 
     assert.equal(decision.nextRequiredAction, "LINK_VAULT_EVIDENCE");
     assert.equal(decision.nextRequiredActionLabel, "Source evidence required");
     assert.equal(aiPanel, "AI Analysis is complete and current.");
     assert.match(matchingPanel, /Engine complete/);
+    assert.match(matchingPanel, /paused — source evidence required/);
     for (const panelMessage of [aiPanel, matchingPanel]) {
       assert.doesNotMatch(panelMessage, /Run Engine|Run AI Analyze/);
     }

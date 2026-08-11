@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-11 UTC — Codex (PR #1175 Phase 2 downstream-truth repair)
+
+- **Mode:** Phase 2 only — reconcile completed Engine execution with canonical downstream workflow truth at the Stage 3 presentation boundary.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting from exact remote head `170c58a8586620ed1158b8f5782bd89867420477` after confirming the 16 Phase 1 semantic tests still passed.
+- **Scope / files changed:** `lib/engine/workflow-panel-presentation.ts` now formats current-revision Engine truth together with a presentation-safe projection of the existing canonical workflow decision and exact-revision persisted successor activity; `app/api/tenders/[id]/workflow-center/route.ts` exposes that observed activity without changing eligibility; `components/matching-selected-evidence-panel.tsx` consumes and polls both existing authorities and fails closed when downstream truth is unavailable; focused semantic/PostgreSQL tests were strengthened; `e2e/phase2-workflow-truth-screenshot.spec.ts` creates and screenshots the exact current-analysis/current-Engine/selected-evidence/confirmed-plan/2-of-4 state; `playwright.config.ts` runs it in authenticated CI.
+- **Tests so far:** the pre-edit Phase 1 suite passed 16/16; the exact old Stage 3 source path was reproduced returning the unconditional automatic-continuation sentence; 53 focused Phase 1/Phase 2/manual-button tests pass; 28 additional workflow-center/two-action/route semantic tests pass; typecheck passes; lint passes with the one standing unused-disable warning. The real PostgreSQL test cannot run locally because the configured Neon host is unreachable and this container has no local PostgreSQL; exact-head disposable-PostgreSQL CI, full suite/build/Playwright/screenshot/security remain required before completion.
+- **Risks / assumptions:** no workflow resolver, readiness/gate calculation, mutation route, evidence trust, source revision, tenant filter, Company Vault reconciliation, generated-file/ZIP integrity, manual authority, or automatic worker continuation was changed. The new activity selector observes only `PROPOSAL_GENERATION`/`AUTO_FINALIZE` rows bound to the current Engine source revision.
+- **Next action:** push the Phase 2 implementation, inspect all fresh exact-head failures and the attached real 2/4 rendered screenshot, repair if necessary, and stop after Phase 2 verification.
+- **Merge status:** DO NOT MERGE; draft, unreviewed, no Production promotion.
+
 ### 2026-08-11 UTC — Codex (PR #1175 full-suite reconciliation)
 
 - **Mode:** continue-to-green verification of the AI Analyze/Engine cross-panel truth repair.

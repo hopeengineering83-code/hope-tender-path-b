@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDownIcon, WarningIcon, BoltIcon } from "./icons";
 import {
+  type CanonicalDownstreamPresentationState,
   describeEngineActivity,
   describeMatchingEngineState,
 } from "../lib/engine/workflow-panel-presentation";
@@ -109,6 +110,9 @@ export function MatchingSelectedEvidencePanel({
   const [readiness, setReadiness] = useState<EngineReadiness | null>(null);
   const [readinessLoading, setReadinessLoading] = useState(true);
   const [readinessError, setReadinessError] = useState("");
+  const [downstream, setDownstream] = useState<CanonicalDownstreamPresentationState | null>(null);
+  const [downstreamLoading, setDownstreamLoading] = useState(true);
+  const [downstreamError, setDownstreamError] = useState("");
 
   // A stale selected flag must never make draft, tampered, or otherwise
   // unpromoted Company Vault data visible as selected evidence. Matching uses
@@ -159,8 +163,47 @@ export function MatchingSelectedEvidencePanel({
     }
   }, [router, tenderId]);
 
+  const loadDownstreamWorkflow = useCallback(async () => {
+    if (deletedRef.current) return;
+    try {
+      const response = await fetch(`/api/tenders/${tenderId}/workflow-center`, { cache: "no-store" });
+      if (response.status === 404 || response.status === 410) {
+        deletedRef.current = true;
+        return;
+      }
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.ok || !body?.decision) {
+        throw new Error(body?.error || `Canonical workflow check failed (HTTP ${response.status}).`);
+      }
+      setDownstream({
+        nextRequiredAction: String(body.decision.nextRequiredAction ?? ""),
+        nextRequiredActionLabel: String(body.decision.nextRequiredActionLabel ?? ""),
+        nextRequiredActionReason: String(body.decision.nextRequiredActionReason ?? ""),
+        currentBlockingStage: String(body.decision.currentBlockingStage ?? ""),
+        downstreamSuppressedBy: body.decision.downstreamSuppressedBy
+          ? String(body.decision.downstreamSuppressedBy)
+          : null,
+        finalExportAllowed: Boolean(body.decision.finalExportAllowed),
+        activeJob: body.downstreamActivity
+          && ["QUEUED", "RUNNING"].includes(String(body.downstreamActivity.status))
+          ? {
+              jobType: String(body.downstreamActivity.jobType),
+              status: String(body.downstreamActivity.status) as "QUEUED" | "RUNNING",
+            }
+          : null,
+      });
+      setDownstreamError("");
+    } catch (reason) {
+      setDownstream(null);
+      setDownstreamError(reason instanceof Error ? reason.message : "Unable to verify canonical downstream workflow state.");
+    } finally {
+      setDownstreamLoading(false);
+    }
+  }, [tenderId]);
+
   useEffect(() => {
     void loadReadiness();
+    void loadDownstreamWorkflow();
     const markDeleted = (event: Event) => {
       const detail = (event as CustomEvent<{ tenderId?: string }>).detail;
       if (!detail?.tenderId || detail.tenderId === tenderId) deletedRef.current = true;
@@ -171,13 +214,19 @@ export function MatchingSelectedEvidencePanel({
       window.removeEventListener("tender-deletion-started", markDeleted);
       window.removeEventListener("tender-deleted", markDeleted);
     };
-  }, [loadReadiness, tenderId]);
+  }, [loadDownstreamWorkflow, loadReadiness, tenderId]);
 
   useEffect(() => {
     if (!readiness?.engineRunning || deletedRef.current) return;
     const timer = window.setInterval(() => void loadReadiness(), POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [loadReadiness, readiness?.engineRunning]);
+
+  useEffect(() => {
+    if (!readiness?.engineComplete || deletedRef.current) return;
+    const timer = window.setInterval(() => void loadDownstreamWorkflow(), POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [loadDownstreamWorkflow, readiness?.engineComplete]);
 
   const analysisCurrent = readiness?.analysisCurrent === true;
   const engineRunning = readiness?.engineRunning === true;
@@ -252,7 +301,11 @@ export function MatchingSelectedEvidencePanel({
       : readinessError
       ? "Engine readiness could not be verified. Run Engine remains disabled."
       : readiness
-        ? describeMatchingEngineState(readiness, hasSelection)
+        ? describeMatchingEngineState(
+            readiness,
+            hasSelection,
+            readiness.engineComplete && (downstreamLoading || downstreamError) ? null : downstream,
+          )
         : "Engine readiness could not be verified. Run Engine remains disabled.";
 
   return (

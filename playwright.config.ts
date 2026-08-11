@@ -31,6 +31,7 @@ const DESKTOP_AUTHENTICATED_SPECS = [
   // refresh immediately, wake VAULT_INGEST, and Plan B displays restored
   // canonical totals without repeated missing-source warnings.
   "company-vault-plan-b-recovery.spec.ts",
+  "phase2-workflow-truth-screenshot.spec.ts",
 ];
 
 // Tablet-authenticated contract specs validate responsive UI, role-aware

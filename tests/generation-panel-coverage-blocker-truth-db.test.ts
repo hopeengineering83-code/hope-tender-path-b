@@ -322,6 +322,9 @@ dbDescribe("Generation panel — coverage blocker reaches the release status", (
 
   it("renders no contradictory manual action after the current Engine completed", async () => {
     const decision = await getCanonicalTenderWorkflowDecision(prisma, user.id, tender.id);
+    const readiness = await getTenderGenerationReadinessStrict(prisma, user.id, tender.id);
+    const canonicalReadiness = await getCanonicalTenderReadiness(prisma, user.id, tender.id);
+    const workflowDecision = await resolveGenerationPanelWorkflowDecision(prisma, user.id, tender.id);
     const engineState = {
       analysisCurrent: true,
       engineRunning: false,
@@ -330,13 +333,32 @@ dbDescribe("Generation panel — coverage blocker reaches the release status", (
       canRunEngine: false,
       activeJob: null,
     };
+    assert.ok(decision, "fixture requires a canonical workflow decision");
     const aiPanel = describeAIAnalyzeWorkflowState(engineState);
-    const matchingPanel = describeMatchingEngineState(engineState, true);
+    const matchingPanel = describeMatchingEngineState(engineState, true, {
+      nextRequiredAction: decision.nextRequiredAction,
+      nextRequiredActionLabel: decision.nextRequiredActionLabel,
+      nextRequiredActionReason: decision.nextRequiredActionReason,
+      currentBlockingStage: decision.currentBlockingStage,
+      downstreamSuppressedBy: decision.downstreamSuppressedBy,
+      finalExportAllowed: decision.finalExportAllowed,
+      activeJob: null,
+    });
+    const releaseStatus = deriveTruthfulReleaseStatus(
+      readiness,
+      canonicalReadiness,
+      null,
+      false,
+      workflowDecision,
+    );
 
     assert.equal(decision?.nextRequiredActionLabel, "Source evidence required");
     assert.equal(aiPanel, "AI Analysis is complete and current.");
     assert.match(matchingPanel, /Engine complete/);
+    assert.match(matchingPanel, /paused — source evidence required/);
+    assert.doesNotMatch(matchingPanel, /Downstream processing continues automatically/);
     assert.doesNotMatch(`${aiPanel} ${matchingPanel}`, /Run Engine|Run AI Analyze/);
+    assert.equal(releaseStatus, "GENUINE_SOURCE_BLOCKED");
   });
 
   it("the panel's own readiness sources never carry the coverage code", async () => {

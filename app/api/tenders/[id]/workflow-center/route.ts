@@ -8,6 +8,10 @@ import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/ca
 import { presentTwoActionWorkflowDecision } from "../../../../../lib/engine/two-action-workflow-presentation";
 import { TENDER_WORKFLOW_STAGE_LABELS } from "../../../../../lib/tender-workflow-stages";
 import { getTenderAction, type TenderActionId } from "../../../../../lib/ui/action-registry";
+import { computeEngineSourceRevision } from "../../../../../lib/engine/engine-source-revision";
+import { selectCurrentDownstreamActivity } from "../../../../../lib/engine/workflow-panel-presentation";
+
+const ACTIVE_DOWNSTREAM_STATUSES = ["QUEUED", "RUNNING"] as const;
 
 function stageStatusFromCanonical(canonicalState: string | undefined, fallback: string): string {
   return canonicalState || fallback;
@@ -52,6 +56,33 @@ export async function GET(
     }
 
     const decision = presentTwoActionWorkflowDecision(rawDecision);
+    const company = await prisma.company.findUnique({
+      where: { userId: actor.id },
+      select: { id: true },
+    });
+    const engineRevision = company
+      ? await computeEngineSourceRevision(prisma, {
+          tenderId,
+          userId: actor.id,
+          companyId: company.id,
+        }).catch(() => null)
+      : null;
+    const downstreamCandidates = engineRevision
+      ? await prisma.aiJob.findMany({
+          where: {
+            tenderId,
+            userId: actor.id,
+            jobType: { in: ["PROPOSAL_GENERATION", "AUTO_FINALIZE"] },
+            status: { in: [...ACTIVE_DOWNSTREAM_STATUSES] },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { jobType: true, status: true, analysisInputHash: true, input: true },
+        })
+      : [];
+    const activeDownstreamJob = selectCurrentDownstreamActivity(
+      engineRevision?.sourceRevision ?? null,
+      downstreamCandidates,
+    );
     const pageLedgerSummary = (snapshot.pageLedgers ?? []).map((pageLedger, index) => ({
       fileName: snapshot.extraction.files[index]?.fileName ?? `File ${index + 1}`,
       ...pageLedger,
@@ -198,6 +229,9 @@ export async function GET(
       snapshot,
       workflow,
       decision: decision ?? undefined,
+      downstreamActivity: activeDownstreamJob
+        ? activeDownstreamJob
+        : null,
       stages,
       classification: classificationSummary,
       pageLedgers: pageLedgerSummary,
