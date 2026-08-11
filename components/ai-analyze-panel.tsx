@@ -29,6 +29,36 @@ type SourceReadiness = {
   analysisBlocker: string | null;
 };
 
+export type AIAnalyzeEngineState = {
+  analysisCurrent: boolean;
+  engineRunning: boolean;
+  engineComplete: boolean;
+  engineFailed: boolean;
+  canRunEngine: boolean;
+  activeJob: { id: string; status: string; createdAt: string } | null;
+};
+
+/**
+ * Present the AI stage from the same current-revision Engine authority used by
+ * the matching panel. This deliberately says nothing about downstream work:
+ * once Engine is complete, the canonical Next Required Action owns that truth.
+ */
+export function describeAIAnalyzeWorkflowState(state: AIAnalyzeEngineState): string {
+  if (!state.analysisCurrent) {
+    return "AI Analysis is stale or incomplete. Run AI Analyze again for the current source revision.";
+  }
+  if (state.engineComplete) return "AI Analysis is complete and current.";
+  if (state.engineRunning) {
+    return state.activeJob?.status === "QUEUED"
+      ? "AI Analysis is complete and current. Engine is queued for this source revision."
+      : "AI Analysis is complete and current. Engine is running for this source revision.";
+  }
+  if (state.engineFailed) {
+    return "AI Analysis is complete and current. The current-revision Engine run failed; review the Engine panel before retrying.";
+  }
+  return "AI Analyze complete. Run Engine to continue.";
+}
+
 type ProviderDiag = {
   provider: string;
   configured: boolean;
@@ -62,6 +92,9 @@ export function AIAnalyzePanel({
   const [readiness, setReadiness] = useState<SourceReadiness | null>(null);
   const [readinessLoading, setReadinessLoading] = useState(true);
   const [readinessError, setReadinessError] = useState("");
+  const [engineState, setEngineState] = useState<AIAnalyzeEngineState | null>(null);
+  const [engineStateLoading, setEngineStateLoading] = useState(true);
+  const [engineStateError, setEngineStateError] = useState("");
   const [diag, setDiag] = useState<{ anyWorking: boolean; summary: string; perProvider: ProviderDiag[] } | null>(null);
   const [diagnosing, setDiagnosing] = useState(false);
 
@@ -98,8 +131,42 @@ export function AIAnalyzePanel({
     }
   }, [tenderId]);
 
+  const loadEngineState = useCallback(async () => {
+    if (deletedRef.current) return;
+    try {
+      const response = await fetch(`/api/tenders/${tenderId}/engine-readiness`, { cache: "no-store" });
+      if (response.status === 404 || response.status === 410) {
+        deletedRef.current = true;
+        return;
+      }
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.ok) {
+        throw new Error(body?.error || `Engine readiness check failed (HTTP ${response.status}).`);
+      }
+      setEngineState({
+        analysisCurrent: Boolean(body.analysisCurrent),
+        engineRunning: Boolean(body.engineRunning),
+        engineComplete: Boolean(body.engineComplete),
+        engineFailed: Boolean(body.engineFailed),
+        canRunEngine: Boolean(body.canRunEngine),
+        activeJob: body.activeJob
+          ? { id: String(body.activeJob.id), status: String(body.activeJob.status), createdAt: String(body.activeJob.createdAt) }
+          : null,
+      });
+      setEngineStateError("");
+    } catch (reason) {
+      // Do not fall back to source-readiness wording: that would recreate the
+      // contradiction whenever current Engine truth cannot be established.
+      setEngineState(null);
+      setEngineStateError(reason instanceof Error ? reason.message : "Unable to verify current Engine state.");
+    } finally {
+      setEngineStateLoading(false);
+    }
+  }, [tenderId]);
+
   useEffect(() => {
     void loadReadiness();
+    void loadEngineState();
     const markDeleted = (event: Event) => {
       const detail = (event as CustomEvent<{ tenderId?: string }>).detail;
       if (!detail?.tenderId || detail.tenderId === tenderId) deletedRef.current = true;
@@ -110,7 +177,13 @@ export function AIAnalyzePanel({
       window.removeEventListener("tender-deletion-started", markDeleted);
       window.removeEventListener("tender-deleted", markDeleted);
     };
-  }, [loadReadiness, tenderId]);
+  }, [loadEngineState, loadReadiness, tenderId]);
+
+  useEffect(() => {
+    if (!engineState?.engineRunning || deletedRef.current) return;
+    const timer = window.setInterval(() => void loadEngineState(), POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [engineState?.engineRunning, loadEngineState]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -136,9 +209,9 @@ export function AIAnalyzePanel({
               if (TERMINAL.includes(job.status)) {
                 setAnalyzing(false);
                 if (job.status === "SUCCEEDED") {
-                  setPhase("AI Analyze complete. Run Engine to continue.");
+                  setPhase("AI Analyze completed for the current source revision.");
                   setError("");
-                  await loadReadiness();
+                  await Promise.all([loadReadiness(), loadEngineState()]);
                   router.refresh();
                 } else if (job.status === "PARTIAL_SUCCESS") {
                   setError("AI Analyze completed only partially. Run Engine remains blocked until complete grounded analysis succeeds.");
@@ -158,10 +231,15 @@ export function AIAnalyzePanel({
 
     void watchJob();
     return () => { active = false; };
-  }, [jobId, loadReadiness, router]);
+  }, [jobId, loadEngineState, loadReadiness, router]);
 
   const canonicalAnalysisReady = readiness?.analysisReady === true;
-  const analysisComplete = readiness?.analysisCurrent === true;
+  // Prefer the Engine authority whenever it is available. While that request
+  // is loading or unavailable, the source authority may hide the mutation but
+  // must never guess the next Engine action.
+  const analysisComplete = engineState
+    ? engineState.analysisCurrent
+    : readiness?.analysisCurrent === true;
 
   const runAiAnalyze = useCallback(async () => {
     if (submitting || analyzing || !canonicalAnalysisReady || readinessError || deletedRef.current) return;
@@ -230,7 +308,13 @@ export function AIAnalyzePanel({
   const statusLabel = analyzing
     ? "AI Analyze is running."
     : analysisComplete
-      ? "AI Analyze complete. Run Engine to continue."
+      ? engineStateLoading && !engineState
+        ? "Checking current-revision Engine state."
+        : engineStateError || !engineState
+          ? "AI Analysis is complete, but current Engine state could not be verified. Check the Engine panel before taking another action."
+          : describeAIAnalyzeWorkflowState(engineState)
+      : engineState && !engineState.analysisCurrent && canonicalAnalysisReady
+        ? describeAIAnalyzeWorkflowState(engineState)
       : !aiEnabled
         ? "No AI provider is configured."
         : readinessError
@@ -259,7 +343,7 @@ export function AIAnalyzePanel({
     <section id="ai-analyze-section" className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">AI analysis</p>
       <h2 className="mt-1 text-lg font-bold text-slate-900">
-        {analyzing ? "AI Analyze running" : analysisComplete ? "Analysis complete" : canonicalAnalysisReady ? "Ready for AI Analyze" : "Source preparation required"}
+        {analyzing ? "AI Analyze running" : analysisComplete ? "Analysis complete" : readiness?.analysisCurrent ? "Analysis refresh required" : canonicalAnalysisReady ? "Ready for AI Analyze" : "Source preparation required"}
       </h2>
       <p className="mt-1 max-w-3xl text-sm text-slate-600">{statusLabel}</p>
       {readiness && readiness.duplicateFileCount > 0 ? (

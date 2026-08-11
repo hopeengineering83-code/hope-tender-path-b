@@ -108,6 +108,19 @@ export function describeEngineActivity(
     : "Engine job is queued — waiting for a worker to start it.";
 }
 
+export function describeMatchingEngineState(
+  state: Pick<EngineReadiness, "analysisCurrent" | "analysisBlocker" | "engineRunning" | "engineComplete" | "engineFailed" | "blocker" | "activeJob">,
+  hasSelection: boolean,
+): string {
+  if (state.engineComplete) return "Engine complete. Downstream processing continues automatically.";
+  if (state.engineRunning) return describeEngineActivity(state.activeJob);
+  if (!state.analysisCurrent) return state.analysisBlocker ?? "Run AI Analyze first to enable Engine.";
+  if (state.engineFailed) return state.blocker ?? "The latest Engine run failed. Correct the issue and retry.";
+  return hasSelection
+    ? "AI Analyze complete. Run Engine to refresh current-revision matching."
+    : "AI Analyze complete. Run Engine to start matching.";
+}
+
 export function isEligibleSelectedEvidence(row: SelectedEvidenceCandidate): boolean {
   return ELIGIBLE_EVIDENCE_TRUST_LEVELS.has(row.trustLevel);
 }
@@ -295,19 +308,11 @@ export function MatchingSelectedEvidencePanel({
 
   const statusLabel = readinessLoading
     ? "Checking the current analysis and Engine revision."
-    : readinessError
+      : readinessError
       ? "Engine readiness could not be verified. Run Engine remains disabled."
-      : engineComplete
-        ? "Engine complete. Downstream processing continues automatically."
-        : engineRunning
-          ? describeEngineActivity(readiness?.activeJob)
-          : !analysisCurrent
-            ? readiness?.analysisBlocker ?? "Run AI Analyze first to enable Engine."
-            : readiness?.engineFailed
-              ? readiness.blocker ?? "The latest Engine run failed. Correct the issue and retry."
-              : hasSelection
-                ? "AI Analyze complete. Run Engine to refresh current-revision matching."
-                : "AI Analyze complete. Run Engine to start matching.";
+      : readiness
+        ? describeMatchingEngineState(readiness, hasSelection)
+        : "Engine readiness could not be verified. Run Engine remains disabled.";
 
   return (
     <section id={sectionId} className="min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">

@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-11 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175, started from exact remote head `48ee3d40ea46bc705eb184832dbf15456104d0c0`.
+- **Scope:** removed the Stage 2 contradiction that told users to Run Engine after Engine had already completed. `AIAnalyzePanel` now reads the existing tenant-scoped, current-revision `/engine-readiness` authority, distinguishes queued/running/completed/failed/stale states, polls active Engine work, and stops at AI-analysis truth after current Engine completion so the canonical Next Required Action owns downstream blockers. The matching panel now routes its existing state copy through an exported pure presenter used by cross-panel regression coverage.
+- **Files changed:** `components/ai-analyze-panel.tsx`, `components/matching-selected-evidence-panel.tsx`, `tests/ai-analyze-engine-workflow-truth.test.ts`, and this handoff.
+- **Tests:** targeted 40-test workflow/status set passed; `npx prisma generate` passed; `npm run typecheck` passed; `npm run lint` passed with one pre-existing unused-disable warning in `tests/superseded-job-status-projection.test.ts`; production `npm run build` passed with placeholder local provider/worker variables. The first post-push CI typecheck found that the test fixture omitted the Engine job `id`; the production payload and fixture type were aligned before the follow-up push. A full test attempt was stopped after 2,365 passing suites because this container has no local PostgreSQL and the repository intentionally fails DB-required files when `RUN_DB_INTEGRATION=false`; the configured Neon URL was correctly rejected by the fail-closed test DB guard.
+- **Risks / assumptions:** no gate, revision resolver, tenant query, automatic continuation, Vault reconciliation, or source/generated-file integrity logic changed. The Engine readiness endpoint revision-filters `ENGINE_RUN` jobs, so an old-revision success correctly presents as not run for the current revision. Exact-head preview screenshot audit remains the next action after this commit deploys.
+- **Next action:** push this commit, wait for PR #1175 exact-head CI/preview, then capture the authenticated original tender state and verify AI Analyze, Next Required Action, and Matching panels are non-contradictory.
+- **Merge status:** not reviewed; do not merge until exact-head CI, real PostgreSQL tests, and authenticated screenshot audit pass.
+
 ### 2026-08-10 19:40 UTC — Claude Code (Opus), root cause of the live 0/28 · 0/112 Company Vault
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, from head `d35b8130`.
