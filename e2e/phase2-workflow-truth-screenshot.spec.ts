@@ -17,9 +17,6 @@ import {
   projectReviewFields,
 } from "../lib/vault-review-provenance";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../lib/engine/tender-analysis-content";
-import { computeTenderBuildPlanHash, getCurrentConfirmedBuildPlan } from "../lib/engine/build-plan";
-import { computeEngineSourceRevision } from "../lib/engine/engine-source-revision";
-import { buildSubmissionPlan, plannedSubmissionTargetFiles } from "../lib/engine/submission-plan";
 
 const prisma = new PrismaClient();
 const SUFFIX = "phase2-rendered-2-of-4";
@@ -223,51 +220,6 @@ test.describe("Phase 2 rendered 2/4 evidence workflow truth", () => {
       },
     });
 
-    // Persist the same hash-bound CONFIRMED shape the automatic Build Plan
-    // service produces. The PostgreSQL regression exercises that service;
-    // this browser fixture avoids opening a nested serializable transaction
-    // inside Playwright's test lifecycle and then re-verifies the real gate.
-    const tenderForPlan = await prisma.tender.findUniqueOrThrow({
-      where: { id: tenderId },
-      include: { files: true, requirements: true },
-    });
-    const planItems = plannedSubmissionTargetFiles(buildSubmissionPlan(tenderForPlan as never));
-    const planHash = await computeTenderBuildPlanHash(prisma, tenderId, user.id, planItems);
-    if (!planHash) throw new Error("Phase 2 Build Plan hash is unavailable");
-    await prisma.buildPlan.create({
-      data: {
-        tenderId,
-        status: "CONFIRMED",
-        revision: 1,
-        confirmedRevision: 1,
-        contentHash: planHash,
-        confirmedContentHash: planHash,
-        itemsJson: JSON.stringify(planItems),
-        validationJson: JSON.stringify({ ok: true, blockers: [], confirmationMode: "AUTOMATIC_SOURCE_GROUNDED" }),
-        builtById: user.id,
-        confirmedBy: "SYSTEM_AUTOMATION",
-        confirmedAt: new Date(),
-      },
-    });
-    const plan = await getCurrentConfirmedBuildPlan(prisma, tenderId, user.id);
-    if (!plan.ok) throw new Error(`Phase 2 confirmed Build Plan fixture failed: ${plan.blocker}`);
-    const engineRevision = await computeEngineSourceRevision(prisma, {
-      tenderId,
-      userId: user.id,
-      companyId: company.id,
-    });
-    if (!engineRevision) throw new Error("Phase 2 Engine source revision is unavailable");
-    await prisma.aiJob.create({
-      data: {
-        userId: user.id,
-        tenderId,
-        jobType: "ENGINE_RUN",
-        status: "SUCCEEDED",
-        analysisInputHash: engineRevision.sourceRevision,
-        startedAt: new Date(Date.now() - 20_000),
-        finishedAt: new Date(Date.now() - 10_000),
-      },
-    });
   });
 
   test.afterAll(async () => {
@@ -287,6 +239,28 @@ test.describe("Phase 2 rendered 2/4 evidence workflow truth", () => {
       page.waitForURL((url) => url.pathname.startsWith("/dashboard"), { timeout: 30_000 }),
       page.locator('button[type="submit"]').click(),
     ]);
+
+    // Exercise the real server-side automatic Build Plan service instead of
+    // importing server modules through Playwright's CommonJS transform.
+    const planResponse = await page.request.post(`/api/tenders/${tenderId}/build-plan`);
+    const planBody = await planResponse.text();
+    expect(planResponse.status(), planBody).toBe(200);
+    const engineReadiness = await page.request.get(`/api/tenders/${tenderId}/engine-readiness`);
+    const engineText = await engineReadiness.text();
+    expect(engineReadiness.status(), engineText).toBe(200);
+    const engineBody = JSON.parse(engineText) as { sourceRevision?: string | null };
+    expect(engineBody.sourceRevision, "fixture requires the authoritative current Engine revision").toBeTruthy();
+    await prisma.aiJob.create({
+      data: {
+        userId,
+        tenderId,
+        jobType: "ENGINE_RUN",
+        status: "SUCCEEDED",
+        analysisInputHash: engineBody.sourceRevision!,
+        startedAt: new Date(Date.now() - 20_000),
+        finishedAt: new Date(Date.now() - 10_000),
+      },
+    });
     await page.goto(`/dashboard/tenders/${tenderId}`, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Source evidence required" })).toBeVisible({ timeout: 30_000 });
 
