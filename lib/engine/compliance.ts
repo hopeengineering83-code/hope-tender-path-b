@@ -2,6 +2,34 @@ import type { CompanyKnowledgeSnapshot, ComplianceResult, MatchingResult, Requir
 
 function clamp01(value: number): number { return Math.max(0, Math.min(1, value)); }
 
+/**
+ * Translate the Engine's support vocabulary into the one the release gates count.
+ *
+ * The Engine has always graded requirements as SUPPORTED /
+ * EVIDENCE_PENDING_REVIEW / PARTIAL / UNSUPPORTED, while every gate counts
+ * FULL / SUBSTANTIAL. Nothing translated between them, so an Engine row saying
+ * SUPPORTED — its strongest verdict, meaning reviewed or selected evidence
+ * exists — counted for exactly nothing. Two subsystems describing the same
+ * requirement in two languages, with the gate fluent in only one.
+ *
+ * SUPPORTED becomes SUBSTANTIAL rather than FULL deliberately. FULL is reserved
+ * for a generated artifact whose bytes exist and validate, or for a record whose
+ * required facets are all matched; the Engine's SUPPORTED means real selected
+ * evidence is on file, which is exactly what SUBSTANTIAL denotes. Mapping it to
+ * the lower of the two counting levels keeps the strongest claim honest.
+ *
+ * EVIDENCE_PENDING_REVIEW becomes PARTIAL: evidence that still needs a human
+ * look is not evidence that counts. UNSUPPORTED stays itself and counts for
+ * nothing, which is the point.
+ */
+export function toCanonicalSupportLevel(supportStatus: string): string {
+  switch (supportStatus) {
+    case "SUPPORTED": return "SUBSTANTIAL";
+    case "EVIDENCE_PENDING_REVIEW": return "PARTIAL";
+    default: return supportStatus;
+  }
+}
+
 export function findSupportDocument(knowledge: CompanyKnowledgeSnapshot, patterns: RegExp[]) {
   return knowledge.documents.find((doc) => {
     const extractedText = (doc.extractedText ?? "").trim();

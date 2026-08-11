@@ -25,6 +25,8 @@ const SEV: Record<string,string> = {
 const SUPP: Record<string,string> = {
   SUPPORTED:"bg-green-100 text-green-700",
   EVIDENCE_PENDING_REVIEW:"bg-blue-100 text-blue-700",
+  SUBSTANTIAL:"bg-emerald-100 text-emerald-700",
+  FULL:"bg-emerald-100 text-emerald-700",
   PARTIAL:"bg-amber-100 text-amber-800",
   UNSUPPORTED:"bg-red-100 text-red-700",
 };
@@ -262,7 +264,10 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
           ) : matrixByTender.length > 0 ? (
             matrixByTender.map(({ tender, rows }) => {
               const isOpen = expandedMatrixTenders.has(tender.id);
-              const supported = rows.filter(r => r.supportLevel === "SUPPORTED").length;
+              // Rows written before the Engine spoke the gates' vocabulary still say
+              // SUPPORTED, so both are counted here rather than silently dropping
+              // the history.
+              const supported = rows.filter(r => ["SUBSTANTIAL", "FULL", "SUPPORTED"].includes(r.supportLevel)).length;
               return (
                 <div key={tender.id} className="rounded-2xl border bg-white shadow-sm overflow-hidden">
                   <button

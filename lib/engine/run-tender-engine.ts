@@ -1,3 +1,4 @@
+import { toCanonicalSupportLevel } from "./compliance";
 import { logger } from "../observability";
 import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
@@ -594,7 +595,9 @@ export async function runTenderEngine(
       evidenceType: matrix.evidenceType,
       evidenceSource: matrix.evidenceSource,
       evidenceReference: matrix.evidenceReference ?? null,
-      supportLevel: matrix.supportStatus,
+      // Persist in the vocabulary the gates count. Without this the Engine's
+      // strongest verdict, SUPPORTED, was invisible to every coverage check.
+      supportLevel: toCanonicalSupportLevel(matrix.supportStatus),
       notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null,
     }));
     const gapRows = compliance.gaps.map((gap) => ({
