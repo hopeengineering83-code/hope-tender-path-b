@@ -273,11 +273,14 @@ export function AIAnalyzePanel({
     }
   }
 
+  // A completed analysis no longer disables the button. AI Analyze is one of
+  // the two owner-reserved actions, and a finished run is not a reason the
+  // owner may not ask for another one. The protection that matters — never two
+  // analyses at once — is `!analyzing`, and it is untouched.
   const canRunAnalyze = canMutate
     && aiEnabled
     && canonicalAnalysisReady
     && !analyzing
-    && !analysisComplete
     && !submitting
     && !readinessLoading
     && !readinessError;
@@ -313,9 +316,7 @@ export function AIAnalyzePanel({
             ? blocker ?? "Canonical source extraction is not ready."
             : analyzing
               ? "An AI Analyze job is already running."
-              : analysisComplete
-                ? "AI Analyze already completed successfully for this source revision."
-                : null;
+              : null;
 
   return (
     <section id="ai-analyze-section" className="mb-4 rounded-2xl border border-purple-100 bg-purple-50/30 p-5 shadow-sm">
@@ -330,7 +331,12 @@ export function AIAnalyzePanel({
         </p>
       ) : null}
 
-      {canMutate && !analysisComplete ? (
+      {/* Always rendered for a user entitled to press it. Hiding it once the
+          analysis had completed meant the owner opening a finished tender saw
+          no AI Analyze control at all and could not re-run after correcting or
+          adding a source. A finished run is a label, not a reason to remove the
+          button. */}
+      {canMutate ? (
         <div className="mt-4">
           <button
             type="button"
@@ -338,15 +344,27 @@ export function AIAnalyzePanel({
             disabled={!canRunAnalyze}
             aria-disabled={!canRunAnalyze}
             aria-busy={submitting || analyzing || readinessLoading}
-            title={disabledReason ?? "Run AI Analyze"}
+            title={disabledReason ?? (analysisComplete ? "Re-run AI Analyze" : "Run AI Analyze")}
             className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${canRunAnalyze
               ? "bg-purple-600 text-white hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2"
               : "cursor-not-allowed bg-slate-300 text-slate-500"}`}
           >
             <SparklesIcon />
-            {submitting ? "Starting…" : analyzing ? "AI Analyze running…" : "Run AI Analyze"}
+            {submitting
+              ? "Starting…"
+              : analyzing
+                ? "AI Analyze running…"
+                : analysisComplete
+                  ? "Re-run AI Analyze"
+                  : "Run AI Analyze"}
           </button>
           {disabledReason && !canRunAnalyze ? <p className="mt-2 text-xs text-slate-500" role="note">{disabledReason}</p> : null}
+          {analysisComplete && canRunAnalyze ? (
+            <p className="mt-2 text-xs text-slate-500" role="note">
+              Analysis is complete for this source revision. Re-running replaces it with a fresh
+              analysis and supersedes the previous result, so downstream stages run again against it.
+            </p>
+          ) : null}
         </div>
       ) : null}
 

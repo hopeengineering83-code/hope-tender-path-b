@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+// The same capability vocabulary the matching engine uses to select these
+// records, so coverage scoring and selection agree on what "related" means.
+import { capabilityFamilies } from "./matching";
 import {
   isGroundedEvidenceInActiveFiles,
   type GroundingActiveFile,
@@ -238,7 +241,34 @@ export function inferAutomaticEvidenceKinds(
   if (type === "EXPERT" || /\b(expert|personnel|staff|team leader|curriculum vitae|\bcv\b|specialist)\b/.test(text)) {
     kinds.add("EXPERT_CV");
   }
-  if (type === "PROJECT_EXPERIENCE" || /\b(similar project|project reference|past performance|track record|portfolio|relevant experience)\b/.test(text)) {
+  // "PROJECT" belongs here as much as "PROJECT_EXPERIENCE".
+  //
+  // The requirement categories the app itself displays are Project, Eligibility,
+  // Expert and Submission. ELIGIBILITY and EXPERT are matched exactly below and
+  // above; PROJECT matched nothing, because only the longer PROJECT_EXPERIENCE
+  // was listed. A requirement the app had already labelled "Project" therefore
+  // inferred no evidence kind at all, fell through to GENERAL, and its
+  // candidates started 38 points lower — below the link threshold. On the
+  // reported tender that is the whole difference between the Eligibility and
+  // Expert requirements reading "Fully verified" and the Project one reading
+  // "Partially verified" with hospitals sitting in its selected evidence.
+  //
+  // The phrase list is widened for the same reason. It demanded the tender say
+  // "relevant experience" or "past performance"; a requirement titled
+  // "Healthcare Facility Design Experience" says none of those, and asking a
+  // procuring entity to phrase its tender in this codebase's vocabulary is not
+  // a workable contract. Experience of doing the work is asked for in many
+  // ordinary ways, and all of them mean: show me the projects.
+  if (
+    type === "PROJECT_EXPERIENCE"
+    || type === "PROJECT"
+    || type === "SIMILAR_PROJECTS"
+    || /\b(similar project|project reference|past performance|track record|portfolio|relevant experience)\b/.test(text)
+    || /\b(?:design|work|project|construction|supervision|consultanc|implementation)\w*\s+experience\b/.test(text)
+    || /\bexperience\s+(?:in|of|with|on)\b/.test(text)
+    || /\b(?:demonstrated|proven|prior|previous|comparable|similar)\s+(?:experience|works?|projects?|assignments?|contracts?)\b/.test(text)
+    || /\bcompleted\s+(?:projects?|works?|contracts?|assignments?)\b/.test(text)
+  ) {
     kinds.add("PROJECT_REFERENCE");
   }
   if (/\b(audited|financial statement|turnover|revenue|balance sheet|bank reference|financial capacity)\b/.test(text)) {
@@ -316,6 +346,37 @@ function scoreCandidate(
   if (matchingTokens.length > 0) {
     score += Math.min(18, matchingTokens.length * 3);
     reasons.push(`matching terms: ${matchingTokens.slice(0, 6).join(", ")}`);
+  }
+
+  // Shared capability family — the difference between reading and matching.
+  //
+  // Token overlap alone is literal to the point of uselessness on real tenders.
+  // A requirement for "Healthcare Facility Design Experience" and a project
+  // record reading "Dessie Specialized Hospital" have no token in common, so
+  // that project scored 68 + 8 = 76: linked, but below the 84 needed for
+  // SUBSTANTIAL, leaving a mandatory requirement reported as unsupported while
+  // a hospital sat in the selected evidence. The owner is then asked to supply
+  // evidence that is already there, phrased in the tender's words.
+  //
+  // The vocabulary that resolves this already exists and is already trusted:
+  // `capabilityFamilies` is what the matching engine uses to select these
+  // records in the first place, and its HEALTHCARE_FACILITIES patterns include
+  // /\bhospital/. Reusing it here makes one system hold one notion of
+  // relatedness instead of two, the stricter of which was gating release.
+  //
+  // This invents nothing. Both sides are derived from text already on file —
+  // the tender's requirement and the record's own uploaded content — and every
+  // award names the family it came from, so a reviewer can check the inference
+  // rather than take it on trust. A record with no shared family gains nothing,
+  // so genuinely unsupported requirements stay unsupported and fail closed.
+  const requirementFamilies = capabilityFamilies(requirementText);
+  if (requirementFamilies.length > 0) {
+    const candidateFamilies = capabilityFamilies(`${candidate.label} ${candidate.searchableText}`);
+    const sharedFamilies = requirementFamilies.filter((family) => candidateFamilies.includes(family));
+    if (sharedFamilies.length > 0) {
+      score += Math.min(16, sharedFamilies.length * 8);
+      reasons.push(`shared capability family: ${sharedFamilies.join(", ")}`);
+    }
   }
 
   if (candidate.selected) {

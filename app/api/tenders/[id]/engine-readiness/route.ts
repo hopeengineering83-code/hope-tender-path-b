@@ -118,7 +118,18 @@ export async function GET(
     engineRunning,
     engineComplete,
     engineFailed,
-    canRunEngine: analysisCurrent && Boolean(sourceRevision) && !engineRunning && !engineComplete,
+    // A completed Engine run is no longer a reason to refuse another one.
+    // Run Engine is one of the two actions the contract reserves to the owner,
+    // and the owner's reason for pressing it again is usually that the inputs
+    // changed underneath it — more Company Vault evidence uploaded, a record
+    // newly source-verified — none of which moves the source revision, so the
+    // old result stays "current" while being out of date. Refusing here left
+    // the owner with a completed run they could not redo and no way forward.
+    //
+    // The duplicate-work protection that matters is still enforced: an Engine
+    // job that is queued or running blocks another. Re-running is deliberate,
+    // authorized, and idempotent by revision; refusing it was neither.
+    canRunEngine: analysisCurrent && Boolean(sourceRevision) && !engineRunning,
     blocker,
     activeJob: activeJob
       ? { id: activeJob.id, status: activeJob.status, createdAt: activeJob.createdAt.toISOString() }

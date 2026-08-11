@@ -9,7 +9,10 @@
 //   - at least one AI provider is available;
 //   - the current user has the required role;
 //   - there is no active duplicate AI Analyze job;
-//   - the current revision has not already completed successfully.
+//   - (removed) the current revision has not already completed successfully —
+//     see the re-run tests below. Both controls are now always rendered for a
+//     user entitled to press them; completion changes the label, not their
+//     presence.
 //
 // Run Engine button is visible when:
 //   - AI Analyze completed successfully;
@@ -29,6 +32,7 @@ import {
 
 const aiPanel = readFileSync("components/ai-analyze-panel.tsx", "utf8");
 const matchingPanel = readFileSync("components/matching-selected-evidence-panel.tsx", "utf8");
+const engineReadinessRoute = readFileSync("app/api/tenders/[id]/engine-readiness/route.ts", "utf8");
 
 function codeOnly(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
@@ -58,8 +62,22 @@ describe("AI Analyze button visibility conditions", () => {
     assert.match(aiPanel, /!analyzing/);
   });
 
-  it("button is disabled when analysis already completed", () => {
-    assert.match(aiPanel, /!analysisComplete/);
+  // Replaces an assertion that pinned the opposite rule. A completed analysis
+  // used to remove the button from the page entirely, so the owner opening a
+  // finished tender saw no AI Analyze control and had no way to re-run after
+  // correcting or adding a source. That was reported from the live Preview as
+  // the buttons simply being missing.
+  it("stays on the page and stays pressable after a completed analysis", () => {
+    assert.match(aiPanel, /\{canMutate \? \(/, "the button must not be hidden once analysis completes");
+    assert.doesNotMatch(
+      aiPanel,
+      /canMutate && !analysisComplete/,
+      "a finished run is a label, not a reason to remove the owner's control",
+    );
+    const enablement = aiPanel.match(/const canRunAnalyze = canMutate[\s\S]*?;/)?.[0] ?? "";
+    assert.doesNotMatch(enablement, /!analysisComplete/, "re-running a completed analysis is the owner's call");
+    assert.match(enablement, /!analyzing/, "two concurrent analyses must still be impossible");
+    assert.match(aiPanel, /Re-run AI Analyze/, "the completed state must say what pressing it will do");
   });
 
   it("button uses aria-disabled and aria-busy correctly", () => {
@@ -107,8 +125,32 @@ describe("Run Engine button visibility conditions", () => {
     assert.match(matchingPanel, /engineRunning/);
   });
 
-  it("button is disabled when Engine already completed", () => {
-    assert.match(matchingPanel, /engineComplete/);
+  // Same correction on the Engine side, and the more consequential one: adding
+  // Company Vault evidence does not move the tender's source revision, so a
+  // completed Engine run stayed "current" while being out of date, with no
+  // control left to redo it.
+  it("stays on the page and stays pressable after a completed Engine run", () => {
+    assert.match(matchingPanel, /\{canMutate && \(/, "the button must not be hidden once Engine completes");
+    assert.doesNotMatch(
+      matchingPanel,
+      /canMutate && !engineComplete/,
+      "a completed run must not remove the owner's only way to re-run matching",
+    );
+    const enablement = matchingPanel.match(/const canRunEngine = canMutate[\s\S]*?;/)?.[0] ?? "";
+    assert.doesNotMatch(enablement, /!engineComplete/, "re-running a completed Engine is the owner's call");
+    assert.match(matchingPanel, /Re-run Engine/, "the completed state must say what pressing it will do");
+
+    // The server must agree, or the button would be visible and permanently dead.
+    assert.doesNotMatch(
+      engineReadinessRoute,
+      /canRunEngine:[^\n]*!engineComplete/,
+      "engine-readiness must not withhold canRunEngine purely because a run finished",
+    );
+    assert.match(
+      engineReadinessRoute,
+      /canRunEngine:[^\n]*!engineRunning/,
+      "a queued or running Engine job must still block another",
+    );
   });
 
   it("button uses aria-disabled and aria-busy correctly", () => {

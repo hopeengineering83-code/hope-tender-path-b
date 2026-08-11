@@ -252,9 +252,7 @@ export function MatchingSelectedEvidencePanel({
             ? readiness?.activeJob?.status === "QUEUED"
               ? "An Engine job is already queued for this revision."
               : "An Engine job is already running for this revision."
-            : engineComplete
-              ? "Engine already completed successfully for this revision."
-              : readiness?.blocker;
+            : readiness?.blocker;
 
   const runEngine = useCallback(async () => {
     if (!canRunEngine || deletedRef.current) return;
@@ -316,7 +314,15 @@ export function MatchingSelectedEvidencePanel({
         <p className="mt-1 text-sm text-slate-600">{statusLabel}</p>
       </div>
 
-      {canMutate && !engineComplete && (
+      {/* Run Engine is one of exactly two actions the contract reserves to the
+          owner, so it is always rendered for anyone entitled to press it. It
+          used to disappear once the Engine had completed, which read as the app
+          having removed the control rather than as the run being finished — and
+          left no way to re-run after uploading more Company Vault evidence,
+          which is the single most common reason to want one. When a run is
+          already queued or running the button stays visible and disabled, with
+          the reason underneath, rather than vanishing. */}
+      {canMutate && (
         <div className="mt-4">
           <button
             type="button"
@@ -324,7 +330,7 @@ export function MatchingSelectedEvidencePanel({
             disabled={!canRunEngine}
             aria-disabled={!canRunEngine}
             aria-busy={submitting || engineRunning || readinessLoading}
-            title={disabledReason ?? "Run Engine"}
+            title={disabledReason ?? (engineComplete ? "Re-run Engine" : "Run Engine")}
             className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
               canRunEngine
                 ? "bg-blue-600 text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
@@ -332,10 +338,22 @@ export function MatchingSelectedEvidencePanel({
             }`}
           >
             <BoltIcon />
-            {submitting ? "Starting…" : engineRunning ? "Engine running…" : "Run Engine"}
+            {submitting
+              ? "Starting…"
+              : engineRunning
+                ? "Engine running…"
+                : engineComplete
+                  ? "Re-run Engine"
+                  : "Run Engine"}
           </button>
           {disabledReason && !canRunEngine && (
             <p className="mt-2 text-xs text-slate-500" role="note">{disabledReason}</p>
+          )}
+          {engineComplete && canRunEngine && (
+            <p className="mt-2 text-xs text-slate-500" role="note">
+              Engine already completed for this source revision. Re-running matches again against the
+              Company Vault as it stands now, which is what you want after adding or verifying evidence.
+            </p>
           )}
         </div>
       )}
