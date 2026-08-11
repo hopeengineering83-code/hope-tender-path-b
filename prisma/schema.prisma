@@ -430,9 +430,18 @@ model Tender {
   // fileId is added by the repair-metadata route (AI Analyze does not emit it)
   // so contact-sourced fields (e.g. procurementReferenceNumber for reference)
   // can achieve GROUNDED status when fileId points to an active TenderFile.
-  // Covers: clientContactName, clientContactTitle, clientContactEmail,
-  //         clientContactPhone, clientAddress, submissionAddress, country,
+  // Covers every key AI Analyze writes here (see the key list in lib/ai.ts):
+  //         country, clientAddress, clientCity, clientWebsite,
+  //         clientContactName, clientContactTitle, clientContactEmail,
+  //         clientContactPhone, submissionAddress, submissionEmailSubject,
+  //         preBidChannel, preBidMeetingDate, preBidMeetingLocation,
+  //         clientRepresentative, procuringEntityName, legalClientName,
+  //         donorAgency, implementingAgency,
   //         procurementReferenceNumber (for the reference field).
+  // This list previously named only eight of them. That understated what the
+  // column holds, and a reader who trusted it would conclude the other fields
+  // had no provenance to surface — which is how clientCity ended up as the one
+  // client field with no TenderFactsLedger row.
   contactDetailsSourceJson      String?
   // Source traceability for submission method and submission address
   submissionMethodSourcePage    Int?

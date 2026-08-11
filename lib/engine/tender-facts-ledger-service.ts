@@ -696,7 +696,7 @@ export async function backfillTenderFactsForTender(
       // buildBackfillCandidates reads them off the row, and an unselected column
       // arrives as undefined, which would silently skip every one of them.
       legalClientName: true, donorAgency: true, implementingAgency: true,
-      clientAddress: true, clientContactName: true, clientContactTitle: true,
+      clientAddress: true, clientCity: true, clientContactName: true, clientContactTitle: true,
       clientContactEmail: true, clientContactPhone: true, clientWebsite: true,
       preBidChannel: true, clientRepresentative: true,
       // Per-field source evidence for those client details. finalizeJob already
@@ -890,7 +890,7 @@ function buildBackfillCandidates(tender: any): BackfillCandidate[] {
   // ── Remaining client / procuring-entity detail ────────────────────────────
   //
   // CLAUDE.md requires a source page and source quote for EVERY extracted
-  // client field. These eleven were extracted and stored as Tender scalars but
+  // client field. These twelve were extracted and stored as Tender scalars but
   // never given a ledger row, so they were invisible to every ledger consumer —
   // readiness, gates, and the review surfaces — and no reviewer could trace them
   // to a page and quote.
@@ -922,6 +922,12 @@ function buildBackfillCandidates(tender: any): BackfillCandidate[] {
     { value: tender.donorAgency, semanticKey: "donorAgency", displayLabel: "Donor / Funding Agency", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
     { value: tender.implementingAgency, semanticKey: "implementingAgency", displayLabel: "Implementing Agency / Project Owner", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
     { value: tender.clientAddress, semanticKey: "clientAddress", displayLabel: "Client Address", category: "procuring-entity", valueType: "ADDRESS", relevance: "advisory" },
+    // CLAUDE.md item 9, "City / project location". AI Analyze extracts it and
+    // asks the provider for its page and quote alongside the other contact
+    // fields, and the tender detail panel displays it — the ledger was the only
+    // consumer that could not see it, which is precisely the surface a reviewer
+    // uses to ask whether a displayed value is traceable.
+    { value: tender.clientCity, semanticKey: "clientCity", displayLabel: "City / Project Location", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
     { value: tender.clientContactName, semanticKey: "clientContactName", displayLabel: "Client Contact Name", category: "procuring-entity", valueType: "TEXT", relevance: "advisory" },
     { value: tender.clientContactTitle, semanticKey: "clientContactTitle", displayLabel: "Client Contact Title / Role", category: "procuring-entity", valueType: "TEXT", relevance: "informational" },
     { value: tender.clientContactEmail, semanticKey: "clientContactEmail", displayLabel: "Client Contact Email", category: "procuring-entity", valueType: "EMAIL_LIST", relevance: "advisory" },

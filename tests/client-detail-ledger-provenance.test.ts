@@ -24,12 +24,20 @@ if (process.env.RUN_DB_INTEGRATION !== "true") {
   process.exit(1);
 }
 
-// The eleven fields that had no ledger row before this fix.
+// The twelve fields that had no ledger row before this fix.
+//
+// clientCity was the last one still missing after the first eleven were wired
+// up. It is not a cosmetic addition: CLAUDE.md item 9 lists "City / project
+// location" among the client details that must be extracted, AI Analyze does
+// extract it and asks the provider for its page and quote, and the tender
+// detail panel displays it. Only the ledger could not see it, which is the one
+// place a reviewer goes to ask whether a displayed value is traceable.
 const CLIENT_DETAIL_KEYS = [
   "legalClientName",
   "donorAgency",
   "implementingAgency",
   "clientAddress",
+  "clientCity",
   "clientContactName",
   "clientContactTitle",
   "clientContactEmail",
@@ -59,6 +67,7 @@ describe("client detail fields reach the facts ledger", () => {
         donorAgency: "African Development Bank",
         implementingAgency: "Oromia Water Works Design Enterprise",
         clientAddress: "Arada Sub-City, Addis Ababa, Ethiopia",
+        clientCity: "Adama",
         clientContactName: "Ato Bekele Tadesse",
         clientContactTitle: "Procurement Director",
         clientContactEmail: "procurement@oromiawater.gov.et",
@@ -130,6 +139,136 @@ describe("client detail fields reach the facts ledger", () => {
     } finally {
       await prisma.tenderFactsLedger.deleteMany({ where: { tenderId: bare.id } });
       await prisma.tender.deleteMany({ where: { id: bare.id } });
+    }
+  });
+
+  // The tests above prove the ungrounded direction. This one proves the other
+  // one, which is the direction that actually satisfies requirement 20: when
+  // promotion did resolve a page and a verbatim quote for a client field, the
+  // ledger row must carry them and reach SOURCE_GROUNDED_CONFIRMED. Without
+  // this, "every client field has a row" could be satisfied by rows that can
+  // never be anything but candidates, which is not traceability.
+  it("grounds a client field when promotion resolved a complete file, page and quote", async () => {
+    const grounded = await prisma.tender.create({
+      data: {
+        userId,
+        title: "Dessie Referral Hospital Upgrade",
+        clientName: "Amhara Health Bureau",
+        clientCity: "Dessie",
+        clientContactName: "Ato Bekele Tadesse",
+      },
+      select: { id: true },
+    });
+    const file = await prisma.tenderFile.create({
+      data: {
+        tenderId: grounded.id,
+        fileName: "itb.pdf",
+        originalFileName: "itb.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+      },
+      select: { id: true },
+    });
+    await prisma.tender.update({
+      where: { id: grounded.id },
+      data: {
+        contactDetailsSourceJson: JSON.stringify({
+          clientCity: {
+            fileId: file.id,
+            page: 4,
+            quote: "The Bureau's office is located in Dessie, Amhara Region.",
+          },
+        }),
+      },
+    });
+
+    try {
+      await backfillTenderFactsForTender(prisma as never, { tenderId: grounded.id, apply: true });
+
+      const row = await prisma.tenderFactsLedger.findFirst({
+        where: { tenderId: grounded.id, semanticKey: "clientCity" },
+        select: { authorityState: true, sourceFileId: true, sourcePage: true, sourceQuote: true, normalizedValue: true },
+      });
+
+      assert.ok(row, "clientCity must have a ledger row");
+      assert.equal(row.normalizedValue, "Dessie");
+      assert.equal(row.sourceFileId, file.id, "the row must point at the file promotion proved the quote in");
+      assert.equal(row.sourcePage, 4, "the proven page must be carried, not dropped");
+      assert.equal(
+        row.sourceQuote,
+        "The Bureau's office is located in Dessie, Amhara Region.",
+        "the verbatim quote must be carried so a reviewer can check it",
+      );
+      assert.equal(
+        row.authorityState,
+        "SOURCE_GROUNDED_CONFIRMED",
+        "a complete triple is exactly what grounding means",
+      );
+    } finally {
+      await prisma.tenderFactsLedger.deleteMany({ where: { tenderId: grounded.id } });
+      await prisma.tenderFile.deleteMany({ where: { tenderId: grounded.id } });
+      await prisma.tender.deleteMany({ where: { id: grounded.id } });
+    }
+  });
+
+  // The mirror of the test above, and the more important half. Partial evidence
+  // is the shape a hallucinated or unlocatable citation takes: a quote with no
+  // proven page, a page with no file, a quote too short to check. None of it may
+  // be rounded up into a grounded fact.
+  it("refuses to ground a client field whose recorded evidence is incomplete", async () => {
+    const partial = await prisma.tender.create({
+      data: {
+        userId,
+        title: "Partial Evidence Tender",
+        clientName: "Some Bureau",
+        clientCity: "Hawassa",
+        clientContactName: "Contact Person",
+        clientContactTitle: "Officer",
+        clientAddress: "Somewhere",
+      },
+      select: { id: true },
+    });
+    await prisma.tender.update({
+      where: { id: partial.id },
+      data: {
+        contactDetailsSourceJson: JSON.stringify({
+          // quote and file, but no proven page
+          clientCity: { fileId: "file-1", page: null, quote: "The office is in Hawassa city." },
+          // page and quote, but no file to check them against
+          clientContactName: { page: 2, quote: "Contact: the named procurement officer." },
+          // a file and a page, but a quote too short to verify anything
+          clientContactTitle: { fileId: "file-1", page: 3, quote: "Officer" },
+          // a page that is not a valid page number
+          clientAddress: { fileId: "file-1", page: 0, quote: "The address of the bureau is stated here." },
+        }),
+      },
+    });
+
+    try {
+      await backfillTenderFactsForTender(prisma as never, { tenderId: partial.id, apply: true });
+
+      const rows = await prisma.tenderFactsLedger.findMany({
+        where: {
+          tenderId: partial.id,
+          semanticKey: { in: ["clientCity", "clientContactName", "clientContactTitle", "clientAddress"] },
+        },
+        select: { semanticKey: true, authorityState: true, sourceFileId: true, sourcePage: true, sourceQuote: true },
+      });
+
+      assert.equal(rows.length, 4, "each field still gets a row — visible and visibly ungrounded");
+      for (const row of rows) {
+        assert.equal(row.sourcePage, null, `${row.semanticKey}: a page must not be kept from incomplete evidence`);
+        assert.equal(row.sourceQuote, null, `${row.semanticKey}: a quote must not be kept from incomplete evidence`);
+        assert.equal(row.sourceFileId, null, `${row.semanticKey}: a file must not be kept from incomplete evidence`);
+        assert.equal(
+          row.authorityState,
+          "CANDIDATE_NEEDS_REVIEW",
+          `${row.semanticKey}: incomplete evidence must never round up to source-grounded`,
+        );
+      }
+    } finally {
+      await prisma.tenderFactsLedger.deleteMany({ where: { tenderId: partial.id } });
+      await prisma.tender.deleteMany({ where: { id: partial.id } });
     }
   });
 
