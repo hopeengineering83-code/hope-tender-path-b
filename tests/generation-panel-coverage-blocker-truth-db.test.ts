@@ -48,6 +48,11 @@ import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-work
 import { buildAndVerifyBuildPlan } from "../lib/engine/automatic-build-plan";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
 import { getCanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
+import { computeEngineSourceRevision } from "../lib/engine/engine-source-revision";
+import {
+  describeAIAnalyzeWorkflowState,
+  describeMatchingEngineState,
+} from "../lib/engine/workflow-panel-presentation";
 import {
   deriveTruthfulReleaseStatus,
   resolveGenerationPanelWorkflowDecision,
@@ -280,6 +285,26 @@ dbDescribe("Generation panel — coverage blocker reaches the release status", (
 
     const plan = await buildAndVerifyBuildPlan(prisma, tender.id, user.id);
     assert.equal(plan.ok, true, "fixture requires a confirmed Build Plan");
+
+    // Pin the exact reported state: Engine already completed for the same
+    // current source revision that owns the selected evidence and Build Plan.
+    const engineRevision = await computeEngineSourceRevision(prisma, {
+      tenderId: tender.id,
+      userId: user.id,
+      companyId: company.id,
+    });
+    assert.ok(engineRevision, "fixture requires a current Engine source revision");
+    await client.aiJob.create({
+      data: {
+        userId: user.id,
+        tenderId: tender.id,
+        jobType: "ENGINE_RUN",
+        status: "SUCCEEDED",
+        analysisInputHash: engineRevision.sourceRevision,
+        startedAt: new Date(Date.now() - 20_000),
+        finishedAt: new Date(Date.now() - 10_000),
+      },
+    });
   });
 
   after(async () => {
@@ -293,6 +318,25 @@ dbDescribe("Generation panel — coverage blocker reaches the release status", (
     assert.equal(decision?.nextRequiredActionLabel, "Source evidence required");
     assert.equal(decision?.mandatoryFullOrSubstantialCoverageCount, 2);
     assert.equal(decision?.mandatoryRequirementCount, 4);
+  });
+
+  it("renders no contradictory manual action after the current Engine completed", async () => {
+    const decision = await getCanonicalTenderWorkflowDecision(prisma, user.id, tender.id);
+    const engineState = {
+      analysisCurrent: true,
+      engineRunning: false,
+      engineComplete: true,
+      engineFailed: false,
+      canRunEngine: false,
+      activeJob: null,
+    };
+    const aiPanel = describeAIAnalyzeWorkflowState(engineState);
+    const matchingPanel = describeMatchingEngineState(engineState, true);
+
+    assert.equal(decision?.nextRequiredActionLabel, "Source evidence required");
+    assert.equal(aiPanel, "AI Analysis is complete and current.");
+    assert.match(matchingPanel, /Engine complete/);
+    assert.doesNotMatch(`${aiPanel} ${matchingPanel}`, /Run Engine|Run AI Analyze/);
   });
 
   it("the panel's own readiness sources never carry the coverage code", async () => {
