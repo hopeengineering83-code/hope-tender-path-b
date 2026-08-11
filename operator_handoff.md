@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-11 UTC — Codex (PR #1175 exact-head follow-up)
+
+- **Mode:** narrow exact-head CI repair and user-facing diff-limit investigation.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting at exact head `4f2e0d18bdf4a7b942c43f843090840ef2b36063`.
+- **Scope / files changed:** corrected the shared Engine presentation helper's input type so its intentionally supported missing-active-job fallback compiles (`lib/engine/workflow-panel-presentation.ts`); recorded this handoff. The quoted generated-diff size-limit notice is not present in repository files, the PR body, issue comments, or reviews and therefore cannot be removed from application code; it is external review-tool output caused by the consolidated PR's exceptionally large diff.
+- **Tests:** `npx prisma generate` passed; 16/16 targeted Engine/AI/cross-panel workflow truth tests passed; `npm run typecheck` passed; `npm run lint` passed with one pre-existing unused-disable warning in `tests/superseded-job-status-projection.test.ts`.
+- **Risks / assumptions:** no workflow derivation, Company Vault reconciliation, source integrity, tenant isolation, release gate, or manual-action authority changed. Full PostgreSQL/full-suite/build and exact-head screenshot evidence remain governed by fresh CI after this commit.
+- **Next action:** push the commit to #1175 and require fresh exact-head CI plus screenshot audit before merge consideration.
+- **Merge status:** DO NOT MERGE — draft; no deployment or production migration performed.
+
 ### 2026-08-11 UTC (AI/Engine semantic consolidation follow-up) — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / #1175, started from exact remote head `c6e0676a51dd8433f8251c898a575bd217dc6ea6`.

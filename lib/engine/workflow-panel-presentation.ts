@@ -20,7 +20,7 @@ export type CurrentEnginePresentationState = {
 const ENGINE_QUEUE_STALL_MS = 15 * 60 * 1000;
 
 export function describeEngineActivity(
-  activeJob: CurrentEnginePresentationState["activeJob"],
+  activeJob: CurrentEnginePresentationState["activeJob"] | undefined,
   now: number = Date.now(),
 ): string {
   const running = "Engine is running as a durable current-revision job.";
