@@ -17,8 +17,9 @@ import {
   projectReviewFields,
 } from "../lib/vault-review-provenance";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../lib/engine/tender-analysis-content";
-import { buildAndVerifyBuildPlan } from "../lib/engine/automatic-build-plan";
+import { computeTenderBuildPlanHash, getCurrentConfirmedBuildPlan } from "../lib/engine/build-plan";
 import { computeEngineSourceRevision } from "../lib/engine/engine-source-revision";
+import { buildSubmissionPlan, plannedSubmissionTargetFiles } from "../lib/engine/submission-plan";
 
 const prisma = new PrismaClient();
 const SUFFIX = "phase2-rendered-2-of-4";
@@ -222,8 +223,34 @@ test.describe("Phase 2 rendered 2/4 evidence workflow truth", () => {
       },
     });
 
-    const plan = await buildAndVerifyBuildPlan(prisma, tenderId, user.id);
-    if (!plan.ok) throw new Error(`Phase 2 Build Plan fixture failed: ${plan.message}`);
+    // Persist the same hash-bound CONFIRMED shape the automatic Build Plan
+    // service produces. The PostgreSQL regression exercises that service;
+    // this browser fixture avoids opening a nested serializable transaction
+    // inside Playwright's test lifecycle and then re-verifies the real gate.
+    const tenderForPlan = await prisma.tender.findUniqueOrThrow({
+      where: { id: tenderId },
+      include: { files: true, requirements: true },
+    });
+    const planItems = plannedSubmissionTargetFiles(buildSubmissionPlan(tenderForPlan as never));
+    const planHash = await computeTenderBuildPlanHash(prisma, tenderId, user.id, planItems);
+    if (!planHash) throw new Error("Phase 2 Build Plan hash is unavailable");
+    await prisma.buildPlan.create({
+      data: {
+        tenderId,
+        status: "CONFIRMED",
+        revision: 1,
+        confirmedRevision: 1,
+        contentHash: planHash,
+        confirmedContentHash: planHash,
+        itemsJson: JSON.stringify(planItems),
+        validationJson: JSON.stringify({ ok: true, blockers: [], confirmationMode: "AUTOMATIC_SOURCE_GROUNDED" }),
+        builtById: user.id,
+        confirmedBy: "SYSTEM_AUTOMATION",
+        confirmedAt: new Date(),
+      },
+    });
+    const plan = await getCurrentConfirmedBuildPlan(prisma, tenderId, user.id);
+    if (!plan.ok) throw new Error(`Phase 2 confirmed Build Plan fixture failed: ${plan.blocker}`);
     const engineRevision = await computeEngineSourceRevision(prisma, {
       tenderId,
       userId: user.id,
