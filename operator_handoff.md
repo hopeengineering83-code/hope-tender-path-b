@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-11 UTC (AI/Engine semantic consolidation follow-up) — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175, started from exact remote head `c6e0676a51dd8433f8251c898a575bd217dc6ea6`.
+- **Scope:** moved AI Analyze and Matching Engine wording into one presentation-only module while retaining the existing tenant-scoped, current-revision `/engine-readiness` authority. Strengthened the cross-panel regression so “Source evidence required” is produced by the real canonical workflow decision instead of being hard-coded in the test.
+- **Files changed:** `lib/engine/workflow-panel-presentation.ts`, `components/ai-analyze-panel.tsx`, `components/matching-selected-evidence-panel.tsx`, `tests/ai-analyze-engine-workflow-truth.test.ts`, and this handoff.
+- **Tests:** targeted AI/Engine semantic tests passed (16/16); Prisma generation, typecheck, lint, and production build passed. The local full-suite attempt could not complete because the fail-closed DB guard correctly rejected the configured Neon URL and no local PostgreSQL server is installed; the pre-existing PR-head CI PostgreSQL run completed 9851/9853 with two unrelated failures before this follow-up.
+- **Risks / assumptions:** no gate, route authorization, source-integrity calculation, tenant filter, job revision filter, or manual/automatic workflow ownership changed. Exact authenticated Preview screenshot audit still requires the deployment/test account available to the operator capture workflow.
+- **Next action:** push this commit, let PR #1175 CI run against ephemeral PostgreSQL, and complete the exact-head authenticated screenshot capture before merge.
+- **Merge status:** unsafe until fresh CI and screenshot audit complete; do not merge yet.
+
 ### 2026-08-11 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / #1175, started from exact remote head `48ee3d40ea46bc705eb184832dbf15456104d0c0`.

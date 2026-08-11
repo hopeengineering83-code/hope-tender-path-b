@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckIcon, CrossIcon, SparklesIcon } from "./icons";
+import {
+  describeAIAnalyzeWorkflowState,
+  type CurrentEnginePresentationState,
+} from "../lib/engine/workflow-panel-presentation";
+
+export { describeAIAnalyzeWorkflowState } from "../lib/engine/workflow-panel-presentation";
 
 type JobStatus = "QUEUED" | "RUNNING" | "PARTIAL_SUCCESS" | "SUCCEEDED" | "FAILED" | "CANCELED";
 
@@ -29,35 +35,7 @@ type SourceReadiness = {
   analysisBlocker: string | null;
 };
 
-export type AIAnalyzeEngineState = {
-  analysisCurrent: boolean;
-  engineRunning: boolean;
-  engineComplete: boolean;
-  engineFailed: boolean;
-  canRunEngine: boolean;
-  activeJob: { id: string; status: string; createdAt: string } | null;
-};
-
-/**
- * Present the AI stage from the same current-revision Engine authority used by
- * the matching panel. This deliberately says nothing about downstream work:
- * once Engine is complete, the canonical Next Required Action owns that truth.
- */
-export function describeAIAnalyzeWorkflowState(state: AIAnalyzeEngineState): string {
-  if (!state.analysisCurrent) {
-    return "AI Analysis is stale or incomplete. Run AI Analyze again for the current source revision.";
-  }
-  if (state.engineComplete) return "AI Analysis is complete and current.";
-  if (state.engineRunning) {
-    return state.activeJob?.status === "QUEUED"
-      ? "AI Analysis is complete and current. Engine is queued for this source revision."
-      : "AI Analysis is complete and current. Engine is running for this source revision.";
-  }
-  if (state.engineFailed) {
-    return "AI Analysis is complete and current. The current-revision Engine run failed; review the Engine panel before retrying.";
-  }
-  return "AI Analyze complete. Run Engine to continue.";
-}
+export type AIAnalyzeEngineState = CurrentEnginePresentationState;
 
 type ProviderDiag = {
   provider: string;

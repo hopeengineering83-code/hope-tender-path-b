@@ -6,6 +6,7 @@ import {
   type AIAnalyzeEngineState,
 } from "../components/ai-analyze-panel";
 import { describeMatchingEngineState } from "../components/matching-selected-evidence-panel";
+import { buildCanonicalWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
 
 function state(overrides: Partial<AIAnalyzeEngineState> = {}): AIAnalyzeEngineState {
   return {
@@ -74,7 +75,37 @@ describe("AI Analyze panel uses canonical current-revision Engine truth", () => 
 
 describe("cross-panel next-action semantics", () => {
   it("does not contradict Source evidence required after current Engine completion", () => {
-    const canonicalNextRequiredAction = "Source evidence required";
+    // This is the original Preview state: current trusted analysis, a current
+    // confirmed plan, and incomplete mandatory evidence coverage. Derive the
+    // headline from the real canonical resolver rather than hard-coding the
+    // expected label in this semantic test.
+    const decision = buildCanonicalWorkflowDecision({
+      hasFiles: true,
+      extractionUnsafe: false,
+      extractionCorrupted: false,
+      ocrRequired: false,
+      aiAnalysisExists: true,
+      aiAnalysisTrusted: true,
+      aiAnalysisPartial: false,
+      aiAnalysisStale: false,
+      resumableAnalysisAvailable: false,
+      criticalTenderDetailsValid: true,
+      requirementsExist: true,
+      requirementsTrusted: true,
+      mandatoryRequirementCount: 4,
+      mandatoryTracedCount: 4,
+      mandatoryComplianceRowsCount: 4,
+      mandatoryFullOrSubstantialCoverageCount: 2,
+      confirmedBuildPlanExists: true,
+      requiredDocumentsTotal: 4,
+      generatedDocumentsTotal: 0,
+      exportReadyDocumentsTotal: 0,
+      documentsValidated: false,
+      documentsApproved: false,
+      pdfRequiredButUnavailable: false,
+      finalExportAllowed: false,
+      authorityOrQualityBlockers: false,
+    });
     const engine = state({ engineComplete: true, canRunEngine: false });
     const aiPanel = describeAIAnalyzeWorkflowState(engine);
     const matchingPanel = describeMatchingEngineState({
@@ -83,11 +114,13 @@ describe("cross-panel next-action semantics", () => {
       blocker: null,
     }, true);
 
-    assert.equal(canonicalNextRequiredAction, "Source evidence required");
+    assert.equal(decision.nextRequiredAction, "LINK_VAULT_EVIDENCE");
+    assert.equal(decision.nextRequiredActionLabel, "Source evidence required");
     assert.equal(aiPanel, "AI Analysis is complete and current.");
     assert.match(matchingPanel, /Engine complete/);
     for (const panelMessage of [aiPanel, matchingPanel]) {
       assert.doesNotMatch(panelMessage, /Run Engine|Run AI Analyze/);
     }
+    assert.doesNotMatch(decision.nextRequiredActionReason, /Run Engine|Run AI Analyze/);
   });
 });
