@@ -84,24 +84,10 @@ export async function handleSecureUpload(req: Request) {
     return NextResponse.json({ error: packageBatch.error, code: packageBatch.code }, { status: packageBatch.status });
   }
   if (packageBatch?.ok && packageBatch.replayed) {
-    let replayJobId = packageBatch.session.analysisJobId;
-    let replayAnalysisRevision = packageBatch.session.analysisRevision;
-    let replayStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null =
-      replayJobId ? "AI_ANALYZE_QUEUED" : null;
-    if (!replayJobId && packageBatch.session.missingBatchIndexes.length === 0 && tenderId) {
-      const continuation = await continueTenderPipelineAfterExtraction({
-        userId: actor.id,
-        tenderId,
-        companyId: company.id,
-        intakeSessionId: intake?.sessionId ?? null,
-        deferAnalysis,
-      }).catch(() => null);
-      if (continuation?.queued && continuation.jobId) {
-        replayJobId = continuation.jobId;
-        replayAnalysisRevision = continuation.analysisRevision ?? null;
-        replayStage = "AI_ANALYZE_QUEUED";
-      }
-    }
+    // Upload replay recovers extraction only; manual-ai-analyze is the sole AI authority.
+    let replayJobId: string | null = null;
+    const replayAnalysisRevision: string | null = null;
+    let replayStage: "EXTRACT_TEXT_QUEUED" | null = null;
     if (!replayJobId && tenderId) {
       const queuedExtraction = await prisma.aiJob.findFirst({
         where: {
@@ -365,7 +351,7 @@ export async function handleSecureUpload(req: Request) {
 
   let processingJobId: string | null = null;
   let analysisRevision: string | null = null;
-  let processingStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null = null;
+  let processingStage: "EXTRACT_TEXT_QUEUED" | null = null;
   let pipelineWarning: string | null = null;
   const uploadBatchFailed = results.some((result) => result.success !== true);
   let intakeSession: TenderPackageSessionResult | null = packageBatch?.ok ? packageBatch.session : null;
@@ -434,18 +420,7 @@ export async function handleSecureUpload(req: Request) {
         intakeSessionId: intake?.sessionId ?? null,
         deferAnalysis,
       });
-      if (continuation.queued && continuation.jobId) {
-        processingJobId = continuation.jobId;
-        processingStage = "AI_ANALYZE_QUEUED";
-        analysisRevision = continuation.analysisRevision ?? null;
-        if (intakeSession) {
-          intakeSession = {
-            ...intakeSession,
-            analysisJobId: continuation.jobId,
-            analysisRevision,
-          };
-        }
-      }
+      void continuation;
     } catch (error) {
       pipelineWarning = pipelineWarning
         ?? "Source extraction is durable, but automatic analysis continuation must retry.";

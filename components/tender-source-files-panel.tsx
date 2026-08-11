@@ -170,7 +170,7 @@ export function TenderSourceFilesPanel({
           results?: UploadResult[];
           error?: string;
           processingJobId?: string | null;
-          pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+          pipelineStage?: "EXTRACT_TEXT_QUEUED" | null;
           intakeSession?: ActiveIntakeSession | null;
         };
         if (!response.ok || !Array.isArray(payload.results) || payload.results.some((result) => !result.fileRecord)) {
@@ -202,7 +202,7 @@ export function TenderSourceFilesPanel({
           kind: "success",
           text: updatedSession.missingBatchIndexes.length > 0
             ? `${uploadedRecords.length} file(s) restored. Continue with the next expected package batch.`
-            : "The complete source package is stored and automatic AI analysis is queued.",
+            : "The complete source package is stored. Source extraction is running automatically; AI Analyze becomes a manual action when extraction completes.",
         });
         router.refresh();
       } catch {
@@ -222,7 +222,7 @@ export function TenderSourceFilesPanel({
      * the memoized callback. Set state for the badge AND this local for the
      * success message in one go. */
     let lastJobId: string | null = null;
-    let lastPipelineStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null = null;
+    let lastPipelineStage: "EXTRACT_TEXT_QUEUED" | null = null;
 
     for (const file of incoming) {
       try {
@@ -236,7 +236,7 @@ export function TenderSourceFilesPanel({
           results?: UploadResult[];
           error?: string;
           processingJobId?: string | null;
-          pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+          pipelineStage?: "EXTRACT_TEXT_QUEUED" | null;
         };
         const result = payload.results?.[0];
         if (!response.ok || !result?.fileRecord) {
@@ -353,7 +353,7 @@ export function TenderSourceFilesPanel({
                   : packageFailed > 0
                   ? ` ${packageFailed} additional file(s) could not be uploaded; select those files again below.`
                   : intakePipelineStatus === "queued"
-                    ? " The complete package was stored and automatic AI analysis is queued."
+                    ? " The complete package was stored. Extraction is automatic; AI Analyze will be ready as a manual action afterward."
                     : " Confirm that every selected document appears below; automatic analysis can be retried from the Analysis stage if it did not queue."}
               </p>
               {intakeSession && nextExpectedBatch && (

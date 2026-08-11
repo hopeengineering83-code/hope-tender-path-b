@@ -4,7 +4,6 @@ import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import {
-  appendControlNote,
   auditLogToControlRecord,
   controlActionForType,
   controlDescription,
@@ -14,6 +13,8 @@ import {
 import { computeTenderLifecycle } from "../../../../../lib/engine/tender-lifecycle-orchestrator";
 import { deriveControlSuggestions, type SuggestedControl } from "../../../../../lib/engine/tender-control-suggestions";
 import { classifyWeakMatches } from "../../../../../lib/engine/weak-match-classifier";
+import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
+import { presentTwoActionWorkflowDecision } from "../../../../../lib/engine/two-action-workflow-presentation";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,7 @@ async function deriveSuggestedControls(tenderId: string, userId?: string): Promi
   try {
     const lifecycle = await computeTenderLifecycle(prisma, tenderId, userId);
     if (!lifecycle) return [];
+    const canonicalDecision = presentTwoActionWorkflowDecision(await getCanonicalTenderWorkflowDecision(prisma, userId ?? "", tenderId));
     const tenderForMatches = await prisma.tender.findFirst({
       where: { id: tenderId },
       select: {
@@ -38,6 +40,7 @@ async function deriveSuggestedControls(tenderId: string, userId?: string): Promi
       projectRequirementsCount,
     });
     const all = deriveControlSuggestions({
+      canonicalDecision: canonicalDecision ? { nextRequiredAction: canonicalDecision.nextRequiredAction, nextRequiredActionLabel: canonicalDecision.nextRequiredActionLabel, nextRequiredActionReason: canonicalDecision.nextRequiredActionReason } : null,
       metadataStatus: lifecycle.metadataStatus,
       analysisStatus: lifecycle.analysisStatus,
       sourceReferenceStatus: lifecycle.sourceReferenceStatus,
@@ -63,19 +66,6 @@ async function deriveSuggestedControls(tenderId: string, userId?: string): Promi
   } catch {
     return [];
   }
-}
-
-function stageForControl(type: string, currentStage: string): string {
-  if (["ADDENDUM", "CLARIFICATION", "QUESTION"].includes(type)) return "COMPLIANCE";
-  if (["MILESTONE", "TASK", "RISK"].includes(type)) return currentStage === "TENDER_INTAKE" ? "MATCHING" : currentStage;
-  if (type === "COMMERCIAL_ASSUMPTION") return "COMMERCIAL";
-  return currentStage;
-}
-
-function statusForControl(type: string, currentStatus: string): string {
-  if (["ADDENDUM", "CLARIFICATION", "QUESTION"].includes(type)) return "COMPLIANCE_REVIEW";
-  if (type === "RISK" && currentStatus === "EXPORTED") return "COMPLIANCE_REVIEW";
-  return currentStatus;
 }
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -139,7 +129,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json({ error: "Invalid control payload" }, { status: 400 });
   }
 
-  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true, title: true, notes: true, status: true, stage: true } });
+  const tender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true, title: true } });
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
   await logAction({
@@ -151,14 +141,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     metadata: { tenderId: id, control },
   });
 
-  await prisma.tender.update({
-    where: { id },
-    data: {
-      notes: appendControlNote(tender.notes, control),
-      status: statusForControl(control.type, tender.status),
-      stage: stageForControl(control.type, tender.stage),
-    },
-  });
+  // Controls are audit/coordination records, never workflow eligibility authority.
 
   return NextResponse.json({ success: true, control });
 }

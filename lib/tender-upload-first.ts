@@ -150,24 +150,10 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
             requestId,
           }, { status: 409 });
         }
-        let replayJobId = existingSession.analysisJobId;
-        let replayAnalysisRevision = existingSession.analysisRevision;
-        let replayStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null =
-          replayJobId ? "AI_ANALYZE_QUEUED" : null;
-        if (!replayJobId && existingSession.missingBatchIndexes.length === 0) {
-          const continuation = await continueTenderPipelineAfterExtraction({
-            userId: actor.id,
-            tenderId: ownedTender.id,
-            companyId: company.id,
-            intakeSessionId: intake.sessionId,
-            deferAnalysis,
-          }).catch(() => null);
-          if (continuation?.queued && continuation.jobId) {
-            replayJobId = continuation.jobId;
-            replayAnalysisRevision = continuation.analysisRevision ?? null;
-            replayStage = "AI_ANALYZE_QUEUED";
-          }
-        }
+        // Upload replay recovers extraction only; manual-ai-analyze is the sole AI authority.
+        let replayJobId: string | null = null;
+        const replayAnalysisRevision: string | null = null;
+        let replayStage: "EXTRACT_TEXT_QUEUED" | null = null;
         if (!replayJobId) {
           const queuedExtraction = await prisma.aiJob.findFirst({
             where: {
@@ -198,9 +184,9 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
           intakeSession: existingSession,
           nextAction: existingSession.missingBatchIndexes.length > 0
             ? "UPLOAD_REMAINING_SOURCE_FILES"
-            : replayStage === "AI_ANALYZE_QUEUED"
-              ? "WAIT_FOR_AI_ANALYZE"
-              : "WAIT_FOR_SOURCE_EXTRACTION",
+            : replayStage === "EXTRACT_TEXT_QUEUED"
+              ? "WAIT_FOR_SOURCE_EXTRACTION"
+              : "READY_FOR_AI_ANALYZE",
           message: "The existing tender package intake was recovered without creating a duplicate tender.",
           requestId,
         }, { status: 200 });
@@ -489,8 +475,8 @@ export async function handleUploadFirstTender(req: Request): Promise<NextRespons
           : "RETRY_SOURCE_UPLOAD",
       message: processingJobId
         ? sourcePackageComplete
-          ? "Tender and verified source files were created. Durable background extraction is queued; analysis will follow automatically."
-          : "Tender and the first verified source batch were created. Extraction is queued; analysis will wait for the remaining package batches."
+          ? "Tender and verified source files were created. Source documents are extracting automatically; AI Analyze will be ready as a manual action when extraction completes."
+          : "Tender and the first verified source batch were created. Extraction is queued; the remaining batches must finish before manual AI Analyze becomes ready."
         : "Tender and verified source files were created, but durable extraction must be retried.",
       requestId,
     }, { status: 201 });

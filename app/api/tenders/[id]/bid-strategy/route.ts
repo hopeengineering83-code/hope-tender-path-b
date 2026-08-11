@@ -55,19 +55,23 @@ function hasExtractionUnsafeStatus(status: string | null | undefined, analysisEx
   return /EXTRACTION_CORRUPTED|OCR_REQUIRED|EXTRACTION_WEAK_REVIEW_REQUIRED|REGEX_FALLBACK_FROM_WEAK_EXTRACTION/.test(combined);
 }
 
-function computeMandatoryEvidenceCoverageRatio(requirements: Array<{
+function computeMandatoryEvidenceCoverage(requirements: Array<{
   priority: string;
   complianceMatrixRows?: Array<{ supportLevel: string | null }> | null;
-}>): number {
+}>): { releaseRatio: number; progressRatio: number; partial: number } {
   const mandatory = requirements.filter((r) => String(r.priority ?? "").toUpperCase() === "MANDATORY");
-  if (mandatory.length === 0) return 0;
+  if (mandatory.length === 0) return { releaseRatio: 0, progressRatio: 0, partial: 0 };
   const covered = mandatory.filter((r) =>
     (r.complianceMatrixRows ?? []).some((row) => {
       const level = String(row.supportLevel ?? "").toUpperCase();
       return level === "FULL" || level === "SUBSTANTIAL";
     }),
   ).length;
-  return covered / mandatory.length;
+  const partial = mandatory.filter((r) =>
+    (r.complianceMatrixRows ?? []).some((row) => String(row.supportLevel ?? "").toUpperCase() === "PARTIAL")
+      && !(r.complianceMatrixRows ?? []).some((row) => ["FULL", "SUBSTANTIAL"].includes(String(row.supportLevel ?? "").toUpperCase())),
+  ).length;
+  return { releaseRatio: covered / mandatory.length, progressRatio: (covered + partial * 0.5) / mandatory.length, partial };
 }
 
 export async function GET(
@@ -200,7 +204,8 @@ export async function GET(
     }, { status: 200 });
   }
 
-  const evidenceCoverageRatio = computeMandatoryEvidenceCoverageRatio(tender.requirements);
+  const evidenceCoverage = computeMandatoryEvidenceCoverage(tender.requirements);
+  const evidenceCoverageRatio = evidenceCoverage.releaseRatio;
   const totalPages = extractedPageTotal(tender.files);
   const mandatoryCount = tender.requirements.filter((req) => String(req.priority ?? "").toUpperCase() === "MANDATORY").length;
   // Canonical predicate. This previously counted only requirements whose
@@ -272,6 +277,7 @@ export async function GET(
       submissionMethod: tender.submissionMethod,
       analysisSource,
       evidenceCoverageRatio,
+      evidenceProgressRatio: evidenceCoverage.progressRatio,
     },
     company: {
       name: company.name,
@@ -294,13 +300,14 @@ export async function GET(
   // without the new context fields.
   const fallbackSource = isFallbackLikeAnalysisSource(analysisSource);
   const zeroEvidence = evidenceCoverageRatio === 0;
+  const evidenceLimited = evidenceCoverageRatio < 0.8;
   const confidenceCeiling = fallbackSource
     ? Math.min(FALLBACK_CONFIDENCE_CEILING, zeroEvidence ? ZERO_EVIDENCE_CONFIDENCE_CEILING : FALLBACK_CONFIDENCE_CEILING)
     : zeroEvidence
       ? ZERO_EVIDENCE_CONFIDENCE_CEILING
       : null;
 
-  let confidenceCapped = false;
+  let confidenceCapped = evidenceLimited;
   if (confidenceCeiling !== null && strategy.winProbability > confidenceCeiling) {
     strategy.winProbability = confidenceCeiling;
     confidenceCapped = true;
@@ -312,7 +319,9 @@ export async function GET(
     confidenceNotes.push("Bid strategy confidence is capped because the tender analysis used regex/deterministic fallback or an unknown source. Re-run AI Analyze for full-confidence strategy.");
   }
   if (zeroEvidence) {
-    confidenceNotes.push("Bid strategy confidence is capped because mandatory evidence coverage is 0%. Confirm reviewed evidence links before relying on the win probability.");
+    confidenceNotes.push("Bid strategy confidence is capped because mandatory evidence coverage is 0%. Add or strengthen eligible source-backed evidence before relying on the win probability.");
+  } else if (evidenceLimited) {
+    confidenceNotes.push(`Evidence confidence is limited: ${Math.round(evidenceCoverageRatio * 100)}% of mandatory requirements are release-qualified; ${evidenceCoverage.partial} have partial evidence. Competitive fit may still be strong, but strengthen eligible source-backed evidence before committing.`);
   }
   const confidenceNote = confidenceNotes.length > 0 ? confidenceNotes.join(" ") : null;
 

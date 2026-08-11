@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+
+### 2026-08-11 UTC — Codex (PR #1175 final remaining-gap closure)
+
+- **Mode:** final scoped semantic/UX/release-readiness closure; preserve both manual gates and the Phase 1/2 truth repairs.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting from exact remote head `b4b5bf75b2a6ecc47e3870c668631c3f42787bee`.
+- **Scope / files changed:** upload-first/additional-upload contracts and New Tender/source-file copy now own extraction only; Tender Controls project exactly one canonical current action and never mutate Tender stage/status; Requirement Coverage separates release-qualified and weighted partial progress; Bid Strategy consumes canonical mandatory evidence ratios and caps materially evidence-limited recommendations; Matching labels relevance and hides internal rationale; Release Status suppresses unreachable downstream symptoms; Company Vault moves implementation detail under Technical details; focused architecture regressions cover the changes.
+- **Tests so far:** focused Phase 1/Phase 2/manual wake/upload/controls/Bid Strategy suite passed 84/84 non-DB tests; exact 2/4 PostgreSQL fixture was discovered but cancelled locally because no configured PostgreSQL was reachable; typecheck and lint pass. Fresh exact-head CI, PostgreSQL, build, Playwright, screenshots, audits and Preview convergence remain required after push.
+- **Risks / assumptions:** no canonical gate, evidence trust predicate, source hash/revision, tenant boundary, generation/finalization worker, document/ZIP integrity rule, legal authority, or provider order was weakened. Control acceptance is now audit-only rather than a second lifecycle mutation.
+- **Next action:** commit/push, inspect both exact-head CI runs and rendered artifacts, repair any failure, then stop without merge or Production promotion.
+- **Merge status:** DO NOT MERGE; draft, unreviewed, no Production promotion.
+
 ### 2026-08-11 UTC — Claude Code (Opus), AI Analyze never woke its worker
 
 - **Reported live:** Hope pressed Run AI Analyze on the Preview and the panel sat on "AI Analyze is queued" for minutes. The panel was telling the truth.

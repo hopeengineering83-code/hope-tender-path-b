@@ -100,7 +100,7 @@ describe("canonical requirement-evidence resolver runtime fixture", () => {
     // first left the stat tile ("Genuine gaps", 5) contradicting the chip
     // ("Genuine gaps / unresolved", 6) on the same screen. See
     // tests/requirement-coverage-counter-truth.test.ts.
-    assert.match(panel, /Gaps \/ unresolved/);
+    assert.match(panel, /Genuine gaps \/ stale/);
     assert.doesNotMatch(panel, /Automatic source grounding continues/);
     assert.doesNotMatch(panel, /automatic work/i);
     assert.match(panel, /No resolver job is queued or running/);

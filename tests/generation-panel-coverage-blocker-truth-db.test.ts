@@ -420,7 +420,7 @@ dbDescribe("Generation panel — coverage blocker reaches the release status", (
     const index = workflowDecision?.blockerCodes.indexOf("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE") ?? -1;
     assert.ok(index >= 0);
     const detail = workflowDecision?.blockerDetails[index] ?? "";
-    assert.match(detail, /2\/4 mandatory requirements have FULL\/SUBSTANTIAL coverage/);
-    assert.match(detail, /Add genuine owned source evidence/i);
+    assert.match(detail, /2\/4 mandatory requirements have release-qualified FULL\/SUBSTANTIAL coverage/);
+    assert.match(detail, /Strengthen partial evidence/i);
   });
 });

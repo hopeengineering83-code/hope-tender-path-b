@@ -22,7 +22,7 @@ export type UploadFirstResponse = {
   engineSkipped?: boolean;
   nextAction?: string;
   processingJobId?: string;
-  pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+  pipelineStage?: "EXTRACT_TEXT_QUEUED" | null;
   error?: string;
   code?: string;
   requestId?: string;
@@ -55,10 +55,6 @@ export function decideTenderUploadAutoPipeline(
   if (response.pipelineStage === "EXTRACT_TEXT_QUEUED") {
     return EXTRACT_TEXT_WORKER_ENDPOINT;
   }
-  // AI_ANALYZE_QUEUED is intentionally NOT returned — the browser must not
-  // nudge AI Analyze. If the server reports AI_ANALYZE_QUEUED (which it
-  // should NOT after this redesign), the browser returns null and the user
-  // is prompted to click "Run AI Analyze" manually.
   return null;
 }
 
@@ -118,11 +114,9 @@ export async function triggerTenderUploadAutoPipeline(
     fired: false,
     endpoint: null,
     status: "skipped",
-    message: response.pipelineStage === "AI_ANALYZE_QUEUED"
-      ? "Extraction is complete. Click \"Run AI Analyze\" to analyze the tender."
-      : response.nextAction
-        ? `Upload completed. ${response.nextAction}.`
-        : "Upload completed. Source extraction will continue automatically.",
+    message: response.nextAction
+      ? `Upload completed. ${response.nextAction}.`
+      : "Upload completed. Source extraction will continue automatically.",
   };
 }
 

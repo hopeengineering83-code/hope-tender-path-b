@@ -41,6 +41,7 @@ export interface BidStrategyInput {
     submissionMethod?: string | null;
     analysisSource?: string | null;
     evidenceCoverageRatio?: number | null;
+    evidenceProgressRatio?: number | null;
   };
   company: {
     name: string;
@@ -161,9 +162,10 @@ function scoreExperienceFit(input: BidStrategyInput): { score: number; topProjec
 function scoreComplianceReadiness(input: BidStrategyInput): { score: number; criticalGaps: number; mandatoryReqs: number } {
   const mandatoryReqs = input.tender.requirements.filter((r) => r.priority === "MANDATORY").length;
   const criticalGaps = input.tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
-  if (mandatoryReqs === 0) return { score: 80, criticalGaps, mandatoryReqs };
-  if (criticalGaps === 0) return { score: 95, criticalGaps, mandatoryReqs };
-  const score = Math.max(20, 95 - criticalGaps * 12);
+  if (mandatoryReqs === 0) return { score: 0, criticalGaps, mandatoryReqs };
+  const releaseCoverage = Math.max(0, Math.min(1, input.tender.evidenceCoverageRatio ?? 0));
+  const progress = Math.max(releaseCoverage, Math.min(1, input.tender.evidenceProgressRatio ?? releaseCoverage));
+  const score = Math.max(0, Math.round((releaseCoverage * 0.8 + progress * 0.2) * 100) - criticalGaps * 12);
   return { score, criticalGaps, mandatoryReqs };
 }
 
@@ -346,6 +348,8 @@ export function computeBidStrategy(input: BidStrategyInput): BidStrategy {
   if ((input.tender.evidenceCoverageRatio ?? 1) === 0) {
     winProbability = Math.max(0, winProbability - 10);
   }
+  const releaseCoverage = input.tender.evidenceCoverageRatio ?? 0;
+  if (releaseCoverage < 0.8) winProbability = Math.min(winProbability, 64);
 
   const gapAnalysis = classifyBidStrategyGaps({
     tender: {
@@ -360,6 +364,7 @@ export function computeBidStrategy(input: BidStrategyInput): BidStrategy {
 
   let recommendation = synthesizeRecommendation(winProbability);
   if (gapAnalysis.inhibitDecline && recommendation === "DECLINE") recommendation = "BID_CAREFULLY";
+  if (releaseCoverage < 0.8 && recommendation === "BID_HARD") recommendation = "BID_CAREFULLY";
 
   const posture = synthesizePosture(recommendation, capability, experience, eligibility);
   const topRisks = buildTopRisks(capability, experience, compliance, eligibility);

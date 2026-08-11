@@ -232,7 +232,7 @@ export function buildCanonicalWorkflowDecision(input: {
   if (requirementsOK && input.confirmedBuildPlanExists && input.mandatoryRequirementCount > 0 && input.mandatoryComplianceRowsCount > 0) {
     if (mandatoryCoveredForGeneration < input.mandatoryRequirementCount) {
       blockerCodes.push("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE");
-      blockerDetails.push(`${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have FULL/SUBSTANTIAL coverage. Add genuine owned source evidence for unsupported requirements.`);
+      blockerDetails.push(`${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have release-qualified FULL/SUBSTANTIAL coverage. Strengthen partial evidence or add eligible source-backed evidence for requirements with no adequate evidence.`);
     }
   }
 
@@ -321,7 +321,7 @@ export function buildCanonicalWorkflowDecision(input: {
     REQUIREMENTS_NOT_SOURCE_GROUNDED: { action: "REVIEW_REQUIREMENTS", label: "Review requirements", reason: "Requirements exist but lack source tracing. Review and confirm source grounding." },
     NO_CONFIRMED_BUILD_PLAN: { action: "BUILD_SUBMISSION_PLAN", label: "Review and confirm Build Plan", reason: "No current confirmed Build Plan. Build the draft, review its complete ordered file scope, and confirm it." },
     MANDATORY_NO_COMPLIANCE_ROWS: { action: "LINK_VAULT_EVIDENCE", label: "Link evidence to requirements", reason: `${input.mandatoryRequirementCount} mandatory requirements have no compliance matrix rows. Run Engine to link evidence.` },
-    MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Source evidence required", reason: `Automatic matching found FULL/SUBSTANTIAL coverage for ${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements. Add genuine owned source evidence for unsupported claims; no confirmation click can bypass this gate.` },
+    MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Source evidence required", reason: `Automatic matching found release-qualified FULL/SUBSTANTIAL coverage for ${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements. Strengthen partial evidence or add eligible source-backed evidence where none is adequate; no confirmation click can bypass this gate.` },
     PDF_REQUIRED_UNAVAILABLE: { action: "FINALIZE_REQUIRED_PDF", label: "Finalize required PDF", reason: "Required PDF output is unavailable. Finalize the required PDF (from the approved DOCX source) or upload the tender-issued PDF." },
     REQUIRED_DOCS_NOT_GENERATED: { action: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: `${input.generatedDocumentsTotal}/${input.requiredDocumentsTotal} required documents generated.` },
     DOCS_NOT_VALIDATED: { action: "FIX_EXPORT_BLOCKERS", label: "Validate documents", reason: "Generated documents have not been validated." },

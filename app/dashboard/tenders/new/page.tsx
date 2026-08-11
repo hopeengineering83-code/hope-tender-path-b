@@ -9,9 +9,7 @@ import {
   partitionTenderUploadPackage,
   validateTenderPackageSelection,
 } from "../../../../lib/tender-upload-package";
-// Note: triggerTenderUploadAutoPipeline is no longer called from the client.
-// The server enqueues AI_ANALYZE in the upload-first handler — the job
-// persists and runs even if the browser is closed.
+// Upload owns verified storage and automatic extraction only. AI Analyze and Run Engine remain manual.
 
 const CATEGORIES = ["General", "IT", "Construction", "Services", "Consulting", "Supply", "Healthcare", "Education", "Infrastructure", "Urban Planning", "Environmental", "Feasibility Study", "NGO/Donor-Funded", "Other"];
 const CURRENCIES = ["USD", "EUR", "GBP", "ZAR", "AUD", "CAD", "AED", "SAR", "KWD", "EGP", "ETB", "NGN"];
@@ -26,16 +24,12 @@ type UploadFirstPayload = {
   error?: string;
   errors?: string[];
   tenderId?: string;
-  /** Server advertises whether the engine was skipped (it always is for
-   * upload-first — extraction runs but AI Analyze does not). The client
-   * uses this to auto-fire the next pipeline step. */
+  /** Upload-first explicitly skips every manual workflow gate. */
   engineSkipped?: boolean;
-  /** Server advertises the next pipeline action. The client auto-fires it
-   * when it is "RUN_AI_ANALYZE" — the user no longer has to click the AI
-   * Analyze button manually after upload. */
+  /** Intake status only; never an instruction to auto-run AI Analyze. */
   nextAction?: string;
   processingJobId?: string;
-  pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+  pipelineStage?: "EXTRACT_TEXT_QUEUED" | null;
   intakeSessionId?: string;
 };
 
@@ -43,7 +37,7 @@ type AdditionalUploadPayload = {
   error?: string;
   results?: Array<{ success?: boolean; fileRecord?: { id: string }; error?: string }>;
   processingJobId?: string;
-  pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+  pipelineStage?: "EXTRACT_TEXT_QUEUED" | null;
 };
 
 function formatMegabytes(bytes: number): string {
@@ -102,7 +96,7 @@ export default function NewTenderPage() {
     uploaded: number;
     failed: number;
     processingJobId: string | null;
-    pipelineStage: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+    pipelineStage: "EXTRACT_TEXT_QUEUED" | null;
   }> {
     const body = new FormData();
     for (const file of batch) body.append("file", file);
@@ -217,9 +211,8 @@ export default function NewTenderPage() {
         }
       }
 
-      // The server enqueues AI_ANALYZE durably — no client-side trigger needed.
-      // The job persists in the AiJob table and runs even if the browser is closed.
-      const pipelineStatus = data.processingJobId ? "queued" : "skipped";
+      // This response describes upload-owned extraction only.
+      const pipelineStatus = pipelineStage === "EXTRACT_TEXT_QUEUED" ? "extracting" : "ready-for-ai-analyze";
 
       if (batches.length > 1) {
         const query = new URLSearchParams({
@@ -284,14 +277,14 @@ export default function NewTenderPage() {
     <div className="max-w-4xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900">New Tender Intake</h1>
-        <p className="mt-1 text-sm text-slate-500">Upload the complete tender package once. The app stores and extracts every source file, then automatically queues AI analysis, matching, and gated draft generation. All records are auto-approved — no manual review required.</p>
+        <p className="mt-1 text-sm text-slate-500">Upload the complete tender package once. The app verifies source bytes and extracts documents automatically. When extraction completes, AI Analyze is ready as a manual action; Run Engine remains the next manual action after analysis.</p>
       </div>
 
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-sm sm:p-6" aria-labelledby="upload-first-heading">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">Recommended</p>
           <h2 id="upload-first-heading" className="mt-1 text-xl font-bold text-slate-900">Upload tender documents first</h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-600">The first secure batch creates the tender and extracts core details. Larger packages are added to the same tender in request-safe batches; analysis starts only after the final batch succeeds.</p>
+          <p className="mt-1 max-w-2xl text-sm text-slate-600">The first secure batch creates the tender. Larger packages are added in request-safe batches, then extraction runs automatically. After the final batch is extracted, open the tender and select AI Analyze.</p>
         </div>
 
         <div className="mt-5 rounded-2xl border border-dashed border-blue-300 bg-white p-4 sm:p-5">

@@ -31,6 +31,7 @@
 // recorded against it in the audit log and the panel can dedupe.
 
 export type ControlSuggestionCode =
+  | "CANONICAL_CURRENT_ACTION"
   | "TENDER_FACTS_INCOMPLETE"
   | "ANALYSIS_NOT_RUN"
   | "REGEX_FALLBACK_UNAPPROVED"
@@ -73,6 +74,7 @@ export type SuggestedControl = {
 };
 
 export type SuggestionDerivationInput = {
+  canonicalDecision?: { nextRequiredAction: string; nextRequiredActionLabel: string; nextRequiredActionReason: string } | null;
   metadataStatus: { criticalMissing: string[] };
   analysisStatus: { source: string | null };
   sourceReferenceStatus?: { ungroundedMandatoryCount: number; totalMandatoryCount: number };
@@ -121,6 +123,11 @@ function mkSuggestion(opts: Omit<SuggestedControl, "id" | "status" | "createdAt"
  * I/O, no side effects.
  */
 export function deriveControlSuggestions(input: SuggestionDerivationInput): SuggestedControl[] {
+  if (input.canonicalDecision) {
+    const decision = input.canonicalDecision;
+    if (["AUTOMATIC_PROCESSING", "WORKFLOW_COMPLETE", "COMPLETE", "EXPORT_READY"].includes(decision.nextRequiredAction)) return [];
+    return [mkSuggestion({ code: "CANONICAL_CURRENT_ACTION", type: "TASK", title: decision.nextRequiredActionLabel, description: decision.nextRequiredActionReason, severity: "HIGH", nextAction: decision.nextRequiredActionLabel })];
+  }
   const out: SuggestedControl[] = [];
 
   // 1. AI providers not configured at all — this should be the first thing
@@ -167,9 +174,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "REGEX_FALLBACK_UNAPPROVED",
       type: "RISK",
       title: "Analysis source is unapproved regex fallback",
-      description: "AI analysis failed and the regex fallback is unapproved. Requirements may be partial; downstream scoring is unreliable. Retry AI Analyze when providers recover, or auto-approve the fallback.",
+      description: "AI analysis failed and the regex fallback is unapproved. Requirements may be partial; downstream scoring is unreliable. Retry AI Analyze when providers recover.",
       severity: "HIGH",
-      nextAction: "Retry AI Analyze, or approve the fallback with a written justification.",
+      nextAction: "Retry AI Analyze when providers are available.",
     }));
   }
 
@@ -182,7 +189,7 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       title: "Complete critical Tender Details",
       description: `${input.metadataStatus.criticalMissing.length} critical field(s) missing (${fieldsList}). The Repair-all button will populate any value that is in the uploaded tender source; the rest must be confirmed manually.`,
       severity: "HIGH",
-      nextAction: "Click 'Repair all empty fields from source' on the Generation panel, then edit any field still empty.",
+      nextAction: "Resolve the current canonical Tender Details action before continuing.",
     }));
   }
 
@@ -206,7 +213,7 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       title: "Mandatory requirements have zero evidence coverage",
       description: `${input.evidenceStatus.totalRequirements} requirement(s) have no linked evidence. Link reviewed experts, projects, or vault documents before generating the proposal.`,
       severity: "HIGH",
-      nextAction: "Confirm reviewed-evidence suggestions on the Requirement Coverage panel, or link evidence from the vault.",
+      nextAction: "Add or strengthen eligible source-backed evidence.",
     }));
   }
 
@@ -228,9 +235,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "PLANNED_DOCS_NOT_GENERATED",
       type: "TASK",
       title: `${input.planStatus.totalMissing} planned document(s) not generated`,
-      description: "Submission plan rows exist but the corresponding generated documents are missing. Click Generate Docs (or 'Generate missing planned documents') to produce them.",
+      description: "Submission plan rows exist but corresponding outputs are not yet available. This is downstream diagnostic information until the canonical workflow reaches generation.",
       severity: "HIGH",
-      nextAction: "Click 'Generate missing planned documents' or 'Generate Docs'.",
+      nextAction: "Wait for or resolve the canonical generation-stage action.",
     }));
   }
 
@@ -254,7 +261,7 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       title: "No active final-export candidates",
       description: "There are no documents currently eligible for the final ZIP. Generate planned documents or repair quality-failed documents before export. Tender-issued forms are sourced automatically from uploaded Tender Intake files.",
       severity: "HIGH",
-      nextAction: "Generate or attach documents until at least one is final-export ready.",
+      nextAction: "Resolve the canonical upstream blocker; export candidates are a downstream consequence.",
     }));
   }
 

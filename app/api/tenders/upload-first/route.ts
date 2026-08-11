@@ -6,7 +6,7 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 type UploadFirstResponse = {
-  pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+  pipelineStage?: "EXTRACT_TEXT_QUEUED" | null;
   queuedExtractionFiles?: number;
 };
 

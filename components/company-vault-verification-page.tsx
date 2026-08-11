@@ -121,7 +121,7 @@ export default function CompanyVaultVerificationPage() {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Company Vault</p>
           <h1 className="mt-1 text-2xl font-bold text-slate-900">Automatic Verification</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-            Company Vault records are promoted automatically when their current exact values match owned, byte-verified source evidence. No human approval step is required between the Vault and Run Engine.
+            Upload company documents once. Extraction and verification run automatically, and verified experts, projects, and supporting records become available to Engine. Records that need a source or become invalid stay blocked; reprocessing is recovery, not a normal step.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -136,11 +136,13 @@ export default function CompanyVaultVerificationPage() {
       {message && <div role="status" className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-700">{message}</div>}
 
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-5 text-sm text-blue-900">
-        <h2 className="font-semibold">Runtime authority</h2>
-        <p className="mt-1 leading-6">Current SOURCE_VERIFIED evidence and current authenticated REVIEWED evidence are equally eligible for matching, generation, export, and Final ZIP. Draft, source-less, stale, altered, expired, or unmatched evidence remains blocked.</p>
-        <p className="mt-2 leading-6">
-          <span className="font-semibold">Partial verification (per-field trust):</span> when a record&rsquo;s identity field (expert name, project name, legal/compliance title, or financial year+type) is verified against source bytes but some inferred fields are not, the record is SOURCE_VERIFIED on its identity. Inferred fields that could not be verified remain non-authoritative — they are listed in the record&rsquo;s provenance payload and <code className="rounded bg-blue-100 px-1 py-0.5 text-xs">canUseVaultRecordField</code> returns <code className="rounded bg-blue-100 px-1 py-0.5 text-xs">false</code> for them. Consumers that cite a specific field (e.g., an expert&rsquo;s years of experience) check the per-field trust before using it.
-        </p>
+        <h2 className="font-semibold">Verification status</h2>
+        <p className="mt-1 leading-6">Verified records are usable automatically. Processing records are still being checked. Records marked Needs source or Invalid / stale remain blocked.</p>
+        <details className="mt-3 rounded-lg border border-blue-200 bg-white/60 p-3">
+          <summary className="cursor-pointer font-semibold">Technical details</summary>
+          <p className="mt-2 leading-6">Current SOURCE_VERIFIED evidence and current authenticated REVIEWED evidence are equally eligible for matching, generation, export, and Final ZIP. No human approval step is required. Draft, source-less, stale, altered, expired, or unmatched evidence remains blocked.</p>
+          <p className="mt-2 leading-6">Per-field provenance remains fail-closed: consumers check <code className="rounded bg-blue-100 px-1 py-0.5 text-xs">canUseVaultRecordField</code> before citing a field.</p>
+        </details>
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

@@ -81,14 +81,16 @@ describe("large tender package intake", () => {
     assert.match(sourcePanel, /searchParams\.get\("packageIntake"\) === "1"/);
     assert.match(sourcePanel, /Large tender package intake completed/);
     assert.match(sourcePanel, /source-file list currently contains <strong>\{files\.length\}<\/strong>/);
-    assert.match(sourcePanel, /automatic AI analysis is queued/);
+    assert.match(sourcePanel, /AI Analyze becomes a manual action/);
     assert.match(sourcePanel, /activeIntakeSession/);
     assert.match(sourcePanel, /Choose expected batch/);
   });
 
-  it("describes queued automation without claiming gated work already completed", () => {
-    assert.match(intakePage, /automatically queues AI analysis, matching, and gated draft generation/);
-    assert.match(intakePage, /analysis starts only after the final batch succeeds/);
+  it("describes automatic extraction without crossing either manual gate", () => {
+    assert.match(intakePage, /extracts documents automatically/);
+    assert.match(intakePage, /manual action/);
+    assert.match(intakePage, /Run Engine remains the next manual action/);
+    assert.doesNotMatch(intakePage, /automatically queues AI analysis/);
     assert.doesNotMatch(intakePage, /Extracting and running engine/);
     assert.doesNotMatch(intakePage, /run analysis, and rank best-fit/);
   });

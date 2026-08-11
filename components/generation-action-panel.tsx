@@ -394,7 +394,12 @@ export async function GenerationActionPanel({
   for (const code of releaseDecision?.blockerCodes ?? []) addCode(code);
   for (const code of canonicalReadiness?.blockers ?? []) addCode(code);
 
-  const truncatedBlockers = [...blockersByCode.values()].slice(0, 8);
+  const canonicalCurrentBlocker = resolvedWorkflowDecision
+    && !AUTOMATIC_NEXT_ACTIONS.has(resolvedWorkflowDecision.nextRequiredAction)
+    && !["WORKFLOW_COMPLETE", "COMPLETE"].includes(resolvedWorkflowDecision.nextRequiredAction)
+      ? [resolvedWorkflowDecision.nextRequiredActionReason]
+      : [];
+  const truncatedBlockers = resolvedWorkflowDecision ? canonicalCurrentBlocker : [...blockersByCode.values()].slice(0, 8);
 
   return (
     <section id="generated-documents" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -403,7 +408,7 @@ export async function GenerationActionPanel({
       <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{statusExplanation(status, resolvedWorkflowDecision)}</p>
       {truncatedBlockers.length > 0 && (
         <div className="mt-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pending items</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current blocker</p>
           <ul className="mt-1 space-y-1 text-sm text-slate-700">
             {truncatedBlockers.map((msg, idx) => (
               <li key={`blk-${idx}`} className="before:content-['•'] before:mr-1.5 before:text-slate-400">{msg}</li>

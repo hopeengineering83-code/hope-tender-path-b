@@ -206,6 +206,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
   }
 
   const coveragePct = Math.round(data.coverageRatio * 100);
+  const progressPct = Math.round(data.weightedProgressRatio * 100);
   // One definition of "unresolved", shared by the stat tile, the filter chip
   // and the filter predicate, so the three can never disagree.
   const unresolvedCount = data.trueEvidenceGaps + data.staleOrInvalidated;
@@ -230,8 +231,9 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
               />
             </div>
             <span className={`text-xs font-semibold ${coveragePct >= 80 ? "text-green-700" : coveragePct >= 50 ? "text-amber-800" : "text-red-700"}`}>
-              {coveragePct}% supported
+              Release-qualified coverage: {data.fullyCovered}/{data.totalMandatory} ({coveragePct}%)
             </span>
+            <span className="text-xs font-medium text-slate-600">Progress including partial evidence: {progressPct}%</span>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -253,7 +255,9 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
           : coveragePct > 0
             ? data.sourceProcessing > 0
               ? "Partially verified. Durable automatic resolution is running; release stays fail-closed until every required provenance check passes."
-              : "Partially verified. No resolver job is queued or running; unresolved requirements are genuine gaps or stale evidence and release remains blocked."
+              : data.partiallyCovered > 0 && data.trueEvidenceGaps === 0 && data.staleOrInvalidated === 0
+                ? `Partial evidence exists for ${data.partiallyCovered} requirement(s), but it is not release-qualified. Strengthen it with eligible source-backed evidence; release remains blocked.`
+                : "Partially verified. Genuine evidence gaps or stale evidence remain; release stays fail-closed until they are resolved."
             : data.sourceProcessing > 0
               ? "Durable automatic resolution is running."
               : "No mandatory requirement is fully verified. No resolver job is queued or running; release remains fail-closed."}
@@ -269,14 +273,14 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
 
       <div className="grid grid-cols-2 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs sm:grid-cols-4">
         {[
-          { label: "Full", value: data.fullyCovered, color: "text-green-700" },
+          { label: "Release-qualified", value: data.fullyCovered, color: "text-green-700" },
           { label: "Partial", value: data.partiallyCovered, color: "text-amber-800" },
           { label: "Automatic verification", value: data.sourceProcessing, color: "text-orange-700" },
           // Counts BOTH unresolved states, matching the filter chip below.
           // Naming this tile "Genuine gaps" while the chip counted genuine gaps
           // plus stale evidence meant the same words carried two numbers, and
           // the four tiles summed to fewer than the rows on screen.
-          { label: "Gaps / unresolved", value: unresolvedCount, color: unresolvedCount > 0 ? "text-red-700" : "text-gray-500" },
+          { label: "Genuine gaps / stale", value: unresolvedCount, color: unresolvedCount > 0 ? "text-red-700" : "text-gray-500" },
         ].map((cell) => (
           <div key={cell.label} className="bg-white py-2">
             <div className={`text-base font-bold ${cell.color}`}>{cell.value}</div>
@@ -309,7 +313,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                   onClick={() => setFilter(value)}
                   className={`rounded px-2.5 py-1 text-xs font-medium transition-colors ${filter === value ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
                 >
-                  {value === "UNRESOLVED" ? "Gaps / unresolved" : value[0] + value.slice(1).toLowerCase()} ({count})
+                  {value === "UNRESOLVED" ? "Genuine gaps / stale" : value[0] + value.slice(1).toLowerCase()} ({count})
                 </button>
               );
             })}
@@ -390,7 +394,7 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                                   {link.sourceFileName && <span className="min-w-0 break-all text-gray-600">Source: {link.sourceFileName}</span>}
                                   <span className={`rounded border px-1 py-0.5 text-[10px] ${support.color}`}>{support.label}</span>
                                   {link.autoLinked && <span className="rounded bg-blue-100 px-1 py-0.5 text-[10px] font-medium text-blue-700">Automatically linked</span>}
-                                  {typeof link.linkageScore === "number" && <span className="text-[10px] text-gray-600">{Math.round(link.linkageScore)}% fit</span>}
+                                  {typeof link.linkageScore === "number" && <span className="text-[10px] text-gray-600">Evidence relevance · {Math.round(link.linkageScore)}%</span>}
                                 </div>
                                 {link.linkageReasons.length > 0 && (
                                   <p className="mt-1 text-[10px] text-gray-600">{link.linkageReasons.join(" · ")}</p>

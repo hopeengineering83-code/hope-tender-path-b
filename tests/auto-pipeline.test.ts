@@ -27,16 +27,6 @@ describe("manual AI Analyze / manual Run Engine workflow", () => {
       }),
       EXTRACT_TEXT_WORKER_ENDPOINT,
     );
-    // AI_ANALYZE_QUEUED → browser must NOT nudge. The user must click
-    // "Run AI Analyze" manually via POST /api/tenders/:id/manual-ai-analyze.
-    assert.equal(
-      decideTenderUploadAutoPipeline({
-        ...response,
-        processingJobId: "job-456",
-        pipelineStage: "AI_ANALYZE_QUEUED",
-      }),
-      null,
-    );
     // No pipelineStage → no nudge.
     assert.equal(
       decideTenderUploadAutoPipeline({
@@ -88,31 +78,6 @@ describe("manual AI Analyze / manual Run Engine workflow", () => {
       assert.equal(result.fired, true);
       assert.equal(result.endpoint, EXTRACT_TEXT_WORKER_ENDPOINT);
       assert.equal(result.status, "queued");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("does NOT nudge AI_ANALYZE even if the server reports AI_ANALYZE_QUEUED", async () => {
-    const originalFetch = globalThis.fetch;
-    const endpoints: string[] = [];
-    globalThis.fetch = (async (input) => {
-      endpoints.push(String(input));
-      return new Response(JSON.stringify({ ran: 1 }), { status: 200 });
-    }) as typeof fetch;
-    try {
-      const result = await triggerTenderUploadAutoPipeline({
-        success: true,
-        tenderId: "tender-abc",
-        processingJobId: "job-456",
-        pipelineStage: "AI_ANALYZE_QUEUED",
-      });
-      // The browser must NOT nudge AI_ANALYZE. The user must click
-      // "Run AI Analyze" manually.
-      assert.deepEqual(endpoints, []);
-      assert.equal(result.fired, false);
-      assert.equal(result.endpoint, null);
-      assert.match(result.message, /Run AI Analyze/i);
     } finally {
       globalThis.fetch = originalFetch;
     }

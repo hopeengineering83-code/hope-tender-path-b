@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type SecureUploadResponse = {
-  pipelineStage?: "EXTRACT_TEXT_QUEUED" | "AI_ANALYZE_QUEUED" | null;
+  pipelineStage?: "EXTRACT_TEXT_QUEUED" | null;
   companyImport?: { status?: string } | null;
   results?: Array<{ success?: boolean; scope?: string }>;
 };

@@ -83,16 +83,26 @@ function EvidenceList({ title, rows }: { title: string; rows: SelectedEvidenceCa
                   {row.subtitle && <p className="text-xs text-slate-600">{row.subtitle}</p>}
                 </div>
                 <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-800">
-                  Linked · {Math.round(row.score * 100)}%
+                  Match relevance · {Math.round(row.score * 100)}%
                 </span>
               </div>
-              {row.rationale && <p className="mt-2 text-xs text-slate-600">{row.rationale}</p>}
+              {row.rationale && <p className="mt-2 text-xs text-slate-600">{operatorMatchReason(row)}</p>}
             </li>
           ))}
         </ul>
       )}
     </div>
   );
+}
+
+export function operatorMatchReason(row: SelectedEvidenceCandidate): string {
+  const text = `${row.subtitle ?? ""} ${row.rationale ?? ""}`.toLowerCase();
+  if (/sector|industry/.test(text)) return "Same sector";
+  if (/discipline|expert|role|qualification/.test(text)) return "Relevant discipline";
+  if (/service|scope|assignment/.test(text)) return "Similar project scope";
+  if (/contract|procurement/.test(text)) return "Comparable contract type";
+  if (/experience|project|portfolio/.test(text)) return "Verified prior experience";
+  return "Relevant source-verified company evidence";
 }
 
 export function MatchingSelectedEvidencePanel({
@@ -386,6 +396,7 @@ export function MatchingSelectedEvidencePanel({
         <EvidenceList title={`Selected experts (${selectedExperts.length})`} rows={selectedExperts} />
         <EvidenceList title={`Selected projects (${selectedProjects.length})`} rows={selectedProjects} />
       </div>
+      {hasSelection && <p className="mt-3 text-xs text-slate-600">Relevance score only — requirement coverage and release readiness are measured separately.</p>}
 
       <details className="group mt-4 rounded-xl border border-slate-200 bg-slate-50">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 marker:content-none">
@@ -401,9 +412,9 @@ export function MatchingSelectedEvidencePanel({
                 <li key={row.id} className="rounded-lg border border-slate-200 bg-white p-3 text-sm">
                   <div className="flex flex-wrap justify-between gap-2">
                     <span className="font-medium text-slate-900">{row.name}</span>
-                    <span className="text-slate-600">{Math.round(row.score * 100)}% fit</span>
+                    <span className="text-slate-600">Match relevance · {Math.round(row.score * 100)}%</span>
                   </div>
-                  {row.rationale && <p className="mt-1 text-xs text-slate-600">{row.rationale}</p>}
+                  {row.rationale && <p className="mt-1 text-xs text-slate-600">{operatorMatchReason(row)}</p>}
                 </li>
               ))}
             </ul>

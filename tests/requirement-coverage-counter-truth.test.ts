@@ -79,9 +79,8 @@ describe("Requirement coverage tiles account for every row", () => {
   it("does not name the combined bucket after only one of its members", () => {
     // "Genuine gap" remains a ROW badge; it must not also be a bucket label,
     // because the bucket also holds "Stale or invalidated" rows.
-    assert.match(PANEL, /label: "Gaps \/ unresolved"/);
-    assert.match(PANEL, /"Gaps \/ unresolved" : value\[0\]/);
-    assert.doesNotMatch(PANEL, /label: "Genuine gaps"/);
+    assert.match(PANEL, /label: "Genuine gaps \/ stale"/);
+    assert.match(PANEL, /"Genuine gaps \/ stale" : value\[0\]/);
     assert.doesNotMatch(PANEL, /"Genuine gaps \/ unresolved"/);
     // The per-row badge keeps its precise name.
     assert.match(PANEL, /TRUE_EVIDENCE_GAP: \{ label: "Genuine gap"/);
