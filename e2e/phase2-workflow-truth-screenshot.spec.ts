@@ -233,12 +233,21 @@ test.describe("Phase 2 rendered 2/4 evidence workflow truth", () => {
 
   test("all rendered panels agree that Engine completed and source evidence is required", async ({ page }, testInfo) => {
     await page.goto("/login");
-    await page.locator('input[type="email"]').fill(email);
-    await page.locator('input[type="password"]').fill(password);
-    await Promise.all([
-      page.waitForURL((url) => url.pathname.startsWith("/dashboard"), { timeout: 30_000 }),
-      page.locator('button[type="submit"]').click(),
-    ]);
+    const login = await page.context().request.post("/api/auth/login", { data: { email, password } });
+    expect(login.status(), await login.text()).toBe(200);
+    const sessionHeader = login.headersArray().find(
+      (header) => header.name.toLowerCase() === "set-cookie" && header.value.startsWith("hope_session="),
+    );
+    expect(sessionHeader, "fixture login must return a session cookie").toBeTruthy();
+    const sessionValue = sessionHeader!.value.split(";")[0].split("=").slice(1).join("=");
+    await page.context().addCookies([{
+      name: "hope_session",
+      value: sessionValue,
+      url: new URL(page.url()).origin,
+      httpOnly: true,
+      secure: false,
+      sameSite: "Lax",
+    }]);
 
     // Exercise the real server-side automatic Build Plan service instead of
     // importing server modules through Playwright's CommonJS transform.
