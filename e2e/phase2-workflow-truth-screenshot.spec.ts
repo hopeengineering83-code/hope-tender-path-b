@@ -283,7 +283,11 @@ test.describe("Phase 2 rendered 2/4 evidence workflow truth", () => {
     await expect(page.getByText("Blocked — source evidence required", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText("Engine complete. Downstream processing continues automatically.", { exact: true })).toHaveCount(0);
 
-    const screenshot = await page.screenshot({ fullPage: true, animations: "disabled" });
+    const screenshot = await page.screenshot({
+      path: "browser-results/phase2-engine-complete-source-evidence-required.png",
+      fullPage: true,
+      animations: "disabled",
+    });
     await testInfo.attach("phase2-engine-complete-source-evidence-required", {
       body: screenshot,
       contentType: "image/png",
