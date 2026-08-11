@@ -15,12 +15,14 @@
 // No icons, badges, emoji, icon packages or decorative graphics.
 
 import React from "react";
+import type { PrismaClient } from "@prisma/client";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 import type { CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 import { classifyReleaseStatus } from "../lib/release-status-classifier";
 import { releaseBlockerLabel } from "../lib/ui/human-labels";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
+import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
 
 type GenerationReadiness = {
   ready: boolean;
@@ -85,16 +87,59 @@ const EVIDENCE_BLOCKER_CODES = new Set([
   "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE",
 ]);
 
+/** The blocker codes + parallel human sentences the canonical workflow
+ * decision reports for this tender. */
+export type PanelWorkflowDecision = {
+  blockerCodes: string[];
+  blockerDetails: string[];
+};
+
+/**
+ * Load the canonical workflow decision's blockers for this panel.
+ *
+ * The panel used to collect blocker codes from four sources only:
+ * readiness.blockers, readiness.fullProposalBlockers,
+ * releaseDecision.blockerCodes and canonicalReadiness.blockers. None of them
+ * emits MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE — that code exists only in
+ * canonical-workflow-decision.ts. So the panel kept reporting "Processing
+ * automatically — the workflow is running ... processing continues
+ * server-side" while the header above it already said "Source evidence
+ * required", and the owner waited for a worker that would never run.
+ *
+ * canonical-workflow-decision.ts names the "Generation Action / Readiness
+ * panels" among its intended consumers; this is that wiring. It is a read of
+ * the SAME resolver the header and the workflow-center route use, so the two
+ * surfaces cannot disagree.
+ *
+ * Fails soft: a decision that cannot be loaded contributes no codes, leaving
+ * the previous four sources to classify exactly as before.
+ */
+export async function resolveGenerationPanelWorkflowDecision(
+  client: PrismaClient,
+  userId: string,
+  tenderId: string,
+): Promise<PanelWorkflowDecision | null> {
+  const decision = await getCanonicalTenderWorkflowDecision(client, userId, tenderId)
+    .catch(() => null);
+  if (!decision) return null;
+  return {
+    blockerCodes: decision.blockerCodes ?? [],
+    blockerDetails: decision.blockerDetails ?? [],
+  };
+}
+
 function collectedBlockerCodes(
   readiness: GenerationReadiness | null,
   canonicalReadiness?: CanonicalTenderReadiness | null,
   releaseDecision?: { blockerCodes: string[] } | null,
+  workflowDecision?: PanelWorkflowDecision | null,
 ): string[] {
   return [
     ...(readiness?.blockers ?? []).map((blocker) => blocker.code),
     ...(readiness?.fullProposalBlockers ?? []).map((blocker) => blocker.code),
     ...(releaseDecision?.blockerCodes ?? []),
     ...(canonicalReadiness?.blockers ?? []),
+    ...(workflowDecision?.blockerCodes ?? []),
   ];
 }
 
@@ -105,9 +150,10 @@ export function deriveTruthfulReleaseStatus(
   canonicalReadiness: CanonicalTenderReadiness | null | undefined,
   releaseDecision: { status: ReleaseStatus; blockerCodes: string[] } | null | undefined,
   activeDownstreamWork: boolean,
+  workflowDecision?: PanelWorkflowDecision | null,
 ): ReleaseStatus {
   const status = releaseDecision?.status ?? deriveReleaseStatus(readiness, canonicalReadiness);
-  const evidenceBlocked = collectedBlockerCodes(readiness, canonicalReadiness, releaseDecision)
+  const evidenceBlocked = collectedBlockerCodes(readiness, canonicalReadiness, releaseDecision, workflowDecision)
     .some((code) => EVIDENCE_BLOCKER_CODES.has(code));
   return status === "PROCESSING_AUTOMATICALLY" && evidenceBlocked && !activeDownstreamWork
     ? "GENUINE_SOURCE_BLOCKED"
@@ -199,6 +245,7 @@ export async function GenerationActionPanel({
   canMutate: _canMutate = false,
   releaseDecision,
   activeDownstreamWork = false,
+  workflowDecision = null,
 }: {
   tenderId: string;
   readiness: GenerationReadiness | null;
@@ -211,21 +258,35 @@ export async function GenerationActionPanel({
     blockerCodes: string[];
   } | null;
   activeDownstreamWork?: boolean;
+  // The canonical workflow decision's blockers. Supplied by callers that
+  // already hold one; otherwise the panel loads it below from the same
+  // resolver the header and workflow-center route read.
+  workflowDecision?: PanelWorkflowDecision | null;
 }) {
   let hasActiveDownstreamWork = activeDownstreamWork;
-  if (!hasActiveDownstreamWork) {
+  let resolvedWorkflowDecision = workflowDecision;
+  if (!hasActiveDownstreamWork || !resolvedWorkflowDecision) {
     const userId = await getSession();
     if (userId) {
       await prismaReady;
-      hasActiveDownstreamWork = Boolean(await prisma.aiJob.findFirst({
-        where: {
+      if (!hasActiveDownstreamWork) {
+        hasActiveDownstreamWork = Boolean(await prisma.aiJob.findFirst({
+          where: {
+            userId,
+            tenderId: _tenderId,
+            jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"] },
+            status: { in: ["QUEUED", "RUNNING"] },
+          },
+          select: { id: true },
+        }).catch(() => null));
+      }
+      if (!resolvedWorkflowDecision) {
+        resolvedWorkflowDecision = await resolveGenerationPanelWorkflowDecision(
+          prisma as unknown as PrismaClient,
           userId,
-          tenderId: _tenderId,
-          jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"] },
-          status: { in: ["QUEUED", "RUNNING"] },
-        },
-        select: { id: true },
-      }).catch(() => null));
+          _tenderId,
+        );
+      }
     }
   }
   // Blocker 3: prefer the server-computed releaseDecision. Only fall back to
@@ -236,6 +297,7 @@ export async function GenerationActionPanel({
     canonicalReadiness,
     releaseDecision,
     hasActiveDownstreamWork,
+    resolvedWorkflowDecision,
   );
 
   // Collect blockers for display, keyed by code so the SAME blocker cannot be
@@ -266,6 +328,16 @@ export async function GenerationActionPanel({
 
   for (const b of readiness?.blockers ?? []) addMessage(b.code, b.message);
   for (const b of readiness?.fullProposalBlockers ?? []) addMessage(b.code, b.message);
+  // The canonical decision ships a human sentence alongside every code (for
+  // the coverage gate: "2/4 mandatory requirements have FULL/SUBSTANTIAL
+  // coverage. Add genuine owned source evidence for unsupported
+  // requirements."). Read it as a message source so the reason the workflow
+  // stopped is stated, not left as a bare identifier.
+  (resolvedWorkflowDecision?.blockerCodes ?? []).forEach((code, index) => {
+    const detail = resolvedWorkflowDecision?.blockerDetails[index];
+    if (detail) addMessage(code, detail);
+    else addCode(code);
+  });
   for (const code of releaseDecision?.blockerCodes ?? []) addCode(code);
   for (const code of canonicalReadiness?.blockers ?? []) addCode(code);
 

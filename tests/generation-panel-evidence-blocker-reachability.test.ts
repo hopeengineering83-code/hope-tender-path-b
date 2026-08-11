@@ -1,0 +1,112 @@
+// Contract — every evidence blocker the release panel classifies must be
+// reachable from a source the panel actually reads.
+//
+// EVIDENCE_BLOCKER_CODES is the set that flips PROCESSING_AUTOMATICALLY to
+// GENUINE_SOURCE_BLOCKED. Listing a code there does nothing unless some
+// module the panel collects from emits it. MANDATORY_NO_FULL_SUBSTANTIAL_
+// COVERAGE sat in that set for as long as the set existed while being emitted
+// only by canonical-workflow-decision.ts, which the panel did not read — so
+// the panel told the owner the workflow was "running ... server-side" while
+// the header said source evidence was required.
+//
+// These assertions are static and need no database, so the reachability gap
+// is caught on every run rather than only under RUN_DB_INTEGRATION.
+
+import { describe, it } from "node:test";
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+
+const read = (path: string) => readFileSync(path, "utf8");
+
+const panelSource = read("components/generation-action-panel.tsx");
+
+// The blocker-producing modules the panel collects from, and the collection
+// expression in the panel that proves it reads each one.
+const PANEL_SOURCES: Array<{ module: string; collectedBy: string }> = [
+  { module: "lib/tender-generation-readiness.ts", collectedBy: "readiness?.blockers" },
+  { module: "lib/tender-generation-readiness.ts", collectedBy: "readiness?.fullProposalBlockers" },
+  { module: "lib/canonical-tender-readiness.ts", collectedBy: "canonicalReadiness?.blockers" },
+  { module: "lib/canonical-release-decision.ts", collectedBy: "releaseDecision?.blockerCodes" },
+  { module: "lib/engine/canonical-workflow-decision.ts", collectedBy: "workflowDecision?.blockerCodes" },
+];
+
+function evidenceBlockerCodes(): string[] {
+  const block = panelSource.match(/const EVIDENCE_BLOCKER_CODES = new Set\(\[([\s\S]*?)\]\)/);
+  assert.ok(block, "EVIDENCE_BLOCKER_CODES must remain a literal set in the panel");
+  return [...block[1].matchAll(/"([A-Z0-9_]+)"/g)].map((match) => match[1]);
+}
+
+describe("generation panel evidence blockers are reachable", () => {
+  it("the panel collects from every listed producer module", () => {
+    for (const source of PANEL_SOURCES) {
+      assert.ok(
+        panelSource.includes(source.collectedBy),
+        `collectedBlockerCodes must read ${source.collectedBy} (${source.module})`,
+      );
+    }
+  });
+
+  it("every evidence blocker code is emitted by a producer the panel actually reads", () => {
+    // Deliberately derived from the panel's own collection expressions rather
+    // than from the PANEL_SOURCES list: a producer the panel stopped reading
+    // must stop counting towards reachability, which is exactly the failure
+    // that hid the coverage blocker.
+    const producers = [...new Set(
+      PANEL_SOURCES
+        .filter((source) => panelSource.includes(source.collectedBy))
+        .map((source) => source.module),
+    )].map((module) => ({ module, source: read(module) }));
+
+    const unreachable: string[] = [];
+    for (const code of evidenceBlockerCodes()) {
+      const emitted = producers.some((producer) => producer.source.includes(`"${code}"`));
+      if (!emitted) unreachable.push(code);
+    }
+    assert.deepEqual(
+      unreachable,
+      [],
+      "these codes can never reach the panel, so they can never flip the status",
+    );
+  });
+
+  it("the workflow decision can only contribute the mandatory-coverage blocker", () => {
+    // Bounds the blast radius of reading the canonical decision: of every
+    // stage it can block on, only the coverage gate is an evidence blocker.
+    // If a future stage joins EVIDENCE_BLOCKER_CODES, that is a deliberate
+    // decision and this assertion must be updated with it.
+    const workflowSource = read("lib/engine/canonical-workflow-decision.ts");
+    const priorityBlock = workflowSource.match(
+      /export type WorkflowBlockerPriority =([\s\S]*?);/,
+    );
+    assert.ok(priorityBlock, "WorkflowBlockerPriority must remain a literal union");
+    const stages = [...priorityBlock[1].matchAll(/"([A-Z0-9_]+)"/g)].map((match) => match[1]);
+    assert.ok(stages.length > 10, "expected the full workflow priority union");
+
+    const evidence = new Set(evidenceBlockerCodes());
+    assert.deepEqual(
+      stages.filter((stage) => evidence.has(stage)),
+      ["MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"],
+    );
+  });
+
+  it("keeps the mandatory-coverage gate itself intact", () => {
+    // The gate is genuine — Bid Strategy independently reports the same
+    // capability gap. This test exists so a future "fix" for the
+    // contradiction cannot resolve it by relaxing the gate instead.
+    const workflowSource = read("lib/engine/canonical-workflow-decision.ts");
+    assert.match(
+      workflowSource,
+      /if \(input\.mandatoryFullOrSubstantialCoverageCount < input\.mandatoryRequirementCount\) \{\s*\n\s*blockerCodes\.push\("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"\);/,
+    );
+    assert.match(workflowSource, /no confirmation click can bypass this gate/);
+  });
+
+  it("only a genuinely running job may keep the 'processing automatically' claim", () => {
+    assert.match(
+      panelSource,
+      /status === "PROCESSING_AUTOMATICALLY" && evidenceBlocked && !activeDownstreamWork/,
+    );
+    assert.match(panelSource, /jobType: \{ in: \["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"\] \}/);
+    assert.match(panelSource, /status: \{ in: \["QUEUED", "RUNNING"\] \}/);
+  });
+});
