@@ -22,6 +22,10 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import {
+  describeAIAnalyzeWorkflowState,
+  describeMatchingEngineState,
+} from "../lib/engine/workflow-panel-presentation";
 
 const aiPanel = readFileSync("components/ai-analyze-panel.tsx", "utf8");
 const matchingPanel = readFileSync("components/matching-selected-evidence-panel.tsx", "utf8");
@@ -150,13 +154,37 @@ describe("truthful status messages", () => {
     assert.match(aiPanel, /Canonical source extraction is still running/);
     assert.match(aiPanel, /Extraction complete\. Run AI Analyze to continue\./);
     assert.match(aiPanel, /AI Analyze is running\./);
-    assert.match(aiPanel, /AI Analyze complete\. Run Engine to continue\./);
+    assert.equal(
+      describeAIAnalyzeWorkflowState({
+        analysisCurrent: true,
+        engineRunning: false,
+        engineComplete: false,
+        engineFailed: false,
+        canRunEngine: true,
+        activeJob: null,
+      }),
+      "AI Analyze complete. Run Engine to continue.",
+    );
   });
 
   it("Run Engine panel shows correct status for each state", () => {
-    assert.match(matchingPanel, /Run AI Analyze first to enable Engine\./);
-    assert.match(matchingPanel, /Engine is running/);
-    assert.match(matchingPanel, /Engine complete\. Downstream processing continues automatically\./);
+    const base = {
+      analysisCurrent: false,
+      engineRunning: false,
+      engineComplete: false,
+      engineFailed: false,
+      canRunEngine: false,
+      activeJob: null,
+    };
+    assert.equal(describeMatchingEngineState(base, false), "Run AI Analyze first to enable Engine.");
+    assert.match(
+      describeMatchingEngineState({ ...base, analysisCurrent: true, engineRunning: true }, false),
+      /Engine is running/,
+    );
+    assert.equal(
+      describeMatchingEngineState({ ...base, analysisCurrent: true, engineComplete: true }, true),
+      "Engine complete. Downstream processing continues automatically.",
+    );
   });
 
   it("workflow-step-links shows correct status messages", () => {

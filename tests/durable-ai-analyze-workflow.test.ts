@@ -7,6 +7,7 @@ import {
   isTerminalHandlerResult,
   type AnalyzeExecOutcome,
 } from "../lib/ai-job-handlers";
+import { describeAIAnalyzeWorkflowState } from "../lib/engine/workflow-panel-presentation";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const FULL: AnalyzeExecOutcome = { success: true, isPartial: false, completedChunks: 3 };
@@ -93,8 +94,18 @@ describe("AI Analyze is a MANUAL user action via the manual-ai-analyze route", (
     assert.doesNotMatch(panel, /text\/event-stream|getReader\(\)/);
     // The panel polls job status via /api/ai-jobs/${jobId} (state variable).
     assert.match(panel, /\/api\/ai-jobs\/\$\{jobId\}/);
-    // The panel shows truthful status messages.
-    assert.match(panel, /AI Analyze complete\. Run Engine to continue\./);
+    // The shared current-revision presenter owns the completed-stage wording.
+    assert.equal(
+      describeAIAnalyzeWorkflowState({
+        analysisCurrent: true,
+        engineRunning: false,
+        engineComplete: false,
+        engineFailed: false,
+        canRunEngine: true,
+        activeJob: null,
+      }),
+      "AI Analyze complete. Run Engine to continue.",
+    );
     assert.match(panel, /Check provider diagnostics/);
   });
 });

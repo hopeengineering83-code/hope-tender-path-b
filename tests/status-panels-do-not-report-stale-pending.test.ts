@@ -72,9 +72,10 @@ describe("AI Analyze completion is derived from server state, not only polling",
   it("completion is not gated on polling state alone", () => {
     const line = panel.split("\n").find((l) => l.includes("const analysisComplete"));
     assert.ok(line, "analysisComplete must still exist");
-    assert.ok(
-      /readiness\?\.analysisCurrent/.test(line!),
-      `analysisComplete is derived from canonical readiness, not polling state alone: ${line}`,
+    assert.match(
+      panel,
+      /engineState\.analysisCurrent\s*:\s*readiness\?\.analysisCurrent === true/,
+      `analysisComplete must prefer current-revision Engine authority and retain canonical source readiness fallback: ${line}`,
     );
   });
 
@@ -83,10 +84,8 @@ describe("AI Analyze completion is derived from server state, not only polling",
     // The `analyzing` state is tracked separately and prevents the panel
     // from showing "complete" while a job is actively running.
     const line = panel.split("\n").find((l) => l.includes("const analysisComplete"))!;
-    assert.ok(
-      /readiness\?\.analysisCurrent/.test(line),
-      "analysisComplete must be derived from canonical readiness",
-    );
+    assert.match(line, /engineState/, "analysisComplete must prefer live current-revision Engine state");
+    assert.match(panel, /engineState\?\.engineRunning/, "the Engine authority must drive active polling");
     // The panel must also track analyzing state separately.
     assert.match(panel, /analyzing.*useState/);
   });
