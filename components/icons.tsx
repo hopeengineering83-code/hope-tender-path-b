@@ -46,7 +46,7 @@ export function SparklesIcon(props: IconProps) {
   );
 }
 
-/** Lightning bolt — Generate Docs. Replaces ⚡ */
+/** Lightning bolt — document generation. Replaces ⚡ */
 export function BoltIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

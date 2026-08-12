@@ -86,6 +86,43 @@ function isProposalResponseRequirement(type: string): boolean {
   return ["FORMAT", "SUBMISSION_RULE", "FORM", "ANNEX", "SCHEDULE", "TECHNICAL", "METHODOLOGY", "COMPANY_PROFILE", "DECLARATION"].includes(type);
 }
 
+/** A bare UUID or cuid — an identifier that tells a reviewer nothing. */
+const OPAQUE_ID = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|c[a-z0-9]{24,})$/i;
+
+export function isOpaqueEvidenceReference(value: string | null | undefined): boolean {
+  return OPAQUE_ID.test((value ?? "").trim());
+}
+
+/**
+ * The first candidate a reviewer could actually check.
+ *
+ * Two rules, and the order between them is the point:
+ *
+ *   1. Blank and whitespace-only candidates are skipped. `??` alone does not
+ *      do this — `record.referenceNumber ?? record.title` keeps an empty
+ *      string and never reaches the title, so a record with a real title
+ *      rendered as nothing at all.
+ *   2. A bare UUID/cuid is held back and returned only if no candidate has a
+ *      name. Dropping it entirely would be worse: the row would then read as
+ *      having no evidence when it has some, which understates the tender.
+ *      Nothing is ever invented to fill the gap.
+ */
+export function recognizableEvidenceReference(
+  ...candidates: Array<string | null | undefined>
+): string | undefined {
+  let opaqueFallback: string | undefined;
+  for (const candidate of candidates) {
+    const value = (candidate ?? "").trim();
+    if (!value) continue;
+    if (isOpaqueEvidenceReference(value)) {
+      opaqueFallback ??= value;
+      continue;
+    }
+    return value;
+  }
+  return opaqueFallback;
+}
+
 export function buildCompliance(
   requirementIds: Array<{ id: string; requirement: RequirementDraft }>,
   knowledge: CompanyKnowledgeSnapshot,
@@ -115,7 +152,8 @@ export function buildCompliance(
     knowledge.projects.map((project: { id: string; name?: string | null }) => [project.id, (project.name ?? "").trim()]),
   );
   /** Prefer the record's own name; fall back to the id rather than losing the reference. */
-  const nameOrId = (lookup: Map<string, string>, id: string): string => lookup.get(id) || id;
+  const nameOrId = (lookup: Map<string, string>, id: string): string =>
+    recognizableEvidenceReference(lookup.get(id), id) ?? id;
   const legalDocument = findCategorizedSupportDocument(knowledge, ["LEGAL_REGISTRATION"], [/LEGAL_REGISTRATION/i, /registration/i, /licen[cs]e/i, /certificate/i, /\btin\b/i, /\bvat\b/i]);
   const financialDocument = findCategorizedSupportDocument(knowledge, ["FINANCIAL_STATEMENT"], [/FINANCIAL_STATEMENT/i, /audit/i, /financial/i, /turnover/i, /balance sheet/i]);
   const complianceDocument = findCategorizedSupportDocument(knowledge, ["CERTIFICATION", "COMPLIANCE_RECORD", "MANUAL"], [/CERTIFICATION/i, /COMPLIANCE_RECORD/i, /MANUAL/i, /declaration/i, /certificate/i, /policy/i, /manual/i]);
@@ -176,21 +214,34 @@ export function buildCompliance(
       evidenceSummary = legalCount > 0 ? `${legalCount} relevant legal/company registration evidence source(s) available.` : "No relevant legal/company registration evidence was found in the Company Vault.";
       evidenceType = legalCount > 0 ? "LEGAL_RECORD" : "UNMAPPED";
       evidenceSource = legalCount > 0 ? "Company legal/support documents" : "No legal records found";
-      evidenceReference = knowledge.legalRecords[0]?.referenceNumber ?? knowledge.legalRecords[0]?.title ?? legalDocument?.originalFileName;
+      evidenceReference = recognizableEvidenceReference(
+        knowledge.legalRecords[0]?.referenceNumber,
+        knowledge.legalRecords[0]?.title,
+        legalDocument?.originalFileName,
+      );
     } else if (["FINANCIAL", "FINANCIAL_CAPACITY"].includes(req.requirementType)) {
       supportStrength = financialCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 0.75 ? "SUPPORTED" : supportStrength > 0 ? "EVIDENCE_PENDING_REVIEW" : "UNSUPPORTED";
       evidenceSummary = financialCount > 0 ? `${financialCount} relevant financial evidence source(s) available for internal evidence mapping.` : "No relevant financial evidence was found in the Company Vault.";
       evidenceType = financialCount > 0 ? "FINANCIAL_RECORD" : "UNMAPPED";
       evidenceSource = financialCount > 0 ? "Company financial/support documents" : "No financial records found";
-      evidenceReference = knowledge.financialRecords[0] ? `${knowledge.financialRecords[0].recordType} ${knowledge.financialRecords[0].fiscalYear}` : financialDocument?.originalFileName;
+      evidenceReference = recognizableEvidenceReference(
+        knowledge.financialRecords[0]
+          ? `${knowledge.financialRecords[0].recordType ?? ""} ${knowledge.financialRecords[0].fiscalYear ?? ""}`.trim()
+          : undefined,
+        financialDocument?.originalFileName,
+      );
     } else if (["COMPLIANCE", "CERTIFICATION", "DECLARATION"].includes(req.requirementType)) {
       supportStrength = complianceCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 1 ? "SUPPORTED" : "UNSUPPORTED";
       evidenceSummary = complianceCount > 0 ? `${complianceCount} relevant compliance/certification/support evidence source(s) available.` : "No relevant compliance or supporting document was found in the Company Vault.";
       evidenceType = complianceCount > 0 ? "COMPANY_COMPLIANCE_RECORD" : "UNMAPPED";
       evidenceSource = complianceCount > 0 ? "Company compliance/support documents" : "No relevant Company Vault evidence found";
-      evidenceReference = knowledge.complianceRecords[0]?.referenceNumber ?? knowledge.complianceRecords[0]?.title ?? complianceDocument?.originalFileName;
+      evidenceReference = recognizableEvidenceReference(
+        knowledge.complianceRecords[0]?.referenceNumber,
+        knowledge.complianceRecords[0]?.title,
+        complianceDocument?.originalFileName,
+      );
     } else if (req.requirementType === "COMPANY_PROFILE") {
       supportStrength = companyProfileCount > 0 ? 1 : 0;
       supportStatus = supportStrength >= 1 ? "SUPPORTED" : "UNSUPPORTED";

@@ -743,7 +743,7 @@ export async function computeTenderLifecycle(
     primaryNextAction = providers.hasAnyProvider ? "RETRY_AI_ANALYZE" : "APPROVE_FALLBACK_WITH_NOTE";
     blockers.push({
       code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
-      message: "Analysis used the regex fallback (all AI providers failed). Generate Docs, Auto-finalize, and Download ZIP are blocked until AI analysis succeeds. Human approval is audit-only and does NOT authorize release.",
+      message: "Analysis used the regex fallback (all AI providers failed). Document generation, auto-finalize, and Download ZIP are blocked until AI analysis succeeds. Human approval is audit-only and does NOT authorize release.",
       action: providers.hasAnyProvider ? "Retry AI Analyze — providers may be available again." : "Re-run AI Analyze after restoring provider access.",
     });
   }
@@ -757,7 +757,7 @@ export async function computeTenderLifecycle(
     primaryNextAction = "RETRY_AI_ANALYZE";
     blockers.push({
       code: "ANALYSIS_FALLBACK_AUDIT_ONLY",
-      message: "Analysis used the regex fallback and was human-approved as audit-only. Human approval no longer authorizes Generate Docs, Auto-finalize, Export, Download ZIP, or any release action. Re-run AI Analyze with healthy providers to obtain a genuine AI analysis.",
+      message: "Analysis used the regex fallback and was human-approved as audit-only. Human approval no longer authorizes document generation, auto-finalize, export, Download ZIP, or any release action. Re-run AI Analyze with healthy providers to obtain a genuine AI analysis.",
       action: "Retry AI Analyze — providers may be available again. The audit-only approval is preserved for record-keeping.",
     });
   }
@@ -860,7 +860,7 @@ export async function computeTenderLifecycle(
   else if (counts.plannedMissingDocs > 0 || (plan.totalRequired > 0 && counts.finalExportCandidates === 0)) {
     lifecycleState = "DOCUMENT_GENERATION_REQUIRED";
     primaryNextAction = "GENERATE_REQUIRED_DOCUMENTS";
-    blockers.push({ code: "DOCUMENTS_NOT_GENERATED", message: `${counts.plannedMissingDocs} required submission document(s) are planned but not generated.`, action: "Click 'Generate missing planned documents' or 'Generate Docs'." });
+    blockers.push({ code: "DOCUMENTS_NOT_GENERATED", message: `${counts.plannedMissingDocs} required submission document(s) are planned but not generated.`, action: "No manual generation step exists. Generation runs automatically once Run Engine succeeds and no upstream blocker remains; resolve the current canonical workflow action." });
   }
   // 12. Official originals required
   else if (officialRequired > officialAttached) {

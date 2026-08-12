@@ -187,7 +187,7 @@ function nextActionForReason(reason: string): string {
   if (/reviewStatus/i.test(reason)) return "Complete human review and mark the document READY_FOR_EXPORT.";
   if (/fileContent|MISSING_CONTENT/i.test(reason)) return "Regenerate or upload the missing DOCX/PDF file content.";
   if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|not a final export/i.test(reason)) {
-    return "Use Generate Docs; quick drafts, placeholders and control rows cannot be exported.";
+    return "Automatic generation produces the exportable submission files; quick drafts, placeholders and control rows cannot be exported.";
   }
   return "Review and resolve this blocker before final export.";
 }

@@ -25,6 +25,7 @@ import {
   canUseVaultRecord,
 } from "../../../../../lib/vault-review-provenance";
 import { loadDurableCompanySupportRecords } from "../../../../../lib/prisma-schema-compatibility";
+import { manualGateGuidance } from "../../../../../lib/ui/manual-gate-guidance";
 
 // Confidence ceiling applied to bid-strategy win probability when the tender
 // analysis came from regex/deterministic fallback. The strategy is computed
@@ -195,12 +196,17 @@ export async function GET(
     extractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
     extractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
   if (extractionBlocked) {
+    // Gap A: the guidance is chosen by the first unmet condition, and every
+    // string it can emit respects both manual gates. Extraction is genuinely
+    // automatic; AI Analyze and Run Engine are not, and no response here may
+    // imply an upload starts either of them.
+    const guidance = manualGateGuidance({ extractionReliable: false, analysisCurrent: false });
     return NextResponse.json({
       strategy: null,
       blocked: true,
       reason: "BID_STRATEGY_UNAVAILABLE_EXTRACTION_WEAK",
-      message:
-        "Bid strategy unavailable — extraction or analysis is unreliable. Run OCR extraction or re-run AI Analyze before requesting bid strategy.",
+      nextAction: guidance.nextAction,
+      message: `Bid strategy unavailable — extraction is unreliable, so extracted requirements cannot be trusted. ${guidance.message}`,
     }, { status: 200 });
   }
 
@@ -247,12 +253,20 @@ export async function GET(
   if (totalPages > 5 && !requiredDocsKnown) unsafeBlockers.push("Required documents/forms are not known from explicit or derived plan inputs.");
 
   if (unsafeBlockers.length > 0) {
+    // Same guidance source as the blocked branch above. `error` is the string
+    // the panel renders when the response is not ok, so it carries the
+    // truthful next step rather than leaving the client to invent one.
+    const guidance = manualGateGuidance({
+      extractionReliable: !hasExtractionUnsafeStatus(tender.status, tender.analysisExtractionStatus),
+      analysisCurrent: !isUnapprovedFallbackOrUnknown(analysisSource),
+      engineRunForCurrentRevision: false,
+    });
     return NextResponse.json(
       {
         unavailable: true,
-        error: "Bid strategy unavailable — extraction/analysis is unreliable.",
+        error: `Bid strategy unavailable — extraction or analysis is not reliable enough to score. ${guidance.message}`,
         code: "BID_STRATEGY_UNAVAILABLE_ANALYSIS_UNRELIABLE",
-        nextAction: hasExtractionUnsafeStatus(tender.status, tender.analysisExtractionStatus) ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "RETRY_AI_ANALYZE",
+        nextAction: guidance.nextAction,
         blockers: unsafeBlockers,
         analysisSource,
         extractionStatus: tender.analysisExtractionStatus ?? null,

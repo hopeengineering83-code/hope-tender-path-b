@@ -15,6 +15,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { activeWorkKindForJobType } from "../lib/ui/release-stage-copy";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
@@ -159,8 +160,26 @@ describe("generation panel evidence blockers are reachable", () => {
     assert.match(panelSource, /if \(evidenceBlocked\) return "GENUINE_SOURCE_BLOCKED";/);
     assert.match(panelSource, /if \(requiresManualAction\(workflowDecision\)\) return "MANUAL_ACTION_REQUIRED";/);
     // And "queued downstream work" must keep meaning a real job row.
-    assert.match(panelSource, /jobType: \{ in: \["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"\] \}/);
+    //
+    // The panel now reads the job's TYPE as well, so the copy can name the
+    // running stage instead of describing the whole pipeline. The query
+    // therefore selects every workflow job type — but "downstream work" still
+    // means exactly Engine, generation and finalization, which is asserted
+    // through the mapping rather than through the literal `in` list.
+    assert.match(panelSource, /jobType: \{ in: \[\.\.\.WORKFLOW_JOB_TYPES\] \}/);
     assert.match(panelSource, /status: \{ in: \["QUEUED", "RUNNING"\] \}/);
+    assert.match(
+      panelSource,
+      /hasActiveDownstreamWork = activeWork === "ENGINE_RUN" \|\| activeWork === "DOWNSTREAM";/,
+      "downstream work must remain Engine and post-Engine jobs only",
+    );
+    assert.equal(activeWorkKindForJobType("ENGINE_RUN"), "ENGINE_RUN");
+    assert.equal(activeWorkKindForJobType("PROPOSAL_GENERATION"), "DOWNSTREAM");
+    assert.equal(activeWorkKindForJobType("AUTO_FINALIZE"), "DOWNSTREAM");
+    // Extraction and AI Analyze are their own stages, and must never be read
+    // as downstream progress — that is the claim this whole file exists for.
+    assert.equal(activeWorkKindForJobType("EXTRACT_TEXT"), "EXTRACTION");
+    assert.equal(activeWorkKindForJobType("AI_ANALYZE"), "AI_ANALYZE");
   });
 
   it("a manual gate can never be presented as automatic server-side processing", () => {

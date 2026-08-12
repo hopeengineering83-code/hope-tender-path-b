@@ -152,7 +152,12 @@ describe("submission-plan completeness — plan provenance", () => {
     // PLAN_NOT_BUILT was renamed to REQUIREMENTS_FOUND_PLAN_NOT_BUILT to distinguish
     // "requirements exist but no plan built" from legacy PLAN_NOT_BUILT (backward compat kept in type).
     assert.equal(report.planState, "REQUIREMENTS_FOUND_PLAN_NOT_BUILT");
-    assert.ok(report.warnings.some((w) => /Build Submission Plan/i.test(w)));
+    // The warning used to read "Build Submission Plan before Generate Docs".
+    // There is no Generate Docs action and no separate manual plan build: Run
+    // Engine creates and source-verifies the Build Plan. The warning must name
+    // that action, and must not name either removed one.
+    assert.ok(report.warnings.some((w) => /Run Engine creates and source-verifies the Build Plan/i.test(w)));
+    assert.ok(!report.warnings.some((w) => /Generate Docs/i.test(w)));
   });
 
   it("marks requirement-derived file rows as an unconfirmed draft plan", () => {

@@ -310,10 +310,10 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
           <span>Requirements: {data.summary.requirementCount}</span>
         </div>
         {data.summary.planState === "PLAN_NOT_BUILT" && (
-          <p className="mt-2">Tender requirements exist, but no exact or derived submission file plan is available yet. Use <strong>Build Plan</strong> before Generate Docs so the system can validate generated outputs against tender scope instead of showing a misleading Required 0 / Generated 0 / Missing 0 state.</p>
+          <p className="mt-2">Tender requirements exist, but no exact or derived submission file plan is available yet. <strong>Run Engine</strong> creates and source-verifies the Build Plan, so the system can validate generated outputs against tender scope instead of showing a misleading Required 0 / Generated 0 / Missing 0 state.</p>
         )}
         {data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" && (
-          <p className="mt-2">Tender requirements have been extracted, but the submission file plan has not been built yet. Use <strong>Build Plan</strong> to derive the submission file list from the extracted requirements before generating documents.</p>
+          <p className="mt-2">Tender requirements have been extracted, but the submission file plan has not been built yet. <strong>Run Engine</strong> derives the submission file list from the extracted requirements; generation follows automatically once it succeeds.</p>
         )}
         {data.summary.requiresUserConfirmation && (
           <p className="mt-2">
@@ -325,8 +325,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
         {data.summary.planState === "DERIVED_DRAFT_UNCONFIRMED" && (
           <p className="mt-2 font-semibold">Submission plan is derived from weak extraction — verify all required documents against the original tender before finalising.</p>
         )}
+        {/* Gap A: the sentence below used to read "Extraction and analysis run
+            automatically". Extraction is automatic; AI Analyze is a manual
+            gate, so the second half promised a step nothing would take. */}
         {data.summary.planState === "NO_REQUIREMENTS" && (
-          <p className="mt-2">No tender requirements are extracted yet. Extraction and analysis run automatically; requirements appear here once they complete.</p>
+          <p className="mt-2">No tender requirements are extracted yet. Source extraction runs automatically. When it completes, run AI Analyze — requirements appear here once that finishes.</p>
         )}
         {data.summary.automaticPlanPending && (
           <div className="mt-3">

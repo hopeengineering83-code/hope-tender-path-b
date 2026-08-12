@@ -10,13 +10,16 @@
 // breakdown.
 //
 // Rendered once, in Stage 2 ("Analysis and engine") of the tender
-// workspace, right after requirement coverage is confirmed and before
-// Generate Docs — see app/dashboard/tenders/[id]/page.tsx. This is
-// read-only decision support; it does not gate, mutate, or own any
-// workflow action.
+// workspace, right after requirement coverage is confirmed — see
+// app/dashboard/tenders/[id]/page.tsx. (This comment used to place the panel
+// "before Generate Docs". There is no Generate Docs action to be before:
+// generation runs automatically once Run Engine succeeds, and the button was
+// removed with the old GenerationActionPanel.) This is read-only decision
+// support; it does not gate, mutate, or own any workflow action.
 
 import { useState, useEffect, useCallback } from "react";
 import { severityBadgeClassesCompact, severityToUISeverity } from "../lib/ui-tokens";
+import { manualGateGuidanceFor } from "../lib/ui/manual-gate-guidance";
 
 type BidStrategy = {
   winProbability: number;
@@ -174,7 +177,13 @@ export function BidStrategyPanel({ tenderId, defaultExpanded = true }: BidStrate
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
         <p className="font-semibold text-amber-800">Bid Strategy Unavailable</p>
         <p className="text-sm text-amber-800 mt-1">
-          {blocked.message || "Bid strategy requires reliable extraction and analysis. Uploading a clearer copy of the source re-runs both automatically."}
+          {/* Gap A: the previous fallback promised that replacing the source
+              "re-runs both automatically". Extraction is automatic; AI Analyze
+              and Run Engine are authenticated manual actions, so an owner who
+              followed that sentence waited for a job nothing had queued. The
+              fallback now names the same first step the API would. */}
+          {blocked.message
+            || `Bid strategy requires reliable extraction and a current analysis. ${manualGateGuidanceFor("EXTRACTION_UNRELIABLE").message}`}
         </p>
         <button onClick={() => void load()} className="mt-3 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs text-amber-800 hover:bg-amber-100">
           Retry

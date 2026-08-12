@@ -690,7 +690,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             generationStatus: "GENERATED",
             validationStatus: "PENDING",
             reviewStatus: "NOT_EXPORTABLE",
-            contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Generate Docs for the full submission-ready package.`,
+            contentSummary: `Quick AI draft generated ${new Date().toLocaleString()}. Run Engine to produce the full submission-ready package; generation continues automatically after it succeeds.`,
           },
         })
             },

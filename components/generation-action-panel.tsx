@@ -22,6 +22,14 @@ import type { PrismaClient } from "@prisma/client";
 import type { CanonicalTenderReadiness } from "../lib/canonical-tender-readiness";
 import type { CanonicalModuleStatus } from "../lib/engine/canonical-readiness-state";
 import { classifyReleaseStatus } from "../lib/release-status-classifier";
+import {
+  activeWorkKindForJobType,
+  releaseStageCopy,
+  resolveReleasePresentationStage,
+  WORKFLOW_JOB_TYPES,
+  type ActiveWorkKind,
+  type ReleaseStageCopy,
+} from "../lib/ui/release-stage-copy";
 import { releaseBlockerLabel } from "../lib/ui/human-labels";
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
@@ -49,6 +57,8 @@ export type ReleaseStatus =
   | "LEGAL_RELEASE_REQUIRED"
   | "READY_TO_DOWNLOAD"
   | "FAILED_SECURITY_OR_INTEGRITY"
+  // Readiness could not be resolved. See lib/release-status-classifier.ts.
+  | "STATUS_UNAVAILABLE"
   // The workflow is stopped at a gate only a human can open (AI Analyze, Run
   // Engine, an upload, a metadata correction). Distinct from
   // PROCESSING_AUTOMATICALLY, whose explanation promises server-side progress
@@ -62,12 +72,20 @@ export type ReleaseStatus =
  *
  * Gap 5: delegates to classifyReleaseStatus from canonical-release-decision.ts
  * so the UI and the server use the SAME classification logic.
+ *
+ * Gap B: when NEITHER readiness input is present, nothing has been resolved,
+ * so the honest answer is STATUS_UNAVAILABLE. This used to return
+ * PROCESSING_AUTOMATICALLY — the panel told the owner the workflow was running
+ * on the strength of having no information at all, which is precisely the case
+ * where a readiness outage looks identical to healthy progress.
  */
 export function deriveReleaseStatus(
   readiness: GenerationReadiness | null,
   canonicalReadiness?: CanonicalTenderReadiness | null,
 ): ReleaseStatus {
-  if (!readiness && !canonicalReadiness) return "PROCESSING_AUTOMATICALLY";
+  if (!readiness && !canonicalReadiness) {
+    return classifyReleaseStatus([], false, { readinessResolved: false });
+  }
 
   const readyForFinalExport = Boolean(
     canonicalReadiness?.readyForFinalExport ??
@@ -191,13 +209,21 @@ export function deriveTruthfulReleaseStatus(
   if (status !== "PROCESSING_AUTOMATICALLY" || activeDownstreamWork) return status;
 
   // Missing source evidence is the more specific truth, so it still wins.
-  const evidenceBlocked = collectedBlockerCodes(readiness, canonicalReadiness, releaseDecision, workflowDecision)
-    .some((code) => EVIDENCE_BLOCKER_CODES.has(code));
+  const collected = collectedBlockerCodes(readiness, canonicalReadiness, releaseDecision, workflowDecision);
+  const evidenceBlocked = collected.some((code) => EVIDENCE_BLOCKER_CODES.has(code));
   if (evidenceBlocked) return "GENUINE_SOURCE_BLOCKED";
 
   // Otherwise: if the canonical decision is stopped at a gate only a person
   // can open, claiming "processing continues server-side" is false.
   if (requiresManualAction(workflowDecision)) return "MANUAL_ACTION_REQUIRED";
+
+  // Gap B, second half. Reaching here means: no job is running, the canonical
+  // workflow decision could not be loaded, and not one blocker code arrived
+  // from any of the four readiness sources. That is an absence of evidence,
+  // not evidence of progress — every source the panel consults came back
+  // empty-handed. Reporting "processing continues server-side" here is the
+  // same false positive as reporting it on null readiness, one layer down.
+  if (!workflowDecision && collected.length === 0) return "STATUS_UNAVAILABLE";
 
   return status;
 }
@@ -225,50 +251,33 @@ export function truthfulEvidenceMessage(
 }
 
 /**
- * The status label shown to the user. Plain text — no icons, no badges.
+ * Gap C: the label and explanation are now stage-specific.
+ *
+ * The old pair of switch statements keyed on ReleaseStatus alone, which cannot
+ * tell "extraction is running" from "AI Analyze is running" from "AI Analyze
+ * has never been started" — all three are PROCESSING_AUTOMATICALLY. So all
+ * three got the sentence that listed the entire pipeline, analysis included,
+ * as automatic. Two of the three were waiting on a button the sentence implied
+ * they did not need to press.
+ *
+ * The copy now comes from lib/ui/release-stage-copy.ts, which reads the
+ * canonical next action and the durable job row. This panel adds no stage
+ * detection of its own; it passes through what the canonical decision said.
  */
-function statusLabel(status: ReleaseStatus, workflowDecision?: PanelWorkflowDecision | null): string {
-  switch (status) {
-    case "PROCESSING_AUTOMATICALLY":
-      return "Processing automatically";
-    case "GENUINE_SOURCE_BLOCKED":
-      return "Blocked — source evidence required";
-    case "LEGAL_RELEASE_REQUIRED":
-      return "Legal release required";
-    case "READY_TO_DOWNLOAD":
-      return "Ready to download";
-    case "FAILED_SECURITY_OR_INTEGRITY":
-      return "Security or integrity failure";
-    case "MANUAL_ACTION_REQUIRED":
-      // The canonical decision's own label — the same words the header shows.
-      return workflowDecision?.nextRequiredActionLabel
-        ? `Waiting for you — ${workflowDecision.nextRequiredActionLabel}`
-        : "Waiting for you";
-  }
-}
-
-/**
- * A plain-text explanation of what the status means. No icons.
- */
-function statusExplanation(status: ReleaseStatus, workflowDecision?: PanelWorkflowDecision | null): string {
-  if (status === "MANUAL_ACTION_REQUIRED") {
-    // Verbatim from the canonical decision, so this panel and the header
-    // cannot state different reasons for the same stop.
-    return workflowDecision?.nextRequiredActionReason
-      ?? "The workflow is stopped until you take the required action. Nothing is running server-side.";
-  }
-  switch (status) {
-    case "PROCESSING_AUTOMATICALLY":
-      return "The workflow is running. Byte verification, extraction, analysis, matching, generation, validation, PDF finalization, and package reconciliation proceed automatically. You may close or refresh this page — processing continues server-side.";
-    case "GENUINE_SOURCE_BLOCKED":
-      return "The automatic workflow is stopped at its first authoritative blocker. Add genuine owned source evidence for unsupported requirements.";
-    case "LEGAL_RELEASE_REQUIRED":
-      return "A legal signature, declaration, or ADMIN release decision is required. No further automatic processing can occur until this is resolved.";
-    case "READY_TO_DOWNLOAD":
-      return "The final ZIP package is ready. Download it below.";
-    case "FAILED_SECURITY_OR_INTEGRITY":
-      return "A security or integrity failure occurred. The package cannot be downloaded. Contact support with the request ID.";
-  }
+function stageCopy(
+  status: ReleaseStatus,
+  workflowDecision?: PanelWorkflowDecision | null,
+  activeWork?: ActiveWorkKind | null,
+): ReleaseStageCopy {
+  const stage = resolveReleasePresentationStage({
+    status,
+    canonicalAction: workflowDecision?.nextRequiredAction ?? null,
+    activeWork: activeWork ?? null,
+  });
+  return releaseStageCopy(stage, {
+    label: workflowDecision?.nextRequiredActionLabel,
+    reason: workflowDecision?.nextRequiredActionReason,
+  });
 }
 
 // Preserve the export name for backward compatibility with page.tsx imports.
@@ -318,20 +327,32 @@ export async function GenerationActionPanel({
 }) {
   let hasActiveDownstreamWork = activeDownstreamWork;
   let resolvedWorkflowDecision = workflowDecision;
-  if (!hasActiveDownstreamWork || !resolvedWorkflowDecision) {
+  // Gap C: which stage is actually running, not merely whether something is.
+  // The panel already had to read this row; it now keeps the jobType so the
+  // copy can name the stage instead of describing the whole pipeline.
+  let activeWork: ActiveWorkKind | null = null;
+  {
     const userId = await getSession();
     if (userId) {
       await prismaReady;
+      const activeJob = await prisma.aiJob.findFirst({
+        where: {
+          userId,
+          tenderId: _tenderId,
+          jobType: { in: [...WORKFLOW_JOB_TYPES] },
+          status: { in: ["QUEUED", "RUNNING"] },
+        },
+        // Latest first: when extraction has finished and Engine is running,
+        // the Engine row is the stage the owner is waiting on.
+        orderBy: { createdAt: "desc" },
+        select: { jobType: true },
+      }).catch(() => null);
+      activeWork = activeWorkKindForJobType(activeJob?.jobType);
+      // Unchanged meaning: "downstream work is under way" still covers only
+      // Engine and post-Engine jobs. Extraction and AI Analyze are reported
+      // as their own stages and must not be read as downstream progress.
       if (!hasActiveDownstreamWork) {
-        hasActiveDownstreamWork = Boolean(await prisma.aiJob.findFirst({
-          where: {
-            userId,
-            tenderId: _tenderId,
-            jobType: { in: ["ENGINE_RUN", "PROPOSAL_GENERATION", "AUTO_FINALIZE"] },
-            status: { in: ["QUEUED", "RUNNING"] },
-          },
-          select: { id: true },
-        }).catch(() => null));
+        hasActiveDownstreamWork = activeWork === "ENGINE_RUN" || activeWork === "DOWNSTREAM";
       }
       if (!resolvedWorkflowDecision) {
         resolvedWorkflowDecision = await resolveGenerationPanelWorkflowDecision(
@@ -400,12 +421,13 @@ export async function GenerationActionPanel({
       ? [resolvedWorkflowDecision.nextRequiredActionReason]
       : [];
   const truncatedBlockers = resolvedWorkflowDecision ? canonicalCurrentBlocker : [...blockersByCode.values()].slice(0, 8);
+  const copy = stageCopy(status, resolvedWorkflowDecision, activeWork);
 
   return (
     <section id="generated-documents" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Release status</p>
-      <h2 className="mt-1 text-lg font-bold text-slate-900">{statusLabel(status, resolvedWorkflowDecision)}</h2>
-      <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{statusExplanation(status, resolvedWorkflowDecision)}</p>
+      <h2 className="mt-1 text-lg font-bold text-slate-900">{copy.label}</h2>
+      <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">{copy.explanation}</p>
       {truncatedBlockers.length > 0 && (
         <div className="mt-3">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Current blocker</p>

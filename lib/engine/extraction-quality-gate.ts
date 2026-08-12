@@ -212,7 +212,7 @@ export type TenderFileQuality = ExtractionFileMetrics;
 export const EXTRACTION_SCORE_GOOD_THRESHOLD = 80;
 /** Score at/above which extraction is considered partial but usable for draft. */
 export const EXTRACTION_SCORE_WARN_THRESHOLD = 60;
-/** Score below this blocks Build Plan and Generate Docs. */
+/** Score below this blocks Build Plan and document generation. */
 export const EXTRACTION_SCORE_BLOCK_THRESHOLD = 40;
 /** sourceConfidence at/above this is considered high-confidence traceability. */
 export const SOURCE_CONFIDENCE_HIGH = 0.7;

@@ -74,6 +74,11 @@ type ControlsData = {
   controls: TenderControlRecord[];
   summary: ControlSummary;
   suggestedControls?: SuggestedControl[];
+  // Gap E: false when the canonical suggestion resolver failed. An empty
+  // suggestion list then means "we could not check", not "nothing to do", and
+  // the panel must say so rather than rendering a reassuring zero.
+  suggestionsAvailable?: boolean;
+  suggestionsError?: { code: string; requestId: string; message: string };
 };
 
 // HIGH-confidence codes — match isHighConfidenceSuggestion in
@@ -325,6 +330,9 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
 
   const { summary, controls } = data;
   const hasHighRisk = summary.highRisk > 0;
+  // Only false when the route explicitly reported a resolver failure. An older
+  // response without the field is treated as available, as it was before.
+  const suggestionsAvailable = data.suggestionsAvailable !== false;
 
   const filteredControls = controls.filter((c) => {
     if (typeFilter !== "ALL" && c.type !== typeFilter) return false;
@@ -349,9 +357,14 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
                 {summary.highRisk} high-risk
               </span>
             )}
-            {summary.open === 0 && summary.total > 0 && (
+            {suggestionsAvailable && summary.open === 0 && summary.total > 0 && (
               <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-800">
                 All resolved
+              </span>
+            )}
+            {!suggestionsAvailable && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+                Controls unverified
               </span>
             )}
           </div>
@@ -372,13 +385,18 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
         </div>
       </div>
 
-      {/* Summary grid */}
+      {/* Summary grid.
+          Gap E: when the resolver failed, `summary` covers only the persisted
+          audit-log rows — the derived half is missing. Printing a number would
+          claim a total the route cannot support, so the derived-bearing cells
+          render an em dash. Resolved counts persisted rows only and stays a
+          number in both states. */}
       <div className="grid grid-cols-4 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs">
         {[
-          { label: "Total",    value: summary.total,    color: "text-gray-800" },
-          { label: "Open",     value: summary.open,     color: summary.open > 0 ? "text-amber-800" : "text-gray-400" },
+          { label: "Total",    value: suggestionsAvailable ? summary.total : "—", color: "text-gray-800" },
+          { label: "Open",     value: suggestionsAvailable ? summary.open : "—",  color: suggestionsAvailable && summary.open > 0 ? "text-amber-800" : "text-gray-400" },
           { label: "Resolved", value: summary.resolved, color: "text-green-700" },
-          { label: "High Risk",value: summary.highRisk, color: summary.highRisk > 0 ? "text-red-600" : "text-gray-400" },
+          { label: "High Risk",value: suggestionsAvailable ? summary.highRisk : "—", color: suggestionsAvailable && summary.highRisk > 0 ? "text-red-600" : "text-gray-400" },
         ].map((cell) => (
           <div key={cell.label} className="bg-white py-2">
             <div className={`text-base font-bold ${cell.color}`}>{cell.value}</div>
@@ -387,8 +405,27 @@ export default function TenderControlsPanel({ tenderId }: { tenderId: string }) 
         ))}
       </div>
 
+      {/* Gap E: the resolver failed. Say that, rather than letting an empty
+          suggestion list read as a clean tender. Nothing here is an eligibility
+          statement — Tender Controls never were — so the notice is explicit
+          that generation and export are unaffected. */}
+      {!suggestionsAvailable && (
+        <div className="border-b border-amber-200 bg-amber-50 px-5 py-3" role="status">
+          <p className="text-sm font-semibold text-amber-900">Current workflow controls could not be verified.</p>
+          <p className="mt-0.5 text-xs text-amber-800">
+            This is a fault in the controls check itself, not a statement about this tender. Suggested controls are not shown because none could be confirmed — treat this as unknown, not as zero. Generation and export eligibility are decided elsewhere and are unchanged.
+          </p>
+          {data.suggestionsError?.requestId && (
+            <p className="mt-1 text-[11px] text-amber-700">Reference: {data.suggestionsError.requestId}</p>
+          )}
+          <button onClick={load} className="mt-2 rounded border border-amber-300 bg-white px-2.5 py-1 text-xs text-amber-800 hover:bg-amber-100">
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Suggested controls (derived from lifecycle blockers) — H */}
-      {data && data.suggestedControls && data.suggestedControls.length > 0 && (
+      {data && suggestionsAvailable && data.suggestedControls && data.suggestedControls.length > 0 && (
         <div className="border-b border-amber-100 bg-amber-50 px-5 py-3">
           <div className="flex items-start justify-between gap-3">
             <div>

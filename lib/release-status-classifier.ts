@@ -40,6 +40,12 @@
 //       - Any unknown blocker (fail safe: assume automatic, not source-blocked)
 //
 //   READY_TO_DOWNLOAD — the final ZIP is ready.
+//
+//   STATUS_UNAVAILABLE — readiness could not be resolved. Not a workflow
+//     state at all: it says the app does not currently know. Callers signal
+//     it with `{ readinessResolved: false }`; it is never inferred from an
+//     empty blocker list, because an empty list from a resolver that DID run
+//     is a real (and different) fact.
 
 // Security/integrity failure codes — package cannot be downloaded.
 const SECURITY_FAILURE_CODES = new Set([
@@ -127,11 +133,35 @@ export type ReleaseStatus =
   | "GENUINE_SOURCE_BLOCKED"
   | "LEGAL_RELEASE_REQUIRED"
   | "READY_TO_DOWNLOAD"
-  | "FAILED_SECURITY_OR_INTEGRITY";
+  | "FAILED_SECURITY_OR_INTEGRITY"
+  // The readiness computation could not be resolved at all — it errored, or
+  // no readiness input reached this classifier. Absence of data is NOT
+  // evidence that the workflow is running, so it must not be reported as
+  // PROCESSING_AUTOMATICALLY. See `readinessResolved` below.
+  | "STATUS_UNAVAILABLE";
+
+/**
+ * What the caller actually knows about the readiness inputs.
+ *
+ * `classifyReleaseStatus` used to receive a blocker array and a boolean, with
+ * no way to tell "the resolver ran and found nothing blocking" apart from "the
+ * resolver never ran". Both arrive as `([], false)`, and both were reported as
+ * PROCESSING_AUTOMATICALLY — so an outage in the readiness path rendered as a
+ * confident claim that work was under way server-side.
+ *
+ * `readinessResolved: false` is the explicit signal that no readiness data was
+ * obtained. It short-circuits to STATUS_UNAVAILABLE before any blocker rule
+ * runs. Omitting the argument keeps the historical behaviour for callers that
+ * genuinely hold resolved readiness.
+ */
+export type ReleaseStatusAvailability = {
+  /** False when the readiness computation was absent, null, or threw. */
+  readinessResolved?: boolean;
+};
 
 /**
  * Pure function that classifies blocker codes + readyForFinalExport into
- * one of five statuses. Client-safe — no Node.js imports.
+ * one of six statuses. Client-safe — no Node.js imports.
  *
  * Blocker 2: AUTOMATIC_WORK_PENDING blockers (NO_ACTIVE_GENERATED_DOCUMENTS,
  * NO_CURRENT_CONFIRMED_BUILD_PLAN, MISSING_PLANNED_FILES, ENGINE_NOT_COMPLETED,
@@ -139,11 +169,18 @@ export type ReleaseStatus =
  * never GENUINE_SOURCE_BLOCKED. Unknown blockers also default to
  * PROCESSING_AUTOMATICALLY (fail safe: assume the workflow will handle it,
  * not that the user must upload something).
+ *
+ * Gap B: a caller that could not resolve readiness at all passes
+ * `{ readinessResolved: false }` and gets STATUS_UNAVAILABLE. "No data" is
+ * never promoted into "work is running".
  */
 export function classifyReleaseStatus(
   blockerCodes: string[],
   readyForFinalExport: boolean,
+  availability: ReleaseStatusAvailability = {},
 ): ReleaseStatus {
+  if (availability.readinessResolved === false) return "STATUS_UNAVAILABLE";
+
   if (readyForFinalExport && blockerCodes.length === 0) return "READY_TO_DOWNLOAD";
 
   // Security/integrity failure — highest priority.

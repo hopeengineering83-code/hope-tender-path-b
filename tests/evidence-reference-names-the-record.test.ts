@@ -18,6 +18,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { recognizableEvidenceReference } from "../lib/engine/compliance";
 
 const source = readFileSync("lib/engine/compliance.ts", "utf8");
 
@@ -45,11 +46,17 @@ describe("compliance evidence references name the record", () => {
     // A record with no name still has to be cited. Losing the reference
     // entirely would be worse than showing an id: the requirement would look
     // unsupported when it is not.
-    assert.match(
-      source,
-      /const nameOrId = \(lookup: Map<string, string>, id: string\): string => lookup\.get\(id\) \|\| id;/,
+    //
+    // This used to pin the literal text of `nameOrId`. It now exercises the
+    // helper that branch delegates to, so the contract survives the next
+    // refactor of the expression while the guarantee stays identical.
+    assert.equal(
+      recognizableEvidenceReference("", "e6ed6bac-1811-49b8-a245-fe8f4c27411e"),
+      "e6ed6bac-1811-49b8-a245-fe8f4c27411e",
       "the fallback must keep the id, not produce an empty reference",
     );
+    assert.match(source, /const nameOrId = /, "the name-or-id resolver must still exist");
+    assert.match(source, /recognizableEvidenceReference\(lookup\.get\(id\), id\) \?\? id/);
   });
 
   it("builds both lookups from the Company Vault records already in scope", () => {

@@ -54,6 +54,63 @@ export type ControlSuggestionCode =
   | "JV_MITIGATION_NEEDED_EXPERTS"
   | "JV_MITIGATION_NEEDED_PROJECTS";
 
+// ─── GAP D: suggestion register ──────────────────────────────────────────────
+//
+// Every ControlSuggestionCode audited. Three things went wrong before this
+// audit, and all three were the same mistake in different clothes: a
+// suggestion told the owner to press something that does not exist.
+//
+//   • "The Repair-all button will populate any value that is in the uploaded
+//     tender source" — there is no Repair-all button anywhere in the app.
+//   • "Run 'Repair source references' on the Recovery panel" — there is no
+//     Recovery panel with that action. /repair-source-grounding exists as a
+//     route, but source grounding is repaired automatically by
+//     automatic-requirement-coverage and the auto-finalize continuation
+//     service; it is not an owner-facing control.
+//   • Suggestions phrased as manual "Generate Docs" work, which stopped being
+//     a user action when generation moved behind a successful Run Engine.
+//
+// `kind` records what the suggestion IS, which is the distinction the copy
+// kept losing:
+//
+//   CURRENT       the canonical workflow's own current action, restated here.
+//   DOWNSTREAM    a symptom of an upstream blocker. NOT something to act on —
+//                 it clears when the upstream action clears. Never phrase one
+//                 of these as an instruction.
+//   INFORMATIONAL a real condition the owner may want to act on, but which is
+//                 not the workflow's current blocker.
+//
+// AUTHORITY: none of these, in any kind. Accepting or rejecting a suggestion
+// writes an audit-log row and nothing else — see the controls route, which has
+// no tender mutation at all. Generation and export eligibility are owned by
+// the canonical workflow decision and the readiness calculators, and are not
+// reachable from this file.
+export type ControlSuggestionKind = "CURRENT" | "DOWNSTREAM" | "INFORMATIONAL";
+
+export const CONTROL_SUGGESTION_REGISTER: Record<
+  ControlSuggestionCode,
+  { kind: ControlSuggestionKind; canonicalStage: string; condition: string }
+> = {
+  CANONICAL_CURRENT_ACTION: { kind: "CURRENT", canonicalStage: "canonical", condition: "A canonical workflow decision exists and is not an automatic/complete state." },
+  AI_PROVIDERS_NOT_CONFIGURED: { kind: "INFORMATIONAL", canonicalStage: "AI_ANALYZE_NOT_RUN", condition: "No AI provider key is configured." },
+  AI_PROVIDERS_COOLING: { kind: "INFORMATIONAL", canonicalStage: "AI_ANALYZE_NOT_RUN", condition: "A configured provider is in cooldown after a 429." },
+  ANALYSIS_NOT_RUN: { kind: "CURRENT", canonicalStage: "AI_ANALYZE_NOT_RUN", condition: "Analysis source is empty or UNKNOWN." },
+  REGEX_FALLBACK_UNAPPROVED: { kind: "CURRENT", canonicalStage: "AI_ANALYZE_NOT_RUN", condition: "Analysis source is an unapproved regex/deterministic fallback." },
+  TENDER_FACTS_INCOMPLETE: { kind: "CURRENT", canonicalStage: "CRITICAL_TENDER_DETAILS_INVALID", condition: "One or more critical tender facts are missing or invalid." },
+  SOURCE_REFS_MISSING: { kind: "CURRENT", canonicalStage: "REQUIREMENTS_NOT_SOURCE_GROUNDED", condition: "Mandatory requirements exist without a source page/quote." },
+  MANDATORY_COVERAGE_ZERO: { kind: "CURRENT", canonicalStage: "MANDATORY_NO_COMPLIANCE_ROWS", condition: "Requirements exist and none has linked evidence." },
+  SUBMISSION_PLAN_NOT_BUILT: { kind: "DOWNSTREAM", canonicalStage: "NO_CONFIRMED_BUILD_PLAN", condition: "No explicit plan and no plan rows. Run Engine builds and source-verifies the plan." },
+  PLANNED_DOCS_NOT_GENERATED: { kind: "DOWNSTREAM", canonicalStage: "REQUIRED_DOCS_NOT_GENERATED", condition: "Plan rows exist whose outputs are not yet generated." },
+  OUTSIDE_PLAN_DOCS: { kind: "INFORMATIONAL", canonicalStage: "REQUIRED_DOCS_NOT_GENERATED", condition: "Generated documents exist that map to no plan row." },
+  NO_ACTIVE_EXPORT_CANDIDATES: { kind: "DOWNSTREAM", canonicalStage: "EXPORT_BLOCKED", condition: "Zero documents are eligible for the final ZIP." },
+  MISSING_OFFICIAL_ORIGINALS: { kind: "INFORMATIONAL", canonicalStage: "EXPORT_BLOCKED", condition: "The plan requires tender-issued forms absent from Tender Intake." },
+  QUALITY_FAILED_DOCS: { kind: "INFORMATIONAL", canonicalStage: "AUTHORITY_OR_QUALITY_BLOCKERS", condition: "Generated documents failed the quality gate." },
+  WEAK_EXPERT_COVERAGE: { kind: "INFORMATIONAL", canonicalStage: "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE", condition: "Selected experts score below the strong-coverage threshold." },
+  WEAK_PROJECT_COVERAGE: { kind: "INFORMATIONAL", canonicalStage: "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE", condition: "Selected project references score below the strong-coverage threshold." },
+  JV_MITIGATION_NEEDED_EXPERTS: { kind: "INFORMATIONAL", canonicalStage: "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE", condition: "No strong-coverage expert exists in the vault for a required discipline." },
+  JV_MITIGATION_NEEDED_PROJECTS: { kind: "INFORMATIONAL", canonicalStage: "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE", condition: "No strong-coverage project reference exists in the vault." },
+};
+
 export type SuggestedControl = {
   /** Stable suggestion code — used by the accept/reject endpoint to dedupe. */
   code: ControlSuggestionCode;
@@ -66,6 +123,12 @@ export type SuggestedControl = {
   status: "SUGGESTED";
   /** Free-form short hint for the user — what clicking Accept will do. */
   nextAction: string;
+  /**
+   * CURRENT / DOWNSTREAM / INFORMATIONAL, from CONTROL_SUGGESTION_REGISTER.
+   * DOWNSTREAM rows are symptoms of an upstream blocker and must not be
+   * rendered as instructions. Presentation only — no gate reads this.
+   */
+  kind: ControlSuggestionKind;
   /** Stable composite id "suggestion:<code>" for React keys + reject endpoint. */
   id: string;
   /** Always null on suggestions; set when promoted to a real control row. */
@@ -107,9 +170,10 @@ const REGEX_FALLBACK_SOURCES = new Set([
   "AI_PROVIDERS_EXHAUSTED",
 ]);
 
-function mkSuggestion(opts: Omit<SuggestedControl, "id" | "status" | "createdAt" | "createdBy">): SuggestedControl {
+function mkSuggestion(opts: Omit<SuggestedControl, "id" | "status" | "createdAt" | "createdBy" | "kind">): SuggestedControl {
   return {
     ...opts,
+    kind: CONTROL_SUGGESTION_REGISTER[opts.code].kind,
     id: `suggestion:${opts.code}`,
     status: "SUGGESTED",
     createdAt: new Date().toISOString(),
@@ -164,7 +228,7 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       title: "Run AI Analyze before generating proposals",
       description: "This tender has not been analyzed yet. AI Analyze extracts requirements, evaluation criteria, scoring weights, and submission rules. Without it, proposal generation is blocked and requirement coverage cannot be assessed.",
       severity: "HIGH",
-      nextAction: "Click 'Run AI Analyze' in the engine panel above.",
+      nextAction: "Select Run AI Analyze on the AI Analyze panel. This is a manual action — nothing queues it for you.",
     }));
   }
 
@@ -187,9 +251,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "TENDER_FACTS_INCOMPLETE",
       type: "TASK",
       title: "Complete critical Tender Details",
-      description: `${input.metadataStatus.criticalMissing.length} critical field(s) missing (${fieldsList}). The Repair-all button will populate any value that is in the uploaded tender source; the rest must be confirmed manually.`,
+      description: `${input.metadataStatus.criticalMissing.length} critical field(s) missing (${fieldsList}). Open Tender Details and correct each field against the tender source; a field with no value in the source must be marked as not stated rather than filled with a placeholder.`,
       severity: "HIGH",
-      nextAction: "Resolve the current canonical Tender Details action before continuing.",
+      nextAction: "Open Tender Details and resolve the current canonical Tender Details action.",
     }));
   }
 
@@ -199,9 +263,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "SOURCE_REFS_MISSING",
       type: "RISK",
       title: `${input.sourceReferenceStatus.ungroundedMandatoryCount} mandatory requirement(s) lack source page/quote`,
-      description: "Mandatory requirements without a source reference cannot be cross-checked against the tender file. Run 'Repair source references' or edit the requirements to add verbatim quotes.",
+      description: "Mandatory requirements without a source page and quote cannot be cross-checked against the tender file. Re-run AI Analyze so requirements are re-extracted with page and quote anchors; if the source pages themselves are unreadable, upload a clearer copy of the tender document first.",
       severity: "HIGH",
-      nextAction: "Run 'Repair source references' on the Recovery panel.",
+      nextAction: "Re-run AI Analyze, or upload a clearer source file if the pages are unreadable.",
     }));
   }
 
@@ -223,9 +287,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "SUBMISSION_PLAN_NOT_BUILT",
       type: "TASK",
       title: "Build the submission plan",
-      description: "No explicit submission plan was detected and no plan rows exist yet. Without a plan, generated documents cannot be validated against tender requirements.",
+      description: "No explicit submission plan was detected and no plan rows exist yet. Run Engine creates and source-verifies the Build Plan; this is a downstream consequence of the Engine not having run for the current source revision, not a separate manual build step.",
       severity: "MEDIUM",
-      nextAction: "Open Submission Plan Reconciliation, build the draft, review every ordered file, and confirm the Build Plan.",
+      nextAction: "Run Engine. Build Plan creation and source verification follow automatically.",
     }));
   }
 
@@ -235,9 +299,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "PLANNED_DOCS_NOT_GENERATED",
       type: "TASK",
       title: `${input.planStatus.totalMissing} planned document(s) not generated`,
-      description: "Submission plan rows exist but corresponding outputs are not yet available. This is downstream diagnostic information until the canonical workflow reaches generation.",
+      description: "Submission plan rows exist but their outputs have not been produced yet. Generation runs automatically once the Engine succeeds and no upstream blocker remains, so this is a downstream diagnostic — not an action. It clears on its own when generation is reached.",
       severity: "HIGH",
-      nextAction: "Wait for or resolve the canonical generation-stage action.",
+      nextAction: "No action here. Resolve the current canonical workflow action; generation follows automatically.",
     }));
   }
 
@@ -249,7 +313,7 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       title: `Reconcile ${input.counts.outsidePlanRows} outside-plan document(s)`,
       description: "Generated documents exist that are not mapped to any submission plan row. Map them to the plan, supersede, or mark as not-exportable before final export.",
       severity: "MEDIUM",
-      nextAction: "Use the row-level actions on the Submission Plan Completeness panel.",
+      nextAction: "Use the row-level actions on the Submission Plan Reconciliation panel.",
     }));
   }
 
@@ -259,9 +323,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "NO_ACTIVE_EXPORT_CANDIDATES",
       type: "RISK",
       title: "No active final-export candidates",
-      description: "There are no documents currently eligible for the final ZIP. Generate planned documents or repair quality-failed documents before export. Tender-issued forms are sourced automatically from uploaded Tender Intake files.",
+      description: "No document is currently eligible for the final ZIP. This is a downstream consequence of whatever is blocking the workflow upstream — documents cannot become export candidates before they are generated. Tender-issued forms are sourced automatically from uploaded Tender Intake files and are never fabricated.",
       severity: "HIGH",
-      nextAction: "Resolve the canonical upstream blocker; export candidates are a downstream consequence.",
+      nextAction: "No action here. Resolve the current canonical workflow action; export candidates follow from it.",
     }));
   }
 
@@ -301,9 +365,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
         code: "WEAK_EXPERT_COVERAGE",
         type: "RISK",
         title: `${w.selectedButWeakExperts} selected expert(s) have weak scope coverage`,
-        description: `Selected experts${labels} score below the strong-coverage threshold for this tender's disciplines. Evaluator scoring will be weak; consider replacing them with stronger reviewed experts from the vault or adding a JV/subcontract for the missing disciplines.`,
+        description: `Selected experts${labels} score below the strong-coverage threshold for this tender's disciplines. Evaluator scoring will be weak. Strengthen the Company Vault with better-matching source-verified experts, or record a JV/subcontract for the missing disciplines.`,
         severity: "HIGH",
-        nextAction: "Open Knowledge Review and replace the weak selections, or add a JV/subcontractor for the missing disciplines.",
+        nextAction: "Add stronger source-verified experts to the Company Vault for the missing disciplines, or record a JV/subcontract mitigation. Selections are re-matched on the next Engine run.",
       }));
     }
     if (w.selectedButWeakProjects > 0) {
@@ -312,9 +376,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
         code: "WEAK_PROJECT_COVERAGE",
         type: "RISK",
         title: `${w.selectedButWeakProjects} selected project reference(s) have weak scope coverage`,
-        description: `Selected project references${labels} score below the strong-coverage threshold for this tender. Evaluator experience-fit scoring will be weak; replace them with closer-fitting reviewed projects or add a JV/subcontract.`,
+        description: `Selected project references${labels} score below the strong-coverage threshold for this tender. Evaluator experience-fit scoring will be weak. Add closer-fitting source-verified project references to the Company Vault, or record a JV/subcontract.`,
         severity: "HIGH",
-        nextAction: "Open Knowledge Review and replace the weak project selections, or add a JV/subcontractor.",
+        nextAction: "Add closer-fitting source-verified project references to the Company Vault, or record a JV/subcontract mitigation. Selections are re-matched on the next Engine run.",
       }));
     }
     if (w.needsJVExperts) {
@@ -348,7 +412,12 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
  * categories so the user doesn't accidentally create a low-signal MEDIUM
  * task with one click.
  */
-export function isHighConfidenceSuggestion(s: SuggestedControl): boolean {
+export function isHighConfidenceSuggestion(
+  // Only the code and severity are read, so callers holding a partial row —
+  // the UI's own narrower SuggestedControl shape, a test literal — can ask
+  // without constructing fields this predicate ignores.
+  s: Partial<SuggestedControl> & Pick<SuggestedControl, "code" | "severity">,
+): boolean {
   if (s.severity !== "HIGH") return false;
   const highConfidence: ControlSuggestionCode[] = [
     "AI_PROVIDERS_NOT_CONFIGURED",
