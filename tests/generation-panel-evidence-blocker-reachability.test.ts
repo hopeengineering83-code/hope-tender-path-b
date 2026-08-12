@@ -154,7 +154,7 @@ describe("generation panel evidence blockers are reachable", () => {
     // never be overridden into a blocked state.
     assert.match(
       panelSource,
-      /if \(status !== "PROCESSING_AUTOMATICALLY" \|\| activeDownstreamWork\) return status;/,
+      /if \(activeDownstreamWork\) return "PROCESSING_AUTOMATICALLY";/,
       "the status guard must short-circuit before any reclassification",
     );
     assert.match(panelSource, /if \(evidenceBlocked\) return "GENUINE_SOURCE_BLOCKED";/);

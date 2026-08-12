@@ -29,12 +29,12 @@ export const TENDER_WORKFLOW_STAGES: TenderWorkflowStage[] = [
   { stage: 1, label: "Source Files", targets: ["#tender-files", "#workflow-stage-1"] },
   { stage: 2, label: "Extraction Quality", targets: ["#extraction-quality", "#tender-files", "#workflow-stage-1"] },
   { stage: 3, label: "AI Analyze", targets: ["#ai-analyze-section", "#workflow-stage-2"] },
-  { stage: 4, label: "Confirm Requirements", targets: ["#requirement-coverage", "#ai-analyze-section", "#workflow-stage-2"] },
+  { stage: 4, label: "Source-ground Requirements", targets: ["#requirement-coverage", "#ai-analyze-section", "#workflow-stage-2"] },
   { stage: 5, label: "Tender Details", targets: ["#tender-edit-form", "#workflow-stage-1"] },
   { stage: 6, label: "Confirmed Build Plan", targets: ["#submission-plan-completeness", "#submission-plan", "#workflow-stage-4"] },
   { stage: 7, label: "Match Evidence", targets: ["#matching-selected-evidence", "#workflow-stage-3"] },
   { stage: 8, label: "Generate Documents", targets: ["#generated-documents", "#submission-plan", "#workflow-stage-4"] },
-  { stage: 9, label: "Validate and Approve", targets: ["#authority-review", "#generated-documents", "#workflow-stage-4"] },
+  { stage: 9, label: "Validate and Final Release", targets: ["#authority-review", "#generated-documents", "#workflow-stage-4"] },
   { stage: 10, label: "Export ZIP", targets: ["#export-readiness", "#final-package-manifest", "#workflow-stage-5"] },
 ];
 

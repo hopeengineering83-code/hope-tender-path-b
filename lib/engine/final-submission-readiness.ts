@@ -36,6 +36,7 @@ import {
 } from "./export-readiness";
 import {
   filterFinalExportCandidateDocuments,
+  isExportReady,
   type DocumentLike,
 } from "./document-output-state";
 import {
@@ -1186,7 +1187,7 @@ export async function getFinalSubmissionReadiness(
     outsidePlanDocuments: extraPlan.length,
     qualityFailedDocuments: qualityFailed,
     finalExportCandidatesCount: finalCandidates.length,
-    readyForExportCount: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
+    readyForExportCount: finalCandidates.filter((d) => isExportReady(d)).length,
     finalExportGateOk:
       readiness.ok &&
       documentBlockers.length === 0 &&
@@ -1243,7 +1244,7 @@ export async function getFinalSubmissionReadiness(
     requiredDocumentsTotal: Math.max(requiredPlanCount, generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length),
     // exportReadyDocumentsTotal = docs that are GENERATED, not SUPERSEDED/PLANNED,
     // and pass the export-candidate filter. This is the numerator for the tile.
-    exportReadyDocumentsTotal: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
+    exportReadyDocumentsTotal: finalCandidates.filter((d) => isExportReady(d)).length,
     // ── Primary blocker reason + fix action ──────────────────────────────
     // Priority order: planned-not-generated > no-export-ready > evidence >
     // source-grounding > validation > quality > submission-facts > export-gate
@@ -1251,8 +1252,8 @@ export async function getFinalSubmissionReadiness(
       const ungenerated = generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length;
       if (ungenerated > 0) return `${ungenerated} required document(s) are planned but not generated.`;
       if (finalCandidates.length === 0 && requiredPlanCount > 0) return "No export-ready documents. Generate required documents first.";
-      const exportReady = finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length;
-      if (finalCandidates.length > 0 && exportReady === 0) return "No documents are validated and approved for export.";
+      const exportReady = finalCandidates.filter((d) => isExportReady(d)).length;
+      if (finalCandidates.length > 0 && exportReady === 0) return "No documents have passed machine validation for export.";
       if (documentBlockers.length > 0) return documentBlockers[0]?.name ?? documentBlockers[0]?.reasons?.[0] ?? "Document blockers exist.";
       if (tenderLevelBlockers.length > 0) return tenderLevelBlockers[0]?.title ?? "Tender-level blockers exist.";
       if (!readiness.ok) return "Export gate is not satisfied.";
@@ -1262,8 +1263,8 @@ export async function getFinalSubmissionReadiness(
       const ungenerated = generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length;
       if (ungenerated > 0) return "Generate required documents.";
       if (finalCandidates.length === 0 && requiredPlanCount > 0) return "Generate required documents.";
-      const exportReady = finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length;
-      if (finalCandidates.length > 0 && exportReady === 0) return "Validate and approve documents for export.";
+      const exportReady = finalCandidates.filter((d) => isExportReady(d)).length;
+      if (finalCandidates.length > 0 && exportReady === 0) return "Validate documents and resolve any genuine quality, legal, signature, or authority blocker.";
       if (documentBlockers.length > 0) return documentBlockers[0]?.nextActions?.[0] ?? "Resolve document blockers.";
       if (tenderLevelBlockers.length > 0) return tenderLevelBlockers[0]?.recommendedAction ?? "Resolve tender-level blockers.";
       if (!readiness.ok) return "Resolve all export gate blockers.";

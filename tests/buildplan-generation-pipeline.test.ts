@@ -247,7 +247,7 @@ describe("Spec Test 6 — Validation failure prevents approval", () => {
   });
 });
 
-// ─── 7. Approval failure prevents export-ready count ─────────────────────────
+// ─── 7. Explicit exclusions remain fail-closed without a routine approval gate ─
 
 describe("Spec Test 7 — Approval failure prevents export-ready count", () => {
   it("isFinalExportCandidateDocument excludes docs with NOT_EXPORTABLE review status", async () => {
@@ -264,18 +264,19 @@ describe("Spec Test 7 — Approval failure prevents export-ready count", () => {
     assert.equal(isFinalExportCandidateDocument(doc as any), false, "NOT_EXPORTABLE review must not be export candidate");
   });
 
-  it("deriveDocumentOutputState returns non-READY for PENDING review status", async () => {
+  it("deriveDocumentOutputState accepts validated bytes with PENDING human review", async () => {
     const { deriveDocumentOutputState } = await import("../lib/engine/document-output-state");
     const state = deriveDocumentOutputState({
       generationStatus: "GENERATED",
       validationStatus: "VALIDATED",
-      reviewStatus: "PENDING", // NOT READY_FOR_EXPORT
+      reviewStatus: "PENDING",
       format: "DOCX",
       documentType: "TECHNICAL_PROPOSAL",
       name: "Technical Proposal",
       exactFileName: "Technical-Proposal.docx",
+      fileContent: Buffer.from("PK\x03\x04validated-docx").toString("base64"),
     } as any);
-    assert.notEqual(state, "READY_FOR_EXPORT", "PENDING review must NOT derive READY_FOR_EXPORT state");
+    assert.equal(state, "READY_FOR_EXPORT", "machine validation must not require routine per-document approval");
   });
 
   it("isFinalExportCandidateDocument excludes SUPERSEDED docs", async () => {

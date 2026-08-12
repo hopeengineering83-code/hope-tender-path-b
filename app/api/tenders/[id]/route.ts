@@ -16,6 +16,7 @@ import { executeTenderDeletion } from "../../../../lib/tender/delete-tender";
 import { processTenderStorageCleanupTask } from "../../../../lib/tender/tender-storage-cleanup-task";
 import { buildPublicReadinessEnvelope } from "../../../../lib/engine/public-readiness-envelope";
 import { withPrismaWriteConflictRetry } from "../../../../lib/prisma-write-conflict-retry";
+import { isExportReady } from "../../../../lib/engine/document-output-state";
 
 function withDashboardGeneratedDocuments<T extends { generatedDocuments: any[] }>(tender: T): T {
   const prepared = prepareDashboardGeneratedDocuments(tender.generatedDocuments);
@@ -167,7 +168,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const payload = await withDashboardPayload(tender as any);
     const requiredDocumentsTotal = Math.max(payload.requirements.length, payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "PLANNED").length);
     const generatedDocumentsTotal = payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED").length;
-    const exportReadyDocumentsTotal = payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED" && /READY_FOR_EXPORT|APPROVED/i.test(doc.reviewStatus ?? "")).length;
+    const exportReadyDocumentsTotal = payload.generatedDocuments.filter((doc: any) => (doc.generationStatus ?? "").toUpperCase() === "GENERATED" && isExportReady(doc)).length;
     const detailBlockers = requiredDocumentsTotal > 0 && exportReadyDocumentsTotal < requiredDocumentsTotal
       ? [{ code: "REQUIRED_DOCUMENTS_NOT_EXPORT_READY", message: `${exportReadyDocumentsTotal}/${requiredDocumentsTotal} required documents are export-ready.`, nextAction: "Open export readiness." }]
       : [];

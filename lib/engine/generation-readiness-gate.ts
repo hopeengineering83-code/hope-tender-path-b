@@ -705,18 +705,17 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     extracted requirements has a valid plan by default.
     // Virtual submission plan authority removed — release depends only on
     // persisted confirmed BuildPlan.
-    // I — EXPORT/FINAL-ZIP readiness: count of real current generated files
-    //     with content, validation, and review. PLANNED/SUPERSEDED/virtual/
-    //     missing-content/unvalidated/unreviewed rows never count.
-    //     This is a strict count — only GENERATED rows with fileContent and
-    //     validationStatus/reviewStatus indicating readiness are included.
+    // I — Machine export eligibility: count real current generated files with
+    //     content and successful validation. Human/legal release authority is
+    //     enforced by its own fail-closed gates; routine documents do not need
+    //     a second per-document approval click after validation.
     const exportReadyDocumentCount = await prisma.generatedDocument.count({
       where: {
         tenderId,
         generationStatus: "GENERATED",
         fileContent: { not: null },
-        validationStatus: { in: ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"] },
-        reviewStatus: { in: ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"] },
+        validationStatus: { in: ["VALIDATED", "PASSED"] },
+        reviewStatus: { notIn: ["NOT_EXPORTABLE", "REPLACE_WITH_ORIGINAL"] },
       },
     });
 

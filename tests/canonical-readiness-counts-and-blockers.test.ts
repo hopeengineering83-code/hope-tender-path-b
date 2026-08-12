@@ -36,16 +36,17 @@ describe("Canonical Readiness — requiredDocumentsTotal includes PLANNED docs",
     );
   });
 
-  it("exportReadyDocumentsTotal counts only READY_FOR_EXPORT/APPROVED docs", () => {
+  it("exportReadyDocumentsTotal uses machine export eligibility", () => {
     const src = read("lib/engine/final-submission-readiness.ts");
     assert.ok(
       src.includes("exportReadyDocumentsTotal:"),
       "must compute exportReadyDocumentsTotal in the summary",
     );
-    // Must filter for READY_FOR_EXPORT or APPROVED — not just any generated doc
+    // Machine eligibility comes from canonical byte/format/validation state,
+    // not a routine human approval click.
     assert.ok(
-      /exportReadyDocumentsTotal.*READY_FOR_EXPORT.*APPROVED/s.test(src),
-      "exportReadyDocumentsTotal must only count READY_FOR_EXPORT/APPROVED docs",
+      /exportReadyDocumentsTotal: finalCandidates\.filter\(\(d\) => isExportReady\(d\)\)/s.test(src),
+      "exportReadyDocumentsTotal must use canonical machine export eligibility",
     );
   });
 });
@@ -146,11 +147,11 @@ describe("Primary blocker — priority order", () => {
     );
   });
 
-  it("validation/approval incomplete is third priority", () => {
+  it("machine validation incomplete is third priority", () => {
     const src = read("lib/engine/final-submission-readiness.ts");
     assert.ok(
-      src.includes("No documents are validated and approved for export"),
-      "must surface validation/approval as a blocker reason",
+      src.includes("No documents have passed machine validation for export"),
+      "must surface machine validation as a blocker reason",
     );
   });
 });

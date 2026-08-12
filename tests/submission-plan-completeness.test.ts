@@ -154,9 +154,10 @@ describe("submission-plan completeness — plan provenance", () => {
     assert.equal(report.planState, "REQUIREMENTS_FOUND_PLAN_NOT_BUILT");
     // The warning used to read "Build Submission Plan before Generate Docs".
     // There is no Generate Docs action and no separate manual plan build: Run
-    // Engine creates and source-verifies the Build Plan. The warning must name
+    // Engine uses the verified source and current analysis to create and verify
+    // the Build Plan. The warning must name
     // that action, and must not name either removed one.
-    assert.ok(report.warnings.some((w) => /Run Engine creates and source-verifies the Build Plan/i.test(w)));
+    assert.ok(report.warnings.some((w) => /Run Engine uses the verified source and current AI analysis to create and verify the Build Plan/i.test(w)));
     assert.ok(!report.warnings.some((w) => /Generate Docs/i.test(w)));
   });
 
