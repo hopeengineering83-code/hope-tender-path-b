@@ -74,6 +74,45 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-12 UTC — Claude Code (Opus), PR #1175 gaps A–F closed, and CI brought back to green
+
+Supersedes my earlier entry in this file, which recorded verification at
+`12680b1d6444b27246059bf0f529dbde968f6403`. That SHA is still in the branch
+history and none of its work was reverted, but the branch has advanced seven
+commits since, so the statement below is the current authoritative one.
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175. Verified head: `270c60dadac7975d9e9139ec00b111ef53898053`.
+- **Gaps A–F** (Bid Strategy false-automation copy, release status inferred from absent data, whole-pipeline automatic copy, Tender Control suggestions naming controls that do not exist, controls-resolver failure rendering as zero controls, and the controls match-context query scoped by tender id alone) are closed as described in the entry below this one. New modules: `lib/ui/manual-gate-guidance.ts`, `lib/ui/release-stage-copy.ts`. New tests: `tests/pr1175-final-gap-closure.test.ts`, `tests/tender-controls-failure-and-tenant-scope-db.test.ts`, `tests/mandatory-evidence-fixtures-db.test.ts`.
+
+**CI was red on this branch and is now green.** Three failures, none from the gap-closure commit, all from copy corrections and a removed action leaving assertions behind them:
+
+1. `Company Vault usable-evidence count` — a correction narrowed "no action is needed here" to "no confirmation click is needed here", which a regression test pins. The broader phrase is restored; the correction it carried (vault ingestion source-verifies, not Run Engine) is untouched.
+2. `Company Vault — zero-document honesty` — the test pinned the whole old sentence including "Run Engine verifies them automatically", an attribution that was false. Restoring it in the page to green the test would have put the falsehood back to satisfy a test written to keep the product honest, so the test moved to the corrected sentence and now also asserts the false attribution cannot return.
+3. `Recovery Command Center — nextAction code coverage` — `REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN` was removed from the registry along with the route that emitted it, because it offered requirement review as a way to promote provenance the source did not support. Two test lists still named it, so the coverage test demanded a registry entry for a code nothing can emit.
+
+**One further defect, found by inspecting the rendered 2/4 screenshot rather than by any test.** Analysis Quality was headed "Tender analysis is stale, incomplete, or blocked" directly beneath the AI Analyze panel's "AI Analysis is complete and current." Both sentences are about the tender analysis and contradicted each other. Neither was lying: `ready` is false when any of its five inputs fails, and one of them, `canonicalExtractionReady`, is about the SOURCE. On that tender the analysis was current and trusted and the source file's byte integrity was unverified — which the reason list underneath already said. The heading now names what is actually wrong. `ready` itself is untouched, so the score cap, tone, badge and every downstream consumer behave exactly as before. Pinned by three assertions in `tests/pr1175-final-gap-closure.test.ts`.
+
+**Verified at `270c60da`:**
+
+- Full suite on real local PostgreSQL 16 with `RUN_DB_INTEGRATION=true`: **9,981 passed, 0 failed, 0 skipped**.
+- Typecheck clean. Lint clean but for the one standing unused-disable warning.
+- Production build passed; `git diff --exit-code` clean afterwards (no build-time source mutation).
+- Migrations applied to a fresh database and re-applied idempotently; `prisma migrate diff` reports **no difference** (zero drift); critical-schema check 30 tables / 10 column groups / 3 functions, 0 failures.
+- `npm audit --omit=dev` and `scripts/audit-dependencies.mjs`: **0 vulnerabilities**.
+- Release-integrity audits: 431 routes, 1,548 files, 0 failures.
+- Authenticated Playwright at the previous verified head: **184 passed, 4 environment-conditional skipped, 0 failed**; the phase-2 rendered 2/4 workflow-truth spec re-run and passing at this head.
+- Screenshot audit at this head: **237 screenshots, route/viewport coverage 111/111 (100%), 0 critical findings, 0 horizontal overflow, 0 warnings** across desktop, tablet and mobile.
+- **Rendered screenshots actually inspected**, not merely exited zero. The 2/4 tender confirms: source traced 4/4, release-qualified 2/4, partial 2, genuine gaps 0, stale 0, "Blocked — source evidence required", matching labelled as relevance only, evidence cited by recognisable name rather than UUID, Bid Strategy evidence-limited at BID CAREFULLY, no Generate Docs instruction, and Analysis Quality no longer contradicting AI Analyze. Mobile Company Vault confirms the honest zero-document branch and the corrected ingestion attribution.
+- **Exact-head CI on #1175 is green**: the full migrations/typecheck/lint/tests/build/authenticated-isolation job (both runs), the screenshot capture job, both dependency-vulnerability jobs, and Vercel Preview.
+
+**Deployment convergence.** PR head, Preview and the verified local head are all `270c60da`. Production remains `d699935351fe9b843a5b9ca082f4d105eb6b9ffa` and is intentionally behind. Nothing was promoted.
+
+**Known remaining gaps.** `presentTwoActionWorkflowDecision` maps `REQUIRED_DOCS_NOT_GENERATED` to "Run Engine" even after a successful Engine run for the current revision. That is the app's existing designed contract — the Engine is what starts the downstream pipeline — so it was deliberately left alone under a closure pass and pinned by the 4/4 fixture instead, making any future decision a visible one. The two non-app Vercel projects (`pr1175`, `repo`) report Error; they are separate projects, inaccessible via the API from here, and were failing before this work began.
+
+**Concurrency note.** Another agent pushed to this branch throughout this session; I rebased twice rather than force-push, and on the second rebase it had independently converged on the same resolution. Nothing of that agent's work was discarded.
+
+**Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration.
+
 ### 2026-08-12 16:27 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; continued from latest remote head `da358c164f9c8bdb4d3c2e711e75acfb871c014e`.
