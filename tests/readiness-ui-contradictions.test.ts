@@ -47,6 +47,7 @@ describe("readiness UI contradiction guardrails", () => {
     // deduped array -- not the raw finalPackage.export.blockers -- so the
     // fail-closed export gate and the displayed list never disagree.
     assert.match(source, /finalPackageDocumentBlockers = finalPackage\.documents\.blockers\.length \+ reconciledExportBlockers\.length/);
-    assert.match(source, /publicBlockers = \[\s*\.\.\.finalPackage\.documents\.blockers,\s*\.\.\.reconciledExportBlockers,/);
+    assert.match(source, /suppressDownstream \? \[\] : finalPackage\.documents\.blockers/);
+    assert.match(source, /suppressDownstream \? \[\] : reconciledExportBlockers/);
   });
 });

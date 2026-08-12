@@ -226,7 +226,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
 
         {blockedRows.length > 0 && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            <strong>{blockedRows.length} document(s) are not export-ready.</strong> Validate, review, and approve each before exporting. These rows stay visible.
+            <strong>{blockedRows.length} document(s) are not export-ready.</strong> The durable post-Engine workflow validates and finalizes safe outputs automatically; intervene only for the specific source, evidence, quality, authority, legal, or integrity blocker shown. These rows stay visible.
           </div>
         )}
 

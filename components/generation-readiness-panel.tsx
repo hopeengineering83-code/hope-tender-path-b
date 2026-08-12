@@ -181,8 +181,9 @@ export async function GenerationReadinessPanel({
             )}
           </div>
           <div className="flex items-center gap-3">
-            {/* When blockers exist, visually de-emphasize the score — it's misleading to show a high score next to "blocked" */}
-            <ScoreGauge score={effectivelyReady ? score : Math.min(score, 45)} />
+            {/* Keep the real score informational; canonical blockers, not a
+                cosmetically capped number, determine readiness. */}
+            <div className={effectivelyReady ? "" : "opacity-60"}><ScoreGauge score={score} /></div>
           </div>
         </div>
 

@@ -280,7 +280,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
 
       {!readiness && !loading && (
         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-          Run the export gate before final submission to verify generated files, validation, review status, file content, evaluator objections, and pricing leakage controls.
+          Export readiness appears from the canonical workflow automatically. It verifies generated files, machine validation, byte integrity, evaluator objections, and pricing leakage controls before final submission.
         </div>
       )}
 

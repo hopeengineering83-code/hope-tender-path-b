@@ -94,6 +94,15 @@ describe("generation and workflow panels consume canonical current truth", () =>
     assert.match(panel, /fullProposalReady && !canonicalUpstreamBlocked/);
   });
 
+  it("makes the latest current-revision Engine attempt authoritative everywhere", async () => {
+    const { readFileSync } = await import("node:fs");
+    const route = readFileSync("app/api/tenders/[id]/engine-readiness/route.ts", "utf8");
+    assert.match(route, /latestJob\?\.status === "SUCCEEDED"/);
+    assert.doesNotMatch(route, /Boolean\(succeededJob\)/);
+    assert.match(route, /publicJobFailureMessage\(latestJob\.errorMessage/);
+    assert.doesNotMatch(route, /errorMessage:\s*latestJob\.errorMessage\?\.slice/);
+  });
+
   it("surfaces the precise title recovery with a safe reference and no raw exception", () => {
     const message = publicJobFailureMessage(
       new Error("Automatic Build Plan verification blocked (TENDER_FACTS_INVALID): Critical metadata field title has invalid source page."),

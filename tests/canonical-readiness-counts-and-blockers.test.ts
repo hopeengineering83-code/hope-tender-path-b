@@ -4,7 +4,8 @@
 // - When 10 required docs are PLANNED but not generated, the widget must
 //   show 0/10 export ready, not 0/0.
 // - requiredDocumentsTotal must include ungenerated PLANNED docs.
-// - primaryBlockerReason must say "Generate required documents."
+// - primaryBlockerReason must identify planned documents without inventing a
+//   manual Generate action.
 // - Final export must remain blocked when required docs are planned but not generated.
 
 import { describe, it } from "node:test";
@@ -134,8 +135,8 @@ describe("Primary blocker — priority order", () => {
       "planned-not-generated must be the first priority in primaryBlockerReason",
     );
     assert.ok(
-      /primaryFixAction.*Generate required documents/s.test(src),
-      "fix action for planned-not-generated must be 'Generate required documents.'",
+      /primaryFixAction.*Automatic post-Engine document generation is pending/s.test(src),
+      "planned-not-generated must remain automatic post-Engine work",
     );
   });
 
@@ -182,11 +183,11 @@ describe("No user-facing metadata in readiness widget", () => {
 // section 1 above.
 
 describe("Screenshot regression — 10 planned required docs scenario", () => {
-  it("primary blocker says 'Generate required documents' when 10 planned", () => {
+  it("does not invent a Generate action when 10 documents are planned", () => {
     const src = read("lib/engine/final-submission-readiness.ts");
     assert.ok(
-      src.includes("Generate required documents."),
-      "primaryFixAction must say 'Generate required documents.'",
+      src.includes("Automatic post-Engine document generation is pending."),
+      "primaryFixAction must describe automatic post-Engine generation",
     );
     assert.ok(
       /primaryBlockerReason.*planned but not generated/s.test(src),

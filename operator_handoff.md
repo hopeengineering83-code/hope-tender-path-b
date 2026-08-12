@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-12 UTC — Codex (Preview 03b9c928 exact-head follow-up)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from latest remote head `1a4b2b597fa63c61ee683ede31a0e62e98127873`; no merge or Production promotion.
+- **Scope:** audited the concurrent Preview repair against the real failure rather than its green-check claim. Exact-head CI was actually red (5 stale/contradictory assertions). Reconciled those tests with the owner contract; made the latest current-revision Engine attempt authoritative in Engine Readiness so an older success cannot mask a newer failure; sanitized Engine failure messages and canonical blocker details; kept the real 95/100 score informational instead of falsifying it to 45; removed remaining manual validate/review/export-gate wording; preserved executable isolated technical/financial/admin ZIPs and strict byte/signature gates.
+- **Files changed:** Engine readiness route, canonical workflow failure projection, Generation/Export/Final Package UI copy, PDF download error copy, affected truth/package/operation regression tests, `tests/preview-title-provenance-engine-postgres.test.ts`, and this handoff.
+- **Tests/checks before commit:** 105 focused non-database assertions passed. The real PostgreSQL title fixture could not run locally because the configured Neon host is unreachable; the prior exact-head CI ran it but ended **9983 pass / 5 fail**, all five now-reconciled expectations. Prisma generation, typecheck, lint, full PostgreSQL/migrations/zero-drift, build, Playwright/isolation, screenshot audit, security, and real Preview acceptance must rerun on the resulting SHA.
+- **Risks / assumptions:** the title repair still accepts only an ACTIVE tenant-owned source whose actual extracted text proves the quote/title at a valid page boundary; otherwise strict `TENDER_FACTS_INVALID` remains. No page validation, provenance, tenant, evidence, legal/authority, or byte-integrity gate was relaxed.
+- **Next action:** commit/push once, require every exact-head check, then manually exercise the exact Preview tender state and inspect all canonical panels before updating PR truth.
+- **Merge status:** **DO NOT MERGE**; exact-head acceptance pending; Production promotion prohibited.
+
 ### 2026-08-12 UTC — Codex (Preview 03b9c928 real-failure repair)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, repaired from exact latest remote head `b4903c03baaa28edeafe9ccb9c8c7ffeb29355c4` without merging or Production promotion.

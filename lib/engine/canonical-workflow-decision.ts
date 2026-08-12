@@ -742,20 +742,23 @@ export async function getCanonicalTenderWorkflowDecision(
   if (latestEngine && ["FAILED", "CANCELED"].includes(latestEngine.status)) {
     const cause = latestEngine.steps.find((step) => step.stepName === "build-plan.blocked")
       ?? latestEngine.steps[0];
-    const detail = cause?.message?.slice(0, 500)
-      ?? "The current-revision Engine run failed before downstream processing completed.";
-    const titleProvenance = /TENDER_FACTS_INVALID|metadata field title|title.*source page/i.test(detail);
+    const recordedDetail = cause?.message ?? "";
+    const titleProvenance = /TENDER_FACTS_INVALID|metadata field title|title.*source page/i.test(recordedDetail);
+    const reference = latestEngine.id.slice(0, 8);
+    const safeDetail = titleProvenance
+      ? `The current-revision Engine run stopped because the tender title is not proven at a valid page in the active source. Reference: ${reference}`
+      : `The current-revision Engine run failed before downstream processing completed. Reference: ${reference}`;
     return {
       ...decision,
       currentBlockingStage: "ENGINE_RUN_FAILED",
       blockingStageCode: titleProvenance ? "TITLE_SOURCE_PROVENANCE_INVALID" : "ENGINE_RUN_FAILED",
       blockerCodes: [titleProvenance ? "TITLE_SOURCE_PROVENANCE_INVALID" : "ENGINE_RUN_FAILED"],
-      blockerDetails: [`${detail} Reference: ${latestEngine.id.slice(0, 8)}`],
+      blockerDetails: [safeDetail],
       nextRequiredAction: titleProvenance ? "REPAIR_SOURCE_REFERENCES" : "RUN_ENGINE",
       nextRequiredActionLabel: titleProvenance ? "Repair title source evidence" : "Retry Run Engine",
       nextRequiredActionReason: titleProvenance
-        ? `The latest Engine run stopped because the tender title could not be proven at a valid page in the active source. Reconcile the title file/page/quote, then retry. Reference: ${latestEngine.id.slice(0, 8)}`
-        : `The latest Engine run failed before downstream processing completed. Resolve the recorded cause, then retry. Reference: ${latestEngine.id.slice(0, 8)}`,
+        ? `The latest Engine run stopped because the tender title could not be proven at a valid page in the active source. Reconcile the title file/page/quote, then retry. Reference: ${reference}`
+        : `The latest Engine run failed before downstream processing completed. Open Diagnostics for the safe recorded cause, then retry. Reference: ${reference}`,
       downstreamSuppressedBy: "ENGINE_RUN_FAILED",
     };
   }

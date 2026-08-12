@@ -3,6 +3,7 @@ import { requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { computeEngineSourceRevision } from "../../../../../lib/engine/engine-source-revision";
+import { publicJobFailureMessage } from "../../../../../lib/prisma-schema-compatibility";
 
 export const dynamic = "force-dynamic";
 
@@ -61,7 +62,7 @@ export async function GET(
       }
     : null;
 
-  const [activeJob, succeededJob, latestJob] = currentRevisionWhere
+  const [activeJob, latestJob] = currentRevisionWhere
     ? await Promise.all([
         prisma.aiJob.findFirst({
           where: {
@@ -70,11 +71,6 @@ export async function GET(
           },
           orderBy: { createdAt: "desc" },
           select: { id: true, status: true, createdAt: true },
-        }),
-        prisma.aiJob.findFirst({
-          where: { ...currentRevisionWhere, status: "SUCCEEDED" },
-          orderBy: { finishedAt: "desc" },
-          select: { id: true, status: true, finishedAt: true },
         }),
         prisma.aiJob.findFirst({
           where: currentRevisionWhere,
@@ -89,10 +85,12 @@ export async function GET(
           },
         }),
       ])
-    : [null, null, null];
+    : [null, null];
 
   const engineRunning = Boolean(activeJob);
-  const engineComplete = Boolean(succeededJob) && !engineRunning;
+  // The latest attempt is authoritative. An older success must never mask a
+  // newer current-revision failure after a deliberate re-run.
+  const engineComplete = Boolean(latestJob?.status === "SUCCEEDED") && !engineRunning;
   const engineFailed = Boolean(
     latestJob
       && ["FAILED", "CANCELED"].includes(latestJob.status)
@@ -107,7 +105,7 @@ export async function GET(
       : !sourceRevision
         ? "The current Engine source revision could not be established."
         : engineFailed
-          ? latestJob?.errorMessage?.slice(0, 500) || "The latest Engine job failed. Correct the reported issue and retry."
+          ? publicJobFailureMessage(latestJob?.errorMessage, latestJob?.id.slice(0, 8) ?? "engine")
           : null;
 
   return NextResponse.json({
@@ -138,7 +136,9 @@ export async function GET(
       ? {
           id: latestJob.id,
           status: latestJob.status,
-          errorMessage: latestJob.errorMessage?.slice(0, 500) ?? null,
+          errorMessage: ["FAILED", "CANCELED"].includes(latestJob.status)
+            ? publicJobFailureMessage(latestJob.errorMessage, latestJob.id.slice(0, 8))
+            : null,
           createdAt: latestJob.createdAt.toISOString(),
           startedAt: latestJob.startedAt?.toISOString() ?? null,
           finishedAt: latestJob.finishedAt?.toISOString() ?? null,

@@ -23,11 +23,13 @@ describe("Generation Readiness — no 'Ready' when blockers exist", () => {
       src.includes("effectivelyReady"),
       "must compute effectivelyReady = fullProposalReady && !hasFullProposalBlockers && !hasNoConfirmedPlan",
     );
-    // Score must be capped when blockers exist
+    // The real score remains informational; it must not be falsified to make
+    // the blocked state look internally consistent.
     assert.ok(
-      src.includes("Math.min(score, 45)"),
-      "must cap score at 45 when blockers exist (prevents 95/100 next to 'blocked')",
+      src.includes("<ScoreGauge score={score}"),
+      "must show the actual informational score while canonical blockers control readiness",
     );
+    assert.ok(!src.includes("Math.min(score, 45)"), "must not cosmetically rewrite the score");
   });
 
   it("checks for no confirmed Build Plan before showing Ready", () => {

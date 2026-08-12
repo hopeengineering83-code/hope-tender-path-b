@@ -598,7 +598,7 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
   if (targetFileName.endsWith(".pdf")) {
     if (!isReadyForFinalExport(asReadyDoc(target))) {
       return err(
-        "This PDF document exists but is not yet validated and approved for export. Run Validate and complete the review before downloading it.",
+        "This PDF exists but has not passed canonical machine validation and export eligibility. Automatic post-Engine processing must complete, or a specific fail-closed blocker must be resolved, before download.",
         409,
         { code: "PDF_DOC_NOT_EXPORT_READY", document: target.exactFileName ?? target.name },
       );

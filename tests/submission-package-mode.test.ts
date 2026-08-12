@@ -3,12 +3,13 @@ import { strict as assert } from "node:assert";
 import { detectSubmissionPackageMode } from "../lib/engine/submission-package-mode";
 
 describe("submission package mode detection", () => {
-  it("blocks default ZIP when separate technical and financial submissions are required", () => {
+  it("enables separately scoped ZIPs when technical and financial submissions must be separate", () => {
     const result = detectSubmissionPackageMode({
       requirements: [{ title: "Two envelope submission", description: "Technical proposal and financial proposal must be submitted in separate sealed envelopes." }],
     });
     assert.equal(result.mode, "SEPARATE_TECHNICAL_FINANCIAL");
-    assert.equal(result.blockingForZip, true);
+    assert.equal(result.blockingForZip, false);
+    assert.match(result.reason, /isolated Technical, Financial.*Admin ZIPs/i);
   });
 
   it("blocks default ZIP when a single combined PDF is required", () => {
