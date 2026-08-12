@@ -94,8 +94,11 @@ export async function reconcileTitleSourceEvidence(
       where: { id: tenderId, userId },
       data: evidence,
     });
-    await syncPersistedTenderFactsToLedger(prisma, tenderId, userId);
   }
+  // Reconcile the canonical ledger even when the scalar fields were already
+  // repaired by an interrupted earlier attempt. This makes a retry converge
+  // instead of leaving valid Tender columns paired with stale ledger evidence.
+  await syncPersistedTenderFactsToLedger(prisma, tenderId, userId);
   return { repaired, proven: true };
 }
 

@@ -36,6 +36,35 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
       extractedPages: 3,
       extractedText: `[Page 1]\nInvitation to Bid\n[Page 2]\nTender Title: ${title}\nReference PHARO/LAB/2026/08\n[Page 3]\nEight requirements including six mandatory requirements.`,
     });
+    const company = await prisma.company.create({
+      data: { userId: user.id, name: `Pharo Fixture Company ${suffix}`, sectors: "[]" },
+    });
+    const expert = await prisma.expert.create({
+      data: { companyId: company.id, fullName: "Fixture Laboratory Engineer", trustLevel: "REGEX_DRAFT" },
+    });
+    const project = await prisma.project.create({
+      data: { companyId: company.id, name: "Fixture Laboratory Supply Project", trustLevel: "REGEX_DRAFT" },
+    });
+    await prisma.tenderExpertMatch.create({
+      data: { tenderId: tender.id, expertId: expert.id, score: 88, isSelected: true, rationale: "Revision-bound fixture match" },
+    });
+    await prisma.tenderProjectMatch.create({
+      data: { tenderId: tender.id, projectId: project.id, score: 86, isSelected: true, rationale: "Revision-bound fixture match" },
+    });
+    for (let index = 1; index <= 8; index += 1) {
+      await prisma.tenderRequirement.create({
+        data: {
+          tenderId: tender.id,
+          title: `Pharo requirement ${index}`,
+          description: `Source-grounded fixture requirement ${index}`,
+          requirementType: index <= 6 ? "MANDATORY" : "TECHNICAL",
+          priority: index <= 6 ? "MANDATORY" : "OPTIONAL",
+          sourceTenderFileId: file.id,
+          sourcePageNumber: 3,
+          sourceExactQuote: "Eight requirements including six mandatory requirements.",
+        },
+      });
+    }
     created.push({ tenderId: tender.id, userId: user.id });
     await prisma.tender.update({
       where: { id: tender.id },
@@ -55,6 +84,28 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
     assert.equal(repaired.titleSourceFileId, file.id);
     assert.equal(repaired.titleSourcePage, 2);
     assert.match(repaired.titleSourceQuote ?? "", /Pharo Secondary School/);
+    const titleLedger = await prisma.tenderFactsLedger.findUniqueOrThrow({
+      where: { tenderId_semanticKey: { tenderId: tender.id, semanticKey: "title" } },
+      select: { sourceFileId: true, sourcePage: true, sourceQuote: true, authorityState: true },
+    });
+    assert.equal(titleLedger.sourceFileId, file.id);
+    assert.equal(titleLedger.sourcePage, 2);
+    assert.match(titleLedger.sourceQuote ?? "", /Pharo Secondary School/);
+    assert.match(titleLedger.authorityState, /^SOURCE_GROUNDED_/);
+    const fixtureState = await prisma.tender.findUniqueOrThrow({
+      where: { id: tender.id },
+      select: {
+        requirements: { select: { priority: true } },
+        expertMatches: { where: { isSelected: true }, select: { id: true } },
+        projectMatches: { where: { isSelected: true }, select: { id: true } },
+        buildPlan: { select: { id: true, status: true } },
+      },
+    });
+    assert.equal(fixtureState.requirements.length, 8);
+    assert.equal(fixtureState.requirements.filter((row) => row.priority === "MANDATORY").length, 6);
+    assert.equal(fixtureState.expertMatches.length, 1);
+    assert.equal(fixtureState.projectMatches.length, 1);
+    assert.equal(fixtureState.buildPlan, null);
   });
 
   it("does not invent a page when neither the quote nor title is provable", async () => {
