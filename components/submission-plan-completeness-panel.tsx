@@ -310,7 +310,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
           <span>Requirements: {data.summary.requirementCount}</span>
         </div>
         {data.summary.planState === "PLAN_NOT_BUILT" && (
-          <p className="mt-2">Tender requirements exist, but no exact or derived submission file plan is available yet. <strong>Run Engine</strong> creates and source-verifies the Build Plan, so the system can validate generated outputs against tender scope instead of showing a misleading Required 0 / Generated 0 / Missing 0 state.</p>
+          <p className="mt-2">Tender requirements exist, but no exact or derived submission file plan is available yet. <strong>Run Engine</strong> uses the verified tender source and current AI analysis to create and verify the Build Plan, so the system can validate generated outputs against tender scope instead of showing a misleading Required 0 / Generated 0 / Missing 0 state.</p>
         )}
         {data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" && (
           <p className="mt-2">Tender requirements have been extracted, but the submission file plan has not been built yet. <strong>Run Engine</strong> derives the submission file list from the extracted requirements; generation follows automatically once it succeeds.</p>

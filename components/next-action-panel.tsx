@@ -52,7 +52,7 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
     case "FIX_EXTRACTION": return "FIX_EXTRACTION";
     case "RESUME_AI_ANALYZE":
     case "RUN_AI_ANALYZE": return "RUN_AI_ANALYZE";
-    case "REVIEW_REQUIREMENTS": return "CONFIRM_REQUIREMENTS";
+    case "REVIEW_REQUIREMENTS": return "RUN_AI_ANALYZE";
     case "EDIT_TENDER_METADATA": return "EDIT_TENDER_METADATA";
     case "RUN_ENGINE":
     case "BUILD_SUBMISSION_PLAN": return "BUILD_SUBMISSION_PLAN";

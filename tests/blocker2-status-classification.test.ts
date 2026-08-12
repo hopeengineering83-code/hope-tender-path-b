@@ -1,5 +1,5 @@
 // Blocker 2: AUTOMATIC_WORK_PENDING blockers must be PROCESSING_AUTOMATICALLY,
-// never GENUINE_SOURCE_BLOCKED. Unknown blockers also default to automatic.
+// never GENUINE_SOURCE_BLOCKED. Unknown blockers fail closed.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -40,9 +40,9 @@ describe("Blocker 2 — automatic work-pending blockers are PROCESSING_AUTOMATIC
     assert.equal(status, "PROCESSING_AUTOMATICALLY");
   });
 
-  it("classifies unknown blockers as PROCESSING_AUTOMATICALLY (not GENUINE_SOURCE_BLOCKED)", () => {
+  it("classifies unknown blockers as STATUS_UNAVAILABLE", () => {
     const status = classifyReleaseStatus(["SOME_UNKNOWN_BLOCKER"], false);
-    assert.equal(status, "PROCESSING_AUTOMATICALLY");
+    assert.equal(status, "STATUS_UNAVAILABLE");
   });
 
   it("classifies empty blockers + readyForFinalExport as READY_TO_DOWNLOAD", () => {
@@ -112,7 +112,7 @@ describe("Blocker 2 — classifyBlocker helper", () => {
     assert.equal(classifyBlocker("ENGINE_NOT_COMPLETED"), "AUTOMATIC");
   });
 
-  it("classifies unknown codes as AUTOMATIC (fail safe)", () => {
-    assert.equal(classifyBlocker("UNKNOWN_CODE"), "AUTOMATIC");
+  it("classifies unknown codes as UNKNOWN (fail closed)", () => {
+    assert.equal(classifyBlocker("UNKNOWN_CODE"), "UNKNOWN");
   });
 });

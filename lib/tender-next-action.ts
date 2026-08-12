@@ -167,11 +167,11 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
         }
       : undefined;
     return {
-      primary: "REVIEW_REQUIREMENTS",
-      label: input.aiAnalysis.regexFallback ? "Review fallback requirements" : "Review AI analysis",
+      primary: "RERUN_AI_ANALYZE",
+      label: "Re-run AI Analyze",
       reason: input.aiAnalysis.regexFallback
-        ? "Regex fallback is draft-only. Review source tracing and do not treat it as final-export ready unless there is an explicit admin override."
-        : "AI analysis is partial or untrusted. Review it before continuing downstream.",
+        ? "Regex fallback is draft-only and cannot be promoted by review. Re-extract or improve the source, then re-run AI Analyze for grounded requirements."
+        : "AI analysis is partial or untrusted. Re-run AI Analyze; a review click cannot promote unsupported provenance.",
       blockers: [
         input.aiAnalysis.regexFallback ? "Analysis used regex fallback (weak extraction) — re-extract and re-run AI Analyze for a trusted result" : "Analysis is partial or untrusted",
         ...(input.requirements.mandatoryCount > input.requirements.mandatoryTracedCount ? [`Mandatory traced: ${input.requirements.mandatoryTracedCount}/${input.requirements.mandatoryCount}`] : []),
@@ -209,11 +209,11 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
 
   if (!requirementsTrusted) {
     return {
-      primary: "REVIEW_REQUIREMENTS",
-      label: "Review requirements",
+      primary: "RERUN_AI_ANALYZE",
+      label: "Re-run AI Analyze",
       reason: input.requirements.rawCount === 0
-        ? "No requirements are available. Run AI Analyze only after extraction is ready, or add requirements manually."
-        : "Raw requirements exist, but trusted source-traced requirements are not ready.",
+        ? "No requirements are available. Re-run AI Analyze after extraction is ready."
+        : "Raw requirements exist, but trusted source-traced requirements are not ready. Re-run AI Analyze; if the active source cannot prove them, upload a better source or make a genuine source correction.",
       blockers: input.requirements.rawCount === 0
         ? ["No requirements available"]
         : [`Trusted traced requirements: ${input.requirements.trustedTracedCount}/${input.requirements.rawCount}`, `Mandatory traced: ${input.requirements.mandatoryTracedCount}/${input.requirements.mandatoryCount}`],

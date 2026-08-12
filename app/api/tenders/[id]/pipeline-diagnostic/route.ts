@@ -195,7 +195,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     | "FIX_EXTRACTION"
     | "RUN_AI_ANALYZE"
     | "CONFIRM_METADATA"
-    | "CONFIRM_REQUIREMENTS"
+    | "GROUND_REQUIREMENTS"
     | "BUILD_PLAN"
     | "CONFIRM_EVIDENCE"
     | "GENERATE_DOCUMENTS"
@@ -231,7 +231,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       const blockers: string[] = tender!.requirements.length === 0
         ? ["No requirements extracted — re-run AI Analyze"]
         : [`${mandatoryReqs.length - tracedReqs.length} mandatory requirements lack source traceability`];
-      return { step: "CONFIRM_REQUIREMENTS", label: "Confirm extracted requirements", reason: "Requirements have not been extracted or lack source traceability.", blockers };
+      return { step: "GROUND_REQUIREMENTS", label: "Ground requirements from source", reason: "Requirements must be verified from the active source. Re-run AI Analyze; if they remain unprovable, upload a better source or make a genuine source correction. Confirmation cannot promote unsupported provenance.", blockers };
     }
     if (!hasPlan) return {
       step: "BUILD_PLAN",

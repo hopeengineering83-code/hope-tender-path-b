@@ -47,7 +47,7 @@ describe("resolveTenderNextAction", () => {
       aiAnalysis: { exists: true, trusted: false, status: "REGEX_FALLBACK_FROM_WEAK_EXTRACTION", regexFallback: true },
       requirements: { rawCount: 13, trustedTracedCount: 0, mandatoryCount: 6, mandatoryTracedCount: 0 },
     });
-    assert.equal(decision.primary, "REVIEW_REQUIREMENTS");
+    assert.equal(decision.primary, "RERUN_AI_ANALYZE");
     assert.match(decision.reason, /draft-only/);
     assert.doesNotMatch(decision.reason, /approved as sufficient/i);
   });
@@ -57,7 +57,7 @@ describe("resolveTenderNextAction", () => {
       ...base,
       requirements: { rawCount: 13, trustedTracedCount: 1, mandatoryCount: 6, mandatoryTracedCount: 0 },
     });
-    assert.equal(decision.primary, "REVIEW_REQUIREMENTS");
+    assert.equal(decision.primary, "RERUN_AI_ANALYZE");
     assert.deepEqual(decision.rawVsTrustedRequirements, {
       raw: 13,
       trusted: 1,

@@ -196,8 +196,8 @@ export function buildCanonicalWorkflowDecision(input: {
     if (!input.requirementsTrusted) {
       blockerCodes.push("REQUIREMENTS_NOT_SOURCE_GROUNDED");
       blockerDetails.push(input.requirementsExist
-        ? "Requirements exist but lack source tracing. Review and confirm source grounding."
-        : "No requirements available. Run AI Analyze.");
+        ? "Requirements exist but lack verified source tracing. Attempt automatic source grounding; if the source cannot prove them, re-run AI Analyze, upload a better source, or correct the requirement from the genuine source."
+        : "No requirements available. Re-run AI Analyze against the verified source.");
     }
   }
 
@@ -205,12 +205,12 @@ export function buildCanonicalWorkflowDecision(input: {
   const requirementsOK = analysisOK && input.criticalTenderDetailsValid && input.requirementsTrusted;
   if (requirementsOK && !input.confirmedBuildPlanExists) {
     blockerCodes.push("NO_CONFIRMED_BUILD_PLAN");
-    // Run Engine creates and source-verifies the Build Plan (the ENGINE_RUN
+    // Run Engine uses the verified source and current AI analysis to create and verify the Build Plan (the ENGINE_RUN
     // handler calls buildAndVerifyBuildPlan). Naming a manual "build and
     // confirm" step invented a third required action, and contradicted the
     // very next blocker below, which correctly says "Run Engine to link
     // evidence".
-    blockerDetails.push("No current confirmed Build Plan for this revision. Run Engine creates and source-verifies it.");
+    blockerDetails.push("No current confirmed Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it.");
   }
 
   // ── Priority 9: Mandatory no compliance rows ─────────────────────────
@@ -258,15 +258,14 @@ export function buildCanonicalWorkflowDecision(input: {
     blockerDetails.push("Generated documents have not been validated.");
   }
 
-  // ── Priority 14: Docs not approved/export-ready ──────────────────────
+  // ── Priority 14: Machine export eligibility ─────────────────────────
+  // Validation is the machine authority for routine downstream processing.
+  // `reviewStatus` is retained as human/legal release audit state, but a
+  // per-document approval click must not deadlock DOCX/PDF/ZIP production.
   const docsValidated = docsGenerated && input.documentsValidated;
-  if (docsValidated && !input.documentsApproved) {
-    blockerCodes.push("DOCS_NOT_APPROVED_EXPORT_READY");
-    blockerDetails.push("Documents are validated but not approved for export.");
-  }
 
   // ── Priority 15: Authority or quality blockers ───────────────────────
-  const docsApproved = docsValidated && input.documentsApproved;
+  const docsApproved = docsValidated;
   if (docsApproved && input.authorityOrQualityBlockers) {
     blockerCodes.push("AUTHORITY_OR_QUALITY_BLOCKERS");
     blockerDetails.push("Authority review or document quality blockers remain.");
@@ -318,14 +317,16 @@ export function buildCanonicalWorkflowDecision(input: {
     STALE_ANALYSIS: { action: "RUN_AI_ANALYZE", label: "Re-run AI Analyze", reason: "Tender content changed since the last analysis. Re-run AI Analyze for the current content." },
     AI_ANALYZE_NOT_RUN: { action: "RUN_AI_ANALYZE", label: "Run AI Analyze", reason: "AI Analyze has not been run or is untrusted." },
     CRITICAL_TENDER_DETAILS_INVALID: { action: "EDIT_TENDER_METADATA", label: "Edit Tender Details", reason: "Critical Tender Details are missing, invalid, or ungrounded." },
-    REQUIREMENTS_NOT_SOURCE_GROUNDED: { action: "REVIEW_REQUIREMENTS", label: "Review requirements", reason: "Requirements exist but lack source tracing. Review and confirm source grounding." },
+    REQUIREMENTS_NOT_SOURCE_GROUNDED: input.requirementsExist
+      ? { action: "REPAIR_SOURCE_GROUNDING", label: "Ground requirements from source", reason: "The system must verify each requirement against the active source. If it cannot, re-run AI Analyze, upload a better source, or make a genuine source correction; review or confirmation cannot promote unsupported provenance." }
+      : { action: "RUN_AI_ANALYZE", label: "Re-run AI Analyze", reason: "No source-grounded requirements are available for the current verified source." },
     NO_CONFIRMED_BUILD_PLAN: { action: "BUILD_SUBMISSION_PLAN", label: "Review and confirm Build Plan", reason: "No current confirmed Build Plan. Build the draft, review its complete ordered file scope, and confirm it." },
     MANDATORY_NO_COMPLIANCE_ROWS: { action: "LINK_VAULT_EVIDENCE", label: "Link evidence to requirements", reason: `${input.mandatoryRequirementCount} mandatory requirements have no compliance matrix rows. Run Engine to link evidence.` },
     MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Source evidence required", reason: `Automatic matching found release-qualified FULL/SUBSTANTIAL coverage for ${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements. Strengthen partial evidence or add eligible source-backed evidence where none is adequate; no confirmation click can bypass this gate.` },
     PDF_REQUIRED_UNAVAILABLE: { action: "FINALIZE_REQUIRED_PDF", label: "Finalize required PDF", reason: "Required PDF output is unavailable. Finalize the required PDF (from the approved DOCX source) or upload the tender-issued PDF." },
     REQUIRED_DOCS_NOT_GENERATED: { action: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: `${input.generatedDocumentsTotal}/${input.requiredDocumentsTotal} required documents generated.` },
     DOCS_NOT_VALIDATED: { action: "FIX_EXPORT_BLOCKERS", label: "Validate documents", reason: "Generated documents have not been validated." },
-    DOCS_NOT_APPROVED_EXPORT_READY: { action: "FIX_EXPORT_BLOCKERS", label: "Approve documents for export", reason: "Documents are validated but not approved for export." },
+    DOCS_NOT_APPROVED_EXPORT_READY: { action: "AUTOMATIC_PROCESSING", label: "Checking machine export eligibility", reason: "The durable worker verifies document validation, byte integrity, format and package eligibility without impersonating human release authority." },
     AUTHORITY_OR_QUALITY_BLOCKERS: { action: "FIX_EXPORT_BLOCKERS", label: "Fix authority/quality blockers", reason: "Authority review or document quality blockers remain." },
     EXPORT_BLOCKED: { action: "FIX_EXPORT_BLOCKERS", label: "Resolve export blockers", reason: "Export gate is not satisfied. Resolve the remaining export blockers before downloading the final ZIP." },
     EXPORT_ZIP_READY: { action: "EXPORT_READY", label: "Export ready", reason: "All gates pass. Review the final package manifest and export the submission ZIP." },
@@ -383,7 +384,9 @@ export function buildCanonicalWorkflowDecision(input: {
     stageAvailability["CONFIRM_REQUIREMENTS"] = false;
   } else if (!input.requirementsTrusted) {
     stageStates["CONFIRM_REQUIREMENTS"] = "BLOCKED";
-    stageAvailability["CONFIRM_REQUIREMENTS"] = true;
+    // Historical stage key retained for response compatibility only. It is
+    // deliberately not actionable: confirmation cannot promote provenance.
+    stageAvailability["CONFIRM_REQUIREMENTS"] = false;
   } else {
     stageStates["CONFIRM_REQUIREMENTS"] = "COMPLETE";
     stageAvailability["CONFIRM_REQUIREMENTS"] = false;
@@ -623,19 +626,16 @@ export async function getCanonicalTenderWorkflowDecision(
       .filter((d) => d.generationStatus === "GENERATED")
       .every((d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED");
 
-  // Documents approved / export-ready: every generated doc has reviewStatus APPROVED or READY_FOR_EXPORT.
-  const documentsApproved =
-    documentsValidated &&
-    generatedDocs
-      .filter((d) => d.generationStatus === "GENERATED")
-      .every((d) => d.reviewStatus === "APPROVED" || d.reviewStatus === "READY_FOR_EXPORT");
+  // Routine machine eligibility is established by successful validation.
+  // Human reviewStatus remains available for genuine legal/signature/owner
+  // release controls, but it is not a second per-document pipeline gate.
+  const documentsApproved = documentsValidated;
 
-  // Export-ready count: generated + validated + approved.
+  // Machine-export-eligible count: generated + validated.
   const exportReadyDocumentsTotal = generatedDocs.filter(
     (d) =>
       d.generationStatus === "GENERATED" &&
-      (d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED") &&
-      (d.reviewStatus === "APPROVED" || d.reviewStatus === "READY_FOR_EXPORT"),
+      (d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED"),
   ).length;
 
   // ─── PDF required but unavailable ───────────────────────────────────────

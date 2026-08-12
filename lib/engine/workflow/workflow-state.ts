@@ -187,9 +187,10 @@ export async function getCanonicalTenderWorkflowState(
     label = "Edit Tender Details";
     reason = "Tender metadata is incomplete.";
   } else if (mandatoryRequirements.length > 0 && !completeTraceability) {
-    nextAction = "REVIEW_REQUIREMENTS";
-    label = "Review Requirements";
-    reason = `${untracedMandatory.length} mandatory requirement(s) lack source traceability.`;
+    nextAction = "RUN_AI_ANALYZE";
+    actionEndpoint = `/api/tenders/${tenderId}/ai-analyze`;
+    label = "Re-run AI Analyze";
+    reason = `${untracedMandatory.length} mandatory requirement(s) lack verified source traceability. Re-run AI Analyze against the verified source; if they remain unprovable, upload a better source or correct the requirement from genuine source evidence.`;
   } else if (!planApproved) {
     nextAction = "BUILD_SUBMISSION_PLAN";
     actionEndpoint = `/api/tenders/${tenderId}/build-plan`;

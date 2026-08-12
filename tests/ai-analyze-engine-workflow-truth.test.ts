@@ -74,6 +74,41 @@ describe("AI Analyze panel uses canonical current-revision Engine truth", () => 
 });
 
 describe("cross-panel next-action semantics", () => {
+  const downstreamReady = {
+    hasFiles: true, extractionUnsafe: false, extractionCorrupted: false, ocrRequired: false,
+    aiAnalysisExists: true, aiAnalysisTrusted: true, aiAnalysisPartial: false,
+    aiAnalysisStale: false, resumableAnalysisAvailable: false,
+    criticalTenderDetailsValid: true, requirementsExist: true, requirementsTrusted: true,
+    mandatoryRequirementCount: 1, mandatoryTracedCount: 1,
+    mandatoryComplianceRowsCount: 1, mandatoryFullOrSubstantialCoverageCount: 1,
+    confirmedBuildPlanExists: true, requiredDocumentsTotal: 1,
+    generatedDocumentsTotal: 1, exportReadyDocumentsTotal: 1,
+    documentsValidated: true, documentsApproved: false,
+    pdfRequiredButUnavailable: false, finalExportAllowed: true,
+    authorityOrQualityBlockers: false,
+  } as const;
+
+  it("does not require routine per-document human approval after machine validation", () => {
+    const decision = buildCanonicalWorkflowDecision(downstreamReady);
+    assert.equal(decision.finalExportAllowed, true);
+    assert.equal(decision.currentBlockingStage, "EXPORT_ZIP_READY");
+    assert.doesNotMatch(decision.blockerCodes.join(" "), /DOCS_NOT_APPROVED/);
+  });
+
+  it("never promotes ungrounded requirements through review or confirmation", () => {
+    const decision = buildCanonicalWorkflowDecision({
+      ...downstreamReady,
+      requirementsTrusted: false,
+      generatedDocumentsTotal: 0,
+      documentsValidated: false,
+      finalExportAllowed: false,
+    });
+    assert.equal(decision.currentBlockingStage, "REQUIREMENTS_NOT_SOURCE_GROUNDED");
+    assert.equal(decision.nextRequiredAction, "REPAIR_SOURCE_GROUNDING");
+    assert.doesNotMatch(`${decision.nextRequiredAction} ${decision.nextRequiredActionLabel}`, /REVIEW_REQUIREMENTS|CONFIRM_REQUIREMENTS/i);
+    assert.match(decision.nextRequiredActionReason, /cannot promote unsupported provenance/i);
+  });
+
   it("does not contradict Source evidence required after current Engine completion", () => {
     // This is the original Preview state: current trusted analysis, a current
     // confirmed plan, and incomplete mandatory evidence coverage. Derive the

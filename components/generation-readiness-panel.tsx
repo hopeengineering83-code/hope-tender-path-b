@@ -159,7 +159,7 @@ export async function GenerationReadinessPanel({
             <h2 className="mt-1 text-lg font-bold text-slate-900">{effectivelyReady ? "Ready to generate full proposal" : "Full proposal generation blocked"}</h2>
             <p className="mt-1 text-sm text-slate-600">The server gate is authoritative. The numeric score is informational and cannot override blockers.</p>
             {hasNoConfirmedPlan && (
-              <p className="mt-1 text-sm text-red-700 font-medium">No confirmed Build Plan for this revision. Run Engine creates and source-verifies it before generation.</p>
+              <p className="mt-1 text-sm text-red-700 font-medium">No confirmed Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it before generation.</p>
             )}
             {supportPackageReady && !effectivelyReady && (
               <p className="mt-1 text-sm text-amber-800">Support packages may be generated, but the full proposal remains blocked.</p>

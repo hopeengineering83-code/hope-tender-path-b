@@ -345,7 +345,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   const requiresUserConfirmation = planState !== "CONFIRMED_BUILD_PLAN";
 
   if ((planState as string) === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" || (planState as string) === "PLAN_NOT_BUILT") {
-    warnings.push(`${requirementCount} tender requirement(s) exist, but no submission file plan has been built or confirmed. Run Engine creates and source-verifies the Build Plan, so generated outputs can be validated against tender scope.`);
+    warnings.push(`${requirementCount} tender requirement(s) exist, but no submission file plan has been built or confirmed. Run Engine uses the verified source and current AI analysis to create and verify the Build Plan, so generated outputs can be validated against tender scope.`);
   }
   if (requiresUserConfirmation) {
     warnings.push(

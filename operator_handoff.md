@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-12 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr1175-remaining-gaps-20260812` updating PR #1175 from remote head `12680b1d6444b27246059bf0f529dbde968f6403`; final commit is the commit containing this entry.
+- **Scope:** Removed the routine post-Engine per-document approval deadlock by separating machine validation/export eligibility from human/legal release authority; replaced requirement review/confirmation promotion with source-grounding/re-analysis recovery; made unknown release blockers fail closed and added producer-to-classifier exhaustiveness coverage; corrected Run Engine copy to say it consumes the already-verified tender source and current manual AI analysis. Preserved FULL/SUBSTANTIAL coverage, current-analysis, integrity, authority, legal, and tenant gates.
+- **Files changed:** canonical workflow/release classifiers and presentation, workflow/readiness API copy, requirement next-action resolvers, targeted regression tests, and this handoff. No schema or migration files changed.
+- **Verification:** targeted regressions pass; Prisma generate/validate, 47-migration deploy/status, and migration-to-schema zero-drift pass on local PostgreSQL 16; typecheck passes; lint passes with one pre-existing warning; release-integrity audits and `npm audit --audit-level=high` pass (0 vulnerabilities); production build passes with build-only placeholder secrets; authenticated cross-tenant and exact-head screenshot/route Playwright cases passed. The first full PostgreSQL run reached 9,975 tests with four failures caused by old expectations/presentation ordering; those failures were fixed and the exact failing files were rerun successfully except the live-evidence case, which exposed one active-job ordering issue that was then fixed. A final entire 9,975-test rerun was not completed. Full Playwright was attempted after browser installation and seeding: exact-head/cross-tenant and the initial route sweep passed, but the golden workflow used a deliberately nonfunctional placeholder AI key and stalled the shared server, causing later health/UI timeouts; the run was stopped rather than misreported green.
+- **Deployment:** no Production merge or promotion. One Preview is the next action after the final commit is pushed.
+- **Known risk / truth:** do not claim 100% or a fully green final full-suite certification until CI reruns the entire PostgreSQL and authenticated Playwright suites with a working CI provider configuration on the final SHA.
+- **Next action:** push this one final SHA to PR #1175, create exactly one Vercel Preview, and wait for exact-head CI/review; do not merge.
+- **Merge status:** **not reviewed / do not merge**.
+
 ### 2026-08-12 UTC — Claude Code (Opus), PR #1175 final remaining-gap closure (Gaps A–F)
 
 - **Branch / PR:** `claude/pr-1175-gap-closure-a2o8u6`, branched from the exact remote head of `release/consolidated-recovery-20260717` (`a0b6f98a57d4b4fa64b6c0549b59e02cc5583d32`). Nothing on #1175 was reset, reverted, rebased away, or overwritten.

@@ -23,7 +23,7 @@ export function presentTwoActionWorkflowDecision(
       nextRequiredAction: "RUN_ENGINE",
       nextRequiredActionLabel: "Run Engine",
       nextRequiredActionReason:
-        "Run Engine starts source verification, matching and Build Plan creation. Valid downstream stages then continue automatically.",
+        "Run Engine uses the current verified source and current AI analysis, then starts matching and Build Plan creation. Valid downstream stages continue automatically.",
     };
   }
 

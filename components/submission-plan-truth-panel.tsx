@@ -23,7 +23,7 @@ function planReason(summary: PlanSummary): string {
   if (summary.planState === "DERIVED_DRAFT_UNCONFIRMED") {
     return "A provisional scope was derived from current requirements. The server will validate and promote it automatically when the source evidence is sufficient.";
   }
-  return "The authoritative Build Plan has not been created yet. Run Engine creates and source-verifies it automatically; recovery is available below if it does not appear.";
+  return "The authoritative Build Plan has not been created yet. Run Engine uses the verified source and current AI analysis to create and verify it automatically; recovery is available below if it does not appear.";
 }
 
 export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {

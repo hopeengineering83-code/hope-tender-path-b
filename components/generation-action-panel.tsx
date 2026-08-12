@@ -206,7 +206,8 @@ export function deriveTruthfulReleaseStatus(
   workflowDecision?: PanelWorkflowDecision | null,
 ): ReleaseStatus {
   const status = releaseDecision?.status ?? deriveReleaseStatus(readiness, canonicalReadiness);
-  if (status !== "PROCESSING_AUTOMATICALLY" || activeDownstreamWork) return status;
+  if (activeDownstreamWork) return "PROCESSING_AUTOMATICALLY";
+  if (status !== "PROCESSING_AUTOMATICALLY" && status !== "STATUS_UNAVAILABLE") return status;
 
   // Missing source evidence is the more specific truth, so it still wins.
   const collected = collectedBlockerCodes(readiness, canonicalReadiness, releaseDecision, workflowDecision);

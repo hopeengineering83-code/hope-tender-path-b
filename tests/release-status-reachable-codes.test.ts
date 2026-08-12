@@ -46,7 +46,8 @@ function reachableBlockerCodes(): Set<string> {
   const generation = readFileSync("lib/tender-generation-readiness.ts", "utf8");
 
   // The literal codes canonical appends itself, e.g. ["ENGINE_NOT_COMPLETED"].
-  const inline = [...canonical.matchAll(/\?\s*\["([A-Z][A-Z_]+)"\]/g)].map((m) => m[1]);
+  const readinessBlockerSource = canonical.split("const nextActions")[0];
+  const inline = [...readinessBlockerSource.matchAll(/\?\s*\["([A-Z][A-Z_]+)"\]/g)].map((m) => m[1]);
 
   // Both producer arrays count. tender-generation-readiness builds
   // fullProposalBlockers and then, in a second pass, inherits entries from its
@@ -108,19 +109,15 @@ describe("work in progress is never reported as a missing upload", () => {
     assert.equal(classifyReleaseStatus(["FULL_PROPOSAL_NO_VAULT"], false), "PROCESSING_AUTOMATICALLY");
   });
 
-  it("classifies every other reachable code as automatic or source, never legal or security", () => {
+  it("requires every reachable blocker to have an explicit classification", () => {
     for (const code of REACHABLE) {
-      const status = classifyReleaseStatus([code], false);
-      assert.ok(
-        status === "PROCESSING_AUTOMATICALLY" || status === "GENUINE_SOURCE_BLOCKED",
-        `${code} classified as ${status}; no reachable readiness blocker should read as legal or security`,
-      );
+      assert.notEqual(classifyBlocker(code), "UNKNOWN", `${code} is a new/unclassified blocker`);
     }
   });
 
-  it("treats an unknown code as automatic rather than demanding an upload", () => {
-    assert.equal(classifyReleaseStatus(["SOME_CODE_ADDED_LATER"], false), "PROCESSING_AUTOMATICALLY");
-    assert.equal(classifyBlocker("SOME_CODE_ADDED_LATER"), "AUTOMATIC");
+  it("fails closed when an unknown code reaches release classification", () => {
+    assert.equal(classifyReleaseStatus(["SOME_CODE_ADDED_LATER"], false), "STATUS_UNAVAILABLE");
+    assert.equal(classifyBlocker("SOME_CODE_ADDED_LATER"), "UNKNOWN");
   });
 });
 

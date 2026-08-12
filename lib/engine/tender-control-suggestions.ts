@@ -99,7 +99,7 @@ export const CONTROL_SUGGESTION_REGISTER: Record<
   TENDER_FACTS_INCOMPLETE: { kind: "CURRENT", canonicalStage: "CRITICAL_TENDER_DETAILS_INVALID", condition: "One or more critical tender facts are missing or invalid." },
   SOURCE_REFS_MISSING: { kind: "CURRENT", canonicalStage: "REQUIREMENTS_NOT_SOURCE_GROUNDED", condition: "Mandatory requirements exist without a source page/quote." },
   MANDATORY_COVERAGE_ZERO: { kind: "CURRENT", canonicalStage: "MANDATORY_NO_COMPLIANCE_ROWS", condition: "Requirements exist and none has linked evidence." },
-  SUBMISSION_PLAN_NOT_BUILT: { kind: "DOWNSTREAM", canonicalStage: "NO_CONFIRMED_BUILD_PLAN", condition: "No explicit plan and no plan rows. Run Engine builds and source-verifies the plan." },
+  SUBMISSION_PLAN_NOT_BUILT: { kind: "DOWNSTREAM", canonicalStage: "NO_CONFIRMED_BUILD_PLAN", condition: "No explicit plan and no plan rows. Run Engine uses the verified source and current AI analysis to build and verify the plan." },
   PLANNED_DOCS_NOT_GENERATED: { kind: "DOWNSTREAM", canonicalStage: "REQUIRED_DOCS_NOT_GENERATED", condition: "Plan rows exist whose outputs are not yet generated." },
   OUTSIDE_PLAN_DOCS: { kind: "INFORMATIONAL", canonicalStage: "REQUIRED_DOCS_NOT_GENERATED", condition: "Generated documents exist that map to no plan row." },
   NO_ACTIVE_EXPORT_CANDIDATES: { kind: "DOWNSTREAM", canonicalStage: "EXPORT_BLOCKED", condition: "Zero documents are eligible for the final ZIP." },
@@ -287,9 +287,9 @@ export function deriveControlSuggestions(input: SuggestionDerivationInput): Sugg
       code: "SUBMISSION_PLAN_NOT_BUILT",
       type: "TASK",
       title: "Build the submission plan",
-      description: "No explicit submission plan was detected and no plan rows exist yet. Run Engine creates and source-verifies the Build Plan; this is a downstream consequence of the Engine not having run for the current source revision, not a separate manual build step.",
+      description: "No explicit submission plan was detected and no plan rows exist yet. Run Engine uses the verified source and current AI analysis to create and verify the Build Plan; this is a downstream consequence of the Engine not having run for the current source revision, not a separate manual build step.",
       severity: "MEDIUM",
-      nextAction: "Run Engine. Build Plan creation and source verification follow automatically.",
+      nextAction: "Run Engine. Build Plan creation and verification against that source follow automatically.",
     }));
   }
 

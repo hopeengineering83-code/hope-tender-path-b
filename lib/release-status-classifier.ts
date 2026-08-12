@@ -36,8 +36,7 @@
 //       - MISSING_PLANNED_FILES (generation will create them)
 //       - ENGINE_NOT_COMPLETED (engine is running or queued)
 //       - MISSING_TENDER_FORM_FIELDS (tender-form completion gate will fire)
-//       - Any validation/PDF/package pending state
-//       - Any unknown blocker (fail safe: assume automatic, not source-blocked)
+//       - Explicitly classified validation/PDF/package pending states
 //
 //   READY_TO_DOWNLOAD — the final ZIP is ready.
 //
@@ -105,6 +104,37 @@ const LEGAL_RELEASE_CODES = new Set([
   "AUTHORITY_REVIEW_REQUIRED",
   "EVALUATOR_OBJECTION_REQUIRES_RESOLUTION",
   "FALLBACK_ANALYSIS_APPROVAL_REQUIRED",
+  "NO_BID_BLOCK",
+  "TENDER_PROHIBITS_BRANDING",
+  "TENDER_PROHIBITS_SIGNATURE",
+  "TENDER_PROHIBITS_STAMP",
+]);
+
+// Known non-automatic blockers whose precise recovery action is supplied by
+// the canonical workflow decision. They are mapped explicitly so additions
+// cannot silently become PROCESSING_AUTOMATICALLY.
+const CANONICAL_ACTION_REQUIRED_CODES = new Set([
+  "ALL_EXPERTS_UNREVIEWED",
+  "ALL_PROJECTS_UNREVIEWED",
+  "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
+  "BEST_AVAILABLE_MATCHES_FLAGGED",
+  "EVAL_WEIGHTS_INCOMPLETE",
+  "EVAL_WEIGHTS_MISSING",
+  "FULL_PROPOSAL_ANALYSIS_POOR",
+  "FULL_PROPOSAL_DERIVED_PLAN_UNCONFIRMED",
+  "FULL_PROPOSAL_ENGINE_NOT_RUN",
+  "FULL_PROPOSAL_MATCHES_WEAK",
+  "FULL_PROPOSAL_NO_REVIEWED_EXPERTS",
+  "FULL_PROPOSAL_NO_REVIEWED_PROJECTS",
+  "MANDATORY_EVIDENCE_NOT_ASSESSED",
+  "MATCHING_QUALITY_POOR",
+  "MATCHING_QUALITY_POOR_VAULT_FALLBACK",
+  "NO_EXPERT_MATCHES_FOUND",
+  "NO_PROJECT_MATCHES_FOUND",
+  "NO_REVIEWED_EXPERT_MATCHES",
+  "NO_REVIEWED_PROJECT_MATCHES",
+  "SENIOR_REVIEW_GAPS",
+  "TENDER_REQUIRES_PDF_SOURCE_MISSING",
 ]);
 
 // Automatic work-pending codes — the durable workflow will resolve these.
@@ -121,6 +151,13 @@ const AUTOMATIC_WORK_PENDING_CODES = new Set([
   "NO_TENDER_SPECIFIC_PROJECT_MATCHES",
   "NO_SELECTED_REVIEWED_EXPERTS",
   "NO_SELECTED_REVIEWED_PROJECTS",
+  "FULL_PROPOSAL_NO_VAULT",
+  "COMPANY_INGESTION_NOT_READY",
+  "COMPANY_INGESTION_WARNING",
+  "EXPERT_AUTO_PROMOTION_AVAILABLE",
+  "PROJECT_AUTO_PROMOTION_AVAILABLE",
+  "MATCHING_QUALITY_WARNING",
+  "TENDER_REQUIRES_PDF",
   "DOCUMENTS_NOT_GENERATED",
   "QUALITY_GATE_FAILED",
   "AUTO_FINALIZE_REQUIRED",
@@ -166,9 +203,9 @@ export type ReleaseStatusAvailability = {
  * Blocker 2: AUTOMATIC_WORK_PENDING blockers (NO_ACTIVE_GENERATED_DOCUMENTS,
  * NO_CURRENT_CONFIRMED_BUILD_PLAN, MISSING_PLANNED_FILES, ENGINE_NOT_COMPLETED,
  * validation/PDF/package pending) are classified as PROCESSING_AUTOMATICALLY,
- * never GENUINE_SOURCE_BLOCKED. Unknown blockers also default to
- * PROCESSING_AUTOMATICALLY (fail safe: assume the workflow will handle it,
- * not that the user must upload something).
+ * never GENUINE_SOURCE_BLOCKED. Unknown blockers fail closed as
+ * STATUS_UNAVAILABLE: absence of a mapping is not evidence that a worker owns
+ * the blocker.
  *
  * Gap B: a caller that could not resolve readiness at all passes
  * `{ readinessResolved: false }` and gets STATUS_UNAVAILABLE. "No data" is
@@ -199,9 +236,14 @@ export function classifyReleaseStatus(
     return "GENUINE_SOURCE_BLOCKED";
   }
 
-  // All remaining blockers (including unknown ones) are AUTOMATIC_WORK_PENDING.
-  // The durable workflow will resolve them without user action.
-  // Blocker 2: do NOT classify unknown blockers as missing source.
+  if (blockerCodes.some((code) => CANONICAL_ACTION_REQUIRED_CODES.has(code))) {
+    return "STATUS_UNAVAILABLE";
+  }
+
+  if (blockerCodes.some((code) => !AUTOMATIC_WORK_PENDING_CODES.has(code))) {
+    return "STATUS_UNAVAILABLE";
+  }
+
   if (blockerCodes.length > 0) return "PROCESSING_AUTOMATICALLY";
 
   return "PROCESSING_AUTOMATICALLY";
@@ -211,10 +253,12 @@ export function classifyReleaseStatus(
  * Classify a single blocker code into its category.
  * Useful for debugging and UI rendering.
  */
-export type BlockerCategory = "SECURITY" | "SOURCE" | "LEGAL" | "AUTOMATIC";
+export type BlockerCategory = "SECURITY" | "SOURCE" | "LEGAL" | "AUTOMATIC" | "CANONICAL_ACTION" | "UNKNOWN";
 export function classifyBlocker(code: string): BlockerCategory {
   if (SECURITY_FAILURE_CODES.has(code)) return "SECURITY";
   if (GENUINE_SOURCE_BLOCKER_CODES.has(code)) return "SOURCE";
   if (LEGAL_RELEASE_CODES.has(code)) return "LEGAL";
-  return "AUTOMATIC";
+  if (AUTOMATIC_WORK_PENDING_CODES.has(code)) return "AUTOMATIC";
+  if (CANONICAL_ACTION_REQUIRED_CODES.has(code)) return "CANONICAL_ACTION";
+  return "UNKNOWN";
 }
