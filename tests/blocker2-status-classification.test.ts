@@ -13,9 +13,7 @@ describe("Blocker 2 — automatic work-pending blockers are PROCESSING_AUTOMATIC
     "ENGINE_NOT_COMPLETED",
     "MISSING_TENDER_FORM_FIELDS",
     "DOCUMENTS_NOT_GENERATED",
-    "QUALITY_GATE_FAILED",
     "AUTO_FINALIZE_REQUIRED",
-    "ANALYSIS_QUALITY_POOR",
     "ANALYSIS_QUALITY_WARNING",
     "NO_TENDER_SPECIFIC_EXPERT_MATCHES",
     "NO_SELECTED_REVIEWED_EXPERTS",
@@ -51,6 +49,13 @@ describe("Blocker 2 — automatic work-pending blockers are PROCESSING_AUTOMATIC
 
   it("fails closed when no blocker explains a false export-ready flag", () => {
     assert.equal(classifyReleaseStatus([], false), "STATUS_UNAVAILABLE");
+  });
+
+  it("does not pretend quality failures or a manual AI recovery are running", () => {
+    for (const code of ["QUALITY_GATE_FAILED", "ANALYSIS_QUALITY_POOR", "MISSING_REQUIREMENTS"]) {
+      assert.equal(classifyBlocker(code), "CANONICAL_ACTION");
+      assert.equal(classifyReleaseStatus([code], false), "STATUS_UNAVAILABLE");
+    }
   });
 });
 

@@ -823,7 +823,7 @@ export default function CompanyPage() {
                   </p>
                 ) : (
                   <p className="mt-1.5 text-xs text-slate-400">
-                    Records that are not yet source-verified are excluded from matching and generation. Run Engine verifies them automatically against the uploaded documents — no action is needed here.
+                    Records that are not yet source-verified are excluded from matching and generation. Vault ingestion verifies them automatically against uploaded documents before AI Analyze and Run Engine use them — no confirmation click is needed here.
                   </p>
                 )
               )}
@@ -1014,7 +1014,7 @@ export default function CompanyPage() {
               </div>
             ) : (
               <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                Run Engine automatically source-verifies eligible expert records before matching and generation.
+                Vault ingestion automatically source-verifies eligible expert records before AI Analyze; Run Engine later uses the verified records for matching and generation.
               </div>
             );
           })()}
@@ -1147,7 +1147,7 @@ export default function CompanyPage() {
             if (totalProjects === 0) return null;
             return (
               <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-                Run Engine automatically source-verifies eligible project records before matching and generation.
+                Vault ingestion automatically source-verifies eligible project records before AI Analyze; Run Engine later uses the verified records for matching and generation.
               </div>
             );
           })()}

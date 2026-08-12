@@ -115,6 +115,13 @@ describe("work in progress is never reported as a missing upload", () => {
     }
   });
 
+  it("does not call manual AI/source/quality recovery automatic progress", () => {
+    for (const code of ["ANALYSIS_QUALITY_POOR", "MISSING_REQUIREMENTS", "QUALITY_GATE_FAILED"]) {
+      assert.equal(classifyBlocker(code), "CANONICAL_ACTION");
+      assert.equal(classifyReleaseStatus([code], false), "STATUS_UNAVAILABLE");
+    }
+  });
+
   it("fails closed when an unknown code reaches release classification", () => {
     assert.equal(classifyReleaseStatus(["SOME_CODE_ADDED_LATER"], false), "STATUS_UNAVAILABLE");
     assert.equal(classifyBlocker("SOME_CODE_ADDED_LATER"), "UNKNOWN");

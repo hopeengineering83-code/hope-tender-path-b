@@ -224,7 +224,7 @@ export default async function VaultEvidenceSearchPanel({ tenderId }: Props) {
           )}
 
           {(pendingExpertCount > 0 || pendingProjectCount > 0) && (
-            <p className="text-xs text-amber-800">{pendingExpertCount + pendingProjectCount} vault item(s) are not yet source-verified against current bytes and are excluded from generation. Run Engine verifies them automatically — no review step is required.</p>
+            <p className="text-xs text-amber-800">{pendingExpertCount + pendingProjectCount} vault item(s) are not yet source-verified against current bytes and are excluded from generation. Vault ingestion verifies eligible records automatically before AI Analyze and Run Engine use them — no confirmation click is required.</p>
           )}
         </div>
 

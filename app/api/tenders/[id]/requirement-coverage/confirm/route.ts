@@ -3,7 +3,6 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
 import { extractRequestId } from "../../../../../../lib/request-id";
-import { isGroundedEvidenceInActiveFiles } from "../../../../../../lib/engine/evidence-grounding";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -110,38 +109,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const requestedLevel = requestedSupportLevel(body.supportLevel);
 
   if (isManualReviewerConfirmation(body)) {
-    if (requestedLevel === "FULL" || requestedLevel === "SUBSTANTIAL") {
-      const activeFiles = await prisma.tenderFile.findMany({
-        where: { tenderId: id, deletionStatus: "ACTIVE" },
-        select: { id: true, extractedText: true, totalPages: true },
-      });
-      if (!isGroundedEvidenceInActiveFiles(
-        requirement.sourcePageNumber,
-        requirement.sourceExactQuote,
-        requirement.sourceTenderFileId,
-        activeFiles,
-      )) {
-        return NextResponse.json({
-          ok: false,
-          code: "REQUIREMENT_SOURCE_TRACE_REQUIRED",
-          error: "FULL or SUBSTANTIAL coverage requires an active tender source file, valid page, and exact quote contained in that source.",
-        }, { status: 422 });
-      }
-    }
-    const evidenceReference = `reviewer:${actor.id}:requirement:${requirement.id}`;
-    const notes = body.notes ?? `Reviewer manually confirmed ${requestedLevel} coverage.`;
-    const existing = await prisma.complianceMatrix.findFirst({
-      where: { tenderId: id, requirementId: requirement.id, evidenceType: "MANUAL_REVIEWER_CONFIRMATION" },
-      select: { id: true },
-    });
-
-    const row = existing
-      ? await prisma.complianceMatrix.update({ where: { id: existing.id }, data: { evidenceSource: "REVIEWER_CONFIRMED", evidenceReference, supportLevel: requestedLevel, notes, updatedAt: new Date() } })
-      : await prisma.complianceMatrix.create({ data: { tenderId: id, requirementId: requirement.id, evidenceType: "MANUAL_REVIEWER_CONFIRMATION", evidenceSource: "REVIEWER_CONFIRMED", evidenceReference, supportLevel: requestedLevel, notes } });
-
-    await logAction({ userId: actor.id, action: "REQUIREMENT_COVERAGE_MANUALLY_CONFIRMED", entityType: "Tender", entityId: id, description: `Manually confirmed ${requestedLevel.toLowerCase()} coverage for requirement: ${requirement.title}`, metadata: { requirementId: requirement.id, complianceMatrixId: row.id, supportLevel: requestedLevel }, requestId });
-
-    return NextResponse.json({ ok: true, success: true, row, requestedSupportLevel: requestedLevel, effectiveSupportLevel: requestedLevel, supportLevelCapped: false, supportLevelPolicy: null });
+    return NextResponse.json({
+      ok: false,
+      code: "REQUIREMENT_SOURCE_GROUNDING_REQUIRED",
+      error: "A confirmation click cannot establish requirement provenance. Run automatic source grounding; if the active source cannot prove the requirement, re-run AI Analyze, upload a better source, or correct the requirement from the genuine source.",
+    }, { status: 422 });
   }
 
   const company = await prisma.company.findUnique({ where: { userId: tender.userId }, select: { id: true } });

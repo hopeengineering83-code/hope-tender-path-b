@@ -78,8 +78,8 @@ describe("Company Vault requires no navigation, review, or approval", () => {
   });
 
   it("keeps the Experts and Projects tabs informational, with no call to action", () => {
-    assert.match(page, /Run Engine automatically source-verifies eligible expert records/);
-    assert.match(page, /Run Engine automatically source-verifies eligible project records/);
+    assert.match(page, /Vault ingestion automatically source-verifies eligible expert records before AI Analyze/);
+    assert.match(page, /Vault ingestion automatically source-verifies eligible project records before AI Analyze/);
     assert.doesNotMatch(page, /Automatic verification →/);
     assert.doesNotMatch(page, /Review experts →|Review projects →|Review each file before using/);
   });

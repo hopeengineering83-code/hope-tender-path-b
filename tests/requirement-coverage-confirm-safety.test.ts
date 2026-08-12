@@ -52,7 +52,10 @@ describe("automatic requirement coverage safety", () => {
     assert.match(panel, /no confirmation click is required/i);
   });
 
-  it("preserves the old direct-confirm endpoint as a capped compatibility path", () => {
+  it("keeps the old direct-confirm endpoint fail-closed for provenance promotion", () => {
+    assert.match(confirmRoute, /REQUIREMENT_SOURCE_GROUNDING_REQUIRED/);
+    assert.match(confirmRoute, /confirmation click cannot establish requirement provenance/i);
+    assert.doesNotMatch(confirmRoute, /REQUIREMENT_COVERAGE_MANUALLY_CONFIRMED/);
     assert.match(confirmRoute, /requested === "FULL" \|\| requested === "SUBSTANTIAL"/);
     assert.match(confirmRoute, /level:\s*"PARTIAL"/);
     assert.match(confirmRoute, /supportLevelCapped/);

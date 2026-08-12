@@ -47,11 +47,11 @@ describe("requirement coverage authority consistency", () => {
     );
   });
 
-  it("strong manual confirmation verifies active source containment", () => {
+  it("manual requirement confirmation cannot promote provenance", () => {
     const route = read("app/api/tenders/[id]/requirement-coverage/confirm/route.ts");
-    assert.match(route, /isGroundedEvidenceInActiveFiles/);
-    assert.match(route, /deletionStatus:\s*"ACTIVE"/);
-    assert.match(route, /REQUIREMENT_SOURCE_TRACE_REQUIRED/);
+    assert.match(route, /REQUIREMENT_SOURCE_GROUNDING_REQUIRED/);
+    assert.doesNotMatch(route, /REVIEWER_CONFIRMED/);
+    assert.doesNotMatch(route, /REQUIREMENT_COVERAGE_MANUALLY_CONFIRMED/);
   });
 
   it("removes the competing direct support-level mutator", () => {

@@ -103,7 +103,7 @@ describe("No confirmed Build Plan — blocks later stages consistently", () => {
     });
     assert.equal(decision.currentBlockingStage, "NO_CONFIRMED_BUILD_PLAN");
     assert.equal(decision.stageStates["GENERATE_DOCUMENTS"], "BLOCKED_BY_PRIOR_STEP");
-    assert.equal(decision.nextRequiredAction, "BUILD_SUBMISSION_PLAN");
+    assert.equal(decision.nextRequiredAction, "RUN_ENGINE");
   });
 });
 

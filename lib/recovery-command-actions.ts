@@ -327,12 +327,6 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     anchorId: "submission-plan-completeness",
     message: "Build Plan verification is automatic. Open the status panel to review the ordered scope and any genuine source blocker.",
   },
-  REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN: {
-    label: "Review Requirements and Build Plan Status",
-    kind: "scroll",
-    anchorId: "submission-plan-completeness",
-    message: "Open the automatic Build Plan status after reviewing tender requirements. No routine manual plan confirmation is required.",
-  },
   // Repair source grounding ──────────────────────────────────────────────────
   REPAIR_SOURCE_GROUNDING: {
     label: "Repair Source Grounding",

@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-12 16:27 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; continued from latest remote head `da358c164f9c8bdb4d3c2e711e75acfb871c014e`.
+- **Scope:** closed only the remaining owner-automation/provenance/status/copy gaps: removed the legacy requirement-review/plan action shortcut; made the compatibility requirement-confirm endpoint refuse manual provenance promotion; classified AI-analysis, missing-requirement, and quality failures as explicit non-automatic recovery; reconciled the Build Plan test with manual Run Engine authority; and corrected Company Vault copy so ingestion/source verification precedes AI Analyze and Run Engine.
+- **Files changed:** `app/api/tenders/[id]/requirement-coverage/confirm/route.ts`, `app/dashboard/company/page.tsx`, `components/vault-evidence-search-panel.tsx`, `lib/recovery-command-actions.ts`, `lib/release-status-classifier.ts`, their focused regression tests, and this handoff.
+- **Tests run:** Prisma generation passed; focused 192-test regression set passed; typecheck passed; release-integrity/safe-error/metadata/reconciliation audits passed; dependency audit reported zero vulnerabilities. Full `npm test` was correctly refused because the supplied `DATABASE_URL` is a Neon host; this container has no local PostgreSQL. Local lint was terminated by the constrained container before reporting a result. Exact-head PostgreSQL tests, migrations/zero drift, lint, build, authenticated/cross-tenant Playwright, route/screenshot audit, and Preview remain delegated to exact-head CI.
+- **Risks / assumptions:** no 100% claim. The compatibility `CONFIRM_REQUIREMENTS` stage key remains in canonical payloads only as disabled/non-promoting historical schema; the mutating confirmation path now fails closed. Production was not merged, deployed, or promoted.
+- **Next action:** push the single final commit, update PR #1175 to its exact SHA, and require exact-head CI plus the one Vercel Preview to pass before human review.
+- **Merge status:** **unsafe until exact-head CI/Preview pass; do not merge; do not promote Production.**
+
 ### 2026-08-12 15:53 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; audited from remote head `a20c0ad762ee83eac0361362cfcd086b70265fb4` on isolated local branch `audit/pr-1175-final`.
