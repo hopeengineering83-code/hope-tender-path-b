@@ -26,7 +26,7 @@ const verificationPage = readFileSync("components/company-vault-verification-pag
 
 describe("Company Vault — zero-document honesty", () => {
   it("does not promise automatic verification when no document exists to verify against", () => {
-    const reassurance = "Run Engine verifies them automatically against the uploaded documents — no action is needed here.";
+    const reassurance = "Vault ingestion verifies them automatically against uploaded documents before AI Analyze and Run Engine use them — no confirmation click is needed here.";
     assert.ok(vaultPage.includes(reassurance), "the reassuring copy should still exist for the normal case");
 
     // It must be reachable only when documents exist.
