@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-12 15:42 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr-1175-final-gap-audit`, based exactly on PR #1175 remote head `989539d1ab314ec87a6412a9ad20c86b809a755e`; intended for PR #1175 (`release/consolidated-recovery-20260717`) only.
+- **Scope:** closed the remaining owner-workflow truth gaps without merging or promoting Production: canonical machine validation now satisfies routine Build Plan document eligibility without a per-document approval click; tender-issued originals and genuine legal/authority/quality blockers remain fail-closed; requirement confirmation/review shortcuts were removed from active next-action types/presentation; missing Build Plan routes to manual Run Engine; stale copy now says ingestion/source verification precede AI Analyze and that Run Engine starts matching/Build Plan/downstream work; finalized-PDF copy no longer requests routine approval.
+- **Files changed:** `lib/engine/build-plan.ts`, `lib/engine/canonical-workflow-decision.ts`, `lib/tender-generation-readiness.ts`, `lib/tender-next-action.ts`, `components/next-action-panel.tsx`, `app/api/tenders/[id]/finalize-pdf/route.ts`, `app/dashboard/company/page.tsx`, `tests/pr1175-final-gap-closure.test.ts`, and this handoff.
+- **Tests passed:** targeted PR #1175/build-plan/classifier/workflow/next-action suite (122 tests); Prisma client generation; TypeScript typecheck; lint (0 errors, one pre-existing unused-disable warning); release-integrity/safe-error/metadata/reconciliation audits; dependency audit (0 vulnerabilities); production build with a development-only placeholder Z.ai key.
+- **Environment limitations:** the supplied Neon `DATABASE_URL` is unreachable and is also deliberately rejected by the repository test DB guard; no local PostgreSQL binaries or Docker are installed. Therefore real-PostgreSQL migrations/full tests, zero-drift, authenticated/cross-tenant Playwright, exact-head screenshot/route audit, and Vercel Preview must be run by CI/Preview on the final pushed SHA. No 100% or fully-green claim is made locally.
+- **Risks / assumptions:** the compatibility-only canonical `CONFIRM_REQUIREMENTS` stage key and confirm API route remain for historical payload/API compatibility, but are non-actionable and cannot promote provenance; removing those public contracts requires a separately coordinated API migration. The machine eligibility change is intentionally limited to canonical validation success or a genuine tender-issued-original path.
+- **Next action:** push the final commit to PR #1175, run/observe its required PostgreSQL, authenticated isolation, route/screenshot, security and Vercel Preview checks on that exact SHA, and fix any contradiction before review.
+- **Merge status:** **not reviewed / do not merge** until the exact-head CI and Preview evidence above are green. Do not promote Production.
+
 ### 2026-08-12 15:10 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175, updated directly from its latest remote head `cd11dc017652d7ed223964df4839164762351eb8`; final SHA is the commit containing this entry.

@@ -774,13 +774,20 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
     const ready = matches.filter((doc) =>
       doc.generationStatus === "GENERATED" &&
       generatedDocumentHasContent(doc) &&
-      ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"].includes(doc.validationStatus) &&
-      ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"].includes(doc.reviewStatus),
+      (
+        // Routine generated outputs become machine-export-eligible when the
+        // canonical validator passes. Human reviewStatus remains an audit and
+        // legal-release authority; it is not a second per-document pipeline
+        // gate. Tender-issued originals remain eligible only through their
+        // explicit REPLACE_WITH_ORIGINAL path.
+        ["VALIDATED", "PASSED", "APPROVED", "READY_FOR_EXPORT"].includes(doc.validationStatus) ||
+        doc.reviewStatus === "REPLACE_WITH_ORIGINAL"
+      ),
     );
     if (matches.length === 0) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is missing.`);
     if (matches.length > 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} has duplicate generated rows.`);
     if (matches.some((doc) => !generatedDocumentHasContent(doc))) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is empty.`);
-    if (matches.length > 0 && ready.length !== 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is not generated, validated, and approved for export.`);
+    if (matches.length > 0 && ready.length !== 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is not generated and machine-validated for export, or is still awaiting its genuine tender-issued original.`);
     exportReadyDocumentCount += ready.length;
   }
 

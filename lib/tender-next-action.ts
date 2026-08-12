@@ -5,7 +5,6 @@ export type TenderNextActionPrimary =
   | "RUN_AI_ANALYZE"
   | "RERUN_AI_ANALYZE"
   | "EDIT_METADATA"
-  | "REVIEW_REQUIREMENTS"
   | "BUILD_SUBMISSION_PLAN"
   | "GENERATE_DOCUMENTS"
   | "FIX_EXPORT_BLOCKERS"
@@ -225,8 +224,8 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
   if (!input.submissionPlanBuilt) {
     return {
       primary: "BUILD_SUBMISSION_PLAN",
-      label: "Review and confirm Build Plan",
-      reason: "Extraction, analysis, Tender Details, and requirements are ready. Build the draft, review its complete ordered scope, and confirm it before generating documents.",
+      label: "Run Engine",
+      reason: "Extraction, source-grounded AI analysis, Tender Details, and requirements are ready. Run Engine starts matching and creates the Build Plan; valid downstream processing then continues automatically.",
       blockers: ["No current confirmed Build Plan"],
       tone: "amber",
     };

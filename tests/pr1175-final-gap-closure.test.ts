@@ -67,6 +67,28 @@ const codeOf = (path: string): string =>
     .filter((line) => !/^\s*(\/\/|\*)/.test(line))
     .join("\n");
 
+describe("remaining workflow contract gaps", () => {
+  it("does not retain requirement-confirmation as a provenance promotion action", () => {
+    const nextAction = codeOf("lib/tender-next-action.ts");
+    const panel = codeOf("components/next-action-panel.tsx");
+    assert.doesNotMatch(nextAction, /REVIEW_REQUIREMENTS/);
+    assert.doesNotMatch(panel, /CONFIRM_REQUIREMENTS|REVIEW_REQUIREMENTS/);
+    assert.match(codeOf("lib/engine/canonical-workflow-decision.ts"), /REPAIR_SOURCE_GROUNDING/);
+  });
+
+  it("describes Run Engine as a consumer of verified source and current analysis", () => {
+    const company = codeOf("app/dashboard/company/page.tsx");
+    const readiness = codeOf("lib/tender-generation-readiness.ts");
+    assert.doesNotMatch(company, /Run Engine extracts and source-verifies/i);
+    assert.match(company, /Ingestion extracts and source-verifies/i);
+    assert.match(readiness, /starts matching and Build Plan\/downstream processing, not source verification/i);
+  });
+
+  it("keeps unknown release blockers fail-closed", () => {
+    assert.equal(classifyReleaseStatus(["NEW_UNMAPPED_BLOCKER"], false), "STATUS_UNAVAILABLE");
+  });
+});
+
 // ─── GAP A ───────────────────────────────────────────────────────────────────
 
 describe("Gap A — no surface claims a manual gate runs automatically", () => {

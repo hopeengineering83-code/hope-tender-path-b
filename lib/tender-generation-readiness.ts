@@ -307,7 +307,7 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   // METADATA IS NO LONGER A BLOCKER OR WARNING (unified runtime model).
 
   if (analysisQuality.severity === "POOR" || analysisQuality.severity === "UNSAFE") {
-    blockers.push({ code: "ANALYSIS_QUALITY_POOR", message: `Tender analysis quality is poor (${analysisQuality.score}/100). Re-run AI Analyze / Run Engine and verify evaluation criteria, submission rules, and source references before generation.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
+    blockers.push({ code: "ANALYSIS_QUALITY_POOR", message: `Tender analysis quality is poor (${analysisQuality.score}/100). Verify or improve the extracted source, then re-run AI Analyze. Run Engine only after the current analysis is trustworthy; it starts matching and Build Plan/downstream processing, not source verification.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
   } else if (analysisQuality.severity === "WARNING") {
     warnings.push({ code: "ANALYSIS_QUALITY_WARNING", message: `Tender analysis quality has warnings (${analysisQuality.score}/100). Review before final generation/export.`, nextAction: "OPEN_ANALYSIS_QUALITY" });
   }

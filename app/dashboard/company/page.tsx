@@ -863,7 +863,7 @@ export default function CompanyPage() {
         <div className="rounded-2xl border bg-white p-6 shadow-sm space-y-4">
           <div>
             <h2 className="font-semibold text-slate-900">Document Library</h2>
-            <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Run Engine extracts and source-verifies eligible evidence automatically</p>
+            <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Ingestion extracts and source-verifies eligible evidence before Run Engine uses it for matching</p>
           </div>
           <div className="flex gap-2 items-center">
             <select value={docCategory} onChange={e=>setDocCategory(e.target.value)} className="flex-1 rounded-lg border px-2 py-1.5 text-xs bg-white">

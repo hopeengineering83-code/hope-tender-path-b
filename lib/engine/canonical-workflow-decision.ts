@@ -320,7 +320,7 @@ export function buildCanonicalWorkflowDecision(input: {
     REQUIREMENTS_NOT_SOURCE_GROUNDED: input.requirementsExist
       ? { action: "REPAIR_SOURCE_GROUNDING", label: "Ground requirements from source", reason: "The system must verify each requirement against the active source. If it cannot, re-run AI Analyze, upload a better source, or make a genuine source correction; review or confirmation cannot promote unsupported provenance." }
       : { action: "RUN_AI_ANALYZE", label: "Re-run AI Analyze", reason: "No source-grounded requirements are available for the current verified source." },
-    NO_CONFIRMED_BUILD_PLAN: { action: "BUILD_SUBMISSION_PLAN", label: "Review and confirm Build Plan", reason: "No current confirmed Build Plan. Build the draft, review its complete ordered file scope, and confirm it." },
+    NO_CONFIRMED_BUILD_PLAN: { action: "RUN_ENGINE", label: "Run Engine", reason: "Run Engine uses the current verified source and current AI analysis, then starts matching and automatic Build Plan creation." },
     MANDATORY_NO_COMPLIANCE_ROWS: { action: "LINK_VAULT_EVIDENCE", label: "Link evidence to requirements", reason: `${input.mandatoryRequirementCount} mandatory requirements have no compliance matrix rows. Run Engine to link evidence.` },
     MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Source evidence required", reason: `Automatic matching found release-qualified FULL/SUBSTANTIAL coverage for ${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements. Strengthen partial evidence or add eligible source-backed evidence where none is adequate; no confirmation click can bypass this gate.` },
     PDF_REQUIRED_UNAVAILABLE: { action: "FINALIZE_REQUIRED_PDF", label: "Finalize required PDF", reason: "Required PDF output is unavailable. Finalize the required PDF (from the approved DOCX source) or upload the tender-issued PDF." },
@@ -436,7 +436,7 @@ export function buildCanonicalWorkflowDecision(input: {
   if (isSuppressed("DOCS_NOT_VALIDATED")) {
     stageStates["VALIDATE_DOCS"] = "BLOCKED_BY_PRIOR_STEP";
     stageAvailability["VALIDATE_DOCS"] = false;
-  } else if (!input.documentsValidated || !input.documentsApproved) {
+  } else if (!input.documentsValidated) {
     stageStates["VALIDATE_DOCS"] = "READY";
     stageAvailability["VALIDATE_DOCS"] = true;
   } else {

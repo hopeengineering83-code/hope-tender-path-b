@@ -23,7 +23,6 @@ type WorkflowStep =
   | "UPLOAD_TENDER"
   | "FIX_EXTRACTION"
   | "RUN_AI_ANALYZE"
-  | "CONFIRM_REQUIREMENTS"
   | "EDIT_TENDER_METADATA"
   | "BUILD_SUBMISSION_PLAN"
   | "MATCH_EVIDENCE"
@@ -36,14 +35,13 @@ const STEP_INDEX: Record<WorkflowStep, number> = {
   UPLOAD_TENDER: 0,
   FIX_EXTRACTION: 1,
   RUN_AI_ANALYZE: 2,
-  CONFIRM_REQUIREMENTS: 3,
-  EDIT_TENDER_METADATA: 4,
-  BUILD_SUBMISSION_PLAN: 5,
-  MATCH_EVIDENCE: 6,
-  GENERATE_DOCUMENTS: 7,
-  VALIDATE_DOCS: 8,
-  EXPORT_ZIP: 9,
-  COMPLETE: 10,
+  EDIT_TENDER_METADATA: 3,
+  BUILD_SUBMISSION_PLAN: 4,
+  MATCH_EVIDENCE: 5,
+  GENERATE_DOCUMENTS: 6,
+  VALIDATE_DOCS: 7,
+  EXPORT_ZIP: 8,
+  COMPLETE: 9,
 };
 
 function stepFromCanonicalAction(action: string): WorkflowStep {
@@ -52,7 +50,6 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
     case "FIX_EXTRACTION": return "FIX_EXTRACTION";
     case "RESUME_AI_ANALYZE":
     case "RUN_AI_ANALYZE": return "RUN_AI_ANALYZE";
-    case "REVIEW_REQUIREMENTS": return "RUN_AI_ANALYZE";
     case "EDIT_TENDER_METADATA": return "EDIT_TENDER_METADATA";
     case "RUN_ENGINE":
     case "BUILD_SUBMISSION_PLAN": return "BUILD_SUBMISSION_PLAN";
@@ -69,13 +66,13 @@ function stepFromCanonicalAction(action: string): WorkflowStep {
 function stepColor(step: WorkflowStep) {
   if (step === "COMPLETE" || step === "EXPORT_ZIP") return "border-emerald-200 bg-emerald-50";
   if (step === "RUN_AI_ANALYZE" || step === "BUILD_SUBMISSION_PLAN" || step === "GENERATE_DOCUMENTS" || step === "MATCH_EVIDENCE") return "border-amber-200 bg-amber-50";
-  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCS") return "border-red-200 bg-red-50";
+  if (step === "FIX_EXTRACTION" || step === "VALIDATE_DOCS") return "border-red-200 bg-red-50";
   return "border-amber-200 bg-amber-50";
 }
 
 function stepIcon(step: WorkflowStep) {
   if (step === "COMPLETE" || step === "EXPORT_ZIP") return <CheckCircleIcon />;
-  if (step === "FIX_EXTRACTION" || step === "CONFIRM_REQUIREMENTS" || step === "VALIDATE_DOCS") return <WarningIcon />;
+  if (step === "FIX_EXTRACTION" || step === "VALIDATE_DOCS") return <WarningIcon />;
   return <ArrowRightIcon />;
 }
 

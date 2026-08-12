@@ -350,7 +350,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         requiredPdfFiles: requiredPdfNames,
         canonicalReadiness,
         ...(created.length
-          ? { nextStep: "Run Validate and approve the finalized PDF before final export." }
+          ? { nextStep: "Canonical validation runs next; a passing machine validation makes the finalized PDF export-eligible without impersonating human/legal release approval." }
           : {}),
       },
       { status: ok ? 200 : 422 },
