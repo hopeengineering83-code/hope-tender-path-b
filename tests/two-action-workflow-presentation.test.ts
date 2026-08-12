@@ -35,7 +35,6 @@ describe("two-action workflow presentation", () => {
     for (const stage of [
       "NO_CONFIRMED_BUILD_PLAN",
       "MANDATORY_NO_COMPLIANCE_ROWS",
-      "REQUIRED_DOCS_NOT_GENERATED",
     ] as const) {
       const source = decision(stage);
       const presented = presentTwoActionWorkflowDecision(source)!;
@@ -49,12 +48,18 @@ describe("two-action workflow presentation", () => {
   });
 
   it("maps server-owned finalization stages to automatic processing", () => {
-    for (const stage of ["PDF_REQUIRED_UNAVAILABLE", "DOCS_NOT_VALIDATED"] as const) {
+    for (const stage of ["REQUIRED_DOCS_NOT_GENERATED", "PDF_REQUIRED_UNAVAILABLE", "DOCS_NOT_VALIDATED"] as const) {
       const presented = presentTwoActionWorkflowDecision(decision(stage))!;
       assert.equal(presented.nextRequiredAction, "AUTOMATIC_PROCESSING");
       assert.equal(presented.nextRequiredActionLabel, "Processing automatically");
       assert.equal(presented.currentBlockingStage, stage);
     }
+  });
+
+  it("never asks for a second Engine click after the workflow reaches generation", () => {
+    const presented = presentTwoActionWorkflowDecision(decision("REQUIRED_DOCS_NOT_GENERATED"))!;
+    assert.equal(presented.nextRequiredAction, "AUTOMATIC_PROCESSING");
+    assert.doesNotMatch(`${presented.nextRequiredActionLabel} ${presented.nextRequiredActionReason}`, /Run Engine/i);
   });
 
   it("does not hide genuine source or authority actions", () => {

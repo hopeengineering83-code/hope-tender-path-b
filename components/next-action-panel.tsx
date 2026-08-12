@@ -248,7 +248,7 @@ export async function NextActionPanel({ tenderId }: { tenderId: string }) {
 
       {decision.currentBlockingStage === "REQUIRED_DOCS_NOT_GENERATED" && (
         <div className="mt-3 rounded-lg border border-emerald-200 bg-white px-4 py-2.5 text-sm text-emerald-800">
-          <strong>Run Engine.</strong> Matching, Build Plan creation, proposal generation, validation and finalization continue automatically after the Engine job succeeds.
+          <strong>Processing automatically.</strong> Run Engine has handed generation, validation, finalization and package assembly to the durable workflow. Intervene only if a specific fail-closed blocker is reported.
         </div>
       )}
 

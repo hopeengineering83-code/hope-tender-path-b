@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-12 UTC — Codex (post-Engine second-click deadlock closure)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from exact remote head `1e438727241a1c41871e866eec01dd66ad46dff3` after its two CI runs, dependency checks, screenshot audit, and Preview all passed.
+- **Scope:** closed the one remaining explicitly documented contradiction: `presentTwoActionWorkflowDecision` still mapped `REQUIRED_DOCS_NOT_GENERATED` to a second manual Run Engine click after the current-revision Engine run had already handed generation to the durable pipeline. It now truthfully presents generation, validation, finalization, and package assembly as automatic post-Engine work; the tender next-action banner and the real-PostgreSQL 4/4 evidence fixture agree. No source, evidence, quality, integrity, authority, legal, tenant, or final-owner gate was changed.
+- **Files changed:** `lib/engine/two-action-workflow-presentation.ts`, `components/next-action-panel.tsx`, `tests/two-action-workflow-presentation.test.ts`, `tests/mandatory-evidence-fixtures-db.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** 102 focused non-database assertions passed, including the new no-second-Engine-click regression, provenance confirmation safety, unknown-blocker exhaustiveness, approval-deadlock coverage, and workflow-copy truth. Prisma generation, typecheck, lint, release-integrity, dependency audit, production build, full PostgreSQL, migrations/zero-drift, authenticated/cross-tenant Playwright, screenshot/route audit, and Preview must all pass again on the resulting commit before the PR is described as exact-head complete.
+- **Risks / assumptions:** the mapping remains presentation-only and does not fabricate a running job or weaken readiness. `NO_CONFIRMED_BUILD_PLAN` and `MANDATORY_NO_COMPLIANCE_ROWS` still map to the one legitimate manual Run Engine gate before downstream ownership begins. Production remains untouched.
+- **Next action:** commit and push once, wait for every exact-head check and the one Preview, inspect the screenshot evidence, then update the PR body/comment to that final SHA without another source commit.
+- **Merge status:** **DO NOT MERGE** until the resulting exact head is completely green; never promote Production in this session.
+
 ### 2026-08-12 UTC — Codex (latest-remote-head workflow-copy audit)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, audited from latest remote head `a36fa30a48f0df4d337b7ba3909d8bd5d540b740` after checking the current worktree, open PRs, and CI.

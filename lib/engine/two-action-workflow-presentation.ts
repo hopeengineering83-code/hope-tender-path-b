@@ -16,7 +16,6 @@ export function presentTwoActionWorkflowDecision(
   if ([
     "NO_CONFIRMED_BUILD_PLAN",
     "MANDATORY_NO_COMPLIANCE_ROWS",
-    "REQUIRED_DOCS_NOT_GENERATED",
   ].includes(decision.currentBlockingStage)) {
     return {
       ...decision,
@@ -28,6 +27,7 @@ export function presentTwoActionWorkflowDecision(
   }
 
   if ([
+    "REQUIRED_DOCS_NOT_GENERATED",
     "PDF_REQUIRED_UNAVAILABLE",
     "DOCS_NOT_VALIDATED",
   ].includes(decision.currentBlockingStage)) {
@@ -36,7 +36,7 @@ export function presentTwoActionWorkflowDecision(
       nextRequiredAction: "AUTOMATIC_PROCESSING",
       nextRequiredActionLabel: "Processing automatically",
       nextRequiredActionReason:
-        "The durable worker owns this stage. Intervene only when a specific source, quality, integrity or legal blocker is reported.",
+        "The post-Engine durable workflow owns generation, validation, finalization and package assembly. Intervene only when a specific source, evidence, quality, integrity, authority or legal blocker is reported.",
     };
   }
 

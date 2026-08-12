@@ -514,24 +514,11 @@ dbDescribe("Fixture — the Engine's SUPPORTED verdict reaches 4/4 and clears th
       `still blocked upstream at ${decision.currentBlockingStage}`,
     );
 
-    // The remaining stage is generation. In this app the Engine is what starts
-    // the downstream pipeline, so the canonical decision presents Run Engine
-    // here — a deliberate manual trigger, not a contradiction — and the panel
-    // must say exactly that rather than claiming work is already under way.
+    // The remaining stage is generation. The successful current-revision
+    // Engine run already handed this stage to the durable downstream worker;
+    // asking for another Engine click here would create a routine deadlock.
     const presented = presentTwoActionWorkflowDecision(decision);
-    assert.equal(presented?.nextRequiredAction, "RUN_ENGINE");
-    const waiting = resolveReleasePresentationStage({
-      status: "PROCESSING_AUTOMATICALLY",
-      canonicalAction: presented?.nextRequiredAction ?? null,
-      activeWork: null,
-    });
-    assert.equal(waiting, "WAITING_FOR_MANUAL_RUN_ENGINE");
-    assert.doesNotMatch(releaseStageCopy(waiting).explanation, /continue automatically/i);
-
-    // Once that run is under way, and only then, the panel may say the rest of
-    // the pipeline continues on its own. This is the single reachable path to
-    // that sentence, and this fixture is what makes it reachable at all: at
-    // 2/4 the coverage gate stood in front of it.
+    assert.equal(presented?.nextRequiredAction, "AUTOMATIC_PROCESSING");
     const downstream = resolveReleasePresentationStage({
       status: "PROCESSING_AUTOMATICALLY",
       canonicalAction: presented?.nextRequiredAction ?? null,
