@@ -36,6 +36,13 @@ const KNOWN_SAFE_NAVIGATE_TARGETS = new Set([
 
 // All nextAction codes that API routes emit. Every code here must have a
 // corresponding entry in RECOVERY_COMMAND_ACTIONS (or a safe alias).
+//
+// REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN was removed from this list along with
+// the route that emitted it and its registry entry. It offered requirement
+// review as a way to promote provenance the source did not support, which is
+// the shortcut that response was deleted to close. A code no route can emit has
+// nothing to resolve, so keeping it here would have failed this test forever
+// while asking someone to re-add a control that must not exist.
 const KNOWN_NEXT_ACTIONS = [
   "BUILD_SUBMISSION_PLAN",
   "CHANGE_BID_DECISION",

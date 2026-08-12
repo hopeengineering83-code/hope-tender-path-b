@@ -823,6 +823,15 @@ export default function CompanyPage() {
                   </p>
                 ) : (
                   <p className="mt-1.5 text-xs text-slate-400">
+                    {/* Two things are load-bearing in this sentence. Ingestion
+                        source-verifies, not Run Engine — the earlier wording
+                        credited Run Engine with work it never does. And it ends
+                        "no action is needed here", which
+                        tests/company-vault-usable-evidence-count.test.ts pins:
+                        this block must offer no control and no wording implying
+                        a pending human step. "No confirmation click is needed"
+                        is narrower, and leaves the owner to wonder whether some
+                        OTHER action is expected of them here. None is. */}
                     Records that are not yet source-verified are excluded from matching and generation. Vault ingestion verifies them automatically against uploaded documents before AI Analyze and Run Engine use them — no action is needed here.
                   </p>
                 )

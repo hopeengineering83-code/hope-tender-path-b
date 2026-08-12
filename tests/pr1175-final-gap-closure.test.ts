@@ -629,6 +629,38 @@ describe("Gap F — the controls match-context read is tenant-scoped at the quer
   });
 });
 
+// ─── Rendered-screenshot finding: two panels, one subject ────────────────────
+
+describe("Analysis Quality does not contradict the AI Analyze panel", () => {
+  const panel = read("components/analysis-quality-panel.tsx");
+
+  it("the heading is chosen by what is actually wrong, not by the ready flag alone", () => {
+    // `ready` is false when ANY of five inputs fails, and one of them —
+    // canonicalExtractionReady — is about the SOURCE. Keying the heading on
+    // `ready` alone made the panel call a current, trusted analysis "stale"
+    // whenever the source file's bytes were unverified, directly beneath the
+    // AI Analyze panel saying "AI Analysis is complete and current."
+    assert.match(panel, /const analysisItselfDegraded = !analysisCurrent/);
+    assert.match(panel, /Tender analysis is current — its canonical source is not verified/);
+    assert.match(panel, /<h2 className="mt-1 text-lg font-bold text-slate-900">\{heading\}<\/h2>/);
+  });
+
+  it("a genuinely stale or fallback analysis still reads as stale", () => {
+    // The original sentence is kept for the case it was written for.
+    assert.match(panel, /Tender analysis is stale, incomplete, or blocked/);
+    assert.match(panel, /quality\.severity === "POOR"/);
+    assert.match(panel, /quality\.severity === "UNSAFE"/);
+  });
+
+  it("the ready flag itself is untouched, so no gate or score moved", () => {
+    assert.match(
+      panel,
+      /const ready = analysisCurrent\s*\n\s*&& canonicalExtractionReady\s*\n\s*&& !fallbackOnly\s*\n\s*&& quality\.severity !== "POOR"\s*\n\s*&& quality\.severity !== "UNSAFE";/,
+    );
+    assert.match(panel, /const displayedScore = ready \? quality\.score : Math\.min\(quality\.score, 69\);/);
+  });
+});
+
 // ─── Evidence reference identity (section 17) ────────────────────────────────
 
 describe("evidence references name the record whenever a name exists", () => {

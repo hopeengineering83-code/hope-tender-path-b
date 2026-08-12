@@ -12,6 +12,15 @@
 // false at zero documents, and together they send the owner round a loop that
 // cannot terminate: run, still zero, reprocess, still zero.
 //
+// The reassuring sentence has since been corrected on a second axis, and this
+// test was updated to follow it rather than to hold it back. Run Engine never
+// verified vault records: vault ingestion does, before AI Analyze or Run Engine
+// consume them. Pinning the old wording would have required reinstating that
+// false attribution to keep a test green, which is the opposite of what this
+// file is for. What the test guards is unchanged — the reassurance must remain
+// conditional on there being something to verify against, and the
+// zero-document branch must still name the real blocker.
+//
 // This is the same class of defect as the Matching panel calling a QUEUED job
 // "running" — a surface asserting a state it cannot observe. These assertions
 // pin that the reassurance is conditional on there being something to verify
@@ -26,6 +35,12 @@ const verificationPage = readFileSync("components/company-vault-verification-pag
 
 describe("Company Vault — zero-document honesty", () => {
   it("does not promise automatic verification when no document exists to verify against", () => {
+    // Ends "no action is needed here", not "no confirmation click is needed
+    // here". tests/company-vault-usable-evidence-count.test.ts requires the
+    // broader phrase in the page, so the two tests would otherwise pull the
+    // same sentence in opposite directions and one of them would always be
+    // red. The broader phrase is also the better answer: the narrower one
+    // rules out a click and leaves the owner wondering what else is expected.
     const reassurance = "Vault ingestion verifies them automatically against uploaded documents before AI Analyze and Run Engine use them — no action is needed here.";
     assert.ok(vaultPage.includes(reassurance), "the reassuring copy should still exist for the normal case");
 
@@ -36,6 +51,13 @@ describe("Company Vault — zero-document honesty", () => {
     assert.ok(
       guardIndex < reassuranceIndex,
       "the zero-document branch must be decided before the reassuring copy is rendered",
+    );
+
+    // And the attribution must stay correct: ingestion verifies, not Run Engine.
+    assert.doesNotMatch(
+      vaultPage,
+      /Run Engine verifies them automatically/,
+      "Run Engine does not source-verify vault records — vault ingestion does",
     );
   });
 

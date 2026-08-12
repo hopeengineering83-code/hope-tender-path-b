@@ -126,6 +126,30 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
     && !fallbackOnly
     && quality.severity !== "POOR"
     && quality.severity !== "UNSAFE";
+  // Found by inspecting the rendered 2/4 screenshot: this panel's heading read
+  // "Tender analysis is stale, incomplete, or blocked" directly beneath the AI
+  // Analyze panel's "AI Analysis is complete and current." Both sentences are
+  // about the tender analysis, and they contradicted each other.
+  //
+  // Neither was lying. `ready` is false whenever ANY of its five inputs fails,
+  // and one of them — canonicalExtractionReady — is about the SOURCE, not the
+  // analysis. On that tender the analysis genuinely was current and trusted;
+  // what was unverified was the source file's byte integrity, which the reason
+  // list underneath already said in as many words.
+  //
+  // So the heading now names the thing that is actually wrong. Nothing else
+  // moves: `ready` still gates the score cap, the tone, the badge and every
+  // downstream consumer exactly as before, and a stale, fallback, poor or
+  // unsafe analysis still reads as stale, incomplete, or blocked.
+  const analysisItselfDegraded = !analysisCurrent
+    || fallbackOnly
+    || quality.severity === "POOR"
+    || quality.severity === "UNSAFE";
+  const heading = ready
+    ? "Tender analysis is current and usable"
+    : analysisItselfDegraded
+      ? "Tender analysis is stale, incomplete, or blocked"
+      : "Tender analysis is current — its canonical source is not verified";
   const displayedScore = ready ? quality.score : Math.min(quality.score, 69);
   const tone = ready ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50";
   const badge = ready ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800";
@@ -139,9 +163,7 @@ export async function AnalysisQualityPanel({ tenderId }: { tenderId: string }) {
   return (
     <section id="analysis-quality" className={`mb-4 rounded-2xl border p-5 shadow-sm ${tone}`}>
       <p className={`text-xs font-semibold uppercase tracking-wide ${ready ? "text-emerald-700" : "text-amber-800"}`}>Analysis quality</p>
-      <h2 className="mt-1 text-lg font-bold text-slate-900">
-        {ready ? "Tender analysis is current and usable" : "Tender analysis is stale, incomplete, or blocked"}
-      </h2>
+      <h2 className="mt-1 text-lg font-bold text-slate-900">{heading}</h2>
       <p className="mt-1 text-sm text-slate-600">
         This score covers canonical extraction, requirements, tender details, submission instructions, and source grounding. Evidence matching remains separate.
       </p>
