@@ -401,7 +401,7 @@ export function evaluateGenerationReadiness(
   //     false. Without this, a caller that forgets to pass the field would
   //     silently bypass the confirmed-plan requirement.
   if (input.hasCurrentConfirmedBuildPlan !== true) {
-    return fail("BUILD_PLAN_NOT_CONFIRMED", "No current confirmed Build Plan exists. Build and confirm the Build Plan before any release action.");
+    return fail("BUILD_PLAN_NOT_CONFIRMED", "No current source-verified Build Plan exists. Run Engine creates and verifies it automatically before downstream release processing.");
   }
 
   // K2 — Confirmed BuildPlan items must be valid at runtime. A corrupted, invalid,

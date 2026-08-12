@@ -260,7 +260,7 @@ export async function FinalPackageManifestPanel({ tenderId }: { tenderId: string
 
         {!hasExplicitPlan && (
           <p className="mt-3 text-xs text-slate-500">
-No final-package submission plan files are currently detected by the shared readiness model — the &quot;In plan&quot; column is not applicable. Build and confirm a submission plan to enable envelope separation and outside-plan exclusion.
+No final-package submission plan files are currently detected by the shared readiness model — the &quot;In plan&quot; column is not applicable. Run Engine to create and source-verify the Build Plan automatically; use recovery only if Engine reports a genuine source failure.
           </p>
         )}
       </section>

@@ -319,7 +319,7 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
                 <li>Missing planned documents are generated <strong>automatically</strong> by the AUTO_FINALIZE job — no manual action needed.</li>
                 <li>Safe repairs (AI traces, pricing leakage, placeholders, source grounding) run <strong>automatically</strong> after generation — no manual button needed.</li>
               </ol>
-              <p className="mt-2 text-[10px] text-sky-600">All safe operations run automatically. The only manual action is downloading the final ZIP when the gate is open.</p>
+              <p className="mt-2 text-[10px] text-sky-600">AI Analyze and Run Engine are manual. Safe downstream processing then runs automatically; genuine source, legal, authority, or final-owner blockers remain fail-closed before package download.</p>
               <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-sky-200 pt-2">
                 <p className="text-[10px] font-semibold text-sky-700 uppercase tracking-wide">Severity legend:</p>
                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE.HIGH}`}>HIGH — blocks export</span>

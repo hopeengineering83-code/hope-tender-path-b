@@ -19,6 +19,7 @@ export type WorkflowBlockerPriority =
   | "PARTIAL_AI_ANALYSIS"
   | "STALE_ANALYSIS"
   | "AI_ANALYZE_NOT_RUN"
+  | "ENGINE_RUN_FAILED"
   | "CRITICAL_TENDER_DETAILS_INVALID"
   | "REQUIREMENTS_NOT_SOURCE_GROUNDED"
   | "NO_CONFIRMED_BUILD_PLAN"
@@ -287,6 +288,7 @@ export function buildCanonicalWorkflowDecision(input: {
     "PARTIAL_AI_ANALYSIS",
     "STALE_ANALYSIS",
     "AI_ANALYZE_NOT_RUN",
+    "ENGINE_RUN_FAILED",
     "CRITICAL_TENDER_DETAILS_INVALID",
     "REQUIREMENTS_NOT_SOURCE_GROUNDED",
     "NO_CONFIRMED_BUILD_PLAN",
@@ -316,6 +318,7 @@ export function buildCanonicalWorkflowDecision(input: {
     PARTIAL_AI_ANALYSIS: { action: "RESUME_AI_ANALYZE", label: "Resume AI Analyze", reason: "A previous AI Analyze run has saved partial progress. Resume it to complete the missing chunks." },
     STALE_ANALYSIS: { action: "RUN_AI_ANALYZE", label: "Re-run AI Analyze", reason: "Tender content changed since the last analysis. Re-run AI Analyze for the current content." },
     AI_ANALYZE_NOT_RUN: { action: "RUN_AI_ANALYZE", label: "Run AI Analyze", reason: "AI Analyze has not been run or is untrusted." },
+    ENGINE_RUN_FAILED: { action: "REPAIR_SOURCE_REFERENCES", label: "Repair title source evidence", reason: "The current-revision Engine run failed. Resolve its first recorded fail-closed cause before retrying Run Engine." },
     CRITICAL_TENDER_DETAILS_INVALID: { action: "EDIT_TENDER_METADATA", label: "Edit Tender Details", reason: "Critical Tender Details are missing, invalid, or ungrounded." },
     REQUIREMENTS_NOT_SOURCE_GROUNDED: input.requirementsExist
       ? { action: "REPAIR_SOURCE_GROUNDING", label: "Ground requirements from source", reason: "The system must verify each requirement against the active source. If it cannot, re-run AI Analyze, upload a better source, or make a genuine source correction; review or confirmation cannot promote unsupported provenance." }
@@ -494,6 +497,7 @@ export function buildCanonicalWorkflowDecision(input: {
 
 import type { PrismaClient } from "@prisma/client";
 import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
+import { computeEngineSourceRevision } from "./engine-source-revision";
 
 export async function getCanonicalTenderWorkflowDecision(
   prisma: PrismaClient,
@@ -688,7 +692,7 @@ export async function getCanonicalTenderWorkflowDecision(
   // It already incorporates generation + export + final ZIP gates.
   const finalExportAllowed = snapshot.finalZipEligible;
 
-  return buildCanonicalWorkflowDecision({
+  const decision = buildCanonicalWorkflowDecision({
     hasFiles: snapshot.extraction.activeFileCount > 0,
     extractionUnsafe: !snapshot.extraction.overallOk,
     extractionCorrupted: snapshot.extraction.files.some((f) => f.corrupted),
@@ -715,4 +719,45 @@ export async function getCanonicalTenderWorkflowDecision(
     finalExportAllowed,
     authorityOrQualityBlockers,
   });
+
+  // A terminal failure from the latest Engine attempt for these exact inputs
+  // is current workflow truth. It outranks secondary consequences such as an
+  // absent Build Plan or requirement links that the failed stage never reached.
+  const revision = await computeEngineSourceRevision(prisma, { tenderId, userId }).catch(() => null);
+  const latestEngine = revision
+    ? await prisma.aiJob.findFirst({
+        where: { tenderId, userId, jobType: "ENGINE_RUN", analysisInputHash: revision.sourceRevision },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          status: true,
+          steps: {
+            where: { status: "FAILED" },
+            orderBy: { stepIndex: "asc" },
+            select: { stepName: true, message: true },
+          },
+        },
+      }).catch(() => null)
+    : null;
+  if (latestEngine && ["FAILED", "CANCELED"].includes(latestEngine.status)) {
+    const cause = latestEngine.steps.find((step) => step.stepName === "build-plan.blocked")
+      ?? latestEngine.steps[0];
+    const detail = cause?.message?.slice(0, 500)
+      ?? "The current-revision Engine run failed before downstream processing completed.";
+    const titleProvenance = /TENDER_FACTS_INVALID|metadata field title|title.*source page/i.test(detail);
+    return {
+      ...decision,
+      currentBlockingStage: "ENGINE_RUN_FAILED",
+      blockingStageCode: titleProvenance ? "TITLE_SOURCE_PROVENANCE_INVALID" : "ENGINE_RUN_FAILED",
+      blockerCodes: [titleProvenance ? "TITLE_SOURCE_PROVENANCE_INVALID" : "ENGINE_RUN_FAILED"],
+      blockerDetails: [`${detail} Reference: ${latestEngine.id.slice(0, 8)}`],
+      nextRequiredAction: titleProvenance ? "REPAIR_SOURCE_REFERENCES" : "RUN_ENGINE",
+      nextRequiredActionLabel: titleProvenance ? "Repair title source evidence" : "Retry Run Engine",
+      nextRequiredActionReason: titleProvenance
+        ? `The latest Engine run stopped because the tender title could not be proven at a valid page in the active source. Reconcile the title file/page/quote, then retry. Reference: ${latestEngine.id.slice(0, 8)}`
+        : `The latest Engine run failed before downstream processing completed. Resolve the recorded cause, then retry. Reference: ${latestEngine.id.slice(0, 8)}`,
+      downstreamSuppressedBy: "ENGINE_RUN_FAILED",
+    };
+  }
+  return decision;
 }

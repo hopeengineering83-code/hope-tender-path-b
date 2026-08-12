@@ -350,7 +350,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   if (requiresUserConfirmation) {
     warnings.push(
       planState === "EXPLICIT_TENDER_PLAN"
-        ? "Tender-issued file scope is available, but no current confirmed Build Plan exists. Build and confirm it before generation or export."
+        ? "Tender-issued file scope is available, but no current source-verified Build Plan exists. Run Engine creates and verifies it automatically."
         : "Submission plan is a derived draft from requirement titles/types. Confirm tender-issued file names/order before final export; do not treat derived rows as official tender forms.",
     );
   }

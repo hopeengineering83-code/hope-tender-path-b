@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-12 UTC — Codex (Preview 03b9c928 real-failure repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, repaired from exact latest remote head `b4903c03baaa28edeafe9ccb9c8c7ffeb29355c4` without merging or Production promotion.
+- **Scope:** traced the real Preview title-page failure through Build Plan verification; added tenant-scoped, byte/text-bound title evidence reconciliation without relaxing page validation; made a current-revision terminal Engine failure canonical; made Generation and Export readiness consume that canonical truth; removed routine Build Plan confirmation/export copy contradictions; labelled revision-bound matches completed before Engine failure; and enabled the already-isolated technical/financial/admin ZIP surfaces instead of blocking separate-package mode.
+- **Files changed:** `lib/engine/automatic-build-plan.ts`, `lib/engine/canonical-workflow-decision.ts`, readiness/package/gate helpers under `lib/engine/`, `lib/prisma-schema-compatibility.ts`, affected readiness/matching/submission components, export-readiness and pipeline-diagnostic routes, regression tests, and this handoff.
+- **Tests/checks before commit:** Prisma generate and TypeScript were started after the final route reconciliation; the first run exposed and fixed a nullable canonical-decision type error. Focused regressions had previously passed 175 assertions with database integration intentionally skipped after the configured external Neon host was unreachable. Final exact-head lint, build, PostgreSQL, migration/zero-drift, Playwright/isolation, security, screenshot/route, and real Preview acceptance remain required after the single commit/push.
+- **Risks / assumptions:** reconciliation only accepts an ACTIVE tenant-owned source and a quote/title located within actual extracted page boundaries; otherwise strict verification still fails. No human/legal/final-owner gate is bypassed. Real Preview inspection is still pending, so this entry does not claim 100% closure.
+- **Next action:** finish local checks, commit/push once, require exact-head CI and Preview, manually inspect the real tender state, and update PR #1175 truth to the resulting SHA.
+- **Merge status:** **DO NOT MERGE**; Production promotion prohibited.
+
 ### 2026-08-12 UTC — Codex (post-Engine second-click deadlock closure)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from exact remote head `1e438727241a1c41871e866eec01dd66ad46dff3` after its two CI runs, dependency checks, screenshot audit, and Preview all passed.

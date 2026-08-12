@@ -32,13 +32,14 @@ describe("envelope inference — TECHNICAL / FINANCIAL / ADMIN", () => {
 });
 
 describe("strict two-envelope detection", () => {
-  it("flags blockingForZip when ToR demands separate technical and financial submissions", () => {
+  it("makes separate packages executable instead of blocking all ZIP export", () => {
     const mode = detectSubmissionPackageMode({
       submissionMethod: "Sealed bid",
       analysisSummary: "Bidders shall submit the Technical Proposal and Financial Proposal in separate sealed envelopes.",
     });
     assert.equal(mode.mode, "SEPARATE_TECHNICAL_FINANCIAL");
-    assert.equal(mode.blockingForZip, true);
+    assert.equal(mode.blockingForZip, false);
+    assert.match(mode.reason, /isolated Technical, Financial.*Admin ZIPs/i);
   });
   it("does NOT flag separate-envelope when ToR explicitly allows a single ZIP", () => {
     const mode = detectSubmissionPackageMode({

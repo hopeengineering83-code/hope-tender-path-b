@@ -246,7 +246,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
           <p className="mt-0.5 text-xs text-slate-500">
             {confirmed
               ? "One row per confirmed required file, with its current output status and next action."
-              : "Preview only: these rows come from tender instructions or a conservative derivation. They do not authorize generation or export until the Build Plan is reviewed and confirmed."}
+              : "Preview only: these rows come from tender instructions or a conservative derivation. Run Engine must create and source-verify the current Build Plan before generation or export."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -318,7 +318,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
         {data.summary.requiresUserConfirmation && (
           <p className="mt-2">
             {data.summary.planState === "EXPLICIT_TENDER_PLAN"
-              ? "Tender-issued file scope is available, but it has not been bound into a current confirmed Build Plan. Build and confirm the plan before generation or export."
+              ? "Tender-issued file scope is available, but it has not been bound into a current source-verified Build Plan. Run Engine creates and verifies it automatically."
               : "This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Confirm exact file names/order from the tender before final export; official forms/templates must still be attached as originals and must not be fabricated."}
           </p>
         )}

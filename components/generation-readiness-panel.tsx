@@ -4,6 +4,7 @@ import { canMutateTender } from "../lib/recovery-command-actions";
 import { getCurrentUser } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../lib/tender-generation-readiness-strict";
+import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
 import type { TenderGenerationReadiness } from "../lib/tender-generation-readiness";
 import { clientLogger } from "@/lib/ui/client-logger";
 
@@ -45,7 +46,7 @@ function buildActionLabel(action?: string): string {
   if (action === "EDIT_TENDER_METADATA") return "Fill missing Tender Details";
   if (action === "OPEN_COMPANY_READINESS") return "Open company readiness";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Check extraction quality";
-  if (action === "BUILD_SUBMISSION_PLAN") return "Review and confirm Build Plan";
+  if (action === "BUILD_SUBMISSION_PLAN") return "Open exceptional Build Plan recovery";
   if (action === "OPEN_ANALYSIS_QUALITY") return "Open analysis quality";
   if (action === "OPEN_MATCHING_QUALITY") return "Open matching quality";
   if (action === "RUN_ENGINE") return "Run engine";
@@ -99,6 +100,8 @@ export async function GenerationReadinessPanel({
           return getTenderGenerationReadinessStrict(prisma, userId, tenderId);
         })()
       : providedReadiness;
+    await prismaReady;
+    const canonicalDecision = await getCanonicalTenderWorkflowDecision(prisma, userId, tenderId);
 
     if (!readiness) {
       return (
@@ -144,7 +147,14 @@ export async function GenerationReadinessPanel({
     const hasPdfRequiredUnavailable = blockers.some((b: { code?: string }) =>
       b.code === "PDF_REQUIRED_CONVERSION_UNAVAILABLE" || b.code === "PDF_CONVERSION_REQUIRED"
     );
-    const effectivelyReady = fullProposalReady && !hasFullProposalBlockers && !hasNoConfirmedPlan
+    const upstreamCanonicalStages = new Set([
+      "NO_TENDER_FILE", "EXTRACTION_UNSAFE", "PARTIAL_AI_ANALYSIS", "STALE_ANALYSIS",
+      "AI_ANALYZE_NOT_RUN", "ENGINE_RUN_FAILED", "CRITICAL_TENDER_DETAILS_INVALID",
+      "REQUIREMENTS_NOT_SOURCE_GROUNDED", "NO_CONFIRMED_BUILD_PLAN",
+      "MANDATORY_NO_COMPLIANCE_ROWS", "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE",
+    ]);
+    const canonicalUpstreamBlocked = Boolean(canonicalDecision && upstreamCanonicalStages.has(canonicalDecision.currentBlockingStage));
+    const effectivelyReady = fullProposalReady && !canonicalUpstreamBlocked && !hasFullProposalBlockers && !hasNoConfirmedPlan
       && !hasStaleAnalysis && !hasNoComplianceRows && !hasPdfRequiredUnavailable;
     const panelClass = effectivelyReady
       ? "border-green-200 bg-green-50"
@@ -158,6 +168,11 @@ export async function GenerationReadinessPanel({
             <p className={`text-xs font-semibold uppercase tracking-wide ${statusClass}`}>Generation readiness</p>
             <h2 className="mt-1 text-lg font-bold text-slate-900">{effectivelyReady ? "Ready to generate full proposal" : "Full proposal generation blocked"}</h2>
             <p className="mt-1 text-sm text-slate-600">The server gate is authoritative. The numeric score is informational and cannot override blockers.</p>
+            {canonicalUpstreamBlocked && canonicalDecision && (
+              <p className="mt-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-medium text-red-800">
+                Current canonical blocker: {canonicalDecision.nextRequiredActionReason}
+              </p>
+            )}
             {hasNoConfirmedPlan && (
               <p className="mt-1 text-sm text-red-700 font-medium">No confirmed Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it before generation.</p>
             )}

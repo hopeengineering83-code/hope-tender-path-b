@@ -102,7 +102,7 @@ export function SubmissionPlanTruthPanel({ tenderId }: { tenderId: string }) {
             className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-white px-2.5 py-1 text-[10px] font-medium text-amber-700 hover:bg-amber-100"
             title="Open automatic Build Plan recovery"
           >
-            Open Build Plan recovery <ArrowRightIcon />
+            Open exceptional Build Plan recovery <ArrowRightIcon />
           </DisclosureAnchorLink>
         )}
       </div>

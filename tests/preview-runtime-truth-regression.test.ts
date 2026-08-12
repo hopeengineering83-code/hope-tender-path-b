@@ -59,7 +59,7 @@ describe("single workflow authority regressions from the latest preview", () => 
     });
     assert.equal(report.planState, "EXPLICIT_TENDER_PLAN");
     assert.equal(report.requiresUserConfirmation, true);
-    assert.match(report.warnings.join(" "), /no current confirmed Build Plan/i);
+    assert.match(report.warnings.join(" "), /no current source-verified Build Plan/i);
   });
 
   it("does not mark a not-yet-generated proposal response as fully supported", () => {

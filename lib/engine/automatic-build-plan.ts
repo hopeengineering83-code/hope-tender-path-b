@@ -6,6 +6,10 @@ import {
   validateBuildPlanForConfirmation,
   type BuildPlanItem,
 } from "./build-plan";
+import { attributeMetadataSourceFileId } from "./metadata-source-attribution";
+import { enrichMetadataWithSourceEvidence } from "./metadata-source-enrichment";
+import { locateQuoteProvenPage } from "./page-provenance";
+import { syncPersistedTenderFactsToLedger } from "./tender-facts-ledger-service";
 
 export const AUTOMATIC_BUILD_PLAN_ACTOR = "SYSTEM_AUTOMATION";
 
@@ -40,6 +44,62 @@ function automaticValidationJson(blockers: string[] = []): string {
 }
 
 /**
+ * Reconcile title provenance from the active source before Build Plan validation.
+ * This never trusts the stored/AI page number: it derives file + page from the
+ * actual extracted text and known page boundaries, or leaves the strict gate to
+ * report TENDER_FACTS_INVALID when the source cannot prove the title.
+ */
+export async function reconcileTitleSourceEvidence(
+  prisma: PrismaClient,
+  tenderId: string,
+  userId: string,
+): Promise<{ repaired: boolean; proven: boolean }> {
+  const tender = await prisma.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: {
+      id: true,
+      title: true,
+      titleSourceFileId: true,
+      titleSourcePage: true,
+      titleSourceQuote: true,
+      files: {
+        where: { deletionStatus: "ACTIVE" },
+        select: { id: true, extractedText: true, deletionStatus: true, totalPages: true },
+      },
+    },
+  });
+  if (!tender) return { repaired: false, proven: false };
+
+  let evidence: { titleSourceFileId?: string; titleSourcePage?: number | null; titleSourceQuote?: string } = {};
+  const quotedFileId = attributeMetadataSourceFileId(tender.titleSourceQuote, tender.files);
+  if (quotedFileId && tender.titleSourceQuote) {
+    const file = tender.files.find((item) => item.id === quotedFileId)!;
+    const page = locateQuoteProvenPage(file.extractedText, tender.titleSourceQuote, file.totalPages);
+    if (page !== null) {
+      evidence = { titleSourceFileId: quotedFileId, titleSourcePage: page, titleSourceQuote: tender.titleSourceQuote };
+    }
+  }
+  if (!evidence.titleSourceFileId) {
+    evidence = enrichMetadataWithSourceEvidence({ title: tender.title }, tender.files);
+  }
+  if (!evidence.titleSourceFileId || !evidence.titleSourcePage || !evidence.titleSourceQuote) {
+    return { repaired: false, proven: false };
+  }
+
+  const repaired = tender.titleSourceFileId !== evidence.titleSourceFileId
+    || tender.titleSourcePage !== evidence.titleSourcePage
+    || tender.titleSourceQuote !== evidence.titleSourceQuote;
+  if (repaired) {
+    await prisma.tender.updateMany({
+      where: { id: tenderId, userId },
+      data: evidence,
+    });
+    await syncPersistedTenderFactsToLedger(prisma, tenderId, userId);
+  }
+  return { repaired, proven: true };
+}
+
+/**
  * Builds and machine-verifies the current tender-controlled file plan.
  *
  * The service deliberately preserves the existing fail-closed CONFIRMED
@@ -53,6 +113,7 @@ export async function buildAndVerifyBuildPlan(
   userId: string,
   options: { reuseCurrent?: boolean } = {},
 ): Promise<AutomaticBuildPlanResult> {
+  await reconcileTitleSourceEvidence(prisma, tenderId, userId);
   if (options.reuseCurrent !== false) {
     const current = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
     if (current.ok) {

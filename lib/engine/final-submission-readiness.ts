@@ -953,7 +953,7 @@ export async function getFinalSubmissionReadiness(
       category: "NO_CURRENT_CONFIRMED_BUILD_PLAN",
       severity: "HIGH",
       title: `No current confirmed Build Plan: ${confirmedPlan.blocker}`,
-      recommendedAction: "Build and confirm the submission Build Plan before final export. Derived drafts do not authorize export.",
+      recommendedAction: "Run Engine to create and source-verify the submission Build Plan automatically. Derived drafts do not authorize export.",
     });
   }
   if (requiredPlanCount > 0 && !hasExplicitPlanScope) {
@@ -1251,7 +1251,7 @@ export async function getFinalSubmissionReadiness(
     primaryBlockerReason: (() => {
       const ungenerated = generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length;
       if (ungenerated > 0) return `${ungenerated} required document(s) are planned but not generated.`;
-      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "No export-ready documents. Generate required documents first.";
+      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "No export-ready documents. Follow the canonical blocker; post-Engine generation and validation are automatic.";
       const exportReady = finalCandidates.filter((d) => isExportReady(d)).length;
       if (finalCandidates.length > 0 && exportReady === 0) return "No documents have passed machine validation for export.";
       if (documentBlockers.length > 0) return documentBlockers[0]?.name ?? documentBlockers[0]?.reasons?.[0] ?? "Document blockers exist.";
@@ -1261,8 +1261,8 @@ export async function getFinalSubmissionReadiness(
     })(),
     primaryFixAction: (() => {
       const ungenerated = generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length;
-      if (ungenerated > 0) return "Generate required documents.";
-      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "Generate required documents.";
+      if (ungenerated > 0) return "Automatic post-Engine document generation is pending.";
+      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "Automatic post-Engine document generation is pending.";
       const exportReady = finalCandidates.filter((d) => isExportReady(d)).length;
       if (finalCandidates.length > 0 && exportReady === 0) return "Validate documents and resolve any genuine quality, legal, signature, or authority blocker.";
       if (documentBlockers.length > 0) return documentBlockers[0]?.nextActions?.[0] ?? "Resolve document blockers.";

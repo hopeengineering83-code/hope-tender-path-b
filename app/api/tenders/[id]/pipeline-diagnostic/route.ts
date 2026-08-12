@@ -235,7 +235,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     }
     if (!hasPlan) return {
       step: "BUILD_PLAN",
-      label: "Review and confirm Build Plan",
+      label: "Open exceptional Build Plan recovery",
       reason: "No current confirmed Build Plan authorizes generation.",
       blockers: [buildPlanBlocker ?? "Build Plan is not confirmed"],
     };

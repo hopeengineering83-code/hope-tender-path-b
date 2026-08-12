@@ -537,7 +537,7 @@ export async function getTenderReleaseSnapshot(
       },
     });
     if (!recordedBuildPlan) {
-      buildPlanGateBlocker = "No Build Plan exists. Build and confirm the plan first.";
+      buildPlanGateBlocker = "No current source-verified Build Plan exists. Run Engine creates and verifies it automatically.";
     } else {
       const persistedItems = recordedBuildPlan.itemsJson
         ? (JSON.parse(recordedBuildPlan.itemsJson) as unknown[])

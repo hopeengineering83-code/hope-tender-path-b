@@ -203,7 +203,7 @@ export function resolveTenderOperationGate(input: OperationGateInput): Operation
 
   // ── 3. Confirmed BuildPlan required ──────────────────────────────
   if (!buildPlan || !buildPlan.ok) {
-    blockers.push("No confirmed BuildPlan — build and confirm the submission plan before final submission.");
+    blockers.push("No current source-verified Build Plan — Run Engine creates and verifies it automatically before final submission processing.");
   }
 
   // ── 4. Submission endpoint validation (operation-specific) ───────

@@ -65,6 +65,9 @@ export function publicJobFailureMessage(error: unknown, correlationId: string): 
   if (/ENGINE_SOURCE_REVISION_STALE/i.test(message)) {
     return `Your source documents changed while this run was in progress, so the run was superseded. A new run has already been queued automatically — no action is needed. ${ref}`;
   }
+  if (/TENDER_FACTS_INVALID[\s\S]{0,400}(?:metadata field title|title.*source page)|(?:metadata field title|title.*source page)[\s\S]{0,400}TENDER_FACTS_INVALID/i.test(message)) {
+    return `TITLE_SOURCE_PROVENANCE_INVALID: The tender title could not be proven at a valid page in the active source. Reconcile the title source file, page, and quote, then retry Run Engine. ${ref}`;
+  }
   if (/\b(?:TenderFile|Tender|Company|AiJob)\b.+\bnot found\b/i.test(message)) {
     return `A required source record no longer exists. Refresh the page, confirm the source file is still attached, and retry. ${ref}`;
   }

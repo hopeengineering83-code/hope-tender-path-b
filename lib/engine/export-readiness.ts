@@ -576,7 +576,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     ));
   }
 
-  if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
+  if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Resolve the canonical upstream blocker; after successful Run Engine, generation and validation continue automatically."));
   // Accept procuringEntityName as fallback — older tenders may have it set without clientName.
   // Use EFFECTIVE values (override ?? raw) so a USER_EDITED clientName override is respected.
   const effectiveExportClientName = effectiveValue("clientName", tender.clientName) || effectiveValue("procuringEntityName", tender.procuringEntityName);
@@ -823,7 +823,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     });
   }
 
-  if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Run Engine, resolve canonical readiness blockers, generate documents, then rerun export readiness."));
+  if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Follow the canonical current action. Safe generation, validation and finalization continue automatically after successful Run Engine."));
   if (hasStrategyOnlySignals(tender.files)) blockers.push(tenderBlocker("OFFICIAL_SOURCE_REQUIRED", "Uploaded source appears to be strategy/market-intelligence only, not an official RFP/ToR/forms package.", "Upload the official tender source package before final export."));
 
   const requiresExperts = tender.requirements.some((r) => r.requirementType === "EXPERT");

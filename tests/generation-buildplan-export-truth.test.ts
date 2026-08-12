@@ -117,8 +117,8 @@ describe("Export Readiness — structured blockers not generic failure", () => {
       "must surface planned-not-generated as second priority",
     );
     assert.ok(
-      src.includes("Build/confirm submission plan"),
-      "must recommend 'Build/confirm submission plan' as fix action",
+      src.includes("Run Engine to create and source-verify the Build Plan automatically"),
+      "must name Run Engine as the sole normal Build Plan action",
     );
   });
 });

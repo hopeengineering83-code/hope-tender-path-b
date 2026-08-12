@@ -393,10 +393,14 @@ export function MatchingSelectedEvidencePanel({
       )}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <EvidenceList title={`Selected experts (${selectedExperts.length})`} rows={selectedExperts} />
-        <EvidenceList title={`Selected projects (${selectedProjects.length})`} rows={selectedProjects} />
+        <EvidenceList title={`${readiness?.engineFailed ? "Matched before Engine failure — " : ""}Selected experts (${selectedExperts.length})`} rows={selectedExperts} />
+        <EvidenceList title={`${readiness?.engineFailed ? "Matched before Engine failure — " : ""}Selected projects (${selectedProjects.length})`} rows={selectedProjects} />
       </div>
-      {hasSelection && <p className="mt-3 text-xs text-slate-600">Relevance score only — requirement coverage and release readiness are measured separately.</p>}
+      {hasSelection && <p className="mt-3 text-xs text-slate-600">
+        {readiness?.engineFailed
+          ? "These revision-bound matches completed before the Engine failed. They remain diagnostic only and do not mean Build Plan verification or the Engine run succeeded."
+          : "Relevance score only — requirement coverage and release readiness are measured separately."}
+      </p>}
 
       <details className="group mt-4 rounded-xl border border-slate-200 bg-slate-50">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 marker:content-none">
