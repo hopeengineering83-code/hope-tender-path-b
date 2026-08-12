@@ -207,7 +207,7 @@ test("planned document chooses best matching generated row and preserves existin
   assert.equal(planned[0].status, "export_ready");
 });
 
-test("PDF required with DOCX blocks; approved uploaded PDF unblocks; wrong/zero/unapproved blocked", () => {
+test("PDF required with DOCX blocks; machine-validated PDF unblocks without invented human approval", () => {
   const tender = { id: "t", requirements: [{ id: "r1", title: "Technical Proposal", description: "PDF", requirementType: "TECHNICAL", priority: "MANDATORY", exactFileName: "Technical Proposal.pdf" }] };
   let planned = deriveRequiredPackageDocuments(tender, [doc({ id: "d", exactFileName: "Technical Proposal.pdf", format: "DOCX" })]);
   let generated = mapGeneratedDocumentsToSubmissionPlan([doc({ id: "d", exactFileName: "Technical Proposal.pdf", format: "DOCX" })], planned);
@@ -218,9 +218,17 @@ test("PDF required with DOCX blocks; approved uploaded PDF unblocks; wrong/zero/
   generated = mapGeneratedDocumentsToSubmissionPlan([pdfDoc], planned);
   assert.equal(detectPdfExportRequirements(planned, generated).requiredPdfMissing, false);
 
+  const machineValidatedPdf = { ...pdfDoc, reviewStatus: "PENDING" };
+  planned = deriveRequiredPackageDocuments(tender, [machineValidatedPdf]);
+  generated = mapGeneratedDocumentsToSubmissionPlan([machineValidatedPdf], planned);
+  const automaticManifest = buildFinalZipManifestFromModel("t", planned, generated);
+  assert.equal(automaticManifest.ready, true);
+  assert.equal(automaticManifest.files[0]?.approved, false, "machine eligibility must not impersonate human approval");
+  assert.equal(automaticManifest.files[0]?.exportReady, true);
+
   for (const bad of [
     { ...pdfDoc, id: "z", storagePath: null, fileContent: "" },
-    { ...pdfDoc, id: "u", reviewStatus: "PENDING" },
+    { ...pdfDoc, id: "u", reviewStatus: "PENDING", validationStatus: "PENDING" },
     { ...pdfDoc, id: "w", format: "DOCX" },
   ]) {
     planned = deriveRequiredPackageDocuments(tender, [bad]);

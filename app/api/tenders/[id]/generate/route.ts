@@ -934,9 +934,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({
         ok: false,
         planBuilt: false,
-        error: "Submission plan build produced zero required files. Review extraction/analysis output or manually confirm required submission documents before generation.",
+        error: "Submission plan build produced zero required files. Re-run AI Analyze against the current verified source, upload a better source, or correct the source-backed requirements before generation.",
         code: "SUBMISSION_PLAN_EMPTY_REVIEW_REQUIRED",
-        nextAction: "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN",
+        nextAction: "RUN_AI_ANALYZE_OR_REPAIR_SOURCE",
         blockers: plan.warnings.length > 0 ? plan.warnings : ["No required submission files could be derived from tender requirements or exact file naming instructions."],
       }, { status: 422 });
     }

@@ -12,7 +12,7 @@
  *     (enforced inside finalizeRequiredPdf),
  *   • the rendered bytes are %PDF-validated before persisting,
  *   • the persisted PDF starts at validationStatus=PENDING /
- *     reviewStatus=PENDING — it must pass the same validation + approval
+ *     reviewStatus=PENDING — it must pass the same machine validation
  *     pipeline as every other document before it can reach the final ZIP,
  *   • when no eligible source exists the response is the structured
  *     PDF_REQUIRED_CONVERSION_UNAVAILABLE blocker, never a fake success.
@@ -92,7 +92,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // enforces ownership, extraction, analysis hash/state, requirement
     // grounding, and a confirmed valid Build Plan; final-level assurance is
     // preserved because the finalizer requires a validated + approved source
-    // and the produced PDF must itself pass validation + approval + the
+    // and the produced PDF must itself pass validation + the
     // final-zip gate before it can be exported.
     const gate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId: actor.id, purpose: "generate-missing-plan-files" });
     if (!gate.ok) return err(`PDF finalization blocked: ${gate.blockerDetail}`, 409, { code: gate.blockerCode });

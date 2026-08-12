@@ -685,10 +685,14 @@ export function buildFinalZipManifestFromModel(
         )
         ?? generated.find((candidate) => candidate.plannedDocumentKey === plannedDocument.key)
         ?? null;
+      // `approved` is retained as truthful human-review audit metadata. It is
+      // deliberately not machine export eligibility: routine output becomes
+      // eligible when the canonical validator passes, while legal/signature
+      // release blockers are enforced separately at tender level.
       const approved = document ? isReviewReadyForExport(document.reviewStatus) : false;
       const formatMatches = !document || document.format === plannedDocument.expectedFormat;
       const exportReady = Boolean(
-        document?.exportReady && approved && document.sizeBytes > 0 && formatMatches,
+        document?.exportReady && document.sizeBytes > 0 && formatMatches,
       );
       return {
         plannedDocumentKey: plannedDocument.key,

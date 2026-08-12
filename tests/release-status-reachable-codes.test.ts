@@ -125,7 +125,7 @@ describe("ready means ready", () => {
   it("requires both the export flag and an empty blocker list", () => {
     assert.equal(classifyReleaseStatus([], true), "READY_TO_DOWNLOAD");
     assert.equal(classifyReleaseStatus(["NO_ACTIVE_GENERATED_DOCUMENTS"], true), "PROCESSING_AUTOMATICALLY");
-    assert.equal(classifyReleaseStatus([], false), "PROCESSING_AUTOMATICALLY");
+    assert.equal(classifyReleaseStatus([], false), "STATUS_UNAVAILABLE");
   });
 
   it("never reports ready while a source blocker stands, whatever the flag says", () => {

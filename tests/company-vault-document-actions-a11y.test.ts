@@ -172,7 +172,7 @@ describe("Company Vault expert and project save failures", () => {
 describe("Company Vault truthful guidance and reduced-motion navigation", () => {
   it("does not claim every uploaded document is fully extracted", () => {
     assert.doesNotMatch(source, /All types extracted fully/);
-    assert.match(source, /Run Engine extracts and source-verifies eligible evidence automatically/);
+    assert.match(source, /Ingestion extracts and source-verifies eligible evidence before Run Engine uses it for matching/);
   });
 
   it("uses a scoped project form ref instead of a global querySelector smooth scroll", () => {

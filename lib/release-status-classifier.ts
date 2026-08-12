@@ -42,9 +42,10 @@
 //
 //   STATUS_UNAVAILABLE — readiness could not be resolved. Not a workflow
 //     state at all: it says the app does not currently know. Callers signal
-//     it with `{ readinessResolved: false }`; it is never inferred from an
-//     empty blocker list, because an empty list from a resolver that DID run
-//     is a real (and different) fact.
+//     it with `{ readinessResolved: false }`. An empty blocker list with a
+//     false export-ready flag is also unavailable: without an explicit blocker
+//     there is no known worker-owned operation that justifies claiming
+//     automatic progress.
 
 // Security/integrity failure codes — package cannot be downloaded.
 const SECURITY_FAILURE_CODES = new Set([
@@ -246,7 +247,7 @@ export function classifyReleaseStatus(
 
   if (blockerCodes.length > 0) return "PROCESSING_AUTOMATICALLY";
 
-  return "PROCESSING_AUTOMATICALLY";
+  return "STATUS_UNAVAILABLE";
 }
 
 /**

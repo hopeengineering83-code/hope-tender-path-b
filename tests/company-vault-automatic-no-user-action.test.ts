@@ -150,7 +150,7 @@ describe("Company Vault recovery controls are an optional, collapsed exception p
     // extraction is not something the user is asked to run.
     assert.doesNotMatch(normalDocumentFlow, /Re-extract/i, "the normal workflow must not surface a re-extract control");
     assert.doesNotMatch(normalDocumentFlow, /Re-import/i, "the normal workflow must not surface a re-import control");
-    assert.match(page, /Run Engine extracts and source-verifies eligible evidence automatically/);
+    assert.match(page, /Ingestion extracts and source-verifies eligible evidence before Run Engine uses it for matching/);
   });
 });
 

@@ -49,8 +49,8 @@ describe("Blocker 2 — automatic work-pending blockers are PROCESSING_AUTOMATIC
     assert.equal(classifyReleaseStatus([], true), "READY_TO_DOWNLOAD");
   });
 
-  it("classifies empty blockers + !readyForFinalExport as PROCESSING_AUTOMATICALLY", () => {
-    assert.equal(classifyReleaseStatus([], false), "PROCESSING_AUTOMATICALLY");
+  it("fails closed when no blocker explains a false export-ready flag", () => {
+    assert.equal(classifyReleaseStatus([], false), "STATUS_UNAVAILABLE");
   });
 });
 

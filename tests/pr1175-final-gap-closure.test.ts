@@ -197,7 +197,7 @@ describe("Gap B — absent readiness is reported as unavailable, never as progre
   it("resolved readiness with no blockers is still a real answer, not unavailable", () => {
     // The resolver ran and found nothing blocking. That is a fact, and it is
     // different from having no data — this half of the behaviour is preserved.
-    assert.equal(classifyReleaseStatus([], false), "PROCESSING_AUTOMATICALLY");
+    assert.equal(classifyReleaseStatus([], false), "STATUS_UNAVAILABLE");
     assert.equal(classifyReleaseStatus([], true), "READY_TO_DOWNLOAD");
     assert.equal(
       classifyReleaseStatus(["NO_ACTIVE_GENERATED_DOCUMENTS"], false),

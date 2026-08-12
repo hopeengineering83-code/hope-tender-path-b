@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-12 15:53 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; audited from remote head `a20c0ad762ee83eac0361362cfcd086b70265fb4` on isolated local branch `audit/pr-1175-final`.
+- **Scope / files:** closed the four requested remaining gaps without changing AI Analyze or Run Engine manual authority: separated machine-validated export eligibility from human review audit metadata in `lib/engine/final-package-readiness-model.ts`; made empty/unexplained release state fail closed in `lib/release-status-classifier.ts`; removed the remaining generation response that offered requirement review/manual confirmation as a provenance shortcut; corrected PDF finalization comments and Company Vault ingestion copy; updated focused regression tests.
+- **Tests passed:** Prisma client generation; 146 focused tests; full non-DB suite with the fail-closed local PostgreSQL URL (DB integration tests skipped by design); typecheck; lint (one pre-existing unused-disable warning); release-integrity audits; dependency audit (0 vulnerabilities); production build with a non-secret dummy Z.ai build-time key.
+- **Tests blocked / not yet claimed:** real PostgreSQL migrations, zero-drift, DB-integration/cross-tenant suite, and authenticated Playwright could not run locally because the supplied `DATABASE_URL` points to an unreachable Neon host and the repository's test DB guard correctly rejects all Neon hosts. Exact-head CI, screenshot capture, and Vercel Preview must be observed after the final commit is pushed; no Production deployment is authorized.
+- **Risks / assumptions:** human/legal/signature/authority gates remain separate and fail closed; the manifest's legacy `approved` field remains truthful human-review metadata but no longer blocks a routine machine-validated export. No 100% claim is made until exact-head remote checks complete.
+- **Next action:** commit and push one final SHA, update PR #1175 body/comment to that SHA, then observe exact-head CI, Preview, screenshot, authenticated isolation and security results without merging or promoting Production.
+- **Merge status:** **not reviewed for merge**; DO NOT MERGE / DO NOT PROMOTE PRODUCTION.
+
 ### 2026-08-12 15:42 UTC — Codex (GPT-5.6 Sol)
 
 - **Branch / PR:** `codex/pr-1175-final-gap-audit`, based exactly on PR #1175 remote head `989539d1ab314ec87a6412a9ad20c86b809a755e`; intended for PR #1175 (`release/consolidated-recovery-20260717`) only.
