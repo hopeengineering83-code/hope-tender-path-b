@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-12 UTC — Codex (latest-remote-head workflow-copy audit)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, audited from latest remote head `a36fa30a48f0df4d337b7ba3909d8bd5d540b740` after checking the current worktree, open PRs, and CI.
+- **Scope:** found and corrected one remaining live Recovery Command action-registry contradiction: it still claimed AI Analyze and Engine matching start automatically and that Run Engine performs source verification. The registry now preserves manual AI Analyze and manual Run Engine authority, states that verification/extraction happen first, and describes post-Engine matching, Build Plan, and downstream automation accurately. Extended the existing PR #1175 regression surface so this registry cannot silently drift again.
+- **Files changed:** `lib/recovery-command-actions.ts`, `tests/pr1175-final-gap-closure.test.ts`, `operator_handoff.md`.
+- **Tests/checks:** focused non-database regressions passed (147 assertions); the included PostgreSQL owner-workflow test failed only during setup because the configured Neon hostname was unreachable. `npx prisma generate`, typecheck, lint (one pre-existing unused-disable warning), release-integrity audits, `npm audit --audit-level=high` (0 vulnerabilities), and the production build with a non-secret build-time placeholder passed. The parent head `a36fa30a` already had exact-head CI and screenshot jobs running when this audit began; new exact-head CI/Preview evidence is required after push.
+- **Risks / assumptions:** no workflow gate, tenant query, evidence semantics, or persistence behavior changed; this is user-facing action copy plus a regression guard. Local real-PostgreSQL, authenticated Playwright, build, route/screenshot, and Preview validation remain delegated to exact-head CI because the configured database is unreachable locally.
+- **Next action:** push the single commit, require all exact-head CI/security/screenshot checks and the one Vercel Preview to pass, then update PR #1175 truth to that SHA. Do not merge or promote Production.
+- **Merge status:** **DO NOT MERGE** — exact-head verification pending; Production promotion prohibited.
+
 ### 2026-08-12 UTC — Claude Code (Opus), PR #1175 gaps A–F closed, and CI brought back to green
 
 Supersedes my earlier entry in this file, which recorded verification at

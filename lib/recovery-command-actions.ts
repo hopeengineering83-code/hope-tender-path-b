@@ -116,10 +116,10 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     path: "/api/tenders/{tenderId}/approve-analysis",
   },
   AI_ANALYZE: {
-    label: "View Automatic AI Analysis",
+    label: "Open AI Analyze",
     kind: "scroll",
     anchorId: "ai-analyze-section",
-    message: "AI analysis starts automatically after extraction and continues through the durable worker. Open this panel to review status and exceptional blockers.",
+    message: "Source verification and extraction happen first. Open this panel to start or review the manual AI Analyze step.",
     aliases: ["REVIEW_ANALYSIS"],
   },
   COMPLETE_METADATA: {
@@ -138,13 +138,13 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
     label: "View Automatic Build Plan Status",
     kind: "scroll",
     anchorId: "submission-plan-completeness",
-    message: "Build Plan creation and source verification continue automatically after Engine processing. No separate Build Plan confirmation is required.",
+    message: "Run Engine uses the current verified source and current AI analysis, then creates and verifies the Build Plan automatically. No separate Build Plan confirmation is required.",
   },
   RUN_ENGINE: {
-    label: "View Engine and Matching Status",
+    label: "Run Engine",
     kind: "scroll",
     anchorId: "matching-selected-evidence",
-    message: "Engine matching starts automatically after complete canonical AI analysis succeeds. Open the matching status panel to review evidence or blockers.",
+    message: "After AI Analyze succeeds, start Run Engine manually. It uses the current verified source and current AI analysis to begin matching, Build Plan creation, and downstream processing; it does not start source verification.",
   },
   LINK_VAULT_EVIDENCE: {
     label: "Link Vault Evidence",

@@ -79,9 +79,14 @@ describe("remaining workflow contract gaps", () => {
   it("describes Run Engine as a consumer of verified source and current analysis", () => {
     const company = codeOf("app/dashboard/company/page.tsx");
     const readiness = codeOf("lib/tender-generation-readiness.ts");
+    const recoveryActions = codeOf("lib/recovery-command-actions.ts");
     assert.doesNotMatch(company, /Run Engine extracts and source-verifies/i);
     assert.match(company, /Ingestion extracts and source-verifies/i);
     assert.match(readiness, /starts matching and Build Plan\/downstream processing, not source verification/i);
+    assert.match(recoveryActions, /Source verification and extraction happen first/);
+    assert.match(recoveryActions, /start Run Engine manually/);
+    assert.match(recoveryActions, /does not start source verification/);
+    assert.doesNotMatch(recoveryActions, /AI analysis starts automatically|Engine matching starts automatically|Build Plan creation and source verification continue automatically/i);
   });
 
   it("keeps unknown release blockers fail-closed", () => {
@@ -161,6 +166,7 @@ describe("Gap A — no surface claims a manual gate runs automatically", () => {
       "lib/ui/manual-gate-guidance.ts",
       "lib/engine/tender-control-suggestions.ts",
       "lib/engine/two-action-workflow-presentation.ts",
+      "lib/recovery-command-actions.ts",
       "app/api/tenders/[id]/bid-strategy/route.ts",
       "app/api/tenders/[id]/controls/route.ts",
     ];
