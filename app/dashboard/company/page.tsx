@@ -823,7 +823,7 @@ export default function CompanyPage() {
                   </p>
                 ) : (
                   <p className="mt-1.5 text-xs text-slate-400">
-                    Records that are not yet source-verified are excluded from matching and generation. Vault ingestion verifies them automatically against uploaded documents before AI Analyze and Run Engine use them — no confirmation click is needed here.
+                    Records that are not yet source-verified are excluded from matching and generation. Vault ingestion verifies them automatically against uploaded documents before AI Analyze and Run Engine use them — no action is needed here.
                   </p>
                 )
               )}
