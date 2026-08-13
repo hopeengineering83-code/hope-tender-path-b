@@ -205,9 +205,9 @@ describe("DIRECTIVE 7 — Behavioral proof: immutable snapshot + fail-closed", (
 });
 
 describe("DIRECTIVE 7 — Behavioral proof: worker deadline architecture", () => {
-  it("has a 40-second soft deadline with 10s minimum remaining budget", () => {
+  it("has a 240-second soft deadline with 10s minimum remaining budget", () => {
     const route = read("app/api/ai-jobs/run-next/route.ts");
-    assert.match(route, /const maxRunMs = 40_000/);
+    assert.match(route, /const maxRunMs = 240_000/);
     assert.match(route, /MINIMUM_REMAINING_BUDGET_MS = 10_000/);
     assert.match(route, /PERSISTENCE_RESERVE_MS = 5_000/);
     assert.match(route, /absoluteDeadline = startTime \+ maxRunMs/);

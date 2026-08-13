@@ -1,7 +1,7 @@
 // Behavioral test: worker deadline architecture (Directive 5)
 //
 // Verifies that the run-next worker:
-//   1. Has a request-level absolute deadline (maxRunMs = 40_000)
+//   1. Has a request-level absolute deadline (maxRunMs = 240_000)
 //   2. Enforces MINIMUM_REMAINING_BUDGET before claiming new jobs
 //   3. Passes deadlineMs and absoluteDeadline into handler input
 //   4. Never starts a job when insufficient budget remains
@@ -11,7 +11,7 @@
 // test deterministically without mocking the Vercel runtime. The source-text
 // assertions prove the architecture is in place; runtime behavior is validated
 // by the CI E2E golden workflow which exercises real provider calls within
-// the 60s Vercel limit.
+// the 300s Vercel limit.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
@@ -20,11 +20,11 @@ import { readFileSync } from "node:fs";
 const route = readFileSync("app/api/ai-jobs/run-next/route.ts", "utf8");
 
 describe("DIRECTIVE 5 — Worker deadline architecture", () => {
-  it("has a 40-second soft deadline (maxRunMs = 40_000)", () => {
+  it("has a 240-second soft deadline (maxRunMs = 240_000)", () => {
     assert.match(
       route,
-      /const maxRunMs = 40_000/,
-      "Worker must have a 40s soft deadline — 20s reserve below Vercel's 60s hard kill",
+      /const maxRunMs = 240_000/,
+      "Worker must have a 240s soft deadline — 60s reserve below Vercel's 300s hard kill",
     );
   });
 

@@ -53,9 +53,9 @@ describe("DIRECTIVE 13 — Persisted stage checkpoints", () => {
     assert.match(route, /retries: currentRetries/);
   });
 
-  it("worker deadline architecture prevents 60s platform timeout", () => {
+  it("worker deadline architecture prevents the platform hard timeout", () => {
     const route = read("app/api/ai-jobs/run-next/route.ts");
-    assert.match(route, /maxRunMs = 40_000/);
+    assert.match(route, /maxRunMs = 240_000/);
     assert.match(route, /MINIMUM_REMAINING_BUDGET_MS = 10_000/);
     assert.match(route, /PERSISTENCE_RESERVE_MS = 5_000/);
     assert.match(route, /absoluteDeadline/);
