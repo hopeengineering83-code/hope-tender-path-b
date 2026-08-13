@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-13 UTC — Codex (latest-head title proof hardening)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from actual latest remote SHA `eb68400388d77513cce8fbf09ecf086f2ea878bc`, twelve commits beyond the reported failing Preview SHA `b4903c03`. Restored the externally removed local `origin` configuration before fetching; no source edits occurred on the unrelated reset branch.
+- **Scope:** independently audited the landed Preview `03b9c928` repair and found one remaining provenance weakness: title reconciliation accepted any stored quote that existed at a valid page, even if that quote did not contain/prove the title value. It now reuses stored title evidence only when the normalized quote contains the normalized title; otherwise it deterministically locates the actual title in active extracted text and derives its real bounded page, or leaves the strict gate blocked. Added a Pharo-shaped regression with a valid-but-unrelated page-1 quote and the real title on page 2. Also removed the last independently-derived `BUILD_SUBMISSION_PLAN` next action in Generation Readiness in favor of the canonical manual `RUN_ENGINE` action.
+- **Files changed:** `lib/engine/automatic-build-plan.ts`, `app/api/tenders/[id]/generation-readiness/route.ts`, `tests/preview-title-provenance-engine-postgres.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** Prisma validate/generate, typecheck, lint (one standing unused-disable warning), diff check, and 55 reachable focused assertions passed. The three PostgreSQL title fixture subtests were invoked but could not connect to the configured external Neon hostname; exact-head CI must run them against its disposable PostgreSQL. Full migrations/zero-drift/PostgreSQL, build, Playwright/isolation, screenshot/security and final Preview acceptance remain required on the resulting SHA.
+- **Real Preview audit:** exact `eb684003` Preview was reached. Vercel environment access supplied the configured bootstrap policy, but login was correctly refused because the existing database account no longer matches the configured bootstrap seed password; no credential, user, session, or database state was modified to bypass authentication. Final owner-authenticated Preview UAT is therefore not claimed yet.
+- **Risks / assumptions:** no page-boundary, quote-containment, tenant, evidence-strength, legal/authority, package-envelope, byte-signature/hash, or final ZIP gate was relaxed. Failure to prove the exact title remains fail-closed. Separate Technical/Financial/Admin downloads and partial-Engine diagnostic labeling remain unchanged.
+- **Next action:** commit/push once, require exact-head CI and Preview, then use an authorized existing Preview session/credential for real-tender panel UAT; if unavailable, report that acceptance boundary honestly rather than claiming 100%.
+- **Merge status:** **DO NOT MERGE**; exact-head and authenticated real-Preview acceptance pending; Production promotion prohibited.
+
 ### 2026-08-13 UTC — Codex (latest-head Preview contradiction cleanup)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from the actual latest remote SHA `30fe2268bbe8961c1d9ca9fd86663b6158b25f51` after restoring the missing local Git remote and re-fetching PR #1175. No merge or Production promotion.

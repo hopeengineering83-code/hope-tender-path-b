@@ -43,6 +43,17 @@ function automaticValidationJson(blockers: string[] = []): string {
   });
 }
 
+function normalizeEvidenceText(value: string | null | undefined): string {
+  return String(value ?? "").toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim();
+}
+
+/** A title quote must prove the title value, not merely exist in the file. */
+function quoteProvesTitle(title: string, quote: string): boolean {
+  const normalizedTitle = normalizeEvidenceText(title);
+  const normalizedQuote = normalizeEvidenceText(quote);
+  return normalizedTitle.length >= 3 && normalizedQuote.includes(normalizedTitle);
+}
+
 /**
  * Reconcile title provenance from the active source before Build Plan validation.
  * This never trusts the stored/AI page number: it derives file + page from the
@@ -72,7 +83,7 @@ export async function reconcileTitleSourceEvidence(
 
   let evidence: { titleSourceFileId?: string; titleSourcePage?: number | null; titleSourceQuote?: string } = {};
   const quotedFileId = attributeMetadataSourceFileId(tender.titleSourceQuote, tender.files);
-  if (quotedFileId && tender.titleSourceQuote) {
+  if (quotedFileId && tender.titleSourceQuote && quoteProvesTitle(tender.title, tender.titleSourceQuote)) {
     const file = tender.files.find((item) => item.id === quotedFileId)!;
     const page = locateQuoteProvenPage(file.extractedText, tender.titleSourceQuote, file.totalPages);
     if (page !== null) {

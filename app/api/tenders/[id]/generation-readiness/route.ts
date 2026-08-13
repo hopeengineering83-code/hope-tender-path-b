@@ -55,8 +55,8 @@ export async function GET(
       ? [{
           code: "NO_CONFIRMED_BUILD_PLAN",
           message: finalPackage.buildPlan.blockerReason
-            ?? "Full proposal generation is blocked because the current Build Plan is not confirmed.",
-          nextAction: "BUILD_SUBMISSION_PLAN",
+            ?? "Full proposal generation is blocked because Run Engine has not created and source-verified the current Build Plan.",
+          nextAction: "RUN_ENGINE",
         }]
       : [];
 

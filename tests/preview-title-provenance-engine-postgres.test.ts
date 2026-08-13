@@ -130,6 +130,40 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
     const unchanged = await prisma.tender.findUniqueOrThrow({ where: { id: tender.id }, select: { titleSourcePage: true } });
     assert.equal(unchanged.titleSourcePage, 99, "strict Build Plan validation must still reject the invalid page");
   });
+
+  it("rejects a contained but unrelated quote and re-proves the actual title", async () => {
+    const suffix = testSuffix();
+    const user = await seedUser(prisma, suffix);
+    const title = "Supply and Installation of Laboratory Equipment for Pharo Secondary School";
+    const tender = await seedTender(prisma, { userId: user.id, suffix, title });
+    const file = await seedTenderFile(prisma, {
+      tenderId: tender.id,
+      suffix,
+      totalPages: 3,
+      extractedPages: 3,
+      extractedText: `[Page 1]\nInvitation to Bid\n[Page 2]\nTender Title: ${title}\n[Page 3]\nSubmission requirements.`,
+    });
+    created.push({ tenderId: tender.id, userId: user.id });
+    await prisma.tender.update({
+      where: { id: tender.id },
+      data: {
+        titleSourceFileId: file.id,
+        titleSourcePage: 1,
+        titleSourceQuote: "Invitation to Bid",
+      },
+    });
+
+    const result = await reconcileTitleSourceEvidence(prisma, tender.id, user.id);
+    assert.deepEqual(result, { repaired: true, proven: true });
+    const repaired = await prisma.tender.findUniqueOrThrow({
+      where: { id: tender.id },
+      select: { titleSourceFileId: true, titleSourcePage: true, titleSourceQuote: true },
+    });
+    assert.equal(repaired.titleSourceFileId, file.id);
+    assert.equal(repaired.titleSourcePage, 2);
+    assert.match(repaired.titleSourceQuote ?? "", /Pharo Secondary School/);
+    assert.doesNotMatch(repaired.titleSourceQuote ?? "", /^Invitation to Bid$/);
+  });
 });
 
 describe("generation and workflow panels consume canonical current truth", () => {
@@ -174,5 +208,6 @@ describe("generation and workflow panels consume canonical current truth", () =>
     assert.match(source, /syncPersistedTenderFactsToLedger\(prisma, tenderId, userId, \{/);
     assert.match(source, /beforeRead: async \(tx\)/);
     assert.match(source, /TITLE_SOURCE_RECONCILIATION_SCOPE_LOST/);
+    assert.match(source, /quoteProvesTitle\(tender\.title, tender\.titleSourceQuote\)/);
   });
 });
