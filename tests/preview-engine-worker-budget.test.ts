@@ -24,6 +24,7 @@ describe("generation readiness follows canonical workflow truth", () => {
     assert.match(route, /getCanonicalTenderWorkflowDecision/);
     assert.match(route, /canonicalBlocksGeneration/);
     assert.match(route, /fullProposalBlockers = canonicalBlocksGeneration/);
+    assert.match(route, /canonicalAnalysisComplete/);
     assert.match(route, /currentBlockingStage: workflowDecision\?\.currentBlockingStage/);
   });
 });

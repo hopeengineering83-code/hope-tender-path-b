@@ -99,7 +99,8 @@ export async function GET(
         }]
       : independentlyDerivedBlockers;
 
-    const warnings = (isUnapprovedFallback || isApprovedFallback)
+    const canonicalAnalysisComplete = workflowDecision?.stageStates.RUN_AI_ANALYZE === "COMPLETE";
+    const warnings = (isUnapprovedFallback || isApprovedFallback) && !canonicalAnalysisComplete
       ? [{
           code: isApprovedFallback ? "ANALYSIS_USED_APPROVED_REGEX_FALLBACK" : analysisSource === "UNKNOWN" ? "ANALYSIS_NOT_RUN" : "ANALYSIS_USED_REGEX_FALLBACK",
           message: isApprovedFallback
