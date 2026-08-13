@@ -165,11 +165,11 @@ function resolveStatus(doc: GeneratedDocSnapshot | null, planFile: SubmissionPla
 function recommendedActionFor(status: SubmissionPlanRowStatus, planFile: SubmissionPlanFile | null, doc: GeneratedDocSnapshot | null): string {
   switch (status) {
     case "GENERATED": return "Ready for export.";
-    case "GENERATED_NEEDS_REVIEW": return "Complete reviewer approval — mark READY_FOR_EXPORT.";
-    case "GENERATED_QUALITY_FAILED": return "Quality gate failed — rewrite or regenerate.";
-    case "PLANNED": return "Generate the planned document. This row has no final file content yet.";
+    case "GENERATED_NEEDS_REVIEW": return "Machine validation is complete; any genuine final-owner or legal review remains explicit.";
+    case "GENERATED_QUALITY_FAILED": return "Quality gate failed; automatic recovery must rewrite or regenerate before export.";
+    case "PLANNED": return "Automatic post-Engine generation has not produced final file content yet.";
     case "MISSING_TENDER_SOURCE_FORM": return "Upload the tender-issued source form from the complete tender package. Company Vault documents are already official — this only applies to tender-issued forms.";
-    case "MISSING": return `Generate the required file (${planFile?.exactFileName ?? "missing file"}).`;
+    case "MISSING": return `Automatic post-Engine generation must produce the required file (${planFile?.exactFileName ?? "missing file"}).`;
     case "OUTSIDE_PLAN": return `Map this document into the submission plan or supersede it; it is not part of the tender-required file list (${doc?.exactFileName ?? doc?.name ?? "unmapped doc"}).`;
     case "SUPERSEDED": return "Historical row — already excluded from the final package.";
     default: return "Review the row status.";

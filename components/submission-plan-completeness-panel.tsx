@@ -102,10 +102,10 @@ function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
 
 function planStateLabel(state: PlanState): string {
   if (state === "CONFIRMED_BUILD_PLAN") return "Source-verified Build Plan";
-  if (state === "EXPLICIT_TENDER_PLAN") return "Unconfirmed tender scope";
-  if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Unconfirmed derived scope";
-  if (state === "PLAN_NOT_BUILT") return "No confirmed Build Plan";
-  if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "No confirmed Build Plan";
+  if (state === "EXPLICIT_TENDER_PLAN") return "Unverified tender scope";
+  if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Unverified derived scope";
+  if (state === "PLAN_NOT_BUILT") return "No source-verified Build Plan";
+  if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "No source-verified Build Plan";
   return "No requirements yet";
 }
 

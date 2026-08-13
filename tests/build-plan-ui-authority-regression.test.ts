@@ -66,8 +66,8 @@ describe("automatic submission scope is presented truthfully", () => {
   });
 
   it("keeps derived scope visibly non-authoritative until verification", () => {
-    assert.match(completeness, /Unconfirmed tender scope/);
-    assert.match(completeness, /Unconfirmed derived scope/);
+    assert.match(completeness, /Unverified tender scope/);
+    assert.match(completeness, /Unverified derived scope/);
     assert.match(completeness, /Unverified submission scope preview/);
     assert.match(completeness, /Preview only:/);
   });
