@@ -215,6 +215,9 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
       const safeMode = ctx.input?.safe === true;
       const skipAiRematch = ctx.input?.skipAiRematch === true;
       const maxChars = typeof ctx.input?.maxChars === "number" ? ctx.input.maxChars : undefined;
+      const deadlineAt = typeof ctx.input?.absoluteDeadline === "number"
+        ? ctx.input.absoluteDeadline
+        : undefined;
 
       const result = await runTenderEngine(
         ctx.tenderId,
@@ -223,7 +226,7 @@ const handlers: Partial<Record<JobType, JobHandler>> = {
           // Fire and forget — don't await inside the engine hot path.
           void recordStep(ctx.jobId, { stepName, message, status: "RUNNING" }).catch(() => {});
         },
-        { safe: safeMode, skipAiRematch, maxChars },
+        { safe: safeMode, skipAiRematch, maxChars, deadlineAt },
       );
       clearInterval(heartbeat);
       const postconditions = await checkEnginePostconditions(ctx.tenderId);

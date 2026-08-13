@@ -16,7 +16,14 @@ import { failStuckJobs } from "../../../../lib/ai-jobs";
 import { reapStaleQueuedJobs } from "../../../../lib/engine/stale-job-reaper";
 import { publicJobFailureMessage } from "../../../../lib/prisma-schema-compatibility";
 
-export const maxDuration = 60;
+// A real Pharo-shaped Preview run reaches the source-verified Build Plan only
+// after matching and requirement persistence. The former 60s function cap
+// killed the request at that exact boundary and left the durable job RUNNING
+// forever even though every completed stage had been persisted. Vercel's
+// configured runtime supports the longer bounded invocation; keep a generous
+// persistence reserve below it and continue to pass an absolute deadline into
+// every claimed handler.
+export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
@@ -56,7 +63,7 @@ export async function POST(req: Request) {
 
   const tenderId = searchParams.get("tenderId")?.trim() || undefined;
   const startTime = Date.now();
-  const maxRunMs = 40_000;
+  const maxRunMs = 240_000;
   type WorkerJobResult = {
     jobId: string;
     jobType: string;
@@ -122,8 +129,8 @@ export async function POST(req: Request) {
     }
   }
 
-  // DIRECTIVE 5: Request-level absolute deadline. Vercel hard-kills at 60s.
-  // We use a 40s soft deadline (maxRunMs) for the worker loop, but also
+  // DIRECTIVE 5: Request-level absolute deadline. Stop a full minute before
+  // the 300s hard cap, and also
   // enforce a MINIMUM_REMAINING_BUDGET before claiming a new job — if less
   // than 10 seconds remain, we stop claiming to ensure every claimed job
   // has enough time to either complete or persist its checkpoint safely.

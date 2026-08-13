@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-13 UTC — Codex (real Preview Engine runtime acceptance repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting SHA `c679a416d863b970088e93bcbfbea9418722cfba`; no merge or Production promotion.
+- **Scope:** authenticated against the exact Vercel Preview with the configured bootstrap owner and reran the real Pharo tender `e65aa856-20c0-4034-a52f-efb627703dc9`. The title repair worked—the prior `TENDER_FACTS_INVALID` failure did not recur—but the live worker exposed a new P0 hidden by green synthetic checks: job `0cb7d836-e270-4bd1-b060-cfb1725d552b` reached matching, persisted 8 requirements/coverage, and entered `build-plan.automatic`, then the route's explicit 60-second limit killed the invocation. Lazy recovery truthfully converted it to `ASYNC_ENGINE_TIMEOUT`, but only after 180 seconds. Raised the bounded worker route to 300 seconds with a 240-second soft deadline and propagated that absolute deadline into `runTenderEngine` so expensive reranking can yield before persistence reserve is exhausted.
+- **Files changed:** `app/api/ai-jobs/run-next/route.ts`, `lib/ai-job-handlers-legacy.ts`, `tests/preview-engine-worker-budget.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** 39/39 reachable focused regressions passed; Prisma generate, typecheck, lint (one pre-existing unused-disable warning), release-integrity audits, and dependency audit (0 vulnerabilities) passed. The two Pharo PostgreSQL subtests could not connect to the configured Neon URL locally; the preceding exact head passed them in CI. Full PostgreSQL/migrations/zero-drift, build, Playwright/isolation, screenshot audit, dependency security, and a second authenticated run of the same real Preview tender are required on the resulting SHA.
+- **Risks / assumptions:** no page, quote, ownership, evidence, authority, legal, or ZIP byte/signature gate changed. The longer route is still bounded and reserves 60 seconds below its hard cap. The exact Preview must prove its deployed function honors the new duration before closure is claimed.
+- **Next action:** commit/push once, require exact-head CI/Preview, then rerun the same Preview Engine job through Build Plan and cross-check every canonical panel and package surface.
+- **Merge status:** **DO NOT MERGE**; real Preview rerun pending; Production promotion prohibited.
+
 ### 2026-08-13 UTC — Codex (Preview 03b9c928 contradiction re-audit)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, audited from latest remote head `81571fcdc75e7d03149b7196f803fa0a26bf88a9`; no merge or Production promotion.
