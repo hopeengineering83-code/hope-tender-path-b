@@ -171,8 +171,8 @@ describe("generation and workflow panels consume canonical current truth", () =>
   it("updates title scalars and the canonical ledger atomically", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("lib/engine/automatic-build-plan.ts", "utf8");
-    assert.match(source, /prisma\.\$transaction\(async \(tx\)/);
-    assert.match(source, /syncPersistedTenderFactsToLedger\(tx as PrismaClient/);
+    assert.match(source, /syncPersistedTenderFactsToLedger\(prisma, tenderId, userId, \{/);
+    assert.match(source, /beforeRead: async \(tx\)/);
     assert.match(source, /TITLE_SOURCE_RECONCILIATION_SCOPE_LOST/);
   });
 });

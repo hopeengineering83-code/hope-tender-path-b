@@ -1092,10 +1092,12 @@ export async function syncPersistedTenderFactsToLedger(
   prismaClient: PrismaClient,
   tenderId: string,
   userId: string,
+  options: { beforeRead?: (tx: any) => Promise<void> } = {},
 ): Promise<PersistedTenderFactSyncResult> {
   const result = await prismaClient.$transaction(async (tx) => {
     const mutationLock = computeTenderMutationLockKey(tenderId);
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(${mutationLock})`;
+    await options.beforeRead?.(tx);
 
     const tender = await tx.tender.findFirst({
       where: { id: tenderId, userId },
