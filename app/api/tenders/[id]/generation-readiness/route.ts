@@ -7,6 +7,8 @@ import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/anal
 import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { randomUUID } from "node:crypto";
 import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
+import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
+import { presentTwoActionWorkflowDecision } from "../../../../../lib/engine/two-action-workflow-presentation";
 
 export const dynamic = "force-dynamic";
 
@@ -21,12 +23,13 @@ export async function GET(
 
   try {
     await prismaReady;
-    const [readiness, tender] = await Promise.all([
+    const [readiness, tender, rawWorkflowDecision] = await Promise.all([
       getTenderGenerationReadinessStrict(prisma, userId, tenderId),
       prisma.tender.findFirst({
         where: { id: tenderId, userId },
         select: { notes: true },
       }),
+      getCanonicalTenderWorkflowDecision(prisma, userId, tenderId),
     ]);
     if (!readiness || !tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
 
@@ -67,7 +70,7 @@ export async function GET(
       nextAction: blocker.nextAction,
     }));
 
-    const fullProposalBlockers = isUnapprovedFallback
+    const independentlyDerivedBlockers = isUnapprovedFallback
       ? [{
           code: analysisSource === "UNKNOWN" ? "FULL_PROPOSAL_NOT_ANALYZED" : "FULL_PROPOSAL_REGEX_FALLBACK_ANALYSIS",
           message: analysisSource === "UNKNOWN"
@@ -76,6 +79,25 @@ export async function GET(
           nextAction: "RETRY_AI_ANALYZE",
         }, ...readiness.fullProposalBlockers]
       : [...submissionPlanBlocker, ...packageBlockers, ...readiness.fullProposalBlockers];
+
+    // Readiness is a projection of canonical workflow truth, never an
+    // independent workflow authority. In particular, legacy notes can report
+    // UNKNOWN after a current AI_ANALYZE/ENGINE_RUN has succeeded. That stale
+    // signal previously produced the impossible Preview combination
+    // "Run AI Analyze" here while workflow-center truthfully reported the
+    // current evidence blocker. Suppress every secondary/downstream diagnosis
+    // while a canonical stage is blocking or processing.
+    const workflowDecision = presentTwoActionWorkflowDecision(rawWorkflowDecision);
+    const canonicalBlocksGeneration = Boolean(
+      workflowDecision && workflowDecision.currentBlockingStage !== "EXPORT_ZIP_READY",
+    );
+    const fullProposalBlockers = canonicalBlocksGeneration && workflowDecision
+      ? [{
+          code: workflowDecision.blockingStageCode,
+          message: workflowDecision.nextRequiredActionReason,
+          nextAction: workflowDecision.nextRequiredAction,
+        }]
+      : independentlyDerivedBlockers;
 
     const warnings = (isUnapprovedFallback || isApprovedFallback)
       ? [{
@@ -91,6 +113,7 @@ export async function GET(
 
     const readyForSupportPackage = Boolean(readiness.supportPackageReady);
     const readyForFullProposal = Boolean(readiness.fullProposalReady)
+      && !canonicalBlocksGeneration
       && !isUnapprovedFallback
       && submissionPlanBuilt
       && packageBlockers.length === 0;
@@ -123,6 +146,8 @@ export async function GET(
       readyForAnySafeGeneration: readyForSupportPackage || readyForFullProposal,
       analysisSourceGate,
       analysisSource,
+      currentBlockingStage: workflowDecision?.currentBlockingStage ?? null,
+      canonicalDecision: workflowDecision,
       submissionPlanBuilt,
       buildPlan: finalPackage.buildPlan,
       finalPackageCounts: {

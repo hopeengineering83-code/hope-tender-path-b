@@ -17,3 +17,13 @@ describe("real Preview Engine worker budget", () => {
     assert.match(handler, /\{ safe: safeMode, skipAiRematch, maxChars, deadlineAt \}/);
   });
 });
+
+describe("generation readiness follows canonical workflow truth", () => {
+  it("suppresses legacy readiness diagnoses whenever canonical workflow is blocked", () => {
+    const route = readFileSync("app/api/tenders/[id]/generation-readiness/route.ts", "utf8");
+    assert.match(route, /getCanonicalTenderWorkflowDecision/);
+    assert.match(route, /canonicalBlocksGeneration/);
+    assert.match(route, /fullProposalBlockers = canonicalBlocksGeneration/);
+    assert.match(route, /currentBlockingStage: workflowDecision\?\.currentBlockingStage/);
+  });
+});
