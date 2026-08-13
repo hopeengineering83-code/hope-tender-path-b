@@ -379,7 +379,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
 
   const sourceCheck = await verifySourceFilesNotDeleted(prisma, tender.id);
   if (!sourceCheck.ok) {
-    return err("Source files required for grounding have been deleted. Regenerate documents before exporting.", 409, { code: "SOURCE_FILES_DELETED" });
+    return err("Source files required for grounding have been deleted. Restore the genuine source and re-run AI Analyze, then Run Engine; downstream documents will be regenerated automatically.", 409, { code: "SOURCE_FILES_DELETED" });
   }
 
   const docEnvelopes = new Map(docs.map((d) => [d.id, inferEnvelope(d.documentType ?? "TECHNICAL", d.exactFileName ?? d.name ?? "")]));
@@ -434,7 +434,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   if (noContent.length) {
     const names = noContent.map((d) => d.exactFileName ?? d.name ?? d.id);
     return err(
-      `${noContent.length} document(s) have no file content and cannot be exported: ${names.join(", ")}. Run auto-finalize or regenerate these documents first.`,
+      `${noContent.length} document(s) have no file content and cannot be exported: ${names.join(", ")}. Automatic post-Engine finalization must produce verified bytes before export.`,
       409,
       { code: "DOCUMENTS_MISSING_CONTENT", documents: noContent.map((d) => ({ id: d.id, name: d.exactFileName ?? d.name })) },
     );
@@ -506,7 +506,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         { code: "FINAL_ZIP_SIZE_CAP_EXCEEDED", limitBytes: FINAL_ZIP_MAX_INPUT_BYTES },
       );
     }
-    return err("Final ZIP verification failed. Regenerate the affected documents before export.", 422, {
+    return err("Final ZIP verification failed. Automatic post-Engine repair must recreate and verify the affected bytes before export.", 422, {
       code: "FINAL_ZIP_VERIFICATION_FAILED",
     });
   }
@@ -581,7 +581,7 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
   const docs = (tender.generatedDocuments as any[]).filter(
     (d: any) => d.generationStatus === "GENERATED" && isFinalExportCandidateDocument(d) && generatedDocumentHasContent(d),
   );
-  if (!docs.length) return err("No generated documents available for PDF export. Generate documents first.", 400, { code: "NO_DOCS_FOR_PDF" });
+  if (!docs.length) return err("No generated documents are available for PDF export. Automatic post-Engine generation must complete first.", 400, { code: "NO_DOCS_FOR_PDF" });
 
   const pdfGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId, purpose: "final-zip" });
   if (!pdfGate.ok) return err(`PDF export blocked: ${pdfGate.blockerDetail}`, 409, { code: pdfGate.blockerCode });

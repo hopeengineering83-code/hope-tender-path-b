@@ -101,7 +101,7 @@ export const ERROR_CODE_LABELS: Record<string, string> = {
   NO_SELECTED_REVIEWED_EXPERTS: "No reviewed experts have been selected as evidence yet",
   NO_SELECTED_REVIEWED_PROJECTS: "No reviewed projects have been selected as evidence yet",
   NO_ACTIVE_GENERATED_DOCUMENTS: "No documents have been generated yet",
-  NO_CURRENT_CONFIRMED_BUILD_PLAN: "The submission Build Plan has not been confirmed for this revision",
+  NO_CURRENT_CONFIRMED_BUILD_PLAN: "The submission Build Plan has not been source-verified for this revision",
   NO_REQUIREMENTS: "No tender requirements have been extracted yet",
 };
 

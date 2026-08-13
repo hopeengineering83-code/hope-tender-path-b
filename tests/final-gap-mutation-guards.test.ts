@@ -23,8 +23,9 @@ describe("Gap A — auto-finalize route calls the central gate", () => {
     assert.match(src, /if \(!centralGate\.ok\)[\s\S]*?status:\s*422/);
   });
 
-  it("returns BUILD_PLAN_NOT_CONFIRMED nextAction when gate blocks on plan", () => {
-    assert.match(src, /centralGate\.blockerCode === "BUILD_PLAN_NOT_CONFIRMED" \? "BUILD_SUBMISSION_PLAN"/);
+  it("routes a missing source-verified plan to Run Engine, not confirmation", () => {
+    assert.match(src, /centralGate\.blockerCode === "BUILD_PLAN_NOT_CONFIRMED" \? "RUN_ENGINE"/);
+    assert.doesNotMatch(src, /centralGate\.blockerCode === "BUILD_PLAN_NOT_CONFIRMED" \? "BUILD_SUBMISSION_PLAN"/);
   });
 });
 

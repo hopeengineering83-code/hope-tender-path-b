@@ -45,7 +45,7 @@ describe("Build Plan has one automatic status owner", () => {
     assert.doesNotMatch(actionBlock, /method: "POST"/);
 
     const stages = read("lib/tender-workflow-stages.ts");
-    assert.match(stages, /stage: 6,\s*label: "Confirmed Build Plan",\s*targets: \["#submission-plan-completeness"/);
+    assert.match(stages, /stage: 6,\s*label: "Source-verified Build Plan",\s*targets: \["#submission-plan-completeness"/);
   });
 
   it("does not mutate or auto-classify documents during page load", () => {
@@ -68,7 +68,7 @@ describe("automatic submission scope is presented truthfully", () => {
   it("keeps derived scope visibly non-authoritative until verification", () => {
     assert.match(completeness, /Unconfirmed tender scope/);
     assert.match(completeness, /Unconfirmed derived scope/);
-    assert.match(completeness, /Unconfirmed submission scope preview/);
+    assert.match(completeness, /Unverified submission scope preview/);
     assert.match(completeness, /Preview only:/);
   });
 

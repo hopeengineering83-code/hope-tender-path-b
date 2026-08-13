@@ -203,7 +203,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         // it needs to show actionable guidance.
         primaryBlockerReason: (() => {
           if (canonicalBlocker.length > 0) return canonicalDecision.nextRequiredActionReason;
-          if (!submissionPlanBuilt) return "No confirmed Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it.";
+          if (!submissionPlanBuilt) return "No source-verified Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it.";
           const ungenerated = finalPackage.documents.missingRequired.length;
           if (ungenerated > 0) return `${ungenerated} required document(s) are planned but not generated.`;
           if (finalPackageDocumentBlockers > 0) return `${finalPackageDocumentBlockers} document blocker(s) remain.`;

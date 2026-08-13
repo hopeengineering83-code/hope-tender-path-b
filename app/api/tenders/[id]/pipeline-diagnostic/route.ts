@@ -236,7 +236,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     if (!hasPlan) return {
       step: "BUILD_PLAN",
       label: "Open exceptional Build Plan recovery",
-      reason: "No current confirmed Build Plan authorizes generation.",
+      reason: "No current source-verified Build Plan authorizes generation. Run Engine creates and verifies it automatically.",
       blockers: [buildPlanBlocker ?? "Build Plan is not confirmed"],
     };
     if (!hasGeneratedDocs) return { step: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: "No documents have been generated yet.", blockers: [] };

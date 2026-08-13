@@ -45,7 +45,7 @@ describe("getCurrentConfirmedBuildPlan — fail-closed verification", () => {
     const prisma = { buildPlan: { findFirst: async () => null }, tender: { findFirst: async () => null } };
     const result = await getCurrentConfirmedBuildPlan(prisma as any, "t1", "u1");
     assert.equal(result.ok, false);
-    assert.match((result as { blocker: string }).blocker, /No confirmed Build Plan/);
+    assert.match((result as { blocker: string }).blocker, /No source-verified Build Plan/);
   });
 
   it("corrupted itemsJson (invalid JSON) → blocked, never ok", async () => {

@@ -58,7 +58,7 @@ describe("single workflow authority regressions from the latest preview", () => 
       confirmedPlanItems: null,
     });
     assert.equal(report.planState, "EXPLICIT_TENDER_PLAN");
-    assert.equal(report.requiresUserConfirmation, true);
+    assert.equal(report.requiresUserConfirmation, false);
     assert.match(report.warnings.join(" "), /no current source-verified Build Plan/i);
   });
 
@@ -103,5 +103,24 @@ describe("single workflow authority regressions from the latest preview", () => 
     assert.match(vault, /canUseVaultRecord\(record,\s*"GENERATION"\)/);
     assert.match(vault, /Generation-eligible experts/);
     assert.match(readiness, /canMutate && item\.nextAction === "FINALIZE_REQUIRED_PDF"[\s\S]*FinalizeRequiredPdfButton[\s\S]*:\s*<Link/);
+  });
+
+  it("removes routine Build Plan confirmation and invented downstream actions from live responses", () => {
+    const liveFiles = [
+      "app/api/tenders/[id]/auto-finalize/route.ts",
+      "app/api/tenders/[id]/finalize-pdf/route.ts",
+      "app/api/tenders/[id]/generate-missing-plan-files/route.ts",
+      "app/api/tenders/[id]/generate/route.ts",
+      "components/authority-review-panel.tsx",
+      "components/export-readiness-panel.tsx",
+      "components/submission-plan-completeness-panel.tsx",
+      "lib/engine/authority-review-availability.ts",
+      "lib/engine/submission-plan-completeness.ts",
+    ].map((path) => readFileSync(path, "utf8")).join("\n");
+
+    assert.doesNotMatch(liveFiles, /Confirm the Build Plan before|Confirm the BuildPlan before|reconfirm the Build Plan|Generate, validate, and approve|Use Generate Missing Planned Docs|only manual action is downloading/i);
+    assert.doesNotMatch(liveFiles, /blockerCode === "BUILD_PLAN_NOT_CONFIRMED" \? "BUILD_SUBMISSION_PLAN"/);
+    assert.match(liveFiles, /blockerCode === "BUILD_PLAN_NOT_CONFIRMED" \? "RUN_ENGINE"/);
+    assert.match(liveFiles, /Automatic post-Engine generation/);
   });
 });

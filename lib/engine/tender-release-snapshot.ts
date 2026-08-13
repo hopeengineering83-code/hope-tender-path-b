@@ -550,7 +550,7 @@ export async function getTenderReleaseSnapshot(
       );
       if (recordedBuildPlan.contentHash !== currentPlanHash) {
         buildPlanGateBlocker =
-          "Build Plan is stale — tender data changed since the plan was built. Rebuild and re-confirm.";
+          "Build Plan is stale — tender data changed since it was built. Run Engine to rebuild and source-verify it.";
       } else {
         const confirmed = await buildPlanModule.getCurrentConfirmedBuildPlan(prisma, tenderId, userId);
         if (!confirmed.ok) {
@@ -652,7 +652,7 @@ export async function getTenderReleaseSnapshot(
     requirementsBlocker: requirements.blocker,
     buildPlanGateBlocker: buildPlan.gateValid
       ? null
-      : buildPlan.gateBlocker ?? "A current confirmed Build Plan is required.",
+      : buildPlan.gateBlocker ?? "A current source-verified Build Plan from Run Engine is required.",
     matchingVaultBlocker,
     finalApprovalVaultBlocker,
     mandatoryRequirementCount: mandatory.length,

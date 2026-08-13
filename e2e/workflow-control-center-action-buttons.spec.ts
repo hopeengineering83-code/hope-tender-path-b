@@ -17,7 +17,7 @@ const STAGE_LINKS: Array<[stage: number, linkText: string, targetSelector: strin
   [3, "AI Analyze", "#ai-analyze-section"],
   [4, "Source-ground Requirements", "#requirement-coverage"],
   [5, "Tender Details", "#tender-edit-form"],
-  [6, "Confirmed Build Plan", "#submission-plan-completeness"],
+  [6, "Source-verified Build Plan", "#submission-plan-completeness"],
   [7, "Match Evidence", "#matching-selected-evidence"],
   [8, "Generate Documents", "#generated-documents"],
   [9, "Validate and Final Release", "#authority-review"],

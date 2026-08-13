@@ -166,7 +166,7 @@ export async function GET(
       gateSemantics: {
         ready: "full proposal readiness only",
         supportPackageReady: "support/admin package readiness only; not final proposal/export readiness",
-        fullProposalReady: "main proposal generation readiness; requires trusted analysis and a current confirmed Build Plan",
+        fullProposalReady: "main proposal generation readiness; requires trusted analysis and a current source-verified Build Plan created by Run Engine",
         finalExportReady: "not evaluated by generation-readiness; check links.exportReadiness or the dashboard export-readiness panel",
       },
     });

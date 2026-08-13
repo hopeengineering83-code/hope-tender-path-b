@@ -197,7 +197,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         blocked.push({
           requiredFileName: requiredName,
           code: "PDF_REQUIRED_CONVERSION_UNAVAILABLE",
-          message: `No approved generated source document matches "${requiredName}". Generate, validate, and approve the matching document first, or upload the tender-issued PDF.`,
+          message: `No machine-validated generated source document matches "${requiredName}". Automatic post-Engine generation and validation must produce the matching source, or the tender-issued PDF must be uploaded when the tender requires an original.`,
         });
         continue;
       }

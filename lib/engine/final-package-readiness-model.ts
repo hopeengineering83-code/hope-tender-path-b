@@ -545,7 +545,7 @@ function parseConfirmedBuildPlan(row: BuildPlanRowLike | null | undefined): Buil
     return {
       confirmed: false,
       items: [],
-      blockerReason: "No confirmed Build Plan exists for the current tender.",
+      blockerReason: "No source-verified Build Plan exists for the current tender. Run Engine creates it automatically.",
     };
   }
   if (
@@ -556,7 +556,7 @@ function parseConfirmedBuildPlan(row: BuildPlanRowLike | null | undefined): Buil
     return {
       confirmed: false,
       items: [],
-      blockerReason: "The Build Plan confirmation no longer matches its current revision or content hash.",
+      blockerReason: "The Build Plan verification no longer matches its current revision or content hash. Run Engine must rebuild it.",
     };
   }
 
@@ -567,14 +567,14 @@ function parseConfirmedBuildPlan(row: BuildPlanRowLike | null | undefined): Buil
     return {
       confirmed: false,
       items: [],
-      blockerReason: "The confirmed Build Plan items are malformed.",
+      blockerReason: "The source-verified Build Plan items are malformed.",
     };
   }
   if (!Array.isArray(parsed) || parsed.length === 0) {
     return {
       confirmed: false,
       items: [],
-      blockerReason: "The confirmed Build Plan contains no package items.",
+      blockerReason: "The source-verified Build Plan contains no package items.",
     };
   }
 
@@ -596,7 +596,7 @@ function parseConfirmedBuildPlan(row: BuildPlanRowLike | null | undefined): Buil
     return {
       confirmed: false,
       items: [],
-      blockerReason: "One or more confirmed Build Plan items are invalid.",
+      blockerReason: "One or more source-verified Build Plan items are invalid.",
     };
   }
   return { confirmed: true, items, blockerReason: null };
@@ -889,9 +889,9 @@ export async function getFinalPackageReadinessModel(
     : {
         area: "export",
         code: "NO_CONFIRMED_BUILD_PLAN",
-        title: "Confirmed Build Plan required",
+        title: "Source-verified Build Plan required",
         reason: buildPlanAuthority.blockerReason
-          ?? "No confirmed Build Plan exists for the current tender.",
+          ?? "No source-verified Build Plan exists for the current tender. Run Engine creates it automatically.",
         nextAction: "Build, review, and confirm the current Build Plan before generation or export.",
       };
   const exportBlockers: FinalPackageBlocker[] = [

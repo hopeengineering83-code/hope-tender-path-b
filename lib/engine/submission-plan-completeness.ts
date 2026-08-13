@@ -338,20 +338,22 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
     planState = "NO_REQUIREMENTS";
   }
 
-  // Only a current CONFIRMED BuildPlan authorizes generation/export. An
+  // Only a current machine-verified BuildPlan authorizes generation/export. An
   // explicit tender-issued file list is stronger than a derived draft, but it
   // is still an input to the Build Plan—not proof that a BuildPlan was built
   // and confirmed.
-  const requiresUserConfirmation = planState !== "CONFIRMED_BUILD_PLAN";
+  // Compatibility field only. A missing/draft plan requires Run Engine or a
+  // genuine source correction, never a routine confirmation click.
+  const requiresUserConfirmation = false;
 
   if ((planState as string) === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" || (planState as string) === "PLAN_NOT_BUILT") {
     warnings.push(`${requirementCount} tender requirement(s) exist, but no submission file plan has been built or confirmed. Run Engine uses the verified source and current AI analysis to create and verify the Build Plan, so generated outputs can be validated against tender scope.`);
   }
-  if (requiresUserConfirmation) {
+  if (planState !== "CONFIRMED_BUILD_PLAN") {
     warnings.push(
       planState === "EXPLICIT_TENDER_PLAN"
         ? "Tender-issued file scope is available, but no current source-verified Build Plan exists. Run Engine creates and verifies it automatically."
-        : "Submission plan is a derived draft from requirement titles/types. Confirm tender-issued file names/order before final export; do not treat derived rows as official tender forms.",
+        : "Submission plan is a derived draft from requirement titles/types. Run Engine must verify tender-issued file names/order against the active source; derived rows are not official tender forms.",
     );
   }
 
@@ -359,7 +361,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
     warnings.push(`${totalMissing}/${totalRequired} required submission documents are still missing from current outputs.`);
   }
   if (plannedOnlyCount > 0) {
-    warnings.push(`${plannedOnlyCount} planned document placeholder(s) have no file content yet. Use Generate Missing Planned Docs before validation or export.`);
+    warnings.push(`${plannedOnlyCount} planned document placeholder(s) have no file content yet. Automatic post-Engine generation must create and validate their bytes before export.`);
   }
   if (totalOutsidePlan > 0) {
     warnings.push(`${totalOutsidePlan} generated document(s) are outside the explicit submission plan and must be mapped or superseded.`);

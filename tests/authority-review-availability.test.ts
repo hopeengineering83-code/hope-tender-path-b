@@ -13,7 +13,7 @@ describe("Authority Review availability", () => {
     }), {
       available: false,
       code: "BUILD_PLAN_CONFIRMATION_REQUIRED",
-      reason: "Confirm the Build Plan before Authority Review.",
+      reason: "Run Engine must create and source-verify the Build Plan before Authority Review.",
     });
   });
 

@@ -226,7 +226,7 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
       primary: "BUILD_SUBMISSION_PLAN",
       label: "Run Engine",
       reason: "Extraction, source-grounded AI analysis, Tender Details, and requirements are ready. Run Engine starts matching and creates the Build Plan; valid downstream processing then continues automatically.",
-      blockers: ["No current confirmed Build Plan"],
+      blockers: ["No current source-verified Build Plan"],
       tone: "amber",
     };
   }

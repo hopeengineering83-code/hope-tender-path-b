@@ -618,10 +618,10 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   // Safe guard: if the prisma client doesn't have buildPlan (e.g., mock in unit tests),
   // return a blocked state instead of crashing.
   if (!(prisma as any).buildPlan || typeof (prisma as any).buildPlan.findFirst !== "function") {
-    return { ok: false as const, blocker: "No confirmed Build Plan exists." };
+    return { ok: false as const, blocker: "No source-verified Build Plan exists." };
   }
   const plan = await (prisma as any).buildPlan.findFirst({ where: { tenderId, status: "CONFIRMED", tender: { userId } }, orderBy: { updatedAt: "desc" } });
-  if (!plan) return { ok: false as const, blocker: "No confirmed Build Plan exists." };
+  if (!plan) return { ok: false as const, blocker: "No source-verified Build Plan exists." };
   // FAIL CLOSED on corrupted plan items — a plan whose contents cannot be
   // read must never authorize generation or export.
   let items: BuildPlanItem[];
@@ -630,7 +630,7 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
     if (!Array.isArray(parsed)) throw new Error("itemsJson is not an array");
     items = parsed as BuildPlanItem[];
   } catch {
-    return { ok: false as const, blocker: "Confirmed Build Plan items are corrupted and cannot be read. Rebuild and re-confirm the Build Plan." };
+    return { ok: false as const, blocker: "Source-verified Build Plan items are corrupted and cannot be read. Run Engine to rebuild and verify the plan." };
   }
   // Reduced unit-test prisma mocks don't model the tables that
   // computeTenderBuildPlanHash reads. Detect that EXPLICITLY (missing model
@@ -649,10 +649,10 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   try {
     currentHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, items);
   } catch {
-    return { ok: false as const, blocker: "Confirmed Build Plan freshness could not be verified (hash computation failed). Retry, or rebuild and re-confirm the Build Plan." };
+    return { ok: false as const, blocker: "Build Plan freshness could not be verified (hash computation failed). Run Engine to rebuild and source-verify the plan." };
   }
   const hashOk = plan.confirmedRevision === plan.revision && plan.confirmedContentHash === plan.contentHash && currentHash === plan.confirmedContentHash;
-  if (!hashOk) return { ok: false as const, blocker: "Confirmed Build Plan is stale or hash/revision mismatched." };
+  if (!hashOk) return { ok: false as const, blocker: "Source-verified Build Plan is stale or hash/revision mismatched. Run Engine to rebuild it." };
   // STRICT CRITICAL METADATA EVIDENCE: even if hash matches, reject if
   // metadata evidence is no longer valid (e.g., source file was deleted).
   const fullTender = await prisma.tender.findFirst({
@@ -662,7 +662,7 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   if (fullTender) {
     const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? []);
     if (!metaValidation.ok) {
-      return { ok: false as const, blocker: `Confirmed Build Plan metadata evidence is no longer valid: ${metaValidation.blockers.join("; ")}` };
+      return { ok: false as const, blocker: `Build Plan source evidence is no longer valid: ${metaValidation.blockers.join("; ")}` };
     }
   }
   return { ok: true as const, plan, items, currentHash };

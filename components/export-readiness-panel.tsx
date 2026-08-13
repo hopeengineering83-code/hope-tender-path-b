@@ -200,8 +200,9 @@ export function ExportReadinessPanel({ tenderId, canMutate = false }: { tenderId
             </span>
           )}
           {canMutate && readiness && !ok && hasDocumentBlockers && null}
-          {/* All safe repairs run automatically via AUTO_FINALIZE.
-              Manual action: Download Final ZIP (canonical download). */}
+          {/* AI Analyze and Run Engine are the two normal manual workflow
+              actions. Safe downstream work is durable and automatic; this
+              download appears only after every canonical gate passes. */}
                     {/* Download affordance — ONLY renders a real <a href> when the
               canonical gate is open. When blocked, render a disabled
               <button> with NO href so the user cannot accidentally hit

@@ -215,7 +215,7 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
           </h2>
           <p className="mt-1 text-sm text-slate-600">
             {preconditionBlocked
-              ? unavailableReason ?? "Generate and validate all required documents before Authority Review."
+              ? unavailableReason ?? "Automatic post-Engine generation and validation must complete before Authority Review."
               : "Scans generated documents for AI traces, placeholders, internal notes, envelope mismatches, and manifest inconsistencies."}
           </p>
           {!isReady && !preconditionBlocked && primaryBlockerReason && (
@@ -244,7 +244,7 @@ export function AuthorityReviewPanel({ tenderId }: AuthorityReviewPanelProps) {
             <span className="text-2xl font-bold text-slate-500">N/A</span>
           </div>
           <p className="mt-2 text-sm text-slate-600">
-            Preliminary only scores are not shown. Authority Review starts only after the confirmed Build Plan has generated and validated every required document. Earlier workflow blockers remain owned by their respective stages.
+            Preliminary-only scores are not shown. Authority Review starts only after the source-verified Build Plan has produced a machine-validated required document set. Earlier workflow blockers remain owned by their respective stages.
           </p>
         </div>
       )}

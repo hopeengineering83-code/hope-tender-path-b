@@ -964,7 +964,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       draftBuildPlanRevision: draftPlan.revision,
       draftBuildPlanStatus: draftPlan.status,
       virtualFiles: plannedFiles.map((file) => ({ exactFileName: file.exactFileName, exactOrder: file.exactOrder, documentType: file.documentType, format: file.format })),
-      message: `DRAFT BuildPlan built — ${plannedFiles.length} required file(s) identified; 0 GeneratedDocument rows created; authorizesGeneration=false. Confirm the BuildPlan before any release action.`,
+      message: `DRAFT BuildPlan built — ${plannedFiles.length} required file(s) identified; 0 GeneratedDocument rows created; authorizesGeneration=false. Run Engine creates and source-verifies the authoritative Build Plan before automatic downstream processing.`,
     });
   }
 

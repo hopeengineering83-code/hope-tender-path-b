@@ -283,7 +283,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
   if (!confirmedPlan.ok) {
-    return NextResponse.json({ success: false, ok: false, code: "BUILD_PLAN_NOT_CONFIRMED", error: `Cannot generate missing plan files: ${confirmedPlan.blocker}`, nextAction: "CONFIRM_BUILD_PLAN" }, { status: 422 });
+    return NextResponse.json({
+      success: false,
+      ok: false,
+      code: "BUILD_PLAN_NOT_SOURCE_VERIFIED",
+      error: `Automatic document generation is waiting for a current source-verified Build Plan: ${confirmedPlan.blocker}`,
+      nextAction: "RUN_ENGINE",
+    }, { status: 422 });
   }
 
   const operationGate = resolveTenderOperationGate({
@@ -536,7 +542,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ok: false,
         code: error.code,
         error: "Missing-plan generation readiness changed before persistence. No batch document writes were committed.",
-        nextAction: "Refresh the tender, reconfirm the Build Plan, and retry.",
+        nextAction: "The durable worker will retry from current canonical state; intervene only if a specific fail-closed blocker appears.",
       }, { status: 409 });
     }
     throw error;

@@ -186,8 +186,9 @@ describe("submission-plan completeness — plan provenance", () => {
     assert.equal(report.totalRequired, 1);
     assert.equal(report.hasExplicitScope, false);
     assert.equal(report.planState, "DERIVED_DRAFT_UNCONFIRMED");
-    assert.equal(report.requiresUserConfirmation, true);
+    assert.equal(report.requiresUserConfirmation, false);
     assert.ok(report.warnings.some((w) => /derived draft/i.test(w)));
+    assert.ok(report.warnings.some((w) => /Run Engine must verify/i.test(w)));
   });
 });
 

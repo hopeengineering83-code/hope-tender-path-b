@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-13 UTC — Codex (latest-head Preview contradiction cleanup)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from the actual latest remote SHA `30fe2268bbe8961c1d9ca9fd86663b6158b25f51` after restoring the missing local Git remote and re-fetching PR #1175. No merge or Production promotion.
+- **Scope:** independently audited the already-landed Preview `03b9c928` provenance/Engine/canonical-readiness/separate-package repair and found remaining live P1 contradictions that its green checks did not cover. Removed routine Build Plan confirmation/re-confirmation actions and invented Generate/Validate/Approve/Re-check instructions from generation, auto-finalize, PDF finalization, reconciliation, submission-plan, authority-review, export/download, workflow-stage and human-label surfaces. Missing plans now point to manual Run Engine; downstream generation/validation/finalization remains automatic; genuine source/original/quality/authority blockers remain fail-closed. The compatibility `requiresUserConfirmation` field is now false in the resolver itself, not only overwritten by its API route. Separate Technical/Financial/Admin ZIP behavior and byte/signature/hash checks were left strict.
+- **Files changed:** generation/auto-finalize/finalize-PDF/reconcile/export/download API copy/actions; submission-plan and authority-review resolvers/panels; Build Plan fail-closed messages; workflow/human labels; focused unit/E2E regressions; and `operator_handoff.md`.
+- **Tests before commit:** 113/113 focused non-DB assertions passed for Preview truth, Build Plan authority, submission completeness, authority availability, canonical generation/export blockers and separate package mode. The Pharo PostgreSQL test was also invoked but its two DB subtests could not connect to the configured Neon hostname; their structural companion assertions passed. Prisma/full PostgreSQL/migrations/zero-drift, full tests, typecheck, lint, build, authenticated/cross-user Playwright, exact-head screenshots, security and Preview must rerun on the resulting SHA.
+- **Risks / assumptions:** no page-range, quote, provenance, tenant, evidence strength, legal/authority, package isolation, file signature, byte hash or final ZIP gate was relaxed. Internal persisted enum/code names containing `CONFIRMED` remain database compatibility identifiers; user-facing text now describes the authority as source-verified automation.
+- **Next action:** commit and push once, require every exact-head check and Preview, then authenticate to and manually inspect the final real Preview tender/panels before updating PR truth.
+- **Merge status:** **DO NOT MERGE**; exact-head acceptance pending; Production promotion prohibited.
+
 ### 2026-08-13 UTC — Codex (real Preview Engine runtime and panel-truth repair)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting SHA `c679a416d863b970088e93bcbfbea9418722cfba`; no merge or Production promotion.

@@ -75,7 +75,7 @@ describe("the second Build Plan panel is gone", () => {
     const stages = readFileSync("lib/tender-workflow-stages.ts", "utf8");
     const spec = readFileSync("e2e/workflow-control-center-action-buttons.spec.ts", "utf8");
     assert.match(stages, /stage: 6,[^}]*targets: \["#submission-plan-completeness"/);
-    assert.match(spec, /\[6, "Confirmed Build Plan", "#submission-plan-completeness"\]/);
+    assert.match(spec, /\[6, "Source-verified Build Plan", "#submission-plan-completeness"\]/);
   });
 });
 

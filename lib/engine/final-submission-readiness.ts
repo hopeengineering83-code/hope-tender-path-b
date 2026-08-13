@@ -952,7 +952,7 @@ export async function getFinalSubmissionReadiness(
     tenderLevelBlockers.push({
       category: "NO_CURRENT_CONFIRMED_BUILD_PLAN",
       severity: "HIGH",
-      title: `No current confirmed Build Plan: ${confirmedPlan.blocker}`,
+      title: `No current source-verified Build Plan: ${confirmedPlan.blocker}`,
       recommendedAction: "Run Engine to create and source-verify the submission Build Plan automatically. Derived drafts do not authorize export.",
     });
   }

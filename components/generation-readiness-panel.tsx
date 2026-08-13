@@ -174,7 +174,7 @@ export async function GenerationReadinessPanel({
               </p>
             )}
             {hasNoConfirmedPlan && (
-              <p className="mt-1 text-sm text-red-700 font-medium">No confirmed Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it before generation.</p>
+              <p className="mt-1 text-sm text-red-700 font-medium">No source-verified Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it before generation.</p>
             )}
             {supportPackageReady && !effectivelyReady && (
               <p className="mt-1 text-sm text-amber-800">Support packages may be generated, but the full proposal remains blocked.</p>

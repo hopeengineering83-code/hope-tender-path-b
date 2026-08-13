@@ -268,7 +268,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       error: `Auto-finalize blocked: ${centralGate.blockerDetail ?? centralGate.blockerCode}`,
       code: centralGate.blockerCode,
       blockers: [centralGate.blockerDetail ?? "Tender is not ready for finalization."],
-      nextAction: centralGate.blockerCode === "BUILD_PLAN_NOT_CONFIRMED" ? "BUILD_SUBMISSION_PLAN" : "RERUN_AI_ANALYZE",
+      nextAction: centralGate.blockerCode === "BUILD_PLAN_NOT_CONFIRMED" ? "RUN_ENGINE" : "RERUN_AI_ANALYZE",
     }, { status: 422 });
   }
 

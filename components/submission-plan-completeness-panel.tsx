@@ -101,7 +101,7 @@ function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
 }
 
 function planStateLabel(state: PlanState): string {
-  if (state === "CONFIRMED_BUILD_PLAN") return "Confirmed Build Plan";
+  if (state === "CONFIRMED_BUILD_PLAN") return "Source-verified Build Plan";
   if (state === "EXPLICIT_TENDER_PLAN") return "Unconfirmed tender scope";
   if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Unconfirmed derived scope";
   if (state === "PLAN_NOT_BUILT") return "No confirmed Build Plan";
@@ -229,7 +229,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
   }
 
   const visibleRows = showHistorical ? data.rows : data.rows.filter((r) => r.status !== "SUPERSEDED");
-  const confirmed = data.summary.planState === "CONFIRMED_BUILD_PLAN" && !data.summary.requiresUserConfirmation;
+  const confirmed = data.summary.planState === "CONFIRMED_BUILD_PLAN";
 
   return (
     <section
@@ -241,11 +241,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">
-            {confirmed ? "Confirmed Build Plan completeness" : "Unconfirmed submission scope preview"}
+            {confirmed ? "Source-verified Build Plan completeness" : "Unverified submission scope preview"}
           </h3>
           <p className="mt-0.5 text-xs text-slate-500">
             {confirmed
-              ? "One row per confirmed required file, with its current output status and next action."
+              ? "One row per source-verified required file, with its current automatic output status."
               : "Preview only: these rows come from tender instructions or a conservative derivation. Run Engine must create and source-verify the current Build Plan before generation or export."}
           </p>
         </div>
@@ -266,7 +266,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4 md:grid-cols-7">
         <div className="rounded-xl bg-slate-50 px-2 py-2">
-          <p className="text-slate-500">{confirmed ? "Confirmed required" : "Scope files"}</p>
+          <p className="text-slate-500">{confirmed ? "Verified required" : "Scope files"}</p>
           <p className="text-base font-bold text-slate-900">{data.summary.totalRequired}</p>
         </div>
         <div className="rounded-xl bg-emerald-50 px-2 py-2">
@@ -319,7 +319,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
           <p className="mt-2">
             {data.summary.planState === "EXPLICIT_TENDER_PLAN"
               ? "Tender-issued file scope is available, but it has not been bound into a current source-verified Build Plan. Run Engine creates and verifies it automatically."
-              : "This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Confirm exact file names/order from the tender before final export; official forms/templates must still be attached as originals and must not be fabricated."}
+              : "This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Run Engine verifies exact file names/order against the active source; official forms/templates must still be attached as originals and must not be fabricated."}
           </p>
         )}
         {data.summary.planState === "DERIVED_DRAFT_UNCONFIRMED" && (
@@ -334,7 +334,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }:
         {data.summary.automaticPlanPending && (
           <div className="mt-3">
             <p className="mb-2">
-              {data.summary.automaticPlanBlocker ?? "No current confirmed Build Plan."} Document counts and export eligibility stay unavailable until a Build Plan is rebuilt and source-verified.
+              {data.summary.automaticPlanBlocker ?? "No current source-verified Build Plan."} Document counts and export eligibility stay unavailable until Run Engine rebuilds and source-verifies it.
             </p>
             {canMutate && <BuildSubmissionPlanButton tenderId={tenderId} />}
           </div>

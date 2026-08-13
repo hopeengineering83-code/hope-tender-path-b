@@ -47,8 +47,8 @@ describe("Generation Readiness — no 'Ready' when blockers exist", () => {
       "must detect BUILD_PLAN_NOT_CONFIRMED blocker code",
     );
     assert.ok(
-      src.includes("No confirmed Build Plan"),
-      "must show 'No confirmed Build Plan' message when plan is missing",
+      src.includes("No source-verified Build Plan"),
+      "must show the source-verified Build Plan blocker when plan is missing",
     );
   });
 
@@ -111,8 +111,8 @@ describe("Export Readiness — structured blockers not generic failure", () => {
   it("primaryBlockerReason priority: no-build-plan > ungenerated > document-blockers > tender-blockers", () => {
     const src = read("app/api/tenders/[id]/export-readiness/route.ts");
     assert.ok(
-      src.includes("No confirmed Build Plan"),
-      "must surface 'No confirmed Build Plan' as highest priority blocker",
+      src.includes("No source-verified Build Plan"),
+      "must surface the source-verified Build Plan blocker as highest priority",
     );
     assert.ok(
       src.includes("planned but not generated"),
