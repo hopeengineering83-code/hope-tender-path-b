@@ -49,5 +49,8 @@ describe("readiness UI contradiction guardrails", () => {
     assert.match(source, /finalPackageDocumentBlockers = finalPackage\.documents\.blockers\.length \+ reconciledExportBlockers\.length/);
     assert.match(source, /suppressDownstream \? \[\] : finalPackage\.documents\.blockers/);
     assert.match(source, /suppressDownstream \? \[\] : reconciledExportBlockers/);
+    assert.match(source, /canonicalBlocker\.length === 0\s*&& readiness\.ok/);
+    assert.match(source, /visibleDocumentBlockerCount = suppressDownstream \? 0/);
+    assert.match(source, /visibleTenderBlockerCount = suppressDownstream \? canonicalBlocker\.length/);
   });
 });

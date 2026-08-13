@@ -90,7 +90,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       (blocker) => !(blocker.code === "NO_CONFIRMED_BUILD_PLAN" && hasCanonicalNoConfirmedBuildPlan),
     );
     const finalPackageDocumentBlockers = finalPackage.documents.blockers.length + reconciledExportBlockers.length;
-    const reconciledOk = readiness.ok && finalPackageDocumentBlockers === 0 && reconciledTenderBlockers.length === 0 && finalPackage.export.zipReady;
 
     const submissionPlanBuilt = readiness.summary.planStatus !== "NO_PLAN_NO_DOCS" && readiness.summary.planStatus !== "NO_PLAN_WITH_ACTIVE_DOCS";
     const analysisSource = readiness.summary.analysisSource ?? "UNKNOWN";
@@ -109,6 +108,17 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       nextAction: canonicalDecision.nextRequiredActionLabel,
       severity: "BLOCKER",
     }];
+    // The canonical workflow is the primary authority. A stale independent
+    // readiness model must never leave `ok: true` beside a current Engine
+    // failure (the exact Preview 03b9c928 contradiction). Downstream counts are
+    // hidden until reachable for the same reason their blocker rows are hidden.
+    const visibleDocumentBlockerCount = suppressDownstream ? 0 : finalPackageDocumentBlockers;
+    const visibleTenderBlockerCount = suppressDownstream ? canonicalBlocker.length : reconciledTenderBlockers.length;
+    const reconciledOk = canonicalBlocker.length === 0
+      && readiness.ok
+      && finalPackageDocumentBlockers === 0
+      && reconciledTenderBlockers.length === 0
+      && finalPackage.export.zipReady;
     const publicBlockers = [
       ...canonicalBlocker,
       ...(suppressDownstream ? [] : finalPackage.documents.blockers),
@@ -148,10 +158,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           activeDocuments: finalPackage.export.exportCandidateCount,
           workspaceDocuments: finalPackage.export.workspaceCount,
           excludedInternalDrafts: finalPackage.documents.extraGeneratedOutsidePlan.length,
-          documentBlockers: finalPackageDocumentBlockers,
-          tenderLevelBlockers: reconciledTenderBlockers.length,
+          documentBlockers: visibleDocumentBlockerCount,
+          tenderLevelBlockers: visibleTenderBlockerCount,
           advisoryWarnings: readiness.summary.advisoryWarnings,
-          totalBlockers: finalPackageDocumentBlockers + reconciledTenderBlockers.length,
+          totalBlockers: visibleDocumentBlockerCount + visibleTenderBlockerCount,
           finalExportCandidates: finalPackage.export.exportCandidateCount,
           excludedInternalRows: finalPackage.documents.extraGeneratedOutsidePlan.length,
           missingContentCount: readiness.summary.missingContentCount,

@@ -143,6 +143,9 @@ describe("generation and workflow panels consume canonical current truth", () =>
     assert.match(panel, /getCanonicalTenderWorkflowDecision/);
     assert.match(panel, /canonicalUpstreamBlocked/);
     assert.match(panel, /fullProposalReady && !canonicalUpstreamBlocked/);
+    const exportRoute = readFileSync("app/api/tenders/[id]/export-readiness/route.ts", "utf8");
+    assert.match(exportRoute, /canonicalBlocker\.length === 0\s*&& readiness\.ok/);
+    assert.match(exportRoute, /visibleTenderBlockerCount = suppressDownstream \? canonicalBlocker\.length/);
   });
 
   it("makes the latest current-revision Engine attempt authoritative everywhere", async () => {
@@ -163,5 +166,13 @@ describe("generation and workflow panels consume canonical current truth", () =>
     assert.match(message, /title source file, page, and quote/i);
     assert.match(message, /Reference: 03b9c928/);
     assert.doesNotMatch(message, /Prisma|stack|\/workspace\//i);
+  });
+
+  it("updates title scalars and the canonical ledger atomically", async () => {
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("lib/engine/automatic-build-plan.ts", "utf8");
+    assert.match(source, /prisma\.\$transaction\(async \(tx\)/);
+    assert.match(source, /syncPersistedTenderFactsToLedger\(tx as PrismaClient/);
+    assert.match(source, /TITLE_SOURCE_RECONCILIATION_SCOPE_LOST/);
   });
 });

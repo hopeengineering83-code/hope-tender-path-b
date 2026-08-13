@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-13 UTC — Codex (Preview 03b9c928 contradiction re-audit)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, audited from latest remote head `81571fcdc75e7d03149b7196f803fa0a26bf88a9`; no merge or Production promotion.
+- **Scope:** treated the reported real Preview failure as primary and reviewed the already-landed title/Engine/package repair rather than trusting its green checks. Found one remaining canonical-consumer contradiction: Export Readiness added the Engine failure to its public blocker list but still computed `ok`, READY styling, and blocker totals exclusively from independent downstream models. A stale independent `ok` could therefore still render READY beside `ENGINE_RUN_FAILED`. Made canonical blockers part of export `ok`, suppressed unreachable document counts, and made the visible total exactly match the canonical-first list. Also made title scalar provenance and `TenderFactsLedger` synchronization one tenant-scoped transaction so an interrupted repair cannot expose split authority.
+- **Files changed:** `app/api/tenders/[id]/export-readiness/route.ts`, `lib/engine/automatic-build-plan.ts`, `tests/readiness-ui-contradictions.test.ts`, `tests/preview-title-provenance-engine-postgres.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** 51/51 reachable focused assertions passed, including canonical generation/export truth, safe Engine failure projection, atomic source/ledger contract, and separate technical/financial/admin package behavior. The two real-PostgreSQL fixture cases could not connect to the configured Neon host and failed only at `prisma.user.create`; exact-head CI must rerun them against PostgreSQL. Full Prisma/migrations/zero-drift, PostgreSQL, typecheck, lint, build, Playwright/isolation, screenshot audit, dependency security, and Preview acceptance remain required on the resulting SHA.
+- **Risks / assumptions:** no page limit, quote containment, source ownership, evidence, legal/authority, or byte/signature gate was relaxed. Separate package downloads remain envelope-filtered. Manual owner credentials for the pre-existing Preview tender are not present locally; automated authenticated exact-Preview acceptance can be claimed only from exact-head CI artifacts, while owner UAT must be stated as unavailable if credentials remain absent.
+- **Next action:** run local static checks, commit/push once, require every exact-head check, download and inspect exact-head artifacts, then update PR truth without another source commit.
+- **Merge status:** **DO NOT MERGE**; exact-head acceptance pending; Production promotion prohibited.
+
 ### 2026-08-12 UTC — Codex (Preview 03b9c928 exact-head follow-up)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from latest remote head `1a4b2b597fa63c61ee683ede31a0e62e98127873`; no merge or Production promotion.

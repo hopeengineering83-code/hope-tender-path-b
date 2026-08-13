@@ -89,16 +89,19 @@ export async function reconcileTitleSourceEvidence(
   const repaired = tender.titleSourceFileId !== evidence.titleSourceFileId
     || tender.titleSourcePage !== evidence.titleSourcePage
     || tender.titleSourceQuote !== evidence.titleSourceQuote;
-  if (repaired) {
-    await prisma.tender.updateMany({
-      where: { id: tenderId, userId },
-      data: evidence,
-    });
-  }
-  // Reconcile the canonical ledger even when the scalar fields were already
-  // repaired by an interrupted earlier attempt. This makes a retry converge
-  // instead of leaving valid Tender columns paired with stale ledger evidence.
-  await syncPersistedTenderFactsToLedger(prisma, tenderId, userId);
+  await prisma.$transaction(async (tx) => {
+    if (repaired) {
+      const updated = await tx.tender.updateMany({
+        where: { id: tenderId, userId },
+        data: evidence,
+      });
+      if (updated.count !== 1) throw new Error("TITLE_SOURCE_RECONCILIATION_SCOPE_LOST");
+    }
+    // Scalar source columns and the canonical ledger are one authority change.
+    // Keeping them in the same transaction prevents an interrupted repair from
+    // exposing valid Tender fields beside stale ledger evidence.
+    await syncPersistedTenderFactsToLedger(tx as PrismaClient, tenderId, userId);
+  });
   return { repaired, proven: true };
 }
 
