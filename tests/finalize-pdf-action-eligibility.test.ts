@@ -69,7 +69,7 @@ describe("The warning that offers Finalize PDF checks a source exists", () => {
 describe("The route remains the fail-closed authority", () => {
   it("still refuses when no source matches, so the UI is a filter and not a bypass", () => {
     assert.match(ROUTE, /PDF_REQUIRED_CONVERSION_UNAVAILABLE/);
-    assert.match(ROUTE, /No approved generated source document matches/);
+    assert.match(ROUTE, /No machine-validated generated source document matches/);
   });
 
   it("still rejects an explicitly chosen source whose name does not match", () => {

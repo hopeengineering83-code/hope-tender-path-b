@@ -212,10 +212,7 @@ describe("Authority Review — precondition blocked mode", () => {
       src.includes("prerequisites not met"),
       "must show 'prerequisites not met' heading when preconditions are not satisfied",
     );
-    assert.ok(
-      src.includes("Preliminary only"),
-      "must label score as 'Preliminary only' when preconditions are not met",
-    );
+    assert.ok(src.includes("Preliminary-only scores are not shown"), "must not present an authority score before prerequisites are met");
     assert.ok(
       src.includes("preconditionBlocked"),
       "must compute preconditionBlocked flag",
