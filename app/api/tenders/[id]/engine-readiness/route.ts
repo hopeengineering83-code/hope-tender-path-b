@@ -69,12 +69,12 @@ export async function GET(
             ...currentRevisionWhere,
             status: { in: [...ACTIVE_ENGINE_STATUSES] },
           },
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ createdAt: "desc" }, { analysisVersion: "desc" }],
           select: { id: true, status: true, createdAt: true },
         }),
         prisma.aiJob.findFirst({
           where: currentRevisionWhere,
-          orderBy: { createdAt: "desc" },
+          orderBy: [{ createdAt: "desc" }, { analysisVersion: "desc" }],
           select: {
             id: true,
             status: true,

@@ -171,9 +171,14 @@ export function getHandler(jobType: JobType): JobHandler | null {
         reuseCurrent: false,
       });
       if (!buildPlan.ok) {
+        const recordedBlockers = (buildPlan.blockers ?? []).join(" ").trim();
         await recordStep(ctx.jobId, {
           stepName: "build-plan.blocked",
-          message: `${buildPlan.code}: ${buildPlan.message}`,
+          // Persist the first deterministic validation cause with the failed
+          // stage. Canonical workflow truth reads AiJobStep first; omitting
+          // blockers here made a title-page failure look like a generic Build
+          // Plan failure even though AiJob.errorMessage held the real cause.
+          message: `${buildPlan.code}: ${buildPlan.message}${recordedBlockers ? ` ${recordedBlockers}` : ""}`,
           status: "FAILED",
         });
         throw new Error(

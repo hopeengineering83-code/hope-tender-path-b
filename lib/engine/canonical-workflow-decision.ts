@@ -13,6 +13,8 @@
 // All panels must consume this decision object — no panel may compute its
 // own competing "next action" or stage truth.
 
+import { publicJobFailureMessage } from "../prisma-schema-compatibility";
+
 export type WorkflowBlockerPriority =
   | "NO_TENDER_FILE"
   | "EXTRACTION_UNSAFE"
@@ -727,10 +729,11 @@ export async function getCanonicalTenderWorkflowDecision(
   const latestEngine = revision
     ? await prisma.aiJob.findFirst({
         where: { tenderId, userId, jobType: "ENGINE_RUN", analysisInputHash: revision.sourceRevision },
-        orderBy: { createdAt: "desc" },
+        orderBy: [{ createdAt: "desc" }, { analysisVersion: "desc" }],
         select: {
           id: true,
           status: true,
+          errorMessage: true,
           steps: {
             where: { status: "FAILED" },
             orderBy: { stepIndex: "asc" },
@@ -742,12 +745,14 @@ export async function getCanonicalTenderWorkflowDecision(
   if (latestEngine && ["FAILED", "CANCELED"].includes(latestEngine.status)) {
     const cause = latestEngine.steps.find((step) => step.stepName === "build-plan.blocked")
       ?? latestEngine.steps[0];
-    const recordedDetail = cause?.message ?? "";
+    // A failed stage is preferred, but older jobs (including Preview failure
+    // 03b9c928) stored the validator's concrete blocker only on errorMessage.
+    // Combine both for internal classification, then pass the result through
+    // the fixed public mapper so no raw exception crosses the API boundary.
+    const recordedDetail = `${cause?.message ?? ""} ${latestEngine.errorMessage ?? ""}`.trim();
     const titleProvenance = /TENDER_FACTS_INVALID|metadata field title|title.*source page/i.test(recordedDetail);
     const reference = latestEngine.id.slice(0, 8);
-    const safeDetail = titleProvenance
-      ? `The current-revision Engine run stopped because the tender title is not proven at a valid page in the active source. Reference: ${reference}`
-      : `The current-revision Engine run failed before downstream processing completed. Reference: ${reference}`;
+    const safeDetail = publicJobFailureMessage(recordedDetail || "ENGINE_RUN_FAILED", reference);
     return {
       ...decision,
       currentBlockingStage: "ENGINE_RUN_FAILED",
@@ -757,8 +762,8 @@ export async function getCanonicalTenderWorkflowDecision(
       nextRequiredAction: titleProvenance ? "REPAIR_SOURCE_REFERENCES" : "RUN_ENGINE",
       nextRequiredActionLabel: titleProvenance ? "Repair title source evidence" : "Retry Run Engine",
       nextRequiredActionReason: titleProvenance
-        ? `The latest Engine run stopped because the tender title could not be proven at a valid page in the active source. Reconcile the title file/page/quote, then retry. Reference: ${reference}`
-        : `The latest Engine run failed before downstream processing completed. Open Diagnostics for the safe recorded cause, then retry. Reference: ${reference}`,
+        ? safeDetail
+        : `${safeDetail} Open Diagnostics for the recorded stage, then retry only after its stated cause is resolved.`,
       downstreamSuppressedBy: "ENGINE_RUN_FAILED",
     };
   }

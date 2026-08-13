@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-13 UTC — Codex (current Engine failure-cause preservation)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from actual latest remote head `85b61507015e961ff5a83b2e3d8e5e62d45ace47` after discovering the local workspace had been reset to `work` and its `origin` removed, then restoring the documented remote and fetching without discarding local changes.
+- **Real Preview acceptance:** exact `85b61507` deployment and `/api/version` are reachable, but `/api/health` returns 503 with all five database probes false. The configured Preview Neon endpoint remains unavailable, so authenticated login and the requested real-tender walkthrough cannot honestly run. No credential, Vercel environment, database, Production alias, or user state was modified to bypass that external outage.
+- **Scope / root cause fixed:** review of the landed `03b9c928` repair found a remaining P0 path hidden by green tests. `build-plan.blocked` persisted only the generic Build Plan message, omitting the validator blocker, while canonical workflow preferred that step over `AiJob.errorMessage`; therefore a current title-page failure could still degrade to generic `ENGINE_RUN_FAILED` instead of `TITLE_SOURCE_PROVENANCE_INVALID`. Failed Build Plan steps now retain deterministic blockers, canonical classification safely combines the failed step and terminal error, maps through `publicJobFailureMessage`, and deterministically breaks same-time job ordering by `analysisVersion`. No raw error is returned and no validation/provenance gate is relaxed.
+- **Files changed:** `lib/ai-job-handlers.ts`, `lib/engine/canonical-workflow-decision.ts`, `app/api/tenders/[id]/engine-readiness/route.ts`, `tests/preview-title-provenance-engine-postgres.test.ts`, and `operator_handoff.md`.
+- **Tests before commit:** Prisma validate/generate passed; 46 reachable focused assertions passed with the four PostgreSQL fixture cases explicitly skipped under `RUN_DB_INTEGRATION=false`; a direct DB-enabled attempt failed only because the configured Neon endpoint is unreachable. Exact-head disposable-PostgreSQL CI, migrations/zero drift, full suite, typecheck, lint, build, Playwright/isolation, screenshots, dependency security and Preview deployment must rerun after push.
+- **Risks / next action:** code-level acceptance is not enough while the real Preview database contradicts deployment readiness. Push once, require exact-head automation, then retry `/api/health` and authenticated real-tender UAT. If Neon remains unavailable, report the external acceptance blocker and do not claim 100%.
+- **Merge status:** **DO NOT MERGE**; Production untouched and promotion prohibited.
+
 ### 2026-08-13 UTC — Codex (real final-Preview analysis-title revision repair)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from latest remote head `81c962f29c08884229dbe97118e6636f3b1e842d` after restoring the missing local `origin` remote and verifying all its CI checks were green.

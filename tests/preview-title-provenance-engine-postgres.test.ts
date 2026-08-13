@@ -232,6 +232,17 @@ describe("generation and workflow panels consume canonical current truth", () =>
     assert.doesNotMatch(message, /Prisma|stack|\/workspace\//i);
   });
 
+  it("does not lose the concrete validator cause between the failed step and canonical workflow", async () => {
+    const { readFileSync } = await import("node:fs");
+    const handler = readFileSync("lib/ai-job-handlers.ts", "utf8");
+    const canonical = readFileSync("lib/engine/canonical-workflow-decision.ts", "utf8");
+    assert.match(handler, /recordedBlockers = \(buildPlan\.blockers \?\? \[\]\)\.join/);
+    assert.match(handler, /message: `\$\{buildPlan\.code\}: \$\{buildPlan\.message\}\$\{recordedBlockers/);
+    assert.match(canonical, /errorMessage: true/);
+    assert.match(canonical, /cause\?\.message[\s\S]*latestEngine\.errorMessage/);
+    assert.match(canonical, /publicJobFailureMessage\(recordedDetail/);
+  });
+
   it("updates title scalars and the canonical ledger atomically", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("lib/engine/automatic-build-plan.ts", "utf8");
