@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-13 UTC — Codex (real final-Preview analysis-title revision repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from latest remote head `81c962f29c08884229dbe97118e6636f3b1e842d` after restoring the missing local `origin` remote and verifying all its CI checks were green.
+- **Real Preview reproduction:** authenticated successfully to the exact `81c962f2` Preview using its configured preview credential, uploaded a real three-page Pharo-shaped tender through `/api/tenders/upload-first`, observed durable extraction succeed, then manually ran AI Analyze. AI Analyze succeeded through Cerebras and promoted the source-proven page-2 title, but every canonical panel immediately classified that just-finished analysis as `STALE_ANALYSIS`; manual Run Engine returned `CURRENT_ANALYSIS_REQUIRED` with `contentHashMatch=false`. This contradicted the prior exact-head synthetic acceptance and blocked the requested real Preview flow.
+- **Root cause / scope:** `buildTenderAnalysisContent` deliberately includes the tender title. The analysis job stored the pre-provider hash while canonical promotion replaced the intake label with the AI-proven source title, so the public post-promotion hash could never reproduce the just-authorized success. The immutable authorized provider hash remains preserved in the job snapshot; in the same promotion transaction, the terminal job now binds `analysisInputHash` to the exact tenant-owned persisted post-promotion tender/files/Vault state. No page, provenance, analysis-promotion, tenant, evidence, or export gate is relaxed.
+- **Files changed:** `lib/engine/tender-analysis-content.ts`, `lib/ai-jobs/analysis-job-service.ts`, `tests/preview-title-provenance-engine-postgres.test.ts`, and `operator_handoff.md`.
+- **Tests before commit:** Prisma generation and typecheck passed; 25 non-DB targeted assertions passed. Local DB-backed assertions reached only the configured unreachable Neon host and failed at connection setup, not behavior; exact-head PostgreSQL CI is required. The real Preview before-state and request/response artifacts are retained under `/tmp` only and contain no committed credentials.
+- **Risks / next action:** deploy this single repair commit through the existing PR Preview, re-run manual AI Analyze and manual Run Engine on the same real Preview tender, then inspect all canonical panels and separate-envelope downloads. Require full exact-head PostgreSQL/zero-drift/build/Playwright/isolation/screenshots/security before any completion claim; delete the temporary Preview tender after acceptance.
+- **Merge status:** **DO NOT MERGE**; Production untouched and promotion prohibited.
+
 ### 2026-08-13 UTC — Codex (latest-head title proof hardening)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from actual latest remote SHA `eb68400388d77513cce8fbf09ecf086f2ea878bc`, twelve commits beyond the reported failing Preview SHA `b4903c03`. Restored the externally removed local `origin` configuration before fetching; no source edits occurred on the unrelated reset branch.

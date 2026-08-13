@@ -3,7 +3,7 @@ import { logger } from "../observability";
 import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
 import { prisma } from "../prisma";
 import type { Prisma } from "@prisma/client";
-import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engine/tender-analysis-content";
+import { buildTenderAnalysisContent, computeAnalysisContentHash, computePersistedTenderAnalysisHash } from "../engine/tender-analysis-content";
 import {
   analyzeOneChunkWithRetry,
   chunkTenderContent as aiChunkTenderContent,
@@ -1120,6 +1120,17 @@ export async function finalizeJob(jobId: string, userId: string) {
             data: tenderUpdate,
         });
 
+        // AI promotion may replace an intake label with the title proven in
+        // the source. Bind the terminal job to that newly persisted canonical
+        // state before exposing success. The immutable authorized provider
+        // input remains in input.canonicalSnapshot.analysisInputHash.
+        const promotedContentHash = await computePersistedTenderAnalysisHash(
+            tx as unknown as Parameters<typeof computePersistedTenderAnalysisHash>[0],
+            job.tenderId!,
+            job.userId,
+        );
+        if (!promotedContentHash) throw new Error("PROMOTED_ANALYSIS_HASH_UNAVAILABLE");
+
         // 5. Set terminal job status with pre-serialized output (single write).
         await tx.aiJob.update({
             where: { id: jobId },
@@ -1127,6 +1138,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
                 finishedAt: new Date(),
                 output: outputJson,
+                analysisInputHash: promotedContentHash,
             }
         });
 

@@ -10,6 +10,15 @@ import crypto from "crypto";
 import { formatTenderFileAnalysisMarker } from "./requirement-source-linkage";
 import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 
+type AnalysisHashStore = {
+  tender: {
+    findFirst(args: unknown): Promise<any>;
+  };
+  company: {
+    findUnique(args: unknown): Promise<any>;
+  };
+};
+
 export const MAX_FILE_CHARS_FOR_AI_ANALYSIS = (() => {
   const raw = Number(process.env.TENDER_AI_MAX_FILE_CHARS);
   if (Number.isFinite(raw) && raw >= 1_000 && raw <= 50_000) return raw;
@@ -142,4 +151,59 @@ export function buildTenderAnalysisContent(
 /** Canonical source revision for AI Analyze, readiness, and Engine. */
 export function computeAnalysisContentHash(content: string): string {
   return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Recompute the canonical analysis binding from the persisted, tenant-owned
+ * state.  This is intentionally usable with either PrismaClient or a Prisma
+ * transaction so AI promotion can bind its terminal job to the metadata it
+ * just promoted in the same transaction.
+ *
+ * The immutable pre-provider input hash remains in the job's snapshot JSON;
+ * AiJob.analysisInputHash is the public current-state binding after promotion.
+ * Without that distinction, an AI-proven title replacing an intake label made
+ * the just-finished analysis immediately appear stale on the real Preview.
+ */
+export async function computePersistedTenderAnalysisHash(
+  store: AnalysisHashStore,
+  tenderId: string,
+  userId: string,
+): Promise<string | null> {
+  const tender = await store.tender.findFirst({
+    where: { id: tenderId, userId },
+    select: {
+      title: true,
+      description: true,
+      intakeSummary: true,
+      files: {
+        where: { deletionStatus: "ACTIVE" },
+        select: {
+          id: true,
+          fileName: true,
+          originalFileName: true,
+          extractedText: true,
+          classification: true,
+          createdAt: true,
+          deletionStatus: true,
+          contentSha256: true,
+          integrityStatus: true,
+          extractionScore: true,
+          extractionMethod: true,
+          totalPages: true,
+          extractedPages: true,
+          failedPages: true,
+        },
+      },
+    },
+  });
+  if (!tender) return null;
+  const company = await store.company.findUnique({
+    where: { userId },
+    select: {
+      documents: {
+        select: { originalFileName: true, category: true, extractedText: true },
+      },
+    },
+  });
+  return computeAnalysisContentHash(buildTenderAnalysisContent(tender, company ?? undefined));
 }

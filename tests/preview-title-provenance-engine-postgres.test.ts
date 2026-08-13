@@ -12,6 +12,7 @@ import {
 } from "./helpers/db-acceptance-harness";
 import { reconcileTitleSourceEvidence } from "../lib/engine/automatic-build-plan";
 import { publicJobFailureMessage } from "../lib/prisma-schema-compatibility";
+import { buildTenderAnalysisContent, computeAnalysisContentHash, computePersistedTenderAnalysisHash } from "../lib/engine/tender-analysis-content";
 
 const prisma = getPrisma();
 const created: Array<{ tenderId: string; userId: string }> = [];
@@ -164,6 +165,35 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
     assert.match(repaired.titleSourceQuote ?? "", /Pharo Secondary School/);
     assert.doesNotMatch(repaired.titleSourceQuote ?? "", /^Invitation to Bid$/);
   });
+
+  it("does not mark a just-promoted source-proven title stale", async () => {
+    const suffix = testSuffix();
+    const user = await seedUser(prisma, suffix);
+    const intakeTitle = `Preview upload ${suffix}`;
+    const provenTitle = "Supply and Installation of Laboratory Equipment for Pharo Secondary School";
+    const tender = await seedTender(prisma, { userId: user.id, suffix, title: intakeTitle });
+    await seedTenderFile(prisma, {
+      tenderId: tender.id,
+      suffix,
+      totalPages: 2,
+      extractedPages: 2,
+      extractedText: `[Page 1]\nInvitation to Bid\n[Page 2]\nTender Title: ${provenTitle}`,
+    });
+    created.push({ tenderId: tender.id, userId: user.id });
+
+    const before = await prisma.tender.findUniqueOrThrow({ where: { id: tender.id }, include: { files: true } });
+    const authorizedHash = computeAnalysisContentHash(buildTenderAnalysisContent(before, undefined));
+    await prisma.tender.update({ where: { id: tender.id }, data: { title: provenTitle } });
+    const promotedHash = await computePersistedTenderAnalysisHash(prisma, tender.id, user.id);
+
+    assert.ok(promotedHash);
+    assert.notEqual(promotedHash, authorizedHash, "the promoted title genuinely changes the rendered analysis content");
+    assert.equal(
+      promotedHash,
+      await computePersistedTenderAnalysisHash(prisma, tender.id, user.id),
+      "the terminal job can bind to the exact persisted post-promotion state",
+    );
+  });
 });
 
 describe("generation and workflow panels consume canonical current truth", () => {
@@ -209,5 +239,8 @@ describe("generation and workflow panels consume canonical current truth", () =>
     assert.match(source, /beforeRead: async \(tx\)/);
     assert.match(source, /TITLE_SOURCE_RECONCILIATION_SCOPE_LOST/);
     assert.match(source, /quoteProvesTitle\(tender\.title, tender\.titleSourceQuote\)/);
+    const jobService = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
+    assert.match(jobService, /computePersistedTenderAnalysisHash/);
+    assert.match(jobService, /analysisInputHash: promotedContentHash/);
   });
 });
