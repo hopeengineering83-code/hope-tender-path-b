@@ -95,11 +95,10 @@ test("manual AI Analyze and Run Engine once continue automatically to a real fin
     assert.equal(preflight.sourceVerification.projectsVerified, 1);
     assert.equal((await prisma.expert.findFirstOrThrow({ where: { companyId: company.id, fullName: "No Source Expert" } })).trustLevel, "AI_DRAFT");
 
-    const companyDocs = await prisma.companyDocument.findMany({ where: { companyId: company.id }, select: { originalFileName: true, category: true, extractedText: true } });
     const hash = computeAnalysisContentHash(buildTenderAnalysisContent({
       title: tender.title, description: null, intakeSummary: null,
       files: [{ ...source, createdAt: source.createdAt }],
-    }, { documents: companyDocs }));
+    }));
     await prisma.aiJob.create({ data: {
       userId: user.id, tenderId: tender.id, jobType: "AI_ANALYZE", status: "SUCCEEDED", analysisInputHash: hash,
       promotedAt: new Date(), promotedBy: user.id, finishedAt: new Date(), output: JSON.stringify({ analysisSource: "AI" }), input: "{}",

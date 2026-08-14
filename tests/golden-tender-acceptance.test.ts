@@ -287,7 +287,7 @@ describe("Golden Tender Acceptance Suite", () => {
   it("AiAnalyzeChunk query uses scalar userId (not tender relation)", () => {
     const src = read("lib/engine/generation-readiness-gate.ts");
     assert.ok(
-      src.includes("where: { tenderId, userId, contentHash: currentContentHash }"),
+      src.includes('where: { tenderId, userId, jobId: latestJob?.id ?? "__missing_analysis_job__" }'),
       "gate must filter AiAnalyzeChunk by scalar userId",
     );
   });
