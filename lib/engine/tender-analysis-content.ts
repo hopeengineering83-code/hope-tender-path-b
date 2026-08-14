@@ -14,9 +14,6 @@ type AnalysisHashStore = {
   tender: {
     findFirst(args: unknown): Promise<any>;
   };
-  company: {
-    findUnique(args: unknown): Promise<any>;
-  };
 };
 
 export const MAX_FILE_CHARS_FOR_AI_ANALYSIS = (() => {
@@ -154,10 +151,16 @@ export function computeAnalysisContentHash(content: string): string {
 }
 
 /**
- * Recompute the canonical analysis binding from the persisted, tenant-owned
- * state.  This is intentionally usable with either PrismaClient or a Prisma
- * transaction so AI promotion can bind its terminal job to the metadata it
- * just promoted in the same transaction.
+ * Recompute the canonical tender-source analysis binding from persisted,
+ * tenant-owned state. Company Vault state is deliberately excluded: AI
+ * Analyze establishes tender facts from tender sources, while Run Engine owns
+ * Vault verification and matching. A Vault ingestion update between those two
+ * manual actions must change the Engine revision, not retroactively stale an
+ * otherwise unchanged tender analysis.
+ *
+ * This is intentionally usable with either PrismaClient or a Prisma
+ * transaction so AI promotion can bind its terminal job to the title/source
+ * metadata it just promoted in the same transaction.
  *
  * The immutable pre-provider input hash remains in the job's snapshot JSON;
  * AiJob.analysisInputHash is the public current-state binding after promotion.
@@ -197,13 +200,5 @@ export async function computePersistedTenderAnalysisHash(
     },
   });
   if (!tender) return null;
-  const company = await store.company.findUnique({
-    where: { userId },
-    select: {
-      documents: {
-        select: { originalFileName: true, category: true, extractedText: true },
-      },
-    },
-  });
-  return computeAnalysisContentHash(buildTenderAnalysisContent(tender, company ?? undefined));
+  return computeAnalysisContentHash(buildTenderAnalysisContent(tender));
 }

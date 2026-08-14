@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import {
   buildTenderAnalysisContent,
   computeAnalysisContentHash,
+  computePersistedTenderAnalysisHash,
   MAX_TOTAL_AI_CHARS,
 } from "../lib/engine/tender-analysis-content";
 
@@ -41,6 +42,18 @@ describe("buildTenderAnalysisContent — deterministic + canonical", () => {
       documents: [{ originalFileName: "cv.pdf", category: "CV", extractedText: "expert profile" }],
     }));
     assert.notEqual(h0, hWithDocs);
+  });
+
+  it("keeps the persisted currentness binding tender-source-only", async () => {
+    let companyRead = false;
+    const tender = { title: "T", description: null, intakeSummary: null, files: [file()] };
+    const store = {
+      tender: { findFirst: async () => tender },
+      company: { findUnique: async () => { companyRead = true; return { documents: [] }; } },
+    };
+    const hash = await computePersistedTenderAnalysisHash(store, "tender-1", "user-1");
+    assert.equal(hash, computeAnalysisContentHash(buildTenderAnalysisContent(tender)));
+    assert.equal(companyRead, false, "Run Engine Vault verification must not stale tender analysis");
   });
 
   it("uses a collision-resistant full SHA-256 revision", () => {

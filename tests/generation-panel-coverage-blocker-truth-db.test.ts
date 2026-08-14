@@ -248,16 +248,12 @@ dbDescribe("Generation panel — coverage blocker reaches the release status", (
       });
     }
 
-    // ── A current AI analysis, hashed AFTER the Vault exists ──────────────
+    // ── A current tender-source analysis ──────────────────────────────────
     const { buildTenderAnalysisContent, computeAnalysisContentHash } =
       await import("../lib/engine/tender-analysis-content");
     const tenderRow = await client.tender.findUnique({
       where: { id: tender.id },
       select: { title: true, description: true, intakeSummary: true },
-    });
-    const companyForHash = await client.company.findUnique({
-      where: { userId: user.id },
-      select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
     });
     const analysisInputHash = computeAnalysisContentHash(
       buildTenderAnalysisContent(
@@ -267,7 +263,6 @@ dbDescribe("Generation panel — coverage blocker reaches the release status", (
           intakeSummary: tenderRow.intakeSummary,
           files: [{ id: file.id, extractedText: EXTRACTED_TEXT, originalFileName: `Tender Document ${suffix}.pdf` }],
         } as never,
-        companyForHash ?? undefined,
       ),
     );
     await client.aiJob.create({

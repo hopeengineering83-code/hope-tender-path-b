@@ -254,10 +254,6 @@ async function seedScenario(
     where: { id: tender.id },
     select: { title: true, description: true, intakeSummary: true },
   });
-  const companyForHash = await client.company.findUnique({
-    where: { userId: user.id },
-    select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
-  });
   const analysisInputHash = computeAnalysisContentHash(
     buildTenderAnalysisContent(
       {
@@ -266,7 +262,6 @@ async function seedScenario(
         intakeSummary: tenderRow.intakeSummary,
         files: [{ id: file.id, extractedText: EXTRACTED_TEXT, originalFileName: `Tender Document ${suffix}.pdf` }],
       } as never,
-      companyForHash ?? undefined,
     ),
   );
   await client.aiJob.create({

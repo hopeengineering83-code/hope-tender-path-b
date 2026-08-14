@@ -446,14 +446,9 @@ export async function resolveCurrentAnalysisBinding(
   });
   if (!tender) return { jobId: null, contentHash: null };
   const activeFiles = (tender.files as _TenderFileRow[]).filter((f) => f.deletionStatus === "ACTIVE");
-  const company = await prisma.company.findUnique({
-    where: { userId },
-    select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
-  });
   const contentHash = computeAnalysisContentHash(
     buildTenderAnalysisContent(
       { title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: activeFiles },
-      company ?? undefined,
     ),
   );
   const latestJob = await prisma.aiJob.findFirst({
@@ -588,17 +583,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       }),
     );
 
-    // Company vault digest participates in the canonical hash so vault changes
-    // invalidate the analysis exactly as AI Analyze computed it.
-    const company = await prisma.company.findUnique({
-      where: { userId },
-      select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
-    });
-
+    // Analysis currentness is bound to tender sources. Run Engine separately
+    // binds the complete Vault revision, so automatic Vault verification cannot
+    // make a just-completed tender analysis stale.
     const currentContentHash = computeAnalysisContentHash(
       buildTenderAnalysisContent(
         { title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: activeFiles },
-        company ?? undefined,
       ),
     );
 
@@ -608,13 +598,15 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       prisma.aiJob.findFirst({
         where: { tenderId, jobType: AI_ANALYZE_JOB_TYPE, tender: { userId } },
         orderBy: { createdAt: "desc" },
-        select: { analysisInputHash: true },
+        select: { id: true, analysisInputHash: true },
       }),
     ]);
 
-    // E — chunk integrity for the CURRENT content hash only.
+    // E — chunk integrity belongs to the immutable provider-input snapshot.
+    // The public analysis currentness hash is tender-source-only, whereas the
+    // provider snapshot may include bounded Vault context.
     const currentHashChunks = await prisma.aiAnalyzeChunk.findMany({
-      where: { tenderId, userId, contentHash: currentContentHash },
+      where: { tenderId, userId, jobId: latestJob?.id ?? "__missing_analysis_job__" },
       select: { status: true, totalChunks: true },
     });
 

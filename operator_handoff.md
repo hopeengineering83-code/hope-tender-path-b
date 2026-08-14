@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-14 UTC — Codex (real Preview Vault/current-analysis contradiction)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; starting SHA `b16b9c2c67dba7996e3f5bd3e94d656ca35b0ea0`, original fixture `b4903c03` / `03b9c928`.
+- **Real Preview before-state:** the original exact deployment failed at Vercel after producing no outputs. An authorized redeploy of the same SHA became READY and healthy, enabling authenticated UAT against the retained real Pharo tender. Manual AI Analyze succeeded and automatic source grounding repaired 2/2 ungrounded requirements; manual Run Engine then failed immediately with safe reference `20e22a68`. Runtime logs proved `CURRENT_ANALYSIS_REQUIRED`: Engine's automatic Vault verification changed Company Vault state after the route had accepted current AI analysis, while analysis currentness incorrectly included the Vault digest. The same manual click therefore invalidated itself before execution.
+- **Scope / root cause repair:** provider-input snapshots remain immutable and continue to bind their bounded Vault context before provider calls, but the public terminal analysis currentness binding is now tender-source-only (title, description/intake context, active source files/text). Company Vault revisions remain fully bound by `computeEngineSourceRevision`. Release Snapshot, Generation Readiness, and Runtime Readiness now use the same tender-source binding; chunk integrity is checked by the canonical analysis job ID rather than conflating the provider-input hash with the public currentness hash. This preserves source drift detection while preventing Run Engine's own Vault preflight from staling a just-completed analysis.
+- **Files changed:** `lib/engine/tender-analysis-content.ts`, `lib/engine/tender-release-snapshot.ts`, `lib/engine/generation-readiness-gate.ts`, `lib/engine/runtime-readiness-facts.ts`, their three PostgreSQL panel fixtures, `tests/tender-analysis-content-parity.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** 72/72 reachable focused assertions passed; Prisma validate/generate, typecheck, lint (one standing warning) and diff check passed. Direct DB tests remain pointed at the unreachable old local Neon URL; exact-head disposable-PostgreSQL CI must run the full suite.
+- **Risks / next action:** no page, title quote, tenant, evidence, manual authority, legal/owner, package envelope, signature, hash or ZIP-byte gate was relaxed. Push once, require all exact-head CI/security/screenshot checks and one Preview, then repeat real Preview manual AI Analyze → source grounding → manual Run Engine and cross-panel/package inspection. Delete no Production data and do not promote.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION**; real Preview after-state is required on the resulting SHA.
+
 ### 2026-08-14 UTC — Codex (latest-head canonical-action audit)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; starting SHA `cf76816774f79d86387af0049f4f1142d045acb5`, original real failure fixture `b4903c03` / reference `03b9c928`.

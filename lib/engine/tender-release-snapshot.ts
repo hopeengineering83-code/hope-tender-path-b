@@ -314,14 +314,6 @@ export async function getTenderReleaseSnapshot(
 
   const analysisDetail = await resolveTenderAnalysisState(prisma, tenderId, userId);
   const { buildTenderAnalysisContent, computeAnalysisContentHash } = await import("./tender-analysis-content");
-  const company = await prisma.company.findUnique({
-    where: { userId },
-    select: {
-      documents: {
-        select: { originalFileName: true, category: true, extractedText: true },
-      },
-    },
-  });
   const currentContentHash = computeAnalysisContentHash(
     buildTenderAnalysisContent(
       {
@@ -330,7 +322,6 @@ export async function getTenderReleaseSnapshot(
         intakeSummary: tender.intakeSummary,
         files: activeFiles,
       },
-      company ?? undefined,
     ),
   );
 

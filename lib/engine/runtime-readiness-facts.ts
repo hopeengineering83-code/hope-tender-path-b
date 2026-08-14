@@ -170,21 +170,11 @@ export async function getRuntimeReadinessFacts(
     },
   });
 
-  // Company vault digest participates in the canonical content hash. It MUST be
-  // included (UNBOUNDED, unordered) so currentSourceHash below reproduces the
-  // stored analysisInputHash — the route/createAnalysisJob and the snapshot/gate
-  // all fold the full vault set into the hash. Omitting it made
-  // hasGoodAnalysisForCurrentSource always false for any tender with vault docs.
-  const companyForHash = await (prisma as any).company.findUnique({
-    where: { userId },
-    select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
-  }).catch(() => null);
-
   // Build metadata facts from effective facts
   const metadata = buildMetadataFacts(effective);
 
   // Build analysis state
-  const analysis = await buildAnalysisState(prisma, tenderId, tender, companyForHash);
+  const analysis = await buildAnalysisState(prisma, tenderId, tender);
 
   // Build build-plan state
   const buildPlan = await buildBuildPlanState(prisma, tenderId, userId);
@@ -305,7 +295,6 @@ async function buildAnalysisState(
   prisma: PrismaClient,
   tenderId: string,
   tender: any,
-  companyForHash: { documents?: Array<{ originalFileName: string; category: string; extractedText: string | null }> } | null,
 ): Promise<RuntimeReadinessFacts["analysis"]> {
   // BUG FIX: Previously currentSourceHash used a completely different algorithm
   // (|`-joined contentHash || extractedText.length per file) that could NEVER
@@ -334,7 +323,7 @@ async function buildAnalysisState(
             classification: f.classification ?? null,
             createdAt: f.createdAt,
           })),
-      }, companyForHash ?? undefined);
+      });
       currentSourceHash = computeAnalysisContentHash(analysisContent);
     } catch {
       // If hash computation fails, fall back to null (same as no files)
