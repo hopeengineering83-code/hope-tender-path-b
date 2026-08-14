@@ -199,14 +199,10 @@ test.describe("Phase 2 rendered 2/4 evidence workflow truth", () => {
       where: { id: tenderId },
       select: { title: true, description: true, intakeSummary: true },
     });
-    const companyForHash = await prisma.company.findUnique({
-      where: { userId: user.id },
-      select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
-    });
     const analysisInputHash = computeAnalysisContentHash(buildTenderAnalysisContent({
       ...tenderRow,
       files: [{ id: file.id, extractedText: SOURCE_TEXT, originalFileName: `Tender Document ${SUFFIX}.pdf` }],
-    } as never, companyForHash ?? undefined));
+    } as never));
     await prisma.aiJob.create({
       data: {
         userId: user.id,
