@@ -7,6 +7,7 @@ export type TenderNextActionPrimary =
   | "EDIT_METADATA"
   | "BUILD_SUBMISSION_PLAN"
   | "GENERATE_DOCUMENTS"
+  | "AUTOMATIC_PROCESSING"
   | "FIX_EXPORT_BLOCKERS"
   | "EXPORT_READY";
 
@@ -233,13 +234,13 @@ export function resolveTenderNextAction(input: TenderNextActionInput): TenderNex
 
   if (!input.documents.current) {
     return {
-      primary: "GENERATE_DOCUMENTS",
-      label: input.documents.stale ? "Regenerate stale documents" : "Generate proposal documents",
+      primary: "AUTOMATIC_PROCESSING",
+      label: "Processing automatically",
       reason: input.documents.stale
-        ? "Generated documents are stale against the current analysis/readiness state."
-        : "All pre-generation gates pass. Generate proposal documents.",
+        ? "The durable post-Engine workflow must regenerate documents against the current canonical revision."
+        : "All upstream gates pass. Durable generation, validation, finalization, and packaging continue automatically.",
       blockers: input.documents.stale ? ["Generated documents are stale"] : [],
-      tone: input.documents.stale ? "amber" : "green",
+      tone: "amber",
     };
   }
 

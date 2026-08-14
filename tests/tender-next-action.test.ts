@@ -71,8 +71,8 @@ describe("resolveTenderNextAction", () => {
       ...base,
       documents: { current: false, hasGeneratedDocuments: true, stale: true },
     });
-    assert.equal(decision.primary, "GENERATE_DOCUMENTS");
-    assert.match(decision.label, /stale/i);
+    assert.equal(decision.primary, "AUTOMATIC_PROCESSING");
+    assert.match(decision.reason, /durable post-Engine workflow/i);
     assert.notEqual(decision.tone, "green");
   });
 });

@@ -531,8 +531,8 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
   if (derivedDraftCount > 0 && derivedDraftCount === totalPlannedCount && totalPlannedCount > 0) {
     fullProposalBlockers.push({
       code: "FULL_PROPOSAL_DERIVED_PLAN_UNCONFIRMED",
-      message: "Full proposal generation is blocked: the submission plan was automatically derived from requirement keywords and has not been confirmed against the actual tender document. Review the plan, verify each required document, and confirm before generating.",
-      nextAction: "CONFIRM_SUBMISSION_PLAN",
+      message: "Full proposal generation is blocked: only a derived draft plan exists. Run Engine to create and source-verify the authoritative Build Plan from the current verified source and current AI analysis.",
+      nextAction: "RUN_ENGINE",
     });
   }
 

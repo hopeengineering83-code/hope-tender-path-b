@@ -416,10 +416,10 @@ export const RECOVERY_COMMAND_ACTIONS: Record<string, RecoveryCommandActionSpec>
   },
   // Engine / analysis compatibility actions remain status navigation. ───────
   RUN_ENGINE_OR_APPROVE_ANALYSIS: {
-    label: "Review Analysis and Engine Status",
+    label: "Review Analysis and Run Engine Status",
     kind: "scroll",
     anchorId: "analysis-quality",
-    message: "Review grounded analysis quality and automatic Engine status. Engine starts automatically after full canonical AI analysis succeeds; fallback approval does not authorize release.",
+    message: "Review grounded analysis quality. After current canonical AI Analyze succeeds, an authorized user must start Run Engine manually; fallback approval does not authorize Engine or release.",
     aliases: ["RUN_ENGINE_SAFE_MODE"],
   },
   // Navigation shortcuts for engine/auth error nextActions ──────────────────

@@ -515,5 +515,5 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // checkFullExportReadiness above is the byte/hygiene gate; this is the
   // canonical resolver the UI reads from /readiness. Both must agree.
   const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tenderId);
-  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: candidates.length - processed > 0 ? "CONTINUE_AUTO_FINALIZE" : "RECHECK_EXPORT_READINESS", readinessOk: readiness.ok, warning, canonicalReadiness });
+  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: readiness.ok ? "EXPORT_READY" : "AUTOMATIC_PROCESSING", readinessOk: readiness.ok, warning, canonicalReadiness });
 }

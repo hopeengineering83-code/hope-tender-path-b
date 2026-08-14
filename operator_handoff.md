@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-14 UTC — Codex (latest-head canonical-action audit)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; starting SHA `cf76816774f79d86387af0049f4f1142d045acb5`, original real failure fixture `b4903c03` / reference `03b9c928`.
+- **Scope:** latest-head inspection found four residual independent-action paths that the prior screenshot route did not exercise. Pipeline Diagnostic now returns the same canonical workflow decision/action as the live panels instead of independently guessing Generate/Validate/Build actions; auto-finalize returns `AUTOMATIC_PROCESSING` or `EXPORT_READY` rather than inventing a manual export-readiness re-check; the legacy tender-next-action resolver treats missing/stale generated documents as durable post-Engine processing; derived-draft Build Plan recovery is manual Run Engine, not confirmation; and the compatibility Engine recovery copy no longer says Engine starts automatically.
+- **Files changed:** `app/api/tenders/[id]/pipeline-diagnostic/route.ts`, `app/api/tenders/[id]/auto-finalize/route.ts`, `lib/tender-next-action.ts`, `lib/tender-generation-readiness.ts`, `lib/recovery-command-actions.ts`, `tests/tender-next-action.test.ts`, `tests/preview-panel-canonical-action-regression.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** 161 focused non-database assertions passed; five Pharo PostgreSQL subtests could not start because the configured Neon endpoint is unreachable. Prisma validate/generate, typecheck, lint (one standing warning), release-integrity audits, dependency audit (0 vulnerabilities), and production build passed. Exact-head real PostgreSQL, migration/zero-drift, Playwright/isolation, screenshot, dependency, and Preview checks are required after push.
+- **Real Preview status:** the starting exact Preview `/api/version` reports `cf768167`; `/api/health` responds with an unhealthy payload and all five database probes false. Only `VERCEL_TOKEN` and an unrelated unreachable `DATABASE_URL` are available locally; no authorized Preview login credential/session exists. No environment, credential, database, or Production state was changed to fabricate acceptance.
+- **Risks / assumptions:** no provenance, page validation, tenant query, evidence strength, legal/authority gate, package isolation, or stored-byte/ZIP integrity logic changed. The new Pipeline Diagnostic authority adds one canonical read but preserves its owner-scoped tender access and safe error boundary.
+- **Next action:** commit/push once, require all exact-head automation and Preview deployment, then retry real Preview health. Owner/provider must restore the configured Preview database and provide an authorized session before the requested final authenticated real-tender walkthrough can honestly pass.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION**; live Preview acceptance remains externally blocked until database restoration.
+
 ### 2026-08-14 UTC — Codex (latest-head Command Center canonical blocker repair)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from exact latest remote head `ac9201993428d6a81be71d01a1b23bfb4bc953bb` after restoring the externally removed local Git remote. Primary real failure fixture remains Preview `b4903c03` / reference `03b9c928`.
