@@ -12,7 +12,8 @@
  *     - Skip if it's already VALIDATED + READY_FOR_EXPORT with content.
  *     - Otherwise: ensure it has DOCX content (generate a safe placeholder
  *       if empty), clean AI traces / placeholders / pricing leakage from
- *       the DOCX XML, mark it GENERATED + VALIDATED + READY_FOR_EXPORT.
+ *       the DOCX XML, and return mutated bytes to PENDING for the canonical
+ *       Document Validator.
  *   - Apply active letterhead branding after repair.
  *
  * What this does NOT do:
@@ -359,11 +360,24 @@ export async function runExportGapRepair(
       // Bind the integrity record to the EXACT bytes that will be stored. Leaving
       // the pre-repair hash/length in place makes the canonical validator reject
       // the successfully cleaned DOCX as PERSISTED_BYTE_INTEGRITY_MISMATCH.
-      const integrity = verifiedIntegrityDataFromBase64({
-        fileContent: content,
-        filename: name,
-        claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      });
+      // If the existing bytes are not a DOCX at all, this repair authority must
+      // not throw, replace, or bless them. Leave the row untouched so the one
+      // canonical validator records the genuine content/integrity failure.
+      let integrity: ReturnType<typeof verifiedIntegrityDataFromBase64>;
+      try {
+        integrity = verifiedIntegrityDataFromBase64({
+          fileContent: content,
+          filename: name,
+          claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        });
+      } catch {
+        logger.warn("[export-gap-repair] declined non-DOCX or unverifiable artifact; canonical validation remains authoritative", {
+          tenderId,
+          documentId: doc.id,
+          fileName: name,
+        });
+        continue;
+      }
 
       await tx.generatedDocument.update({
         where: { id: doc.id },
