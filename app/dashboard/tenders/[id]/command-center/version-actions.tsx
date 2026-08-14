@@ -90,7 +90,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
   }
 
   if (versions.length === 0) {
-    return <p className="text-sm text-slate-400 py-2">No proposal versions saved yet. Run the engine to create the first version.</p>;
+    return <p className="text-sm text-slate-400 py-2">No proposal versions saved yet. Versions appear automatically when the canonical workflow reaches generation.</p>;
   }
 
   return (

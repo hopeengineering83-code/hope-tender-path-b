@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import type { CanonicalWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
 import type { FinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
 import { reconcileReachableReleaseBlockers } from "../lib/engine/tender-release-state";
@@ -77,5 +78,11 @@ describe("Command Center canonical blocker suppression", () => {
       nextRequiredActionReason: "The durable worker owns this stage.",
     }), finalSubmission);
     assert.equal(result.blockers[0]?.nextAction, null);
+  });
+
+  it("does not add a competing Engine instruction in the empty proposal-version state", () => {
+    const source = readFileSync("app/dashboard/tenders/[id]/command-center/version-actions.tsx", "utf8");
+    assert.match(source, /Versions appear automatically when the canonical workflow reaches generation/);
+    assert.doesNotMatch(source, /Run the engine to create the first version/i);
   });
 });
