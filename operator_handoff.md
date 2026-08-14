@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-14 UTC — Codex (latest-head Command Center canonical blocker repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from exact latest remote head `ac9201993428d6a81be71d01a1b23bfb4bc953bb` after restoring the externally removed local Git remote. Primary real failure fixture remains Preview `b4903c03` / reference `03b9c928`.
+- **Audit and scope:** independently verified that the landed title reconciliation, Engine-failure precedence, canonical Generation/Export readiness, separate-package execution and PostgreSQL fixtures exist. Downloading and visually inspecting the exact-head screenshot artifact exposed one remaining contradiction: Command Center showed canonical “Upload tender document” while simultaneously listing eight unreachable downstream export blockers and manual recovery instructions. `getTenderReleaseState` now projects exactly the currently reachable canonical blocker/action and suppresses fail-closed downstream diagnostics until their stage is reachable; automatic post-Engine stages expose no invented manual action. The underlying final-submission/export model remains strict and unchanged.
+- **Files changed:** `lib/engine/tender-release-state.ts`, `tests/command-center-canonical-blocker-suppression.test.ts`, and `operator_handoff.md`.
+- **Tests before commit:** 15/15 focused canonical/readiness assertions passed; Prisma generation and typecheck passed. The prior exact head passed both full CI runs (9,999 PostgreSQL tests), migrations/zero drift, build, Playwright/isolation, screenshots and security; all exact-head checks must rerun after this commit.
+- **Real Preview status:** exact `ac920199` `/api/version` is correct, but `/api/health` returns HTTP 503 with all five critical database probes false. Vercel runtime logs confirm `PrismaClientInitializationError: Can't reach database server` for the configured Neon endpoint. Authenticated real-tender Preview UAT therefore remains externally blocked; no database credential, Vercel environment, owner account, alias or Production state was modified to bypass it.
+- **Risks / next action:** this is presentation reconciliation only: tenant isolation, provenance, page bounds, evidence levels, legal/authority gates, document validation, envelope isolation, file signatures/hashes and ZIP bytes are unchanged. Push once, require exact-head CI/security/screenshot/Preview, visually inspect the repaired Command Center, then retry Preview health. Owner/provider database restoration remains required if health stays 503.
+- **Merge status:** **DO NOT MERGE**; Production untouched; do not claim complete real-Preview acceptance while its database is unreachable.
+
 ### 2026-08-14 UTC — Codex (real-fixture acceptance hardening; Preview DB outage remains)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from actual latest remote head `8008961bdf88ffc3e573018ba8c01650e237e5df` after restoring the externally removed local `origin` and fetching without discarding work. Original failing Preview fixture remains `b4903c03` / reference `03b9c928`.

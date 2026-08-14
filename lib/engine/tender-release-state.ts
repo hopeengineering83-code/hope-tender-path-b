@@ -9,7 +9,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
-import { getCanonicalTenderWorkflowDecision } from "./canonical-workflow-decision";
+import { getCanonicalTenderWorkflowDecision, type CanonicalWorkflowDecision } from "./canonical-workflow-decision";
 import { presentTwoActionWorkflowDecision } from "./two-action-workflow-presentation";
 import { getFinalSubmissionReadiness, type FinalSubmissionReadiness } from "./final-submission-readiness";
 import { evaluateBidDecision, type BidDecisionOutcome } from "./bid-decision";
@@ -103,6 +103,40 @@ export function reconcileBlockers(finalSubmission: FinalSubmissionReadiness): {
   return { blockers, blockerTotal: blockers.length, criticalBlockerTotal };
 }
 
+/**
+ * Present only the blocker that is reachable in the canonical workflow.
+ *
+ * Final-submission readiness deliberately computes every eventual export
+ * defect fail-closed. Those diagnostics remain authoritative inside the
+ * readiness model, but presenting all of them beside an earlier canonical
+ * action (for example UPLOAD_TENDER) invents competing work for the owner.
+ */
+export function reconcileReachableReleaseBlockers(
+  workflowDecision: CanonicalWorkflowDecision | null,
+  finalSubmission: FinalSubmissionReadiness,
+): { blockers: TenderReleaseBlocker[]; blockerTotal: number; criticalBlockerTotal: number } {
+  if (!workflowDecision || workflowDecision.currentBlockingStage === "EXPORT_ZIP_READY") {
+    return reconcileBlockers(finalSubmission);
+  }
+
+  const category = workflowDecision.blockingStageCode || workflowDecision.currentBlockingStage;
+  const title = workflowDecision.blockerDetails[0] || workflowDecision.nextRequiredActionReason;
+  const automatic = workflowDecision.nextRequiredAction === "AUTOMATIC_PROCESSING";
+  const blocker: TenderReleaseBlocker = {
+    category,
+    severity: /SECURITY|INTEGRITY|SOURCE|EXTRACTION|ENGINE_RUN_FAILED|TITLE_SOURCE_PROVENANCE_INVALID|AUTHORITY|LEGAL/.test(category)
+      ? "CRITICAL"
+      : "HIGH",
+    title,
+    nextAction: automatic ? null : workflowDecision.nextRequiredActionLabel,
+  };
+  return {
+    blockers: [blocker],
+    blockerTotal: 1,
+    criticalBlockerTotal: 1,
+  };
+}
+
 export async function getTenderReleaseState(
   prisma: PrismaClient,
   tenderId: string,
@@ -178,7 +212,10 @@ export async function getTenderReleaseState(
       "Decision unavailable — valid source extraction and grounded AI analysis are required before a bid verdict can be calculated.";
   }
 
-  const { blockers, blockerTotal, criticalBlockerTotal } = reconcileBlockers(finalSubmission);
+  const { blockers, blockerTotal, criticalBlockerTotal } = reconcileReachableReleaseBlockers(
+    workflowDecision,
+    finalSubmission,
+  );
 
   const primaryNextAction = workflowDecision
     ? {
