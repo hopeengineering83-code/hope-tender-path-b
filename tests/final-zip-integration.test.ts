@@ -89,6 +89,24 @@ describe("final ZIP integration", () => {
     assert.ok(!names.some((name) => /financial/i.test(name)));
   });
 
+  it("produces independently executable financial and admin envelopes", async () => {
+    const expected: Array<{ envelope: "FINANCIAL" | "ADMIN"; fileName: string; excluded: RegExp }> = [
+      { envelope: "FINANCIAL", fileName: "03-Financial-Proposal.xlsx", excluded: /technical|eligibility/i },
+      { envelope: "ADMIN", fileName: "02-Eligibility-Declaration.docx", excluded: /technical|financial/i },
+    ];
+    for (const item of expected) {
+      const envelopeDocs = generatedDocs.filter((doc) =>
+        inferEnvelope(doc.documentType, doc.exactFileName) === item.envelope,
+      );
+      const scope = buildFinalZipEntries({ tender: tenderScope, generatedDocs: envelopeDocs });
+      const result = await assembleFinalSubmissionZip(scope.entries, contents);
+      const zip = await JSZip.loadAsync(result.buffer, { checkCRC32: true });
+      const names = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
+      assert.deepEqual(names, [item.fileName]);
+      assert.ok(names.every((name) => !item.excluded.test(name)));
+    }
+  });
+
   it("rejects duplicate filenames instead of silently overwriting", async () => {
     await assert.rejects(
       assembleFinalSubmissionZip([

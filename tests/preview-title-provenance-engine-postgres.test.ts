@@ -10,7 +10,10 @@ import {
   seedUser,
   testSuffix,
 } from "./helpers/db-acceptance-harness";
-import { reconcileTitleSourceEvidence } from "../lib/engine/automatic-build-plan";
+import { buildAndVerifyBuildPlan, reconcileTitleSourceEvidence } from "../lib/engine/automatic-build-plan";
+import { validateCriticalMetadataEvidenceForBuildPlan } from "../lib/engine/build-plan";
+import { getCanonicalTenderWorkflowDecision } from "../lib/engine/canonical-workflow-decision";
+import { computeEngineSourceRevision } from "../lib/engine/engine-source-revision";
 import { publicJobFailureMessage } from "../lib/prisma-schema-compatibility";
 import { buildTenderAnalysisContent, computeAnalysisContentHash, computePersistedTenderAnalysisHash } from "../lib/engine/tender-analysis-content";
 
@@ -35,7 +38,7 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
       suffix,
       totalPages: 3,
       extractedPages: 3,
-      extractedText: `[Page 1]\nInvitation to Bid\n[Page 2]\nTender Title: ${title}\nReference PHARO/LAB/2026/08\n[Page 3]\nEight requirements including six mandatory requirements.`,
+      extractedText: `[Page 1]\nInvitation to Bid. Pharo Secondary School invites qualified suppliers to provide laboratory equipment, installation, commissioning, training, warranty support, and complete delivery documentation. Bidders must read every submission instruction and provide the requested administrative records.\n[Page 2]\nTender Title: ${title}\nReference PHARO/LAB/2026/08. The assignment covers compliant equipment supply, safe installation, testing, handover, staff training, and after-sales support for the school laboratory.\n[Page 3]\nEight requirements including six mandatory requirements. The technical proposal, financial proposal, company eligibility records, delivery schedule, warranty undertaking, and personnel evidence must follow the stated package structure and exact filenames.`,
     });
     const company = await prisma.company.create({
       data: { userId: user.id, name: `Pharo Fixture Company ${suffix}`, sectors: "[]" },
@@ -63,6 +66,7 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
           sourceTenderFileId: file.id,
           sourcePageNumber: 3,
           sourceExactQuote: "Eight requirements including six mandatory requirements.",
+          exactFileName: index === 1 ? "Technical Proposal.docx" : null,
         },
       });
     }
@@ -70,14 +74,33 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
     await prisma.tender.update({
       where: { id: tender.id },
       data: {
+        exactFileNaming: JSON.stringify(["Technical Proposal.docx"]),
+        exactFileOrder: JSON.stringify(["Technical Proposal.docx"]),
         titleSourceFileId: file.id,
         titleSourcePage: 99,
         titleSourceQuote: `Tender Title: ${title}`,
       },
     });
 
-    const result = await reconcileTitleSourceEvidence(prisma, tender.id, user.id);
-    assert.deepEqual(result, { repaired: true, proven: true });
+    const analysisInputHash = await computePersistedTenderAnalysisHash(prisma, tender.id, user.id);
+    assert.ok(analysisInputHash);
+    await prisma.aiJob.create({
+      data: {
+        tenderId: tender.id,
+        userId: user.id,
+        jobType: "AI_ANALYZE",
+        status: "SUCCEEDED",
+        analysisInputHash,
+        promotedAt: new Date(),
+        promotedBy: user.id,
+        finishedAt: new Date(),
+        input: "{}",
+        output: JSON.stringify({ analysisSource: "AI" }),
+      },
+    });
+
+    const plan = await buildAndVerifyBuildPlan(prisma, tender.id, user.id, { reuseCurrent: false });
+    assert.equal(plan.ok, true, plan.ok ? undefined : `${plan.code}: ${plan.message}`);
     const repaired = await prisma.tender.findUniqueOrThrow({
       where: { id: tender.id },
       select: { titleSourceFileId: true, titleSourcePage: true, titleSourceQuote: true },
@@ -106,7 +129,7 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
     assert.equal(fixtureState.requirements.filter((row) => row.priority === "MANDATORY").length, 6);
     assert.equal(fixtureState.expertMatches.length, 1);
     assert.equal(fixtureState.projectMatches.length, 1);
-    assert.equal(fixtureState.buildPlan, null);
+    assert.equal(fixtureState.buildPlan?.status, "CONFIRMED");
   });
 
   it("does not invent a page when neither the quote nor title is provable", async () => {
@@ -128,8 +151,17 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
 
     const result = await reconcileTitleSourceEvidence(prisma, tender.id, user.id);
     assert.deepEqual(result, { repaired: false, proven: false });
-    const unchanged = await prisma.tender.findUniqueOrThrow({ where: { id: tender.id }, select: { titleSourcePage: true } });
+    const unchanged = await prisma.tender.findUniqueOrThrow({
+      where: { id: tender.id },
+      include: { files: { where: { deletionStatus: "ACTIVE" } }, metadataOverrides: true },
+    });
     assert.equal(unchanged.titleSourcePage, 99, "strict Build Plan validation must still reject the invalid page");
+    const validation = validateCriticalMetadataEvidenceForBuildPlan(unchanged, unchanged.files, unchanged.metadataOverrides);
+    assert.equal(validation.ok, false);
+    assert.deepEqual(
+      validation.blockers.filter((blocker) => /metadata field title/i.test(blocker)),
+      ["Critical metadata field title source page 99 exceeds file total pages 3."],
+    );
   });
 
   it("rejects a contained but unrelated quote and re-proves the actual title", async () => {
@@ -193,6 +225,86 @@ dbDescribe("Preview 03b9c928 title provenance repair", () => {
       await computePersistedTenderAnalysisHash(prisma, tender.id, user.id),
       "the terminal job can bind to the exact persisted post-promotion state",
     );
+  });
+
+  it("makes the latest current-revision failed Engine cause outrank secondary requirement blockers", async () => {
+    const suffix = testSuffix();
+    const user = await seedUser(prisma, suffix);
+    const title = "Supply and Installation of Laboratory Equipment for Pharo Secondary School";
+    const tender = await seedTender(prisma, { userId: user.id, suffix, title });
+    const file = await seedTenderFile(prisma, {
+      tenderId: tender.id,
+      suffix,
+      totalPages: 3,
+      extractedPages: 3,
+      extractedText: `[Page 1]\nInvitation to Bid\n[Page 2]\nTender Title: ${title}\n[Page 3]\nMandatory laboratory requirements.`,
+    });
+    await prisma.company.create({ data: { userId: user.id, name: `Failure Truth Company ${suffix}`, sectors: "[]" } });
+    created.push({ tenderId: tender.id, userId: user.id });
+    await prisma.tender.update({
+      where: { id: tender.id },
+      data: {
+        titleSourceFileId: file.id,
+        titleSourcePage: 99,
+        titleSourceQuote: `Tender Title: ${title}`,
+      },
+    });
+    await prisma.tenderRequirement.create({
+      data: {
+        tenderId: tender.id,
+        title: "Secondary ungrounded requirement",
+        description: "This downstream consequence must not mask the Engine failure.",
+        requirementType: "MANDATORY",
+        priority: "MANDATORY",
+      },
+    });
+    const analysisInputHash = await computePersistedTenderAnalysisHash(prisma, tender.id, user.id);
+    assert.ok(analysisInputHash);
+    await prisma.aiJob.create({
+      data: {
+        tenderId: tender.id,
+        userId: user.id,
+        jobType: "AI_ANALYZE",
+        status: "SUCCEEDED",
+        analysisInputHash,
+        promotedAt: new Date(),
+        promotedBy: user.id,
+        finishedAt: new Date(),
+        input: "{}",
+      },
+    });
+    const revision = await computeEngineSourceRevision(prisma, { tenderId: tender.id, userId: user.id });
+    assert.ok(revision);
+    const failed = await prisma.aiJob.create({
+      data: {
+        tenderId: tender.id,
+        userId: user.id,
+        jobType: "ENGINE_RUN",
+        status: "FAILED",
+        analysisInputHash: revision.sourceRevision,
+        errorMessage: "TENDER_FACTS_INVALID: Critical metadata field title source page 99 exceeds file total pages 3.",
+        finishedAt: new Date(),
+        input: "{}",
+      },
+    });
+    await prisma.aiJobStep.create({
+      data: {
+        jobId: failed.id,
+        stepName: "build-plan.blocked",
+        stepIndex: 7,
+        status: "FAILED",
+        message: "TENDER_FACTS_INVALID: Critical metadata field title source page 99 exceeds file total pages 3.",
+      },
+    });
+
+    const decision = await getCanonicalTenderWorkflowDecision(prisma, user.id, tender.id);
+    assert.equal(decision?.currentBlockingStage, "ENGINE_RUN_FAILED");
+    assert.equal(decision?.blockingStageCode, "TITLE_SOURCE_PROVENANCE_INVALID");
+    assert.equal(decision?.nextRequiredAction, "REPAIR_SOURCE_REFERENCES");
+    assert.deepEqual(decision?.blockerCodes, ["TITLE_SOURCE_PROVENANCE_INVALID"]);
+    assert.match(decision?.nextRequiredActionReason ?? "", /title source file, page, and quote/i);
+    assert.match(decision?.nextRequiredActionReason ?? "", new RegExp(`Reference: ${failed.id.slice(0, 8)}`));
+    assert.doesNotMatch(decision?.nextRequiredActionReason ?? "", /Ground requirements from source/i);
   });
 });
 
