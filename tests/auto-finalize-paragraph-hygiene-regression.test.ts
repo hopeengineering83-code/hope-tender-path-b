@@ -15,25 +15,15 @@ async function makeTechnicalDocx(): Promise<string> {
   const buffer = await Packer.toBuffer(new Document({
     sections: [{
       children: [
+        // The good sentence, unsafe pricing sentence, and safe envelope sentence
+        // deliberately share ONE paragraph. Word also splits the unsafe phrase
+        // across formatting runs. Repair must remove only the unsafe sentence.
         new Paragraph({
           children: [
-            new TextRun("Our technical methodology covers quality assurance and implementation sequencing."),
-          ],
-        }),
-        // This is the real regression shape: Word formatting splits the pricing
-        // phrase across runs. The old run-by-run cleaner never saw the complete
-        // canonical violation even though export readiness did.
-        new Paragraph({
-          children: [
+            new TextRun("Our technical methodology covers quality assurance and implementation sequencing. "),
             new TextRun({ text: "Financial ", bold: true }),
             new TextRun({ text: "proposal includes USD ", italics: true }),
-            new TextRun("500,000 for consultancy services."),
-          ],
-        }),
-        // Safe envelope-separation wording must not be damaged merely because
-        // it contains the word "financial".
-        new Paragraph({
-          children: [
+            new TextRun("500,000 for consultancy services. "),
             new TextRun("The financial offer is submitted separately in the designated commercial envelope."),
           ],
         }),
@@ -67,7 +57,7 @@ const DOC: RepairDoc = {
 };
 
 describe("auto-finalize paragraph-aware DOCX hygiene repair", () => {
-  it("removes canonical violations split across Word runs without weakening validation", async () => {
+  it("removes split-run violations while preserving safe sentences in the same paragraph", async () => {
     const original = await makeTechnicalDocx();
     const originalText = await extractDocxVisibleText(original, DOC.exactFileName!);
     assert.ok(originalText);
@@ -77,7 +67,7 @@ describe("auto-finalize paragraph-aware DOCX hygiene repair", () => {
     );
 
     const repaired = await cleanDocxHygieneIssues(original, DOC);
-    assert.ok(repaired, "repair should rewrite the unsafe paragraphs");
+    assert.ok(repaired, "repair should rewrite the unsafe paragraph content");
 
     const repairedText = await extractDocxVisibleText(repaired, DOC.exactFileName!);
     assert.ok(repairedText);
