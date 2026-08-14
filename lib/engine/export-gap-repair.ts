@@ -28,6 +28,7 @@ import { applyActiveUploadedLetterheadToTenderDocuments } from "./apply-active-l
 import { normalizeStatus } from "./document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
 import { containsPricingLeakage } from "./pricing-hygiene";
+import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
 import { generatedDocumentHasContent } from "../generated-document-content";
 import { logger } from "../observability";
 
@@ -354,6 +355,16 @@ export async function runExportGapRepair(
         }
       }
 
+      // Any repair that changes fileContent creates a new persisted artifact.
+      // Bind the integrity record to the EXACT bytes that will be stored. Leaving
+      // the pre-repair hash/length in place makes the canonical validator reject
+      // the successfully cleaned DOCX as PERSISTED_BYTE_INTEGRITY_MISMATCH.
+      const integrity = verifiedIntegrityDataFromBase64({
+        fileContent: content,
+        filename: name,
+        claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+
       await tx.generatedDocument.update({
         where: { id: doc.id },
         data: {
@@ -361,6 +372,7 @@ export async function runExportGapRepair(
           format: "DOCX",
           exactFileName: name,
           fileContent: content,
+          ...integrity,
           generationStatus: "GENERATED",
           // Gap 1: automation must never directly mark VALIDATED — that is
           // the Document Validator's authority (Gap 2). Only machine-safe
