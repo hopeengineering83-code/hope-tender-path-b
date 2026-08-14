@@ -418,6 +418,9 @@ export async function runExportGapRepair(
     skipped: skipped.length,
     manualRequired: manualRequired.length,
     blockedByHygiene: blockedByHygiene.length,
+    // Safe diagnostics only: filename + fixed issue labels. Never log source or
+    // generated document content while diagnosing an automatic repair failure.
+    blockedByHygieneDetails: blockedByHygiene,
     letterheadAppliedCount,
     finalExportReady: readiness.ok,
   });
