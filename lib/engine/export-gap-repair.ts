@@ -64,6 +64,15 @@ function decodeXmlText(value: string): string {
     .replace(/&apos;/g, "'");
 }
 
+function encodeXmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 function paragraphVisibleText(paragraphXml: string): string {
   return decodeXmlText(
     paragraphXml
@@ -78,14 +87,8 @@ function paragraphVisibleText(paragraphXml: string): string {
  * Word commonly splits a phrase across multiple <w:t> runs for formatting.
  * A run-by-run cleaner therefore cannot reliably remove a prohibited phrase:
  * e.g. "Financial" in one run + " proposal — USD 50,000" in the next.
- *
- * Evaluate the whole paragraph using the same pricing authority as export
- * readiness. When a paragraph contains an actual hygiene violation, blank only
- * its visible text runs while preserving the OOXML paragraph/table structure.
- * Safe separation wording is preserved because containsPricingLeakage already
- * excludes statements such as "financial offer is submitted separately".
  */
-function paragraphHasCanonicalHygieneRisk(text: string, doc: RepairDoc): boolean {
+function textHasCanonicalHygieneRisk(text: string, doc: RepairDoc): boolean {
   if (!text) return false;
   return AI_TRACE_TEST_RX.test(text)
     || PLACEHOLDER_TEST_RX.test(text)
@@ -98,10 +101,38 @@ function paragraphHasCanonicalHygieneRisk(text: string, doc: RepairDoc): boolean
     });
 }
 
-function blankUnsafeParagraphText(paragraphXml: string): string {
+/**
+ * Preserve valid content from a mixed paragraph. Only sentences that trip the
+ * same canonical hygiene authority used by export readiness are removed. This
+ * avoids the old failure mode where a split-run pricing phrase survived, while
+ * also avoiding a destructive whole-paragraph deletion when good technical
+ * text shares that paragraph with one unsafe sentence.
+ */
+function safeParagraphText(text: string, doc: RepairDoc): string {
+  const sentences = text.match(/[^.!?]+(?:[.!?]+|$)/g) ?? [text];
+  const kept = sentences
+    .map((sentence) => sentence.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .filter((sentence) => !textHasCanonicalHygieneRisk(sentence, doc));
+  const safe = kept.join(" ").trim();
+
+  // If the whole paragraph was classified unsafe but sentence splitting failed
+  // to isolate the cause, fail closed rather than re-emitting unsafe content.
+  if (safe === text.trim() && textHasCanonicalHygieneRisk(text, doc)) return "";
+  return safe;
+}
+
+function rewriteParagraphVisibleText(paragraphXml: string, safeText: string): string {
+  let wrote = false;
   return paragraphXml.replace(
     /(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g,
-    (_match, open, _text, close) => `${open}${close}`,
+    (_match, open, _text, close) => {
+      if (!wrote && safeText) {
+        wrote = true;
+        return `${open}${encodeXmlText(safeText)}${close}`;
+      }
+      return `${open}${close}`;
+    },
   );
 }
 
@@ -115,19 +146,18 @@ export async function cleanDocxHygieneIssues(base64Content: string, doc: RepairD
     if (!xmlFile) return null;
     const xml = await xmlFile.async("string");
 
-    // First repair at paragraph granularity. This catches canonical violations
-    // split across multiple Word runs without weakening the canonical detector.
+    // Repair at paragraph granularity so canonical violations split across
+    // multiple Word runs are visible as one sentence. Preserve every safe
+    // sentence from a mixed paragraph and rewrite only the visible text runs.
     let cleaned = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paragraphXml) => {
       const visible = paragraphVisibleText(paragraphXml);
-      return paragraphHasCanonicalHygieneRisk(visible, doc)
-        ? blankUnsafeParagraphText(paragraphXml)
-        : paragraphXml;
+      if (!textHasCanonicalHygieneRisk(visible, doc)) return paragraphXml;
+      return rewriteParagraphVisibleText(paragraphXml, safeParagraphText(visible, doc));
     });
 
-    // Then clean any residual single-run AI/placeholder traces. Pricing is not
-    // stripped word-by-word: doing so can leave orphaned amounts and can damage
-    // safe "submitted separately" wording. Pricing violations are handled as
-    // complete paragraphs above.
+    // Clean residual single-run AI/placeholder traces. Pricing is not stripped
+    // word-by-word: that can leave orphaned amounts and damage safe separation
+    // wording. Pricing violations are handled as complete sentences above.
     cleaned = cleaned.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g, (_match, open, text, close) => {
       const cleanedText = cleanXmlTextNode(text);
       return `${open}${cleanedText}${close}`;
