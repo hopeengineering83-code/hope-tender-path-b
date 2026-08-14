@@ -27,8 +27,10 @@ function containsCommercialAmount(line: string): boolean {
   const currencyAmount = /(?:ETB|USD|EUR|GBP|AED|SAR|KES|UGX|TZS|ZAR|NGN|\$|€|£)\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:ETB|USD|EUR|GBP|AED|SAR|KES|UGX|TZS|ZAR|NGN)/i.test(value);
   const pricedTermWithNumber = /(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)\D{0,40}\d[\d,]*(?:\.\d+)?/i.test(value);
   const numberWithPricedTerm = /\d[\d,]*(?:\.\d+)?\D{0,40}(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)/i.test(value);
-  return currencyAmount || pricedTermWithNumber || numberWithPricedTerm;
+  return currencyAmount || pricedTermWithNumber || numberPricedTerm.test(value);
 }
+
+const numberPricedTerm = /\d[\d,]*(?:\.\d+)?\D{0,40}(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)/i;
 
 function containsCommercialCommitment(line: string): boolean {
   const value = clean(line);
@@ -36,24 +38,27 @@ function containsCommercialCommitment(line: string): boolean {
   return /(?:our|the)\s+(?:fee|price|rate|quotation|quote|commercial\s+offer|financial\s+offer)\s+(?:is|shall\s+be|will\s+be)|we\s+quote|we\s+offer\s+(?:a\s+)?(?:fee|price|rate)/i.test(value);
 }
 
+/**
+ * Remove client-facing commercial leakage from a technical/two-envelope
+ * proposal. This function is deliberately a PURE SANITISER: it must never
+ * append internal QA narration to the proposal it is cleaning.
+ *
+ * Previously the guard removed unsafe lines and then appended a visible
+ * "Technical Price-Separation Guard" section containing phrases such as
+ * "priced BOQ", "fee quotations", "financial/commercial envelope" and
+ * "quotation form". The canonical technical-envelope validator correctly
+ * classified those high-signal terms as pricing leakage, so the cleaner could
+ * re-contaminate its own output and leave AUTO_FINALIZE permanently blocked.
+ *
+ * Audit/telemetry about removed lines belongs in logs or structured diagnostics,
+ * never in the client deliverable. The canonical validator remains unchanged.
+ */
 export function enforceTechnicalPriceSeparation(markdown: string, input: EvaluatorMatrixInput): string {
   if (!shouldEnforceTechnicalPriceSeparation(input)) return markdown;
 
-  const removed: string[] = [];
-  const keptLines = markdown.split("\n").filter((line) => {
-    const shouldRemove = containsCommercialAmount(line) || containsCommercialCommitment(line);
-    if (shouldRemove) removed.push(clean(line).slice(0, 180));
-    return !shouldRemove;
-  });
-
-  if (removed.length === 0) {
-    return `${keptLines.join("\n").trim()}\n\n## Technical Price-Separation Guard\nNo commercial amounts, rates, priced BOQ totals, fee quotations or financial-offer commitments were detected in this technical/two-envelope output.`;
-  }
-
-  return [
-    keptLines.join("\n").trim(),
-    "## Technical Price-Separation Guard",
-    `${removed.length} commercial/pricing line(s) were removed from this technical/two-envelope output. Put those details only in the financial/commercial envelope or quotation form, as applicable.`,
-    "Removed content is intentionally not reproduced here to avoid leaking commercial values into the technical proposal.",
-  ].join("\n\n");
+  return markdown
+    .split("\n")
+    .filter((line) => !containsCommercialAmount(line) && !containsCommercialCommitment(line))
+    .join("\n")
+    .trim();
 }
