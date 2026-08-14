@@ -377,8 +377,11 @@ export async function assertTenderReadyToDraftBuildPlan(
 
   // 5. Current analysis hash + completed chunks
   const { buildTenderAnalysisContent, computeAnalysisContentHash } = await import("./tender-analysis-content");
-  const company = await prisma.company.findUnique({ where: { userId }, select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } } }).catch(() => null);
-  const currentContentHash = computeAnalysisContentHash(buildTenderAnalysisContent({ title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: tender.files as any[] }, company ?? undefined));
+  // analysisInputHash is rebound at successful promotion to the persisted tender
+  // source revision. Company Vault material remains part of the immutable
+  // provider-input snapshot, but Engine's automatic Vault verification must not
+  // make a just-current tender analysis stale before Build Plan verification.
+  const currentContentHash = computeAnalysisContentHash(buildTenderAnalysisContent({ title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: tender.files as any[] }));
   const latestJob = await prisma.aiJob.findFirst({ where: { tenderId, jobType: "AI_ANALYZE", tender: { userId } }, orderBy: { createdAt: "desc" }, select: { id: true, analysisInputHash: true } });
   if (latestJob?.analysisInputHash && latestJob.analysisInputHash !== currentContentHash) {
     return { ok: false, code: "ANALYSIS_HASH_MISMATCH", message: "Tender content changed since the last analysis. Re-run AI Analyze.", status: 422 };

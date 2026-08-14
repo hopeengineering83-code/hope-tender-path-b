@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-14 UTC — Codex (exact-Preview Build Plan hash owner follow-up)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; follow-up to SHA `c4daa25dead3617858b9203c35e8fe9c92a75b95`.
+- **Real Preview finding:** exact-SHA deployment `dpl_5zjJ3L96pDyH8bkzndo45wxXYZKc` was READY and healthy. A new manual AI Analyze succeeded, automatic requirement grounding repaired 2/2, and manual Run Engine passed its route-level current-analysis check. It then failed at Automatic Build Plan verification with safe reference `da42c065`: `ANALYSIS_HASH_MISMATCH`. Build Plan retained a private company-inclusive currentness computation after Release Snapshot, Runtime Readiness, and Generation Readiness had moved to the terminal tender-source binding.
+- **Scope / repair:** Automatic Build Plan now consumes the same tender-source terminal analysis binding as every other gate. The immutable provider snapshot still binds the full Vault input; chunk integrity remains bound to the canonical analysis job ID; page/title evidence validation is unchanged and fail-closed. PostgreSQL hash-binding expectations now distinguish the pre-promotion full provider hash from the post-promotion public tender-source binding, and the chunk query regression recognizes the job-bound query.
+- **Files changed:** `lib/engine/build-plan.ts`, `tests/ai-analyze-hash-binding-db.test.ts`, `tests/ai-analyze-chunk-relation-regression.test.ts`, and `operator_handoff.md` (in addition to the prior `c4daa25` changes already on this branch).
+- **Tests/checks:** 57/57 focused reachable assertions passed; Prisma validate/generate, typecheck, targeted lint, and diff check passed. The first `c4daa25` exact-head CI exposed six stale test expectations (9,985/10,008 passed, 6 failed, 17 cancelled); this follow-up repairs those expectations. Exact-head PostgreSQL CI and real Preview rerun remain required after push.
+- **Risk / next action:** push one follow-up SHA, require exact-head CI/security/screenshot/Preview, then repeat the retained Pharo tender manual Run Engine and inspect all canonical panels and final package outputs. Provider availability may still produce a truthful external-provider blocker; it must not be misreported as a workflow success.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** until exact-head real Preview acceptance is complete.
+
 ### 2026-08-14 UTC — Codex (real Preview Vault/current-analysis contradiction)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; starting SHA `b16b9c2c67dba7996e3f5bd3e94d656ca35b0ea0`, original fixture `b4903c03` / `03b9c928`.
