@@ -27,10 +27,8 @@ function containsCommercialAmount(line: string): boolean {
   const currencyAmount = /(?:ETB|USD|EUR|GBP|AED|SAR|KES|UGX|TZS|ZAR|NGN|\$|€|£)\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:ETB|USD|EUR|GBP|AED|SAR|KES|UGX|TZS|ZAR|NGN)/i.test(value);
   const pricedTermWithNumber = /(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)\D{0,40}\d[\d,]*(?:\.\d+)?/i.test(value);
   const numberWithPricedTerm = /\d[\d,]*(?:\.\d+)?\D{0,40}(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)/i.test(value);
-  return currencyAmount || pricedTermWithNumber || numberPricedTerm.test(value);
+  return currencyAmount || pricedTermWithNumber || numberWithPricedTerm;
 }
-
-const numberPricedTerm = /\d[\d,]*(?:\.\d+)?\D{0,40}(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)/i;
 
 function containsCommercialCommitment(line: string): boolean {
   const value = clean(line);
