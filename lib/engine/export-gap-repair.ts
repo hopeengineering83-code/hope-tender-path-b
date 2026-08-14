@@ -374,15 +374,11 @@ export async function runExportGapRepair(
           fileContent: content,
           ...integrity,
           generationStatus: "GENERATED",
-          // Gap 1: automation must never directly mark VALIDATED — that is
-          // the Document Validator's authority (Gap 2). Only machine-safe
-          // content repair (AI traces, placeholders, pricing leakage) runs
-          // here; validation remains pending until the canonical validator
-          // passes. Similarly, automation never writes reviewedBy,
-          // reviewedAt, or a human REVIEWED/READY_FOR_EXPORT reviewStatus,
-          // and never creates a DocumentReview record — those are human
-          // review state. reviewNotes carries the machine-repair provenance
-          // payload only.
+          // Any byte mutation invalidates the old validation result. Returning
+          // the artifact to PENDING does not approve it; it deliberately sends
+          // the new exact bytes back through the one canonical validator. This
+          // also lets a previously FAILED hygiene document recover on retry.
+          validationStatus: "PENDING",
           reviewNotes: "machine:safe-export-repair — DOCX hygiene cleaned (AI traces, placeholders, pricing leakage). Awaiting canonical Document Validator.",
           contentSummary: `Machine export repair completed for ${name}.`,
           updatedAt: new Date(),
