@@ -470,9 +470,6 @@ export async function getTenderReleaseSnapshot(
     gateBlocker: metadataGateBlocker,
   };
 
-  const mandatory = tender.requirements.filter(
-    (requirement) => (requirement.priority ?? "").toUpperCase() === "MANDATORY",
-  );
   const requirementEvidenceStatuses = mapRequirementsToEvidence(
     tender.requirements,
     tender.expertMatches,
@@ -483,31 +480,43 @@ export async function getTenderReleaseSnapshot(
       totalPages: file.totalPages,
     })),
   );
-  const groundedMandatory = requirementEvidenceStatuses.filter(
-    (status) => status.mandatory && status.hasSourceTrace,
-  ).length;
+  // The mandatory POPULATION and every mandatory COUNT must come from the same
+  // predicate. `status.mandatory` is `isMandatoryRequirement` (MANDATORY OR
+  // CRITICAL); the denominator here previously matched `MANDATORY` alone, so a
+  // CRITICAL requirement counted as covered/grounded without ever joining the
+  // total. That inflated `evidence.covered` — the value the canonical workflow
+  // decision publishes as `mandatoryFullOrSubstantialCoverageCount` — so the
+  // Command Center and the Export Readiness primary blocker announced
+  // "release-qualified FULL/SUBSTANTIAL coverage for 2/4" while the
+  // Requirements and Evidence panel, counting a single consistent population,
+  // correctly reported 0/4 with every row a genuine gap. Treating CRITICAL as
+  // mandatory matches the rest of the release path, including the canonical
+  // decision's own `priority: { in: ["MANDATORY", "CRITICAL"] }` queries.
+  const mandatoryStatuses = requirementEvidenceStatuses.filter((status) => status.mandatory);
+  const mandatoryCount = mandatoryStatuses.length;
+  const groundedMandatory = mandatoryStatuses.filter((status) => status.hasSourceTrace).length;
 
   const requirementsBlocker =
     tender.requirements.length === 0
       ? "No requirements have been extracted."
-      : groundedMandatory < mandatory.length
-        ? `${mandatory.length - groundedMandatory} mandatory requirement(s) are missing active source evidence.`
+      : groundedMandatory < mandatoryCount
+        ? `${mandatoryCount - groundedMandatory} mandatory requirement(s) are missing active source evidence.`
         : null;
   const requirements: SnapshotRequirementsState = {
     total: tender.requirements.length,
-    mandatory: mandatory.length,
+    mandatory: mandatoryCount,
     groundedMandatory,
-    allMandatoryGrounded: mandatory.length === 0 || groundedMandatory === mandatory.length,
+    allMandatoryGrounded: mandatoryCount === 0 || groundedMandatory === mandatoryCount,
     blocker: requirementsBlocker,
   };
 
-  const covered = requirementEvidenceStatuses.filter(
-    (status) => status.mandatory && status.displayStatus === "FULLY_MET",
+  const covered = mandatoryStatuses.filter(
+    (status) => status.displayStatus === "FULLY_MET",
   ).length;
   const evidence: SnapshotEvidenceState = {
-    total: mandatory.length,
+    total: mandatoryCount,
     covered,
-    coveragePercent: mandatory.length === 0 ? 0 : Math.round((covered / mandatory.length) * 100),
+    coveragePercent: mandatoryCount === 0 ? 0 : Math.round((covered / mandatoryCount) * 100),
   };
 
   const buildPlanCount = tender.generatedDocuments.length;
@@ -646,7 +655,7 @@ export async function getTenderReleaseSnapshot(
       : buildPlan.gateBlocker ?? "A current source-verified Build Plan from Run Engine is required.",
     matchingVaultBlocker,
     finalApprovalVaultBlocker,
-    mandatoryRequirementCount: mandatory.length,
+    mandatoryRequirementCount: mandatoryCount,
     evidenceCoveragePercent: evidence.coveragePercent,
     allMandatoryGrounded: requirements.allMandatoryGrounded,
   });

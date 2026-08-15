@@ -100,6 +100,59 @@ export async function detectAnalysisSourceWithApproval(
   return approval ? "HUMAN_APPROVED_REGEX_FALLBACK" : "REGEX_FALLBACK_AI_ERROR";
 }
 
+/**
+ * Canonical analysis SOURCE for read-only panels.
+ *
+ * `detectAnalysisSourceWithApproval` reads `tender.notes` alone, so a genuine
+ * AI analysis that is proven by AiJob / AiAnalyzeChunk rows but has no notes
+ * marker resolves to `UNKNOWN`. Panels then render "no analysis has been run"
+ * and tell the owner to run AI Analyze, while the canonical workflow decision
+ * — which reads `resolveTenderAnalysisState` — simultaneously shows AI Analyze
+ * as complete. That is the exact contradiction FM-009 fixed inside
+ * `assertAnalysisReadyForFinalGeneration`; this helper applies the same
+ * resolver-first order so a secondary panel can never disagree with the
+ * central gate.
+ *
+ * Authority is unchanged: only AI_SUCCEEDED maps to `AI`. Fallback and
+ * not-started states keep their blocking sources, and any resolver failure
+ * falls through to the notes-based detector, which fails closed.
+ */
+export async function resolveCanonicalAnalysisSource(
+  client: PrismaClient,
+  tenderId: string,
+  tender: TenderAnalysisSourceLike,
+): Promise<AnalysisSource> {
+  try {
+    const tenderRow = await client.tender.findUnique({
+      where: { id: tenderId },
+      select: { userId: true },
+    });
+    if (tenderRow) {
+      const { resolveTenderAnalysisState } = await import("./analysis-state-resolver");
+      const detail = await resolveTenderAnalysisState(client, tenderId, tenderRow.userId);
+      switch (detail.state) {
+        case "AI_SUCCEEDED":
+          return "AI";
+        case "HUMAN_APPROVED_FALLBACK":
+          return "HUMAN_APPROVED_REGEX_FALLBACK";
+        case "REGEX_FALLBACK_UNAPPROVED":
+          return "REGEX_FALLBACK_AI_ERROR";
+        case "NOT_STARTED":
+          return "UNKNOWN";
+        default:
+          // QUEUED / RUNNING / PARTIAL_NEEDS_RESUME / FAILED / SUPERSEDED /
+          // SECTION_DETECTED_REQUIREMENTS_NOT_STRUCTURED describe progress, not
+          // a promoted source. Defer to the notes detector rather than assert
+          // a source the resolver has not established.
+          break;
+      }
+    }
+  } catch {
+    // Fall through to the notes-based detector below.
+  }
+  return detectAnalysisSourceWithApproval(client, tenderId, tender);
+}
+
 export type AnalysisGateResult =
   | { ok: true }
   | { ok: false; code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED"; message: string; nextAction: string };

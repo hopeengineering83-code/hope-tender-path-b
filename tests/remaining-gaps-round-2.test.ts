@@ -42,11 +42,16 @@ describe("F2 — runtime-readiness-facts forwards classification to buildTenderA
 // ─── F3: tender-release-snapshot allMandatoryGrounded vacuously true when no mandatory ──
 
 describe("F3 — allMandatoryGrounded vacuously true when mandatory.length === 0", () => {
-  it("uses `mandatory.length === 0 || groundedMandatory === mandatory.length`", () => {
+  it("uses `<count> === 0 || groundedMandatory === <count>`", () => {
     const src = read("lib/engine/tender-release-snapshot.ts");
-    assert.match(src, /allMandatoryGrounded: mandatory\.length === 0 \|\| groundedMandatory === mandatory\.length/);
-    // The old buggy expression must be gone.
+    // The mandatory population is now `mandatoryCount`, derived from the same
+    // `status.mandatory` predicate that feeds groundedMandatory/covered, so the
+    // numerator and denominator can no longer disagree. The vacuous-true
+    // guarantee this test guards is unchanged.
+    assert.match(src, /allMandatoryGrounded: mandatoryCount === 0 \|\| groundedMandatory === mandatoryCount/);
+    // The old buggy expression must stay gone, under either identifier.
     assert.doesNotMatch(src, /allMandatoryGrounded: groundedMandatory === mandatory\.length && mandatory\.length > 0/);
+    assert.doesNotMatch(src, /allMandatoryGrounded: groundedMandatory === mandatoryCount && mandatoryCount > 0/);
   });
 });
 

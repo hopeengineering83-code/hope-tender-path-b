@@ -75,12 +75,26 @@ describe("Gap D — tender-generation-readiness fails closed", () => {
 describe("Gap E — export-readiness blocks HUMAN_APPROVED_REGEX_FALLBACK", () => {
   const src = readFileSync("lib/engine/export-readiness.ts", "utf8");
 
-  it("imports detectAnalysisSourceWithApproval", () => {
-    assert.match(src, /import \{ detectAnalysisSourceWithApproval \} from "\.\/analysis-source"/);
+  it("imports the canonical analysis-source resolver", () => {
+    assert.match(src, /import \{ resolveCanonicalAnalysisSource \} from "\.\/analysis-source"/);
   });
 
-  it("calls detectAnalysisSourceWithApproval", () => {
-    assert.match(src, /detectAnalysisSourceWithApproval\(prisma, tenderId, tender\)/);
+  it("calls the canonical analysis-source resolver", () => {
+    // resolveCanonicalAnalysisSource replaces the notes-only detector, which
+    // reported ANALYSIS_SOURCE_UNKNOWN for tenders whose AI Analyze had
+    // genuinely succeeded (the proof lives in AiJob rows, not tender.notes).
+    assert.match(src, /resolveCanonicalAnalysisSource\(prisma, tenderId, tender\)/);
+  });
+
+  it("still resolves approval semantics through detectAnalysisSourceWithApproval", () => {
+    // The audit-only approval lookup must survive the resolver-first change:
+    // the canonical resolver falls back to the approval-aware detector, so
+    // HUMAN_APPROVED_REGEX_FALLBACK is still detected and still blocks.
+    const analysisSrc = readFileSync("lib/engine/analysis-source.ts", "utf8");
+    assert.match(
+      analysisSrc,
+      /export async function resolveCanonicalAnalysisSource[\s\S]*?return detectAnalysisSourceWithApproval\(client, tenderId, tender\);/,
+    );
   });
 
   it("blocks HUMAN_APPROVED_REGEX_FALLBACK with ANALYSIS_FALLBACK_AUDIT_ONLY", () => {

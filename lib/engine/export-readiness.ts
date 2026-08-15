@@ -15,7 +15,7 @@ import { containsPricingLeakage } from "./pricing-hygiene";
 import { checkExportFileByteReadiness } from "./export-byte-readiness";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessExtractionQualityPerPage } from "../extraction-quality";
-import { detectAnalysisSourceWithApproval } from "./analysis-source";
+import { resolveCanonicalAnalysisSource } from "./analysis-source";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "./submission-method-policy";
 import { validateGeneratedDocumentQuality } from "../document-generation/generated-document-quality-validator";
 import { buildTenderDocumentContext, type TenderDocumentGenerationContext } from "../document-generation/tender-document-context";
@@ -710,7 +710,12 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // the central gate (assertTenderReadyForGenerationAndExport) already blocks
   // it, this secondary panel MUST be consistent so the UI never shows "export
   // ready" when the analysis source is audit-only.
-  const analysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
+  // Resolver-first (see resolveCanonicalAnalysisSource): the notes-only
+  // detector reported ANALYSIS_SOURCE_UNKNOWN — "no analysis has been run" —
+  // for tenders whose AI Analyze had genuinely succeeded and whose workflow
+  // panel showed it complete, because the proof lives in AiJob rows rather
+  // than tender.notes. This panel must agree with the central gate.
+  const analysisSource = await resolveCanonicalAnalysisSource(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
   if (analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
     blockers.push(tenderBlocker(
       "ANALYSIS_FALLBACK_AUDIT_ONLY",
