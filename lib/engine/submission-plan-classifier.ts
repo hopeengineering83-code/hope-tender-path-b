@@ -73,7 +73,7 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   if (
     /financial proposal exclusion|separate envelope|two[-\s]envelope|sealed envelope|technical only|do not include price|do not include financial/.test(value) ||
     /\bno\s+financial\s+(?:proposal|offer)\b/.test(value) ||
-    /\bfinancial\s+(?:proposal|offer)\s+(?:is\s+)?(?:not\s+required|not\s+requested|not\s+applicable|excluded|omitted)\b/.test(value) ||
+    /\bfinancial\s+(?:proposal|offer)\s*(?:[:;,.\-–—]\s*)?(?:is\s+)?(?:not\s+required|not\s+requested|not\s+applicable|excluded|omitted)\b/.test(value) ||
     /\b(?:do\s+not|must\s+not|shall\s+not)\s+(?:generate|submit|include)\s+(?:a\s+)?financial\s+(?:proposal|offer)\b/.test(value) ||
     /\bwithout\s+(?:a\s+)?financial\s+(?:proposal|offer)\b/.test(value)
   ) {
