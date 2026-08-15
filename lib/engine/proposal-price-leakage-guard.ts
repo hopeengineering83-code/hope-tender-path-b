@@ -18,7 +18,7 @@ function shouldEnforceTechnicalPriceSeparation(input: EvaluatorMatrixInput): boo
 }
 
 function isAllowedControlLine(line: string): boolean {
-  return /no\s+price|price[-\s]?free|price[-\s]?leakage|commercial\s+controls?|financial\s+envelope|financial\/commercial\s+envelope|technical\s+proposal\s+must\s+remain|confirm\s+no|where\s+the\s+tender\s+explicitly\s+requests|commercial\s+content\s+controls/i.test(line);
+  return /no\s+price|price[-\s]?free|price[-\s]?leakage|commercial\s+controls?|financial\s+envelope|financial\/commercial\s+envelope|technical\s+proposal\s+must\s+remain|confirm\s+no|where\s+the\s+tender\s+explicitly\s+requests|commercial\s+content\s+controls|financial\s+(?:proposal|offer)\s+(?:is\s+)?(?:submitted|provided|delivered)\s+separately|(?:separate|separately)\s+(?:submitted|provided|delivered)?\s*financial\s+(?:proposal|offer)/i.test(line);
 }
 
 function containsCommercialAmount(line: string): boolean {
@@ -47,6 +47,11 @@ function containsCommercialCommitment(line: string): boolean {
  * "quotation form". The canonical technical-envelope validator correctly
  * classified those high-signal terms as pricing leakage, so the cleaner could
  * re-contaminate its own output and leave AUTO_FINALIZE permanently blocked.
+ *
+ * Safe tender-facing control wording such as "the financial offer is submitted
+ * separately" must also survive. It describes envelope separation and contains
+ * no commercial amount or commitment; deleting it can erase a genuine tender
+ * compliance statement and made the sanitizer disagree with canonical hygiene.
  *
  * Audit/telemetry about removed lines belongs in logs or structured diagnostics,
  * never in the client deliverable. The canonical validator remains unchanged.
