@@ -563,9 +563,20 @@ export async function getCanonicalTenderWorkflowDecision(
   const mandatoryFullOrSubstantialCoverageCount = snapshot.evidence.covered;
 
   // Mandatory requirements whose outstanding evidence is a file this workflow
-  // will generate. AUTO_PLANNED_ARTIFACT is the evidenceType the automatic
-  // coverage writer uses for a confirmed Build Plan row, so this asks exactly:
-  // is this requirement waiting on generation, and on nothing else?
+  // will generate. This asks exactly: is this requirement waiting on
+  // generation, and on nothing else?
+  //
+  // AUTO_PLANNED_ARTIFACT is written to `evidenceSource`, not `evidenceType`.
+  // automatic-requirement-coverage persists a confirmed Build Plan row as
+  // `evidenceType: candidate.recordType` ("BUILD_PLAN_ITEM") and
+  // `evidenceSource: automaticEvidenceSource(recordType)`
+  // ("AUTO_PLANNED_ARTIFACT"). Filtering evidenceType for that value therefore
+  // matched no row ever written, so this count was permanently 0 and the
+  // allowance below was dead code — producing precisely the deadlock its own
+  // comment warns about: the Requirements and Evidence panel showed both
+  // outstanding requirements as PARTIAL "planned output pending generated
+  // bytes", while the generation gate refused to produce those bytes because
+  // coverage was 2/4. Neither side could move first.
   //
   // The NOT clause keeps it from double counting a requirement that is already
   // covered by real evidence, so the sum with evidence.covered can never exceed
@@ -574,7 +585,7 @@ export async function getCanonicalTenderWorkflowDecision(
     where: {
       tenderId,
       priority: { in: ["MANDATORY", "CRITICAL"] },
-      complianceMatrixRows: { some: { evidenceType: "AUTO_PLANNED_ARTIFACT" } },
+      complianceMatrixRows: { some: { evidenceSource: "AUTO_PLANNED_ARTIFACT" } },
       NOT: { complianceMatrixRows: { some: { supportLevel: { in: ["FULL", "SUBSTANTIAL"] } } } },
     },
   }).catch(() => 0);

@@ -135,9 +135,23 @@ describe("generation panel evidence blockers are reachable", () => {
 
     // And it must be measured, not asserted: the count comes from requirements
     // that actually carry a planned-artifact row and are not otherwise covered.
+    //
+    // This pinned `evidenceType: "AUTO_PLANNED_ARTIFACT"` until it was found to
+    // be the wrong column. automatic-requirement-coverage persists a confirmed
+    // Build Plan row as `evidenceType: candidate.recordType` ("BUILD_PLAN_ITEM")
+    // and `evidenceSource: automaticEvidenceSource(recordType)`
+    // ("AUTO_PLANNED_ARTIFACT"), so the old filter matched no row ever written:
+    // the exemption counted 0 always and the deadlock it exists to prevent was
+    // live in Preview. The intent of this assertion — the exemption is derived
+    // from real compliance rows rather than assumed — is unchanged and is only
+    // now actually satisfied. The behavioural proof in
+    // tests/planned-output-generation-deadlock.test.ts supplies the count
+    // directly, which is why it stayed green while the query was broken;
+    // tests/generation-planned-output-deadlock-regression.test.ts pins the
+    // column against the writer so the two cannot drift again.
     assert.match(
       workflowSource,
-      /evidenceType: "AUTO_PLANNED_ARTIFACT"/,
+      /evidenceSource: "AUTO_PLANNED_ARTIFACT"/,
       "the exemption must be derived from real compliance rows",
     );
     assert.match(
