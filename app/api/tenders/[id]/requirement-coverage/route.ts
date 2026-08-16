@@ -102,10 +102,10 @@ function nextAutomaticAction(input: {
 
   const type = input.requirementType.toUpperCase();
   if (type === "EXPERT") {
-    return "No source-verified expert currently satisfies this discipline. Add the missing expert CV source document to Company Vault; ingestion, verification, matching, and linking then run automatically.";
+    return "Every Company Vault document was searched automatically and none proves an expert for this discipline. Ingestion, source-document resolution, verification, matching and linking have already run — no upload is required unless the vault genuinely holds no CV for this discipline.";
   }
   if (type === "PROJECT_EXPERIENCE") {
-    return "No source-verified project currently satisfies this experience requirement. Add the missing project-reference source document to Company Vault; ingestion, verification, matching, and linking then run automatically.";
+    return "Every Company Vault document was searched automatically and none proves a project for this experience requirement. Ingestion, source-document resolution, verification, matching and linking have already run — no upload is required unless the vault genuinely holds no matching project reference.";
   }
   if (type === "FORM" || type === "ANNEX" || type === "DECLARATION") {
     return "No eligible tender-issued original or generated artifact is available yet. The Build Plan and generation pipeline will attach it automatically when the required source or output exists.";

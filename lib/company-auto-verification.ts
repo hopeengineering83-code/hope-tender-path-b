@@ -173,6 +173,102 @@ export function deriveAutomaticSourceVerification(input: {
   };
 }
 
+/**
+ * Link vault records that carry no `sourceDocumentId` to the owned Company
+ * Vault document that actually proves them.
+ *
+ * Every verification query below is scoped to `sourceDocumentId: { not: null }`,
+ * so a record extracted without a document link was never examined at all. It
+ * stayed a draft, `canUseVaultRecord` refused it, matching skipped it, and the
+ * Requirements and Evidence panel told the owner to "Add the missing expert CV
+ * source document to Company Vault" — for a document already sitting in the
+ * vault. The owner was being asked to do the search the app declined to run.
+ *
+ * The search is the verifier itself. Each candidate document is trial-verified
+ * with `deriveAutomaticSourceVerification`, so a link is created only when that
+ * exact function would promote the record against that exact document. Nothing
+ * can be linked here that verification would then reject, no new matching rule
+ * is introduced, and a record whose identity appears in no owned document is
+ * left untouched and still fails closed.
+ */
+export async function resolveUnlinkedVaultSourceDocuments(companyId: string): Promise<{
+  expertsLinked: number;
+  projectsLinked: number;
+}> {
+  const [experts, projects] = await Promise.all([
+    prisma.expert.findMany({
+      where: { companyId, deletedAt: null, sourceDocumentId: null, trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
+      select: {
+        id: true, trustLevel: true, fullName: true, title: true, yearsExperience: true,
+        disciplines: true, sectors: true, certifications: true,
+      },
+    }),
+    prisma.project.findMany({
+      where: { companyId, deletedAt: null, sourceDocumentId: null, trustLevel: { in: MACHINE_ELIGIBLE_TRUST } },
+      select: {
+        id: true, trustLevel: true, name: true, clientName: true, country: true,
+        sector: true, serviceAreas: true, contractValue: true, currency: true,
+      },
+    }),
+  ]);
+  if (experts.length === 0 && projects.length === 0) return { expertsLinked: 0, projectsLinked: 0 };
+
+  // Only documents that can actually carry proof: owned, with extracted text.
+  const documents = await prisma.companyDocument.findMany({
+    where: { companyId, extractedText: { not: null } },
+    select: {
+      id: true, companyId: true, extractedText: true, contentSha256: true,
+      contentByteLength: true, integrityStatus: true, metadata: true,
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  if (documents.length === 0) return { expertsLinked: 0, projectsLinked: 0 };
+
+  // Exactly one proving document, or none. When two owned documents both prove
+  // the same record their authority is indistinguishable, and picking either
+  // one would attribute the record's provenance to a document that may not be
+  // its real source. That ambiguity fails closed here, exactly as it does
+  // everywhere else in the vault contract — the record simply stays unlinked.
+  const soleProvingDocument = (recordType: ReviewRecordType, fields: ReviewEvidenceField[], priorTrustLevel: string | null) => {
+    const proving = documents.filter((document) =>
+      deriveAutomaticSourceVerification({
+        recordType,
+        sourceDocument: document as ReviewSourceDocument,
+        fields,
+        priorTrustLevel,
+      }).ok,
+    );
+    return proving.length === 1 ? proving[0] : null;
+  };
+
+  let expertsLinked = 0;
+  let projectsLinked = 0;
+
+  for (const expert of experts) {
+    const document = soleProvingDocument("EXPERT", expertReviewFields(expert), expert.trustLevel);
+    if (!document) continue;
+    const linked = await prisma.expert.updateMany({
+      // sourceDocumentId stays in the filter so a concurrent writer wins instead
+      // of being overwritten.
+      where: { id: expert.id, companyId, deletedAt: null, sourceDocumentId: null },
+      data: { sourceDocumentId: document.id, updatedAt: new Date() },
+    });
+    if (linked.count === 1) expertsLinked += 1;
+  }
+
+  for (const project of projects) {
+    const document = soleProvingDocument("PROJECT", projectReviewFields(project), project.trustLevel);
+    if (!document) continue;
+    const linked = await prisma.project.updateMany({
+      where: { id: project.id, companyId, deletedAt: null, sourceDocumentId: null },
+      data: { sourceDocumentId: document.id, updatedAt: new Date() },
+    });
+    if (linked.count === 1) projectsLinked += 1;
+  }
+
+  return { expertsLinked, projectsLinked };
+}
+
 export async function autoVerifyCompanyKnowledge(companyId: string): Promise<AutoVerificationResult> {
   await prismaReady;
 
@@ -187,6 +283,11 @@ export async function autoVerifyCompanyKnowledge(companyId: string): Promise<Aut
       complianceVerified: 0, complianceBlocked: 0,
     };
   }
+
+  // Recover records the extraction left unlinked BEFORE the verification queries
+  // run, so a provable record joins this same pass instead of waiting for the
+  // owner to upload a document the vault already holds.
+  await resolveUnlinkedVaultSourceDocuments(companyId).catch(() => ({ expertsLinked: 0, projectsLinked: 0 }));
 
   const supportSourceDocumentSelect = {
     id: true,
