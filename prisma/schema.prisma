@@ -537,9 +537,10 @@ model TenderShare {
   tender      Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   createdBy   User     @relation(fields: [createdById], references: [id])
   @@index([tenderId])
-  // Note: no @@index([tokenHash]) — the @unique constraint above already
-  // creates a unique index that serves all lookups. A redundant non-unique
-  // index would cause Prisma migrate-diff drift.
+  // Kept for backward compatibility with the init migration's index and
+  // the verify-retroactive-init check. The index also speeds up the
+  // legacy plaintext-token lookup fallback path in app/share/[token]/page.tsx.
+  @@index([token])
 }
 
 model TenderFile {

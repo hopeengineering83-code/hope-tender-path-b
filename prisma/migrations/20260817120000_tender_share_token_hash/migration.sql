@@ -26,16 +26,23 @@ UPDATE "TenderShare"
 SET "tokenHash" = encode(digest("token", 'sha256'), 'hex')
 WHERE "token" IS NOT NULL AND "tokenHash" IS NULL;
 
--- 3. Add a unique index on tokenHash (partial — only for non-null values)
-CREATE UNIQUE INDEX "TenderShare_tokenHash_key" ON "TenderShare" ("tokenHash") WHERE "tokenHash" IS NOT NULL;
+-- 3. Add a unique index on tokenHash. Uses a FULL index (not partial) to
+--    match what Prisma's @unique constraint generates. PostgreSQL allows
+--    multiple NULLs in a unique index, so legacy rows with tokenHash=NULL
+--    (if any backfill was skipped) do not conflict.
+CREATE UNIQUE INDEX "TenderShare_tokenHash_key" ON "TenderShare" ("tokenHash");
 
 -- 4. Make the token column nullable (was NOT NULL in the original migration).
 --    New shares store token = NULL and use tokenHash for lookup. Legacy shares
 --    keep their plaintext token for backward-compatible lookup.
 ALTER TABLE "TenderShare" ALTER COLUMN "token" DROP NOT NULL;
 
--- 5. Drop the old non-unique index on token (created by the original
---    migration's @@index([token])). The @unique constraint on token is
---    preserved as a separate unique index. We keep the unique index because
---    legacy tokens must remain unique until they expire.
-DROP INDEX IF EXISTS "TenderShare_token_idx";
+-- Note: the old non-unique index TenderShare_token_idx (created by the
+-- original @@index([token]) in the init migration) is intentionally KEPT
+-- in the DB even though the schema no longer declares @@index([token]).
+-- The verify-retroactive-init script checks that all init-migration indexes
+-- are present, and dropping it would fail that check. The index is small
+-- (TenderShare is a low-cardinality table) and harmless — it slightly
+-- speeds up the legacy plaintext-token lookup fallback path.
+-- A future follow-up migration can drop it after the retroactive-init
+-- script is updated to exclude it.
