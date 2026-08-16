@@ -9,6 +9,7 @@ import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
 import { invalidateDashboardCache } from "../../../../../lib/dashboard-cache";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { checkAiQuota } from "../../../../../lib/ai-quota";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
@@ -1353,6 +1354,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     return NextResponse.json(
       { error: "Rate limit exceeded — too many analysis requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) },
       { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } },
+    );
+  }
+
+  // Audit H-6: per-user daily AI quota. Prevents a compromised session from
+  // burning through provider quota. Configurable via AI_DAILY_QUOTA_* env vars.
+  const quota = await checkAiQuota(userId, actor.role);
+  if (!quota.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((quota.resetAtMs - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: quota.reason ?? "Daily AI quota exceeded.", used: quota.used, limit: quota.limit },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
     );
   }
 

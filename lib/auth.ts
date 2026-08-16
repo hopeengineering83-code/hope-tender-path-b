@@ -150,7 +150,14 @@ export async function getCurrentUser() {
   const userId = await getSession();
   if (!userId) return null;
   await prismaReady;
-  return prisma.user.findUnique({ where: { id: userId } });
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  // Audit C-5: reject soft-deleted users. Even if a stolen cookie still
+  // resolves to a session row (e.g. the soft-delete transaction committed
+  // after the session was checked), the deletedAt field marks the user as
+  // no longer authorized. This is the auth-layer enforcement of the
+  // soft-delete pattern.
+  if (user?.deletedAt) return null;
+  return user;
 }
 
 export async function requireUser() {

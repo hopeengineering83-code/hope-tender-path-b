@@ -7,6 +7,7 @@ import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../..
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
 import { applyActiveSignatureAndStampToTenderDocuments } from "../../../../../lib/engine/apply-signature-stamp";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { checkAiQuota } from "../../../../../lib/ai-quota";
 import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT } from "../../../../../lib/vault-review-provenance";
@@ -249,6 +250,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const userId = actor.id;
   const rl = rateLimit(`gen:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded — too many generation requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
+  // Audit H-6: per-user daily AI quota. Generation is the most token-expensive
+  // operation; enforce the daily cap before any provider call is made.
+  const quota = await checkAiQuota(userId, actor.role);
+  if (!quota.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((quota.resetAtMs - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: quota.reason ?? "Daily AI quota exceeded.", used: quota.used, limit: quota.limit },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
 
   await prismaReady;
   const { id } = await params;

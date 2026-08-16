@@ -2,7 +2,7 @@ import { unstable_noStore as noStore } from "next/cache";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { prisma, prismaReady } from "../../../lib/prisma";
-import { isValidTenderShareToken } from "../../../lib/tender-share-security";
+import { isValidTenderShareToken, hashTenderShareToken } from "../../../lib/tender-share-security";
 import { LinkIcon, BanIcon, ClockIcon, WarningIcon } from "../../../components/icons";
 
 export const dynamic = "force-dynamic";
@@ -99,15 +99,37 @@ async function claimShareAccess(token: string): Promise<
   | { ok: true; share: NonNullable<ShareWithTender> }
   | { ok: false; reason: ShareFailureReason }
 > {
-  const claimed = await prisma.$queryRaw<Array<{ id: string }>>`
+  // SECURITY (audit C-4): look up by SHA-256 hash first (new-style shares),
+  // then fall back to plaintext token match (legacy shares created before
+  // this fix). The hash lookup is O(1) via the unique index on tokenHash.
+  // The plaintext fallback will be removed once all legacy shares have
+  // expired (max lifetime = 365 days from creation).
+  const tokenHash = hashTenderShareToken(token);
+
+  // Try the hash-based claim first (new-style shares).
+  let claimed = await prisma.$queryRaw<Array<{ id: string }>>`
     UPDATE "TenderShare"
     SET "downloadCount" = "downloadCount" + 1
-    WHERE "token" = ${token}
+    WHERE "tokenHash" = ${tokenHash}
       AND "revokedAt" IS NULL
       AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
       AND ("maxDownloads" IS NULL OR "downloadCount" < "maxDownloads")
     RETURNING "id"
   `;
+
+  // Fallback: legacy plaintext token (shares created before audit C-4 fix).
+  if (claimed.length === 0) {
+    claimed = await prisma.$queryRaw<Array<{ id: string }>>`
+      UPDATE "TenderShare"
+      SET "downloadCount" = "downloadCount" + 1
+      WHERE "token" = ${token}
+        AND "tokenHash" IS NULL
+        AND "revokedAt" IS NULL
+        AND ("expiresAt" IS NULL OR "expiresAt" > NOW())
+        AND ("maxDownloads" IS NULL OR "downloadCount" < "maxDownloads")
+      RETURNING "id"
+    `;
+  }
 
   const claimedId = claimed[0]?.id;
   if (claimedId) {
@@ -117,10 +139,18 @@ async function claimShareAccess(token: string): Promise<
     }
   }
 
-  const status = await prisma.tenderShare.findUnique({
-    where: { token },
+  // Determine the failure reason. Try hash lookup first, then legacy token.
+  let status = await prisma.tenderShare.findUnique({
+    where: { tokenHash },
     select: { revokedAt: true, expiresAt: true, maxDownloads: true, downloadCount: true },
   });
+  if (!status) {
+    // Try legacy plaintext token lookup.
+    status = await prisma.tenderShare.findUnique({
+      where: { token },
+      select: { revokedAt: true, expiresAt: true, maxDownloads: true, downloadCount: true },
+    });
+  }
   if (!status) return { ok: false, reason: "not-found" };
   if (status.revokedAt) return { ok: false, reason: "revoked" };
   if (status.expiresAt && status.expiresAt <= new Date()) return { ok: false, reason: "expired" };
