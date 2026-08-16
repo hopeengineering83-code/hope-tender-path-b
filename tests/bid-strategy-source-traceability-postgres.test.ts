@@ -64,6 +64,11 @@ before(async () => {
 after(async () => {
   sessionCookie = undefined;
   if (createdUserIds.length > 0) {
+    // Audit C-5: Tender.user now uses onDelete: Restrict, so we must delete
+    // the user's tenders BEFORE deleting the user. Previously the Cascade
+    // rule handled this automatically.
+    await prisma.tender.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await prisma.company.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
   }
   Module._resolveFilename = originalResolve;
