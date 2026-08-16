@@ -52,12 +52,16 @@ function scheduleManualJobWake(
   }
 
   const requestUrl = new URL(req.url);
-  const workerUrl = new URL("/api/ai-jobs/run-next", requestUrl.origin);
-  workerUrl.searchParams.set("jobType", jobType);
-  workerUrl.searchParams.set("tenderId", tenderId);
+  // The manual route has a 60-second budget. Waiting here for /run-next would
+  // keep that initiating invocation alive for the entire Engine/Analyze run and
+  // Vercel would kill it despite the durable job having been accepted. Hand off
+  // to the short dispatcher instead; the dispatcher owns the long worker wait.
+  const dispatchUrl = new URL("/api/ai-jobs/dispatch", requestUrl.origin);
+  dispatchUrl.searchParams.set("jobType", jobType);
+  dispatchUrl.searchParams.set("tenderId", tenderId);
   schedule(async () => {
     try {
-      const response = await fetchWorker(workerUrl, {
+      const response = await fetchWorker(dispatchUrl, {
         method: "POST",
         cache: "no-store",
         redirect: "manual",
@@ -69,12 +73,12 @@ function scheduleManualJobWake(
         },
       });
       if (!response.ok) {
-        logger.warn("[manual-worker-wake] job remains queued because the worker wake was rejected", {
+        logger.warn("[manual-worker-wake] job remains queued because the dispatcher wake was rejected", {
           status: response.status,
         });
       }
     } catch (error) {
-      logger.warn("[manual-worker-wake] job remains queued because the worker wake failed", {
+      logger.warn("[manual-worker-wake] job remains queued because the dispatcher wake failed", {
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
       });
     }
