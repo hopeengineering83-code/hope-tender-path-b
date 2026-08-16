@@ -59,7 +59,7 @@ describe("request-scoped upload worker wake", () => {
   it("uses Next after and forwards only the authenticated same-origin session", () => {
     assert.match(helper, /import \{ after \} from "next\/server"/);
     assert.match(helper, /const cookie = req\.headers\.get\("cookie"\)/);
-    assert.match(helper, /new URL\("\/api\/ai-jobs\/run-next", requestUrl\.origin\)/);
+    assert.match(helper, /new URL\("\/api\/ai-jobs\/dispatch", requestUrl\.origin\)/);
     assert.match(helper, /headers: \{[\s\S]*cookie,[\s\S]*origin,[\s\S]*referer,/);
     assert.doesNotMatch(helperCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/);
   });

@@ -77,7 +77,7 @@ describe("Run Engine wake — fail-closed authority", () => {
   });
 
   it("defers to the durable worker instead of running the Engine inline", () => {
-    assert.match(wakeCode, /new URL\("\/api\/ai-jobs\/run-next", requestUrl\.origin\)/);
+    assert.match(wakeCode, /new URL\("\/api\/ai-jobs\/dispatch", requestUrl\.origin\)/);
     assert.doesNotMatch(wakeCode, /runTenderEngine|getHandler|claimJobForCaller/);
   });
 });
@@ -223,7 +223,7 @@ describe("Run Engine wake — scope", () => {
     for (const task of tasks) await task();
 
     assert.equal(seen.length, 1);
-    assert.equal(seen[0].pathname, "/api/ai-jobs/run-next");
+    assert.equal(seen[0].pathname, "/api/ai-jobs/dispatch");
     assert.equal(seen[0].searchParams.get("jobType"), "ENGINE_RUN");
     assert.equal(seen[0].searchParams.get("tenderId"), "t-9");
   });

@@ -54,7 +54,7 @@ describe("a manually authorized AI Analyze wakes its own worker", () => {
 
     assert.equal(scheduled, true);
     assert.equal(c.calls.length, 1, "exactly one wake — the atomic claim owns QUEUED to RUNNING");
-    assert.equal(c.calls[0].url.pathname, "/api/ai-jobs/run-next");
+    assert.equal(c.calls[0].url.pathname, "/api/ai-jobs/dispatch");
     assert.equal(
       c.calls[0].url.searchParams.get("jobType"),
       "AI_ANALYZE",
