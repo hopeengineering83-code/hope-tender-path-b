@@ -537,7 +537,9 @@ model TenderShare {
   tender      Tender   @relation(fields: [tenderId], references: [id], onDelete: Cascade)
   createdBy   User     @relation(fields: [createdById], references: [id])
   @@index([tenderId])
-  @@index([tokenHash])
+  // Note: no @@index([tokenHash]) — the @unique constraint above already
+  // creates a unique index that serves all lookups. A redundant non-unique
+  // index would cause Prisma migrate-diff drift.
 }
 
 model TenderFile {

@@ -28,3 +28,14 @@ WHERE "token" IS NOT NULL AND "tokenHash" IS NULL;
 
 -- 3. Add a unique index on tokenHash (partial — only for non-null values)
 CREATE UNIQUE INDEX "TenderShare_tokenHash_key" ON "TenderShare" ("tokenHash") WHERE "tokenHash" IS NOT NULL;
+
+-- 4. Make the token column nullable (was NOT NULL in the original migration).
+--    New shares store token = NULL and use tokenHash for lookup. Legacy shares
+--    keep their plaintext token for backward-compatible lookup.
+ALTER TABLE "TenderShare" ALTER COLUMN "token" DROP NOT NULL;
+
+-- 5. Drop the old non-unique index on token (created by the original
+--    migration's @@index([token])). The @unique constraint on token is
+--    preserved as a separate unique index. We keep the unique index because
+--    legacy tokens must remain unique until they expire.
+DROP INDEX IF EXISTS "TenderShare_token_idx";

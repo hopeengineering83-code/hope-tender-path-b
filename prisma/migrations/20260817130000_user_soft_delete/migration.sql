@@ -21,7 +21,9 @@ CREATE INDEX "User_deletedAt_idx" ON "User" ("deletedAt");
 --    This prevents accidental hard-deletes of users with tenders. The
 --    application layer's soft-delete path does not trigger this constraint
 --    because it UPDATEs (sets deletedAt) rather than DELETEing.
---    We must drop the existing FK constraint first, then recreate it.
+--    We must drop the existing FK constraint first, then recreate it with
+--    the same name and ON UPDATE CASCADE (to match Prisma's expected
+--    constraint definition — otherwise migrate diff reports drift).
 ALTER TABLE "Tender" DROP CONSTRAINT "Tender_userId_fkey";
 ALTER TABLE "Tender" ADD CONSTRAINT "Tender_userId_fkey"
-  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT;
+  FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

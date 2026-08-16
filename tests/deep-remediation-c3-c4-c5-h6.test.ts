@@ -150,6 +150,8 @@ describe("C-4: TenderShare token hashing", () => {
     assert.match(migration, /encode\(digest\("token", 'sha256'\), 'hex'\)/, "must backfill with sha256");
     // Must add unique partial index.
     assert.match(migration, /CREATE UNIQUE INDEX "TenderShare_tokenHash_key"/, "must add unique index");
+    // Must make token column nullable.
+    assert.match(migration, /ALTER COLUMN "token" DROP NOT NULL/, "must make token nullable");
     // Must NOT delete data or drop columns.
     const executableSql = migration.split("\n").filter(l => !l.trim().startsWith("--")).join("\n");
     assert.doesNotMatch(executableSql, /\bDELETE\s+FROM\b/i, "executable SQL must not DELETE FROM");
