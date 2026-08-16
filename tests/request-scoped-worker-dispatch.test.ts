@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 
-import { dispatchWorkerRequest } from "../app/api/ai-jobs/dispatch/route";
+import { dispatchWorkerRequest } from "../lib/ai-jobs/worker-dispatch";
 import {
   scheduleRequestScopedAnalyzeWorkerWake,
   scheduleRequestScopedEngineWorkerWake,
