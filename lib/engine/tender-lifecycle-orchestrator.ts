@@ -571,7 +571,6 @@ export async function computeTenderLifecycle(
   const metadataExportOk = !meta.blockingForExport;
 
   // ── Source references ──────────────────────────────────────────────────────
-  const mandatoryReqs = requirements.filter((r) => r.priority === "MANDATORY");
   const requirementEvidenceStatuses = mapRequirementsToEvidence(
     requirements,
     [],
@@ -585,6 +584,21 @@ export async function computeTenderLifecycle(
   const canonicalStatusByRequirementId = new Map(
     requirementEvidenceStatuses.map((status) => [status.requirementId, status]),
   );
+  // The mandatory population must be the one the canonical evidence statuses
+  // use — `status.mandatory` is isMandatoryRequirement, i.e. MANDATORY OR
+  // CRITICAL. Filtering on `priority === "MANDATORY"` alone hid every CRITICAL
+  // requirement from `mandatoryEvidenceReady`, so a tender with two MANDATORY
+  // rows covered and two CRITICAL rows only partially covered satisfied
+  // finalExportReady, reached lifecycle EXPORT_READY, and rendered
+  // "Ready to download. The final ZIP package is ready." beside a live
+  // Download Final ZIP button — while the canonical blocker on the same page
+  // said 2/4 and the download route itself refused with
+  // CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE. Same defect class as the release
+  // snapshot's numerator/denominator split, in a second file.
+  const mandatoryRequirementIds = new Set(
+    requirementEvidenceStatuses.filter((status) => status.mandatory).map((status) => status.requirementId),
+  );
+  const mandatoryReqs = requirements.filter((r) => mandatoryRequirementIds.has(r.id));
   const ungroundedMandatory = mandatoryReqs.filter(
     (requirement) => !canonicalStatusByRequirementId.get(requirement.id)?.hasSourceTrace,
   );

@@ -364,9 +364,25 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
                               &ldquo;{row.sourceExactQuote.slice(0, 200)}{row.sourceExactQuote.length > 200 ? "…" : ""}&rdquo;
                             </blockquote>
                           )}
-                          <span className="inline-flex items-center rounded border border-blue-200 bg-blue-50 px-1 py-0.5 text-[10px] font-medium text-blue-700">
-                            {Math.round((row.sourceConfidence ?? 0) * 100)}% grounding confidence
-                          </span>
+                          {/*
+                            sourceConfidence is the extractor's optional self-reported
+                            score, stored as `req.sourceConfidence ?? 0` — so a model that
+                            returns no score persists 0. Rendering that unconditionally put
+                            "0% grounding confidence" directly beneath a verified file,
+                            page, heading and exact quote, which reads as worthless
+                            grounding when it only means "no score was supplied". The
+                            grounding shown above is containment-verified and is the real
+                            signal; the chip appears only when a score actually exists.
+                          */}
+                          {(row.sourceConfidence ?? 0) > 0 ? (
+                            <span className="inline-flex items-center rounded border border-blue-200 bg-blue-50 px-1 py-0.5 text-[10px] font-medium text-blue-700">
+                              {Math.round(row.sourceConfidence * 100)}% grounding confidence
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded border border-blue-200 bg-blue-50 px-1 py-0.5 text-[10px] font-medium text-blue-700">
+                              Source-verified against the active tender file
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <p role="status" className="text-xs text-orange-800">Automatic source grounding.</p>
