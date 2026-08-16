@@ -19,26 +19,26 @@ export type RequestScopedContinuationJobType = "PROPOSAL_GENERATION" | "AUTO_FIN
 
 const MAX_REQUEST_SCOPED_WAKE_COUNT = 10;
 
+type Scheduler = (task: () => Promise<void>) => void;
+
 /**
- * Best-effort wake for durable automatic upload stages.
+ * Best-effort wake for durable automatic upload/continuation stages.
  *
- * The request's authenticated session is forwarded to /api/ai-jobs/run-next,
- * so claimJobForCaller remains scoped to the same tenant/user. This helper is
- * deliberately unable to start AI_ANALYZE, ENGINE_RUN, generation, or any
- * other normal/manual workflow stage.
- *
- * EXTRACT_TEXT handles one source file per worker request. A secure upload may
- * persist up to ten files, so callers may request a bounded concurrent wake for
- * the complete batch. Transactional job claims prevent duplicate execution.
+ * The caller's authenticated session is forwarded to the short dispatcher.
+ * The dispatcher then owns the long /run-next invocation, so the request that
+ * merely enqueued the durable stage is never kept alive for the whole worker
+ * execution. Transactional job claims remain the duplicate-execution guard.
  */
 export function scheduleRequestScopedWorkerWake(
   req: Request,
   jobType: RequestScopedUploadJobType | RequestScopedContinuationJobType,
   requestedCount = 1,
+  schedule: Scheduler = after,
+  fetchDispatcher: typeof fetch = fetch,
 ): boolean {
   const cookie = req.headers.get("cookie");
   if (!cookie) {
-    logger.warn("[worker-wake] authenticated upload stage could not be nudged because the session cookie was unavailable", {
+    logger.warn("[worker-wake] authenticated stage could not be nudged because the session cookie was unavailable", {
       jobType,
     });
     return false;
@@ -46,15 +46,15 @@ export function scheduleRequestScopedWorkerWake(
 
   const count = Math.max(1, Math.min(MAX_REQUEST_SCOPED_WAKE_COUNT, Math.trunc(requestedCount) || 1));
   const requestUrl = new URL(req.url);
-  const workerUrl = new URL("/api/ai-jobs/run-next", requestUrl.origin);
-  workerUrl.searchParams.set("jobType", jobType);
+  const dispatchUrl = new URL("/api/ai-jobs/dispatch", requestUrl.origin);
+  dispatchUrl.searchParams.set("jobType", jobType);
   const origin = requestUrl.origin;
   const referer = req.url;
 
-  after(async () => {
+  schedule(async () => {
     await Promise.all(Array.from({ length: count }, async () => {
       try {
-        const response = await fetch(workerUrl, {
+        const response = await fetchDispatcher(dispatchUrl, {
           method: "POST",
           cache: "no-store",
           redirect: "manual",
@@ -66,13 +66,13 @@ export function scheduleRequestScopedWorkerWake(
           },
         });
         if (!response.ok) {
-          logger.warn("[worker-wake] durable upload stage remains queued because the request-scoped worker nudge was rejected", {
+          logger.warn("[worker-wake] durable stage remains queued because the dispatcher nudge was rejected", {
             jobType,
             status: response.status,
           });
         }
       } catch (error) {
-        logger.warn("[worker-wake] durable upload stage remains queued because the request-scoped worker nudge failed", {
+        logger.warn("[worker-wake] durable stage remains queued because the dispatcher nudge failed", {
           jobType,
           errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
         });
