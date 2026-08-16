@@ -170,7 +170,12 @@ function recommendedActionFor(status: SubmissionPlanRowStatus, planFile: Submiss
     case "PLANNED": return "Automatic post-Engine generation has not produced final file content yet.";
     case "MISSING_TENDER_SOURCE_FORM": return "Upload the tender-issued source form from the complete tender package. Company Vault documents are already official — this only applies to tender-issued forms.";
     case "MISSING": return `Automatic post-Engine generation must produce the required file (${planFile?.exactFileName ?? "missing file"}).`;
-    case "OUTSIDE_PLAN": return `Map this document into the submission plan or supersede it; it is not part of the tender-required file list (${doc?.exactFileName ?? doc?.name ?? "unmapped doc"}).`;
+    // Previously interpolated the document's OWN filename into "not part of the
+    // tender-required file list (…)", so the row read as a file missing from a
+    // list containing only itself. It also opened with four manual verbs for a
+    // document the app generated. An unplanned extra is simply left out of the
+    // package — no owner action is required for the normal path.
+    case "OUTSIDE_PLAN": return `${doc?.exactFileName ?? doc?.name ?? "This document"} is not one of the tender-required files, so it is excluded from the package automatically. No action is needed unless it should replace a required file.`;
     case "SUPERSEDED": return "Historical row — already excluded from the final package.";
     default: return "Review the row status.";
   }
@@ -221,12 +226,30 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
     }
   }
 
+  // When several generated documents share a key, the plan row must adopt the
+  // CURRENT one. This kept whichever arrived first, so a superseded or
+  // content-less predecessor could claim the plan row and strand the live
+  // document — which then fell through to the OUTSIDE_PLAN default below and
+  // demanded the owner Reclassify / Supersede / Exclude a file the app had
+  // just produced itself. Tenders accumulate these: the reported tender showed
+  // 11 historical rows behind a single required file.
+  //
+  // Rank: never-superseded first, then a document that actually has bytes,
+  // then validated over unvalidated. Ordering is otherwise preserved, so a
+  // single-document key behaves exactly as before.
+  const docRank = (doc: GeneratedDocSnapshot): number => {
+    const superseded = (doc.generationStatus ?? "").toUpperCase() === "SUPERSEDED";
+    const hasBytes = Boolean((doc.fileContent ?? "").length > 0 || (doc.storagePath ?? "").length > 0);
+    const validated = ["PASSED", "VALIDATED"].includes((doc.validationStatus ?? "").toUpperCase());
+    return (superseded ? 0 : 4) + (hasBytes ? 2 : 0) + (validated ? 1 : 0);
+  };
   const docByKey = new Map<string, GeneratedDocSnapshot>();
   const usedDocIds = new Set<string>();
   for (const doc of input.generatedDocuments) {
     const key = fileKey(doc.exactFileName ?? doc.name);
-    if (!key || docByKey.has(key)) continue;
-    docByKey.set(key, doc);
+    if (!key) continue;
+    const existing = docByKey.get(key);
+    if (!existing || docRank(doc) > docRank(existing)) docByKey.set(key, doc);
   }
 
   const rows: SubmissionPlanRow[] = [];
