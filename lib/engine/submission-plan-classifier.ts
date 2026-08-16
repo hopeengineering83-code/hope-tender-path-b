@@ -81,8 +81,24 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   }
 
   // Submission method / deadline / delivery rules → SUBMISSION_RULE (not TECHNICAL_PROPOSAL)
-  if (/email recipients|both contacts|deadline|submit before|submit by|cc both|portal address|submission method|submission deadline|delivery rules|delivery instructions|how to submit|where to submit/.test(value)) {
-    return result("SUBMISSION_RULE", "Submission process/timing/recipient rule, not a deliverable file.");
+  //
+  // The email SUBJECT LINE belongs here and was missing. A tender line such as
+  // "Required Email Subject: Technical Proposal for Pharo Ventures" describes
+  // how to address the submission email; it is not something the bidder hands
+  // over. Without these patterns the row fell through to the deliverable branch
+  // and the Build Plan invented a mandatory file literally named
+  // "Required Email Subject.docx" — which automatic generation can never
+  // produce, so the package could never converge and the owner was told a
+  // required submission document was permanently missing.
+  //
+  // Same failure shape as the "No Financial Proposal.docx" rule above: an
+  // instruction about the submission was read as a thing to submit.
+  if (
+    /email recipients|both contacts|deadline|submit before|submit by|cc both|portal address|submission method|submission deadline|delivery rules|delivery instructions|how to submit|where to submit/.test(value) ||
+    /\b(?:required\s+)?(?:e-?mail\s+)?subject\s*(?:line|title|header)?\s*[:\-–—]/.test(value) ||
+    /\bemail\s+subject\b|\bsubject\s+line\b|\bsubject\s+of\s+the\s+e-?mail\b|\bmark\s+the\s+(?:e-?mail|envelope)\b|\bemail\s+body\b|\bcovering\s+e-?mail\b/.test(value)
+  ) {
+    return result("SUBMISSION_RULE", "Submission process/timing/recipient/subject rule, not a deliverable file.");
   }
 
   // Formatting rules → INTERNAL_COMPLIANCE_CONTROL (not TECHNICAL_PROPOSAL)
