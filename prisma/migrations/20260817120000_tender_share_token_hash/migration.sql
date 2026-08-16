@@ -12,10 +12,16 @@
 -- Once all existing share links have expired (max lifetime = 365 days), a
 -- follow-up migration can drop the token column entirely.
 
+-- 0. Enable pgcrypto for digest() function. Required for SHA-256 hashing
+--    inside the backfill UPDATE. The extension is idempotent — safe to run
+--    even if already enabled. On most managed Postgres providers (Neon,
+--    Supabase, Railway) pgcrypto is pre-installed in the default database.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- 1. Add the tokenHash column (nullable for backfill)
 ALTER TABLE "TenderShare" ADD COLUMN "tokenHash" TEXT;
 
--- 2. Backfill: hash every existing plaintext token
+-- 2. Backfill: hash every existing plaintext token using pgcrypto's digest()
 UPDATE "TenderShare"
 SET "tokenHash" = encode(digest("token", 'sha256'), 'hex')
 WHERE "token" IS NOT NULL AND "tokenHash" IS NULL;

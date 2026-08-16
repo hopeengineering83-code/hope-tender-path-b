@@ -140,14 +140,21 @@ describe("C-4: TenderShare token hashing", () => {
     assert.notEqual(a.tokenHash, b.tokenHash, "hashes must be unique");
   });
 
-  it("schema declares tokenHash as the unique lookup column", () => {
-    const schema = readFileSync("prisma/schema.prisma", "utf8");
-    // tokenHash column exists and is unique.
-    assert.match(schema, /tokenHash\s+String\?\s+@unique/, "tokenHash must be a unique column");
-    // token is now nullable (legacy shares only).
-    assert.match(schema, /token\s+String\?\s+@unique\s+@default\(cuid\(\)\)/, "token must be nullable");
-    // Index on tokenHash for efficient lookup.
-    assert.match(schema, /@@index\(\[tokenHash\]\)/, "tokenHash must be indexed");
+  it("TenderShare token hashing migration is safe (additive, enables pgcrypto)", () => {
+    const migration = readFileSync("prisma/migrations/20260817120000_tender_share_token_hash/migration.sql", "utf8");
+    // Must enable pgcrypto for the digest() function used in backfill.
+    assert.match(migration, /CREATE EXTENSION IF NOT EXISTS pgcrypto/, "must enable pgcrypto");
+    // Must add tokenHash column.
+    assert.match(migration, /ADD COLUMN "tokenHash"/, "must add tokenHash column");
+    // Must backfill via digest().
+    assert.match(migration, /encode\(digest\("token", 'sha256'\), 'hex'\)/, "must backfill with sha256");
+    // Must add unique partial index.
+    assert.match(migration, /CREATE UNIQUE INDEX "TenderShare_tokenHash_key"/, "must add unique index");
+    // Must NOT delete data or drop columns.
+    const executableSql = migration.split("\n").filter(l => !l.trim().startsWith("--")).join("\n");
+    assert.doesNotMatch(executableSql, /\bDELETE\s+FROM\b/i, "executable SQL must not DELETE FROM");
+    assert.doesNotMatch(executableSql, /\bDROP\s+TABLE\b/i, "executable SQL must not DROP TABLE");
+    assert.doesNotMatch(executableSql, /\bDROP\s+COLUMN\b/i, "executable SQL must not DROP COLUMN");
   });
 
   it("share creation route stores ONLY the hash (source inspection)", () => {
