@@ -29,6 +29,7 @@ const stripComments = (source: string) => source
   .replace(/^[ \t]*\/\/.*$/gm, "");
 
 const wakeCode = stripComments(readFileSync("lib/ai-jobs/request-scoped-engine-worker-wake.ts", "utf8"));
+const dispatchCode = stripComments(readFileSync("lib/ai-jobs/worker-dispatch.ts", "utf8"));
 const engineRouteCode = stripComments(readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8"));
 const runNext = readFileSync("app/api/ai-jobs/run-next/route.ts", "utf8");
 const claimPolicy = readFileSync("lib/job-claim-policy.ts", "utf8");
@@ -79,6 +80,13 @@ describe("Run Engine wake — fail-closed authority", () => {
   it("defers to the durable worker instead of running the Engine inline", () => {
     assert.match(wakeCode, /new URL\("\/api\/ai-jobs\/dispatch", requestUrl\.origin\)/);
     assert.doesNotMatch(wakeCode, /runTenderEngine|getHandler|claimJobForCaller/);
+
+    // The wake reaches the durable worker through the dispatcher now, so pinning
+    // only the first hop would stop proving this test's own title: that the work
+    // ends up on the worker rather than inline. Pin the second hop too, or a
+    // dispatcher that quietly ran the Engine itself would keep this green.
+    assert.match(dispatchCode, /new URL\("\/api\/ai-jobs\/run-next", requestUrl\.origin\)/);
+    assert.doesNotMatch(dispatchCode, /runTenderEngine|getHandler|claimJobForCaller/);
   });
 });
 
@@ -89,6 +97,13 @@ describe("Run Engine wake — cron remains the only recovery path", () => {
     // retry re-arm. Recovery must stay with the cron alone.
     assert.doesNotMatch(wakeCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/i);
     assert.match(wakeCode, /req\.headers\.get\("cookie"\)/);
+
+    // The dispatcher is the hop that now actually calls run-next, so it inherits
+    // this prohibition. Checking only the wake would let the sweeps be claimed by
+    // proxy: a secret added here, not there, still hands the wake failStuckJobs /
+    // reapStaleQueuedJobs / retry re-arm.
+    assert.doesNotMatch(dispatchCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/i);
+    assert.match(dispatchCode, /req\.headers\.get\("cookie"\)/);
   });
 
   it("keeps every recovery sweep inside run-next's automated-caller branch", () => {

@@ -8,6 +8,8 @@ const codeOnly = (source: string) => source
   .replace(/^[ \t]*\/\/.*$/gm, "");
 const helper = read("lib/ai-jobs/request-scoped-worker-wake.ts");
 const helperCode = codeOnly(helper);
+const dispatch = read("lib/ai-jobs/worker-dispatch.ts");
+const dispatchCode = codeOnly(dispatch);
 const uploadRoute = read("app/api/upload/route.ts");
 const uploadFirstRoute = read("app/api/tenders/upload-first/route.ts");
 const capabilitiesRoute = read("app/api/auth/workflow-capabilities/route.ts");
@@ -62,6 +64,13 @@ describe("request-scoped upload worker wake", () => {
     assert.match(helper, /new URL\("\/api\/ai-jobs\/dispatch", requestUrl\.origin\)/);
     assert.match(helper, /headers: \{[\s\S]*cookie,[\s\S]*origin,[\s\S]*referer,/);
     assert.doesNotMatch(helperCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/);
+
+    // Same-origin session forwarding is only meaningful end to end. The helper
+    // now stops at the dispatcher, so the dispatcher has to carry the rest of the
+    // guarantee: it reaches the durable worker, and it presents no worker secret
+    // of its own on the way.
+    assert.match(dispatch, /new URL\("\/api\/ai-jobs\/run-next", requestUrl\.origin\)/);
+    assert.doesNotMatch(dispatchCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/);
   });
 
   it("bounds concurrent multi-file wakes to the ten-file request limit", () => {
