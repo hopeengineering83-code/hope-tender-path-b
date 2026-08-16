@@ -722,6 +722,11 @@ export async function getCanonicalTenderWorkflowDecision(
     mandatoryTracedCount,
     mandatoryComplianceRowsCount,
     mandatoryFullOrSubstantialCoverageCount,
+    // Computed above and previously dropped here. Because the field is
+    // optional, omitting it silently resolved to `?? 0`, so the planned-output
+    // allowance was inert no matter what the query returned — the whole reason
+    // the generation deadlock survived a fix to the query itself.
+    mandatoryAwaitingPlannedOutputCount,
     confirmedBuildPlanExists,
     requiredDocumentsTotal,
     generatedDocumentsTotal,

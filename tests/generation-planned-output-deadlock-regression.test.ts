@@ -108,4 +108,20 @@ describe("the planned-output allowance queries the column the writer fills", () 
     assert.match(writerSrc, /evidenceSource: automaticEvidenceSource\(item\.candidate\.recordType\)/);
     assert.match(writerSrc, /if \(recordType === "BUILD_PLAN_ITEM"\) return "AUTO_PLANNED_ARTIFACT";/);
   });
+
+  it("the computed count is actually passed into the decision", () => {
+    // The missing link. mandatoryAwaitingPlannedOutputCount was computed by
+    // getCanonicalTenderWorkflowDecision and then omitted from the
+    // buildCanonicalWorkflowDecision call. Because the field is optional,
+    // omitting it resolved to `?? 0`, so the allowance stayed inert and fixing
+    // the query alone changed nothing on the running Preview. Query, pure
+    // function and wiring must all be pinned — two of the three passing is
+    // exactly how this survived.
+    const call = decisionSrc.slice(decisionSrc.indexOf("const decision = buildCanonicalWorkflowDecision({"));
+    const callObject = call.slice(0, call.indexOf("});"));
+    assert.ok(
+      /\n\s*mandatoryAwaitingPlannedOutputCount,/.test(callObject),
+      "getCanonicalTenderWorkflowDecision must forward the count it computes",
+    );
+  });
 });
