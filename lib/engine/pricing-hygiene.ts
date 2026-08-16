@@ -30,6 +30,28 @@ function sentences(text: string): string[] {
 }
 
 function isSafeNoPriceSentence(sentence: string): boolean {
+  // A bare cross-reference to the separate financial/commercial envelope,
+  // carrying no figure of any kind, is the correct way for a technical
+  // document to say where pricing lives — "Pricing is presented in the
+  // Financial Proposal." It names the other envelope precisely BECAUSE the
+  // amounts are not here. standaloneFinancialTerm matches "financial
+  // proposal" on sight, so without this the guard flagged the sentence that
+  // demonstrates proper separation, marking a clean Technical Proposal FAILED
+  // and stalling AUTO_FINALIZE on a document with no leaked figure in it.
+  //
+  // Deliberately narrow: any digit, percentage or currency symbol anywhere in
+  // the sentence disqualifies it, so "Financial Proposal totals USD 4,250,000"
+  // is still leakage and every numeric rule below still applies.
+  const namesSeparateEnvelope =
+    /\b(financial|commercial|price|pricing|fee)\s+(proposal|offer|envelope|submission|document|annex)\b/i.test(sentence);
+  // Naming the envelope is safe only when the sentence carries nothing else
+  // priced. "Our commercial proposal includes itemized rates" names it and
+  // then leaks anyway, so any figure or further commercial term disqualifies.
+  const carriesPricedContent =
+    /[0-9%$€£]/.test(sentence)
+    || /\b(rate|rates|itemi[sz]ed|bill of quantities|BoQ|breakdown|lump sum|total|amount|amounts|quotation|quoted|invoice|unit price|price list|costing)\b/i.test(sentence);
+  if (namesSeparateEnvelope && !carriesPricedContent) return true;
+
   return /\b(does not|do not|must not|shall not|should not|will not)\b.{0,140}\b(include|contain|show|disclose|present|submit)\b.{0,180}\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b/i.test(sentence)
     || /\b(no price leakage|financial offer is submitted separately|commercial offer is submitted separately|no financial offer included|price[sd]?\s+separately|submitted\s+separately|as\s+a\s+separate\s+(?:financial|commercial|price))\b/i.test(sentence)
     || /\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b.{0,180}\b(not included|not shown|not disclosed|excluded|separate|separately)\b/i.test(sentence);
