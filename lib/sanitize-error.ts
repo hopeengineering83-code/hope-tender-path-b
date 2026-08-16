@@ -34,6 +34,12 @@ export function redactSecrets(text: string): string {
     // OpenAI org-/proj- keys
     .replace(/org-[a-zA-Z0-9]{20,}/g, "[KEY_REDACTED]")
     .replace(/proj-[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
+    // Groq gsk_ keys (underscore prefix — not matched by sk- above)
+    .replace(/gsk_[a-zA-Z0-9]{30,}/g, "[KEY_REDACTED]")
+    // Cerebras csk_ keys (underscore prefix — not matched by sk- above)
+    .replace(/csk_[a-zA-Z0-9]{30,}/g, "[KEY_REDACTED]")
+    // DeepSeek dsk- keys (real DeepSeek format — not sk-deepseek-)
+    .replace(/dsk-[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
     // GitHub PATs
     .replace(/ghp_[a-zA-Z0-9]{36,}/g, "[KEY_REDACTED]")
     .replace(/github_pat_[a-zA-Z0-9_]{20,}/g, "[KEY_REDACTED]")
@@ -41,6 +47,8 @@ export function redactSecrets(text: string): string {
     .replace(/eyJ[a-zA-Z0-9_-]{10,}\.eyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]*/g, "[JWT_REDACTED]")
     // Vercel Blob tokens
     .replace(/vercel_blob_[a-zA-Z0-9_-]{20,}/gi, "[KEY_REDACTED]")
+    // Vercel deployment tokens (vcp_*)
+    .replace(/vcp_[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
     // api_key= query params
     .replace(/(api[_-]?key\s*[:=]\s*)[^\s&,;]+/gi, "$1[KEY_REDACTED]")
     // Database connection strings

@@ -6,6 +6,7 @@ import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, get
 import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt } from "./ai-trust-boundary";
+import { redactSecrets } from "./sanitize-error";
 import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
 const apiKey = process.env.GEMINI_API_KEY;
@@ -2765,9 +2766,14 @@ export async function generateWithClaudeTools(
         if (/401|403|invalid api key|authentication/i.test(msg)) {
           const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
           if (strictAuth) {
-            throw new Error(`Anthropic API key invalid — check ANTHROPIC_API_KEY. (${msg})`);
+            // SECURITY (audit C-6): never interpolate the raw provider error
+            // message — Anthropic's SDK can include the Authorization header
+            // (sk-ant-...) in err.message on 401. Use a fixed string; the
+            // full redacted detail is already in attemptError for the warn
+            // log below.
+            throw new Error("Anthropic API key invalid — check ANTHROPIC_API_KEY configuration.");
           }
-          logger.warn(`[ai:tools] Claude auth error on ${modelName} — falling back: ${msg.slice(0, 100)}`);
+          logger.warn(`[ai:tools] Claude auth error on ${modelName} — falling back: ${redactSecrets(msg).slice(0, 120)}`);
           aborted = true;
           break;
         }
