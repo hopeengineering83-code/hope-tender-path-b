@@ -74,6 +74,20 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-17 UTC — Claude Code (gap found by running the app locally)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; base `273f522e`.
+- **How it was found:** built and ran the real app (`next build` + `next start`) against local PostgreSQL 16, seeded the two e2e users with `scripts/seed-e2e-user.mjs`, logged in through the actual form, and drove the dashboard, tenders list, tender detail and Command Center in Chromium.
+- **Gap:** on a tender with zero files, Command Center correctly showed one canonical action — "Upload tender document. No tender file has been uploaded." — while the Tender Detail panel directly below offered **"Re-extract from PDF"**. Two panels on one screen contradicting each other, and the owner could only discover the second was impossible by clicking it. `POST /api/tenders/[id]/re-extract-metadata` was already fail-closed (400, "Tender has no uploaded files to re-extract from"), so this was never a successful no-op — it was an unreachable action being advertised, the contradiction class this PR exists to remove.
+- **Fix:** gate `<ReExtractMetadataButton>` on `hasSourceFile`, derived from the file list `page.tsx` already passes the panel. Presentation only — no gate relaxed, the route is untouched and still refuses.
+- **Files changed:** `app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx`, `tests/re-extract-action-requires-a-source.test.ts` (new), `operator_handoff.md`.
+- **Verified live in the running app**, before and after the rebuild: 0 "Re-extract from PDF" buttons on a tender with no files, 1 on a tender with one file. Zero console errors, zero 5xx, and the only server-log warnings were the local `SENTRY_DSN` notice.
+- **Also confirmed by the same run (no change needed):** `/api/health` returns **200 healthy** locally, so the health route and its probes are correct code and the Preview 503 was purely the unreachable Neon endpoint. And the C-5 fix from `273f522e` was proven end to end rather than by test: with a live session `/api/tenders`, `/api/company` and `/api/search` all returned 200; after soft-deleting the user, the **same cookie** got 401 from all three; re-login returned 401 `INVALID_CREDENTIALS`; after restoring the user, 200 again. Those are precisely the routes that authorize on `getSession()` alone and never reach `getCurrentUser`.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`): full suite **10,112 passed / 0 failed / 0 cancelled / 0 skipped**; `prisma migrate deploy` clean; `migrate diff` zero drift; `tsc --noEmit` clean; `next lint` 0 warnings/errors; `next build` exit 0.
+- **Risks / assumptions:** the panel now reads `tender.files` for reachability only; if a future page stops passing `files`, the button hides rather than misleads — fail-safe in the honest direction. Real-Preview UAT still not run from here (agent proxy returns 403 CONNECT for the preview host).
+- **Next action:** exact-head CI on the pushed SHA.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — PR remains draft.
+
 ### 2026-08-17 UTC — Claude Code (audit-remediation gap closure on the PR branch)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; base `7cbf855a`.

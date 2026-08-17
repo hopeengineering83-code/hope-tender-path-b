@@ -63,6 +63,10 @@ type TenderDetailLike = {
   intakeSummary?: string | null;
   analysisSummary?: string | null;
   metadataOverrides?: Array<{ field: string; fieldState: string; overrideValue: string | null }>;
+  // Only used to decide whether re-extraction is reachable at all. The page
+  // already passes the full file list; this panel needs nothing from it but
+  // the existence of a source to re-read.
+  files?: Array<unknown>;
 };
 
 // fieldState values that mean the user already resolved a missing/invalid
@@ -479,6 +483,9 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
   const filledCount = sourceDetail.extractedCount;
   const totalCount = sourceDetail.extractedCount + sourceDetail.missingRelevantCount;
 
+  // Re-extraction is only reachable when there is an uploaded source to re-read.
+  const hasSourceFile = Array.isArray(tender.files) && tender.files.length > 0;
+
   const [actionMessage, setActionMessage] = useState<{ kind: string; ok: boolean; error?: string } | null>(null);
 
   function handleAction(kind: "ignore" | "edit" | "re-extract", result: { ok: boolean; error?: string }) {
@@ -508,7 +515,15 @@ export function TenderIntakeDetailPanel({ tender }: { tender: TenderDetailLike }
             <div className="text-xs text-slate-500">Auto-fill coverage</div>
             <div className="text-lg font-bold text-slate-900">{filledCount} / {totalCount}</div>
           </div>
-          <ReExtractMetadataButton tenderId={tender.id} />
+          {/* Re-extraction re-reads the uploaded tender source. With no source
+              there is nothing to re-read: /re-extract-metadata answers 400
+              "Tender has no uploaded files to re-extract from." Offering the
+              button anyway put a competing, unreachable action beside Command
+              Center's single canonical "Upload tender document", and the owner
+              only discovered it was impossible by clicking it. The route stays
+              fail-closed either way — this hides an action that cannot succeed,
+              it does not relax a gate. */}
+          {hasSourceFile && <ReExtractMetadataButton tenderId={tender.id} />}
         </div>
       </div>
 
