@@ -29,6 +29,7 @@ const stripComments = (source: string) => source
   .replace(/^[ \t]*\/\/.*$/gm, "");
 
 const wakeCode = stripComments(readFileSync("lib/ai-jobs/request-scoped-engine-worker-wake.ts", "utf8"));
+const dispatchCode = stripComments(readFileSync("lib/ai-jobs/worker-dispatch.ts", "utf8"));
 const engineRouteCode = stripComments(readFileSync("app/api/tenders/[id]/engine/route.ts", "utf8"));
 const runNext = readFileSync("app/api/ai-jobs/run-next/route.ts", "utf8");
 const claimPolicy = readFileSync("lib/job-claim-policy.ts", "utf8");
@@ -77,8 +78,14 @@ describe("Run Engine wake — fail-closed authority", () => {
   });
 
   it("defers to the durable worker instead of running the Engine inline", () => {
+    // The wake stops at the short dispatcher — the manual route has a 60-second
+    // budget, so the dispatcher owns the long wait on /run-next. Both hops are
+    // pinned: asserting only the first would stop proving this test's own title,
+    // because a dispatcher that ran the Engine itself would keep it green.
     assert.match(wakeCode, /new URL\("\/api\/ai-jobs\/dispatch", requestUrl\.origin\)/);
+    assert.match(dispatchCode, /new URL\("\/api\/ai-jobs\/run-next", requestUrl\.origin\)/);
     assert.doesNotMatch(wakeCode, /runTenderEngine|getHandler|claimJobForCaller/);
+    assert.doesNotMatch(dispatchCode, /runTenderEngine|getHandler|claimJobForCaller/);
   });
 });
 
@@ -89,6 +96,11 @@ describe("Run Engine wake — cron remains the only recovery path", () => {
     // retry re-arm. Recovery must stay with the cron alone.
     assert.doesNotMatch(wakeCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/i);
     assert.match(wakeCode, /req\.headers\.get\("cookie"\)/);
+    // The dispatcher is the hop that now actually reaches run-next, so the same
+    // prohibition must hold there. A secret added on the dispatcher rather than
+    // on the wake would hand the sweeps over by proxy.
+    assert.doesNotMatch(dispatchCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/i);
+    assert.match(dispatchCode, /req\.headers\.get\("cookie"\)/);
   });
 
   it("keeps every recovery sweep inside run-next's automated-caller branch", () => {

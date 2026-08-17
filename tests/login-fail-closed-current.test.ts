@@ -22,7 +22,12 @@ describe("login fail-closed authentication boundary", () => {
   });
 
   it("returns one generic invalid-credentials code for every account state", () => {
-    assert.match(source, /if \(!user \|\| !user\.passwordHash \|\| !passwordOk\)/);
+    // "Every account state" now includes deactivated (audit C-5): a soft-deleted
+    // user must be refused, and refused indistinguishably from a wrong password.
+    // All four conditions share one branch — a dedicated branch for the
+    // deactivated case would hand an unauthenticated caller a way to enumerate
+    // which accounts have been deactivated.
+    assert.match(source, /if \(!user \|\| !user\.passwordHash \|\| !passwordOk \|\| user\.deletedAt\)/);
     assert.match(source, /return loginResult\(req, nativeForm, "INVALID_CREDENTIALS", 401\)/);
     assert.match(source, /INVALID_CREDENTIALS: "The email or password is incorrect\."/);
     assert.doesNotMatch(source, /User password is not initialized/);

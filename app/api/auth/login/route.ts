@@ -230,7 +230,17 @@ export async function POST(req: Request) {
       passwordOk = false;
     }
 
-    if (!user || !user.passwordHash || !passwordOk) {
+    // Audit C-5: a soft-deleted user must not be able to re-authenticate.
+    // Deactivation revokes existing sessions atomically (app/api/users/[id]),
+    // but that only removes the sessions the account already had — without this
+    // check a deactivated user who still knows their password simply logs in
+    // again and receives a brand-new session.
+    //
+    // Deliberately folded into the same branch as a wrong password: the
+    // response, status and failure accounting are identical, so this cannot be
+    // used to discover which accounts exist or which have been deactivated. The
+    // bcrypt comparison above has already run, so the timing shape is unchanged.
+    if (!user || !user.passwordHash || !passwordOk || user.deletedAt) {
       void recordFailedLogin(user?.id, email);
       return loginResult(req, nativeForm, "INVALID_CREDENTIALS", 401);
     }

@@ -109,11 +109,19 @@ export async function getSession(): Promise<string | null> {
     await prismaReady;
     const session = await prisma.session.findUnique({
       where: { token: hashToken(token) },
-      select: { userId: true, expiresAt: true },
+      select: { userId: true, expiresAt: true, user: { select: { deletedAt: true } } },
     });
     if (!session || session.userId !== data.userId || session.expiresAt.getTime() <= Date.now()) {
       return null;
     }
+    // Audit C-5: enforce soft-delete here, not only in getCurrentUser. Many API
+    // routes authorize on getSession() alone and never load the user record, so
+    // a check that lives only in getCurrentUser leaves that surface reachable by
+    // a deactivated account. This is the same reasoning getCurrentUser already
+    // documents for stolen cookies, applied at the choke point every caller
+    // shares. The user row is fetched in the existing session query rather than
+    // a second round trip, so no extra query is added per request.
+    if (session.user?.deletedAt) return null;
     return session.userId;
   } catch (e) {
     // SECURITY / OBSERVABILITY: previously this catch was bare (`catch {}`),

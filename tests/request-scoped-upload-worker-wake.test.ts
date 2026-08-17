@@ -8,6 +8,8 @@ const codeOnly = (source: string) => source
   .replace(/^[ \t]*\/\/.*$/gm, "");
 const helper = read("lib/ai-jobs/request-scoped-worker-wake.ts");
 const helperCode = codeOnly(helper);
+const dispatch = read("lib/ai-jobs/worker-dispatch.ts");
+const dispatchCode = codeOnly(dispatch);
 const uploadRoute = read("app/api/upload/route.ts");
 const uploadFirstRoute = read("app/api/tenders/upload-first/route.ts");
 const capabilitiesRoute = read("app/api/auth/workflow-capabilities/route.ts");
@@ -59,9 +61,14 @@ describe("request-scoped upload worker wake", () => {
   it("uses Next after and forwards only the authenticated same-origin session", () => {
     assert.match(helper, /import \{ after \} from "next\/server"/);
     assert.match(helper, /const cookie = req\.headers\.get\("cookie"\)/);
+    // Both hops of the chain stay pinned: the helper reaches the dispatcher and
+    // the dispatcher reaches the durable worker. Without the second assertion
+    // nothing proves the chain still terminates at run-next.
     assert.match(helper, /new URL\("\/api\/ai-jobs\/dispatch", requestUrl\.origin\)/);
+    assert.match(dispatch, /new URL\("\/api\/ai-jobs\/run-next", requestUrl\.origin\)/);
     assert.match(helper, /headers: \{[\s\S]*cookie,[\s\S]*origin,[\s\S]*referer,/);
     assert.doesNotMatch(helperCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/);
+    assert.doesNotMatch(dispatchCode, /AI_JOBS_WORKER_SECRET|CRON_SECRET|x-worker-secret/);
   });
 
   it("bounds concurrent multi-file wakes to the ten-file request limit", () => {
