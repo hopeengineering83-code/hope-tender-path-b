@@ -756,6 +756,12 @@ model GeneratedDocument {
   // Partial unique index on (tenderId, exactFileName) for non-SUPERSEDED rows
   // is migration-managed because Prisma cannot express the WHERE clause.
   @@index([integrityStatus])
+  // Retention cleanup selects SUPERSEDED rows older than a cutoff across the
+  // whole table, with no tenderId to narrow it, so the @@index([tenderId])
+  // above cannot serve it. EXPLAIN confirmed a sequential scan over the one
+  // table that stores base64 document bytes. Ordered (generationStatus,
+  // updatedAt) so the equality column leads and the range column follows.
+  @@index([generationStatus, updatedAt])
 }
 
 // Per-document review action audit trail (PR #247).
