@@ -5,6 +5,11 @@ import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from
 import { logAction } from "../../../../lib/audit";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../lib/rate-limit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
+import {
+  buildReviewProvenance,
+  buildPartialSourceVerificationProvenance,
+  projectReviewFields,
+} from "../../../../lib/vault-review-provenance";
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
@@ -103,21 +108,81 @@ export async function POST(req: Request) {
       }
       sourceDocumentId = doc.id;
     }
+    // Same rule as the expert create path and PATCH
+    // /api/company/projects/{id}: a review state is earned from a verified
+    // source document, never asserted at creation. Writing REVIEWED with a
+    // free-text note produced records the authority model rejects forever, so
+    // generation reported "No verified, source-backed projects are available"
+    // for projects the vault listed as reviewed.
+    const projectReviewedAt = new Date();
+    const projectSourceDocument = sourceDocumentId
+      ? await prisma.companyDocument.findFirst({
+          where: { id: sourceDocumentId, companyId: company.id },
+          select: {
+            id: true,
+            companyId: true,
+            extractedText: true,
+            contentSha256: true,
+            contentByteLength: true,
+            integrityStatus: true,
+            metadata: true,
+          },
+        })
+      : null;
+
+    const projectCandidateFields = {
+      name: String(body.name).trim(),
+      clientName: body.clientName || null,
+      country: body.country || null,
+      sector: body.sector || null,
+      serviceAreas: toJsonArray(body.serviceAreas),
+      contractValue,
+      currency: body.currency || null,
+    };
+
+    const projectDurable = projectSourceDocument
+      ? buildReviewProvenance({
+          recordType: "PROJECT",
+          sourceDocument: projectSourceDocument,
+          fields: projectReviewFields(projectCandidateFields),
+          reviewerId: actor.id,
+          reviewedAt: projectReviewedAt,
+        })
+      : null;
+
+    const projectPartial = !projectDurable?.ok && projectSourceDocument
+      ? buildPartialSourceVerificationProvenance({
+          recordType: "PROJECT",
+          sourceDocument: projectSourceDocument,
+          fields: projectReviewFields(projectCandidateFields),
+          verificationMethod: "HYBRID",
+          verifiedAt: projectReviewedAt,
+        })
+      : null;
+
+    const projectReviewState = projectDurable?.ok
+      ? { trustLevel: "REVIEWED", reviewedBy: actor.id, reviewedAt: projectReviewedAt, reviewNotes: projectDurable.serialized }
+      : projectPartial?.ok
+        ? { trustLevel: "SOURCE_VERIFIED", reviewedBy: null, reviewedAt: null, reviewNotes: projectPartial.serialized }
+        : {
+            trustLevel: "MANUAL_DRAFT",
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewNotes: "Manual project record awaiting automatic source verification. Uploaded Company Vault documents are the official source of truth.",
+          };
+
     const project = await prisma.project.create({
       data: {
         companyId: company.id,
-        name: String(body.name).trim(),
+        name: projectCandidateFields.name,
         clientName: body.clientName || null,
         country: body.country || null,
         sector: body.sector || null,
-        serviceAreas: toJsonArray(body.serviceAreas),
+        serviceAreas: projectCandidateFields.serviceAreas,
         summary: body.summary || null,
         contractValue,
         currency: body.currency || null,
-        trustLevel: "REVIEWED",
-        reviewedBy: actor.id,
-        reviewedAt: new Date(),
-        reviewNotes: "Manual project record created by authenticated user.",
+        ...projectReviewState,
         sourceDocumentId,
       },
     });

@@ -5,6 +5,11 @@ import { requireRole, forbiddenResponse, unauthorizedResponse, getSession } from
 import { logAction } from "../../../../lib/audit";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../lib/rate-limit";
 import { ensureCompanyForUser } from "../../../../lib/company-workspace";
+import {
+  buildReviewProvenance,
+  buildPartialSourceVerificationProvenance,
+  expertReviewFields,
+} from "../../../../lib/vault-review-provenance";
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
@@ -109,22 +114,96 @@ export async function POST(req: Request) {
       }
       sourceDocumentId = doc.id;
     }
+    // ── Review state must be EARNED, never asserted on creation ──────────
+    //
+    // This route previously wrote trustLevel REVIEWED with reviewedBy,
+    // reviewedAt and the free-text note "Manual expert record created by
+    // authenticated user." That is precisely the state the authority model
+    // forbids: PATCH /api/company/experts/{id} says so in its own words —
+    // "Source-less auto-approval is forbidden. When no verified source exists,
+    // the record stays UNVERIFIED — never REVIEWED, never reviewedBy, never
+    // reviewedAt, never a fabricated 'manual' hash."
+    //
+    // isDurablyReviewed() re-parses reviewNotes as structured provenance and
+    // rejects anything else, so those records read as REVIEWED in the vault
+    // list while canUseVaultRecordSafely() refused them forever. Generation
+    // then failed with "No verified, source-backed experts are available" and
+    // advised uploading or reprocessing source documents — which cannot fix a
+    // record whose review state was never verifiable in the first place.
+    //
+    // The create path now applies the same ladder as the approve path:
+    // full provenance → REVIEWED; identity-only verification →
+    // SOURCE_VERIFIED with no reviewer identity; otherwise AI_DRAFT, honestly
+    // unverified and reported as such.
+    const reviewedAt = new Date();
+    const sourceDocument = sourceDocumentId
+      ? await prisma.companyDocument.findFirst({
+          where: { id: sourceDocumentId, companyId: company.id },
+          select: {
+            id: true,
+            companyId: true,
+            extractedText: true,
+            contentSha256: true,
+            contentByteLength: true,
+            integrityStatus: true,
+            metadata: true,
+          },
+        })
+      : null;
+
+    const candidateFields = {
+      fullName: String(body.fullName).trim(),
+      title: body.title || null,
+      yearsExperience: yearsExp,
+      disciplines: toJsonArray(body.disciplines),
+      sectors: toJsonArray(body.sectors),
+      certifications: toJsonArray(body.certifications),
+    };
+
+    const durable = sourceDocument
+      ? buildReviewProvenance({
+          recordType: "EXPERT",
+          sourceDocument,
+          fields: expertReviewFields(candidateFields),
+          reviewerId: actor.id,
+          reviewedAt,
+        })
+      : null;
+
+    const partial = !durable?.ok && sourceDocument
+      ? buildPartialSourceVerificationProvenance({
+          recordType: "EXPERT",
+          sourceDocument,
+          fields: expertReviewFields(candidateFields),
+          verificationMethod: "HYBRID",
+          verifiedAt: reviewedAt,
+        })
+      : null;
+
+    const reviewState = durable?.ok
+      ? { trustLevel: "REVIEWED", reviewedBy: actor.id, reviewedAt, reviewNotes: durable.serialized }
+      : partial?.ok
+        ? { trustLevel: "SOURCE_VERIFIED", reviewedBy: null, reviewedAt: null, reviewNotes: partial.serialized }
+        : {
+            trustLevel: "MANUAL_DRAFT",
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewNotes: "Manual expert record awaiting automatic source verification. Uploaded Company Vault documents are the official source of truth.",
+          };
+
     const expert = await prisma.expert.create({
       data: {
         companyId: company.id,
-        fullName: String(body.fullName).trim(),
+        fullName: candidateFields.fullName,
         title: body.title || null,
         email: body.email || null,
         phone: body.phone || null,
         yearsExperience: yearsExp,
-        disciplines: toJsonArray(body.disciplines),
-        sectors: toJsonArray(body.sectors),
-        certifications: toJsonArray(body.certifications),
+        disciplines: candidateFields.disciplines,
+        sectors: candidateFields.sectors,
+        certifications: candidateFields.certifications,
         profile: body.profile || null,
-        trustLevel: "REVIEWED",
-        reviewedBy: actor.id,
-        reviewedAt: new Date(),
-        reviewNotes: "Manual expert record created by authenticated user.",
+        ...reviewState,
         sourceDocumentId,
       },
     });
