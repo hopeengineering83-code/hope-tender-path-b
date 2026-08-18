@@ -15,30 +15,40 @@ const doc = DxfReader.readFromStream(new Uint8Array(dxfBytes), (_sender, e) => {
 });
 doc.header.version = ACadVersion.AC1032;
 
-const out = new Uint8Array(64 * 1024 * 1024);
-const writer = new DwgWriter(out, doc);
+// acad-ts currently copies the supplied Uint8Array when it creates the internal
+// DWG file-header writer. Read the serialized bytes back from that internal
+// writer stream after write() completes rather than from the caller's buffer.
+const capacity = 64 * 1024 * 1024;
+const writer = new DwgWriter(new Uint8Array(capacity), doc);
 writer.write();
-const n = writer.bytesWritten;
-if (!n || n < 4096) throw new Error(`DWG writer returned invalid byte count: ${n}`);
-const dwg = out.slice(0, n);
+const fh = writer['_fileHeaderWriter'];
+const n = fh?.bytesWritten ?? writer.bytesWritten;
+const serialized = fh?.['_stream'];
+if (!(serialized instanceof Uint8Array) || !n || n < 4096) {
+  throw new Error(`DWG writer returned invalid output: bytes=${n}, stream=${serialized?.constructor?.name}`);
+}
+const dwg = serialized.slice(0, n);
 const sig = Buffer.from(dwg.slice(0, 6)).toString('ascii');
 if (sig !== 'AC1032') throw new Error(`Unexpected DWG signature ${JSON.stringify(sig)}`);
+
 fs.mkdirSync('tmp-dwg-export/output', {recursive:true});
-fs.writeFileSync('tmp-dwg-export/output/Bishoftu_B_G_9_Terrace_FINAL_REV04.dwg', dwg);
+const dwgPath = 'tmp-dwg-export/output/Bishoftu_B_G_9_Terrace_FINAL_REV04.dwg';
+fs.writeFileSync(dwgPath, dwg);
 
 const readback = DwgReader.readFromStream(dwg, (_sender, e) => {
   const msg = e?.message ?? e?.Message;
   if (msg) messages.push(`READBACK: ${msg}`);
 });
-const entityCount = readback?.modelSpace?.entities?.length ?? [...(readback?.modelSpace?.entities ?? [])].length;
+const entities = readback?.modelSpace?.entities;
+const entityCount = typeof entities?.length === 'number' ? entities.length : [...(entities ?? [])].length;
 const qa = {
   sourceDxfBytes: dxfBytes.length,
   dwgBytes: n,
   dwgSignature: sig,
-  dwgVersion: 'AC1032 (AutoCAD 2018 format family)',
+  dwgVersion: 'AC1032',
   modelSpaceEntityCount: entityCount,
   notifications: messages.slice(0, 100),
-  status: 'DWG written and read back successfully'
+  status: 'PASS - DWG written and read back successfully'
 };
 fs.writeFileSync('tmp-dwg-export/output/DWG_QA.json', JSON.stringify(qa, null, 2));
 console.log(JSON.stringify(qa, null, 2));
