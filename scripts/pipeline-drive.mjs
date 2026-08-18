@@ -394,6 +394,16 @@ r = await call("POST", `/api/tenders/${tenderId}/supersede-outside-plan`, {
 });
 log("supersede-outside-plan", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status} ${body(r, 300)}`);
 
+// ── 9c. Recompute requirement coverage now that the artifacts exist ─────────
+// Coverage was last computed before generation, when every plan item was still
+// a promise. Diagnostic probe: if validation only passes because of this call,
+// the product is missing an automatic recompute after generation.
+r = await call("POST", `/api/tenders/${tenderId}/requirement-coverage/auto-sync`, {
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({}),
+});
+log("requirement-coverage/auto-sync (post-generation)", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status} ${body(r, 300)}`);
+
 // ── 10. Validate ────────────────────────────────────────────────────────────
 r = await call("POST", `/api/tenders/${tenderId}/validate`, {
   headers: { "content-type": "application/json" },

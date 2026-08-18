@@ -477,7 +477,22 @@ function supportForCandidate(
   if (candidate.recordType === "GENERATED_DOCUMENT" && candidate.generatedReady && score >= 88) {
     return "FULL";
   }
-  if (candidate.recordType === "BUILD_PLAN_ITEM") return "PARTIAL";
+  if (candidate.recordType === "BUILD_PLAN_ITEM") {
+    // A plan item is a promise; once the artifact it names exists with
+    // byte-verified content it is evidence, and SUBSTANTIAL is what this
+    // codebase already uses for "real selected evidence is on file".
+    //
+    // It stayed PARTIAL unconditionally, and mandatory requirements answered by
+    // the proposal's own documents need FULL or SUBSTANTIAL to be FULLY_MET.
+    // Those requirements could therefore never be met: POST /validate refused
+    // because the evidence was only PARTIAL, and the evidence could only exceed
+    // PARTIAL once the document had passed validation. A tender whose mandatory
+    // requirements are answered by its own deliverables was unfinishable.
+    //
+    // FULL still requires a document that passed validation, so the strongest
+    // claim continues to mean what it always did.
+    return candidate.facets?.artifactBytesVerified === true ? "SUBSTANTIAL" : "PARTIAL";
+  }
   if (evaluateCandidateFacets(requirement, candidate).complete && score >= MIN_AUTOMATIC_LINK_SCORE) return "FULL";
   return score >= 84 ? "SUBSTANTIAL" : "PARTIAL";
 }
@@ -939,17 +954,26 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
     });
   }
 
+  // File names whose planned artifact now exists with real, byte-verified
+  // content — recorded WITHOUT requiring validation to have passed, because
+  // this set exists precisely to break the loop where validation waits on
+  // evidence strength and evidence strength waits on validation.
+  const byteVerifiedArtifactNames = new Set<string>();
   for (const document of tender.generatedDocuments) {
     const integrity = verifiedHashAndLength(document);
     const generationStatus = String(document.generationStatus ?? "").toUpperCase();
     const validationStatus = String(document.validationStatus ?? "").toUpperCase();
     const hasBytes = Boolean((document.fileContent ?? "").trim() || (document.storagePath ?? "").trim());
-    const generatedReady = Boolean(
+    const existsWithVerifiedBytes = Boolean(
       integrity
       && hasBytes
-      && ["GENERATED", "UPLOADED", "ATTACHED", "READY_FOR_EXPORT"].includes(generationStatus)
-      && isValidationPassed(validationStatus),
+      && ["GENERATED", "UPLOADED", "ATTACHED", "READY_FOR_EXPORT"].includes(generationStatus),
     );
+    if (existsWithVerifiedBytes) {
+      const name = String(document.exactFileName ?? document.name ?? "").trim().toLowerCase();
+      if (name) byteVerifiedArtifactNames.add(name);
+    }
+    const generatedReady = Boolean(existsWithVerifiedBytes && isValidationPassed(validationStatus));
     if (!generatedReady || !integrity) continue;
     candidates.push({
       recordType: "GENERATED_DOCUMENT",
@@ -999,7 +1023,10 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
         sourceSection: "Confirmed Build Plan",
         sourceQuote: null,
         evidenceRevision: String(buildPlan.contentHash).toLowerCase(),
-        facets: { confirmed: true },
+        facets: {
+          confirmed: true,
+          artifactBytesVerified: byteVerifiedArtifactNames.has(exactFileName.toLowerCase()),
+        },
       });
     }
   }
