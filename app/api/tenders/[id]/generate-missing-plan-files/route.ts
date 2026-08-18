@@ -96,7 +96,15 @@ function isNarrativeDraft(fileName: string, documentType: string) {
   const label = `${fileName} ${documentType}`.toLowerCase();
   if (needsOriginalReplacement(fileName, documentType)) return false;
   if (/submission formatting|packaging rules|submission rules|delivery instruction|submission method|submission deadline/.test(label)) return false;
-  return /technical|methodology|approach|work\s*plan|strategic|proposal|narrative|scope|requirement/.test(label);
+  // Company-produced narrative deliverables. The app already treats these as
+  // documents it can write from vault evidence — COMPANY_PRODUCED_KINDS in the
+  // generate route lists company profile, methodology, project references and
+  // sector/technical scope — but this predicate did not, so a planned
+  // "02-Company-Profile.docx" or "03-Capability-Statement.docx" fell through to
+  // replacementControlContent and was packaged as a ~58-word "generated support
+  // control" stub telling the operator to replace it, even though the vault
+  // holds exactly the material those files need.
+  return /technical|methodology|approach|work\s*plan|strategic|proposal|narrative|scope|requirement|company\s*[-_]?\s*profile|capability\s*[-_]?\s*statement|expression[-\s_]*of[-\s_]*interest|\beoi\b|experience|track\s*record|project\s*[-_]?\s*reference/.test(label);
 }
 
 function matchingRequirements(fileName: string, requirements: RequirementLike[]) {
