@@ -47,6 +47,7 @@ import { assessExtractionQuality } from "../extraction-quality";
 import { hasActiveExtractionOverride } from "./readiness-overrides";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
 import type { MetadataFieldState } from "./metadata-override";
+import { VALIDATION_PASSED_STATUSES } from "./document-output-state";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
 // @prisma/client types are not yet generated in the current environment.
@@ -706,7 +707,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         tenderId,
         generationStatus: "GENERATED",
         fileContent: { not: null },
-        validationStatus: { in: ["VALIDATED", "PASSED"] },
+        validationStatus: { in: [...VALIDATION_PASSED_STATUSES] },
         reviewStatus: { notIn: ["NOT_EXPORTABLE", "REPLACE_WITH_ORIGINAL"] },
       },
     });

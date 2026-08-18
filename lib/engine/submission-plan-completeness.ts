@@ -16,6 +16,7 @@ import {
 import {
   filterFinalExportCandidateDocuments,
   isFinalExportCandidateDocument,
+  isValidationPassed,
   type DocumentLike,
 } from "./document-output-state";
 
@@ -240,7 +241,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
   const docRank = (doc: GeneratedDocSnapshot): number => {
     const superseded = (doc.generationStatus ?? "").toUpperCase() === "SUPERSEDED";
     const hasBytes = Boolean((doc.fileContent ?? "").length > 0 || (doc.storagePath ?? "").length > 0);
-    const validated = ["PASSED", "VALIDATED"].includes((doc.validationStatus ?? "").toUpperCase());
+    const validated = isValidationPassed(doc.validationStatus);
     return (superseded ? 0 : 4) + (hasBytes ? 2 : 0) + (validated ? 1 : 0);
   };
   const docByKey = new Map<string, GeneratedDocSnapshot>();

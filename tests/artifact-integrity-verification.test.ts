@@ -116,7 +116,18 @@ describe("DIRECTIVE 18 — Generation completeness", () => {
   });
 
   it("validation gate checks document completeness", () => {
+    // Assert the invariant, not the spelling. This previously grepped the gate
+    // source for the literal "VALIDATED", so it failed the moment that literal
+    // moved behind VALIDATION_PASSED_STATUSES — a refactor that provably
+    // changed no behaviour. What matters is that the gate counts export-ready
+    // documents through the canonical validation vocabulary rather than an
+    // inline list of its own.
     const gate = read("lib/engine/generation-readiness-gate.ts");
-    assert.match(gate, /checkFullExportReadiness|VALIDATED/);
+    assert.match(gate, /checkFullExportReadiness|VALIDATION_PASSED_STATUSES/);
+    assert.doesNotMatch(
+      gate,
+      /validationStatus:\s*\{\s*in:\s*\[\s*"/,
+      "generation-readiness-gate must not inline its own validationStatus list; use VALIDATION_PASSED_STATUSES",
+    );
   });
 });

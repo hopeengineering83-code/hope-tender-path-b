@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "./submission-plan";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 import { containsMetadataPlaceholder } from "./metadata-validators";
+import { isValidationPassed } from "./document-output-state";
 
 export type BuildPlanItem = SubmissionPlanFile;
 export type BuildPlanValidation = { ok: boolean; blockers: string[] };
@@ -805,7 +806,7 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
         // legal-release authority; it is not a second per-document pipeline
         // gate. Tender-issued originals remain eligible only through their
         // explicit REPLACE_WITH_ORIGINAL path.
-        ["VALIDATED", "PASSED", "APPROVED", "READY_FOR_EXPORT"].includes(doc.validationStatus) ||
+        isValidationPassed(doc.validationStatus) ||
         doc.reviewStatus === "REPLACE_WITH_ORIGINAL"
       ),
     );

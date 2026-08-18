@@ -15,6 +15,7 @@ import {
   VAULT_REVIEW_CONSUMER_SELECT,
   type ReviewRecordState,
 } from "../vault-review-provenance";
+import { isValidationPassed } from "./document-output-state";
 
 /**
  * Persisted automatic requirement-evidence rows carry this prefix in notes.
@@ -947,7 +948,7 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       integrity
       && hasBytes
       && ["GENERATED", "UPLOADED", "ATTACHED", "READY_FOR_EXPORT"].includes(generationStatus)
-      && ["VALIDATED", "PASSED", "APPROVED", "READY_FOR_EXPORT"].includes(validationStatus),
+      && isValidationPassed(validationStatus),
     );
     if (!generatedReady || !integrity) continue;
     candidates.push({

@@ -42,9 +42,33 @@ export function normalizeStatus(value?: string | null): string {
   return (value ?? "").trim().toUpperCase();
 }
 
+/**
+ * The only values the validator ever writes to GeneratedDocument.validationStatus
+ * to mean "validation succeeded".
+ *
+ * lib/engine/validate.ts writes "PASSED" / "FAILED"; the auto-finalize
+ * continuation writes "VALIDATED" / "FAILED". Everything else that column ever
+ * holds is PENDING, SUPERSEDED or NEEDS_REVALIDATION.
+ *
+ * Exported as an array so Prisma `{ in: [...] }` filters and in-memory
+ * predicates read from one definition. Four call sites previously inlined this
+ * list and two of them disagreed — see isValidationPassed below.
+ */
+export const VALIDATION_PASSED_STATUSES = ["VALIDATED", "PASSED"] as const;
+
+/**
+ * Canonical answer to "did validation pass for this document?".
+ *
+ * Prefer this (or VALIDATION_PASSED_STATUSES for a database filter) over an
+ * inline literal list. Two gates used to accept a four-value list that included
+ * "APPROVED" and "READY_FOR_EXPORT" — reviewStatus vocabulary tested against
+ * the validationStatus column, which that column has never held in any version
+ * of this codebase, so those two alternatives could never match while making
+ * the four gates look like they disagreed about what "validated" means.
+ */
 export function isValidationPassed(value?: string | null): boolean {
   const status = normalizeStatus(value);
-  return status === "VALIDATED" || status === "PASSED";
+  return (VALIDATION_PASSED_STATUSES as readonly string[]).includes(status);
 }
 
 export function isReviewReadyForExport(value?: string | null): boolean {
