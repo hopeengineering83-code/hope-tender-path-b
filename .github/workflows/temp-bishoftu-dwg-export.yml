@@ -1,26 +1,21 @@
 name: Temporary Bishoftu DWG Export
 
 on:
-  push:
+  pull_request:
     branches:
-      - temp/dwg-export-bishoftu-20260818
-    paths:
-      - 'tmp-dwg-export/input.part*'
-      - 'tmp-dwg-export/convert.mjs'
-      - '.github/workflows/temp-bishoftu-dwg-export.yml'
+      - main
+    types: [opened, synchronize, reopened]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   convert:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout temporary branch
+      - name: Checkout PR branch
         uses: actions/checkout@v4
-        with:
-          ref: temp/dwg-export-bishoftu-20260818
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -29,10 +24,12 @@ jobs:
         run: npm install --no-save --ignore-scripts @node-projects/acad-ts@2.4.2
       - name: Convert DXF to DWG and read back
         run: node tmp-dwg-export/convert.mjs
-      - name: Commit validated DWG to temporary branch
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f tmp-dwg-export/output/Bishoftu_B_G_9_Terrace_FINAL_REV04.dwg tmp-dwg-export/output/DWG_QA.json
-          git commit -m "Temporary validated Bishoftu DWG output [skip ci]"
-          git push origin HEAD:temp/dwg-export-bishoftu-20260818
+      - name: Upload validated final DWG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bishoftu-Final-DWG-Rev04
+          path: |
+            tmp-dwg-export/output/Bishoftu_B_G_9_Terrace_FINAL_REV04.dwg
+            tmp-dwg-export/output/DWG_QA.json
+          if-no-files-found: error
+          retention-days: 1
