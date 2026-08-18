@@ -211,7 +211,10 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   // METADATA_CONTAMINATED is enforced inside getFinalSubmissionReadiness (see
   // lib/engine/final-submission-readiness.ts). It is not duplicated here
   // because the canonical readiness gate already surfaces it as a blocker.
-  const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId, requireFileContent: false });
+  // requireFileContent: true — this is the final ZIP, so the readiness check
+  // must load and verify the actual bytes it is about to package rather than
+  // judging byte readiness from metadata it never fetched.
+  const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId, requireFileContent: true });
   if (!canonical) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
   if (!canonical.ok) {
     return err(

@@ -7,7 +7,6 @@ type MatchRow = {
   score: number;
   isSelected: boolean;
   rationale: string | null;
-  evidenceSummary: string | null;
 };
 
 function summarize(rows: MatchRow[]) {
@@ -31,7 +30,7 @@ function summarize(rows: MatchRow[]) {
       .slice()
       .sort((a, b) => b.score - a.score)
       .slice(0, 5)
-      .map((row) => ({ id: row.id, score: row.score, evidenceSummary: row.evidenceSummary ?? "" })),
+      .map((row) => ({ id: row.id, score: row.score, evidenceSummary: row.rationale ?? "" })),
   };
 }
 
@@ -48,8 +47,13 @@ export async function GET(
   if (!tender) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const [expertMatches, projectMatches] = await Promise.all([
-    prisma.tenderExpertMatch.findMany({ where: { tenderId }, select: { id: true, score: true, isSelected: true, rationale: true, evidenceSummary: true } }),
-    prisma.tenderProjectMatch.findMany({ where: { tenderId }, select: { id: true, score: true, isSelected: true, rationale: true, evidenceSummary: true } }),
+    // NOTE: TenderExpertMatch/TenderProjectMatch have no `evidenceSummary`
+    // column (see prisma/schema.prisma) — only the in-memory MatchingResult
+    // type carries one. Selecting it made Prisma reject the query, so this
+    // endpoint answered 500 for every tender and the match-review step could
+    // not be inspected at all. `rationale` is the persisted evidence text.
+    prisma.tenderExpertMatch.findMany({ where: { tenderId }, select: { id: true, score: true, isSelected: true, rationale: true } }),
+    prisma.tenderProjectMatch.findMany({ where: { tenderId }, select: { id: true, score: true, isSelected: true, rationale: true } }),
   ]);
 
   return NextResponse.json({

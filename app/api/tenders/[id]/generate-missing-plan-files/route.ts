@@ -37,6 +37,9 @@ type PreparedDocument = {
   exactOrder?: number | null;
   plannedRowId?: string;
   keepPlanned?: boolean;
+  // The file is required by the plan but cannot be auto-drafted: the row is
+  // created in PLANNED state so an original can be attached to it.
+  awaitingOriginal?: boolean;
 };
 
 function clean(value: string) {
@@ -348,14 +351,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       documentType,
       requirements: tender.requirements,
     });
-    if (generated.format !== "DOCX" || !file.exactFileName.toLowerCase().endsWith(".docx")) {
-      skipped.push(`${file.exactFileName} (requires original or format-specific finalization)`);
-      continue;
-    }
+    const awaitingOriginal = generated.format !== "DOCX" || !file.exactFileName.toLowerCase().endsWith(".docx");
     preparedMissing.push({
       fileName: file.exactFileName,
       documentType,
       exactOrder: file.exactOrder,
+      // A required plan file that cannot be auto-drafted (a priced financial
+      // offer, an official form, a third-party certificate) still needs a ROW.
+      // Previously this branch pushed to `skipped` and created nothing, so the
+      // file existed in the confirmed plan and nowhere else: export-readiness
+      // reported PLANNED_DOCUMENT_MISSING forever and there was no document id
+      // for POST /documents/{docId}/attach-original to target, leaving the
+      // operator no way to supply the original at all. Note the existing
+      // asymmetry this repairs — an ALREADY-PLANNED row hitting the same
+      // condition is deliberately preserved via `keepPlanned` below, which is
+      // exactly the state a missing file should be created in.
+      awaitingOriginal,
       ...generated,
     });
   }
@@ -425,10 +436,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               format: document.format,
               exactFileName: document.fileName,
               exactOrder: document.exactOrder,
-              fileContent: document.fileContent,
-              ...integrity,
-              generationStatus: "GENERATED",
-              validationStatus: document.validationStatus,
+              // A row awaiting its original carries no bytes and stays PLANNED,
+              // so it can never be mistaken for an exportable document: the
+              // final-ZIP scope only accepts GENERATED rows with content.
+              fileContent: document.awaitingOriginal ? null : document.fileContent,
+              ...(document.awaitingOriginal ? {} : integrity),
+              generationStatus: document.awaitingOriginal ? "PLANNED" : "GENERATED",
+              validationStatus: document.awaitingOriginal ? "PENDING" : document.validationStatus,
               reviewStatus: document.reviewStatus,
               reviewedBy: null,
               reviewedAt: null,
@@ -440,7 +454,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               updated.push(document.fileName);
             } else {
               await lockedTx.generatedDocument.create({ data: { tenderId: id, ...data } });
-              created.push(document.fileName);
+              if (document.awaitingOriginal) {
+                skipped.push(`${document.fileName} (awaiting original — attach the official file to this planned document)`);
+              } else {
+                created.push(document.fileName);
+              }
             }
           }
 

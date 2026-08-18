@@ -62,6 +62,13 @@ export type AnalysisResult = {
   requirements: RequirementDraft[];
   exactFileNaming: string[];
   exactFileOrder: string[];
+  /**
+   * Evaluation methodology / scoring rubric extracted for this analysis, when
+   * the analyser produced one. The regex fallback does not, so consumers must
+   * treat an absent value as "this run said nothing" and leave any previously
+   * persisted methodology intact rather than overwriting it with null.
+   */
+  evaluationMethodology?: string | null;
 };
 
 export type MatchingResult = {

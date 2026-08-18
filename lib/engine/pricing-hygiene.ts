@@ -29,8 +29,38 @@ function sentences(text: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * A submission INSTRUCTION is not pricing leakage.
+ *
+ * The strongest example is the tender's mandated email subject line, which
+ * routinely contains the words "Financial Proposal" — e.g.
+ *   The email subject line must read exactly
+ *   "MOWE/CS/RWS/2026/0117 - Technical and Financial Proposal".
+ * That sentence quotes a packaging rule the bidder must obey; it discloses no
+ * price. The standalone-term rule matched "financial proposal" inside it and
+ * blocked the technical proposal from export, with no wording that could
+ * satisfy both the tender (which mandates that exact subject) and the checker.
+ *
+ * Only sentences that carry no amount at all are treated as instructions, so a
+ * genuine figure smuggled into a sentence about the subject line still trips
+ * the detector.
+ */
+function isSubmissionInstructionSentence(sentence: string): boolean {
+  const isInstruction = /\b(subject\s+line|email\s+subject|subject\s+must|file\s+name|named\s+and\s+ordered|envelope\s+label|separate\s+(?:sealed\s+)?(?:file|envelope)s?)\b/i.test(sentence);
+  if (!isInstruction) return false;
+  // Any real monetary amount disqualifies the exemption.
+  return !/(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9]|[0-9][0-9,]*(?:\.\d+)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9])/i.test(sentence);
+}
+
 function isSafeNoPriceSentence(sentence: string): boolean {
-  return /\b(does not|do not|must not|shall not|should not|will not)\b.{0,140}\b(include|contain|show|disclose|present|submit)\b.{0,180}\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b/i.test(sentence)
+  if (isSubmissionInstructionSentence(sentence)) return true;
+  // "appear"/"be present"/"be included" belong beside include/contain/show:
+  // the generator's own assurance line — "Pricing, rates, BOQ, and commercial
+  // terms must not appear in a technical-envelope document." — is a statement
+  // that pricing is ABSENT, yet without these verbs it was read as pricing
+  // leakage and blocked the very document it was asserting was clean.
+  return /\b(does not|do not|must not|shall not|should not|will not)\b.{0,140}\b(include|contain|show|disclose|present|submit|appear|feature|be\s+included|be\s+present|be\s+shown|be\s+disclosed)\b.{0,180}\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b/i.test(sentence)
+    || /\b(pricing|price|prices|financial|commercial|fee|fees|rate|rates|cost|costs|BOQ|bill of quantities)\b.{0,180}\b(does not|do not|must not|shall not|should not|will not)\b.{0,60}\b(appear|include|contain|show|disclose|be\s+included|be\s+present)\b/i.test(sentence)
     || /\b(no price leakage|financial offer is submitted separately|commercial offer is submitted separately|no financial offer included|price[sd]?\s+separately|submitted\s+separately|as\s+a\s+separate\s+(?:financial|commercial|price))\b/i.test(sentence)
     || /\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b.{0,180}\b(not included|not shown|not disclosed|excluded|separate|separately)\b/i.test(sentence);
 }

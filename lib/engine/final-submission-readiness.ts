@@ -227,6 +227,15 @@ function asReadyDoc(doc: {
   fileContent?: string | null;
   storagePath: string | null;
   hasInlineFileContent?: boolean | null;
+  // Persisted byte-integrity columns — carried through so byte verification
+  // compares against what is actually stored.
+  contentSha256?: string | null;
+  contentByteLength?: number | null;
+  contentMimeType?: string | null;
+  detectedFormat?: string | null;
+  integrityStatus?: string | null;
+  integrityVerifiedAt?: Date | null;
+  integrityFailureCode?: string | null;
 }): ExportReadyDocument {
   return {
     id: doc.id,
@@ -241,6 +250,18 @@ function asReadyDoc(doc: {
     fileContent: doc.fileContent ?? null,
     storagePath: doc.storagePath ?? null,
     hasInlineFileContent: doc.hasInlineFileContent ?? null,
+    // Dropping these here defeated the whole persisted-integrity mechanism:
+    // verifyPersistedFileBytes saw integrityStatus undefined, concluded the row
+    // predated integrity tracking, and returned LEGACY_INTEGRITY_UNKNOWN for
+    // documents whose stored status is VERIFIED — so the final ZIP was refused
+    // as unverifiable while the database held a matching hash and byte length.
+    contentSha256: doc.contentSha256 ?? null,
+    contentByteLength: doc.contentByteLength ?? null,
+    contentMimeType: doc.contentMimeType ?? null,
+    detectedFormat: doc.detectedFormat ?? null,
+    integrityStatus: doc.integrityStatus ?? "UNKNOWN",
+    integrityVerifiedAt: doc.integrityVerifiedAt ?? null,
+    integrityFailureCode: doc.integrityFailureCode ?? null,
   };
 }
 
@@ -519,6 +540,20 @@ export async function getFinalSubmissionReadiness(
           // metadata instead of loading the full blob from Neon.
           fileContent: shouldLoadFileContent,
           storagePath: true,
+          // Persisted byte-integrity columns. These are small, and without them
+          // every document reaching checkExportFileByteReadiness arrived with
+          // integrityStatus undefined — which reads as legacy/unknown, so
+          // readGeneratedDocumentContent({ requireVerifiedIntegrity: true })
+          // rejected files whose stored integrityStatus is in fact VERIFIED and
+          // the final ZIP was refused with FILE_BYTES_NOT_VERIFIED:
+          // LEGACY_INTEGRITY_UNKNOWN.
+          contentSha256: true,
+          contentByteLength: true,
+          contentMimeType: true,
+          detectedFormat: true,
+          integrityStatus: true,
+          integrityVerifiedAt: true,
+          integrityFailureCode: true,
         },
       },
       // Extraction quality status — consumed by checkTenderLevelExportBlockers to

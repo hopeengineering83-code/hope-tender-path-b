@@ -45,6 +45,7 @@ import {
 import { assessExtractionQuality } from "../extraction-quality";
 import { hasActiveExtractionOverride } from "./readiness-overrides";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
+import { VALIDATION_PASSED_STATUSES, REVIEW_EXPORT_CLEARED_STATUSES } from "./document-output-state";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
 // @prisma/client types are not yet generated in the current environment.
@@ -679,8 +680,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         tenderId,
         generationStatus: "GENERATED",
         fileContent: { not: null },
-        validationStatus: { in: ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"] },
-        reviewStatus: { in: ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"] },
+        // Canonical status vocabulary — see document-output-state. The inline
+        // literals here omitted "PASSED", the value /validate writes on
+        // success, so every validated document was counted as unvalidated and
+        // the export was refused with NO_EXPORT_READY_DOCUMENTS.
+        validationStatus: { in: [...VALIDATION_PASSED_STATUSES] },
+        reviewStatus: { in: [...REVIEW_EXPORT_CLEARED_STATUSES] },
       },
     });
 

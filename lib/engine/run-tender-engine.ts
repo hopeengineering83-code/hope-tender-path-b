@@ -229,6 +229,9 @@ export async function runTenderEngine(
             requirements: strategicRequirements,
             exactFileNaming: aiResult.exactFileNaming ?? [],
             exactFileOrder: aiResult.exactFileOrder ?? [],
+            // Carried through so the persist step below does not overwrite the
+            // tender's evaluation methodology with null (see the update call).
+            evaluationMethodology: aiResult.evaluationMethodology ?? null,
           };
           analysisMethod = "AI";
         } catch (err) {
@@ -247,6 +250,11 @@ export async function runTenderEngine(
       analysisFallbackReason = "GEMINI_API_KEY is not configured.";
       analysis = analyzeTender(tender);
     }
+
+    // Evaluation methodology produced by THIS run, if any. Empty string counts
+    // as "not produced" so a blank AI field cannot wipe a good stored value.
+    const analysisEvaluationMethodology =
+      (analysis as { evaluationMethodology?: string | null }).evaluationMethodology?.trim() || null;
 
     const reviewedExperts = company.experts.filter((expert) => expert.trustLevel === "REVIEWED");
     const reviewedProjects = company.projects.filter((project) => project.trustLevel === "REVIEWED");
@@ -688,7 +696,13 @@ export async function runTenderEngine(
           analysisSummary: analysis.summary,
           exactFileNaming: JSON.stringify(analysis.exactFileNaming),
           exactFileOrder: JSON.stringify(analysis.exactFileOrder),
-          evaluationMethodology: (analysis as { evaluationMethodology?: string | null }).evaluationMethodology ?? null,
+          // Only overwrite when this run actually produced a methodology. The
+          // regex fallback never sets one, so an unconditional `?? null` erased
+          // the evaluation criteria that AI Analyze had already extracted and
+          // persisted — after which the export gate refused the package with
+          // EVALUATION_CRITERIA_NOT_EXTRACTED, blaming a missing extraction the
+          // engine itself had deleted.
+          ...(analysisEvaluationMethodology ? { evaluationMethodology: analysisEvaluationMethodology } : {}),
           readinessScore,
           status: reviewNeeded ? "COMPLIANCE_REVIEW" : "MATCHED",
           stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",

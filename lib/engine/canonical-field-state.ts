@@ -653,11 +653,31 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       }
     }
 
-    // Special handling for requiredDocuments
+    // Special handling for requiredDocuments.
+    //
+    // This field has NO scalar column on Tender: it is satisfied by the
+    // presence of extracted TenderRequirement rows, which is why the branch
+    // below sets the status from `hasExtractedRequirements` rather than from a
+    // value. Its rawValue/effectiveValue are therefore always null/empty by
+    // design, and `satisfiedWithoutScalarValue` records that so the
+    // export-eligibility rules further down do not re-apply the generic
+    // "critical field has no value" test to it.
+    //
+    // Without that flag the resolver contradicted itself: requiredDocuments
+    // came out as status=EXTRACTED_AND_GROUNDED with blockerReason=null — a
+    // clean field — while the emptiness clause simultaneously set
+    // hasExportBlocker, so the export gate answered TENDER_FACTS_INVALID
+    // ("missing, invalid, or not source-grounded") for a field it had just
+    // declared satisfied. Because that gate also guards marking documents
+    // READY_FOR_EXPORT, a fully analysed tender with a confirmed plan and
+    // generated documents could never be approved, and the final ZIP was
+    // unreachable.
+    let satisfiedWithoutScalarValue = false;
     if (fieldKey === "requiredDocuments") {
       if (hasExtractedRequirements) {
         status = "EXTRACTED_AND_GROUNDED";
         blockerReason = null;
+        satisfiedWithoutScalarValue = true;
       } else {
         status = "INVALID";
         blockerReason = "No extracted requirements. Run AI Analyze or manually enter requirements.";
@@ -716,9 +736,11 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       status === "GENERIC_FIELD_LABEL" ||
       status === "INVALID_FORMAT" ||
       status === "BLOCKED" ||
-      (isCritical && !isManualValuePresent && isBlocked && !isGrounded) ||
-      (isCritical && !effectiveStr?.trim() && !override) || // missing critical, no override
-      (isCritical && isManualValuePresent && !isGrounded && !(auditSufficientForFinal(override, fieldKey, policyCtx)));
+      (isCritical && !satisfiedWithoutScalarValue && !isManualValuePresent && isBlocked && !isGrounded) ||
+      // missing critical, no override — skipped for fields that carry no scalar
+      // value and are satisfied by other persisted state (see requiredDocuments).
+      (isCritical && !satisfiedWithoutScalarValue && !effectiveStr?.trim() && !override) ||
+      (isCritical && !satisfiedWithoutScalarValue && isManualValuePresent && !isGrounded && !(auditSufficientForFinal(override, fieldKey, policyCtx)));
 
     const generationEligible = !draftHardBlockReasons && (!isBlocked || (!isCritical && status !== "BLOCKED") || isManualValuePresent);
     const exportEligible = !exportHardBlockReasons && (!isBlocked || (!isCritical && status !== "BLOCKED") || (isManualValuePresent && auditSufficientForFinal(override, fieldKey, policyCtx)));

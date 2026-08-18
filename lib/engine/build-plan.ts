@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "./submission-plan";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 import { containsMetadataPlaceholder } from "./metadata-validators";
+import { isGenerated, isValidationPassed, isReviewReadyForExport } from "./document-output-state";
 
 export type BuildPlanItem = SubmissionPlanFile;
 export type BuildPlanValidation = { ok: boolean; blockers: string[] };
@@ -446,6 +447,28 @@ function planItemKey(item: Pick<BuildPlanItem, "exactFileName" | "exactOrder" | 
   return `${Number(item.exactOrder)}::${normalizePlanName(item.exactFileName)}::${normalizeText(item.documentType)}`;
 }
 
+/**
+ * Identity used to match a PLAN ITEM to a GENERATED DOCUMENT.
+ *
+ * Deliberately the exact file name alone. planItemKey additionally folds in
+ * exactOrder and documentType, which is right when comparing one plan against
+ * another (both sides come from the same builder) but wrong here: the plan's
+ * documentType is derived from the source requirement's type while the
+ * generator assigns its own classification to the row it writes. On a normal
+ * run those disagree — a plan item typed EXPERIENCE against a document the
+ * generator typed PROJECT_REFERENCE_PACKAGE for the very same
+ * "01-Expression-Of-Interest.docx" — and the compound key then reported the
+ * same file BOTH as "not in the confirmed Build Plan" and as "missing",
+ * blocking the export with CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE.
+ *
+ * The exact file name is the identity the tender itself prescribes and the
+ * name the client receives, so it is the correct thing to match on. Order and
+ * type remain validated in their own right by the plan-item checks.
+ */
+function planDocumentMatchKey(exactFileName: string | null | undefined): string {
+  return normalizePlanName(exactFileName ?? "");
+}
+
 function quoteSupported(extractedText: unknown, quote: string): boolean {
   return normalizeText(extractedText).includes(normalizeText(quote));
 }
@@ -753,7 +776,7 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
   if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."], exportReadyDocumentCount: 0 };
 
   const requiredItems = items.filter((item) => item.required);
-  const requiredKeys = new Set(requiredItems.map(planItemKey));
+  const requiredKeys = new Set(requiredItems.map((item) => planDocumentMatchKey(item.exactFileName)));
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, format: true, fileContent: true, storagePath: true, generationStatus: true, validationStatus: true, reviewStatus: true },
@@ -761,7 +784,7 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
   let exportReadyDocumentCount = 0;
   const docsByKey = new Map<string, typeof docs>();
   for (const doc of docs) {
-    const key = planItemKey({ exactFileName: doc.exactFileName ?? doc.name, exactOrder: doc.exactOrder ?? -1, documentType: doc.documentType });
+    const key = planDocumentMatchKey(doc.exactFileName ?? doc.name);
     const bucket = docsByKey.get(key) ?? [];
     bucket.push(doc);
     docsByKey.set(key, bucket);
@@ -769,13 +792,17 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
   }
 
   for (const item of requiredItems) {
-    const key = planItemKey(item);
+    const key = planDocumentMatchKey(item.exactFileName);
     const matches = docsByKey.get(key) ?? [];
     const ready = matches.filter((doc) =>
-      doc.generationStatus === "GENERATED" &&
+      isGenerated(doc.generationStatus) &&
       generatedDocumentHasContent(doc) &&
-      ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"].includes(doc.validationStatus) &&
-      ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"].includes(doc.reviewStatus),
+      // Status vocabulary via the shared helpers rather than inline literals.
+      // The literal list omitted "PASSED", which is exactly what the /validate
+      // route writes on success (isValidationPassed has always accepted it), so
+      // a document the app had just validated still read as unvalidated here.
+      isValidationPassed(doc.validationStatus) &&
+      (isReviewReadyForExport(doc.reviewStatus) || normalizeText(doc.reviewStatus) === "replace_with_original"),
     );
     if (matches.length === 0) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is missing.`);
     if (matches.length > 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} has duplicate generated rows.`);

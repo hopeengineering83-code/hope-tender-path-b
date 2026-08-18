@@ -59,7 +59,19 @@ export function normalizeSupportLevel(value?: string | null): SupportLevel {
   switch (v) {
     case "FULL": return "FULL";
     case "SUBSTANTIAL": return "SUBSTANTIAL";
-    case "PARTIAL": return "PARTIAL";
+    // Vocabulary the engine and matrix builder actually persist. Without these
+    // cases every real row fell through to the `default` and normalised to
+    // PARTIAL, so isStrongSupportLevel was false for evidence that is in fact
+    // direct — and no tender could ever reach strong mandatory coverage.
+    // "DIRECT" is evidence tied straight to the requirement; "SUPPORTED" is a
+    // linked vault record backing it.
+    case "DIRECT": return "FULL";
+    case "SUPPORTED": return "SUBSTANTIAL";
+    case "PARTIAL":
+    // Explicitly weak states: linked but unverified, or invalidated by a later
+    // analysis/plan change. They must stay PARTIAL so they never read as proof.
+    case "NEEDS_CONFIRMATION":
+    case "STALE": return "PARTIAL";
     case "N_A":
     case "NA":
     case "NOT_APPLICABLE": return "NOT_APPLICABLE";

@@ -183,16 +183,27 @@ export async function getTenderGenerationReadiness(client: PrismaClient, userId:
     : [];
   const overrideByField = new Map(metadataOverrides.map(o => [o.field, o]));
 
-  const queryRaw = (client as unknown as { $queryRaw?: <T = unknown>(strings: TemplateStringsArray, ...values: unknown[]) => Promise<T> }).$queryRaw;
-  const [{ extractedTextLength, totalPageCount }] = queryRaw
-    ? await queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
+  // $queryRaw must be invoked as a METHOD ON THE CLIENT. Pulling it into a bare
+  // local and calling it detached leaves Prisma without its `this`, and the
+  // tagged-template call then throws
+  //   TypeError: Cannot read properties of undefined (reading '_createPrismaPromise')
+  // synchronously — before any promise exists, so the trailing .catch() never
+  // runs and the whole request 500s. On the final-package gate that meant every
+  // real ZIP download failed with DOWNLOAD_ROUTE_RUNTIME_ERROR, while tests
+  // stayed green because their mock clients have no $queryRaw at all and took
+  // the fallback branch instead.
+  const supportsQueryRaw = typeof (client as unknown as { $queryRaw?: unknown }).$queryRaw === "function";
+  const fileTextStats = supportsQueryRaw
+    ? await (client.$queryRaw<Array<{ extractedTextLength: number; totalPageCount: number }>>`
         SELECT
           COALESCE(SUM(char_length("extractedText")), 0)::int AS "extractedTextLength",
           COALESCE(SUM(COALESCE("totalPages", 0)), 0)::int AS "totalPageCount"
         FROM "TenderFile"
         WHERE "tenderId" = ${tenderId}
-      `.catch(() => [{ extractedTextLength: 0, totalPageCount: 0 }])
+      `.catch(() => [{ extractedTextLength: 0, totalPageCount: 0 }]))
     : [{ extractedTextLength: 0, totalPageCount: 0 }];
+  const { extractedTextLength, totalPageCount } =
+    fileTextStats[0] ?? { extractedTextLength: 0, totalPageCount: 0 };
 
   // Check derived-draft plan state (generatedDocuments not in main query).
   // Defensive: test mocks may not implement generatedDocument — default to 0 on any error.

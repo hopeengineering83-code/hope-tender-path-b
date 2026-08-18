@@ -42,6 +42,31 @@ export function normalizeStatus(value?: string | null): string {
   return (value ?? "").trim().toUpperCase();
 }
 
+/**
+ * Validation statuses that count as "this document passed validation", and
+ * review statuses that count as "cleared for export".
+ *
+ * Exported as arrays because several gates cannot call the predicates below —
+ * they filter in the DATABASE (`validationStatus: { in: [...] }`). Those call
+ * sites previously inlined their own literals and omitted "PASSED", which is
+ * what the /validate route writes on success, so a freshly validated document
+ * was counted as unvalidated and the export failed with
+ * NO_EXPORT_READY_DOCUMENTS. Anything that needs the set in a query must use
+ * these constants so the SQL and the predicates cannot drift apart.
+ */
+export const VALIDATION_PASSED_STATUSES: readonly string[] = [
+  "VALIDATED",
+  "PASSED",
+  "APPROVED",
+  "READY_FOR_EXPORT",
+];
+
+export const REVIEW_EXPORT_CLEARED_STATUSES: readonly string[] = [
+  "APPROVED",
+  "READY_FOR_EXPORT",
+  "REPLACE_WITH_ORIGINAL",
+];
+
 export function isValidationPassed(value?: string | null): boolean {
   const status = normalizeStatus(value);
   return status === "VALIDATED" || status === "PASSED";

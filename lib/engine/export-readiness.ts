@@ -19,6 +19,7 @@ import { detectAnalysisSourceWithApproval } from "./analysis-source";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "./submission-method-policy";
 import { validateGeneratedDocumentQuality } from "../document-generation/generated-document-quality-validator";
 import { buildTenderDocumentContext, type TenderDocumentGenerationContext } from "../document-generation/tender-document-context";
+import { normalizeSupportLevel, isStrongSupportLevel } from "./requirement-evidence-profile";
 
 export type ExportReadyDocument = {
   id: string;
@@ -807,11 +808,19 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     prisma.tenderExpertMatch.count({ where: { tenderId } }),
     prisma.tenderProjectMatch.count({ where: { tenderId } }),
     prisma.generatedDocument.count({ where: { tenderId, generationStatus: "PLANNED" } }),
+    // Support levels are compared through the shared normalizer rather than by
+    // matching raw column values. The previous `supportLevel: { in: ["FULL",
+    // "SUBSTANTIAL"] }` filter matched strings this codebase never writes — the
+    // engine and matrix builder persist DIRECT / SUPPORTED / PARTIAL /
+    // NEEDS_CONFIRMATION / STALE — so the covered set was empty for every
+    // tender, coverage was always 0%, and MANDATORY_EVIDENCE_INCOMPLETE blocked
+    // every export no matter how completely the requirements were evidenced.
+    // Reading the rows and normalising them keeps this check in step with
+    // final-submission-readiness, which already resolves coverage that way.
     mandatoryReqIds.length > 0
       ? prisma.complianceMatrix.findMany({
-          where: { tenderId, requirementId: { in: mandatoryReqIds }, supportLevel: { in: ["FULL", "SUBSTANTIAL"] } },
-          select: { requirementId: true },
-          distinct: ["requirementId"],
+          where: { tenderId, requirementId: { in: mandatoryReqIds } },
+          select: { requirementId: true, supportLevel: true },
         })
       : Promise.resolve([]),
   ]);
@@ -823,7 +832,11 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // key proof documents for the most critical requirements.
   const mandatoryCount = mandatoryReqIds.length;
   if (mandatoryCount > 0 && complianceRows > 0) {
-    const coveredCount = coveredMandatoryIds.length;
+    const coveredCount = new Set(
+      (coveredMandatoryIds as Array<{ requirementId: string; supportLevel?: string | null }>)
+        .filter((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel)))
+        .map((row) => row.requirementId),
+    ).size;
     const coveragePercent = Math.round((coveredCount / mandatoryCount) * 100);
     if (coveragePercent < 50) {
       blockers.push(tenderBlocker(
@@ -908,7 +921,21 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
   const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
   const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
-  const byteFailures = await checkExportFileByteReadiness(opts.docs);
+  // Byte readiness can only be judged when the caller actually loaded the
+  // bytes. Callers that pass requireFileContent=false select document METADATA
+  // ONLY (see getFinalSubmissionReadiness), so fileContent is undefined on
+  // every row — and running the check anyway reported MISSING_FILE_BYTES for
+  // every document, including ones holding several KB of content. The ZIP
+  // download takes exactly that path, so the final package was refused with
+  // EXPORT_READINESS_BLOCKED on evidence that was never fetched.
+  //
+  // This does not weaken the final package: the ZIP path now requests the
+  // content (so this check runs on real bytes), and assembly independently
+  // re-reads and verifies every file with requireVerifiedIntegrity before
+  // writing the archive.
+  const byteFailures = opts.requireFileContent
+    ? await checkExportFileByteReadiness(opts.docs)
+    : [];
   const failures = mergeFailures(perDoc.failures, docxHygieneFailures, byteFailures);
   const tenderReadiness = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
   return { ok: failures.length === 0 && tenderReadiness.blockers.length === 0, failures, tenderLevelBlockers: tenderReadiness.blockers, advisoryWarnings: tenderReadiness.advisoryWarnings };

@@ -203,7 +203,28 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       reviewNotes: (d as Record<string, unknown>).reviewNotes as string | undefined,
       exactFileName: d.exactFileName ?? undefined,
     }));
-    const authorityRequiredSections = (typeof t.title === "string" ? [t.title] : []);
+    // Required sections are the tender's exactly-named submission files, NOT
+    // the tender title. runAuthorityReview asks whether some generated
+    // document's name or documentType CONTAINS each section string; the tender
+    // title ("Expression of Interest for Design Review and Technical Audit of
+    // Rural Water Supply Schemes") is never a substring of a file name like
+    // "01-Expression-Of-Interest", so passing the title raised a CRITICAL
+    // MISSING_REQUIRED_SECTION on every tender, pushed the authority score
+    // under the 85 threshold, and made AUTHORITY_REVIEW_BLOCKED an
+    // unconditional refusal of the final export.
+    //
+    // manifestEntries above already collects those names from the requirements
+    // and from exactFileNaming/exactFileOrder — the same source
+    // deriveRequiredSections uses in the authority-review route, so the export
+    // gate and that panel now agree. Match on the base name (extension
+    // stripped) because generated documents are named without it.
+    const authorityRequiredSections = Array.from(
+      new Set(
+        manifestEntries
+          .map((entry) => entry.exactFileName.replace(/\.[a-z0-9]{2,5}$/i, "").trim())
+          .filter((name) => name.length > 0),
+      ),
+    );
     const authorityResult = runAuthorityReview(authorityDocuments, manifestEntries, authorityRequiredSections);
     if (authorityResult.status !== "AUTHORITY_READY") {
       return NextResponse.json(
