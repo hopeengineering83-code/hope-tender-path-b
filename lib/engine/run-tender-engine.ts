@@ -20,6 +20,7 @@ import { canUseVaultRecord } from "../vault-review-provenance";
 import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
 import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
+import { normalizeRequirementTypeOrDefault } from "./requirement-type-vocabulary";
 
 const DB_PERSISTENCE_BUFFER_MS = 8_000;
 const RESPONSE_SERIALIZATION_BUFFER_MS = 2_000;
@@ -442,7 +443,10 @@ export async function runTenderEngine(
         tenderId,
         title: requirement.title,
         description: requirement.description,
-        requirementType: requirement.requirementType,
+        // Same normalization the AI promotion path applies: this is the other
+        // boundary where a requirement type reaches the column, and the
+        // selection policy it feeds matches on exact canonical spellings.
+        requirementType: normalizeRequirementTypeOrDefault(requirement.requirementType),
         priority: requirement.priority,
         requiredQuantity: requirement.requiredQuantity ?? null,
         pageLimit: requirement.pageLimit ?? null,

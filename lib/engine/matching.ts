@@ -3,6 +3,7 @@ import { exactSelectionLimit } from "./scope-policy";
 import { deriveRequirementConstraintProfile } from "./requirement-constraints";
 import { checkMatchingEligibility } from "./matching-eligibility";
 import { effectiveReviewTrustLevel, type ReviewRecordState } from "../vault-review-provenance";
+import { domainTagMatchScore } from "./domain-signals";
 
 // Per-record lexical interpretation cycles. For each candidate expert /
 // project, the matcher runs MATCHING_CYCLES different tokenization
@@ -274,23 +275,9 @@ function strictFamilyRequired(requiredFamilies: CapabilityFamily[]): boolean {
   return requiredFamilies.some((family) => strictFamilies.includes(family));
 }
 
-function domainTagMatchScore(domainTags: string[], recordText: string): number {
-  if (domainTags.length === 0) return 0;
-  const text = recordText.toLowerCase();
-  const checks: Record<string, RegExp> = {
-    healthcare: /hospital|healthcare|medical|clinic|ward|pharmacy|laboratory|patient/i,
-    telecom: /telecom|telecommunication|fiber|fibre|broadband|5g|4g|tower|bts/i,
-    ict: /ict|digital|software|platform|information\s+system|database|api|cloud/i,
-    mining: /mining|extractive|quarry|mineral|ore|tailings/i,
-    education: /school|education|university|college|campus|classroom/i,
-    oil_gas: /hazop|p&id|pipeline.*design|refinery|petrochemical|wellhead|upstream.*petroleum/i,
-    energy: /power.*plant|solar.*farm|wind.*farm|grid.*code|substation|generation.*capacity/i,
-    port: /berth.*design|dredging|harbour|maritime.*infra|isps|nautical/i,
-    financial: /kyc|aml|core.*banking|microfinance|ifrs|basel|prudential/i,
-  };
-  const matches = domainTags.filter((tag) => checks[tag]?.test(text));
-  return matches.length / domainTags.length;
-}
+// domainTagMatchScore now lives in ./domain-signals, shared with the
+// requirement-constraint derivation that produces the tags it scores against.
+
 
 function minimumFamilyDiversity(requiredFamilies: CapabilityFamily[]): number {
   if (strictFamilyRequired(requiredFamilies)) return Math.min(3, Math.max(2, requiredFamilies.length));
