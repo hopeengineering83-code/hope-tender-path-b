@@ -74,6 +74,19 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-18 UTC — Claude Code (dependency advisory blocking CI *and* Vercel Preview)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; base `49c0f63a`.
+- **Symptom:** two different red signals on the branch — the CI check "Reject high and critical dependency vulnerabilities", and the Vercel deployment on the authoritative `hope-tender-path-b` project. Both red on `cbe26fea` and again on `49c0f63a`, i.e. across commits from two different sessions.
+- **One root cause.** `npm audit --omit=dev` reports three high findings that are all the same advisory — 1145093, "DeepmergeTS has stack exhaustion when merging recursive object graphs" — reachable from production via `@prisma/client@6.19.3 -> prisma@6.19.3 -> @prisma/config -> deepmerge-ts (<8.0.0)`. It is not from any commit on this branch; no dependency file was touched. It is a newly published advisory against the existing lockfile. The Vercel failure is the *same* gate: `scripts/vercel-build.mjs` runs `scripts/audit-dependencies.mjs`, whose build log shows "Dependency audit failed: 3 blocking vulnerability finding(s)". So the Preview deployments owner UAT depends on were being failed by the advisory, not by a build defect.
+- **Fix:** one `overrides` entry, `"deepmerge-ts": "^8.0.1"` — the mechanism this repo already uses for six other transitive advisories (postcss, rimraf, glob, sharp, nanoid, js-yaml). npm's own suggested remedy was `prisma@6.12.0`, flagged `isSemVerMajor` — a downgrade of the ORM across 47 migrations, which was rejected as far riskier than the advisory.
+- **Risk checked rather than assumed:** `@prisma/config` pins `deepmerge-ts: "7.1.5"` *exactly*, so the override forces a major bump past a deliberate pin. Against the real installed tree (`node_modules` at 8.0.1, not just a lockfile edit): `prisma validate`, `prisma generate`, `prisma migrate deploy` and `migrate diff` zero-drift all pass; `npm audit --omit=dev` reports 0 vulnerabilities; and `scripts/audit-dependencies.mjs` — the exact gate Vercel runs — prints "Dependency audit passed: no known vulnerabilities."
+- **Files changed:** `package.json`, `package-lock.json`, `operator_handoff.md`. Both dependency files are "shared high-risk" per the PR template; nothing else in either file was altered.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`): full suite **10,114 passed / 0 failed / 0 cancelled / 0 skipped**; migrate deploy clean; zero drift; lint 0 warnings/errors; `next build` exit 0.
+- **Risks / assumptions:** if Prisma later ships a release that bumps `deepmerge-ts` itself, this override becomes redundant and should be dropped rather than left to pin the tree. The override applies repo-wide, so any other consumer of `deepmerge-ts` also moves to 8.x — there is currently only the one.
+- **Next action:** exact-head CI plus a Vercel Preview on the pushed SHA; the Preview should now build, which unblocks the authenticated owner UAT that has been blocked since the Neon outage.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — PR remains draft.
+
 ### 2026-08-17 UTC — Claude Code (gap found by running the app locally)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; base `273f522e`.
