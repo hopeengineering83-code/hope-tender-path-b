@@ -261,12 +261,14 @@ const expertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderI
 const projectMatches = await prisma.tenderProjectMatch.findMany({ where: { tenderId }, select: { id: true, score: true } });
 await prisma.$disconnect();
 let selected = 0;
+let selectFailure = null;
 for (const m of [...expertMatches].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 4)) {
   const res = await call("PUT", `/api/tenders/${tenderId}/matches`, {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ matchId: m.id, matchType: "expert", isSelected: true }),
   });
   if (res.status < 400) selected += 1;
+  else if (!selectFailure) selectFailure = `expert PUT /matches HTTP ${res.status} ${body(res, 300)}`;
 }
 let selectedProjects = 0;
 for (const m of [...projectMatches].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 4)) {
@@ -275,8 +277,9 @@ for (const m of [...projectMatches].sort((a, b) => (b.score ?? 0) - (a.score ?? 
     body: JSON.stringify({ matchId: m.id, matchType: "project", isSelected: true }),
   });
   if (res.status < 400) selectedProjects += 1;
+  else if (!selectFailure) selectFailure = `project PUT /matches HTTP ${res.status} ${body(res, 300)}`;
 }
-log("select matches", "OK", `experts=${selected}/${expertMatches.length} projects=${selectedProjects}/${projectMatches.length}`);
+log("select matches", selected > 0 || expertMatches.length === 0 ? "OK" : "INFO", `experts=${selected}/${expertMatches.length} projects=${selectedProjects}/${projectMatches.length}${selectFailure ? ` | first failure: ${selectFailure}` : ""}`);
 
 // ── 6b2. Re-run Run Engine against the CONFIRMED Build Plan ─────────────────
 // Requirement coverage is computed by the engine, and BUILD_PLAN_ITEM evidence
@@ -321,10 +324,26 @@ r = await call("GET", `/api/tenders/${tenderId}/generation-readiness`);
 log("generation-readiness", "INFO", `ready=${r.json?.ready} ${JSON.stringify(r.json?.blockers ?? r.json ?? null).slice(0, 500)}`);
 
 // ── 8. Generate ─────────────────────────────────────────────────────────────
-r = await call("POST", `/api/tenders/${tenderId}/generate`, {
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({}),
-});
+// The generator refuses while any mandatory requirement is untraced and names
+// repair-source-grounding as the recovery. Call it once and retry, so the run
+// reports the next real stop rather than this one. Whether that click should be
+// mandatory at all is a separate question about the automation contract.
+async function generateOnce() {
+  return call("POST", `/api/tenders/${tenderId}/generate`, {
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+}
+r = await generateOnce();
+if (r.status >= 400 && r.json?.code === "UNTRACED_MANDATORY_REQUIREMENTS") {
+  const untraced = r.json?.requirements?.length ?? 0;
+  const repair = await call("POST", `/api/tenders/${tenderId}/repair-source-grounding`, {
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  log("repair-source-grounding", repair.status < 400 ? "OK" : "INFO", `HTTP ${repair.status} untraced=${untraced} ${body(repair, 400)}`);
+  r = await generateOnce();
+}
 if (r.status >= 400) die("generate", r);
 log("generate", "OK", body(r, 400));
 

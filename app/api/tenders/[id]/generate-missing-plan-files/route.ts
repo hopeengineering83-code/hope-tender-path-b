@@ -363,11 +363,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       documentType,
       requirements: tender.requirements,
     });
-    if (generated.format !== "DOCX" || !file.exactFileName.toLowerCase().endsWith(".docx")) {
-      skipped.push(`${file.exactFileName} (requires original or format-specific finalization)`);
-      continue;
-    }
+    // A file the app must not invent — a priced financial proposal, a
+    // tender-issued form — still needs a row, as PLANNED awaiting its official
+    // original.
+    //
+    // This used to `continue`, creating nothing. The export gate then required
+    // the file, generation reported it "skipped", and POST
+    // .../documents/{id}/attach-original had no {id} to address because no row
+    // existed: the owner was required to supply a document with nowhere to put
+    // it. The already-PLANNED branch below has always handled this correctly
+    // with keepPlanned; the missing-file branch simply did not, so whether the
+    // tender could be finished depended on whether a row happened to exist
+    // already.
+    const requiresOriginal = generated.format !== "DOCX" || !file.exactFileName.toLowerCase().endsWith(".docx");
     preparedMissing.push({
+      keepPlanned: requiresOriginal,
       fileName: file.exactFileName,
       documentType,
       exactOrder: file.exactOrder,
@@ -399,6 +409,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const created: string[] = [];
   const updated: string[] = [];
   const convertedFromPlanned: string[] = [];
+  // Rows created as PLANNED because the file must be an official original.
+  // Reported separately so "created" keeps meaning "produced bytes".
+  const plannedCreated: string[] = [];
 
   const persistBatch = async () => {
     await prisma.$transaction(async (tx) => {
@@ -429,33 +442,56 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               continue;
             }
 
-            const integrity = verifiedIntegrityDataFromBase64({
-              fileContent: document.fileContent,
-              filename: document.fileName,
-              claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            });
-            const data = {
-              name: document.fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
-              documentType: document.documentType,
-              format: document.format,
-              exactFileName: document.fileName,
-              exactOrder: document.exactOrder,
-              fileContent: document.fileContent,
-              ...integrity,
-              generationStatus: "GENERATED",
-              validationStatus: document.validationStatus,
-              reviewStatus: document.reviewStatus,
-              reviewedBy: null,
-              reviewedAt: null,
-              contentSummary: document.contentSummary,
-              updatedAt: new Date(),
-            };
+            // Mirrors the already-PLANNED branch below: no bytes, integrity
+            // explicitly unknown, and a failure code naming what is awaited, so
+            // this row can never be mistaken for a finished document.
+            const data = document.keepPlanned
+              ? {
+                name: document.fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+                documentType: document.documentType,
+                format: document.format,
+                exactFileName: document.fileName,
+                exactOrder: document.exactOrder,
+                fileContent: null,
+                generationStatus: "PLANNED",
+                validationStatus: "PENDING",
+                reviewStatus: document.reviewStatus,
+                reviewedBy: null,
+                reviewedAt: null,
+                contentSummary: document.contentSummary,
+                integrityStatus: "UNKNOWN",
+                integrityVerifiedAt: null,
+                integrityFailureCode: "REQUIRES_ORIGINAL_OR_FORMAT_FINALIZATION",
+                updatedAt: new Date(),
+              }
+              : {
+                name: document.fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+                documentType: document.documentType,
+                format: document.format,
+                exactFileName: document.fileName,
+                exactOrder: document.exactOrder,
+                fileContent: document.fileContent,
+                ...verifiedIntegrityDataFromBase64({
+                  fileContent: document.fileContent,
+                  filename: document.fileName,
+                  claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                }),
+                generationStatus: "GENERATED",
+                validationStatus: document.validationStatus,
+                reviewStatus: document.reviewStatus,
+                reviewedBy: null,
+                reviewedAt: null,
+                contentSummary: document.contentSummary,
+                updatedAt: new Date(),
+              };
             if (existing) {
               await lockedTx.generatedDocument.update({ where: { id: existing.id }, data });
-              updated.push(document.fileName);
+              if (document.keepPlanned) plannedCreated.push(document.fileName);
+              else updated.push(document.fileName);
             } else {
               await lockedTx.generatedDocument.create({ data: { tenderId: id, ...data } });
-              created.push(document.fileName);
+              if (document.keepPlanned) plannedCreated.push(document.fileName);
+              else created.push(document.fileName);
             }
           }
 
@@ -583,7 +619,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // reason and nothing different to try. Clicking again produced the same
   // thing. When there were targets and none of them moved, say so and name the
   // reason for each, so the next step is a fact rather than another click.
-  const changedCount = created.length + updated.length + convertedFromPlanned.length;
+  // Planning a row for a file that must arrive as an official original IS
+  // progress: it is what gives the owner somewhere to upload it. Counting it
+  // as "nothing changed" would fail the call that just created the only route
+  // forward.
+  const changedCount = created.length + updated.length + convertedFromPlanned.length + plannedCreated.length;
   if (changedCount === 0) {
     return NextResponse.json(
       {
@@ -594,7 +634,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           ? `No planned file could be generated. ${skipped.length} target(s) were skipped, each for the reason listed.`
           : "No planned file could be generated, and no target reported a reason. Re-run the Engine to rebuild the submission plan.",
         skipped: skipped.length,
-        files: { created, updated, convertedFromPlanned, skipped },
+        files: { created, updated, convertedFromPlanned, plannedCreated, skipped },
         nextAction: skipped.length > 0 ? "REVIEW_SKIPPED_TARGETS" : "RUN_ENGINE",
       },
       { status: 422 },
@@ -608,8 +648,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     created: created.length,
     updated: updated.length,
     convertedFromPlanned: convertedFromPlanned.length,
+    plannedCreated: plannedCreated.length,
     skipped: skipped.length,
-    files: { created, updated, convertedFromPlanned, skipped },
+    files: { created, updated, convertedFromPlanned, plannedCreated, skipped },
     warning: "Generated narrative drafts/replacement controls require validation and reviewer approval before export. Replace official originals where reviewStatus is REPLACE_WITH_ORIGINAL.",
     canonicalReadiness,
   });
