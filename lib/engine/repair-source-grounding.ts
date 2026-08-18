@@ -226,6 +226,14 @@ function bestRepairForRequirement(
   return best;
 }
 
+/**
+ * Confidence written when a requirement's EXISTING evidence is re-confirmed to
+ * resolve against an active tender file. Deliberately the same value the
+ * analysis promotion writes for verbatim containment: the fact being recorded
+ * is identical, so the two paths must not disagree about how strong it is.
+ */
+const CONFIRMED_EXISTING_EVIDENCE_CONFIDENCE = 0.9;
+
 export async function repairSourceGrounding(
   tenderId: string,
   options: RepairSourceGroundingOptions = {},
@@ -290,14 +298,27 @@ export async function repairSourceGrounding(
     extractedText: file.extractedText,
     totalPages: file.totalPages,
   }));
-  const ungrounded: RequirementToRepair[] = requirements.filter(
-    (requirement: RequirementToRepair) => !isGroundedEvidenceInActiveFiles(
+  // A requirement needs repair when EITHER its evidence does not resolve
+  // against an active file, OR its stored sourceConfidence is <= 0.
+  //
+  // The second condition is not redundant. The generate and export gates block
+  // on `sourceConfidence <= 0` alone, while this routine used to ask only
+  // whether the evidence resolved. A requirement whose quote does resolve but
+  // whose confidence was never written therefore blocked generation while this
+  // routine reported checkedCount: 0 — and the block's own nextAction is
+  // REPAIR_SOURCE_GROUNDING, so the owner was directed at a button that could
+  // not possibly clear it, forever. Whatever else changes, the recovery a gate
+  // advertises must be able to address what that gate is blocking on.
+  const needsRepair = (requirement: RequirementToRepair): boolean => {
+    if ((requirement.sourceConfidence ?? 0) <= 0) return true;
+    return !isGroundedEvidenceInActiveFiles(
       requirement.sourcePageNumber,
       requirement.sourceExactQuote,
       requirement.sourceTenderFileId,
       activeFiles,
-    ),
-  );
+    );
+  };
+  const ungrounded: RequirementToRepair[] = requirements.filter(needsRepair);
 
   const checkedCount = ungrounded.length;
   if (checkedCount === 0) {
@@ -327,6 +348,28 @@ export async function repairSourceGrounding(
   const remainingRequirements: Array<{ id: string; title: string }> = [];
 
   for (const requirement of ungrounded) {
+    // Evidence that already resolves against an active file needs confirming,
+    // not replacing: write the confidence the gates read and keep the quote the
+    // analysis established. Re-deriving a quote here would discard a correct
+    // citation just because a number beside it was missing.
+    if (isGroundedEvidenceInActiveFiles(
+      requirement.sourcePageNumber,
+      requirement.sourceExactQuote,
+      requirement.sourceTenderFileId,
+      activeFiles,
+    )) {
+      await db.tenderRequirement.update({
+        where: { id: requirement.id },
+        data: {
+          sourceConfidence: CONFIRMED_EXISTING_EVIDENCE_CONFIDENCE,
+          sourceExtractionMethod: "automatic_repair_confirmed",
+          updatedAt: new Date(),
+        },
+      });
+      repairedRequirementIds.push(requirement.id);
+      continue;
+    }
+
     const repair = bestRepairForRequirement(requirement, usableFiles);
     if (!repair) {
       remainingRequirements.push({ id: requirement.id, title: requirement.title });

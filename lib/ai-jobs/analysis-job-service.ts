@@ -26,6 +26,8 @@ import {
 } from "../ai-analyze-promotion";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health-db";
 import { syncPersistedTenderFactsToLedger } from "../engine/tender-facts-ledger-service";
+import { normalizeForContainment } from "../engine/evidence-grounding";
+import { normalizeRequirementTypeOrDefault } from "../engine/requirement-type-vocabulary";
 
 export type AnalysisJobCreateInput = {
   tenderId: string;
@@ -823,11 +825,21 @@ function groundingConfidence(
     const quote = typeof req.sourceQuote === "string" ? req.sourceQuote.trim() : "";
     if (page <= 0 || quote.length === 0) return modelConfidence;
 
-    // Verbatim containment is the strongest signal available here and is the
-    // same rule the downstream grounding checks apply to the quote.
+    // Containment is the strongest signal available here, and it must be tested
+    // through the SAME normalization the downstream grounding checks use.
+    //
+    // This previously called text.includes(quote) directly while claiming to
+    // apply the same rule. It does not: extracted PDF text re-wraps lines and
+    // the model re-cases the first word of a lifted quote, so a quote that is
+    // genuinely in the document scored 0 here while
+    // isGroundedEvidenceInActiveFiles — which normalizes — considered it
+    // grounded. That split is what produced the unescapable generate loop:
+    // the gate blocks on sourceConfidence <= 0, repair sees nothing to repair,
+    // and the owner is told to press a button that cannot help.
     const text = fileTextById?.get(sourceTenderFileId);
     if (typeof text === "string" && text.length > 0) {
-        return text.includes(quote) ? Math.max(modelConfidence, 0.9) : modelConfidence;
+        const contained = normalizeForContainment(text).includes(normalizeForContainment(quote));
+        return contained ? Math.max(modelConfidence, 0.9) : modelConfidence;
     }
     // No text to compare against: the file/page/quote triple was still verified
     // by the promotion check, so record a positive but modest confidence.
@@ -854,7 +866,10 @@ function mapToDraft(
     return {
         title: req.title,
         description: req.description,
-        requirementType: req.requirementType,
+        // Normalize against the canonical vocabulary. Writing the model's
+        // string straight through let "EXPERIENCE" reach the column, which
+        // silently sized the engine's project-selection limit to zero.
+        requirementType: normalizeRequirementTypeOrDefault(req.requirementType),
         priority: req.priority,
         requiredQuantity: req.requiredQuantity,
         pageLimit: req.pageLimit,
