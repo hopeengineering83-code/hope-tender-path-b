@@ -198,6 +198,16 @@ export async function runTenderEngine(
           progress("engine.analyze", `Analyzing ${Math.round(tenderText.length / 1000)}k chars of tender text with AI (structured requirement extraction)`);
           const aiMeta = await analyzeWithAI(tenderText);
           const aiResult = aiMeta.result;
+          // Carry the AI's own source coordinates through. Dropping them here
+          // meant the engine's requirements arrived with NO evidence and could
+          // only be re-grounded by the best-effort lexical extractor below;
+          // whenever that scored under its confidence floor the requirement was
+          // persisted MANDATORY-but-ungrounded, and the BuildPlan preflight then
+          // rejected the tender with REQUIREMENT_SOURCE_UNGROUNDED — a blocker
+          // produced by this engine's own write, on a tender whose AI Analyze
+          // had already extracted a correct page and verbatim quote for every
+          // requirement. CLAUDE.md also requires page + quote on every extracted
+          // requirement, so the evidence must survive this mapping.
           const rawRequirements = aiResult.requirements.map((req, idx) => ({
             title: req.title,
             description: req.description,
@@ -209,6 +219,9 @@ export async function runTenderEngine(
             exactOrder: idx + 1,
             restrictions: req.restrictions ?? null,
             sectionReference: req.sectionReference ?? null,
+            sourcePageNumber: req.sourcePage ?? null,
+            sourceExactQuote: req.sourceQuote ?? null,
+            sourceSectionHeading: req.sourceSectionHeading ?? null,
           }));
           const strategicRequirements = normalizeStrategicRequirements(rawRequirements);
           analysis = {
@@ -372,6 +385,26 @@ export async function runTenderEngine(
           }
         }
         for (const { id, req } of draftWithIds) {
+          // A quote the AI lifted verbatim from the tender outranks a lexical
+          // re-match: resolve which ACTIVE file actually contains it and keep
+          // the AI's own page/heading. The lexical extractor is a GAP FILLER,
+          // not a replacement — overwriting good evidence with a lower-quality
+          // paragraph match (or with nothing, when it scored below its
+          // confidence floor) is what left MANDATORY requirements ungrounded.
+          if (req.sourceExactQuote) {
+            const owningFile = filesWithText.find((f) => (f.extractedText ?? "").includes(req.sourceExactQuote!));
+            if (owningFile) {
+              req.sourceTenderFileId = owningFile.id;
+              req.sourceConfidence = Math.max(req.sourceConfidence ?? 0, 0.9);
+              continue;
+            }
+            // The quote does not occur in any active file — it cannot ground
+            // anything, so drop it and fall through to the lexical match rather
+            // than persisting evidence that the grounding check must reject.
+            req.sourceExactQuote = null;
+            req.sourcePageNumber = null;
+            req.sourceSectionHeading = null;
+          }
           const coord = bestByReqId.get(id);
           if (coord) {
             req.sourceTenderFileId = coord.fileId ?? null;

@@ -1,4 +1,4 @@
-import { extractRequirementSources, type RequirementSource } from "./requirement-source-extractor";
+import { extractRequirementSources, truncateQuoteVerbatim, type RequirementSource } from "./requirement-source-extractor";
 
 export type TenderSourceDocument = {
   id: string;
@@ -132,7 +132,10 @@ function lexicalFallback(input: {
     sourceTenderFileName: input.source.name ?? null,
     sourcePageNumber: best.pageNumber,
     sourceSectionHeading: best.sectionHeading,
-    sourceExactQuote: best.paragraph.length > 380 ? `${best.paragraph.slice(0, 379).trim()}…` : best.paragraph,
+    // Same verbatim-substring contract as requirement-source-extractor: the
+    // stored quote is checked with `extractedText.includes(quote)`, so it must
+    // never carry an ellipsis or lose leading whitespace.
+    sourceExactQuote: truncateQuoteVerbatim(best.paragraph, 380),
     sourceConfidence: Math.min(0.85, Math.max(0.2, best.score)),
   };
 }

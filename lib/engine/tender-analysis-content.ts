@@ -176,6 +176,49 @@ export function buildTenderAnalysisContent(
   ].filter(Boolean).join("\n\n").slice(0, MAX_TOTAL_AI_CHARS);
 }
 
+// The leading `TENDER: <title>` line that buildTenderAnalysisContent always
+// emits first, pinned to a constant for hashing purposes only.
+const HASH_TITLE_PLACEHOLDER = "TENDER: [title-excluded-from-hash]";
+
+/**
+ * Project built analysis content onto the form used for hashing.
+ *
+ * Tender.title is an ANALYSIS OUTPUT, not an analysis input: a successful AI
+ * Analyze overwrites it via buildCanonicalAnalysisTenderUpdate
+ * (`title: aiResult.tenderTitle` in lib/engine/canonical-analysis-update.ts).
+ * When the live title participates in the hash, every FIRST successful analysis
+ * invalidates itself: the job stamps analysisInputHash BEFORE the write-back,
+ * the write-back replaces the title, and the gate then recomputes a different
+ * hash and reports ANALYSIS_HASH_MISMATCH — "Tender content changed since the
+ * last analysis" — for a tender nobody touched. Build Plan, generation and
+ * export were unreachable until AI Analyze was run a SECOND time (the second
+ * write-back is idempotent, so the hash finally settles).
+ *
+ * Normalising here rather than in buildTenderAnalysisContent is deliberate: the
+ * title still reaches the model as prompt context, and every one of the ten
+ * call sites that hashes analysis content is corrected at a single point. An
+ * opt-in flag per call site would reintroduce exactly the stamp/recompute
+ * divergence this function exists to prevent (see the vault-ordering note in
+ * buildTenderAnalysisContent for a previous instance of that same bug).
+ *
+ * The hash therefore tracks genuine analysis inputs — source-file text, the
+ * description/intake notes and the vault-document digest. Renaming a tender no
+ * longer discards its extracted requirements.
+ */
+function projectContentForHash(content: string): string {
+  if (!content.startsWith("TENDER: ")) return content;
+  // buildTenderAnalysisContent joins its sections with a blank line, so the
+  // title section runs to the first "\n\n" — NOT merely to the first newline.
+  // Extracted tender titles are routinely multi-line (they are lifted verbatim
+  // from the source document, e.g. "Consultancy Services for Detailed Design
+  // and Construction\nSupervision of Rural Water Supply Schemes"), so trimming
+  // only the first physical line would leave the remaining title lines in the
+  // hashed text and the self-invalidation would persist.
+  const sectionBreak = content.indexOf("\n\n");
+  const rest = sectionBreak === -1 ? "" : content.slice(sectionBreak);
+  return `${HASH_TITLE_PLACEHOLDER}${rest}`;
+}
+
 /**
  * The canonical content hash used to key AiAnalyzeChunk rows and AiJob
  * analysisInputHash. 16-char truncated sha256 of the built content — the same
@@ -183,5 +226,5 @@ export function buildTenderAnalysisContent(
  * route share one chunk-state identity.
  */
 export function computeAnalysisContentHash(content: string): string {
-  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
+  return crypto.createHash("sha256").update(projectContentForHash(content)).digest("hex").slice(0, 16);
 }

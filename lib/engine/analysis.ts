@@ -313,6 +313,14 @@ export function normalizeStrategicRequirements(requirements: RequirementDraft[])
       ? samples[0]
       : `Senior-level requirement bundle consolidating ${sourceCount} extracted tender instruction(s). Key evidence interpreted: ${samples.join(" | ")}`;
 
+    // Grouping must not lose the members' source evidence. A bundle is only as
+    // traceable as the extract it stands on, and every consumer downstream —
+    // the BuildPlan preflight, the export gate, the traceability panel —
+    // requires a page and a verbatim quote on each MANDATORY requirement. The
+    // first member that carries a quote becomes the bundle's evidence anchor;
+    // without this the bundle is written ungrounded and blocks the release.
+    const evidenceAnchor = group.find((item) => item.sourceExactQuote) ?? null;
+
     strategic.push({
       title: strategicTitle(key, first.requirementType),
       description: description.slice(0, 3500),
@@ -324,6 +332,13 @@ export function normalizeStrategicRequirements(requirements: RequirementDraft[])
       exactOrder: Number.isFinite(exactOrder) && exactOrder !== 9999 ? exactOrder : strategic.length + 1,
       restrictions: group.find((item) => item.restrictions)?.restrictions ?? null,
       sectionReference: group.find((item) => item.sectionReference)?.sectionReference ?? null,
+      sourceTenderFileId: evidenceAnchor?.sourceTenderFileId ?? null,
+      sourcePageNumber: evidenceAnchor?.sourcePageNumber ?? null,
+      sourceSectionHeading: evidenceAnchor?.sourceSectionHeading ?? null,
+      sourceExactQuote: evidenceAnchor?.sourceExactQuote ?? null,
+      ...(typeof evidenceAnchor?.sourceConfidence === "number"
+        ? { sourceConfidence: evidenceAnchor.sourceConfidence }
+        : {}),
     });
   }
 

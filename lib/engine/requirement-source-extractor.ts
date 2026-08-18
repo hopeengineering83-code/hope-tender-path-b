@@ -58,6 +58,39 @@ const DEFAULT_OPTS: Required<ExtractorOptions> = {
 };
 
 /**
+ * Cap a source quote's length while keeping it a VERBATIM substring of the
+ * paragraph it was taken from.
+ *
+ * `sourceExactQuote` is not display text — downstream grounding checks assert
+ * `tenderFile.extractedText.includes(sourceExactQuote)` (see the BuildPlan
+ * preflight's REQUIREMENT_QUOTE_NOT_IN_FILE blocker and the shared evidence
+ * validator). The previous form appended an ellipsis to the truncated text:
+ *
+ *     `${para.paragraph.slice(0, max - 1).trim()}…`
+ *
+ * The "…" is by definition absent from the source document, so EVERY
+ * requirement whose matched paragraph exceeded maxQuoteChars was written to the
+ * database already ungrounded, and no amount of re-analysis could clear it —
+ * Build Plan, generation and export stayed blocked on a correctly extracted
+ * tender. The `.trim()` compounded it by also stripping leading whitespace,
+ * which breaks substring identity even without the ellipsis.
+ *
+ * Here the quote is cut on a whitespace boundary where one is available (so it
+ * ends on a whole word rather than mid-token) and only trailing whitespace is
+ * removed. Dropping characters from the END of a prefix leaves a prefix, so the
+ * result is always contained in the paragraph — and therefore in the file text.
+ */
+export function truncateQuoteVerbatim(paragraph: string, maxQuoteChars: number): string {
+  if (paragraph.length <= maxQuoteChars) return paragraph;
+  const head = paragraph.slice(0, maxQuoteChars);
+  const lastBreak = head.search(/\s\S*$/);
+  // Only honour the word boundary when it retains most of the budget; a very
+  // early boundary (a long unbroken token) would throw away real evidence.
+  const cut = lastBreak > maxQuoteChars * 0.6 ? head.slice(0, lastBreak) : head;
+  return cut.trimEnd();
+}
+
+/**
  * Splits the file text into a list of paragraphs, each tagged with the
  * detected page number (when "[page N]" markers exist) and the most
  * recent section heading seen above it.
@@ -185,9 +218,7 @@ export function extractRequirementSources(opts: {
       sourceTenderFileId: opts.tenderFileId,
       sourcePageNumber: para.pageNumber,
       sourceSectionHeading: para.sectionHeading,
-      sourceExactQuote: para.paragraph.length > o.maxQuoteChars
-        ? `${para.paragraph.slice(0, o.maxQuoteChars - 1).trim()}…`
-        : para.paragraph,
+      sourceExactQuote: truncateQuoteVerbatim(para.paragraph, o.maxQuoteChars),
       sourceConfidence: Math.min(1, bestScore),
     };
   });
