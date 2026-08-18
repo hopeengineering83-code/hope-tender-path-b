@@ -3223,6 +3223,52 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Technical-Proposal.docx record and let the misclassified planned
   // slot remain as a support doc (filled later by
   // fillPlannedSupportDocuments).
+  // Recognises a file name that is genuinely the main proposal slot, so a
+  // support file misclassified as METHODOLOGY never absorbs the proposal.
+  // "expression of interest" / "EOI" is included because on an EOI tender that
+  // file IS the main narrative — there is no "technical proposal" at that
+  // stage. Without it the proposal had no recognised slot on an entire
+  // category of tender and the plan file received a stub instead.
+  const isMainProposalSlotName = (name: string | null | undefined) =>
+    typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal|expression[-\s_]*of[-\s_]*interest|eoi)\b/i.test(name);
+
+  // The confirmed submission plan owns the file names the client receives.
+  // When it names a main-proposal file (e.g. "01-Technical-Proposal.docx"),
+  // the proposal must be written to THAT name.
+  //
+  // Previously this step only looked for an existing GeneratedDocument row to
+  // reuse. On a normal run no row exists for a plan file yet — the plan rows
+  // are materialised later, by generate-missing-plan-files — so the lookup
+  // found nothing and the proposal was created as a fresh
+  // "Technical-Proposal.docx". That name is outside the confirmed plan, so
+  // supersede-outside-plan discarded it, while the plan's own
+  // "01-Technical-Proposal.docx" was filled with the short
+  // "generated support control" stub. The exported package therefore shipped
+  // placeholders and the real proposal was thrown away.
+  const planProposalFileName = await (async (): Promise<string | null> => {
+    try {
+      const planned = await prisma.tender.findFirst({
+        where: { id: tenderId },
+        select: { exactFileNaming: true, exactFileOrder: true },
+      });
+      const names: string[] = [];
+      for (const raw of [planned?.exactFileNaming, planned?.exactFileOrder]) {
+        if (typeof raw !== "string" || !raw) continue;
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) continue;
+        for (const entry of parsed) {
+          if (typeof entry === "string" && entry.trim()) names.push(entry.trim());
+          else if (entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string") {
+            names.push(((entry as { name: string }).name).trim());
+          }
+        }
+      }
+      return names.find((name) => isMainProposalSlotName(name)) ?? null;
+    } catch {
+      return null;
+    }
+  })();
+
   const target = await prisma.generatedDocument.findFirst({
     where: {
       tenderId,
@@ -3238,8 +3284,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Only reuse the slot if the filename is a real proposal-named slot.
   // This regex catches genuine main-proposal slot names while rejecting
   // accidental METHODOLOGY-classified support slots.
-  const isMainProposalSlotName = (name: string | null | undefined) =>
-    typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal)\b/i.test(name);
   let reuseTarget = target && isMainProposalSlotName(target.exactFileName ?? target.name);
 
   if (reuseTarget && target) {
@@ -3315,8 +3359,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         userId,
         purpose: "generate",
         write: async (lockedTx) => {
+      const proposalFileName = planProposalFileName ?? "Technical-Proposal.docx";
       const existing = await lockedTx.generatedDocument.findFirst({
-        where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+        where: { tenderId, exactFileName: proposalFileName, generationStatus: { not: "SUPERSEDED" } },
         orderBy: { updatedAt: "desc" },
       });
       if (existing) {
@@ -3342,7 +3387,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               name: "Client-Ready Benchmark Technical Proposal",
               documentType: "TECHNICAL_PROPOSAL",
               format: "DOCX",
-              exactFileName: "Technical-Proposal.docx",
+              exactFileName: proposalFileName,
               exactOrder: 1,
               fileContent,
               ...proposalIntegrity,
