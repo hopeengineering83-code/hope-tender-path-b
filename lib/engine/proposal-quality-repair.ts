@@ -95,7 +95,15 @@ function sectionH(input: EvaluatorMatrixInput): string {
     "| Self-score axis | Score | Rationale |",
     "|---|---:|---|",
     `| Tender requirement coverage | ${missing === 0 ? "9/10" : missing <= 2 ? "7/10" : "5/10"} | ${direct} DIRECT, ${partial} PARTIAL, ${missing} NEEDS_CONFIRMATION evidence mappings. |`,
-    `| Evidence strength | ${direct >= partial + missing ? "8/10" : partial > 0 ? "6/10" : "4/10"} | Claims are controlled by evidence support levels and final bid-team actions. |`,
+    // "bid-team action" is an INTERNAL stub marker: PLACEHOLDER_PATTERNS matches
+    // /Bid-Team\s+Action/i to catch unfinished "Bid-Team Action: confirm X"
+    // notes. Emitting the phrase as ordinary narrative in a client-facing
+    // self-assessment made the generator trip its own placeholder gate, so a
+    // complete document was refused with QUALITY_VALIDATION_BLOCKED. The
+    // wording below says the same thing in language that belongs in a document
+    // the client actually receives, and avoids INTERNAL_TRACEABILITY_PATTERNS
+    // ("internal review", "reviewer note") for the same reason.
+    `| Evidence strength | ${direct >= partial + missing ? "8/10" : partial > 0 ? "6/10" : "4/10"} | Claims are controlled by evidence support levels and a final quality check before submission. |`,
     "| Evaluator readability | 8/10 | Proposal now includes blueprint, compliance matrix, criteria mirror, win themes and appendix controls. |",
     "| Submission risk control | 7/10 | Final submission still requires file-name, deadline, signature/stamp, appendix and commercial-envelope verification. |",
   ];

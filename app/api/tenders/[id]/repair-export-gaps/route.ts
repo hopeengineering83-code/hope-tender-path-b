@@ -8,6 +8,7 @@ import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText
 import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
+import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
 
 // ── DOCX XML hygiene cleaner ──────────────────────────────────────────────────
 // Strips AI traces, placeholders and pricing leakage directly from <w:t> text
@@ -18,6 +19,23 @@ const PLACEHOLDER_RX = /\[(insert|add|fill|placeholder|todo|tbd|name of|date her
 const PLACEHOLDER_WORD_RX = /\b(TODO|TBD|FIXME|PLACEHOLDER)\b/g;
 // Pricing patterns for technical documents only
 const PRICING_RX = /\b(financial proposal|commercial offer|contract value|bid price|unit rate|lump sum price|fee schedule|our pricing|competitive price[s]?|cost estimate|quoted amount)\b/gi;
+
+// Monetary AMOUNTS in a technical-envelope document.
+//
+// PRICING_RX above removes the surrounding phrase but leaves the figure, so a
+// past-project reference such as "Contract value: ETB 18,400,000." still
+// carried a currency amount after cleaning. containsPricingLeakage flags the
+// amount itself, so repair-export-gaps reported the document as
+// blockedByHygiene and could never bring it into compliance — the operator was
+// told to "rewrite" with no supported way to do so.
+//
+// A technical envelope must not state figures at all: the amount is redacted
+// and the surrounding sentence kept, so experience references still read as
+// evidence without disclosing any value. Mirrors the currency forms
+// lib/engine/pricing-hygiene.ts detects.
+const CURRENCY_AMOUNT_RX =
+  /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/gi;
+const CURRENCY_REDACTION = "value not disclosed in the technical envelope";
 
 const SAFE_REWRITE_MAP: Array<[RegExp, string]> = [
   // Replace financial-in-technical narrative with a safe neutral sentence
@@ -33,6 +51,9 @@ function cleanXmlTextNode(text: string, isTechnicalDoc: boolean): string {
     out = out.replace(rx, replacement);
   }
   if (isTechnicalDoc) {
+    // Redact figures BEFORE stripping the priced phrases, so the amount is
+    // caught while its context is still present.
+    out = out.replace(CURRENCY_AMOUNT_RX, CURRENCY_REDACTION);
     out = out.replace(PRICING_RX, "");
   }
   // Collapse multiple spaces/dashes left by removals
@@ -215,6 +236,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }
 
       const priorStatus = doc.reviewStatus;
+      // Rewriting the bytes MUST re-derive the persisted integrity columns.
+      // Leaving the previous contentSha256/byteLength in place while replacing
+      // fileContent made every repaired document fail verification with
+      // PERSISTED_BYTE_INTEGRITY_MISMATCH, so the hygiene repair that was
+      // supposed to unblock the export was itself the thing blocking it.
+      const repairedIntegrity = verifiedIntegrityDataFromBase64({
+        fileContent: content,
+        filename: name,
+        claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
       await tx.generatedDocument.update({
         where: { id: doc.id },
         data: {
@@ -222,6 +253,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           format: "DOCX",
           exactFileName: name,
           fileContent: content,
+          ...repairedIntegrity,
           generationStatus: "GENERATED",
           validationStatus: "VALIDATED",
           reviewStatus: "READY_FOR_EXPORT",

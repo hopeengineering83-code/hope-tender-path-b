@@ -161,9 +161,31 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
   return [{ title: "Tender Package Item", lines: ["This file corresponds to a tender-required submission item. Refer to the tender document for the exact content and format."] }, { title: "Linked Tender Requirements", lines: context.requirements.slice(0, 8) }, { title: "Insertion Instructions", lines: placeholderIntro() }];
 }
 
+/**
+ * Is this row the tender's MAIN generated proposal?
+ *
+ * fillPlannedSupportDocuments overwrites every row it does NOT consider the
+ * main proposal with support/stub content, so a false answer here destroys the
+ * generated proposal. The previous test recognised it only by the literal name
+ * "Client-Ready Benchmark Technical Proposal" or a filename ending
+ * "technical-proposal.docx". That held while the proposal was always written to
+ * "Technical-Proposal.docx", but it fails as soon as the proposal is written to
+ * the confirmed plan's own file name — an EOI tender's
+ * "01-Expression-Of-Interest.docx" matched neither, so the freshly generated
+ * proposal was immediately replaced by a 58-word stub and the exported package
+ * shipped placeholders.
+ *
+ * Recognition is now by document TYPE (the main narrative types), by the
+ * "Client-Ready" name the generator gives it, or by a filename that names the
+ * main proposal slot — matching the patterns generate-elite uses to choose that
+ * slot.
+ */
 function isMainProposalLike(doc: { name: string; exactFileName: string | null; documentType: string }): boolean {
   const label = `${doc.name} ${doc.exactFileName ?? ""}`.toLowerCase();
-  return /\bclient-ready benchmark technical proposal\b|technical-proposal\.docx$/.test(label) || (doc.documentType === "TECHNICAL_PROPOSAL" && /feasibility, design and supervision technical scope/i.test(doc.name));
+  if (doc.documentType === "TECHNICAL_PROPOSAL" || doc.documentType === "EXPRESSION_OF_INTEREST") return true;
+  if (/\bclient-ready\b/.test(label)) return true;
+  if (/\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal|expression[-\s_]*of[-\s_]*interest|eoi)\b/.test(label)) return true;
+  return /technical-proposal\.docx$/.test(label);
 }
 
 // Kinds that represent company-produced deliverables and should have a real DOCX generated.

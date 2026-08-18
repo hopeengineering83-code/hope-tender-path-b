@@ -3269,6 +3269,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
   })();
 
+  // On an EOI the main narrative is an Expression of Interest, not a full
+  // technical proposal. The quality validator blocks
+  // documentType=TECHNICAL_PROPOSAL on an EOI/REOI tender ("EOI tender should
+  // not generate a full technical proposal"), so stamping that type on the
+  // EOI's own plan file made the document unexportable by construction.
+  // EXPRESSION_OF_INTEREST is the type the section planner and the
+  // required-sections maps already use for this case.
+  const isExpressionOfInterestSlot = /\b(expression[-\s_]*of[-\s_]*interest|eoi)\b/i.test(planProposalFileName ?? "");
+  const proposalDocumentType = isExpressionOfInterestSlot ? "EXPRESSION_OF_INTEREST" : "TECHNICAL_PROPOSAL";
+  const proposalDocumentName = isExpressionOfInterestSlot
+    ? "Client-Ready Expression of Interest"
+    : "Client-Ready Benchmark Technical Proposal";
+
   const target = await prisma.generatedDocument.findFirst({
     where: {
       tenderId,
@@ -3292,8 +3305,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       await prisma.generatedDocument.update({
         where: { id: target.id },
         data: {
-          name: "Client-Ready Benchmark Technical Proposal",
-          documentType: "TECHNICAL_PROPOSAL",
+          name: proposalDocumentName,
+          documentType: proposalDocumentType,
           // Keep target.exactFileName because it's a genuine
           // proposal-named slot the tender required.
           exactFileName: target.exactFileName ?? "Technical-Proposal.docx",
@@ -3368,8 +3381,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         await lockedTx.generatedDocument.update({
           where: { id: existing.id },
           data: {
-            name: "Client-Ready Benchmark Technical Proposal",
-            documentType: "TECHNICAL_PROPOSAL",
+            name: proposalDocumentName,
+            documentType: proposalDocumentType,
             fileContent,
             ...proposalIntegrity,
             generationStatus: "GENERATED",
@@ -3384,8 +3397,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           await lockedTx.generatedDocument.create({
             data: {
               tenderId,
-              name: "Client-Ready Benchmark Technical Proposal",
-              documentType: "TECHNICAL_PROPOSAL",
+              name: proposalDocumentName,
+              documentType: proposalDocumentType,
               format: "DOCX",
               exactFileName: proposalFileName,
               exactOrder: 1,
@@ -3411,8 +3424,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               await lockedTx.generatedDocument.update({
                 where: { id: winner.id },
                 data: {
-                  name: "Client-Ready Benchmark Technical Proposal",
-                  documentType: "TECHNICAL_PROPOSAL",
+                  name: proposalDocumentName,
+                  documentType: proposalDocumentType,
                   fileContent,
                   ...proposalIntegrity,
                   generationStatus: "GENERATED",
