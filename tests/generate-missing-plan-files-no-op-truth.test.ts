@@ -24,11 +24,18 @@ const BUTTON = readFileSync("components/generate-missing-plan-files-button.tsx",
 
 describe("A no-op generation run is reported as a failure with reasons", () => {
   it("counts every kind of change before deciding the run succeeded", () => {
-    assert.match(
-      ROUTE,
-      /const changedCount = created\.length \+ updated\.length \+ convertedFromPlanned\.length;/,
-      "converted PLANNED rows are real changes and must count toward success",
-    );
+    // Assert the invariant, not one spelling of the sum. This previously pinned
+    // the exact expression, so adding a fourth kind of change — planning a row
+    // for a file that must arrive as an official original — failed the test for
+    // doing precisely what the test exists to require.
+    const sum = ROUTE.match(/const changedCount = ([^;]+);/)?.[1] ?? "";
+    assert.ok(sum.length > 0, "changedCount must be computed in one place");
+    for (const counter of ["created", "updated", "convertedFromPlanned", "plannedCreated"]) {
+      assert.ok(
+        sum.includes(`${counter}.length`),
+        `${counter} rows are real changes and must count toward success (changedCount = ${sum})`,
+      );
+    }
   });
 
   it("refuses success when nothing changed", () => {
@@ -40,7 +47,14 @@ describe("A no-op generation run is reported as a failure with reasons", () => {
 
   it("returns the per-target skip reasons rather than only a count", () => {
     const block = ROUTE.slice(ROUTE.indexOf("if (changedCount === 0)"), ROUTE.indexOf("return NextResponse.json({\n    success: true,"));
-    assert.match(block, /files: \{ created, updated, convertedFromPlanned, skipped \}/);
+    // Every per-target list the caller needs to act on must be present. Matched
+    // by name rather than as one object literal so the set can grow without
+    // failing a test whose point is that the lists are returned at all.
+    const files = block.match(/files: \{([^}]+)\}/)?.[1] ?? "";
+    assert.ok(files.length > 0, "the failure response must return the per-target file lists");
+    for (const list of ["created", "updated", "convertedFromPlanned", "plannedCreated", "skipped"]) {
+      assert.ok(files.includes(list), `the failure response must return the ${list} list (files: {${files}})`);
+    }
     assert.match(block, /nextAction: skipped\.length > 0 \? "REVIEW_SKIPPED_TARGETS" : "RUN_ENGINE"/);
   });
 
