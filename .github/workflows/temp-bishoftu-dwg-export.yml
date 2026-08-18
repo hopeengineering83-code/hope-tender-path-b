@@ -1,0 +1,37 @@
+name: Temporary Bishoftu DWG Export
+
+on:
+  push:
+    branches:
+      - temp/dwg-export-bishoftu-20260818
+    paths:
+      - 'tmp-dwg-export/**'
+      - '.github/workflows/temp-bishoftu-dwg-export.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout temporary branch
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install CAD writer
+        run: npm install --no-save --ignore-scripts @node-projects/acad-ts@2.4.2
+      - name: Convert DXF to DWG and read back
+        run: node tmp-dwg-export/convert.mjs
+      - name: Upload final DWG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bishoftu-Final-DWG-Rev04
+          path: |
+            tmp-dwg-export/output/Bishoftu_B_G_9_Terrace_FINAL_REV04.dwg
+            tmp-dwg-export/output/DWG_QA.json
+          if-no-files-found: error
+          retention-days: 1
