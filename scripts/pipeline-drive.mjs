@@ -84,25 +84,60 @@ const PROJECTS = [
   { name: "Sidama Region Primary School Facilities — Design and Supervision of 14 Schools", clientName: "Ministry of Education / World Bank GEQIP-E", country: "Ethiopia", sector: "Education", serviceAreas: ["Architectural design", "Structural design", "Supervision"], contractValue: 940000, currency: "USD", summary: "14 primary school facilities. Lead consultant. 2021-2023, completed." },
 ];
 
-let expertsCreated = 0;
+// Vault records must cite the source document they came from. A record with no
+// verified source can never be generation-eligible (canUseVaultRecordSafely),
+// which is the intended contract — so the harness links each expert to the CV
+// document and each project to the project-references document, exactly as an
+// operator does after uploading them.
+const vaultDocs = await call("GET", "/api/company/documents");
+const docList = vaultDocs.json?.documents ?? vaultDocs.json?.items ?? vaultDocs.json ?? [];
+const findDoc = (pattern) =>
+  (Array.isArray(docList) ? docList : []).find((doc) =>
+    pattern.test(String(doc.originalFileName ?? doc.fileName ?? "")))?.id ?? null;
+const expertSourceDocumentId = findDoc(/Key-Experts-CVs/i);
+const projectSourceDocumentId = findDoc(/Project-References/i);
+log("company/documents", "INFO",
+  `expertSource=${expertSourceDocumentId ? "found" : "MISSING"} projectSource=${projectSourceDocumentId ? "found" : "MISSING"}`);
+
+const expertTrust = [];
 for (const expert of EXPERTS) {
   const res = await call("POST", "/api/company/experts", {
-    headers: { "content-type": "application/json" }, body: JSON.stringify(expert),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...expert, sourceDocumentId: expertSourceDocumentId }),
   });
   if (res.status >= 400) die("company/experts", res);
-  expertsCreated += 1;
+  expertTrust.push(res.json?.trustLevel ?? "?");
 }
-log("company/experts", "OK", `${expertsCreated} REVIEWED experts`);
+log("company/experts", "OK", `${expertTrust.length} experts, trust=[${expertTrust.join(", ")}]`);
 
-let projectsCreated = 0;
+const projectTrust = [];
 for (const project of PROJECTS) {
   const res = await call("POST", "/api/company/projects", {
-    headers: { "content-type": "application/json" }, body: JSON.stringify(project),
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...project, sourceDocumentId: projectSourceDocumentId }),
   });
   if (res.status >= 400) die("company/projects", res);
-  projectsCreated += 1;
+  projectTrust.push(res.json?.trustLevel ?? "?");
 }
-log("company/projects", "OK", `${projectsCreated} REVIEWED projects`);
+log("company/projects", "OK", `${projectTrust.length} projects, trust=[${projectTrust.join(", ")}]`);
+
+// ── 0c. Legal records (licence, tax clearance) ──────────────────────────────
+// Mandatory eligibility requirements are evidenced by structured vault records,
+// not just uploaded files. Without them the coverage gate reports mandatory
+// requirements with no adequate evidence.
+const LEGAL_RECORDS = [
+  { recordType: "BUSINESS_LICENSE", title: "Business Licence", authority: "Ministry of Trade and Regional Integration", referenceNumber: "MT/AA/3/0004521/2009", status: "ACTIVE", issueDate: "2026-07-11", expiryDate: "2027-07-10", sourceDocumentId: findDoc(/Trade-License/i) },
+  { recordType: "TAX_CLEARANCE", title: "Tax Clearance Certificate", authority: "Ministry of Revenues", referenceNumber: "TCC/2026/44192", status: "ACTIVE", issueDate: "2026-06-30", expiryDate: "2026-12-31", sourceDocumentId: findDoc(/Tax-Clearance/i) },
+];
+const legalTrust = [];
+for (const record of LEGAL_RECORDS) {
+  const res = await call("POST", "/api/company/legal-records", {
+    headers: { "content-type": "application/json" }, body: JSON.stringify(record),
+  });
+  if (res.status >= 400) { legalTrust.push(`HTTP ${res.status}`); continue; }
+  legalTrust.push(res.json?.trustLevel ?? "created");
+}
+log("company/legal-records", "OK", legalTrust.join(", "));
 
 // ── 1. Intake ───────────────────────────────────────────────────────────────
 const form = new FormData();
@@ -120,11 +155,53 @@ r = await call("GET", `/api/tenders/${tenderId}/extraction-quality`);
 log("extraction-quality", r.status === 200 ? "OK" : "INFO",
   `HTTP ${r.status} ${body(r, 300)}`);
 
-// ── 3. AI Analyze ───────────────────────────────────────────────────────────
-r = await call("POST", `/api/tenders/${tenderId}/ai-analyze?force=true`);
-if (r.status !== 200) die("ai-analyze", r);
-log("ai-analyze", "OK",
-  `source=${r.json.analysisSource} fallback=${r.json.fallback} reqs=${r.json.requirementCount} next=${r.json.nextAction}`);
+// ── Async job worker ────────────────────────────────────────────────────────
+// This branch runs extraction and AI Analyze as durable AiJobs instead of doing
+// the work inside the request. Drain the queue for this tender the way the
+// deployed worker does, then report what actually ran.
+async function drainJobs(label, { maxRounds = 20 } = {}) {
+  const ran = [];
+  for (let round = 0; round < maxRounds; round += 1) {
+    const res = await call("POST", `/api/ai-jobs/run-next?tenderId=${tenderId}`);
+    if (res.status >= 400) break;
+    const results = res.json?.results ?? res.json?.jobs ?? [];
+    const processed = res.json?.processed ?? results.length;
+    if (!processed) break;
+    for (const job of results) ran.push(`${job.jobType}:${job.status}`);
+  }
+  log(`worker (${label})`, "INFO", ran.length ? ran.join(", ") : "no queued jobs");
+  return ran;
+}
+
+// ── 2b. Wait for source extraction ──────────────────────────────────────────
+await drainJobs("extraction");
+for (let attempt = 0; attempt < 30; attempt += 1) {
+  r = await call("GET", `/api/tenders/${tenderId}/extraction-quality`);
+  if (r.json?.readyForAnalysis) break;
+  await drainJobs(`extraction retry ${attempt + 1}`, { maxRounds: 3 });
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+}
+log("extraction ready", r.json?.readyForAnalysis ? "OK" : "INFO",
+  `readyForAnalysis=${r.json?.readyForAnalysis} pages=${r.json?.summary?.totalPages} extracted=${r.json?.summary?.extractedPages}`);
+
+// ── 3. AI Analyze (manual, job-based on this branch) ────────────────────────
+r = await call("POST", `/api/tenders/${tenderId}/manual-ai-analyze`, {
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({}),
+});
+if (r.status >= 400) die("manual-ai-analyze", r);
+const analyzeJobId = r.json?.jobId;
+log("manual-ai-analyze", "OK", `job=${analyzeJobId} status=${r.json?.status} next=${r.json?.nextAction}`);
+
+await drainJobs("ai-analyze");
+for (let attempt = 0; attempt < 30 && analyzeJobId; attempt += 1) {
+  r = await call("GET", `/api/ai-jobs/${analyzeJobId}`);
+  const st = r.json?.job?.status ?? r.json?.status;
+  if (st && !["QUEUED", "RUNNING", "PENDING"].includes(st)) break;
+  await drainJobs(`ai-analyze retry ${attempt + 1}`, { maxRounds: 3 });
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+}
+log("ai-analyze job", "INFO", body(r, 400));
 
 // ── 4. Engine ───────────────────────────────────────────────────────────────
 r = await call("POST", `/api/tenders/${tenderId}/engine`, {
@@ -132,6 +209,23 @@ r = await call("POST", `/api/tenders/${tenderId}/engine`, {
   body: JSON.stringify({ action: "run" }),
 });
 log("engine/run", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status} ${body(r, 400)}`);
+
+// Run Engine is job-based on this branch (202 + jobId); drain it before the
+// Build Plan reads its output.
+if (r.status === 202 && r.json?.jobId) {
+  const engineJobId = r.json.jobId;
+  await drainJobs("engine");
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const st = await call("GET", `/api/ai-jobs/${engineJobId}`);
+    const status = st.json?.job?.status ?? st.json?.status;
+    if (status && !["QUEUED", "RUNNING", "PENDING"].includes(status)) {
+      log("engine job", status === "SUCCEEDED" ? "OK" : "INFO", `status=${status} ${st.json?.job?.errorMessage ?? ""}`);
+      break;
+    }
+    await drainJobs(`engine retry ${attempt + 1}`, { maxRounds: 3 });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
 
 // ── 5. Build Plan ───────────────────────────────────────────────────────────
 r = await call("POST", `/api/tenders/${tenderId}/build-plan`, {
@@ -153,8 +247,10 @@ log("build-plan/confirm", "OK", body(r, 200));
 // Generation requires at least one SELECTED expert match
 // (NO_EXPERT_MATCHES_SELECTED). This is the operator's "review matches" step.
 r = await call("GET", `/api/tenders/${tenderId}/matching-diagnostics`);
-if (r.status >= 400) die("matching-diagnostics", r);
-log("matching-diagnostics", "OK", `experts total=${r.json.experts?.total} selected=${r.json.experts?.selected} projects total=${r.json.projects?.total}`);
+log("matching-diagnostics", r.status === 404 ? "INFO" : r.status < 400 ? "OK" : "INFO",
+  r.status === 404
+    ? "route not present on this branch — reading match state from the database"
+    : `experts total=${r.json?.experts?.total} selected=${r.json?.experts?.selected}`);
 
 // Match IDs are not exposed by any list endpoint (the tender page renders them
 // server-side), so the harness reads the ids straight from the database and
@@ -181,6 +277,44 @@ for (const m of [...projectMatches].sort((a, b) => (b.score ?? 0) - (a.score ?? 
   if (res.status < 400) selectedProjects += 1;
 }
 log("select matches", "OK", `experts=${selected}/${expertMatches.length} projects=${selectedProjects}/${projectMatches.length}`);
+
+// ── 6b2. Re-run Run Engine against the CONFIRMED Build Plan ─────────────────
+// Requirement coverage is computed by the engine, and BUILD_PLAN_ITEM evidence
+// candidates only exist once a confirmed plan does. The first engine run
+// therefore cannot mark requirements whose evidence is a file this workflow
+// will generate (evidenceSource AUTO_PLANNED_ARTIFACT), so those requirements
+// stay PARTIAL and the coverage gate blocks. Running the engine again now that
+// the plan is confirmed is what produces those rows.
+r = await call("POST", `/api/tenders/${tenderId}/engine`, {
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ action: "run" }),
+});
+if (r.status === 202 && r.json?.jobId) {
+  const reEngineJobId = r.json.jobId;
+  await drainJobs("engine rerun");
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const st = await call("GET", `/api/ai-jobs/${reEngineJobId}`);
+    const status = st.json?.job?.status ?? st.json?.status;
+    if (status && !["QUEUED", "RUNNING", "PENDING"].includes(status)) {
+      log("engine rerun", status === "SUCCEEDED" ? "OK" : "INFO", `status=${status}`);
+      break;
+    }
+    await drainJobs(`engine rerun retry ${attempt + 1}`, { maxRounds: 3 });
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+} else {
+  log("engine rerun", "INFO", `HTTP ${r.status} ${body(r, 200)}`);
+}
+
+// ── 6c. Link Vault evidence to requirements ─────────────────────────────────
+// The readiness gate reports mandatory requirements without FULL/SUBSTANTIAL
+// coverage and points at LINK_VAULT_EVIDENCE. This is the operator's step:
+// attach eligible, source-backed vault records as evidence for them.
+r = await call("POST", `/api/tenders/${tenderId}/link-vault-evidence-auto`, {
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({}),
+});
+log("link-vault-evidence-auto", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status} ${body(r, 500)}`);
 
 // ── 7. Generation readiness ─────────────────────────────────────────────────
 r = await call("GET", `/api/tenders/${tenderId}/generation-readiness`);

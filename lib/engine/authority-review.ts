@@ -300,13 +300,26 @@ export function runAuthorityReview(
   }
 
   // Missing required sections — a required section has no matching document
+  // Compare on the BASE name (extension stripped) and include the document's
+  // own exactFileName: generated rows are named without the extension
+  // ("01-Expression-Of-Interest"), so a required section of
+  // "01-Expression-Of-Interest.docx" matched neither `name` nor `documentType`
+  // and a correctly generated file was reported as a CRITICAL
+  // MISSING_REQUIRED_SECTION.
+  const stripExtension = (value: string) => value.replace(/\.[a-z0-9]{2,5}$/i, "").trim().toLowerCase();
   for (const section of tenderRequiredSections) {
     const sectionLower = section.toLowerCase();
-    const hasMatch = documents.some(
-      (d) =>
-        d.name.toLowerCase().includes(sectionLower) ||
-        d.documentType.toLowerCase().includes(sectionLower),
-    );
+    const sectionBase = stripExtension(section);
+    const hasMatch = documents.some((d) => {
+      const candidates = [d.name, d.exactFileName ?? "", d.documentType]
+        .filter((value) => value && value.trim().length > 0)
+        .map((value) => value.toLowerCase());
+      return candidates.some(
+        (candidate) =>
+          candidate.includes(sectionLower) ||
+          (sectionBase.length > 0 && stripExtension(candidate).includes(sectionBase)),
+      );
+    });
     if (!hasMatch) {
       allBlockers.push({
         code: "MISSING_REQUIRED_SECTION",

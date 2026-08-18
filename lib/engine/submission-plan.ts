@@ -390,8 +390,40 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
 
   buildFilesFromExactNames(tender, files.size + 1).forEach((file) => addFile(files, file));
 
+  // ── The tender's stated attachment order is authoritative ────────────────
+  //
+  // Files are contributed in two passes: one per requirement (ordered by the
+  // requirement's own position) and one for any remaining names in
+  // exactFileNaming/exactFileOrder. Sorting purely on the resulting exactOrder
+  // let requirement iteration order decide the package order, so a tender that
+  // says "Attachments must be named and ordered exactly as follows: 1.
+  // 01-Expression-Of-Interest.docx 2. 02-Company-Profile.docx 3.
+  // 03-Capability-Statement.docx" produced a confirmed Build Plan ordered
+  // 03, 01, 02 — whichever requirement happened to mention a file first.
+  //
+  // Generated documents copy the plan's exactOrder, so the package was
+  // assembled in the wrong order and the export gate refused it with
+  // FILE_ORDER ("Generated file order does not match tender order"). The
+  // ordering the client asked for is not a preference the planner may
+  // reinterpret, so when the tender declares one it decides the sequence;
+  // files it does not name keep their existing relative order behind it.
+  const declaredOrder = parseStringArray(tender.exactFileOrder).length > 0
+    ? parseStringArray(tender.exactFileOrder)
+    : parseStringArray(tender.exactFileNaming);
+  const declaredRank = new Map<string, number>();
+  declaredOrder.forEach((name, index) => {
+    const withExtension = fileNameWithExtension(name, inferFormat(name));
+    declaredRank.set(normalize(withExtension), index);
+    declaredRank.set(normalize(name), index);
+  });
+  const rankOf = (file: SubmissionPlanFile): number =>
+    declaredRank.get(normalize(file.exactFileName)) ?? Number.MAX_SAFE_INTEGER;
+
   const sortedFiles = Array.from(files.values())
-    .sort((a, b) => a.exactOrder - b.exactOrder || a.exactFileName.localeCompare(b.exactFileName))
+    .sort((a, b) =>
+      rankOf(a) - rankOf(b)
+      || a.exactOrder - b.exactOrder
+      || a.exactFileName.localeCompare(b.exactFileName))
     .map((file, index) => ({ ...file, exactOrder: index + 1 }));
 
   const warnings: string[] = [];

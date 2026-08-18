@@ -170,9 +170,18 @@ async function main() {
   const companyId = user.company.id;
   for (const doc of VAULT_DOCS) {
     const bytes = Buffer.from(doc.extractedText, "utf8");
+    // Byte integrity must be recorded exactly as a real upload records it.
+    // sourceByteIntegrityIsVerified() requires integrityStatus VERIFIED plus a
+    // sha256 and a positive byte length, and vault review provenance refuses to
+    // verify any record whose source document lacks them — so a seed without
+    // these fields cannot produce a generation-eligible expert or project.
+    const contentSha256 = createHash("sha256").update(bytes).digest("hex");
     await prisma.companyDocument.create({
       data: {
         companyId,
+        contentSha256,
+        integrityStatus: "VERIFIED",
+        integrityVerifiedAt: new Date(),
         fileName: doc.originalFileName,
         originalFileName: doc.originalFileName,
         mimeType: "text/plain",

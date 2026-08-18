@@ -418,7 +418,29 @@ const server = createServer((req, res) => {
       /\bJSON\b/.test(prompt.slice(0, 4000)) && /requirements/i.test(prompt);
 
     // Serve the analysis matching whichever tender the prompt carries.
-    const analysis = /AWWDSE\/EOI\/2026\/0042/.test(prompt) ? ANALYSIS_B : ANALYSIS;
+    const base = /AWWDSE\/EOI\/2026\/0042/.test(prompt) ? ANALYSIS_B : ANALYSIS;
+
+    // Echo the source file id the way a compliant model must. The prompt embeds
+    // "[FILE_ID:<uuid>|FILE_NAME:<name>]" above each file's text and instructs
+    // the model to copy that value into sourceFileToken; promotion then rejects
+    // any mandatory requirement whose token is not a real ACTIVE TenderFile id.
+    // A stub that returns fixed requirements without the token is not modelling
+    // a real provider — it fails promotion for a reason no real run would hit.
+    // Require a UUID-shaped id: the prompt ALSO contains the literal instruction
+    // template "[FILE_ID:<id>|FILE_NAME:<name>]", and matching that returns the
+    // placeholder "<id>" — which promotion then rejects as not a real file.
+    const fileIdMatch = /\[FILE_ID:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\|/i.exec(prompt);
+    const sourceFileToken = fileIdMatch ? fileIdMatch[1].trim() : null;
+    const analysis = sourceFileToken
+      ? {
+          ...base,
+          requirements: base.requirements.map((requirement) => ({
+            ...requirement,
+            sourceFileToken,
+            sourceFileName: fileIdMatch ? (new RegExp("\\[FILE_ID:" + fileIdMatch[1] + "\\|FILE_NAME:([^\\]]+)\\]").exec(prompt)?.[1]?.trim() ?? null) : null,
+          })),
+        }
+      : base;
     const content = wantsJson ? JSON.stringify(analysis) : proseFor(prompt);
 
     const payload = {
@@ -430,7 +452,7 @@ const server = createServer((req, res) => {
       usage: { prompt_tokens: 100, completion_tokens: 100, total_tokens: 200 },
     };
     const out = JSON.stringify(payload);
-    console.log(`[local-ai] ${req.method} ${req.url} -> ${wantsJson ? "JSON analysis" : "prose"} (${out.length}b)`);
+    console.log(`[local-ai] ${req.method} ${req.url} -> ${wantsJson ? "JSON analysis" : "prose"} (${out.length}b) fileToken=${sourceFileToken ?? "NONE"} promptHasMarker=${/\[FILE_ID:/.test(prompt)}`);
     res.writeHead(200, { "content-type": "application/json" });
     res.end(out);
   });

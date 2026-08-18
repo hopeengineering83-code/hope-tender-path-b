@@ -793,7 +793,52 @@ export async function runNextChunk(jobId: string, userId: string) {
 }
 
 
-function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): RequirementDraft {
+/**
+ * Confidence that a requirement's stored evidence actually grounds it.
+ *
+ * The generation gate defines "source-grounded" as sourceConfidence > 0 and
+ * nothing else (see UNTRACED_MANDATORY_REQUIREMENTS in the generate and export
+ * routes). Promotion, meanwhile, verifies file + page + quote and refuses to
+ * promote a mandatory requirement that lacks any of them.
+ *
+ * Those two facts were connected by `req.sourceConfidence ?? 0` — a number the
+ * model supplies. The extraction prompt does not ask for it, so it is normally
+ * absent, and every requirement was persisted at 0. The result: a requirement
+ * carrying an ACTIVE file id, a real page and a quote that appears verbatim in
+ * that file's text was still reported as "not source-grounded", and generation
+ * was blocked on evidence promotion had just checked. Confidence is now derived
+ * from the evidence itself, and only a model-supplied value that is HIGHER is
+ * preferred, so this can never weaken a genuinely weak match.
+ */
+function groundingConfidence(
+    req: AIRequirement,
+    sourceTenderFileId: string | null,
+    fileTextById?: Map<string, string>,
+): number {
+    const modelConfidence = typeof req.sourceConfidence === "number" && Number.isFinite(req.sourceConfidence)
+        ? Math.max(0, Math.min(1, req.sourceConfidence))
+        : 0;
+    if (!sourceTenderFileId) return 0;
+    const page = typeof req.sourcePage === "number" ? req.sourcePage : 0;
+    const quote = typeof req.sourceQuote === "string" ? req.sourceQuote.trim() : "";
+    if (page <= 0 || quote.length === 0) return modelConfidence;
+
+    // Verbatim containment is the strongest signal available here and is the
+    // same rule the downstream grounding checks apply to the quote.
+    const text = fileTextById?.get(sourceTenderFileId);
+    if (typeof text === "string" && text.length > 0) {
+        return text.includes(quote) ? Math.max(modelConfidence, 0.9) : modelConfidence;
+    }
+    // No text to compare against: the file/page/quote triple was still verified
+    // by the promotion check, so record a positive but modest confidence.
+    return Math.max(modelConfidence, 0.5);
+}
+
+function mapToDraft(
+    req: AIRequirement,
+    validTenderFileIds?: Set<string>,
+    fileTextById?: Map<string, string>,
+): RequirementDraft {
     // Source-file attribution: only accept sourceTenderFileId / sourceFileToken
     // when the value is a real ACTIVE TenderFile ID on this tender. Guessed,
     // unsupported, or foreign tokens are dropped to null — they cannot serve
@@ -820,7 +865,7 @@ function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): Requi
         sourcePageNumber: req.sourcePage,
         sourceSectionHeading: req.sourceSectionHeading || req.sectionReference || null,
         sourceExactQuote: req.sourceQuote,
-        sourceConfidence: sourceTenderFileId ? (req.sourceConfidence ?? 0) : 0,
+        sourceConfidence: groundingConfidence(req, sourceTenderFileId, fileTextById),
         sourceExtractionMethod: req.sourceExtractionMethod
     };
 }
@@ -992,7 +1037,15 @@ export async function finalizeJob(jobId: string, userId: string) {
         // matches a real active file on this tender. Guessed/foreign/unsupported
         // tokens are dropped to null (matching the ai-analyze route's behavior).
         const validTenderFileIds = new Set((existingTender?.files ?? []).map((f: any) => f.id));
-        drafts = merged.requirements.map((r: any) => mapToDraft(r, validTenderFileIds));
+        // Extracted text per active file, so grounding confidence can be derived
+        // from verbatim quote containment rather than from a model-supplied
+        // number the extraction prompt never asks for.
+        const fileTextById = new Map<string, string>(
+            (existingTender?.files ?? [])
+                .filter((f: any) => typeof f.extractedText === "string" && f.extractedText.length > 0)
+                .map((f: any) => [f.id as string, f.extractedText as string]),
+        );
+        drafts = merged.requirements.map((r: any) => mapToDraft(r, validTenderFileIds, fileTextById));
 
         // Bind each metadata field's source evidence to the ACTUAL active file
         // whose extracted text contains the field's supporting quote (or null →

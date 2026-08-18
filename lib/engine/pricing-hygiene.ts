@@ -37,7 +37,17 @@ function isSafeNoPriceSentence(sentence: string): boolean {
     || /\b(rate|rates|itemi[sz]ed|bill of quantities|BoQ|breakdown|lump sum|total|amount|amounts|quotation|quoted|invoice|unit price|price list|costing)\b/i.test(sentence);
   if (namesSeparateEnvelope && !carriesPricedContent) return true;
 
-  return /\b(does not|do not|must not|shall not|should not|will not)\b.{0,140}\b(include|contain|show|disclose|present|submit)\b.{0,180}\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b/i.test(sentence)
+  // "appear" / "be present" / "be included" belong beside include|contain|show.
+  // The proposal generator writes its own assurance line — "Pricing, rates,
+  // BOQ, and commercial terms must not appear in a technical-envelope
+  // document." — which states that pricing is ABSENT. Without these verbs it
+  // was read as pricing leakage, so repair-export-gaps reported the file as
+  // blockedByHygiene and could not clean it (the sentence is the document's
+  // own compliance statement), leaving the tender unable to reach a final
+  // package. Sentences carrying an actual figure are still caught: the
+  // priced-content guard above and the amount patterns below are unchanged.
+  return /\b(does not|do not|must not|shall not|should not|will not)\b.{0,140}\b(include|contain|show|disclose|present|submit|appear|feature|be\s+included|be\s+present|be\s+shown|be\s+disclosed)\b.{0,180}\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b/i.test(sentence)
+    || /\b(pricing|price|prices|financial|commercial|fee|fees|rate|rates|cost|costs|BOQ|bill of quantities)\b.{0,180}\b(does not|do not|must not|shall not|should not|will not)\b.{0,60}\b(appear|include|contain|show|disclose|be\s+included|be\s+present)\b/i.test(sentence)
     || /\b(no price leakage|financial offer is submitted separately|commercial offer is submitted separately|no financial offer included|price[sd]?\s+separately|submitted\s+separately|as\s+a\s+separate\s+(?:financial|commercial|price))\b/i.test(sentence)
     || /\b(financial|commercial|price|pricing|fee|fees|rate|rates|cost|amount|offer|unit price|total price)\b.{0,180}\b(not included|not shown|not disclosed|excluded|separate|separately)\b/i.test(sentence);
 }

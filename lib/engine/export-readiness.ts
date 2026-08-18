@@ -945,7 +945,20 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
   const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
   const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
-  const byteFailures = await checkExportFileByteReadiness(opts.docs);
+  // Byte readiness can only be judged when the caller actually loaded the
+  // bytes. Callers passing requireFileContent=false select document METADATA
+  // ONLY (see getFinalSubmissionReadiness), so fileContent is undefined on
+  // every row — and running the check anyway reported MISSING_FILE_BYTES for
+  // every document, including ones holding several KB of verified content. The
+  // ZIP download takes exactly that path, so the final package was refused on
+  // evidence that was never fetched.
+  //
+  // This does not weaken the package: the ZIP path now requests the content
+  // (so this check runs on real bytes), and assembly independently re-reads and
+  // verifies every file before writing the archive.
+  const byteFailures = opts.requireFileContent
+    ? await checkExportFileByteReadiness(opts.docs)
+    : [];
   const failures = mergeFailures(perDoc.failures, docxHygieneFailures, byteFailures);
   const tenderReadiness = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
   return { ok: failures.length === 0 && tenderReadiness.blockers.length === 0, failures, tenderLevelBlockers: tenderReadiness.blockers, advisoryWarnings: tenderReadiness.advisoryWarnings };
