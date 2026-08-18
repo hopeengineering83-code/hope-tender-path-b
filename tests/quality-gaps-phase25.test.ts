@@ -112,11 +112,27 @@ describe("phase 25 — envelope mismatch enforcement in download route (regressi
 describe("phase 25 — regression: support doc generation already resets reviewStatus", () => {
   it("fillPlannedSupportDocuments resets reviewStatus to PENDING (static audit)", () => {
     const src = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
-    // Support doc generation (fillPlannedSupportDocuments) must reset reviewStatus
-    const idx = src.indexOf("fillPlannedSupportDocuments");
-    assert.ok(idx !== -1, "fillPlannedSupportDocuments must exist in generate route");
-    // Check the function body for reviewStatus reset
-    const funcBody = src.slice(idx, idx + 4000);
+    // Locate the DECLARATION, not the first mention of the name. Slicing from
+    // `indexOf("fillPlannedSupportDocuments")` matched whichever line mentioned
+    // the function first — a doc comment above it counted — and the fixed
+    // 4000-character window then measured comment length rather than behaviour,
+    // so adding a comment failed this test while the function was unchanged.
+    const declaration = "async function fillPlannedSupportDocuments(";
+    const start = src.indexOf(declaration);
+    assert.ok(start !== -1, "fillPlannedSupportDocuments must exist in generate route");
+    // Read to the end of the function by matching braces from its opening one.
+    const bodyStart = src.indexOf("{", start);
+    let depth = 0;
+    let end = bodyStart;
+    for (let i = bodyStart; i < src.length; i += 1) {
+      if (src[i] === "{") depth += 1;
+      else if (src[i] === "}") {
+        depth -= 1;
+        if (depth === 0) { end = i; break; }
+      }
+    }
+    assert.ok(end > bodyStart, "could not determine the end of fillPlannedSupportDocuments");
+    const funcBody = src.slice(start, end + 1);
     assert.ok(
       funcBody.includes('reviewStatus: "PENDING"'),
       "fillPlannedSupportDocuments must reset reviewStatus to PENDING",

@@ -106,17 +106,28 @@ describe("isAIEnabled — 8-provider awareness", () => {
   });
 
   it("returns false when no AI provider is set", async () => {
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.GEMINI_API_KEY;
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.MISTRAL_API_KEY;
-    delete process.env.DEEPSEEK_API_KEY;
-    delete process.env.GROQ_API_KEY;
-    delete process.env.TOGETHER_API_KEY;
-    delete process.env.OPENROUTER_API_KEY;
-    const { isAIConfigured } = await import("../lib/env-check");
-    // isAIConfigured reads from process.env at call time
-    assert.equal(isAIConfigured(), false);
+    // Clear EVERY provider key from the canonical catalog rather than a
+    // hand-written list. The list here named eight providers while
+    // CANONICAL_AI_PROVIDER_ORDER has ten, so Cerebras and Z.ai survived: with
+    // either key present in the environment isAIConfigured() correctly returned
+    // true and this test failed, for a reason that had nothing to do with the
+    // code under test. Reading the catalog keeps it correct as providers change.
+    const { ALL_PROVIDER_API_KEY_ENVS } = await import("../lib/ai-provider-catalog.cjs");
+    const saved: Record<string, string | undefined> = {};
+    for (const envName of ALL_PROVIDER_API_KEY_ENVS as string[]) {
+      saved[envName] = process.env[envName];
+      delete process.env[envName];
+    }
+    try {
+      const { isAIConfigured } = await import("../lib/env-check");
+      // isAIConfigured reads from process.env at call time
+      assert.equal(isAIConfigured(), false);
+    } finally {
+      for (const [envName, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[envName];
+        else process.env[envName] = value;
+      }
+    }
   });
 
   it("returns TRUE when ONLY ZAI is set (Z.ai is now automatic rank 1)", async () => {
