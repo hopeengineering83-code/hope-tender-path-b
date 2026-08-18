@@ -16,7 +16,11 @@ describe("Gap 2 — analysis-job-service source-file attribution", () => {
   it("mapToDraft accepts a validTenderFileIds parameter", () => {
     // The function signature MUST accept a validTenderFileIds set so the
     // caller can validate sourceFileToken against the active TenderFile IDs.
-    assert.match(src, /function mapToDraft\(req: AIRequirement, validTenderFileIds\?: Set<string>\)/);
+    // Assert the PARAMETER is accepted, not the exact full signature text:
+    // pinning the whole parameter list failed the moment a further argument was
+    // added (fileTextById, used to derive grounding confidence), even though
+    // validTenderFileIds was still accepted and still used the same way.
+    assert.match(src, /function mapToDraft\([\s\S]{0,200}?validTenderFileIds\?: Set<string>/);
   });
 
   it("mapToDraft validates sourceFileToken against validTenderFileIds (no guessing)", () => {

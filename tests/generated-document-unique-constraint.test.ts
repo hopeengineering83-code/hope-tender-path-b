@@ -311,9 +311,14 @@ describe("GeneratedDocument creators — ACTIVE-only lookups + graceful P2002 (s
   it("generate-elite Technical-Proposal upsert: ACTIVE-only lookup + P2002 convergence (no Serializable)", () => {
     const src = readFileSync("lib/engine/generate-elite.ts", "utf8");
     // The Technical-Proposal.docx upsert must filter to ACTIVE rows.
+    // The guard is the ACTIVE-only filter, not the literal file name. The
+    // proposal is now written to the CONFIRMED PLAN's file name (resolved into
+    // `proposalFileName`) instead of a hardcoded "Technical-Proposal.docx", so
+    // pinning the literal failed while the invariant it protects — never match
+    // a SUPERSEDED row — was untouched.
     assert.ok(
-      /exactFileName: "Technical-Proposal\.docx", generationStatus: \{ not: "SUPERSEDED" \}/.test(src),
-      "generate-elite Technical-Proposal findFirst must exclude SUPERSEDED rows",
+      /exactFileName: (?:"Technical-Proposal\.docx"|proposalFileName), generationStatus: \{ not: "SUPERSEDED" \}/.test(src),
+      "generate-elite proposal findFirst must exclude SUPERSEDED rows",
     );
     // Must catch P2002 on create and converge.
     assert.ok(
@@ -357,7 +362,11 @@ describe("GeneratedDocument creators — ACTIVE-only lookups + graceful P2002 (s
     assert.ok(targetIdx > -1, "must find the target findFirst");
     const targetBlock = src.slice(targetIdx, targetIdx + 800);
     assert.ok(
-      targetBlock.includes('documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] }'),
+      // EXPRESSION_OF_INTEREST joined the list: on an EOI tender that document
+      // IS the main narrative, and the quality validator rejects
+      // documentType=TECHNICAL_PROPOSAL there. Assert the filter exists and
+      // still covers the original types rather than pinning the exact array.
+      /documentType: \{ in: \[[^\]]*"TECHNICAL_PROPOSAL"[^\]]*"PROPOSAL"[^\]]*"METHODOLOGY"[^\]]*\] \}/.test(targetBlock),
       "target findFirst must filter by documentType",
     );
     assert.ok(
