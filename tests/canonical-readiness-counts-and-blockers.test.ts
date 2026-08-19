@@ -4,12 +4,15 @@
 // - When 10 required docs are PLANNED but not generated, the widget must
 //   show 0/10 export ready, not 0/0.
 // - requiredDocumentsTotal must include ungenerated PLANNED docs.
-// - primaryBlockerReason must say "Generate required documents."
+// - primaryBlockerReason must identify planned documents without inventing a
+//   manual Generate action.
 // - Final export must remain blocked when required docs are planned but not generated.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { reconcileBlockers } from "../lib/engine/tender-release-state";
+import type { FinalSubmissionReadiness } from "../lib/engine/final-submission-readiness";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
@@ -34,16 +37,17 @@ describe("Canonical Readiness — requiredDocumentsTotal includes PLANNED docs",
     );
   });
 
-  it("exportReadyDocumentsTotal counts only READY_FOR_EXPORT/APPROVED docs", () => {
+  it("exportReadyDocumentsTotal uses machine export eligibility", () => {
     const src = read("lib/engine/final-submission-readiness.ts");
     assert.ok(
       src.includes("exportReadyDocumentsTotal:"),
       "must compute exportReadyDocumentsTotal in the summary",
     );
-    // Must filter for READY_FOR_EXPORT or APPROVED — not just any generated doc
+    // Machine eligibility comes from canonical byte/format/validation state,
+    // not a routine human approval click.
     assert.ok(
-      /exportReadyDocumentsTotal.*READY_FOR_EXPORT.*APPROVED/s.test(src),
-      "exportReadyDocumentsTotal must only count READY_FOR_EXPORT/APPROVED docs",
+      /exportReadyDocumentsTotal: finalCandidates\.filter\(\(d\) => isExportReady\(d\)\)/s.test(src),
+      "exportReadyDocumentsTotal must use canonical machine export eligibility",
     );
   });
 });
@@ -101,78 +105,25 @@ describe("Readiness-score API — exposes canonical required-doc model", () => {
 });
 
 // ─── 3. Widget display rules ────────────────────────────────────────────────
+//
+// components/canonical-readiness-score-widget.tsx was retired in favor of
+// the canonical Tender Release State panel. The required-docs X/Y fraction
+// display (denominator formula, "No required docs" / "0/10 export ready"
+// text) was specific to that widget's layout and is NOT replicated in the
+// new panel — that concern remains covered by the unchanged
+// components/export-readiness-panel.tsx and
+// components/final-package-manifest-panel.tsx. The new panel instead shows
+// a reconciled blocker list + total, and one primaryNextAction sourced from
+// the canonical workflow decision (see tests/release-snapshot-panel-truth.test.ts).
 
-describe("Canonical Readiness widget — display rules", () => {
-  it("uses requiredDocumentsTotal as denominator (not finalExportCandidates + missingRequiredDocuments)", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      src.includes("requiredDocumentsTotal"),
-      "widget must use requiredDocumentsTotal from the API",
-    );
-    // The old misleading formula must NOT be the primary path
-    assert.ok(
-      src.includes("exportReadyDocumentsTotal"),
-      "widget must use exportReadyDocumentsTotal as numerator",
-    );
-  });
-
-  it("never shows 0/0 when PLANNED docs exist", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    // The widget must have a guard: if total === 0, show "No required docs"
-    // but when PLANNED docs exist, total must be > 0 (from the API)
-    assert.ok(
-      src.includes("No required docs"),
-      "widget must show 'No required docs' when total is genuinely 0",
-    );
-    assert.ok(
-      src.includes("export ready"),
-      "widget must label the count as 'export ready' (not just 'X/Y')",
-    );
-  });
-
-  it("shows primary blocker reason when blockers exist", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      src.includes("primaryBlockerReason"),
-      "widget must display primaryBlockerReason",
-    );
-    assert.ok(
-      src.includes("Primary blocker:"),
-      "widget must label the primary blocker",
-    );
-  });
-
-  it("shows primary fix action when blockers exist", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      src.includes("primaryFixAction"),
-      "widget must display primaryFixAction",
-    );
-    assert.ok(
-      src.includes("Next action:"),
-      "widget must label the fix action",
-    );
-  });
-
-  it("Export blockers tile shows totalBlockers and primary reason", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    assert.ok(
-      src.includes("totalBlockers"),
-      "Export blockers tile must use totalBlockers",
-    );
-  });
-
-  it("does NOT use misleading denominator finalExportCandidates + missingRequiredDocuments as primary", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    // The old formula may appear as a fallback (backward compat) but must NOT
-    // be the primary computation. The primary must use requiredDocumentsTotal.
-    // Check that requiredDocumentsTotal is used with ?? fallback to old formula.
-    assert.ok(
-      /requiredDocumentsTotal\s*\?\?/.test(src),
-      "widget must prefer requiredDocumentsTotal with fallback to old formula",
-    );
-  });
-});
+// "Canonical Tender Release State panel — display rules" describe block
+// removed -- components/tender-release-state-panel.tsx was itself later
+// deleted as unrendered dead code. Its live successor,
+// components/next-action-panel.tsx, shows one primary next action ("Next
+// required action") and a blocker count, but does not preserve the
+// critical/high blocker sub-count breakdown -- a legitimate simplification,
+// not a regression, since fail-closed blocker gating is enforced by the
+// canonical decision logic regardless of what the UI subdivides.
 
 // ─── 4. Primary blocker priority ───────────────────────────────────────────
 
@@ -184,8 +135,8 @@ describe("Primary blocker — priority order", () => {
       "planned-not-generated must be the first priority in primaryBlockerReason",
     );
     assert.ok(
-      /primaryFixAction.*Generate required documents/s.test(src),
-      "fix action for planned-not-generated must be 'Generate required documents.'",
+      /primaryFixAction.*Automatic post-Engine document generation is pending/s.test(src),
+      "planned-not-generated must remain automatic post-Engine work",
     );
   });
 
@@ -197,11 +148,11 @@ describe("Primary blocker — priority order", () => {
     );
   });
 
-  it("validation/approval incomplete is third priority", () => {
+  it("machine validation incomplete is third priority", () => {
     const src = read("lib/engine/final-submission-readiness.ts");
     assert.ok(
-      src.includes("No documents are validated and approved for export"),
-      "must surface validation/approval as a blocker reason",
+      src.includes("No documents have passed machine validation for export"),
+      "must surface machine validation as a blocker reason",
     );
   });
 });
@@ -209,49 +160,114 @@ describe("Primary blocker — priority order", () => {
 // ─── 5. No user-facing metadata in readiness payload ───────────────────────
 
 describe("No user-facing metadata in readiness widget", () => {
-  it("widget does not display 'metadata' label to users", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
+  it("panel does not display 'metadata' label to users", () => {
+    // components/tender-release-state-panel.tsx was itself later deleted as
+    // unrendered dead code; components/next-action-panel.tsx is the live,
+    // rendered successor that now owns this readiness display.
+    const src = read("components/next-action-panel.tsx");
     // Check for user-facing metadata strings (not internal field names)
     assert.ok(
       !/>.*[Mm]etadata.*</.test(src) || !/label.*[Mm]etadata/i.test(src),
-      "widget must not show 'metadata' as a user-facing label",
+      "panel must not show 'metadata' as a user-facing label",
     );
   });
 });
 
 // ─── 6. Screenshot regression fixture ──────────────────────────────────────
+//
+// The 0/0-vs-0/10 required-docs display regression was specific to
+// canonical-readiness-score-widget.tsx's now-retired denominator formula
+// (see the "display rules" note above) — the underlying data-correctness
+// fix (requiredDocumentsTotal = max(planCount, plannedDocs)) is unchanged
+// and still verified against lib/engine/final-submission-readiness.ts in
+// section 1 above.
 
 describe("Screenshot regression — 10 planned required docs scenario", () => {
-  it("widget would display 0/10 export ready (not 0/0)", () => {
-    const src = read("components/canonical-readiness-score-widget.tsx");
-    // When requiredDocumentsTotal = 10 and exportReadyDocumentsTotal = 0:
-    // - total = 10 (not 0)
-    // - exportReady = 0
-    // - ungenerated = 10
-    // - Display: "0/10 export ready" + "10 planned, not generated"
-    assert.ok(
-      src.includes("export ready"),
-      "widget must label as 'export ready'",
-    );
-    assert.ok(
-      src.includes("planned, not generated"),
-      "widget must show 'planned, not generated' text",
-    );
-    assert.ok(
-      src.includes("requiredDocumentsTotal"),
-      "denominator must come from requiredDocumentsTotal (which includes PLANNED)",
-    );
-  });
-
-  it("primary blocker says 'Generate required documents' when 10 planned", () => {
+  it("does not invent a Generate action when 10 documents are planned", () => {
     const src = read("lib/engine/final-submission-readiness.ts");
     assert.ok(
-      src.includes("Generate required documents."),
-      "primaryFixAction must say 'Generate required documents.'",
+      src.includes("Automatic post-Engine document generation is pending."),
+      "primaryFixAction must describe automatic post-Engine generation",
     );
     assert.ok(
       /primaryBlockerReason.*planned but not generated/s.test(src),
       "primaryBlockerReason must mention 'planned but not generated'",
     );
+  });
+});
+
+// ─── Blocker dedup — cross-engine aliases for the same underlying issue ────
+//
+// Confirmed by runtime inspection (real Playwright screenshot of the
+// command center against a live seeded tender): export-readiness.ts's
+// checkFullExportReadiness independently emits CLIENT_NAME_REQUIRED
+// (tenderLevelBlocker) alongside final-submission-readiness.ts's own
+// CLIENT_NAME_MISSING for the same empty-clientName condition, and
+// NO_ACTIVE_GENERATED_DOCUMENTS (tenderLevelBlocker) alongside a synthetic
+// __tender__ documentBlocker for the same zero-documents condition. Without
+// alias collapsing, reconcileBlockers's category-based dedup lets both
+// members of each pair through, rendering the same real issue as two
+// unrelated red warnings.
+
+function fakeReadiness(
+  tenderLevelBlockers: Array<{ category: string; severity: string; title: string; recommendedAction: string | null }>,
+  documentBlockers: Array<{ documentId: string; name: string; fileName: string; reasons: string[]; severity: string; nextActions: string[] }>,
+): FinalSubmissionReadiness {
+  return { tenderLevelBlockers, documentBlockers } as unknown as FinalSubmissionReadiness;
+}
+
+describe("reconcileBlockers — cross-engine category aliases collapse to one blocker", () => {
+  it("CLIENT_NAME_REQUIRED and CLIENT_NAME_MISSING collapse to a single blocker", () => {
+    const readiness = fakeReadiness(
+      [
+        { category: "CLIENT_NAME_REQUIRED", severity: "HIGH", title: "Client/procuring entity name is missing or invalid.", recommendedAction: "Edit Tender Detail." },
+        { category: "CLIENT_NAME_MISSING", severity: "HIGH", title: "Client/procuring entity name is missing or blank.", recommendedAction: "Enter the official procuring entity name." },
+      ],
+      [],
+    );
+    const { blockers, blockerTotal } = reconcileBlockers(readiness);
+    assert.equal(blockerTotal, 1, "must collapse to exactly one blocker, not two");
+    assert.equal(blockers.length, 1);
+  });
+
+  it("NO_ACTIVE_GENERATED_DOCUMENTS and the synthetic __tender__ document blocker collapse to a single blocker", () => {
+    const readiness = fakeReadiness(
+      [
+        { category: "NO_ACTIVE_GENERATED_DOCUMENTS", severity: "HIGH", title: "No active generated documents exist for export.", recommendedAction: "Generate, validate and review the required documents before final export." },
+      ],
+      [
+        { documentId: "__tender__", name: "No active generated documents", fileName: "NO_ACTIVE_GENERATED_DOCUMENTS", reasons: ["NO_ACTIVE_GENERATED_DOCUMENTS: final export requires at least one active generated document."], severity: "HIGH", nextActions: ["Generate the required documents before exporting."] },
+      ],
+    );
+    const { blockers, blockerTotal } = reconcileBlockers(readiness);
+    assert.equal(blockerTotal, 1, "must collapse to exactly one blocker, not two");
+    assert.equal(blockers.length, 1);
+  });
+
+  it("a real per-document failure (non-__tender__ documentId) is NOT collapsed into NO_ACTIVE_GENERATED_DOCUMENTS", () => {
+    const readiness = fakeReadiness(
+      [
+        { category: "NO_ACTIVE_GENERATED_DOCUMENTS", severity: "HIGH", title: "No active generated documents exist for export.", recommendedAction: "Generate, validate and review the required documents before final export." },
+      ],
+      [
+        { documentId: "doc-123", name: "Technical Proposal", fileName: "technical-proposal.docx", reasons: ["Validation failed"], severity: "HIGH", nextActions: ["Re-validate the document."] },
+      ],
+    );
+    const { blockers, blockerTotal } = reconcileBlockers(readiness);
+    assert.equal(blockerTotal, 2, "a real per-document blocker is a distinct issue and must NOT be collapsed");
+    assert.equal(blockers.length, 2);
+  });
+
+  it("unrelated categories are never collapsed", () => {
+    const readiness = fakeReadiness(
+      [
+        { category: "EXTRACTION_QUALITY_INSUFFICIENT", severity: "HIGH", title: "Extraction quality is insufficient.", recommendedAction: "Re-upload a clearer document." },
+        { category: "NO_CURRENT_CONFIRMED_BUILD_PLAN", severity: "HIGH", title: "No confirmed Build Plan exists.", recommendedAction: "Build and confirm the submission Build Plan." },
+      ],
+      [],
+    );
+    const { blockers, blockerTotal } = reconcileBlockers(readiness);
+    assert.equal(blockerTotal, 2, "distinct real issues must remain distinct blockers");
+    assert.equal(blockers.length, 2);
   });
 });

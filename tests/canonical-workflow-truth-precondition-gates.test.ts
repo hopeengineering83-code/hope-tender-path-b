@@ -103,7 +103,7 @@ describe("No confirmed Build Plan — blocks later stages consistently", () => {
     });
     assert.equal(decision.currentBlockingStage, "NO_CONFIRMED_BUILD_PLAN");
     assert.equal(decision.stageStates["GENERATE_DOCUMENTS"], "BLOCKED_BY_PRIOR_STEP");
-    assert.equal(decision.nextRequiredAction, "BUILD_SUBMISSION_PLAN");
+    assert.equal(decision.nextRequiredAction, "RUN_ENGINE");
   });
 });
 
@@ -199,10 +199,7 @@ describe("Requirement Coverage panel — coverage 0% does not say 'acceptable tr
       src.includes("coveragePct > 0"),
       "must check coveragePct > 0 before showing 'acceptable traceability'",
     );
-    assert.ok(
-      src.includes("No compliance coverage has been confirmed yet"),
-      "must show 'No compliance coverage has been confirmed yet' when coverage is 0",
-    );
+    assert.ok(src.includes("Automatic verification running"), "must show the neutral automatic state when coverage is 0");
   });
 });
 
@@ -215,10 +212,7 @@ describe("Authority Review — precondition blocked mode", () => {
       src.includes("prerequisites not met"),
       "must show 'prerequisites not met' heading when preconditions are not satisfied",
     );
-    assert.ok(
-      src.includes("Preliminary only"),
-      "must label score as 'Preliminary only' when preconditions are not met",
-    );
+    assert.ok(src.includes("Preliminary-only scores are not shown"), "must not present an authority score before prerequisites are met");
     assert.ok(
       src.includes("preconditionBlocked"),
       "must compute preconditionBlocked flag",

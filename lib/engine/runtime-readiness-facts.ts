@@ -37,6 +37,7 @@
 // facts are checked.
 
 import type { PrismaClient } from "@prisma/client";
+import { logger } from "../observability";
 import { getEffectiveTenderFacts, type EffectiveTenderFactsResult } from "./effective-tender-facts";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "./tender-analysis-content";
 
@@ -169,21 +170,11 @@ export async function getRuntimeReadinessFacts(
     },
   });
 
-  // Company vault digest participates in the canonical content hash. It MUST be
-  // included (UNBOUNDED, unordered) so currentSourceHash below reproduces the
-  // stored analysisInputHash — the route/createAnalysisJob and the snapshot/gate
-  // all fold the full vault set into the hash. Omitting it made
-  // hasGoodAnalysisForCurrentSource always false for any tender with vault docs.
-  const companyForHash = await (prisma as any).company.findUnique({
-    where: { userId },
-    select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
-  }).catch(() => null);
-
   // Build metadata facts from effective facts
   const metadata = buildMetadataFacts(effective);
 
   // Build analysis state
-  const analysis = await buildAnalysisState(prisma, tenderId, tender, companyForHash);
+  const analysis = await buildAnalysisState(prisma, tenderId, tender);
 
   // Build build-plan state
   const buildPlan = await buildBuildPlanState(prisma, tenderId, userId);
@@ -304,7 +295,6 @@ async function buildAnalysisState(
   prisma: PrismaClient,
   tenderId: string,
   tender: any,
-  companyForHash: { documents?: Array<{ originalFileName: string; category: string; extractedText: string | null }> } | null,
 ): Promise<RuntimeReadinessFacts["analysis"]> {
   // BUG FIX: Previously currentSourceHash used a completely different algorithm
   // (|`-joined contentHash || extractedText.length per file) that could NEVER
@@ -333,7 +323,7 @@ async function buildAnalysisState(
             classification: f.classification ?? null,
             createdAt: f.createdAt,
           })),
-      }, companyForHash ?? undefined);
+      });
       currentSourceHash = computeAnalysisContentHash(analysisContent);
     } catch {
       // If hash computation fails, fall back to null (same as no files)
@@ -450,8 +440,18 @@ async function buildBuildPlanState(
       const plan = buildSubmissionPlan(tender as any);
       derivedPlanExists = plan.files.length > 0;
     }
-  } catch {
-    // Safe fallback
+  } catch (e) {
+    // Safe fallback — previously bare `catch {}` with just a "Safe fallback"
+    // comment. Surface the failure so readiness-fact degradation is observable
+    // (e.g. a derived-plan computation failure could silently let "export
+    // ready" pass when it shouldn't).
+    //
+    // Note: `tender` is declared with `const tender = ...` inside the try block
+    // above, so it is out of scope here. Use the in-scope `tenderId` parameter.
+    logger.warn("[runtime-readiness-facts] derived plan computation failed — using safe fallback", {
+      detail: e,
+      tenderId,
+    });
   }
 
   return {

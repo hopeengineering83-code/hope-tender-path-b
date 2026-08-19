@@ -198,7 +198,10 @@ describe("Tender Workflow E2E Gates Regression Pack", () => {
       const { resolve } = await import("node:path");
       const src = readFileSync(resolve(process.cwd(), "app/api/tenders/[id]/download/route.ts"), "utf8");
 
-      assert.ok(src.includes("if (!docs.length) return err(\"No generated documents available for PDF export. Generate documents first.\", 400, { code: \"NO_DOCS_FOR_PDF\" })"), "PDF route must check for generated documents");
+      assert.ok(
+        src.includes('if (!docs.length) return err("No generated documents are available for PDF export. Automatic post-Engine generation must complete first.", 400, { code: "NO_DOCS_FOR_PDF" })'),
+        "PDF route must check for generated documents without inventing a manual generation action",
+      );
     });
 
     it("Download route must enforce canonical readiness for ZIP exports", async () => {

@@ -21,6 +21,7 @@
 //   → EXPORT_READINESS_BLOCKED → EXPORT_READY → ZIP_READY
 
 import type { PrismaClient } from "@prisma/client";
+import { logger } from "../observability";
 import { getCurrentConfirmedBuildPlan } from "./build-plan";
 import { assessExtractionQuality } from "../extraction-quality";
 import {
@@ -43,10 +44,9 @@ import {
 } from "./submission-plan-completeness";
 import {
   computeEvidenceCoverage,
-  isStrongSupportLevel,
-  normalizeSupportLevel,
   type EvidenceCoverageReport,
 } from "./requirement-evidence-profile";
+import { mapRequirementsToEvidence } from "./final-package-readiness-model";
 import {
   buildProviderDiagnosticsSnapshot,
 } from "../ai-provider-health";
@@ -364,7 +364,11 @@ export async function computeTenderLifecycle(
         },
       }),
       client.tenderFile.findMany({
-        where: { tenderId, ...(userId ? { tender: { userId } } : {}) },
+        where: {
+          tenderId,
+          deletionStatus: "ACTIVE",
+          ...(userId ? { tender: { userId } } : {}),
+        },
         select: {
           id: true,
           fileName: true,
@@ -525,8 +529,14 @@ export async function computeTenderLifecycle(
       if (latestSucceeded && binding.contentHash && latestSucceeded.analysisInputHash !== binding.contentHash) {
         analysisIsStale = true;
       }
-    } catch {
-      // Best-effort — if hash computation fails, don't flag as stale
+    } catch (e) {
+      // Best-effort — if hash computation fails, don't flag as stale — but
+      // surface the failure so silent stale-detection bypass is observable.
+      // Previously bare `catch {}`; a failure here could let a stale
+      // analysis pass the freshness gate.
+      logger.warn("[tender-lifecycle-orchestrator] analysis hash comparison failed — not flagging as stale", {
+        detail: e,
+      });
     }
   }
 
@@ -561,18 +571,40 @@ export async function computeTenderLifecycle(
   const metadataExportOk = !meta.blockingForExport;
 
   // ── Source references ──────────────────────────────────────────────────────
-  const mandatoryReqs = requirements.filter((r) => r.priority === "MANDATORY");
+  const requirementEvidenceStatuses = mapRequirementsToEvidence(
+    requirements,
+    [],
+    [],
+    effectiveFiles.map((file) => ({
+      id: file.id,
+      extractedText: file.extractedText,
+      totalPages: file.totalPages,
+    })),
+  );
+  const canonicalStatusByRequirementId = new Map(
+    requirementEvidenceStatuses.map((status) => [status.requirementId, status]),
+  );
+  // The mandatory population must be the one the canonical evidence statuses
+  // use — `status.mandatory` is isMandatoryRequirement, i.e. MANDATORY OR
+  // CRITICAL. Filtering on `priority === "MANDATORY"` alone hid every CRITICAL
+  // requirement from `mandatoryEvidenceReady`, so a tender with two MANDATORY
+  // rows covered and two CRITICAL rows only partially covered satisfied
+  // finalExportReady, reached lifecycle EXPORT_READY, and rendered
+  // "Ready to download. The final ZIP package is ready." beside a live
+  // Download Final ZIP button — while the canonical blocker on the same page
+  // said 2/4 and the download route itself refused with
+  // CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE. Same defect class as the release
+  // snapshot's numerator/denominator split, in a second file.
+  const mandatoryRequirementIds = new Set(
+    requirementEvidenceStatuses.filter((status) => status.mandatory).map((status) => status.requirementId),
+  );
+  const mandatoryReqs = requirements.filter((r) => mandatoryRequirementIds.has(r.id));
   const ungroundedMandatory = mandatoryReqs.filter(
-    (r) =>
-      !r.sectionReference &&
-      !r.sourceTenderFileId &&
-      !r.sourcePageNumber &&
-      !r.sourceExactQuote &&
-      (r.sourceConfidence ?? 0) <= 0,
+    (requirement) => !canonicalStatusByRequirementId.get(requirement.id)?.hasSourceTrace,
   );
 
   // ── Evidence coverage ──────────────────────────────────────────────────────
-  const evidenceStatus = computeEvidenceCoverage(
+  const rawEvidenceStatus = computeEvidenceCoverage(
     requirements.map((r) => ({
       id: r.id,
       title: r.title,
@@ -582,6 +614,28 @@ export async function computeTenderLifecycle(
       complianceMatrixRows: r.complianceMatrixRows,
     })),
   );
+  const canonicalStrongCount = requirementEvidenceStatuses.filter(
+    (status) => status.displayStatus === "FULLY_MET",
+  ).length;
+  const canonicalMandatoryStrongCount = requirementEvidenceStatuses.filter(
+    (status) => status.mandatory && status.displayStatus === "FULLY_MET",
+  ).length;
+  const evidenceStatus: EvidenceCoverageReport = {
+    ...rawEvidenceStatus,
+    profiles: rawEvidenceStatus.profiles.map((profile) => ({
+      ...profile,
+      hasStrongEvidence:
+        canonicalStatusByRequirementId.get(profile.requirementId)?.displayStatus === "FULLY_MET",
+    })),
+    requirementsWithStrongEvidence: canonicalStrongCount,
+    strongCoveragePercent: requirements.length === 0
+      ? 0
+      : Math.round((canonicalStrongCount / requirements.length) * 100),
+    fullyCoveredMandatory: canonicalMandatoryStrongCount,
+    coverageRatio: mandatoryReqs.length === 0
+      ? 0
+      : canonicalMandatoryStrongCount / mandatoryReqs.length,
+  };
 
   // ── Submission plan completeness ───────────────────────────────────────────
   const tenderLike = {
@@ -619,9 +673,7 @@ export async function computeTenderLifecycle(
   const counts = countSummaryFromPlan(plan, docsSnap);
 
   // ── Official originals ─────────────────────────────────────────────────────
-  const officialRequired =
-    plan.totalOfficialOriginalsRequired +
-    plan.rows.filter((r) => r.status === "REPLACE_WITH_ORIGINAL").length;
+  const officialRequired = plan.totalOfficialOriginalsRequired;
   const officialAttached = plan.rows.filter(
     (r) =>
       r.officialOriginal &&
@@ -632,8 +684,9 @@ export async function computeTenderLifecycle(
   // This deliberately does NOT read tender.readinessScore. That DB column is a
   // legacy workflow-progress hint and can drift from the canonical gates. The
   // lifecycle can only show READY when the explicit gate signals below are clear.
-  const mandatoryEvidenceReady = mandatoryReqs.every((r) =>
-    (r.complianceMatrixRows ?? []).some((row) => isStrongSupportLevel(normalizeSupportLevel(row.supportLevel))),
+  const mandatoryEvidenceReady = mandatoryReqs.every(
+    (requirement) =>
+      canonicalStatusByRequirementId.get(requirement.id)?.displayStatus === "FULLY_MET",
   );
   const finalExportReady =
     analysisSource === "AI" &&
@@ -704,7 +757,7 @@ export async function computeTenderLifecycle(
     primaryNextAction = providers.hasAnyProvider ? "RETRY_AI_ANALYZE" : "APPROVE_FALLBACK_WITH_NOTE";
     blockers.push({
       code: "ANALYSIS_REGEX_FALLBACK_UNAPPROVED",
-      message: "Analysis used the regex fallback (all AI providers failed). Generate Docs, Auto-finalize, and Download ZIP are blocked until AI analysis succeeds. Human approval is audit-only and does NOT authorize release.",
+      message: "Analysis used the regex fallback (all AI providers failed). Document generation, auto-finalize, and Download ZIP are blocked until AI analysis succeeds. Human approval is audit-only and does NOT authorize release.",
       action: providers.hasAnyProvider ? "Retry AI Analyze — providers may be available again." : "Re-run AI Analyze after restoring provider access.",
     });
   }
@@ -718,7 +771,7 @@ export async function computeTenderLifecycle(
     primaryNextAction = "RETRY_AI_ANALYZE";
     blockers.push({
       code: "ANALYSIS_FALLBACK_AUDIT_ONLY",
-      message: "Analysis used the regex fallback and was human-approved as audit-only. Human approval no longer authorizes Generate Docs, Auto-finalize, Export, Download ZIP, or any release action. Re-run AI Analyze with healthy providers to obtain a genuine AI analysis.",
+      message: "Analysis used the regex fallback and was human-approved as audit-only. Human approval no longer authorizes document generation, auto-finalize, export, Download ZIP, or any release action. Re-run AI Analyze with healthy providers to obtain a genuine AI analysis.",
       action: "Retry AI Analyze — providers may be available again. The audit-only approval is preserved for record-keeping.",
     });
   }
@@ -821,19 +874,19 @@ export async function computeTenderLifecycle(
   else if (counts.plannedMissingDocs > 0 || (plan.totalRequired > 0 && counts.finalExportCandidates === 0)) {
     lifecycleState = "DOCUMENT_GENERATION_REQUIRED";
     primaryNextAction = "GENERATE_REQUIRED_DOCUMENTS";
-    blockers.push({ code: "DOCUMENTS_NOT_GENERATED", message: `${counts.plannedMissingDocs} required submission document(s) are planned but not generated.`, action: "Click 'Generate missing planned documents' or 'Generate Docs'." });
+    blockers.push({ code: "DOCUMENTS_NOT_GENERATED", message: `${counts.plannedMissingDocs} required submission document(s) are planned but not generated.`, action: "No manual generation step exists. Generation runs automatically once Run Engine succeeds and no upstream blocker remains; resolve the current canonical workflow action." });
   }
   // 12. Official originals required
   else if (officialRequired > officialAttached) {
     lifecycleState = "OFFICIAL_ORIGINALS_REQUIRED";
     primaryNextAction = "ATTACH_OFFICIAL_ORIGINALS";
-    blockers.push({ code: "OFFICIAL_ORIGINALS_MISSING", message: `${officialRequired - officialAttached} official original(s) must be attached (bid form, financial statements, certificates). Do not generate — attach the tender-issued originals.`, action: "Use 'Attach official original' for each required official document." });
+    blockers.push({ code: "OFFICIAL_ORIGINALS_MISSING", message: `${officialRequired - officialAttached} tender-issued form(s) not found in Tender Intake files. Upload the complete tender package.`, action: "Upload the complete tender package containing the required forms." });
   }
   // 13. Quality gate failing
   else if (counts.qualityFailedCandidates > 0) {
     lifecycleState = "QUALITY_REVIEW_REQUIRED";
     primaryNextAction = "REPAIR_DOCUMENT_QUALITY";
-    blockers.push({ code: "QUALITY_GATE_FAILED", message: `${counts.qualityFailedCandidates} document(s) failed the quality gate.`, action: "Rewrite or attach official originals for quality-failed documents." });
+    blockers.push({ code: "QUALITY_GATE_FAILED", message: `${counts.qualityFailedCandidates} document(s) failed the quality gate.`, action: "Rewrite or regenerate quality-failed documents." });
   }
   // 14. Has generated docs, needs auto-finalize
   else if (counts.finalExportCandidates > 0 && !finalExportReady) {
@@ -917,12 +970,12 @@ export async function computeTenderLifecycle(
   } else if (!analysisOk) {
     blocked.push({ action: "GENERATE_DOCS", reason: "No approved analysis exists. Run AI Analyze first." });
   } else if (effectiveFiles.length > 0 && !extractionGenerationOk) {
-    blocked.push({ action: "GENERATE_DOCS", reason: "Tender extraction quality is too low for reliable generation. Re-extract or run OCR first." });
+    blocked.push({ action: "GENERATE_DOCS", reason: "Tender extraction quality is too low for reliable generation. Upload a clearer, text-based copy of the source." });
   } else {
     allowed.push("GENERATE_DOCS");
   }
 
-  // Attach official originals
+  // Tender-issued forms (sourced from Tender Intake files)
   if (officialRequired > 0) {
     allowed.push("ATTACH_OFFICIAL_ORIGINALS");
   }
@@ -958,7 +1011,7 @@ export async function computeTenderLifecycle(
     if (fallbackUnapproved) reasons.push("analysis source is unapproved regex fallback");
     if (noFinalDocs) reasons.push("no active final export candidates");
     if (counts.plannedMissingDocs > 0) reasons.push(`${counts.plannedMissingDocs} required document(s) not yet generated`);
-    if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} official original(s) not attached`);
+    if (officialRequired > officialAttached) reasons.push(`${officialRequired - officialAttached} tender-issued form(s) not found in Tender Intake`);
     if (ungroundedMandatory.length > 0) reasons.push(`${ungroundedMandatory.length} mandatory requirement(s) missing source traceability`);
     if (!mandatoryEvidenceReady) reasons.push("mandatory requirements are not covered by confirmed FULL/SUBSTANTIAL evidence");
     if (counts.qualityFailedCandidates > 0) reasons.push(`${counts.qualityFailedCandidates} document(s) failed quality gate`);

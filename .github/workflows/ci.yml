@@ -1,14 +1,46 @@
+# ─── Neon-isolation contract (audit requirements #1–#7) ──────────────────────
+#
+# This workflow NEVER connects to the live Neon Production database.
+#   #1 — No dependency on the external Neon DATABASE_URL. The job sets its own
+#        DATABASE_URL inline below; no `secrets.DATABASE_URL` is read.
+#   #2 — A postgres:16 service container is started for every database
+#        integration test (see `services:` below). The container is ephemeral
+#        and is destroyed when the job exits.
+#   #3 — DATABASE_URL is generated INSIDE the workflow (see the `env:` block
+#        below) and is scoped only to this job. The URL points at the service
+#        container via 127.0.0.1:5432.
+#   #4 — RUN_DB_INTEGRATION=true is set ONLY for this job (the one using the
+#        ephemeral Postgres). No other workflow in this repo sets it.
+#   #5 — A fail-closed runtime guard (lib/test-db-guard.mjs) is loaded by
+#        scripts/run-tests.mjs and rejects any DATABASE_URL containing
+#        neon.tech, the known Production Neon hostname, or any
+#        production-designated database name (prod_*, *_prod, vercel_prod, etc.).
+#   #6 — Test-created rows (users, tenders, files, requirements, AI jobs, …)
+#        are transactionally cleaned up by tests/helpers/db-fixture.ts even
+#        when assertions fail mid-test.
+#   #7 — A repo-wide regression test (tests/ci-neon-isolation-regression.test.ts)
+#        enforces all of the above statically — any future contributor who
+#        re-introduces `secrets.DATABASE_URL` or a non-postgres:16 service
+#        image will fail the build.
+#
+# This contract is non-negotiable. Production Neon credentials, Vercel
+# Production env vars, SESSION_SECRET, migrations, and Production deployment
+# are NEVER touched by this workflow.
 name: CI
 
 on:
   pull_request:
     branches:
       - main
+      - integration/controlled-recovery
+      - release/consolidated-recovery-20260717
       - integration/production-engine-2026-06
       - release/production-engine-2026-06
   push:
     branches:
       - main
+      - integration/controlled-recovery
+      - release/consolidated-recovery-20260717
       - integration/production-engine-2026-06
       - release/production-engine-2026-06
   workflow_dispatch:
@@ -55,13 +87,24 @@ jobs:
       E2E_TEST_PASSWORD: "CiPrimary-${{ github.run_id }}-A9!secure"
       E2E_SECOND_EMAIL: "e2e-secondary@example.test"
       E2E_SECOND_PASSWORD: "CiSecondary-${{ github.run_id }}-B8!secure"
+      EVIDENCE_SOURCE_SHA: "${{ github.event.pull_request.head.sha || github.sha }}"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Mask isolated authentication fixtures
+        shell: bash
+        run: |
+          echo "::add-mask::$E2E_TEST_EMAIL"
+          echo "::add-mask::$E2E_TEST_PASSWORD"
+          echo "::add-mask::$E2E_SECOND_EMAIL"
+          echo "::add-mask::$E2E_SECOND_PASSWORD"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -69,58 +112,126 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Initialize exact-head command evidence
+        shell: bash
+        run: |
+          mkdir -p test-results build-results browser-results
+          rm -f test-results/command-ledger.ndjson
+
       - name: Reject install-time source mutation
-        run: git diff --exit-code
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name reject-install-source-mutation
+          --log test-results/reject-install-source-mutation.log
+          --
+          git diff --exit-code
 
       - name: Validate Prisma schema
-        run: npx prisma validate
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name prisma-validate
+          --log test-results/prisma-validate.log
+          --
+          npx prisma validate
 
       - name: Generate Prisma client
-        run: npx prisma generate
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name prisma-generate
+          --log test-results/prisma-generate.log
+          --
+          npx prisma generate
 
       - name: Deploy complete migration history
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-results
-          npx prisma migrate deploy 2>&1 | tee test-results/migrate-deploy.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name migrate-deploy
+          --log test-results/migrate-deploy.log
+          --
+          npx prisma migrate deploy
 
       - name: Verify critical migrated schema
-        run: npm run db:check-critical-schema
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name critical-schema
+          --log test-results/critical-schema.log
+          --
+          npm run db:check-critical-schema
 
       - name: Verify retroactive initialization structure and history
-        run: npm run db:verify-retroactive-init
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name retroactive-init
+          --log test-results/retroactive-init.log
+          --
+          npm run db:verify-retroactive-init
 
       - name: Verify migration idempotency
-        shell: bash
-        run: |
-          set -o pipefail
-          npx prisma migrate deploy 2>&1 | tee test-results/migrate-idempotency.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name migrate-idempotency
+          --log test-results/migrate-idempotency.log
+          --
+          npx prisma migrate deploy
+
+      - name: Verify Prisma zero drift
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name prisma-zero-drift
+          --log test-results/prisma-zero-drift.log
+          --
+          npx prisma migrate diff
+          --from-schema-datasource prisma/schema.prisma
+          --to-schema-datamodel prisma/schema.prisma
+          --exit-code
 
       - name: Audit release integrity
-        run: npm run audit:release-integrity
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name release-integrity
+          --log test-results/release-integrity-audit.log
+          --
+          npm run audit:release-integrity
 
       - name: Typecheck
-        run: npm run typecheck
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name typecheck
+          --log test-results/typecheck.log
+          --
+          npm run typecheck
 
       - name: Lint
-        run: npm run lint
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name lint
+          --log test-results/lint.log
+          --
+          npm run lint
 
       - name: Unit and database integration tests
-        shell: bash
-        run: |
-          set -o pipefail
-          npm test 2>&1 | tee test-results/npm-test.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name unit-database-tests
+          --log test-results/npm-test.log
+          --
+          npm test
 
       - name: Build
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p build-results
-          npm run build 2>&1 | tee build-results/npm-build.log
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name build
+          --log build-results/npm-build.log
+          --
+          npm run build
 
       - name: Reject build-time source mutation
-        run: git diff --exit-code
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name reject-build-source-mutation
+          --log test-results/reject-build-source-mutation.log
+          --
+          git diff --exit-code
 
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
@@ -130,7 +241,8 @@ jobs:
 
       - name: Browser smoke, authenticated intake, golden workflow, and cross-user isolation
         env:
-          CSRF_MODE: "off"
+          CSRF_MODE: "origin"
+          CSRF_STRICT_DEV: "true"
           MISTRAL_API_KEY: ""
           GROQ_API_KEY: ""
           OPENROUTER_API_KEY: ""
@@ -138,29 +250,58 @@ jobs:
           TOGETHER_API_KEY: ""
           DEEPSEEK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
-          # Map the CI-seeded credentials to the env vars the Playwright tests check.
-          # E2E_FULL_AUTH is already set in the job-level env; E2E_GOLDEN_AUTH enables
-          # the golden tender workflow. SMOKE_TEST_EMAIL/PASSWORD enable the production
-          # smoke and tablet tests. The credentials are generated per-run and seeded
-          # by scripts/seed-e2e-user.mjs — they are not real production accounts.
           E2E_GOLDEN_AUTH: "true"
           SMOKE_TEST_EMAIL: ${{ env.E2E_TEST_EMAIL }}
           SMOKE_TEST_PASSWORD: ${{ env.E2E_TEST_PASSWORD }}
-        run: npm run test:e2e
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name playwright
+          --log browser-results/playwright.log
+          --
+          npm run test:e2e
 
       - name: Reject test-time source mutation
         if: always()
-        run: git diff --exit-code
+        run: >-
+          node scripts/run-evidence-command.mjs
+          --name reject-test-source-mutation
+          --log test-results/reject-test-source-mutation.log
+          --
+          git diff --exit-code
 
-      - name: Upload diagnostics on failure
+      - name: Verify exact-head evidence completeness
+        if: success()
+        run: node scripts/verify-ci-evidence.mjs
+
+      - name: Upload credential-free exact-head acceptance evidence
+        if: success()
+        uses: actions/upload-artifact@v5
+        with:
+          name: exact-head-acceptance-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            acceptance-evidence/
+            build-results/
+            test-results/
+            browser-results/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload non-browser diagnostics and exact critical sources on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ci-diagnostics
           path: |
             test-results/
-            build-results/
+            browser-results/
             playwright-report/
-            test-results-e2e/
-          if-no-files-found: ignore
+            acceptance-evidence/
+            build-results/
+            prisma/schema.prisma
+            prisma/migrations/
+            lib/ai-job-handlers.ts
+            lib/ai.ts
+            lib/engine/final-package-readiness-model.ts
+            lib/engine/public-readiness-envelope.ts
+          if-no-files-found: error
           retention-days: 7

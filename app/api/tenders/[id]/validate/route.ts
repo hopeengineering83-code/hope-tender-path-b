@@ -3,6 +3,8 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { checkFullExportReadinessWithQualityGate } from "../../../../../lib/engine/export-readiness";
 import { buildTenderDocumentContext } from "../../../../../lib/document-generation/tender-document-context";
+import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
 import { logAction } from "../../../../../lib/audit";
 import { childLogger } from "../../../../../lib/observability";
 
@@ -12,29 +14,29 @@ export const maxDuration = 30;
 function jsonError(message: string, status = 500) {
   return NextResponse.json(
     { ok: false, success: false, error: message, message },
-    { status }
+    { status },
   );
 }
 
 export async function POST(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
 ) {
   const logger = childLogger({ route: "[validate]" });
   try {
     let actor;
     try {
       actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      return message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
     }
 
     await prismaReady;
     const { id } = await params;
 
-    const tender = await prisma.tender.findUnique({
-      where: { id },
+    const tender = await prisma.tender.findFirst({
+      where: { id, userId: actor.id },
       include: {
         files: true,
         requirements: { select: { title: true, description: true, priority: true, requirementType: true, sectionReference: true, exactFileName: true } },
@@ -49,31 +51,29 @@ export async function POST(
       return jsonError("Tender not found", 404);
     }
 
-    if (tender.userId !== actor.id && actor.role !== "ADMIN") {
-      logger.warn(`unauthorized access: user=${actor.id} tender=${id}`);
-      return forbiddenResponse();
-    }
-
     logger.info(`validating tender=${id}`);
 
-    // Run export readiness check to validate all documents and tender state
-    const docs = tender.generatedDocuments.map((doc) => ({
-      id: doc.id,
-      name: doc.name,
-      exactFileName: doc.exactFileName,
-      exactOrder: doc.exactOrder,
-      documentType: doc.documentType,
-      format: doc.format,
-      generationStatus: doc.generationStatus,
-      validationStatus: doc.validationStatus,
-      reviewStatus: doc.reviewStatus,
-      fileContent: doc.fileContent,
-      storagePath: doc.storagePath,
+    const finalPackage = await getFinalPackageReadinessModel(prisma, id, actor.id);
+    const canonicalBlockers = [
+      ...finalPackage.requirements.blockers,
+      ...finalPackage.documents.blockers,
+      ...finalPackage.export.blockers,
+    ];
+
+    const docs = tender.generatedDocuments.map((document) => ({
+      id: document.id,
+      name: document.name,
+      exactFileName: document.exactFileName,
+      exactOrder: document.exactOrder,
+      documentType: document.documentType,
+      format: document.format,
+      generationStatus: document.generationStatus,
+      validationStatus: document.validationStatus,
+      reviewStatus: document.reviewStatus,
+      fileContent: document.fileContent,
+      storagePath: document.storagePath,
     }));
 
-    // Build the tender document generation context (for tender-type-aware
-    // quality-gate checks). This is the same context used by the document
-    // composer and the document-quality-check route.
     const ctx = buildTenderDocumentContext(
       {
         id: tender.id,
@@ -89,24 +89,13 @@ export async function POST(
       },
       tender.files,
       tender.requirements,
-      [], // selectedExperts — not needed for quality-gate (only used for invented-evidence checks)
-      [], // selectedProjects
-      [], // selectedLegalDocuments
-      [], // selectedCompanyAssets
+      [],
+      [],
+      [],
+      [],
       { name: "—", description: null, country: null, website: null, serviceLines: [], establishedYear: null },
     );
 
-    // Use the quality-gate version: runs the standard export readiness
-    // checks PLUS validateGeneratedDocumentQuality().okForFinal as a
-    // final-approval blocker.
-    //
-    // Per spec rule 6 & 8: validation must not approve empty content,
-    // placeholder content, AI traces, pricing leakage, or wrong envelope
-    // files. The quality gate is what enforces these checks. If it throws,
-    // we MUST fail closed — falling back to the weaker base readiness would
-    // silently skip placeholder/AI-trace/pricing checks and could let an
-    // invalid document pass validation. The previous .catch() fallback was
-    // a real safety gap.
     let readiness;
     try {
       readiness = await checkFullExportReadinessWithQualityGate({
@@ -115,13 +104,13 @@ export async function POST(
         requireFileContent: false,
         ctx,
       });
-    } catch (err) {
-      logger.error(`quality-gate check threw — failing closed to prevent invalid docs from passing validation: ${err instanceof Error ? err.message : String(err)}`);
+    } catch (error) {
+      logger.error(`quality-gate check threw — failing closed to prevent invalid docs from passing validation: ${error instanceof Error ? error.message : String(error)}`);
       return NextResponse.json(
         {
           ok: false,
           success: false,
-          error: "Validation quality gate failed. Documents cannot be safely validated at this time. Refresh to retry, or contact support if the problem persists.",
+          error: "Validation quality gate failed. Documents cannot be safely validated at this time. Contact support if the problem persists.",
           code: "QUALITY_GATE_UNAVAILABLE",
           qualityGateDegraded: true,
         },
@@ -129,106 +118,122 @@ export async function POST(
       );
     }
 
-    const validationResults = {
-      documentCount: docs.length,
-      failureCount: readiness.failures.length,
-      documentFailures: readiness.failures.map((f) => ({
-        documentId: f.documentId,
-        name: f.name,
-        reasons: f.reasons,
-      })),
-      tenderLevelBlockers: readiness.tenderLevelBlockers ?? [],
-      advisoryWarnings: readiness.advisoryWarnings ?? [],
-    };
-
-    // ── PDF format coverage check ────────────────────────────────────────────
-    // Per spec rule 5: PDF conversion unavailable must be a structured
-    // blocker, not a vague warning. If the tender requires PDF output
-    // (e.g., "Technical Proposal.pdf") but only DOCX files are generated,
-    // surface a structured PDF_REQUIRED_CONVERSION_UNAVAILABLE blocker
-    // BEFORE the user attempts export. This gives an earlier, clearer
-    // error than waiting for the document output state machine to catch
-    // the mismatch at download time.
-    //
-    // Defect 1 fix: Also check TenderRequirement.exactFileName values for
-    // required PDF filenames — the tender-level exactFileNaming may be empty
-    // while individual requirements specify "Technical Proposal.pdf".
-    //
-    // Defect 3 fix: Only count extensions from GENERATED docs with real content
-    // or storage — PLANNED/PENDING rows must never satisfy format coverage.
     let pdfCoverageBlocker: { code: string; missing: string[]; reason: string } | null = null;
     try {
       const { detectTenderFormatPolicy, checkTenderFormatCoverage } = await import("../../../../../lib/engine/export-format-policy");
-
-      // Collect requirement-level exact filenames that end in .pdf
       const requirementPdfNames = (tender.requirements ?? [])
-        .map((r: { exactFileName?: string | null }) => r.exactFileName ?? "")
+        .map((requirement: { exactFileName?: string | null }) => requirement.exactFileName ?? "")
         .filter((name: string) => name.trim().toLowerCase().endsWith(".pdf"));
-
-      // Combine tender-level + requirement-level filenames for policy detection
       const allRequiredNames = [
-        ...(tender.exactFileNaming ? tender.exactFileNaming.split(/[;,\n]/).map((s: string) => s.trim()).filter(Boolean) : []),
+        ...(tender.exactFileNaming ? tender.exactFileNaming.split(/[;,\n]/).map((value: string) => value.trim()).filter(Boolean) : []),
         ...requirementPdfNames,
       ];
       const combinedFileNaming = allRequiredNames.length > 0 ? allRequiredNames.join("\n") : tender.exactFileNaming;
-
       const policy = detectTenderFormatPolicy({
         exactFileNaming: combinedFileNaming,
         exactFileOrder: tender.exactFileOrder,
       });
-
-      // Defect 3: Only count extensions from GENERATED docs with real content/storage
       const generatedExtensions = docs
-        .filter((d) => d.generationStatus === "GENERATED" && (d.fileContent || d.storagePath))
-        .map((d) => (d.exactFileName ?? d.name ?? "").split(".").pop() ?? "")
+        .filter((document) => document.generationStatus === "GENERATED" && (document.fileContent || document.storagePath))
+        .map((document) => (document.exactFileName ?? document.name ?? "").split(".").pop() ?? "")
         .filter(Boolean);
       const coverage = checkTenderFormatCoverage(policy, generatedExtensions);
       if (!coverage.ok && coverage.code === "PDF_REQUIRED_CONVERSION_UNAVAILABLE") {
         pdfCoverageBlocker = { code: coverage.code, missing: coverage.missing, reason: coverage.reason };
       }
-    } catch (err) {
-      logger.warn(`PDF format coverage check failed (non-fatal): ${err instanceof Error ? err.constructor.name : "UnknownError"}`);
+    } catch (error) {
+      logger.warn(`PDF format coverage check failed (non-fatal): ${error instanceof Error ? error.constructor.name : "UnknownError"}`);
     }
 
-    // Log the validation action
+    const validationResults = {
+      documentCount: docs.length,
+      failureCount: readiness.failures.length,
+      documentFailures: readiness.failures.map((failure) => ({
+        documentId: failure.documentId,
+        name: failure.name,
+        reasons: failure.reasons,
+      })),
+      tenderLevelBlockers: readiness.tenderLevelBlockers ?? [],
+      canonicalPackageBlockers: canonicalBlockers,
+      advisoryWarnings: readiness.advisoryWarnings ?? [],
+      buildPlan: finalPackage.buildPlan,
+    };
+
+    const publicBlockers = [
+      ...canonicalBlockers.map((blocker) => ({
+        code: blocker.code,
+        message: blocker.reason,
+        nextAction: blocker.nextAction,
+      })),
+      ...readiness.failures.map((failure) => ({
+        code: "DOCUMENT_VALIDATION_FAILED",
+        message: `${failure.name}: ${failure.reasons.join("; ")}`,
+        nextAction: "Repair and regenerate the document before validation.",
+      })),
+      ...(readiness.tenderLevelBlockers ?? []).map((blocker) => ({
+        code: blocker.category ?? "TENDER_VALIDATION_BLOCKER",
+        message: blocker.title ?? "Tender-level validation blocker remains.",
+        nextAction: blocker.recommendedAction ?? "Resolve the tender-level blocker.",
+        severity: blocker.severity,
+      })),
+      ...(pdfCoverageBlocker ? [{
+        code: pdfCoverageBlocker.code,
+        message: pdfCoverageBlocker.reason,
+        nextAction: "Upload or attach the required final PDF files.",
+      }] : []),
+    ];
+    const validationOk = readiness.ok
+      && !pdfCoverageBlocker
+      && canonicalBlockers.length === 0
+      && finalPackage.buildPlan.confirmed;
+    const envelope = buildPublicReadinessEnvelope({
+      ok: validationOk,
+      blockers: publicBlockers,
+      warnings: readiness.advisoryWarnings ?? [],
+      requiredDocumentsTotal: finalPackage.documents.required.length,
+      generatedDocumentsTotal: finalPackage.documents.generated.length,
+      exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+    });
+
     await logAction({
       userId: actor.id,
       action: "VALIDATE_DOCUMENTS",
       entityType: "Tender",
       entityId: id,
-      description: `Validated ${docs.length} document(s) for export readiness${pdfCoverageBlocker ? " (PDF coverage blocked)" : ""}`,
+      description: `Validated ${docs.length} document(s) against canonical package readiness${pdfCoverageBlocker ? " (PDF coverage blocked)" : ""}`,
       metadata: {
         documentCount: docs.length,
-        validationOk: readiness.ok && !pdfCoverageBlocker,
+        validationOk,
         failureCount: readiness.failures.length,
-        blockerCount: (readiness.tenderLevelBlockers?.length ?? 0) + (pdfCoverageBlocker ? 1 : 0),
+        canonicalBlockerCount: canonicalBlockers.length,
+        blockerCount: publicBlockers.length,
         pdfCoverageBlocked: Boolean(pdfCoverageBlocker),
       },
-    }).catch((err) => logger.warn(`failed to log action: ${err}`));
+    }).catch((error) => logger.warn(`failed to log action: ${error}`));
 
-    if (!readiness.ok || pdfCoverageBlocker) {
+    if (!validationOk) {
       return NextResponse.json(
         {
-          ok: false,
           success: false,
+          ...envelope,
           error: pdfCoverageBlocker
             ? `Validation blocked: ${pdfCoverageBlocker.reason}`
-            : `Validation found ${readiness.failures.length} document issue(s) and ${readiness.tenderLevelBlockers?.length ?? 0} tender-level blocker(s).`,
+            : `Validation is blocked by ${publicBlockers.length} canonical or document issue(s).`,
           ...(pdfCoverageBlocker ? { code: pdfCoverageBlocker.code, pdfCoverageBlocked: true, missingPdfFiles: pdfCoverageBlocker.missing } : {}),
           ...validationResults,
         },
-        { status: 422 }
+        { status: 422 },
       );
     }
 
     return NextResponse.json({
-      ok: true,
       success: true,
-      message: "All documents validated successfully.",
+      ...envelope,
+      message: "All canonical package and document validation checks passed.",
       ...validationResults,
     });
-  } catch (err) {
-    logger.error("[validate] failed", { detail: err });
-    return jsonError("Validation failed. Refresh to retry.", 500);
+  } catch (error) {
+    logger.error("[validate] failed", { detail: error });
+    return jsonError("Validation failed.", 500);
   }
 }

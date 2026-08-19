@@ -118,7 +118,15 @@ export const INTERNAL_BOILERPLATE_PATTERNS: RegExp[] = [
   /\bmatch[-_\s]?score\b/i,
   /\bwin\s+probability\b/i,
   /\bevaluator[-_\s]?score\b/i,
-  /\b(?:internal\s+(?:use|note|review)|reviewer\s+note)\b/i,
+  // Genuine internal-annotation markers only. This was
+  // /\b(?:internal\s+(?:use|note|review)|reviewer\s+note)\b/i, whose bare
+  // "internal review" alternative fired on ordinary QA-process prose — "quality
+  // assurance is applied through independent internal review before any
+  // deliverable is issued" is a description of how the firm works, not a
+  // working note leaking into a submission. It failed a real technical proposal
+  // at HIGH severity, which is a refusal the owner cannot act on because there
+  // is nothing wrong with the sentence.
+  /\b(?:internal\s+use(?:\s+only)?|internal\s+notes?|for\s+internal\s+review|internal\s+review\s+only|reviewer\s+notes?)\b/i,
   /\btraceability\s+map\b/i,
   /\baudit\s+metadata\b/i,
   /\bTODO\b/i,

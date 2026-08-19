@@ -12,7 +12,6 @@ type DocItem = { id: string; name: string; exactFileName: string | null; exactOr
 type Props = {
   tenderId: string;
   tenderTitle: string;
-  tenderStatus: string;
   isReady: boolean;
   isExported: boolean;
   generatedCount: number;
@@ -33,7 +32,7 @@ type Props = {
 };
 
 export function ExportTenderCard({
-  tenderId, tenderTitle, tenderStatus, isReady, isExported,
+  tenderId, tenderTitle, isReady, isExported,
   generatedCount, totalDocs, blockingGaps, warningGaps,
   checks, criticalGaps, highGaps, documents,
   canonicalBlockerCodes = [], canonicalNextAction,
@@ -48,7 +47,7 @@ export function ExportTenderCard({
             <h2 className="min-w-0 break-words text-lg font-semibold text-slate-900">{tenderTitle}</h2>
             {isExported && <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs text-green-700">Exported</span>}
             {isReady && !isExported && <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs text-emerald-700">Ready</span>}
-            {!isReady && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs text-amber-700">Not ready</span>}
+            {!isReady && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs text-amber-800">Not ready</span>}
           </div>
           <p className="mt-1 text-sm text-slate-500">
             {generatedCount} / {totalDocs} docs generated
@@ -56,7 +55,15 @@ export function ExportTenderCard({
             {warningGaps > 0 && <span className="ml-2 text-amber-600">{warningGaps} warning{warningGaps !== 1 ? "s" : ""}</span>}
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+        {/* w-full on mobile gives this row a definite width so flex-wrap can
+            actually constrain its children -- shrink-0 alone makes the
+            browser compute this container's intrinsic width as the sum of
+            all children's widths regardless of flex-wrap (wrapping only
+            affects layout once a definite width is imposed from outside),
+            so on narrow viewports the row silently overflowed instead of
+            wrapping. sm:w-auto sm:shrink-0 restores the original
+            don't-shrink-below-content behavior once there's room. */}
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:shrink-0">
           {isReady && canonicalBlockerCodes.length === 0 && (
             <a
               href={`/api/tenders/${tenderId}/download?type=zip`}
@@ -68,10 +75,22 @@ export function ExportTenderCard({
           )}
           {!isReady && canonicalBlockerCodes.length > 0 && (
             <span
-              className="rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-400 cursor-not-allowed"
-              title={canonicalNextAction ?? "Not ready"}
+              className="rounded-lg bg-slate-100 px-4 py-2 text-sm text-slate-500 cursor-not-allowed"
+              title={canonicalNextAction ?? "Resolve all critical gaps to unlock the ZIP download."}
             >
               ZIP locked
+            </span>
+          )}
+          {!isReady && canonicalBlockerCodes.length > 0 && (
+            <span className="text-xs text-slate-500">
+              {canonicalBlockerCodes.length} blocker{canonicalBlockerCodes.length !== 1 ? "s" : ""} —{" "}
+              <button
+                type="button"
+                onClick={() => setExpanded(true)}
+                className="font-medium text-slate-700 underline hover:text-slate-900"
+              >
+                view checklist to resolve
+              </button>
             </span>
           )}
           <Link href={`/dashboard/tenders/${tenderId}`}
@@ -100,12 +119,12 @@ export function ExportTenderCard({
           {!isReady && canonicalBlockerCodes.length > 0 && (
             <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
               <p className="text-sm font-semibold text-amber-800">Canonical export blockers</p>
-              <p className="mt-1 text-xs text-amber-700">
+              <p className="mt-1 text-xs text-amber-800">
                 Next action: {canonicalNextAction ?? "Resolve the blockers below."}
               </p>
               <ul className="mt-2 flex flex-wrap gap-2">
                 {canonicalBlockerCodes.map((code) => (
-                  <li key={code} className="rounded bg-amber-100 px-2 py-0.5 text-xs font-mono font-semibold text-amber-700">
+                  <li key={code} className="rounded bg-amber-100 px-2 py-0.5 text-xs font-mono font-semibold text-amber-800">
                     {code}
                   </li>
                 ))}
@@ -154,7 +173,7 @@ export function ExportTenderCard({
               <p className="text-sm font-medium text-amber-800 mb-2">High-priority warnings (non-blocking)</p>
               <ul className="space-y-1">
                 {highGaps.map((gap) => (
-                  <li key={gap.id} className="text-sm text-amber-700">{gap.title}</li>
+                  <li key={gap.id} className="text-sm text-amber-800">{gap.title}</li>
                 ))}
               </ul>
             </div>

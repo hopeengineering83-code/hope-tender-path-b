@@ -20,6 +20,7 @@ import { runAuthorityReview } from "../../../../../lib/engine/authority-review";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { getCurrentConfirmedBuildPlan } from "../../../../../lib/engine/build-plan";
+import { persistVerifiedExportPackageDownload } from "../../../../../lib/engine/export-package-persistence";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -108,11 +109,6 @@ async function finalPackageGate(userId: string, tender: any) {
   const critical = tender.complianceGaps.filter((g: any) => !g.isResolved && g.severity === "CRITICAL");
   if (critical.length) return { ok: false as const, response: err("Final export blocked by unresolved CRITICAL compliance gaps.", 409, { code: "CRITICAL_COMPLIANCE_GAPS", reasons: critical.map((g: any) => g.title) }) };
 
-  // Central authoritative readiness gate (condition K) — the final, fail-closed
-  // check immediately before the ZIP is assembled. Enforces current-content-hash
-  // match, canonical promotion, chunk integrity, mandatory-requirement source
-  // grounding, and a confirmed non-empty submission plan, so a stale/partial/
-  // unapproved-fallback analysis can never reach the final package.
   const centralGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId, purpose: "final-zip" });
   if (!centralGate.ok) return { ok: false as const, response: err(`Final ZIP blocked: ${centralGate.blockerDetail}`, 409, { code: centralGate.blockerCode }) };
 
@@ -140,10 +136,6 @@ async function singleDocument(userId: string, tender: any, docId: string) {
   if (!isFinalExportCandidateDocument(raw)) return err("This workspace draft is not a final export file.", 409, { code: "INTERNAL_DRAFT_NOT_EXPORTABLE" });
   if (!generatedDocumentHasContent(raw)) return err("Document content is unavailable.", 409, { code: "MISSING_CONTENT" });
 
-  // Central authoritative readiness gate (condition K). Downloading a single
-  // final document is an export; without this it would bypass the gate that
-  // zipPackage enforces, letting a stale-hash / revoked-fallback / ungrounded
-  // analysis leak final content one file at a time.
   const singleGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId, purpose: "final-zip" });
   if (!singleGate.ok) return err(`Single-document export blocked: ${singleGate.blockerDetail}`, 409, { code: singleGate.blockerCode });
 
@@ -151,9 +143,6 @@ async function singleDocument(userId: string, tender: any, docId: string) {
   const readiness = checkExportReadiness([doc], { requireFileContent: false });
   if (!readiness.ok) return err(exportReadinessError(readiness.failures), 409, { code: "DOCUMENT_NOT_READY", failures: readiness.failures });
 
-  // Run authority review on this single document before serving it.
-  // Pass empty manifestEntries and requiredSections since we are only
-  // checking content quality on the individual document.
   const singleAuthorityResult = runAuthorityReview(
     [{
       id: String(raw.id),
@@ -204,14 +193,10 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   const gate = await finalPackageGate(userId, tender);
   if (!gate.ok) return gate.response;
 
-  // Canonical readiness gate — same helper used by Export Readiness API,
-  // Bid Control, and Final Submission Control Center. Backend MUST reject
-  // direct ZIP downloads when canonical ok === false so a user cannot
-  // bypass blockers by hitting /download?type=zip directly.
-  // METADATA_CONTAMINATED is enforced inside getFinalSubmissionReadiness (see
-  // lib/engine/final-submission-readiness.ts). It is not duplicated here
-  // because the canonical readiness gate already surfaces it as a blocker.
-  const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId, requireFileContent: false });
+  // requireFileContent: true — this is the final ZIP, so the readiness check
+  // must load and verify the actual bytes it is about to package rather than
+  // judging byte readiness from metadata it never fetched.
+  const canonical = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId, requireFileContent: true });
   if (!canonical) return err("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
   if (!canonical.ok) {
     return err(
@@ -227,18 +212,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     );
   }
 
-  // ── Operation gate (FINAL_SUBMISSION_READY) — authoritative metadata check ─
-  // The operation gate is the single authority for operation-specific
-  // metadata eligibility. For FINAL_SUBMISSION_READY, the gate enforces:
-  //   • Critical fields (title, clientName, deadline, submissionMethod) present
-  //   • Requirements extracted
-  //   • Confirmed BuildPlan
-  //   • Submission endpoint matches the tender-derived method
-  //     (EMAIL → email endpoint, PHYSICAL → address, HYBRID → at least one)
-  //   • No metadata contamination
-  //   • No OCR_REQUIRED / REGEX_FALLBACK extraction status
-  // This complements the canonical readiness gate — both must pass for
-  // final submission to proceed.
   const finalBuildPlan = await getCurrentConfirmedBuildPlan(prisma, tender.id, userId);
   const finalOperationGate = resolveTenderOperationGate({
     tender: {
@@ -277,24 +250,15 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     );
   }
 
-  // ── Phase 4: Server-enforced quality validation check for ALL docs ─────────
-  // Per spec rule 6: validation must not approve empty content, placeholder
-  // content, AI traces, pricing leakage, or wrong envelope files. We extract
-  // the visible text from base64 DOCX content before running the quality
-  // validator — otherwise the regex checks would run against base64 gibberish
-  // and never match, silently skipping placeholder/AI-trace detection.
   const { validateDocumentQuality } = await import("../../../../../lib/engine/document-quality-validator");
   const { extractDocxVisibleText: extractVisibleText } = await import("../../../../../lib/engine/export-readiness");
   const blockedDocs: any[] = [];
   for (const doc of tender.generatedDocuments) {
     if (!isFinalExportCandidateDocument(doc)) continue;
-    // Extract visible text from base64 DOCX so the quality validator can
-    // run its regex checks (placeholders, AI traces, pricing leakage,
-    // envelope mismatch) against the actual document text.
     let visibleText: string | null = null;
-    const fileName = doc.exactFileName ?? doc.name ?? "";
-    if (doc.fileContent && fileName.toLowerCase().endsWith(".docx")) {
-      visibleText = await extractVisibleText(doc.fileContent, fileName);
+    const currentFileName = doc.exactFileName ?? doc.name ?? "";
+    if (doc.fileContent && currentFileName.toLowerCase().endsWith(".docx")) {
+      visibleText = await extractVisibleText(doc.fileContent, currentFileName);
     }
     const quality = validateDocumentQuality({
       name: doc.name,
@@ -313,18 +277,10 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
       {
         code: "QUALITY_VALIDATION_BLOCKED",
         blockedDocuments: blockedDocs.map((d: any) => d.exactFileName ?? d.name),
-      }
+      },
     );
   }
 
-  // ── Phase 4b: Authority Review gate ──────────────────────────────────────
-  // Additional to the Phase 4 quality validation check above.
-  // Detects AI traces, placeholders, Bid-Team stubs, envelope cross-contamination,
-  // and documents not in the Final Package Manifest.
-  // NOTE: The previous `zipAuthorityNeedsReview` variable was dead code — it
-  // was always false (the authority review block always returns err() on
-  // NEEDS_REVIEW/BLOCKED, never setting it to true). The X-Authority-Review-Status
-  // header branch at the end was therefore unreachable. Removed per audit.
   {
     const authorityDocs = tender.generatedDocuments
       .filter((doc: any) => isFinalExportCandidateDocument(doc) && doc.generationStatus === "GENERATED")
@@ -337,14 +293,12 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         exactFileName: doc.exactFileName ?? null,
       }));
 
-    // Build manifest entries from requirements with exactFileName
     const manifestEntries: Array<{ exactFileName: string; documentType: string }> = [];
     for (const req of (tender.requirements ?? [])) {
       if ((req as any).exactFileName) {
         manifestEntries.push({ exactFileName: (req as any).exactFileName, documentType: "TENDER_REQUIRED_FILE" });
       }
     }
-    // Also include entries from exactFileNaming JSON
     try {
       const parsed = JSON.parse(tender.exactFileNaming ?? "[]");
       if (Array.isArray(parsed)) {
@@ -358,7 +312,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
       }
     } catch { /* ignore invalid JSON */ }
 
-    // Derive required sections from exactFileNaming / exactFileOrder
     const requiredSections: string[] = [];
     for (const raw of [tender.exactFileNaming, tender.exactFileOrder]) {
       if (!raw) continue;
@@ -374,9 +327,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     }
 
     const authorityResult = runAuthorityReview(authorityDocs, manifestEntries, requiredSections);
-    // Block on BLOCKED and NEEDS_REVIEW — consistent with the single-doc download gate
-    // (which uses !== "AUTHORITY_READY") and the export route. Only AUTHORITY_READY
-    // proceeds without annotation.
     if (authorityResult.status !== "AUTHORITY_READY") {
       if (authorityResult.status === "BLOCKED") {
         return err(
@@ -391,7 +341,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
           },
         );
       }
-      // NEEDS_REVIEW: block ZIP export until authority review is cleared
       return err(
         `Export blocked: Authority Review is pending (status: ${authorityResult.status}). Complete the authority review before downloading the final package.`,
         422,
@@ -405,17 +354,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
       );
     }
   }
-  // (Authority review gate complete — any NEEDS_REVIEW/BLOCKED status
-  //  already returned err() above. No header propagation needed.)
 
-  // Strict two-envelope tenders: the canonical helper sets
-  // summary.strictTwoEnvelope when the tender requires SEPARATE technical
-  // and financial envelopes. In that case we MUST NOT produce one mixed
-  // ZIP. Either:
-  //   (a) reject the unqualified request with a clear 409 and instruct the
-  //       caller to specify ?envelope=technical or ?envelope=financial, or
-  //   (b) build one ZIP per envelope when the caller specifies the
-  //       envelope= query.
   const docs: ExportReadyDocument[] = filterFinalExportCandidateDocuments(tender.generatedDocuments as any[])
     .filter((d: any) => d.generationStatus === "GENERATED")
     .map(asReadyDoc)
@@ -423,15 +362,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
 
   if (!docs.length) return err("No final exportable generated documents to package.", 400, { code: "NO_FINAL_EXPORT_CANDIDATES" });
 
-  // ── Required-format hard gate ──────────────────────────────────────────────
-  // The generation-readiness warning promises "final export will block with
-  // PDF_REQUIRED_CONVERSION_UNAVAILABLE" — this is that gate. It previously
-  // existed only in the validate route, so hitting /download?type=zip directly
-  // skipped it: a tender requiring "Technical Proposal.pdf" could ship a final
-  // ZIP containing only DOCX files. Runs against the FULL active document set
-  // (before envelope scoping) so an envelope query cannot bypass it, and only
-  // counts documents that actually have bytes — PLANNED/contentless rows never
-  // satisfy a required format.
   const { detectTenderFormatPolicy, checkTenderFormatCoverage } = await import("../../../../../lib/engine/export-format-policy");
   const zipFormatPolicy = detectTenderFormatPolicy({
     exactFileNaming: tender.exactFileNaming,
@@ -450,21 +380,11 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     });
   }
 
-  // Runtime revalidation: Download always builds a fresh ZIP (does not serve
-  // a stored package), so it always re-checks readiness, central gate, and
-  // source file existence. There is no stale-package risk for ZIP downloads.
-  // For single-document downloads, the central gate + checkExportReadiness
-  // provide the same revalidation.
-  //
-  // Runtime revalidation: verify source files have not been deleted since
-  // the package was prepared. If grounding source files are gone, the
-  // package is stale and must not be downloaded.
   const sourceCheck = await verifySourceFilesNotDeleted(prisma, tender.id);
   if (!sourceCheck.ok) {
-    return err("Source files required for grounding have been deleted. Regenerate documents before exporting.", 409, { code: "SOURCE_FILES_DELETED" });
+    return err("Source files required for grounding have been deleted. Restore the genuine source and re-run AI Analyze, then Run Engine; downstream documents will be regenerated automatically.", 409, { code: "SOURCE_FILES_DELETED" });
   }
 
-  // Annotate each doc with its envelope and filter when ?envelope= is set.
   const docEnvelopes = new Map(docs.map((d) => [d.id, inferEnvelope(d.documentType ?? "TECHNICAL", d.exactFileName ?? d.name ?? "")]));
   const fullEnvelopeCounts: Record<SubmissionEnvelope, number> = { TECHNICAL: 0, FINANCIAL: 0, ADMIN: 0 };
   for (const env of docEnvelopes.values()) fullEnvelopeCounts[env] = (fullEnvelopeCounts[env] ?? 0) + 1;
@@ -497,29 +417,32 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
 
   const scope = buildFinalZipEntries({
     tender: { exactFileNaming: tender.exactFileNaming, exactFileOrder: tender.exactFileOrder, requirements: tender.requirements.map((r: any) => ({ exactFileName: r.exactFileName ?? null })) },
-    generatedDocs: scopedDocs.map((d) => ({ id: d.id, name: d.name, exactFileName: d.exactFileName, exactOrder: d.exactOrder ?? null, documentType: d.documentType ?? null })),
+    generatedDocs: scopedDocs.map((d) => ({
+      id: d.id,
+      name: d.name,
+      exactFileName: d.exactFileName,
+      exactOrder: d.exactOrder ?? null,
+      documentType: d.documentType ?? null,
+      format: d.format,
+    })),
   });
 
   const byId = new Map(scopedDocs.map((d) => [d.id, d]));
   const entries = scope.entries.filter((entry) => Boolean(entry.generatedDocId && byId.get(entry.generatedDocId)));
   if (!entries.length) return err("Final ZIP has no entries after scope filtering.", 409, { code: "NO_ZIP_ENTRIES_AFTER_SCOPE_FILTERING", exclusions: scope.exclusions });
 
-  // Pre-check: identify entries whose document has no file content before attempting ZIP.
-  // This gives a clear structured error listing exactly which documents need regenerating,
-  // rather than a generic storage error mid-loop.
   const noContent = entries
     .map((entry) => byId.get(entry.generatedDocId!))
     .filter((doc): doc is ExportReadyDocument => !!doc && !doc.fileContent && !doc.storagePath);
   if (noContent.length) {
     const names = noContent.map((d) => d.exactFileName ?? d.name ?? d.id);
     return err(
-      `${noContent.length} document(s) have no file content and cannot be exported: ${names.join(", ")}. Run auto-finalize or regenerate these documents first.`,
+      `${noContent.length} document(s) have no file content and cannot be exported: ${names.join(", ")}. Automatic post-Engine finalization must produce verified bytes before export.`,
       409,
       { code: "DOCUMENTS_MISSING_CONTENT", documents: noContent.map((d) => ({ id: d.id, name: d.exactFileName ?? d.name })) },
     );
   }
 
-  // Duplicate filename guard — two docs with the same ZIP path would silently overwrite each other.
   const seenNames = new Set<string>();
   const dupes: string[] = [];
   for (const entry of entries) {
@@ -539,12 +462,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     const sig = validateFileSignature(content.filename, content.base64);
     if (!sig.ok) return err(`File signature mismatch on ${content.filename}.`, 422, { code: "FILE_SIGNATURE_MISMATCH", reason: sig.reason });
 
-    // ─── File byte integrity (SHA-256) verification ──────────────────────
-    // Recompute the SHA-256 from actual bytes and compare with the stored
-    // digest. This prevents corrupted or tampered files from entering the
-    // final ZIP package. Rows pinned by the canonical integrity system carry
-    // the digest in contentSha256/contentByteLength — accept either column
-    // pair. Rows with NO digest in either system are blocked (fail-closed).
     const { verifyFileBytes } = await import("../../../../../lib/engine/file-byte-integrity");
     const integrityResult = verifyFileBytes({
       storedSha256: (doc as any).sha256 ?? (doc as any).contentSha256 ?? null,
@@ -559,10 +476,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     zipContents.push({ generatedDocId: doc.id, bytes: content.buffer });
   }
 
-  // PERF-003: pre-flight the total uncompressed input size so we can return
-  // a clean 413 to the caller before JSZip allocates the full archive buffer.
-  // The same cap is enforced defensively inside `assembleFinalSubmissionZip`
-  // in case future callers bypass this route.
   const totalZipInputBytes = zipContents.reduce(
     (sum, item) => sum + (item.bytes?.byteLength ?? 0),
     0,
@@ -589,8 +502,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     logger.error("Final ZIP assembly/verification failed", {
       errorName: error instanceof Error ? error.constructor.name : typeof error,
     });
-    // PERF-003: a size-cap violation thrown by the assembly helper is surfaced
-    // as 413 (Payload Too Large) rather than the generic 422 verification error.
     if (/PERF-003|safety cap/i.test(detail)) {
       return err(
         `Final ZIP package exceeds the ${Math.floor(FINAL_ZIP_MAX_INPUT_BYTES / (1024 * 1024))}MB safety cap (PERF-003). Reduce the package size by splitting envelopes or removing non-final documents.`,
@@ -598,16 +509,11 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         { code: "FINAL_ZIP_SIZE_CAP_EXCEEDED", limitBytes: FINAL_ZIP_MAX_INPUT_BYTES },
       );
     }
-    return err("Final ZIP verification failed. Regenerate the affected documents before export.", 422, {
+    return err("Final ZIP verification failed. Automatic post-Engine repair must recreate and verify the affected bytes before export.", 422, {
       code: "FINAL_ZIP_VERIFICATION_FAILED",
     });
   }
 
-  // ── Envelope breakdown — annotate the response so clients know how many
-  // TECHNICAL / FINANCIAL / ADMIN files are in this ZIP. For two-envelope
-  // tenders the caller should submit the FINANCIAL files in a separate
-  // sealed envelope; they are included here for single-envelope submissions
-  // (and split into separate ZIPs when ?envelope=… is used).
   const envelopeCounts: Record<SubmissionEnvelope, number> = { TECHNICAL: 0, FINANCIAL: 0, ADMIN: 0 };
   for (const entry of entries) {
     const doc = byId.get(entry.generatedDocId!);
@@ -619,39 +525,25 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   const hasFinancialDocs = envelopeCounts.FINANCIAL > 0;
 
   const zipBuffer = assembledZip.buffer;
-  // Name the ZIP after the envelope when scoped, so the user has clarity:
-  //   submission-package.zip                  — single combined
-  //   submission-package-technical.zip        — technical envelope only
-  //   submission-package-financial.zip        — financial envelope only
   const baseLabel = `${safeFileBaseName(tender.title)}-submission-package`;
   const zipName = envelopeFilter
     ? `${baseLabel}-${envelopeFilter.toLowerCase()}.zip`
     : `${baseLabel}.zip`;
   const fileList = assembledZip.fileList;
-  // Fresh read before create/update to avoid stale-object race on concurrent requests.
-  const packageIntegrity = {
-    status: "READY",
-    fileList: JSON.stringify(fileList),
+
+  // The exact verified ZIP snapshot and the tender lifecycle transition are a
+  // single tenant-scoped transaction. The helper locks the tender row, reuses
+  // an identical hash safely under concurrent downloads, and creates a distinct
+  // snapshot when a technical/financial envelope produces different bytes.
+  const exportPackage = await persistVerifiedExportPackageDownload(prisma, {
+    tenderId: tender.id,
+    userId,
+    fileListJson: JSON.stringify(fileList),
     manifestJson: JSON.stringify(assembledZip.manifest),
     packageSha256: assembledZip.packageSha256,
     packageByteLength: zipBuffer.length,
-    integrityStatus: "VERIFIED",
-    integrityVerifiedAt: new Date(),
-  };
-  const freshPkg = await prisma.exportPackage.findFirst({
-    where: { tenderId: tender.id },
-    orderBy: { createdAt: "desc" },
+    verifiedAt: new Date(),
   });
-  if (freshPkg) {
-    await prisma.exportPackage.update({
-      where: { id: freshPkg.id },
-      data: { ...packageIntegrity, downloadCount: { increment: 1 } },
-    });
-  } else {
-    await prisma.exportPackage.create({
-      data: { tenderId: tender.id, ...packageIntegrity, downloadCount: 1 },
-    });
-  }
 
   await logAction({
     userId,
@@ -659,6 +551,12 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     entityType: "Tender",
     entityId: tender.id,
     description: `Downloaded ${envelopeFilter ? envelopeFilter + " envelope " : ""}ZIP package for "${tender.title}" (${entries.length} file(s); ${envelopeBreakdown})`,
+    metadata: {
+      exportPackageId: exportPackage.id,
+      packageSha256: assembledZip.packageSha256,
+      packageByteLength: zipBuffer.length,
+      envelopeScope: envelopeFilter ?? "COMBINED",
+    },
   });
   const responseHeaders: Record<string, string> = {
     "Content-Type": "application/zip",
@@ -672,14 +570,6 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
     responseHeaders["X-Envelope-Note"] =
       "FINANCIAL documents are included. If this tender requires separate technical and financial envelopes, submit the financial files in a separate sealed package per the tender instructions.";
   }
-  // PERF-003: stream the ZIP back to the client instead of returning a single
-  // monolithic buffer. JSZip still materializes the full archive in memory
-  // (we removed the CRC32 re-read pass in `assembleFinalSubmissionZip` to
-  // drop from a ~3x to ~1x memory multiplier), but wrapping the buffer in a
-  // `ReadableStream` lets Vercel start sending headers + the first chunk
-  // immediately and frees the function to flush progressively rather than
-  // buffering the whole response. The Content-Length header is preserved so
-  // clients can show download progress.
   responseHeaders["Content-Length"] = String(zipBuffer.length);
   const zipStream = new ReadableStream({
     start(controller) {
@@ -691,23 +581,14 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
 }
 
 async function proposalPdf(userId: string, tender: any, docId: string | null) {
-  // Find the main technical proposal document (or the doc specified by docId).
   const docs = (tender.generatedDocuments as any[]).filter(
     (d: any) => d.generationStatus === "GENERATED" && isFinalExportCandidateDocument(d) && generatedDocumentHasContent(d),
   );
-  if (!docs.length) return err("No generated documents available for PDF export. Generate documents first.", 400, { code: "NO_DOCS_FOR_PDF" });
+  if (!docs.length) return err("No generated documents are available for PDF export. Automatic post-Engine generation must complete first.", 400, { code: "NO_DOCS_FOR_PDF" });
 
-  // Central authoritative readiness gate (condition K). A proposal PDF is a
-  // final export (it logs EXPORT_PACKAGE_DOWNLOAD below), so it must pass the
-  // same fail-closed gate zipPackage enforces — otherwise a stale-hash /
-  // revoked-fallback analysis could still be exported as a PDF.
   const pdfGate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId, purpose: "final-zip" });
   if (!pdfGate.ok) return err(`PDF export blocked: ${pdfGate.blockerDetail}`, 409, { code: pdfGate.blockerCode });
 
-  // Pick the target document. Auto-pick prefers the DOCX revision — once a
-  // required PDF has been finalized, "Technical Proposal.docx" and
-  // "Technical Proposal.pdf" can both be active, and only the DOCX is a
-  // convertible source for the finalizer.
   const technicalMatch = (d: any) => /technical.proposal|technical_proposal/i.test(d.exactFileName ?? d.name ?? "");
   const target = docId
     ? docs.find((d: any) => d.id === docId)
@@ -716,16 +597,11 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
       ?? docs[0];
   if (!target) return err("Target document not found or not yet generated.", 404, { code: "PDF_DOC_NOT_FOUND" });
 
-  // Serve an already-finalized PDF document directly. When the target is a
-  // .pdf document (explicit docId, or no convertible DOCX source exists),
-  // conversion is not applicable: serve its bytes when it is validated +
-  // approved and the bytes really carry the %PDF signature — otherwise fail
-  // closed with the precise blocker instead of a confusing conversion error.
   const targetFileName = (target.exactFileName ?? target.name ?? "").toLowerCase();
   if (targetFileName.endsWith(".pdf")) {
     if (!isReadyForFinalExport(asReadyDoc(target))) {
       return err(
-        "This PDF document exists but is not yet validated and approved for export. Run Validate and complete the review before downloading it.",
+        "This PDF exists but has not passed canonical machine validation and export eligibility. Automatic post-Engine processing must complete, or a specific fail-closed blocker must be resolved, before download.",
         409,
         { code: "PDF_DOC_NOT_EXPORT_READY", document: target.exactFileName ?? target.name },
       );
@@ -749,15 +625,10 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
     });
   }
 
-  // Load the source bytes (inline or storage-backed) before finalization.
   const contentResult = await readContentOrError(asReadyDoc(target));
   if (!contentResult.ok) return contentResult.response;
   const content = contentResult.content;
 
-  // Resolve the tender-required exact PDF filename (e.g. "Technical
-  // Proposal.pdf") for this source document. When the tender names no
-  // matching required PDF, fall back to a generic safe name — the generic
-  // file never claims to satisfy a required exact filename.
   const { finalizeRequiredPdf, resolveRequiredPdfFileName } = await import("../../../../../lib/engine/workflow/pdf-finalizer");
   const { detectTenderFormatPolicy } = await import("../../../../../lib/engine/export-format-policy");
   const pdfPolicy = detectTenderFormatPolicy({
@@ -768,10 +639,6 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
   const safeBase = (tender.title ?? "proposal").replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().slice(0, 60) || "proposal";
   const pdfName = resolveRequiredPdfFileName(pdfPolicy, target) ?? `${safeBase}-proposal.pdf`;
 
-  // Fail-closed finalization: real DOCX visible-text extraction, quality gate
-  // on the extracted text, %PDF byte validation, structured safe errors. The
-  // old path fell back to contentSummary/title as the PDF body when
-  // extraction failed — that could ship a near-empty "successful" PDF.
   const finalized = await finalizeRequiredPdf({
     requiredFileName: pdfName,
     tender: {
@@ -792,8 +659,6 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
     sourceDocument: {
       id: String(target.id),
       name: target.name ?? null,
-      // Fall back to the normalized content filename so legacy docs without
-      // an exactFileName still pass the finalizer's DOCX detection.
       exactFileName: target.exactFileName ?? content.filename,
       documentType: target.documentType ?? null,
       format: target.format ?? null,

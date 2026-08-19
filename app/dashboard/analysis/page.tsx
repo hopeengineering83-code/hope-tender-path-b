@@ -4,7 +4,6 @@ import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { classifyTenderCurrentnessBatch } from "../../../lib/engine/tender-currentness";
 import { StatusBadge } from "../../../components/status-badge";
-import { formatDate } from "../../../lib/tender-workflow";
 import { ArrowRightIcon, AlertCircleIcon } from "../../../components/icons";
 
 export default async function AnalysisPage() {

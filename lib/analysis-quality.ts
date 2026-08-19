@@ -150,9 +150,14 @@ export function assessTenderAnalysisQuality(params: {
   let score = 100;
 
   if (requirementCount === 0) {
-    warnings.push("No requirements were extracted from the tender.");
-    recommendations.push("Run AI Analyze / Run Engine again after confirming extraction quality.");
-    score -= 70;
+    // Gap 1: No requirements is no longer a 70-point penalty. Readable,
+    // integrity-verified extracted tender text must proceed even when there
+    // are no structured requirements. Source-text-only generation uses the
+    // extracted scope, tender type, requested services, deliverables, forms
+    // and submission instructions. Genuinely absent information is stored as
+    // NOT_STATED — never invented.
+    warnings.push("No structured requirements were extracted. Source-text-only generation will proceed using the extracted tender scope, deliverables, and submission instructions.");
+    recommendations.push("Review the generated proposal carefully — it is based on source text only, not structured requirements.");
   } else if (requirementCount < 5) {
     warnings.push(`Only ${requirementCount} requirement(s) were extracted; complex tenders usually contain more.`);
     recommendations.push("Review the tender manually for missing eligibility, technical, financial, form, and submission requirements.");
@@ -320,7 +325,7 @@ export function assessTenderAnalysisQuality(params: {
     isUnsafe = true;
   }
   if (extractionPartial) {
-    warnings.push("AI analysis ran on partially-extracted tender pages — results may be missing sections. Re-extract or run OCR for a fully reliable analysis.");
+    warnings.push("AI analysis ran on partially-extracted tender pages — results may be missing sections. Upload a clearer, text-based copy for a fully reliable analysis.");
     score = Math.min(score, 74);
   }
   if (isRegexFallback) {

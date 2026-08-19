@@ -1,0 +1,61 @@
+# ─── Neon keep-warm cron ──────────────────────────────────────────────────────
+#
+# Neon free-tier databases auto-pause after ~5 days of inactivity. The first
+# request after pause takes 5-15 seconds to wake the database, which exceeds
+# Vercel's 10s function timeout for some API routes and causes /api/health to
+# return 503 on the first probe after a pause.
+#
+# This workflow pings /api/health every 5 minutes, keeping the Neon database
+# warm. It runs on GitHub Actions free tier (2,000 min/month for private repos,
+# unlimited for public). 5-min intervals = 288 runs/day × ~2s each = ~10
+# min/day of compute, well within free limits.
+#
+# The workflow is read-only — it sends a GET request to the public health
+# endpoint and logs the response. No authentication, no mutations, no data
+# access. It only keeps the database connection warm.
+
+name: Keep Neon warm
+
+on:
+  schedule:
+    # Every 5 minutes. GitHub Actions cron uses UTC and may drift.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Production health endpoint
+        env:
+          HEALTH_URL: https://hope-tender-path-b.vercel.app/api/health
+        run: |
+          response=$(curl -sS \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -w "\n---STATUS:%{http_code}---" \
+            "$HEALTH_URL" \
+            || echo "---STATUS:000---")
+
+          status=$(echo "$response" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          body=$(echo "$response" | sed -E "s/---STATUS:[0-9]+---//")
+
+          echo "HTTP $status"
+          echo "Body: $(echo "$body" | head -c 200)"
+
+          if [ "$status" = "200" ]; then
+            echo "Neon is warm."
+            exit 0
+          fi
+
+          if [ "$status" = "503" ]; then
+            echo "::warning::Neon returned 503 — database may be paused or tables missing. The next ping will retry; if this persists, check the Production deployment."
+            exit 0
+          fi
+
+          echo "::warning::Unexpected HTTP status $status. Will retry on next tick."
+          exit 0

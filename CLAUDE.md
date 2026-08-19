@@ -5,23 +5,103 @@ Stack: Next.js 15 · React 19 · TypeScript · Prisma 6.19 (PostgreSQL) · Tailw
 
 ---
 
-## Current Main State (SHA: 63369f03)
+## Establishing current state
 
-- **tsc:** PASS (run `npx prisma generate` first to pick up new models)
-- **lint:** PASS
-- **build:** PASS
-- **Tests:** 464 test files, 6000+ tests PASS
-- **Main is stable.** All 5 clusters (A-E) from DECISIONS_NEEDED.md are resolved.
-- **Recent merges:** #1029 (action icons), #1028 (screenshot contradictions), #1027 (generation/buildplan/export truth), #1026 (lifecycle truth), #1025 (canonical readiness counts).
+Do not trust a state summary written into this file — a pinned SHA, test count,
+or "recent merges" list is stale the moment the next commit lands, and an agent
+that believes one reports a green tree it never ran. Establish state by running
+it, and quote what you actually saw:
+
+```bash
+npx prisma generate                 # first — the client must match schema.prisma
+npx tsc --noEmit
+npx next lint
+npm test                            # DB-integration suites need the env below
+npx next build
+```
+
+DB-integration suites are skipped, or fail closed, without a real PostgreSQL and
+`RUN_DB_INTEGRATION=true`. They are the only tests that prove behavior rather
+than source text, so a run without them is not a full run. If the database
+process dies mid-run, every DB suite fails at once with "Can't reach database
+server" — that is an environment failure, not a code regression; restart it and
+re-run before believing the result.
+
+Open work and cross-agent scope: `operator_handoff.md` Active Workboard.
+
+## Product goal (canonical — owner-stated, supersedes earlier phrasing)
+
+Read `OWNER_AUTOMATION_CONTRACT.md` first. It is the current workflow authority.
+
+The owner uploads exactly two things:
+
+1. **Company Vault documents and Brand Assets — ONCE.** Not per tender.
+2. **Tender files — every time**, for each new tender.
+
+Everything else is automatic **except exactly two owner actions**: AI Analyze and
+Run Engine. Those two are deliberate manual gates, not stages to be automated
+away. Every other stage runs on durable server-owned workers through to a
+downloadable ZIP.
+
+```
+Vault + Brand Assets (once)  ─┐
+                              ├─→ extraction + source verification   AUTOMATIC
+Tender files (every tender)  ─┘
+        │
+        ├─→ AI Analyze                                    MANUAL (owner clicks)
+        │
+        ├─→ Run Engine                                    MANUAL (owner clicks)
+        │
+        └─→ Build Plan → evidence matching → DOCX generation →
+            validation → PDF finalization → package
+            reconciliation → ZIP readiness                        AUTOMATIC
+```
+
+The browser may display progress and recovery controls, but it must not own orchestration or need to remain open. Automatic continuation may stop only for fail-closed review conditions defined in `OWNER_AUTOMATION_CONTRACT.md`, including unreadable/conflicting sources, unsupported claims, legal-authority decisions, exhausted external credentials after bounded retry, and final owner approval.
+
+Apart from AI Analyze and Run Engine, no Generate, Confirm, Repair, Validate, Finalize, Refresh, or Re-check click may be mandatory on the normal path. Exceptional recovery may exist only inside collapsed Diagnostics and Recovery.
+
+**Do not "fix" AI Analyze or Run Engine into automatic stages.** Earlier revisions
+of this section described them as server-owned and non-mandatory, which
+contradicted `OWNER_AUTOMATION_CONTRACT.md` — the file this document names as the
+workflow authority — and sent successive sessions back and forth undoing each
+other. The contract and the shipped code agree: both actions require explicit
+owner authority. `createAnalysisJob()` rejects any call without a
+`manualAuthority` bearing `source: "manual-ai-analyze"` and a matching
+`actorUserId`; the engine route requires `manualRequested: true`;
+`continueSuccessfulAnalysis()` always returns `MANUAL_ENGINE_REQUIRED`;
+extraction ends at `EXTRACTION_COMPLETE_MANUAL_AI_ANALYZE_REQUIRED`. Negative
+regression tests pin all of it.
+
+## Resuming after an interrupted session — ask first
+
+If a session ended because a tool/usage limit was reached, **do not resume work on
+the next session automatically.** Report the current state and wait for Hope's
+explicit go-ahead before editing, committing, or pushing anything.
+
+Hope continues the work with a different coding tool while a limit is in effect.
+An agent that picks its previous task back up on refresh is therefore editing on
+top of changes it has not seen, which is how two tools end up fixing the same
+thing at once. That has already happened on PR #1175: `1d746caa` and `f8dd0eb5`
+were concurrent independent fixes to the same test-contention bug, and nothing
+was lost only because they were merged rather than force-pushed.
+
+This applies to autonomous continuation only. A fresh instruction from Hope is
+always permission to proceed.
 
 ## Priority order for all sessions
 
-1. Read `operator_handoff.md` Active Workboard before starting — do not overlap another agent's scope.
-2. Wire `TenderFactsLedger` model into downstream consumers (UI, gates, BuildPlan, document generators).
-3. Write + test backfill script (`scripts/backfill-tender-facts-ledger.ts`) to migrate legacy Tender scalars → TenderFactsLedger.
-4. Add `CONDITIONAL_OR_UNSCHEDULED` status to canonical resolver + wire through STATUS_BADGE maps.
-5. Run DB-integration tests with PostgreSQL to verify all clusters are truly resolved.
-6. Run browser E2E tests at 800×1280 tablet viewport.
+1. Read `OWNER_AUTOMATION_CONTRACT.md` and `operator_handoff.md` Active Workboard before starting — do not overlap another agent's scope. More than one agent pushes to this repo, so re-fetch and confirm the exact head before editing, and rebase rather than discarding someone else's commits.
+2. Establish current state by running the commands above. Quote real output; never restate a status line from a document as if you had verified it.
+3. Take the next item from the `operator_handoff.md` Active Workboard. That file is the open-work list — this one is not.
+
+This section previously listed four specific engineering tasks (wiring
+`TenderFactsLedger` into consumers, writing `scripts/backfill-tender-facts-ledger.ts`,
+adding `CONDITIONAL_OR_UNSCHEDULED` to the canonical resolver, configuring the
+800×1280 tablet E2E viewport). All four already shipped, and the stale list sent
+each new session to redo finished work. Keep this section about *how* to pick up
+work; track *what* is open in `operator_handoff.md`, which has a defined update
+ritual and one owner per branch.
 
 ## Canonical Provider Order (NEVER change)
 

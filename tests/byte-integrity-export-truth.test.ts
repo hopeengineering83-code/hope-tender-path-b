@@ -141,10 +141,6 @@ describe("writers keep both digest systems in sync", () => {
     const src = read("app/api/tenders/[id]/auto-finalize/route.ts");
     assert.ok(src.includes("if (!doc.fileContent || doc.storagePath) continue;"), "storage-backed and byte-less rows must be skipped");
   });
-  it("attach-original fills legacy digests for attached finals", () => {
-    const src = read("app/api/tenders/[id]/documents/[docId]/attach-original/route.ts");
-    assert.ok(src.includes("sha256: attachedIntegrity.contentSha256"), "attached original must fill sha256");
-  });
 });
 
 describe("auto-finalize readiness report reads what the byte gate needs", () => {

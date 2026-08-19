@@ -99,7 +99,15 @@ function parseManifest(value: string): TenderStorageCleanupManifest | null {
         ? parsed.failureCount
         : undefined,
     };
-  } catch {
+  } catch (e) {
+    // JSON.parse of cleanup-task metadata failed — return null so the caller
+    // treats the task as not-yet-attempted and can re-run. Surface the failure
+    // so corrupted metadata rows are visible to operators (a series of these
+    // suggests a serialization bug, not a one-off bad row).
+    // Previously bare `catch {}` — silently returned null on every malformed row.
+    logger.warn("[tender-storage-cleanup-task] failed to parse cleanup task metadata — treating as not-yet-attempted", {
+      detail: e,
+    });
     return null;
   }
 }

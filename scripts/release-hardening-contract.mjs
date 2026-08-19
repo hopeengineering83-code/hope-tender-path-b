@@ -54,10 +54,16 @@ if (!vercel) {
   if (dep["main"] !== true) {
     fail("vercel.json git.deploymentEnabled['main'] must be true to allow production deployment after merge");
   }
+  // Branches explicitly allowed to build PREVIEW deployments on every push.
+  // Vercel only creates PRODUCTION deployments from the project's production
+  // branch (main), so an entry here can never deploy to production — it only
+  // lets the controlled release branch produce a reviewable preview URL per
+  // commit (owner-requested, 2026-07-20).
+  const PREVIEW_ALLOWED_BRANCHES = new Set(["release/consolidated-recovery-20260717"]);
   // Reject any configuration that silently enables unspecified branches.
   for (const key of Object.keys(dep)) {
-    if (key !== "**" && key !== "main" && dep[key] === true) {
-      fail(`vercel.json git.deploymentEnabled['${key}'] must not be true — only 'main' may deploy`);
+    if (key !== "**" && key !== "main" && dep[key] === true && !PREVIEW_ALLOWED_BRANCHES.has(key)) {
+      fail(`vercel.json git.deploymentEnabled['${key}'] must not be true — only 'main' (production) and the allowlisted release branch (previews) may deploy`);
     }
   }
 }

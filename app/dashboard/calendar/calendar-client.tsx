@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { ChevronLeftIcon, ChevronRightIcon } from "../../../components/icons";
+import { formatTenderStatus } from "../../../lib/tender-workflow";
 
 type TenderItem = {
   id: string;
@@ -14,14 +15,22 @@ type TenderItem = {
 };
 
 const STATUS_COLORS: Record<string, string> = {
-  DRAFT: "bg-slate-100 text-slate-600 border-slate-200",
-  INTAKE: "bg-blue-50 text-blue-700 border-blue-200",
-  ANALYSIS: "bg-indigo-50 text-indigo-700 border-indigo-200",
-  MATCHING: "bg-violet-50 text-violet-700 border-violet-200",
-  REVIEW: "bg-amber-50 text-amber-700 border-amber-200",
-  APPROVED: "bg-green-50 text-green-700 border-green-200",
-  EXPORTED: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  CLOSED: "bg-slate-50 text-slate-500 border-slate-200",
+  DRAFT: "border-slate-200 bg-slate-100 text-slate-700",
+  INTAKE: "border-indigo-200 bg-indigo-50 text-indigo-700",
+  ANALYZED: "border-sky-200 bg-sky-50 text-sky-700",
+  AI_ANALYZED: "border-sky-200 bg-sky-50 text-sky-700",
+  AI_ANALYSIS_PARTIAL: "border-yellow-200 bg-yellow-50 text-yellow-700",
+  FALLBACK_DRAFT_CREATED: "border-orange-200 bg-orange-50 text-orange-700",
+  ANALYSIS_REQUIRES_REVIEW: "border-red-200 bg-red-50 text-red-700",
+  MATCHED: "border-violet-200 bg-violet-50 text-violet-700",
+  COMPLIANCE_REVIEW: "border-amber-200 bg-amber-50 text-amber-800",
+  READY_FOR_GENERATION: "border-cyan-200 bg-cyan-50 text-cyan-700",
+  GENERATED: "border-blue-200 bg-blue-50 text-blue-700",
+  IN_REVIEW: "border-orange-200 bg-orange-50 text-orange-700",
+  APPROVED: "border-green-200 bg-green-50 text-green-700",
+  EXPORTED: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  CLOSED: "border-rose-200 bg-rose-50 text-rose-700",
+  NO_BID: "border-neutral-800 bg-neutral-800 text-neutral-100",
 };
 
 const DAYS_OF_WEEK = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -119,7 +128,7 @@ export function CalendarClient({ tenders }: { tenders: TenderItem[] }) {
                       <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${isToday ? "bg-blue-600 text-white" : "text-slate-700"}`}>{day}</span>
                       <span className="mt-1 block space-y-0.5">
                         {dayTenders.slice(0, 3).map((tender) => (
-                          <span key={tender.id} className={`flex min-w-0 items-center gap-1 rounded border px-1 py-0.5 text-[10px] font-medium ${STATUS_COLORS[tender.status] ?? "bg-blue-50 text-blue-700 border-blue-200"}`}>
+                          <span key={tender.id} className={`flex min-w-0 items-center gap-1 rounded border px-1 py-0.5 text-[10px] font-medium ${STATUS_COLORS[tender.status] ?? "border-slate-200 bg-slate-50 text-slate-700"}`} title={`${tender.title} — ${formatTenderStatus(tender.status)}`}>
                             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${urgencyColor(tender.deadline!)}`} />
                             <span className="truncate">{tender.title}</span>
                           </span>
@@ -148,7 +157,7 @@ export function CalendarClient({ tenders }: { tenders: TenderItem[] }) {
                         <p className="break-words text-sm font-medium text-slate-900">{tender.title}</p>
                         {tender.clientName && <p className="mt-0.5 break-words text-xs text-slate-500">{tender.clientName}</p>}
                         <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${STATUS_COLORS[tender.status] ?? "bg-slate-50 text-slate-600 border-slate-200"}`}>{tender.status}</span>
+                          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${STATUS_COLORS[tender.status] ?? "border-slate-200 bg-slate-50 text-slate-700"}`}>{formatTenderStatus(tender.status)}</span>
                           {tender.readinessScore != null && <span className="text-xs text-slate-600">{tender.readinessScore}% stored workflow score</span>}
                         </div>
                       </Link>
@@ -175,7 +184,7 @@ export function CalendarClient({ tenders }: { tenders: TenderItem[] }) {
                           <span className="block truncate text-xs font-medium text-slate-900">{tender.title}</span>
                           {tender.clientName && <span className="block truncate text-[10px] text-slate-500">{tender.clientName}</span>}
                         </span>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${daysRemaining <= 3 ? "bg-red-100 text-red-700" : daysRemaining <= 7 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${daysRemaining <= 3 ? "bg-red-100 text-red-700" : daysRemaining <= 7 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"}`}>
                           {daysRemaining === 0 ? "today" : daysRemaining === 1 ? "tomorrow" : `${daysRemaining}d`}
                         </span>
                       </Link>

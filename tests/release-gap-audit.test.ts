@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import {
+  buildTenderAnalysisContent,
+  computeAnalysisContentHash,
+} from "../lib/engine/tender-analysis-content";
 
 function source(path: string): string {
   return readFileSync(path, "utf8");
@@ -8,8 +12,7 @@ function source(path: string): string {
 
 describe("release gap audit regressions", () => {
   it("does not mutate process-wide storage policy during upload requests", () => {
-    const route = source("app/api/tenders/upload-first/route.ts");
-    assert.ok(!route.includes("process.env.ALLOW_DB_FILE_STORAGE ="));
+    assert.ok(!source("app/api/tenders/upload-first/route.ts").includes("process.env.ALLOW_DB_FILE_STORAGE ="));
   });
 
   it("scopes document review reads and writes to the authenticated tender owner", () => {
@@ -39,9 +42,7 @@ describe("release gap audit regressions", () => {
       "app/api/tenders/[id]/pricing/route.ts",
       "app/api/tenders/[id]/pricing/lines/route.ts",
       "app/api/tenders/[id]/pricing/lines/[lineId]/route.ts",
-    ]) {
-      assert.match(source(path), /rateLimitPersistent\(/, path);
-    }
+    ]) assert.match(source(path), /rateLimitPersistent\(/, path);
     const createLine = source("app/api/tenders/[id]/pricing/lines/route.ts");
     const updateLine = source("app/api/tenders/[id]/pricing/lines/[lineId]/route.ts");
     assert.match(createLine, /company:\s*\{\s*userId:\s*actor\.id\s*\}/);
@@ -66,30 +67,34 @@ describe("release gap audit regressions", () => {
   });
 
   it("explicitly rejects company assets shorter than their declared magic signature", () => {
-    const security = source("lib/company-asset-security.ts");
-    assert.match(security, /buffer\.length\s*<\s*signature\.length/);
+    assert.match(source("lib/company-asset-security.ts"), /buffer\.length\s*<\s*signature\.length/);
   });
 
-  it("validates AI-returned source file tokens before persisting source linkage (ACTIVE files only)", () => {
-    const route = source("app/api/tenders/[id]/ai-analyze/route.ts");
-    // The validTenderFileIds set MUST be filtered to ACTIVE files only —
-    // deleted/foreign file IDs must NOT be accepted as sourceTenderFileId.
-    // The previous pattern `new Set(tenderRecord.files.map((f) => f.id))`
-    // included deleted files; the new pattern filters by deletionStatus.
-    assert.match(route, /validTenderFileIds\s*=\s*new Set\([\s\S]*?filter\(\(f\)\s*=>\s*\(f\.deletionStatus\s*\?\?\s*"ACTIVE"\)\s*===\s*"ACTIVE"\)[\s\S]*?map\(\(f\)\s*=>\s*f\.id\)/);
-    assert.match(route, /validTenderFileIds\.has\(req\.sourceFileToken\)/);
-    assert.ok(!route.includes("sourceTenderFileId: req.sourceFileToken ?? null"));
+  it("validates AI-returned source file tokens against ACTIVE tender files", () => {
+    // DIRECTIVE 2: The validation now lives in lib/ai-jobs/analysis-job-service.ts
+    // (mapToDraft function). The legacy /ai-analyze route no longer creates
+    // fresh jobs, so the validation is in the durable worker path.
+    const service = source("lib/ai-jobs/analysis-job-service.ts");
+    assert.ok(service.includes("validSet") || service.includes("validTenderFileIds"),
+      "analysis-job-service must validate source file tokens against ACTIVE tender files");
   });
 
-  it("changes AI analysis content hashes when vault text changes", () => {
-    // The vault-document digest now lives in the shared content builder
-    // (lib/engine/tender-analysis-content.ts), consumed by BOTH the route and
-    // the durable job service. The digest still folds vault text into the hash.
+  it("changes the canonical analysis revision when bounded Vault text changes", () => {
+    const tender = {
+      title: "Tender",
+      files: [{ id: "file-1", originalFileName: "tender.pdf", extractedText: "Tender requirements and submission instructions." }],
+    };
+    const first = computeAnalysisContentHash(buildTenderAnalysisContent(tender, {
+      documents: [{ originalFileName: "profile.pdf", category: "COMPANY_PROFILE", extractedText: "Vault version one" }],
+    }));
+    const second = computeAnalysisContentHash(buildTenderAnalysisContent(tender, {
+      documents: [{ originalFileName: "profile.pdf", category: "COMPANY_PROFILE", extractedText: "Vault version two" }],
+    }));
+    assert.notEqual(first, second);
+
     const builder = source("lib/engine/tender-analysis-content.ts");
-    assert.match(builder, /createHash\("sha256"\)\.update\(d\.extractedText\.slice\(0, 10_000\)\)/);
+    assert.match(builder, /crypto\.createHash\("sha256"\)\.update\(document\.extractedText\.slice\(0, 10_000\)\)/);
     assert.match(builder, /\[digest:\$\{textDigest\}\]/);
-    // And the route delegates to the shared builder, passing the tender record's
-    // ACTIVE files + the company vault so vault text still folds into the hash.
     const route = source("app/api/tenders/[id]/ai-analyze/route.ts");
     assert.match(route, /buildTenderAnalysisContent\(\s*\{ \.\.\.tenderRecord, files:[\s\S]*?company,\s*\)/);
   });

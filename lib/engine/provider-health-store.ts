@@ -1,4 +1,5 @@
 import { logger } from "../observability";
+import { redactSecrets } from "../sanitize-error";
 // Provider health store — DB-backed persistence for cold-start recovery.
 //
 // This module provides a higher-level API over the ProviderHealthSnapshot table.
@@ -45,13 +46,12 @@ let healthLoaded = false;
 
 /**
  * Redacts API keys and URLs from an error message so it is safe to store.
+ * Delegates secret redaction to the canonical redactSecrets() helper so
+ * patterns cannot diverge across the 5 call sites.
  */
 function redactError(raw: string | null | undefined): string {
   if (!raw) return "";
-  return raw
-    .replace(/sk-[a-zA-Z0-9_-]{8,}/g, "[KEY_REDACTED]")
-    .replace(/AIza[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
-    .replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+  return redactSecrets(raw)
     .replace(/https?:\/\/\S+/g, "[URL_REDACTED]")
     .replace(/\s+/g, " ")
     .trim()
@@ -71,6 +71,7 @@ function toFailureCategory(failureClass: string): AiProviderFailureCategory {
     MODEL_UNAVAILABLE: "MODEL_UNAVAILABLE",
     NETWORK: "NETWORK",
     MALFORMED_RESPONSE: "MALFORMED_RESPONSE",
+    PROVIDER_ERROR: "PROVIDER_ERROR",
     UNKNOWN: "UNKNOWN",
   };
   return map[failureClass] ?? "UNKNOWN";

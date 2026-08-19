@@ -66,7 +66,11 @@ requireRule(
   "AI health route no longer exposes the derived canonical fallback chain",
   health.includes("CANONICAL_AI_FALLBACK_CHAIN_DISPLAY"),
 );
-requireRule("AI environment readiness order drifted", envReadiness.includes(REQUIRED_LABELS));
+requireRule(
+  "AI environment readiness no longer derives its display order from the canonical registry",
+  envReadiness.includes("CANONICAL_AI_PROVIDER_CHAIN_DISPLAY") &&
+    /export const CANONICAL_PROVIDER_DISPLAY\s*=\s*CANONICAL_AI_PROVIDER_CHAIN_DISPLAY/.test(envReadiness),
+);
 
 // 4. Prompt trust boundary.
 requireRule("AI prompt trust boundary import is missing", ai.includes('from "./ai-trust-boundary"'));

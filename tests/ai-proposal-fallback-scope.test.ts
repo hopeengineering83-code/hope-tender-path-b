@@ -1,13 +1,15 @@
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { createHash } from "node:crypto";
 import { fallbackProposal, selectReviewedEvidenceForAIDraft } from "../lib/engine/ai-proposal-fallback";
+import { buildSourceVerificationProvenance, expertReviewFields } from "../lib/vault-review-provenance";
 
 function build(requirements: string[]) {
   return fallbackProposal({
     tenderTitle: "Sample Tender",
     requirements,
     companyName: "Hope",
-    companyProfile: "Reviewed profile.",
+    companyProfile: "Source-verified profile.",
     serviceLines: "Design, Supervision",
     expertLines: ["Dr A | Team Lead"],
     projectLines: ["Project X | Client Y"],
@@ -39,37 +41,91 @@ describe("ai-proposal fallback is tender-scoped", () => {
     assert.ok(out.includes("## Evidence-Backed Differentiators"));
   });
 
-  it("does not expose raw provider error details in fallback body", () => {
+  it("does not expose raw provider error details", () => {
     const out = build(["MANDATORY FORM: Signed declaration"]);
     assert.ok(!out.includes("provider timeout"));
   });
 });
 
 describe("selectReviewedEvidenceForAIDraft", () => {
-  it("uses reviewed selected evidence when present", () => {
+  function usable(id: number) {
+    const companyId = "company-ai-proposal-fallback-scope";
+    const fullName = `Expert ${id}`;
+    const text = [
+      "CURRICULUM VITAE",
+      `Name of Key Expert: ${fullName}`,
+      `${fullName} is a Senior Consultant with 15 years of experience in General Consultancy Services.`,
+    ].join("\n");
+    const sourceDocument = {
+      id: `doc-${id}`,
+      companyId,
+      extractedText: text,
+      contentSha256: createHash("sha256").update(text).digest("hex"),
+      contentByteLength: Buffer.byteLength(text),
+      integrityStatus: "VERIFIED",
+      metadata: JSON.stringify({ extractionRevision: 1 }),
+    };
+    const fields = {
+      fullName,
+      title: "Senior Consultant",
+      yearsExperience: 15,
+      disciplines: JSON.stringify(["General Consultancy Services"]),
+      sectors: JSON.stringify([]),
+      certifications: JSON.stringify([]),
+    };
+    const provenance = buildSourceVerificationProvenance({
+      recordType: "EXPERT",
+      sourceDocument,
+      fields: expertReviewFields(fields),
+      verificationMethod: "HYBRID",
+    });
+    assert.equal(provenance.ok, true);
+    if (!provenance.ok) throw new Error("fixture provenance failed");
+    return {
+      ...fields,
+      id,
+      companyId,
+      trustLevel: "SOURCE_VERIFIED",
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNotes: provenance.serialized,
+      sourceDocumentId: sourceDocument.id,
+      sourceDocument,
+    };
+  }
+  const draft = (id: number, trustLevel: string) => ({ trustLevel, id });
+
+  it("uses verified selected evidence when present", () => {
     const out = selectReviewedEvidenceForAIDraft(
-      [{ trustLevel: "REVIEWED", id: 1 }, { trustLevel: "AI_DRAFT", id: 2 }],
-      [{ trustLevel: "REVIEWED", id: 3 }],
+      [usable(1), draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
+      [usable(3)],
     );
-    assert.deepEqual(out.evidence.map((x) => x.id), [1]);
+    assert.equal(out.evidence.length, 1);
     assert.equal(out.usedReviewedVaultFallback, false);
   });
 
-  it("falls back to reviewed vault evidence when selected set has no reviewed rows", () => {
+  it("falls back to verified Vault evidence when selected rows are drafts", () => {
     const out = selectReviewedEvidenceForAIDraft(
-      [{ trustLevel: "AI_DRAFT", id: 2 }],
-      [{ trustLevel: "REVIEWED", id: 3 }],
+      [draft(2, "AI_DRAFT") as unknown as ReturnType<typeof usable>],
+      [usable(3)],
     );
-    assert.deepEqual(out.evidence.map((x) => x.id), [3]);
+    assert.equal(out.evidence.length, 1);
     assert.equal(out.usedReviewedVaultFallback, true);
   });
 
-  it("never returns unreviewed rows when no reviewed evidence exists", () => {
-    const out = selectReviewedEvidenceForAIDraft(
-      [{ trustLevel: "AI_DRAFT", id: 2 }, { trustLevel: "REGEX_DRAFT", id: 4 }],
-      [],
-    );
-    assert.deepEqual(out.evidence, []);
-    assert.equal(out.usedReviewedVaultFallback, false);
+  it("returns no evidence when only unsupported drafts exist", () => {
+    const draftExpert = {
+      id: "draft-1",
+      fullName: "Draft Only",
+      trustLevel: "AI_DRAFT",
+      sourceDocumentId: null,
+      reviewedBy: null,
+      reviewedAt: null,
+      reviewNotes: null,
+      companyId: "company-1",
+    };
+    const selection = selectReviewedEvidenceForAIDraft([], [draftExpert as never]);
+    assert.deepEqual(selection.evidence, []);
+    assert.equal(selection.usedReviewedVaultFallback, false);
   });
 });

@@ -31,7 +31,7 @@ for (const name of lifecycle) {
   );
 }
 check("manual reconciler remains explicit", scripts["reconcile:ai"]?.includes("reconcile-gap-closure"), "reconciler must remain manual");
-check("PostCSS patched resolution pinned", pkg.overrides?.postcss === "8.5.10", "package.json must pin the patched PostCSS resolution");
+check("PostCSS patched resolution pinned", pkg.overrides?.postcss === "8.5.23", "package.json must pin the patched PostCSS resolution");
 
 const migration = read("scripts/migrate-deploy-safe.mjs");
 check("preview migration guard", migration.includes("ALLOW_PREVIEW_DB_MIGRATIONS") && migration.includes("build-only and is not database-verified"), "previews must not mutate a shared database by default");
@@ -85,7 +85,6 @@ check("persistent limiter fails closed in production", limiter.includes("RATE_LI
 const directPersistentAiRoutes = [
   "app/api/tenders/[id]/engine/route.ts",
   "app/api/tenders/[id]/ai-proposal/route.ts",
-  "app/api/tenders/[id]/ai-rematch/route.ts",
   "app/api/tenders/[id]/regenerate-cvs/route.ts",
   "app/api/tenders/[id]/regenerate-section/route.ts",
   "app/api/tenders/[id]/copilot/route.ts",
@@ -95,10 +94,17 @@ for (const path of directPersistentAiRoutes) {
   const source = read(path);
   check(`${path} uses persistent AI throttling`, source.includes("rateLimitPersistent") && !source.includes("const rl = rateLimit("), `${path} must not rely on a process-local mutation limiter`);
 }
+check(
+  "standalone AI rematch authority stays retired",
+  !existsSync(join(root, "app/api/tenders/[id]/ai-rematch/route.ts")),
+  "AI rematching must remain inside the canonical durable Engine job",
+);
 
 const middleware = read("middleware.ts");
 const rateGuard = read("app/api/internal/rate-guard/route.ts");
-check("large AI routes pass through signed guard", middleware.includes("ai-analyze|generate") && middleware.includes("/api/internal/rate-guard") && middleware.includes("suppliedToken === token") && middleware.includes("requestHeaders.delete(INTERNAL_GUARD_HEADER)"), "large AI handlers must not be callable without the signed persistent guard");
+// The signed-token comparison must also require a non-null derived token, so a
+// missing SESSION_SECRET can never be mistaken for a trusted internal hop.
+check("large AI routes pass through signed guard", middleware.includes("ai-analyze|generate") && middleware.includes("/api/internal/rate-guard") && middleware.includes("guardToken !== null && req.headers.get(INTERNAL_GUARD_HEADER) === guardToken") && middleware.includes("requestHeaders.delete(INTERNAL_GUARD_HEADER)"), "large AI handlers must not be callable without the signed persistent guard");
 check("AI guard authenticates and persists rate state", rateGuard.includes("await getSession()") && rateGuard.includes("await rateLimitPersistent") && rateGuard.includes('headers: { "Retry-After"'), "guard must authenticate and persistently limit before forwarding");
 check("AI guard cannot become an open proxy", rateGuard.includes("targetUrl.origin !== currentUrl.origin") && rateGuard.includes("GUARDED_ROUTE.test(targetUrl.pathname)"), "guard target must remain same-origin and allowlisted");
 check("AI guard forwards a strict header allowlist", rateGuard.includes("FORWARDED_REQUEST_HEADERS") && !rateGuard.includes("new Headers(req.headers)"), "guard must not forward arbitrary infrastructure headers");
@@ -120,8 +126,15 @@ check("pricing mutations use persistent limits", [pricingHeader, pricingCreate, 
 check("pricing expert references are tenant-owned", pricingCreate.includes("company: { userId: actor.id }") && pricingLine.includes("company: { userId: actor.id }"), "pricing lines must not reference another tenant's experts");
 check("pricing totals are bounded", pricingCreate.includes("MAX_TOTAL") && pricingLine.includes("MAX_TOTAL"), "pricing inputs must not create non-finite or unbounded totals");
 
+// BLOCKER 1: The legacy ai-analyze route no longer creates fresh AI_ANALYZE
+// jobs — that authority was removed. The source-grounding validation now lives
+// in lib/ai-jobs/analysis-job-service.ts (mapToDraft function) and
+// lib/engine/analysis-orchestrator.ts. Check those files instead.
 const aiAnalyze = read("app/api/tenders/[id]/ai-analyze/route.ts");
-check("AI source references validated", aiAnalyze.includes("validTenderFileIds.has(req.sourceFileToken)") && !aiAnalyze.includes("sourceTenderFileId: req.sourceFileToken ?? null"), "AI-returned source IDs must match uploaded tender files");
+const analysisJobService = read("lib/ai-jobs/analysis-job-service.ts");
+check("AI source references validated",
+  analysisJobService.includes("validTenderFileIds.has(req.sourceFileToken)") || analysisJobService.includes("validSet.has(rawFileId)"),
+  "AI-returned source IDs must match uploaded tender files (validated in analysis-job-service.ts)");
 // The vault content digest was moved to lib/engine/tender-analysis-content.ts
 // (the shared content+hash builder) during the Stage 1 unification (PR #821).
 // Check there instead of the route file.

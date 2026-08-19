@@ -125,13 +125,13 @@ describe("requirement categorization — wired into run-tender-engine", () => {
   });
 
   it("classifies each requirement", () => {
-    assert.ok(src.includes("reqClassification"), "must classify each requirement");
-    assert.ok(src.includes("reqClassification.category"), "must use the category");
+    assert.ok(src.includes("classifyTenderRequirement"), "must classify each requirement");
+    assert.ok(src.includes("classification.category"), "must use the category");
   });
 
   it("stores category in sectionReference", () => {
     assert.ok(src.includes("sectionReference"), "must store category in sectionReference");
-    assert.ok(src.includes("[${reqClassification.category}"), "must prefix with [category:mandatory]");
+    assert.ok(src.includes("[${classification.category}"), "must prefix with [category:mandatory]");
   });
 });
 

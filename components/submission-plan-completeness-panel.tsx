@@ -1,23 +1,34 @@
-// Submission Plan Completeness panel.
+// The single Build Plan panel.
 //
-// Drops into the tender detail page next to the export-readiness panel.
-// Answers the screenshot question "where are the missing 13 of 19 docs?"
-// by rendering one row per planned file with a status badge and the
-// recommended next action.
+// Answers "where are the missing 13 of 19 docs?" with one row per planned
+// file, its status badge, and the recommended next action — and owns the
+// three plan mutations (build, generate missing, reconcile stale).
+//
+// It used to share the page with submission-plan-reconciliation-panel.tsx,
+// which re-derived required/generated/missing itself from
+// findMissingGeneratedDocuments instead of the canonical
+// /api/tenders/[id]/submission-plan resolver. That helper counts any
+// non-SUPERSEDED row as satisfying its plan file, while the resolver first
+// asks isFinalExportCandidateDocument. So a document marked NOT_EXPORTABLE —
+// by the row action in THIS panel — showed as "1/1 · plan is reconciled"
+// there and "Current outputs 0 · REPLACE WITH ORIGINAL" here, on the same
+// screen. One panel now reads one resolver, so the two cannot disagree.
 
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { DocumentIcon, RefreshIcon, CheckCircleIcon, WarningIcon, ClockIcon, BanIcon } from "./icons";
+import { CheckCircleIcon, WarningIcon, ClockIcon, BanIcon, FolderIcon } from "./icons";
+import { BuildSubmissionPlanButton } from "./build-submission-plan-button";
+import { ReconcileStaleFilesButton } from "./reconcile-stale-files-button";
+import { subscribeTenderWorkflowSync } from "../lib/ui/tender-workflow-sync";
 
 type Status =
   | "GENERATED"
   | "GENERATED_NEEDS_REVIEW"
   | "GENERATED_QUALITY_FAILED"
   | "PLANNED"
-  | "OFFICIAL_ORIGINAL_REQUIRED"
-  | "REPLACE_WITH_ORIGINAL"
+  | "MISSING_TENDER_SOURCE_FORM"
   | "MISSING"
   | "OUTSIDE_PLAN"
   | "SUPERSEDED";
@@ -57,6 +68,10 @@ type Summary = {
   hasExplicitScope: boolean;
   planState: PlanState;
   requiresUserConfirmation: boolean;
+  // !confirmedPlan.ok — the same condition the deleted reconciliation panel
+  // used to decide whether to offer Build Plan.
+  automaticPlanPending?: boolean;
+  automaticPlanBlocker?: string | null;
 };
 
 type Response = {
@@ -72,32 +87,31 @@ const STATUS_BADGE: Record<Status, { label: string; tone: "ok" | "warn" | "bad" 
   GENERATED_NEEDS_REVIEW: { label: "REVIEW NEEDED", tone: "warn", icon: <WarningIcon /> },
   GENERATED_QUALITY_FAILED: { label: "QUALITY FAILED", tone: "bad", icon: <BanIcon /> },
   PLANNED: { label: "PLANNED", tone: "warn", icon: <ClockIcon /> },
-  OFFICIAL_ORIGINAL_REQUIRED: { label: "ATTACH ORIGINAL", tone: "warn", icon: <WarningIcon /> },
-  REPLACE_WITH_ORIGINAL: { label: "REPLACE WITH ORIGINAL", tone: "warn", icon: <WarningIcon /> },
+  MISSING_TENDER_SOURCE_FORM: { label: "MISSING TENDER FORM", tone: "warn", icon: <WarningIcon /> },
   MISSING: { label: "MISSING", tone: "bad", icon: <BanIcon /> },
   OUTSIDE_PLAN: { label: "OUTSIDE PLAN", tone: "warn", icon: <WarningIcon /> },
-  SUPERSEDED: { label: "HISTORICAL", tone: "neutral", icon: <ClockIcon /> },
+  SUPERSEDED: { label: "HISTORICAL", tone: "neutral", icon: <FolderIcon /> },
 };
 
 function toneClass(tone: "ok" | "warn" | "bad" | "neutral"): string {
   if (tone === "ok") return "bg-emerald-100 text-emerald-700";
-  if (tone === "warn") return "bg-amber-100 text-amber-700";
+  if (tone === "warn") return "bg-amber-100 text-amber-800";
   if (tone === "bad") return "bg-red-100 text-red-700";
   return "bg-slate-100 text-slate-500";
 }
 
 function planStateLabel(state: PlanState): string {
-  if (state === "CONFIRMED_BUILD_PLAN") return "Confirmed Build Plan";
-  if (state === "EXPLICIT_TENDER_PLAN") return "Explicit tender plan";
-  if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Derived draft — confirm";
-  if (state === "PLAN_NOT_BUILT") return "Plan not built";
-  if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "Requirements found — build plan";
+  if (state === "CONFIRMED_BUILD_PLAN") return "Source-verified Build Plan";
+  if (state === "EXPLICIT_TENDER_PLAN") return "Unverified tender scope";
+  if (state === "DERIVED_DRAFT_UNCONFIRMED") return "Unverified derived scope";
+  if (state === "PLAN_NOT_BUILT") return "No source-verified Build Plan";
+  if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "No source-verified Build Plan";
   return "No requirements yet";
 }
 
 function planStateTone(state: PlanState): "ok" | "warn" | "bad" | "neutral" {
   if (state === "CONFIRMED_BUILD_PLAN") return "ok";
-  if (state === "EXPLICIT_TENDER_PLAN") return "ok";
+  if (state === "EXPLICIT_TENDER_PLAN") return "warn";
   if (state === "PLAN_NOT_BUILT") return "bad";
   if (state === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") return "bad";
   if (state === "DERIVED_DRAFT_UNCONFIRMED") return "warn";
@@ -145,7 +159,7 @@ export function suggestOutsidePlanResolution(fileName: string): string {
   return "Review this document and decide: reclassify to match a plan requirement, mark not exportable, or exclude.";
 }
 
-export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string }) {
+export function SubmissionPlanCompletenessPanel({ tenderId, canMutate = false }: { tenderId: string; canMutate?: boolean }) {
   const router = useRouter();
   const [data, setData] = useState<Response | null>(null);
   const [loading, setLoading] = useState(true);
@@ -153,11 +167,8 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
   const [showHistorical, setShowHistorical] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
-  const [building, setBuilding] = useState(false);
-  const [classifying, setClassifying] = useState(false);
-  const autoRunDone = useRef(false);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -170,7 +181,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
     } finally {
       setLoading(false);
     }
-  }
+  }, [tenderId]);
 
   async function runRowAction(documentId: string, action: PlanRowAction) {
     let note: string | undefined;
@@ -200,131 +211,46 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
     }
   }
 
-  async function autoClassify(rows: Row[]) {
-    const outsidePlanIds = rows
-      .filter((r) => r.status === "OUTSIDE_PLAN" && r.documentId)
-      .map((r) => r.documentId as string);
-    if (outsidePlanIds.length === 0) return;
-
-    setClassifying(true);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/submission-plan/auto-classify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ docIds: outsidePlanIds }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error ?? `Auto-classify failed (${res.status})`);
-      const classified: number = json.classified ?? 0;
-      if (classified > 0) {
-        setActionMsg(`Auto-classified ${classified} outside-plan document(s) by type. Review the updated rows below.`);
-        await load();
-        router.refresh();
-      }
-    } catch {
-      // auto-classify is best-effort; don't overwrite a build success message
-    } finally {
-      setClassifying(false);
-    }
-  }
-
-  async function buildPlan(silent = false) {
-    setBuilding(true);
-    if (!silent) setActionMsg(null);
-    try {
-      const res = await fetch(`/api/tenders/${tenderId}/submission-plan/build`, { method: "POST" });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error ?? `Build failed (${res.status})`);
-      const created: number = json.created ?? 0;
-      const skipped: number = json.skipped ?? 0;
-      const total: number = json.total ?? 0;
-      if (total === 0) {
-        setActionMsg("Plan built — no submission files were derived from the tender requirements. Add exact file names in the Tender Details, or run AI Analyze to extract them.");
-      } else if (created === 0 && skipped > 0) {
-        setActionMsg(`Plan up to date — all ${skipped} planned file(s) already exist. No new rows created.`);
-      } else {
-        setActionMsg(`Submission plan built — ${created} planned file(s) created, ${skipped} already existed.`);
-      }
-      await load();
-      router.refresh();
-    } catch (err) {
-      setActionMsg(err instanceof Error ? err.message : "Build plan failed");
-    } finally {
-      setBuilding(false);
-    }
-  }
-
-  useEffect(() => { void load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [tenderId]);
-
-  // Auto-run once after the first successful data load:
-  // 1. Build plan if requirements exist but plan hasn't been built yet.
-  // 2. Auto-classify any outside-plan documents by normalizing their document type.
+  // The three plan mutations below live inside this client panel, so
+  // router.refresh() alone would leave these counts stale — the server tree
+  // would update while this panel kept showing the pre-mutation numbers and
+  // re-offered the action that just ran. Re-read on the same workflow-sync
+  // event the mutations emit.
   useEffect(() => {
-    if (!data || autoRunDone.current) return;
-    autoRunDone.current = true;
-
-    const needsBuild = (data.summary.planState === "PLAN_NOT_BUILT" || data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") && data.summary.requirementCount > 0;
-    const outsidePlanRows = data.rows.filter((r) => r.status === "OUTSIDE_PLAN" && r.documentId);
-
-    async function runAuto() {
-      if (needsBuild) {
-        // Build plan first; after load() the outside-plan docs may change,
-        // so reload then classify from fresh state.
-        await buildPlan(true);
-        // After build, re-fetch to get the updated rows and classify what remains.
-        setLoading(true);
-        try {
-          const res = await fetch(`/api/tenders/${tenderId}/submission-plan`, { method: "GET" });
-          const json: Response | null = await res.json().catch(() => null);
-          if (res.ok && json) {
-            setData(json);
-            await autoClassify(json.rows);
-          }
-        } finally {
-          setLoading(false);
-        }
-      } else if (outsidePlanRows.length > 0) {
-        await autoClassify(outsidePlanRows.length > 0 ? data!.rows : []);
-      }
-    }
-
-    void runAuto();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+    void load();
+    return subscribeTenderWorkflowSync(tenderId, () => { void load(); });
+  }, [load, tenderId]);
 
   if (loading && !data) {
     return <section aria-busy="true" aria-label="Submission plan completeness" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Loading submission plan completeness…</section>;
-  }
-  if (building && !data) {
-    return <section aria-busy="true" aria-label="Submission plan completeness" className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Building submission plan…</section>;
   }
   if (error || !data) {
     return <section className="mb-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">Could not load submission plan: {error ?? "no data"}</section>;
   }
 
   const visibleRows = showHistorical ? data.rows : data.rows.filter((r) => r.status !== "SUPERSEDED");
+  const confirmed = data.summary.planState === "CONFIRMED_BUILD_PLAN";
 
   return (
     <section
       className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"
       id="submission-plan-completeness"
-      aria-busy={loading || building || classifying}
+      aria-busy={loading || busyKey !== null}
       aria-label="Submission plan completeness"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Submission Plan Completeness</h3>
+          <h3 className="text-sm font-semibold text-slate-900">
+            {confirmed ? "Source-verified Build Plan completeness" : "Unverified submission scope preview"}
+          </h3>
           <p className="mt-0.5 text-xs text-slate-500">
-            One row per required submission document with the exact status and recommended next action. Replaces the misleading &ldquo;Docs N/M&rdquo; counter with a full breakdown.
+            {confirmed
+              ? "One row per source-verified required file, with its current automatic output status."
+              : "Preview only: these rows come from tender instructions or a conservative derivation. Run Engine must create and source-verify the current Build Plan before generation or export."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          <button type="button" onClick={() => void buildPlan()} aria-label={building ? "Building submission plan" : classifying ? "Auto-classifying documents" : "Build submission plan"} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-60" disabled={loading || building || classifying} title="Build the submission plan from extracted requirements">
-            <DocumentIcon /> {building ? "Building…" : classifying ? "Classifying…" : "Build Plan"}
-          </button>
-          <button type="button" onClick={() => void load()} aria-label={loading ? "Refreshing submission plan" : "Re-check submission plan"} className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60" disabled={loading || building || classifying} title="Re-check the submission plan status">
-            <RefreshIcon /> {loading ? "Checking…" : "Re-check"}
-          </button>
+          {/* GenerateMissingPlanFilesButton removed — planned documents are generated automatically by the pipeline. */}
           {data.summary.totalSuperseded > 0 && (
             <label className="ml-2 inline-flex items-center gap-1 text-[11px] text-slate-500">
               <input type="checkbox" checked={showHistorical} onChange={(e) => setShowHistorical(e.target.checked)} />
@@ -340,11 +266,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
 
       <div className="mt-4 grid grid-cols-2 gap-2 text-center text-xs sm:grid-cols-4 md:grid-cols-7">
         <div className="rounded-xl bg-slate-50 px-2 py-2">
-          <p className="text-slate-500">Required</p>
+          <p className="text-slate-500">{confirmed ? "Verified required" : "Scope files"}</p>
           <p className="text-base font-bold text-slate-900">{data.summary.totalRequired}</p>
         </div>
         <div className="rounded-xl bg-emerald-50 px-2 py-2">
-          <p className="text-slate-500">Generated</p>
+          <p className="text-slate-500">Current outputs</p>
           <p className="text-base font-bold text-emerald-700">{data.summary.totalGenerated}</p>
         </div>
         <div className="rounded-xl bg-red-50 px-2 py-2">
@@ -353,11 +279,11 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
         </div>
         <div className="rounded-xl bg-amber-50 px-2 py-2">
           <p className="text-slate-500">Originals</p>
-          <p className="text-base font-bold text-amber-700">{data.summary.totalOfficialOriginalsRequired}</p>
+          <p className="text-base font-bold text-amber-800">{data.summary.totalOfficialOriginalsRequired}</p>
         </div>
         <div className="rounded-xl bg-amber-50 px-2 py-2">
           <p className="text-slate-500">Outside plan</p>
-          <p className={`text-base font-bold ${data.summary.totalOutsidePlan > 0 ? "text-amber-700" : "text-emerald-700"}`}>{data.summary.totalOutsidePlan}</p>
+          <p className={`text-base font-bold ${data.summary.totalOutsidePlan > 0 ? "text-amber-800" : "text-emerald-700"}`}>{data.summary.totalOutsidePlan}</p>
         </div>
         <div className="rounded-xl bg-red-50 px-2 py-2">
           <p className="text-slate-500">Quality failed</p>
@@ -379,24 +305,39 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
 
       <div className={`mt-3 rounded-lg border p-3 text-xs ${(data.summary.planState === "PLAN_NOT_BUILT" || data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT") ? "border-red-200 bg-red-50 text-red-800" : data.summary.requiresUserConfirmation ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold">Plan state:</span>
+          <span className="font-semibold">Authority:</span>
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${toneClass(planStateTone(data.summary.planState))}`}>{planStateLabel(data.summary.planState)}</span>
           <span>Requirements: {data.summary.requirementCount}</span>
         </div>
         {data.summary.planState === "PLAN_NOT_BUILT" && (
-          <p className="mt-2">Tender requirements exist, but no exact or derived submission file plan is available yet. Use <strong>Build Plan</strong> before Generate Docs so the system can validate generated outputs against tender scope instead of showing a misleading Required 0 / Generated 0 / Missing 0 state.</p>
+          <p className="mt-2">Tender requirements exist, but no exact or derived submission file plan is available yet. <strong>Run Engine</strong> uses the verified tender source and current AI analysis to create and verify the Build Plan, so the system can validate generated outputs against tender scope instead of showing a misleading Required 0 / Generated 0 / Missing 0 state.</p>
         )}
         {data.summary.planState === "REQUIREMENTS_FOUND_PLAN_NOT_BUILT" && (
-          <p className="mt-2">Tender requirements have been extracted, but the submission file plan has not been built yet. Use <strong>Build Plan</strong> to derive the submission file list from the extracted requirements before generating documents.</p>
+          <p className="mt-2">Tender requirements have been extracted, but the submission file plan has not been built yet. <strong>Run Engine</strong> derives the submission file list from the extracted requirements; generation follows automatically once it succeeds.</p>
         )}
         {data.summary.requiresUserConfirmation && (
-          <p className="mt-2">This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Confirm exact file names/order from the tender before final export; official forms/templates must still be attached as originals and must not be fabricated.</p>
+          <p className="mt-2">
+            {data.summary.planState === "EXPLICIT_TENDER_PLAN"
+              ? "Tender-issued file scope is available, but it has not been bound into a current source-verified Build Plan. Run Engine creates and verifies it automatically."
+              : "This is a conservative derived draft from requirement titles/types, not a tender-issued file list. Run Engine verifies exact file names/order against the active source; official forms/templates must still be attached as originals and must not be fabricated."}
+          </p>
         )}
         {data.summary.planState === "DERIVED_DRAFT_UNCONFIRMED" && (
           <p className="mt-2 font-semibold">Submission plan is derived from weak extraction — verify all required documents against the original tender before finalising.</p>
         )}
+        {/* Gap A: the sentence below used to read "Extraction and analysis run
+            automatically". Extraction is automatic; AI Analyze is a manual
+            gate, so the second half promised a step nothing would take. */}
         {data.summary.planState === "NO_REQUIREMENTS" && (
-          <p className="mt-2">No tender requirements are extracted yet. Run AI Analyze or add requirements manually before building the submission package.</p>
+          <p className="mt-2">No tender requirements are extracted yet. Source extraction runs automatically. When it completes, run AI Analyze — requirements appear here once that finishes.</p>
+        )}
+        {data.summary.automaticPlanPending && (
+          <div className="mt-3">
+            <p className="mb-2">
+              {data.summary.automaticPlanBlocker ?? "No current source-verified Build Plan."} Document counts and export eligibility stay unavailable until Run Engine rebuilds and source-verifies it.
+            </p>
+            {canMutate && <BuildSubmissionPlanButton tenderId={tenderId} />}
+          </div>
         )}
       </div>
 
@@ -415,7 +356,7 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           <tbody>
             {visibleRows.map((row, index) => {
               const badge = STATUS_BADGE[row.status];
-              const canAct = Boolean(row.documentId) && row.status !== "SUPERSEDED";
+              const canAct = canMutate && Boolean(row.documentId) && row.status !== "SUPERSEDED";
               const isOutsidePlan = row.status === "OUTSIDE_PLAN";
               return (
                 <tr key={row.key} className="border-t border-slate-100 align-top">
@@ -423,7 +364,9 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
                   <td className="px-2 py-2">
                     <div className="font-medium text-slate-900">{row.exactFileName ?? row.name}</div>
                     {row.exactFileName && row.exactFileName !== row.name && <div className="text-[10px] text-slate-400">{row.name}</div>}
-                    {row.documentType && <div className="text-[10px] text-slate-400">{row.documentType}</div>}
+                    {(row.documentType || row.format) && (
+                      <div className="text-[10px] text-slate-400">{[row.documentType, row.format].filter(Boolean).join(" · ")}</div>
+                    )}
                   </td>
                   <td className="px-2 py-2 text-[10px] font-medium text-slate-600">{row.envelope}</td>
                   <td className="px-2 py-2">
@@ -456,6 +399,14 @@ export function SubmissionPlanCompletenessPanel({ tenderId }: { tenderId: string
           </tbody>
         </table>
       </div>
+
+      {canMutate && data.summary.totalOutsidePlan > 0 && (
+        <ReconcileStaleFilesButton tenderId={tenderId} staleCount={data.summary.totalOutsidePlan} />
+      )}
+
+      {!canMutate && data.rows.some((row) => Boolean(row.documentId) && row.status !== "SUPERSEDED") && (
+        <p className="mt-3 text-xs text-slate-500">Read-only: changing submission-scope rows requires ADMIN or PROPOSAL_MANAGER.</p>
+      )}
     </section>
   );
 }

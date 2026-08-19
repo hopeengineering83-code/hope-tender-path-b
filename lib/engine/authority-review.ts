@@ -12,6 +12,30 @@
  *   - Required sections that have no matching generated document
  *
  * All detection is deterministic regex — no AI calls, no external I/O.
+ *
+ * SCOPE — read this before trusting a result.
+ *
+ * This module inspects `contentSummary` and `reviewNotes` ONLY. It never sees a
+ * document's bytes or its rendered text. `contentSummary` is a short sentence
+ * the app writes about a document ("Professional CV for …", "Machine export
+ * repair completed for …", truncated to 500 chars on at least one path), so a
+ * clean result here says nothing about what the delivered file contains. The
+ * blocker names read as if they cover document content — `TODO_FIXME_IN_CONTENT`
+ * says so outright — and they do not.
+ *
+ * Real document content IS gated, by a different pair of checks, and those are
+ * the ones that carry the guarantee:
+ *   - lib/engine/workflow/pdf-finalizer.ts extracts the DOCX text and runs
+ *     validateDocumentQuality + hygiene + internal-artifact scans BEFORE a PDF
+ *     is produced, so failing content never becomes a deliverable;
+ *   - the ZIP route (app/api/tenders/[id]/download) re-extracts each DOCX's
+ *     visible text and re-runs validateDocumentQuality, returning 409 on
+ *     BLOCKED.
+ *
+ * So this module is a metadata-level layer on top of those, not a substitute
+ * for them. Do not "simplify" the export path by dropping the content checks
+ * because Authority Review appears to cover the same categories — it does not,
+ * and the export would silently stop inspecting anything a client will read.
  */
 
 import { AI_TRACE_PATTERNS, PLACEHOLDER_PATTERNS } from "./detection-patterns";
@@ -89,8 +113,16 @@ function firstPatternMatch(patterns: RegExp[], text: string): string {
   return "pattern match";
 }
 
+// "to be confirmed by bid team" is the phrase proposal-benchmark-guard's
+// normalizeWeakText() substitutes in for every placeholder, TBD, TODO, template
+// variable and AI refusal it cannot resolve. It is the same unresolved stub as
+// "Bid-Team to confirm" — the normalizer simply emits it in two phrasings, and
+// only one of them was listed here. So the rarer wording
+// ("Bid-team to confirm before submission.") blocked export as a CRITICAL
+// stub while the dominant wording travelled all the way into a client-facing
+// tender submission untouched. Both must fail closed.
 const INTERNAL_NOTE_RE =
-  /Bid-Team to confirm|MISSING_SOURCE|\[Bid-Team[^\]]*\]|Source-evidence action/i;
+  /Bid-Team to confirm|to be confirmed by bid[-\s]team|MISSING_SOURCE|\[Bid-Team[^\]]*\]|Source-evidence action/i;
 
 const TODO_FIXME_RE =
   /\bTODO\b|\bFIXME\b|\bHACK\b|\bNOTE:\s/;
@@ -165,7 +197,7 @@ function analyseDocument(
   // Internal notes / Bid-Team stubs (check both INTERNAL_NOTE and BID_TEAM)
   if (INTERNAL_NOTE_RE.test(text)) {
     const match = text.match(INTERNAL_NOTE_RE);
-    const isBidTeam = /Bid-Team to confirm|\[Bid-Team[^\]]*\]/i.test(text);
+    const isBidTeam = /Bid-Team to confirm|to be confirmed by bid[-\s]team|\[Bid-Team[^\]]*\]/i.test(text);
     blockers.push({
       code: isBidTeam ? "BID_TEAM_STUB" : "INTERNAL_NOTE",
       severity: "CRITICAL",
@@ -268,13 +300,26 @@ export function runAuthorityReview(
   }
 
   // Missing required sections — a required section has no matching document
+  // Compare on the BASE name (extension stripped) and include the document's
+  // own exactFileName: generated rows are named without the extension
+  // ("01-Expression-Of-Interest"), so a required section of
+  // "01-Expression-Of-Interest.docx" matched neither `name` nor `documentType`
+  // and a correctly generated file was reported as a CRITICAL
+  // MISSING_REQUIRED_SECTION.
+  const stripExtension = (value: string) => value.replace(/\.[a-z0-9]{2,5}$/i, "").trim().toLowerCase();
   for (const section of tenderRequiredSections) {
     const sectionLower = section.toLowerCase();
-    const hasMatch = documents.some(
-      (d) =>
-        d.name.toLowerCase().includes(sectionLower) ||
-        d.documentType.toLowerCase().includes(sectionLower),
-    );
+    const sectionBase = stripExtension(section);
+    const hasMatch = documents.some((d) => {
+      const candidates = [d.name, d.exactFileName ?? "", d.documentType]
+        .filter((value) => value && value.trim().length > 0)
+        .map((value) => value.toLowerCase());
+      return candidates.some(
+        (candidate) =>
+          candidate.includes(sectionLower) ||
+          (sectionBase.length > 0 && stripExtension(candidate).includes(sectionBase)),
+      );
+    });
     if (!hasMatch) {
       allBlockers.push({
         code: "MISSING_REQUIRED_SECTION",

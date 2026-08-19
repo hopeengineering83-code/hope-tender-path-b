@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth";
 import { logAction } from "@/lib/audit";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "@/lib/rate-limit";
+import { redactSecrets } from "@/lib/sanitize-error";
 import {
   recordProviderPingSuccess,
   recordProviderAnalysisSuccess,
@@ -97,17 +98,11 @@ class ProviderTester {
   }
 }
 
+// SECURITY (audit H-9): use the unified redactor from lib/sanitize-error.ts.
+// The previous inline redactMessage() was one of 5 divergent implementations
+// and missed several provider key prefixes (csk_, vcp_, etc.).
 function redactMessage(message: string | null | undefined): string {
-  return (message ?? "")
-    .replace(/sk-ant-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-or-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/gsk_[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/dsk[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/AIza[A-Za-z0-9-_]{15,}/g, "[REDACTED]")
-    .replace(/AQ[A-Za-z0-9-_]{20,}/g, "[REDACTED]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
-    .replace(/authorization:\s*[A-Za-z0-9._\-+/=]+/gi, "authorization: [REDACTED]")
+  return redactSecrets(message ?? "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);
@@ -314,6 +309,16 @@ export async function POST(req: Request) {
   let actor;
   try { actor = await requireRole("ADMIN"); }
   catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+
+  // SECURITY (audit H-10): persistent rate limit on POST. Each request makes
+  // one outbound API call per configured provider; without a limit a
+  // compromised admin session could burn the full provider chain repeatedly.
+  // The GET route already had this limit; POST was missing it.
+  const rl = await rateLimitPersistent(`provider-test:${actor.id}`, MUTATION_RATE_LIMIT);
+  if (!rl.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((rl.resetAt - Date.now()) / 1000));
+    return NextResponse.json({ error: "Too many requests" }, { status: 429, headers: { "Retry-After": String(retryAfter) } });
+  }
 
   const body = await req.json().catch(() => ({}));
   const provider = typeof body.provider === "string" ? (body.provider as AiProviderName) : null;

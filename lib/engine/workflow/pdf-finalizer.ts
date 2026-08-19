@@ -259,11 +259,16 @@ export async function finalizeRequiredPdf(input: {
       `"${label}" has not passed validation. Run Validate on the source document before finalizing the PDF.`,
     );
   }
-  // …and approved / ready for export.
-  if (!isReviewReadyForExport(doc.reviewStatus)) {
+  // …and either human-approved (READY_FOR_EXPORT/APPROVED) OR canonically
+  // validated (VALIDATED) by the Document Validator. Per Gap 5, the
+  // automatic chain may finalize PDFs from VALIDATED sources without a
+  // separate human reviewStatus — the canonical validator is the
+  // machine-safe authority. The human reviewStatus remains required only
+  // where legally mandatory ( Gap 6: one explicit human release decision).
+  if (!isReviewReadyForExport(doc.reviewStatus) && !isValidationPassed(doc.validationStatus)) {
     return blocker(
       "PDF_SOURCE_NOT_APPROVED",
-      `"${label}" is not approved for export. Complete the review/approval step before finalizing the PDF.`,
+      `"${label}" is neither approved for export nor canonically validated. Run Validate on the source document before finalizing the PDF.`,
     );
   }
 

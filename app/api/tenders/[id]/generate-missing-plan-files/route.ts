@@ -15,6 +15,7 @@ import {
   withTransactionalGenerationGate,
 } from "../../../../../lib/engine/transactional-generation-gate";
 import { logger } from "../../../../../lib/observability";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -95,7 +96,15 @@ function isNarrativeDraft(fileName: string, documentType: string) {
   const label = `${fileName} ${documentType}`.toLowerCase();
   if (needsOriginalReplacement(fileName, documentType)) return false;
   if (/submission formatting|packaging rules|submission rules|delivery instruction|submission method|submission deadline/.test(label)) return false;
-  return /technical|methodology|approach|work\s*plan|strategic|proposal|narrative|scope|requirement/.test(label);
+  // Company-produced narrative deliverables. The app already treats these as
+  // documents it can write from vault evidence — COMPANY_PRODUCED_KINDS in the
+  // generate route lists company profile, methodology, project references and
+  // sector/technical scope — but this predicate did not, so a planned
+  // "02-Company-Profile.docx" or "03-Capability-Statement.docx" fell through to
+  // replacementControlContent and was packaged as a ~58-word "generated support
+  // control" stub telling the operator to replace it, even though the vault
+  // holds exactly the material those files need.
+  return /technical|methodology|approach|work\s*plan|strategic|proposal|narrative|scope|requirement|company\s*[-_]?\s*profile|capability\s*[-_]?\s*statement|expression[-\s_]*of[-\s_]*interest|\beoi\b|experience|track\s*record|project\s*[-_]?\s*reference/.test(label);
 }
 
 function matchingRequirements(fileName: string, requirements: RequirementLike[]) {
@@ -282,7 +291,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, id, actor.id);
   if (!confirmedPlan.ok) {
-    return NextResponse.json({ success: false, ok: false, code: "BUILD_PLAN_NOT_CONFIRMED", error: `Cannot generate missing plan files: ${confirmedPlan.blocker}`, nextAction: "CONFIRM_BUILD_PLAN" }, { status: 422 });
+    return NextResponse.json({
+      success: false,
+      ok: false,
+      code: "BUILD_PLAN_NOT_SOURCE_VERIFIED",
+      error: `Automatic document generation is waiting for a current source-verified Build Plan: ${confirmedPlan.blocker}`,
+      nextAction: "RUN_ENGINE",
+    }, { status: 422 });
   }
 
   const operationGate = resolveTenderOperationGate({
@@ -348,11 +363,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       documentType,
       requirements: tender.requirements,
     });
-    if (generated.format !== "DOCX" || !file.exactFileName.toLowerCase().endsWith(".docx")) {
-      skipped.push(`${file.exactFileName} (requires original or format-specific finalization)`);
-      continue;
-    }
+    // A file the app must not invent — a priced financial proposal, a
+    // tender-issued form — still needs a row, as PLANNED awaiting its official
+    // original.
+    //
+    // This used to `continue`, creating nothing. The export gate then required
+    // the file, generation reported it "skipped", and POST
+    // .../documents/{id}/attach-original had no {id} to address because no row
+    // existed: the owner was required to supply a document with nowhere to put
+    // it. The already-PLANNED branch below has always handled this correctly
+    // with keepPlanned; the missing-file branch simply did not, so whether the
+    // tender could be finished depended on whether a row happened to exist
+    // already.
+    const requiresOriginal = generated.format !== "DOCX" || !file.exactFileName.toLowerCase().endsWith(".docx");
     preparedMissing.push({
+      keepPlanned: requiresOriginal,
       fileName: file.exactFileName,
       documentType,
       exactOrder: file.exactOrder,
@@ -384,6 +409,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const created: string[] = [];
   const updated: string[] = [];
   const convertedFromPlanned: string[] = [];
+  // Rows created as PLANNED because the file must be an official original.
+  // Reported separately so "created" keeps meaning "produced bytes".
+  const plannedCreated: string[] = [];
 
   const persistBatch = async () => {
     await prisma.$transaction(async (tx) => {
@@ -414,33 +442,56 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               continue;
             }
 
-            const integrity = verifiedIntegrityDataFromBase64({
-              fileContent: document.fileContent,
-              filename: document.fileName,
-              claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            });
-            const data = {
-              name: document.fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
-              documentType: document.documentType,
-              format: document.format,
-              exactFileName: document.fileName,
-              exactOrder: document.exactOrder,
-              fileContent: document.fileContent,
-              ...integrity,
-              generationStatus: "GENERATED",
-              validationStatus: document.validationStatus,
-              reviewStatus: document.reviewStatus,
-              reviewedBy: null,
-              reviewedAt: null,
-              contentSummary: document.contentSummary,
-              updatedAt: new Date(),
-            };
+            // Mirrors the already-PLANNED branch below: no bytes, integrity
+            // explicitly unknown, and a failure code naming what is awaited, so
+            // this row can never be mistaken for a finished document.
+            const data = document.keepPlanned
+              ? {
+                name: document.fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+                documentType: document.documentType,
+                format: document.format,
+                exactFileName: document.fileName,
+                exactOrder: document.exactOrder,
+                fileContent: null,
+                generationStatus: "PLANNED",
+                validationStatus: "PENDING",
+                reviewStatus: document.reviewStatus,
+                reviewedBy: null,
+                reviewedAt: null,
+                contentSummary: document.contentSummary,
+                integrityStatus: "UNKNOWN",
+                integrityVerifiedAt: null,
+                integrityFailureCode: "REQUIRES_ORIGINAL_OR_FORMAT_FINALIZATION",
+                updatedAt: new Date(),
+              }
+              : {
+                name: document.fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
+                documentType: document.documentType,
+                format: document.format,
+                exactFileName: document.fileName,
+                exactOrder: document.exactOrder,
+                fileContent: document.fileContent,
+                ...verifiedIntegrityDataFromBase64({
+                  fileContent: document.fileContent,
+                  filename: document.fileName,
+                  claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                }),
+                generationStatus: "GENERATED",
+                validationStatus: document.validationStatus,
+                reviewStatus: document.reviewStatus,
+                reviewedBy: null,
+                reviewedAt: null,
+                contentSummary: document.contentSummary,
+                updatedAt: new Date(),
+              };
             if (existing) {
               await lockedTx.generatedDocument.update({ where: { id: existing.id }, data });
-              updated.push(document.fileName);
+              if (document.keepPlanned) plannedCreated.push(document.fileName);
+              else updated.push(document.fileName);
             } else {
               await lockedTx.generatedDocument.create({ data: { tenderId: id, ...data } });
-              created.push(document.fileName);
+              if (document.keepPlanned) plannedCreated.push(document.fileName);
+              else created.push(document.fileName);
             }
           }
 
@@ -535,7 +586,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         ok: false,
         code: error.code,
         error: "Missing-plan generation readiness changed before persistence. No batch document writes were committed.",
-        nextAction: "Refresh the tender, reconfirm the Build Plan, and retry.",
+        nextAction: "The durable worker will retry from current canonical state; intervene only if a specific fail-closed blocker appears.",
       }, { status: 409 });
     }
     throw error;
@@ -560,13 +611,47 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     requestId,
   });
 
+  // A run that changed nothing is not a success.
+  //
+  // This response used to be unconditionally {success: true, created: 0,
+  // updated: 0}, and the button rendered it as "0 missing planned file records
+  // created/updated" — a cheerful message describing a complete no-op, with no
+  // reason and nothing different to try. Clicking again produced the same
+  // thing. When there were targets and none of them moved, say so and name the
+  // reason for each, so the next step is a fact rather than another click.
+  // Planning a row for a file that must arrive as an official original IS
+  // progress: it is what gives the owner somewhere to upload it. Counting it
+  // as "nothing changed" would fail the call that just created the only route
+  // forward.
+  const changedCount = created.length + updated.length + convertedFromPlanned.length + plannedCreated.length;
+  if (changedCount === 0) {
+    return NextResponse.json(
+      {
+        success: false,
+        ok: false,
+        code: "NO_PLANNED_FILE_COULD_BE_GENERATED",
+        error: skipped.length > 0
+          ? `No planned file could be generated. ${skipped.length} target(s) were skipped, each for the reason listed.`
+          : "No planned file could be generated, and no target reported a reason. Re-run the Engine to rebuild the submission plan.",
+        skipped: skipped.length,
+        files: { created, updated, convertedFromPlanned, plannedCreated, skipped },
+        nextAction: skipped.length > 0 ? "REVIEW_SKIPPED_TARGETS" : "RUN_ENGINE",
+      },
+      { status: 422 },
+    );
+  }
+
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, id);
   return NextResponse.json({
     success: true,
     created: created.length,
     updated: updated.length,
     convertedFromPlanned: convertedFromPlanned.length,
+    plannedCreated: plannedCreated.length,
     skipped: skipped.length,
-    files: { created, updated, convertedFromPlanned, skipped },
+    files: { created, updated, convertedFromPlanned, plannedCreated, skipped },
     warning: "Generated narrative drafts/replacement controls require validation and reviewer approval before export. Replace official originals where reviewStatus is REPLACE_WITH_ORIGINAL.",
+    canonicalReadiness,
   });
 }

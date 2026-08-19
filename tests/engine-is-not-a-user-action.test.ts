@@ -1,0 +1,54 @@
+import { describe, it } from "node:test";
+import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
+
+import { getTenderAction, listTenderActions } from "../lib/ui/action-registry";
+
+const links = readFileSync("components/workflow-step-links.tsx", "utf8");
+const engineContinuation = readFileSync("lib/ai-jobs/engine-continuation-service.ts", "utf8");
+
+describe("manual AI Analyze / manual Run Engine workflow action contract", () => {
+  it("AI Analyze is a NORMAL user action with a manual mutation endpoint", () => {
+    const action = getTenderAction("AI_ANALYZE");
+    assert.equal(action.availability, "NORMAL");
+    assert.equal(action.owner, "AIAnalyzePanel");
+    assert.equal(action.mutation, "POST /api/tenders/:id/manual-ai-analyze");
+    assert.doesNotMatch(links, /runManualAction/);
+  });
+
+  it("Run Engine is a NORMAL user action with a manual mutation endpoint", () => {
+    const action = getTenderAction("RUN_ENGINE");
+    assert.equal(action.availability, "NORMAL");
+    assert.equal(action.owner, "MatchingSelectedEvidencePanel");
+    assert.equal(action.mutation, "POST /api/tenders/:id/engine");
+    assert.doesNotMatch(links, /wakeWorker/);
+  });
+
+  it("Build Plan and generation are automatic status surfaces", () => {
+    const plan = getTenderAction("BUILD_SUBMISSION_PLAN");
+    const generation = getTenderAction("GENERATE_REQUIRED_DOCUMENTS");
+    assert.equal(plan.availability, "NAVIGATION");
+    assert.equal(plan.mutation, null);
+    assert.equal(generation.availability, "NAVIGATION");
+    assert.equal(generation.mutation, null);
+  });
+
+  it("upload, AI Analyze, and Run Engine are the three NORMAL POST workflow actions", () => {
+    const normalPostActions = listTenderActions()
+      .filter(([, action]) => action.availability === "NORMAL" && action.mutation?.startsWith("POST "))
+      .map(([id]) => id)
+      .sort();
+    assert.deepEqual(normalPostActions, ["AI_ANALYZE", "RUN_ENGINE", "UPLOAD_TENDER_FILES"]);
+  });
+
+  it("successful analysis does NOT auto-continue to Engine — the user must click Run Engine", () => {
+    // The engine-continuation-service NEVER enqueues an Engine job. It always
+    // returns MANUAL_ENGINE_REQUIRED when the analysis is valid. The legacy
+    // autoContinue field is parsed and discarded — never acted upon.
+    assert.match(engineContinuation, /never act on it/i);
+    assert.match(engineContinuation, /MANUAL_ENGINE_REQUIRED/);
+    // The function must not contain any upsertEngine or rearmFailedEngine calls.
+    assert.doesNotMatch(engineContinuation, /upsertEngine\(/);
+    assert.doesNotMatch(engineContinuation, /rearmFailedEngine\(/);
+  });
+});

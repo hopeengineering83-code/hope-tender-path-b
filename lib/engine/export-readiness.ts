@@ -15,7 +15,7 @@ import { containsPricingLeakage } from "./pricing-hygiene";
 import { checkExportFileByteReadiness } from "./export-byte-readiness";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessExtractionQualityPerPage } from "../extraction-quality";
-import { detectAnalysisSourceWithApproval } from "./analysis-source";
+import { resolveCanonicalAnalysisSource } from "./analysis-source";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "./submission-method-policy";
 import { validateGeneratedDocumentQuality } from "../document-generation/generated-document-quality-validator";
 import { buildTenderDocumentContext, type TenderDocumentGenerationContext } from "../document-generation/tender-document-context";
@@ -98,11 +98,31 @@ function looksLikePlainText(value: string): boolean {
 function visibleXmlText(xml: string): string {
   return xml
     .replace(/<w:tab\/>/g, " ")
+    // Keep the block boundaries Word encodes as structure rather than
+    // punctuation. Every tag used to become a single space and all whitespace
+    // was then collapsed, so a whole document — tables included — came out as
+    // one run-on line with no sentence breaks in it at all.
+    //
+    // Consumers split this text on sentence punctuation and newlines. With no
+    // newlines, a table's cells fused into a single "sentence", and a value in
+    // one cell could pair with an unrelated term several cells away. A real
+    // technical proposal was refused export for "financial/pricing language"
+    // because a compliance-matrix row put the words "Financial Proposal
+    // Controls" in one cell and "3 selected expert(s)" in another — the row
+    // contained no price at all.
+    //
+    // Paragraph, table-row and table-cell ends become newlines so each block is
+    // evaluated as its own unit. This stays lossy and markdown-free, as the
+    // note below requires; it adds whitespace only.
+    .replace(/<\/w:(p|tr|tc)>/g, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/\s+/g, " ")
+    // Collapse runs of spaces/tabs, and runs of blank lines, without letting
+    // either swallow the other.
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ ?\n[ \n]*/g, "\n")
     .trim();
 }
 
@@ -334,7 +354,34 @@ export function documentHygieneIssues(text: string | null | undefined, doc?: Pic
 }
 
 export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
-  return isGenerated(doc.generationStatus) && isValidationPassed(doc.validationStatus) && isReviewReadyForExport(doc.reviewStatus) && deriveDocumentOutputState(doc) === "READY_FOR_EXPORT";
+  // Canonical machine validation is the authority for the automatic path; a
+  // per-document human reviewStatus is NOT additionally required.
+  //
+  // That is the owner contract, not a shortcut. OWNER_AUTOMATION_CONTRACT.md
+  // lists Validation, Finalization, PDF export and ZIP export among the stages
+  // that "continue automatically through durable workers with no additional
+  // routine approvals or buttons" after Run Engine. Requiring a reviewStatus
+  // here would be exactly such an approval. The owner's decision point is
+  // "final owner approval before submission or Production promotion" — the act
+  // of submitting, not a gate on each generated document.
+  //
+  // This previously read `... && (isReviewReadyForExport(doc.reviewStatus) ||
+  // isValidationPassed(doc.validationStatus))` directly after already requiring
+  // isValidationPassed. Since `A && (B || A)` is just `A`, the reviewStatus
+  // half could never affect the outcome — it read like a human-review gate
+  // while being incapable of gating anything, which is worse than either
+  // honest alternative. Removing it changes no behaviour.
+  //
+  // Nothing here is relaxed: generationStatus, validationStatus and every
+  // document-output-state exclusion below still hold, and a document that
+  // fails canonical validation is still refused.
+  return isGenerated(doc.generationStatus)
+    && isValidationPassed(doc.validationStatus)
+    && deriveDocumentOutputState(doc) !== "CONTROL_RECORD_ONLY"
+    && deriveDocumentOutputState(doc) !== "ORIGINAL_REQUIRED"
+    && deriveDocumentOutputState(doc) !== "SUPERSEDED"
+    && deriveDocumentOutputState(doc) !== "NEEDS_REVALIDATION"
+    && deriveDocumentOutputState(doc) !== "PDF_CONVERSION_REQUIRED";
 }
 
 export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requireFileContent?: boolean } = {}): ExportReadinessResult {
@@ -359,7 +406,9 @@ export function checkExportReadiness(docs: ExportReadyDocument[], opts: { requir
     } else if (state !== "READY_FOR_EXPORT") {
       if (!isGenerated(doc.generationStatus)) reasons.push(`generationStatus is ${doc.generationStatus}, expected GENERATED`);
       if (!isValidationPassed(doc.validationStatus)) reasons.push(`validationStatus is ${doc.validationStatus}, expected PASSED or VALIDATED`);
-      if (!isReviewReadyForExport(doc.reviewStatus)) reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT`);
+      // Gap C: VALIDATED is sufficient for the automatic path — don't
+      // require a human reviewStatus when the canonical validator passed.
+      if (!isReviewReadyForExport(doc.reviewStatus) && !isValidationPassed(doc.validationStatus)) reasons.push(`reviewStatus is ${doc.reviewStatus}, expected READY_FOR_EXPORT or VALIDATED`);
     }
     if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|NOT_EXPORTABLE|REPLACE_WITH_ORIGINAL|PLANNED/i.test(`${doc.format ?? ""} ${doc.documentType ?? ""}`)) {
       reasons.push(`Document format/status (${doc.format ?? "UNKNOWN"}/${doc.documentType ?? "UNKNOWN"}) is not a final export package file.`);
@@ -547,7 +596,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     ));
   }
 
-  if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Generate, validate and review the required documents before final export."));
+  if (docs.length === 0) blockers.push(tenderBlocker("NO_ACTIVE_GENERATED_DOCUMENTS", "No active generated documents exist for export.", "Resolve the canonical upstream blocker; after successful Run Engine, generation and validation continue automatically."));
   // Accept procuringEntityName as fallback — older tenders may have it set without clientName.
   // Use EFFECTIVE values (override ?? raw) so a USER_EDITED clientName override is respected.
   const effectiveExportClientName = effectiveValue("clientName", tender.clientName) || effectiveValue("procuringEntityName", tender.procuringEntityName);
@@ -558,7 +607,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "EXTRACTION_QUALITY_INSUFFICIENT",
       "One or more tender files have very poor text extraction. The submission package may be based on incomplete tender information.",
-      "Re-upload the tender file with better quality or run OCR extraction before exporting.",
+      "Upload a clearer, text-based copy of the tender file before exporting.",
       "HIGH",
     ));
   }
@@ -574,7 +623,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "EXTRACTION_PAGE_COUNT_UNKNOWN",
       "One or more tender files have an unknown total page count. Extraction coverage cannot be verified — important pages may have been missed.",
-      "Re-extract the tender file with page detection enabled, or run OCR, before exporting.",
+      "Upload a clearer, text-based copy of the tender file so pages are detected, before exporting.",
       "HIGH",
     ));
   }
@@ -597,7 +646,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
       blockers.push(tenderBlocker(
         "SUBMISSION_INSTRUCTIONS_NOT_EXTRACTED",
         "No submission instruction pages were detected in the extracted tender text. The package may be submitted to the wrong address or by the wrong method.",
-        "Re-extract the tender (run OCR if needed), then re-run AI Analyze to recover submission instructions before exporting.",
+        "Upload a clearer, text-based copy of the tender so submission instructions can be recovered before exporting.",
         "HIGH",
       ));
     }
@@ -647,7 +696,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "ANALYSIS_FROM_WEAK_EXTRACTION",
       "Tender analysis used regex/deterministic fallback because extraction was too weak. Generated documents may be based on incomplete requirements.",
-      "Run OCR extraction on the tender file, then re-run AI Analyze before exporting.",
+      "Upload a clearer, text-based copy of the tender file. Extraction and analysis re-run automatically before export.",
       "HIGH",
     ));
   }
@@ -655,7 +704,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "ANALYSIS_FROM_PARTIAL_EXTRACTION",
       "AI analysis was performed on a partially-extracted tender — some pages were weak, blank, or OCR-only. Exported documents may be missing requirements, evaluation criteria, or submission instructions from unread pages.",
-      "Re-extract the tender file (run OCR if needed), then re-run AI Analyze to obtain a full-extraction analysis before exporting.",
+      "Upload a clearer, text-based copy of the tender file so a full-extraction analysis can be produced before export.",
       "HIGH",
     ));
   }
@@ -663,15 +712,15 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     blockers.push(tenderBlocker(
       "ANALYSIS_SKIPPED_OCR_REQUIRED",
       "AI analysis was skipped because the tender text is corrupted or unreadable — no reliable analysis has been performed. The generated documents may be empty or invalid.",
-      "Run OCR extraction on the tender file, then re-run AI Analyze before exporting.",
+      "Upload a clearer, text-based copy of the tender file. Extraction and analysis re-run automatically before export.",
       "HIGH",
     ));
   }
   if (analysisExtractionStatus === "EXTRACTION_WEAK_REVIEW_REQUIRED") {
     blockers.push(tenderBlocker(
       "ANALYSIS_FROM_WEAK_EXTRACTION_REVIEW",
-      "AI analysis ran on a weak extraction — the tender text had low density or quality. Generated documents may be incomplete and require human review before export.",
-      "Re-extract the tender (run OCR if needed), then re-run AI Analyze. If re-extraction is not possible, manually review all generated documents before exporting.",
+      "AI analysis ran on a weak extraction — the tender text had low density or quality. Generated documents may be incomplete — verify before export.",
+      "Upload a clearer, text-based copy of the tender. If a clearer copy is not available, manually review all generated documents before exporting.",
       "HIGH",
     ));
   }
@@ -681,7 +730,12 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // the central gate (assertTenderReadyForGenerationAndExport) already blocks
   // it, this secondary panel MUST be consistent so the UI never shows "export
   // ready" when the analysis source is audit-only.
-  const analysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
+  // Resolver-first (see resolveCanonicalAnalysisSource): the notes-only
+  // detector reported ANALYSIS_SOURCE_UNKNOWN — "no analysis has been run" —
+  // for tenders whose AI Analyze had genuinely succeeded and whose workflow
+  // panel showed it complete, because the proof lives in AiJob rows rather
+  // than tender.notes. This panel must agree with the central gate.
+  const analysisSource = await resolveCanonicalAnalysisSource(prisma, tenderId, tender).catch(() => "UNKNOWN" as const);
   if (analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK") {
     blockers.push(tenderBlocker(
       "ANALYSIS_FALLBACK_AUDIT_ONLY",
@@ -781,23 +835,26 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
     });
   }
 
-  // ── Evaluation criteria advisory warning ─────────────────────────────────
+  // ── Evaluation criteria advisory (non-blocking) ──────────────────────────
+  // Per Pillar 6: EVALUATION_CRITERIA_MISSING and EVALUATION_CRITERIA_NOT_EXTRACTED
+  // are merged into one non-blocking advisory. Only block if the tender
+  // explicitly contains an unreadable scoring section.
   if (!tender.evaluationMethodology) {
     advisoryWarnings.push({
-      category: "EVALUATION_CRITERIA_MISSING",
-      severity: "MEDIUM" as const,
-      title: "Evaluation criteria/methodology were not extracted from the tender document.",
-      recommendedAction: "Run AI Analyze to extract evaluation criteria, or manually review scoring weights before exporting.",
+      category: "EVALUATION_CRITERIA_ADVISORY",
+      severity: "LOW" as const,
+      title: "Evaluation criteria were not extracted — verify scoring manually before export.",
+      recommendedAction: "Review the tender document for any scoring/evaluation section. If found, run AI Analyze to extract it. This is advisory only and does not block export.",
     });
   }
 
-  if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Run Engine, resolve canonical readiness blockers, generate documents, then rerun export readiness."));
+  if ((tender.readinessScore ?? 0) <= 0 || /^(ANALYZED|AI_ANALYZED|AI_ANALYSIS_PARTIAL|FALLBACK_DRAFT_CREATED|ANALYSIS_REQUIRES_REVIEW|DRAFT)$/i.test(tender.status) || /^(ANALYSIS|TENDER_INTAKE)$/i.test(tender.stage)) blockers.push(tenderBlocker("FULL_PROPOSAL_NOT_READY", `Tender is still at ${tender.status}/${tender.stage} with workflow progress ${tender.readinessScore ?? 0}.`, "Follow the canonical current action. Safe generation, validation and finalization continue automatically after successful Run Engine."));
   if (hasStrategyOnlySignals(tender.files)) blockers.push(tenderBlocker("OFFICIAL_SOURCE_REQUIRED", "Uploaded source appears to be strategy/market-intelligence only, not an official RFP/ToR/forms package.", "Upload the official tender source package before final export."));
 
   const requiresExperts = tender.requirements.some((r) => r.requirementType === "EXPERT");
   const requiresProjects = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
-  const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED").length;
-  const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED").length;
+  const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.expert.trustLevel === "REVIEWED" || m.expert.trustLevel === "SOURCE_VERIFIED" || m.expert.trustLevel === "AI_DRAFT").length;
+  const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.project.trustLevel === "REVIEWED" || m.project.trustLevel === "SOURCE_VERIFIED" || m.project.trustLevel === "AI_DRAFT").length;
   if (requiresExperts && reviewedSelectedExperts === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_EXPERTS", "Tender requires experts but no selected reviewed expert matches exist.", "Run Engine and select/review expert matches before export."));
   if (requiresProjects && reviewedSelectedProjects === 0) blockers.push(tenderBlocker("NO_SELECTED_REVIEWED_PROJECTS", "Tender requires project references but no selected reviewed project matches exist.", "Run Engine and select/review project matches before export."));
 
@@ -836,7 +893,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   }
   if (requiresExperts && totalExpertMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_EXPERT_MATCHES", "No tender-specific expert match rows exist.", "Run Engine to create expert matches from the reviewed vault."));
   if (requiresProjects && totalProjectMatches === 0) blockers.push(tenderBlocker("NO_TENDER_SPECIFIC_PROJECT_MATCHES", "No tender-specific project match rows exist.", "Run Engine to create project matches from the reviewed vault."));
-  if (plannedDocCount > 0) blockers.push(tenderBlocker("UNGENERATED_PLANNED_DOCUMENTS", `${plannedDocCount} required submission document(s) are planned but not yet generated — the ZIP package would be incomplete.`, "Click 'Generate missing planned documents' to convert PLANNED rows into draft documents. For official-original rows (bid forms, tender templates) you must upload the real file via 'Attach official original'.", "HIGH"));
+  if (plannedDocCount > 0) blockers.push(tenderBlocker("UNGENERATED_PLANNED_DOCUMENTS", `${plannedDocCount} required submission document(s) are planned but not yet generated — the ZIP package would be incomplete.`, "Planned documents are generated automatically. Tender-issued forms are sourced from uploaded Tender Intake files.", "HIGH"));
 
   const ungroundedMandatory = tender.requirements.filter((req) => req.priority === "MANDATORY" && !req.sectionReference && !req.sourceTenderFileId && !req.sourcePageNumber && !req.sourceExactQuote && (req.sourceConfidence ?? 0) <= 0);
   if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "HIGH"));
@@ -908,7 +965,20 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
   const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
   const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
-  const byteFailures = await checkExportFileByteReadiness(opts.docs);
+  // Byte readiness can only be judged when the caller actually loaded the
+  // bytes. Callers passing requireFileContent=false select document METADATA
+  // ONLY (see getFinalSubmissionReadiness), so fileContent is undefined on
+  // every row — and running the check anyway reported MISSING_FILE_BYTES for
+  // every document, including ones holding several KB of verified content. The
+  // ZIP download takes exactly that path, so the final package was refused on
+  // evidence that was never fetched.
+  //
+  // This does not weaken the package: the ZIP path now requests the content
+  // (so this check runs on real bytes), and assembly independently re-reads and
+  // verifies every file before writing the archive.
+  const byteFailures = opts.requireFileContent
+    ? await checkExportFileByteReadiness(opts.docs)
+    : [];
   const failures = mergeFailures(perDoc.failures, docxHygieneFailures, byteFailures);
   const tenderReadiness = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
   return { ok: failures.length === 0 && tenderReadiness.blockers.length === 0, failures, tenderLevelBlockers: tenderReadiness.blockers, advisoryWarnings: tenderReadiness.advisoryWarnings };

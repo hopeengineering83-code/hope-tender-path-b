@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanFile } from "./submission-plan";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 import { containsMetadataPlaceholder } from "./metadata-validators";
+import { isValidationPassed } from "./document-output-state";
 
 export type BuildPlanItem = SubmissionPlanFile;
 export type BuildPlanValidation = { ok: boolean; blockers: string[] };
@@ -377,8 +378,11 @@ export async function assertTenderReadyToDraftBuildPlan(
 
   // 5. Current analysis hash + completed chunks
   const { buildTenderAnalysisContent, computeAnalysisContentHash } = await import("./tender-analysis-content");
-  const company = await prisma.company.findUnique({ where: { userId }, select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } } }).catch(() => null);
-  const currentContentHash = computeAnalysisContentHash(buildTenderAnalysisContent({ title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: tender.files as any[] }, company ?? undefined));
+  // analysisInputHash is rebound at successful promotion to the persisted tender
+  // source revision. Company Vault material remains part of the immutable
+  // provider-input snapshot, but Engine's automatic Vault verification must not
+  // make a just-current tender analysis stale before Build Plan verification.
+  const currentContentHash = computeAnalysisContentHash(buildTenderAnalysisContent({ title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: tender.files as any[] }));
   const latestJob = await prisma.aiJob.findFirst({ where: { tenderId, jobType: "AI_ANALYZE", tender: { userId } }, orderBy: { createdAt: "desc" }, select: { id: true, analysisInputHash: true } });
   if (latestJob?.analysisInputHash && latestJob.analysisInputHash !== currentContentHash) {
     return { ok: false, code: "ANALYSIS_HASH_MISMATCH", message: "Tender content changed since the last analysis. Re-run AI Analyze.", status: 422 };
@@ -444,6 +448,28 @@ function normalizePlanName(value: unknown): string {
 
 function planItemKey(item: Pick<BuildPlanItem, "exactFileName" | "exactOrder" | "documentType">): string {
   return `${Number(item.exactOrder)}::${normalizePlanName(item.exactFileName)}::${normalizeText(item.documentType)}`;
+}
+
+/**
+ * Identity used to match a PLAN ITEM to a GENERATED DOCUMENT.
+ *
+ * Deliberately the exact file name alone. planItemKey additionally folds in
+ * exactOrder and documentType, which is correct when comparing one plan against
+ * another (both sides come from the same builder) but wrong here: the plan's
+ * documentType is derived from the source requirement's type while the
+ * generator assigns its own classification to the row it writes. On a real run
+ * those disagree — a plan item typed EXPERIENCE against a document the
+ * generator typed PROJECT_REFERENCE_PACKAGE for the very same
+ * "01-Expression-Of-Interest.docx" — and the compound key then reported that
+ * one file BOTH as "not in the confirmed Build Plan" and as "missing", so the
+ * export failed with CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE.
+ *
+ * The exact file name is the identity the tender prescribes and the name the
+ * client receives, so it is the correct thing to match on. Order and type are
+ * still validated in their own right by the plan-item checks.
+ */
+function planDocumentMatchKey(exactFileName: string | null | undefined): string {
+  return normalizePlanName(exactFileName ?? "");
 }
 
 function quoteSupported(extractedText: unknown, quote: string): boolean {
@@ -618,10 +644,10 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   // Safe guard: if the prisma client doesn't have buildPlan (e.g., mock in unit tests),
   // return a blocked state instead of crashing.
   if (!(prisma as any).buildPlan || typeof (prisma as any).buildPlan.findFirst !== "function") {
-    return { ok: false as const, blocker: "No confirmed Build Plan exists." };
+    return { ok: false as const, blocker: "No source-verified Build Plan exists." };
   }
   const plan = await (prisma as any).buildPlan.findFirst({ where: { tenderId, status: "CONFIRMED", tender: { userId } }, orderBy: { updatedAt: "desc" } });
-  if (!plan) return { ok: false as const, blocker: "No confirmed Build Plan exists." };
+  if (!plan) return { ok: false as const, blocker: "No source-verified Build Plan exists." };
   // FAIL CLOSED on corrupted plan items — a plan whose contents cannot be
   // read must never authorize generation or export.
   let items: BuildPlanItem[];
@@ -630,7 +656,7 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
     if (!Array.isArray(parsed)) throw new Error("itemsJson is not an array");
     items = parsed as BuildPlanItem[];
   } catch {
-    return { ok: false as const, blocker: "Confirmed Build Plan items are corrupted and cannot be read. Rebuild and re-confirm the Build Plan." };
+    return { ok: false as const, blocker: "Source-verified Build Plan items are corrupted and cannot be read. Run Engine to rebuild and verify the plan." };
   }
   // Reduced unit-test prisma mocks don't model the tables that
   // computeTenderBuildPlanHash reads. Detect that EXPLICITLY (missing model
@@ -649,10 +675,10 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   try {
     currentHash = await computeTenderBuildPlanHash(prisma, tenderId, userId, items);
   } catch {
-    return { ok: false as const, blocker: "Confirmed Build Plan freshness could not be verified (hash computation failed). Retry, or rebuild and re-confirm the Build Plan." };
+    return { ok: false as const, blocker: "Build Plan freshness could not be verified (hash computation failed). Run Engine to rebuild and source-verify the plan." };
   }
   const hashOk = plan.confirmedRevision === plan.revision && plan.confirmedContentHash === plan.contentHash && currentHash === plan.confirmedContentHash;
-  if (!hashOk) return { ok: false as const, blocker: "Confirmed Build Plan is stale or hash/revision mismatched." };
+  if (!hashOk) return { ok: false as const, blocker: "Source-verified Build Plan is stale or hash/revision mismatched. Run Engine to rebuild it." };
   // STRICT CRITICAL METADATA EVIDENCE: even if hash matches, reject if
   // metadata evidence is no longer valid (e.g., source file was deleted).
   const fullTender = await prisma.tender.findFirst({
@@ -662,7 +688,7 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   if (fullTender) {
     const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? []);
     if (!metaValidation.ok) {
-      return { ok: false as const, blocker: `Confirmed Build Plan metadata evidence is no longer valid: ${metaValidation.blockers.join("; ")}` };
+      return { ok: false as const, blocker: `Build Plan source evidence is no longer valid: ${metaValidation.blockers.join("; ")}` };
     }
   }
   return { ok: true as const, plan, items, currentHash };
@@ -753,7 +779,7 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
   if (!tender) return { ok: false, blockers: ["Tender not found or not owned by actor."], exportReadyDocumentCount: 0 };
 
   const requiredItems = items.filter((item) => item.required);
-  const requiredKeys = new Set(requiredItems.map(planItemKey));
+  const requiredKeys = new Set(requiredItems.map((item) => planDocumentMatchKey(item.exactFileName)));
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, format: true, fileContent: true, storagePath: true, generationStatus: true, validationStatus: true, reviewStatus: true },
@@ -761,7 +787,7 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
   let exportReadyDocumentCount = 0;
   const docsByKey = new Map<string, typeof docs>();
   for (const doc of docs) {
-    const key = planItemKey({ exactFileName: doc.exactFileName ?? doc.name, exactOrder: doc.exactOrder ?? -1, documentType: doc.documentType });
+    const key = planDocumentMatchKey(doc.exactFileName ?? doc.name);
     const bucket = docsByKey.get(key) ?? [];
     bucket.push(doc);
     docsByKey.set(key, bucket);
@@ -769,18 +795,25 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
   }
 
   for (const item of requiredItems) {
-    const key = planItemKey(item);
+    const key = planDocumentMatchKey(item.exactFileName);
     const matches = docsByKey.get(key) ?? [];
     const ready = matches.filter((doc) =>
       doc.generationStatus === "GENERATED" &&
       generatedDocumentHasContent(doc) &&
-      ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"].includes(doc.validationStatus) &&
-      ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"].includes(doc.reviewStatus),
+      (
+        // Routine generated outputs become machine-export-eligible when the
+        // canonical validator passes. Human reviewStatus remains an audit and
+        // legal-release authority; it is not a second per-document pipeline
+        // gate. Tender-issued originals remain eligible only through their
+        // explicit REPLACE_WITH_ORIGINAL path.
+        isValidationPassed(doc.validationStatus) ||
+        doc.reviewStatus === "REPLACE_WITH_ORIGINAL"
+      ),
     );
     if (matches.length === 0) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is missing.`);
     if (matches.length > 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} has duplicate generated rows.`);
     if (matches.some((doc) => !generatedDocumentHasContent(doc))) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is empty.`);
-    if (matches.length > 0 && ready.length !== 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is not generated, validated, and approved for export.`);
+    if (matches.length > 0 && ready.length !== 1) blockers.push(`Required plan file ${item.exactOrder} ${item.exactFileName} is not generated and machine-validated for export, or is still awaiting its genuine tender-issued original.`);
     exportReadyDocumentCount += ready.length;
   }
 

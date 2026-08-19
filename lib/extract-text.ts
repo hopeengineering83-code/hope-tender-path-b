@@ -5,11 +5,12 @@ import { logger } from "./observability";
 
 import { isExtractionCorrupted } from "./engine/extraction-quality-gate";
 
-// Exported so limitExtractedText (lib/upload-security.ts) can DETECT that
-// this inner limiter fired: normalizeExtractedText slices to exactly this
-// length, so output text at this length means the document's tail was cut
-// and the extraction is partial (extractionTruncated must be true).
-export const MAX_EXTRACTED_TEXT_CHARS = 500_000;
+// Per Pillar 3: increased from 500K to 2M to avoid silently truncating large
+// multi-file tender packages. The Vercel 60s function timeout is the real
+// limit on extraction; this char cap is a safety guard against memory
+// exhaustion, not a data-loss gate. Extraction truncation is still reported
+// honestly via extractionTruncated when this limit is hit.
+export const MAX_EXTRACTED_TEXT_CHARS = 2_000_000;
 const LEGACY_TEXT_LIMIT = 80_000;
 
 export async function extractTextFromBuffer(
@@ -26,8 +27,17 @@ export async function extractTextFromBuffer(
     if (isCsv(mimeType, ext)) return extractCsv(buffer);
     if (isRtf(mimeType, ext)) return extractRtf(buffer);
     if (isText(mimeType, ext)) return buffer.toString("utf8").slice(0, MAX_EXTRACTED_TEXT_CHARS);
-    if (isImage(mimeType, ext)) return `[Image: ${fileName}]`;
-    return "";
+    if (isImage(mimeType, ext)) {
+      // Per Pillar 2: report unsupported/corrupt files honestly. Images
+      // cannot be text-extracted without OCR. Return an honest marker so
+      // downstream extraction-quality gates classify this as a weak
+      // extraction (not an empty one). The user sees "Image needs OCR"
+      // in the extraction quality dashboard instead of a silent placeholder.
+      return `[Image needs OCR: ${fileName}]`;
+    }
+    // Per Pillar 2: report unsupported formats honestly instead of silently
+    // returning an empty string that looks like "extraction succeeded".
+    return `[Unsupported format: ${ext || mimeType || "unknown"}]`;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logger.error(`[extract-text] ${fileName} (${mimeType}):`, { detail: err });
@@ -1273,7 +1283,7 @@ function decodeXmlEntities(s: string): string {
 // A cell looks like: <a:tc><a:txBody>...<a:p><a:r><a:t>Cell text</a:t></a:r></a:p>...</a:txBody></a:tc>
 // We gather every <a:t> run inside the fragment and join with spaces.
 function extractPptxCellText(cellXml: string): string {
-  //  after <a:t prevents matching <a:txBody> / <a:tcPr> / <a:tblPr> etc.
+  // \x08 after <a:t prevents matching <a:txBody> / <a:tcPr> / <a:tblPr> etc.
   // — <a:t is a prefix of those tags and without \b the regex would capture
   // their inner content as if it were a text run. This was the root cause of
   // PPTX table cells returning raw XML instead of decoded text.

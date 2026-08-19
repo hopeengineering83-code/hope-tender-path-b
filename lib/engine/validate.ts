@@ -4,7 +4,8 @@ import { exactSelectionLimit } from "./scope-policy";
 import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";
 import { validateConstraints } from "./constraint-validator";
 import { filterFinalExportCandidateDocuments } from "./document-output-state";
-import { documentHygieneIssues } from "./export-readiness";
+import { documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
+import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
 
 export interface ValidationIssue {
   code: string;
@@ -53,6 +54,39 @@ function staffingShortfallMessage(type: "expert" | "project", required: number, 
 export async function validateTender(tenderId: string): Promise<ValidationReport> {
   const issues: ValidationIssue[] = [];
 
+  // Bring requirement coverage up to date before judging it.
+  //
+  // The Engine computes coverage BEFORE generation, when every build-plan item
+  // is still a promise and no artifact exists, and nothing recomputed it once
+  // the documents were written. So the evidence this function reads was stale
+  // by construction: a requirement answered by the proposal's own deliverable
+  // stayed at PARTIAL for ever, mandatory-evidence blockers never cleared, and
+  // the only way past it was for someone to know to POST
+  // /api/tenders/{id}/requirement-coverage/auto-sync by hand — an step the
+  // owner is never told about and the automation contract does not allow.
+  //
+  // Reconciling here rather than at each generation site covers every path
+  // that reaches a verdict, since both POST /validate and POST /export come
+  // through this function. The service is an idempotent desired-state sync
+  // with its own retry, so calling it on an already-current tender is a no-op.
+  //
+  // A failure must not fail validation: coverage that could not be refreshed
+  // is reported as a warning, and the gates below still judge what is stored.
+  const owner = await prisma.tender.findUnique({ where: { id: tenderId }, select: { userId: true } });
+  if (owner?.userId) {
+    try {
+      const { reconcileAutomaticRequirementCoverage } = await import("./reconcile-automatic-requirement-coverage");
+      await reconcileAutomaticRequirementCoverage(prisma, tenderId, owner.userId);
+    } catch (error) {
+      logger.warn(`[validate] requirement-coverage reconcile failed; judging stored coverage: ${error instanceof Error ? error.message : String(error)}`);
+      issues.push({
+        code: "REQUIREMENT_COVERAGE_NOT_REFRESHED",
+        severity: "WARN",
+        message: "Requirement evidence could not be refreshed before validation, so the result reflects the last stored coverage.",
+      });
+    }
+  }
+
   const tender = await prisma.tender.findUnique({
     where: { id: tenderId },
     include: {
@@ -70,9 +104,24 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   const selectedExpertIds = tender.expertMatches.map((m) => m.expertId);
   const selectedProjectIds = tender.projectMatches.map((m) => m.projectId);
 
+  // Vault records are re-read scoped to the tender owner, not by bare ID.
+  // These IDs arrive from TenderExpertMatch/TenderProjectMatch rows, and
+  // matching is company-scoped, so a foreign ID should never reach here — but
+  // "should never" is the tenant boundary being inherited from a caller two
+  // levels up rather than enforced where the read happens. The messages below
+  // interpolate fullName/name, so a single cross-tenant match row would leak
+  // another company's expert and project names into a validation report.
+  // Scoping the read makes the boundary local and self-evident.
+  const ownedByTenant = { company: { userId: tender.userId } } as const;
+
   if (selectedExpertIds.length > 0) {
-    const experts = await prisma.expert.findMany({ where: { id: { in: selectedExpertIds } }, select: { id: true, fullName: true, trustLevel: true } });
-    const unreviewed = experts.filter((e) => e.trustLevel !== "REVIEWED");
+    const experts = await prisma.expert.findMany({ where: { id: { in: selectedExpertIds }, deletedAt: null, ...ownedByTenant }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT } });
+    // isDurablyReviewed(), not a raw trustLevel==="REVIEWED" check — a stale
+    // or never-durably-provenance-backed REVIEWED record must not pass this
+    // check as if genuinely human-reviewed (it would otherwise produce a
+    // false-positive "✓ All experts are REVIEWED" that contradicts the
+    // Engine's and generation's own durable gate).
+    const unreviewed = experts.filter((e) => !isDurablyReviewed(e));
     const regexDraft = experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT");
     const aiDraft = experts.filter((e) => e.trustLevel === "AI_DRAFT");
     if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_EXPERT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected expert(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((e) => e.fullName).join(", ")}.` });
@@ -81,7 +130,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   }
 
   if (selectedProjectIds.length > 0) {
-    const projects = await prisma.project.findMany({ where: { id: { in: selectedProjectIds } }, select: { id: true, name: true, trustLevel: true } });
+    const projects = await prisma.project.findMany({ where: { id: { in: selectedProjectIds }, deletedAt: null, ...ownedByTenant }, select: { id: true, ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT } });
     const regexDraft = projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT");
     const aiDraft = projects.filter((p) => p.trustLevel === "AI_DRAFT");
     if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_PROJECT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((p) => p.name).join(", ")}.` });
@@ -121,14 +170,49 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   if (generatedDocs.length === 0) issues.push({ code: "NO_GENERATED_DOCUMENTS", severity: "BLOCK", message: "No documents have been generated yet. Run document generation first." });
 
   for (const doc of generatedDocs) {
-    const textToCheck = [doc.contentSummary ?? "", doc.name, doc.exactFileName ?? ""].join(" ");
-    if (hasPlaceholder(textToCheck)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
+    // Check the DOCUMENT, not the metadata about it.
+    //
+    // Both checks below used to read doc.contentSummary. For a generated
+    // proposal that field holds the generator's own diagnostic report, which
+    // describes the document's problems in the document's own vocabulary — so
+    // a summary reading 'Proposal still has 6 unresolved spot(s) reading "to be
+    // confirmed by bid team"' tripped the placeholder block, and one reading
+    // "Executive Summary lacks a specific project name or contract value"
+    // tripped the pricing-leakage block. Both fired on proposals whose text
+    // contained neither a placeholder nor a price: the report of a problem was
+    // punished as the problem, and no edit to the document could clear it
+    // because the document was never what was read.
+    //
+    // The comment here previously claimed these were "the same checks the
+    // export-readiness gate runs". They now are — that gate extracts the
+    // document's visible text, so this does too.
+    const fileName = doc.exactFileName ?? doc.name ?? "";
+    const isDocx = fileName.toLowerCase().endsWith(".docx");
+    let documentText = "";
+    if (typeof doc.fileContent === "string" && doc.fileContent.length > 0 && doc.fileContent.length < 2_000_000) {
+      documentText = isDocx
+        ? (await extractDocxVisibleText(doc.fileContent, fileName)) ?? ""
+        : doc.fileContent;
+    }
 
-    // Document hygiene: catch pricing leakage in technical envelopes, AI disclosure
-    // phrases, and unresolved placeholder instructions. These are the same checks the
-    // export-readiness gate runs, but surfacing them at validation time means problems
-    // are caught one step earlier — before the user tries to export.
-    const hygieneIssues = documentHygieneIssues(doc.contentSummary, {
+    // A DOCX that carries bytes but yields no readable text is not evidence of
+    // cleanliness — say so rather than passing it silently. WARN, not BLOCK:
+    // export-readiness owns the byte-level verdict and refuses it there.
+    if (isDocx && documentText.trim().length === 0 && (doc.fileContent ?? "").length > 0) {
+      issues.push({
+        code: "DOCUMENT_TEXT_UNREADABLE",
+        severity: "WARN",
+        message: `Document "${doc.name}" has stored bytes but no readable text could be extracted, so placeholder and hygiene checks could not inspect it.`,
+      });
+    }
+
+    if (hasPlaceholder(documentText)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
+
+    // Document hygiene: catch pricing leakage in technical envelopes, AI
+    // disclosure phrases, and unresolved placeholder instructions. Surfacing
+    // them at validation time means problems are caught one step earlier —
+    // before the user tries to export.
+    const hygieneIssues = documentHygieneIssues(documentText, {
       name: doc.name,
       exactFileName: doc.exactFileName ?? null,
       documentType: (doc as { documentType?: string | null }).documentType ?? null,

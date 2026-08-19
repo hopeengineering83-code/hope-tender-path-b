@@ -25,45 +25,43 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
+import { resolveZaiConfiguration } from "../lib/ai-provider-registry";
+
 const read = (p: string) => readFileSync(p, "utf8");
 
 // ─── 1. Invalid Z.ai model is skipped safely ─────────────────────────────────
 
-describe("Fix 1 — Invalid Z.ai model (glm-coding) is skipped safely", () => {
-  it("glm-coding is NOT in the Z.ai Coding Plan model allowlist", () => {
-    const src = read("lib/ai-provider-registry.ts");
-    // The allowlist must NOT include "glm-coding" — it returns HTTP 400.
-    // It MUST include "glm-4-coding" (the valid identifier).
-    assert.ok(
-      src.includes('ZAI_CODING_PLAN_MODELS = new Set(["glm-4-coding", "glm-4v-coding"])'),
-      "Z.ai Coding Plan allowlist must be {glm-4-coding, glm-4v-coding} — glm-coding is invalid",
-    );
-    // Strip comments and verify glm-coding is NOT in the actual Set() definition.
-    // (Comments explaining why glm-coding was removed are fine — they're not code.)
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
-    assert.doesNotMatch(
-      codeOnly,
-      /ZAI_CODING_PLAN_MODELS\s*=\s*new Set\([^)]*"glm-coding"/,
-      "glm-coding must NOT be in the ZAI_CODING_PLAN_MODELS Set (it returns HTTP 400 code 1211)",
-    );
+describe("Fix 1 — an unusable Z.ai model is skipped safely", () => {
+  // These used to assert on the text of a hardcoded allowlist
+  // (ZAI_CODING_PLAN_MODELS). That allowlist is gone: it was a stale local copy
+  // of Z.ai's catalogue that rejected the operator's own configured model and
+  // silently demoted rank-1 Z.ai. The behaviour it was protecting — a
+  // malformed model must be refused before an attempt is spent — is asserted
+  // here directly against the resolver instead.
+  const resolve = (model: string) =>
+    resolveZaiConfiguration("proposal", {
+      NODE_ENV: "test",
+      ZAI_API_KEY: "test-key",
+      ZAI_BASE_URL: "https://api.z.ai/api/paas/v4",
+      ZAI_PROPOSAL_MODEL: model,
+    } as NodeJS.ProcessEnv);
+
+  it("refuses glm-coding, which is not a valid Z.ai identifier", () => {
+    const r = resolve("glm-coding");
+    assert.equal(r.valid, false);
+    assert.equal(r.reason, "MODEL_UNSUPPORTED");
   });
 
-  it("resolveZaiConfiguration rejects glm-coding as MODEL_UNSUPPORTED", () => {
-    const src = read("lib/ai-provider-registry.ts");
-    // The resolver must return MODEL_UNSUPPORTED for invalid models so the
-    // provider is skipped without consuming an attempt.
-    assert.match(src, /reason: "MODEL_UNSUPPORTED"/);
-    assert.match(src, /MODEL_UNSUPPORTED.*Z\.ai model is not in the supported allowlist/);
+  it("refuses a foreign vendor identifier without contacting the provider", () => {
+    for (const model of ["gpt-4o", "claude-3-5-sonnet"]) {
+      assert.equal(resolve(model).valid, false, `${model} must be refused`);
+    }
   });
 
-  it("the Coding Plan default model is glm-4-coding (not glm-coding)", () => {
-    const src = read("lib/ai-provider-registry.ts");
-    // The plan-specific default for coding-plan must be glm-4-coding.
-    assert.match(
-      src,
-      /planDefault = planType === "coding-plan" \? "glm-4-coding"/,
-      "Coding Plan default model must be glm-4-coding (not glm-coding)",
-    );
+  it("accepts the configured GLM model so rank-1 Z.ai is actually attempted", () => {
+    const r = resolve("glm-4.7-flash");
+    assert.equal(r.valid, true);
+    assert.equal(r.reason, "OK");
   });
 });
 
@@ -192,12 +190,14 @@ describe("Fix 7 — Cerebras 429 falls through safely", () => {
 // ─── 8. Later capable providers are attempted when earlier providers fail ─────
 
 describe("Fix 8 — Later capable providers are attempted", () => {
-  it("MAX_PROVIDER_ATTEMPTS_PER_REQUEST default is 5 (not 3)", () => {
+  it("MAX_PROVIDER_ATTEMPTS_PER_REQUEST default is 10 (try all eligible providers)", () => {
     const src = read("lib/ai.ts");
-    // The default must be 5 so later providers (Groq, OpenRouter, Gemini)
-    // get tried even when Z.ai, Cerebras, and Mistral all fail.
-    assert.match(src, /return 5;\s*\}\)\(\)/);
-    assert.match(src, /FIX: raised default from 3 to 5/);
+    // Gap 3: the default was raised from 5 to 10 so ALL eligible providers
+    // get tried before the chain declares ALL_PROVIDERS_EXHAUSTED. This
+    // eliminates ATTEMPT_BUDGET_EXHAUSTED as a workflow blocker in the
+    // normal case.
+    assert.match(src, /return 10;\s*\}\)\(\)/);
+    assert.match(src, /eliminates ATTEMPT_BUDGET_EXHAUSTED as a workflow blocker/);
   });
 
   it("the attempt budget guards only apply to eligible providers", () => {
@@ -318,13 +318,20 @@ describe("Fix 13 — Engine response is partial/honest when AI matching fails", 
     assert.match(src, /Object\.assign\(tenderResult/, "must attach honesty fields to the return value");
   });
 
-  it("engine route propagates partial/blockers/nextAction in the response", () => {
+  it("engine route enqueues only and returns 202 with real persisted jobId", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
-    assert.match(src, /partial: isPartial/);
-    assert.match(src, /blockers: engineMeta\.blockers/);
-    assert.match(src, /nextAction: engineMeta\.nextAction/);
-    // ok must be false when partial is true (honesty).
-    assert.match(src, /ok: !isPartial/);
+    // Production contract: enqueue-only. The route must NOT run the engine
+    // synchronously. It must return 202 with a real persisted jobId.
+    assert.match(src, /status: 202/);
+    assert.match(src, /jobId: enqueueResult\.id/);
+    assert.match(src, /persistedStatus/);
+    assert.match(src, /statusEndpoint/);
+    assert.match(src, /idempotencyKey/);
+    assert.match(src, /sourceRevision/);
+    assert.match(src, /vaultVerification/);
+    // Must NOT contain sync execution patterns.
+    assert.doesNotMatch(src, /partial: isPartial/);
+    assert.doesNotMatch(src, /ok: !isPartial/);
   });
 });
 
@@ -388,8 +395,11 @@ describe("Fix 16 — No raw provider/org/prompt error leaks", () => {
     const src = read("app/api/tenders/[id]/engine/route.ts");
     // The catch block uses actionableEngineError (sanitized).
     assert.match(src, /actionableEngineError/);
-    // The success response includes blockers (array of safe messages) not raw errors.
-    assert.match(src, /blockers: engineMeta\.blockers \?\? \[\]/);
+    // The error response must not include raw error text.
+    assert.match(src, /diagnosticId/);
+    // Must not expose raw Prisma, SQL, or provider errors.
+    assert.doesNotMatch(src, /errorMessage.*error\.message/);
+    assert.doesNotMatch(src, /PrismaClient|P2021|P2022/);
   });
 });
 

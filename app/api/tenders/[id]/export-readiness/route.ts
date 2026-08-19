@@ -7,6 +7,7 @@ import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-r
 import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { isStrongSupportLevel, normalizeSupportLevel } from "../../../../../lib/engine/requirement-evidence-profile";
 import { safeApiError } from "../../../../../lib/engine/safe-api-error";
+import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -55,11 +56,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const ownedTender = await prisma.tender.findFirst({ where: { id, userId: actor.id }, select: { id: true } });
     if (!ownedTender) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
-    const [readiness, finalPackage] = await Promise.all([
+    const [readiness, finalPackage, canonicalDecision] = await Promise.all([
       getFinalSubmissionReadiness(prisma, { tenderId: id, userId: actor.id, requireFileContent: false }),
       getFinalPackageReadinessModel(prisma, id, actor.id),
+      getCanonicalTenderWorkflowDecision(prisma, actor.id, id),
     ]);
     if (!readiness) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
+    if (!canonicalDecision) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
     // Reconcile the export blocker with the same normalized support-level logic
     // used by the Requirement Coverage panel.
@@ -67,23 +70,65 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const reconciledTenderBlockers = readiness.tenderLevelBlockers.filter((blocker) =>
       !(blocker.category === "MANDATORY_EVIDENCE_INCOMPLETE" && evidenceStats.total > 0 && evidenceStats.percent >= 50),
     );
-    const finalPackageDocumentBlockers = finalPackage.documents.blockers.length + finalPackage.export.blockers.length;
-    const reconciledOk = readiness.ok && finalPackageDocumentBlockers === 0 && reconciledTenderBlockers.length === 0 && finalPackage.export.zipReady;
+    // finalPackage.export.blockers (final-package-readiness-model.ts) and
+    // reconciledTenderBlockers (final-submission-readiness.ts -- the engine
+    // behind the canonical Tender Release State used by the tender
+    // workspace/command-center/report) both independently detect "no
+    // confirmed Build Plan exists": the former as NO_CONFIRMED_BUILD_PLAN,
+    // the latter as NO_CURRENT_CONFIRMED_BUILD_PLAN. Confirmed by a real
+    // cross-page comparison against a live seeded tender: this route (which
+    // backs the Documents page and the Export Readiness panel) showed 10
+    // canonical blockers while the Tender Release State showed 9 for the
+    // identical tender at the identical moment. Drop the older engine's
+    // duplicate here so this route's count and list agree with the
+    // canonical Tender Release State; NO_CURRENT_CONFIRMED_BUILD_PLAN still
+    // blocks export via reconciledTenderBlockers, so no gate is weakened.
+    const hasCanonicalNoConfirmedBuildPlan = reconciledTenderBlockers.some(
+      (blocker) => blocker.category === "NO_CURRENT_CONFIRMED_BUILD_PLAN",
+    );
+    const reconciledExportBlockers = finalPackage.export.blockers.filter(
+      (blocker) => !(blocker.code === "NO_CONFIRMED_BUILD_PLAN" && hasCanonicalNoConfirmedBuildPlan),
+    );
+    const finalPackageDocumentBlockers = finalPackage.documents.blockers.length + reconciledExportBlockers.length;
 
     const submissionPlanBuilt = readiness.summary.planStatus !== "NO_PLAN_NO_DOCS" && readiness.summary.planStatus !== "NO_PLAN_WITH_ACTIVE_DOCS";
     const analysisSource = readiness.summary.analysisSource ?? "UNKNOWN";
     const analysisTrusted = analysisSource === "AI";
     const documentsCurrent = submissionPlanBuilt && analysisTrusted && readiness.summary.planStatus === "PLAN_MATCHED";
 
+    const upstreamCanonicalStages = new Set([
+      "NO_TENDER_FILE", "EXTRACTION_UNSAFE", "PARTIAL_AI_ANALYSIS", "STALE_ANALYSIS", "AI_ANALYZE_NOT_RUN",
+      "ENGINE_RUN_FAILED", "CRITICAL_TENDER_DETAILS_INVALID", "REQUIREMENTS_NOT_SOURCE_GROUNDED",
+      "NO_CONFIRMED_BUILD_PLAN", "MANDATORY_NO_COMPLIANCE_ROWS", "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE",
+    ]);
+    const suppressDownstream = upstreamCanonicalStages.has(canonicalDecision.currentBlockingStage);
+    const canonicalBlocker = canonicalDecision.currentBlockingStage === "EXPORT_ZIP_READY" ? [] : [{
+      code: canonicalDecision.blockingStageCode,
+      message: canonicalDecision.nextRequiredActionReason,
+      nextAction: canonicalDecision.nextRequiredActionLabel,
+      severity: "BLOCKER",
+    }];
+    // The canonical workflow is the primary authority. A stale independent
+    // readiness model must never leave `ok: true` beside a current Engine
+    // failure (the exact Preview 03b9c928 contradiction). Downstream counts are
+    // hidden until reachable for the same reason their blocker rows are hidden.
+    const visibleDocumentBlockerCount = suppressDownstream ? 0 : finalPackageDocumentBlockers;
+    const visibleTenderBlockerCount = suppressDownstream ? canonicalBlocker.length : reconciledTenderBlockers.length;
+    const reconciledOk = canonicalBlocker.length === 0
+      && readiness.ok
+      && finalPackageDocumentBlockers === 0
+      && reconciledTenderBlockers.length === 0
+      && finalPackage.export.zipReady;
     const publicBlockers = [
-      ...finalPackage.documents.blockers,
-      ...finalPackage.export.blockers,
-      ...reconciledTenderBlockers.map((blocker) => ({
+      ...canonicalBlocker,
+      ...(suppressDownstream ? [] : finalPackage.documents.blockers),
+      ...(suppressDownstream ? [] : reconciledExportBlockers),
+      ...(suppressDownstream ? [] : reconciledTenderBlockers.map((blocker) => ({
         code: blocker.category,
         message: blocker.title,
         nextAction: blocker.recommendedAction ?? "Resolve tender-level blocker",
         severity: blocker.severity,
-      })),
+      }))),
     ];
     const publicWarnings = readiness.advisoryWarnings.map((warning) => ({
       code: warning.code ?? warning.category,
@@ -96,8 +141,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ok: reconciledOk,
       blockers: publicBlockers,
       warnings: publicWarnings,
-      primaryBlockerReason: readiness.summary.primaryBlockerReason,
-      primaryFixAction: readiness.summary.primaryFixAction,
+      primaryBlockerReason: canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionReason : readiness.summary.primaryBlockerReason,
+      primaryFixAction: canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionLabel : readiness.summary.primaryFixAction,
       requiredDocumentsTotal: readiness.summary.requiredDocumentsTotal,
       generatedDocumentsTotal: finalPackage.documents.generated.length,
       exportReadyDocumentsTotal: readiness.summary.exportReadyDocumentsTotal,
@@ -113,10 +158,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           activeDocuments: finalPackage.export.exportCandidateCount,
           workspaceDocuments: finalPackage.export.workspaceCount,
           excludedInternalDrafts: finalPackage.documents.extraGeneratedOutsidePlan.length,
-          documentBlockers: finalPackageDocumentBlockers,
-          tenderLevelBlockers: reconciledTenderBlockers.length,
+          documentBlockers: visibleDocumentBlockerCount,
+          tenderLevelBlockers: visibleTenderBlockerCount,
           advisoryWarnings: readiness.summary.advisoryWarnings,
-          totalBlockers: finalPackageDocumentBlockers + reconciledTenderBlockers.length,
+          totalBlockers: visibleDocumentBlockerCount + visibleTenderBlockerCount,
           finalExportCandidates: finalPackage.export.exportCandidateCount,
           excludedInternalRows: finalPackage.documents.extraGeneratedOutsidePlan.length,
           missingContentCount: readiness.summary.missingContentCount,
@@ -157,7 +202,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         // generic "failed" message. These fields give the panel everything
         // it needs to show actionable guidance.
         primaryBlockerReason: (() => {
-          if (!submissionPlanBuilt) return "No confirmed Build Plan. Build and confirm the submission plan first.";
+          if (canonicalBlocker.length > 0) return canonicalDecision.nextRequiredActionReason;
+          if (!submissionPlanBuilt) return "No source-verified Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it.";
           const ungenerated = finalPackage.documents.missingRequired.length;
           if (ungenerated > 0) return `${ungenerated} required document(s) are planned but not generated.`;
           if (finalPackageDocumentBlockers > 0) return `${finalPackageDocumentBlockers} document blocker(s) remain.`;
@@ -166,9 +212,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           return null;
         })(),
         primaryFixAction: (() => {
-          if (!submissionPlanBuilt) return "Build/confirm submission plan.";
+          if (canonicalBlocker.length > 0) return canonicalDecision.nextRequiredActionLabel;
+          if (!submissionPlanBuilt) return "Run Engine to create and source-verify the Build Plan automatically.";
           const ungenerated = finalPackage.documents.missingRequired.length;
-          if (ungenerated > 0) return "Generate required documents.";
+          if (ungenerated > 0) return "Automatic post-Engine document generation is pending; resolve the canonical current blocker first.";
           if (finalPackageDocumentBlockers > 0) return "Resolve document blockers.";
           if (reconciledTenderBlockers.length > 0) return reconciledTenderBlockers[0]?.recommendedAction ?? "Resolve tender-level blockers.";
           if (!readiness.ok) return "Resolve all export gate blockers.";

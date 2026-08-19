@@ -66,7 +66,10 @@ import {
   isPhysicalSubmissionMethod,
   isPortalSubmissionMethod,
 } from "./submission-method-policy";
-import { OPERATIONAL_WARNING_FIELDS as CANONICAL_OPERATIONAL_WARNING_FIELDS } from "./draft-final-gate-separation";
+import {
+  OPERATIONAL_WARNING_FIELDS as CANONICAL_OPERATIONAL_WARNING_FIELDS,
+  SUBMISSION_CRITICAL_FIELDS as CANONICAL_SUBMISSION_CRITICAL_FIELDS,
+} from "./draft-final-gate-separation";
 
 // ─── Authority classes ─────────────────────────────────────────────────────
 
@@ -143,14 +146,13 @@ export const OPERATIONAL_WARNING_FIELDS = CANONICAL_OPERATIONAL_WARNING_FIELDS;
  *
  * `submissionEndpoint` is virtual — it's either `submissionEmails` or
  * `submissionAddress` depending on the method.
+ *
+ * Re-exported (not re-declared) from draft-final-gate-separation.ts, the
+ * canonical source, so the two modules cannot silently drift apart.
+ * Previously this was a byte-for-byte duplicate Set declaration —
+ * consolidated to prevent divergence.
  */
-export const SUBMISSION_CRITICAL_FIELDS = new Set([
-  "clientName",
-  "title",
-  "deadline",
-  "submissionMethod",
-  "submissionEndpoint",
-]);
+export const SUBMISSION_CRITICAL_FIELDS = CANONICAL_SUBMISSION_CRITICAL_FIELDS;
 
 /**
  * Check if a field is an operational-warning field (never blocks).

@@ -78,6 +78,10 @@ describe("isAIEnabled — 8-provider awareness", () => {
   });
 
   it("returns true when only DEEPSEEK_API_KEY is set", async () => {
+    // "only" has to mean only — clear Z.ai and Cerebras too, or the case the
+    // name describes is not the case being exercised.
+    delete process.env.ZAI_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.OPENAI_API_KEY;
@@ -93,6 +97,8 @@ describe("isAIEnabled — 8-provider awareness", () => {
   });
 
   it("returns true when only OPENAI_API_KEY is set", async () => {
+    delete process.env.ZAI_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.MISTRAL_API_KEY;
@@ -106,14 +112,22 @@ describe("isAIEnabled — 8-provider awareness", () => {
   });
 
   it("returns false when no AI provider is set", async () => {
-    delete process.env.ANTHROPIC_API_KEY;
+    // Must clear ALL TEN providers in the canonical order, not the original
+    // eight: this test predates Z.ai and Cerebras, and leaving either set made
+    // the assertion depend on which key the surrounding environment happened to
+    // export. CI exports GEMINI_API_KEY, which this list did delete, so the gap
+    // stayed invisible there while the same test failed under a ZAI_API_KEY or
+    // CEREBRAS_API_KEY environment.
+    delete process.env.ZAI_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
+    delete process.env.MISTRAL_API_KEY;
+    delete process.env.GROQ_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.OPENAI_API_KEY;
-    delete process.env.MISTRAL_API_KEY;
-    delete process.env.DEEPSEEK_API_KEY;
-    delete process.env.GROQ_API_KEY;
     delete process.env.TOGETHER_API_KEY;
-    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.DEEPSEEK_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
     const { isAIConfigured } = await import("../lib/env-check");
     // isAIConfigured reads from process.env at call time
     assert.equal(isAIConfigured(), false);

@@ -8,69 +8,14 @@ import { MobileSidebarToggle } from "../../components/mobile-sidebar-toggle";
 import type { ReactNode } from "react";
 import { NotificationBell } from "../components/notification-bell";
 import { BuildVersionBadge } from "../../components/build-version-badge";
+import { HeaderPageTitle } from "../../components/header-page-title";
+import { SearchIcon } from "../../components/icons";
+import { DashboardGroupSubnav } from "../../components/dashboard-group-subnav";
+import { TenderDetailDeleteControl } from "../../components/tender-detail-delete-control";
 import {
-  HomeIcon, ListIcon, ClockIcon, CalendarIcon, DatabaseIcon, TrendingUpIcon,
-  UploadIcon, ClipboardCheckIcon, CodeIcon, ImageIcon, SparklesIcon, SettingsIcon,
-  BrainIcon, PuzzleIcon, ShieldIcon, DocumentIcon, PackageIcon, BarChartIcon,
-  SearchIcon, UsersIcon, GaugeIcon,
-} from "../../components/icons";
-
-// Nav icons were previously raw emoji characters (🏠 📋 🕘 etc). Emoji glyph
-// rendering depends entirely on the viewer's OS/browser having a full-color
-// emoji font installed — a client-side concern no server deploy can fix.
-// Environments without one (many headless browsers, screenshot/automation
-// tools, some desktop Linux setups) show blank "tofu" boxes for every single
-// nav item, on every single page. Inline SVGs (components/icons.tsx) render
-// identically everywhere.
-const NAV_GROUPS_BASE = [
-  {
-    title: "Workspace",
-    roles: null as string[] | null,
-    links: [
-      { href: "/dashboard", label: "Overview", icon: <HomeIcon /> },
-      { href: "/dashboard/tenders", label: "Active Tenders", icon: <ListIcon /> },
-      { href: "/dashboard/history", label: "Tender History", icon: <ClockIcon /> },
-      { href: "/dashboard/calendar", label: "Deadline Calendar", icon: <CalendarIcon /> },
-    ],
-  },
-  {
-    title: "Knowledge",
-    roles: ["ADMIN", "PROPOSAL_MANAGER"] as string[] | null,
-    links: [
-      { href: "/dashboard/company", label: "Knowledge Vault", icon: <DatabaseIcon /> },
-      { href: "/dashboard/company/readiness", label: "Profile Readiness", icon: <TrendingUpIcon /> },
-      { href: "/dashboard/company/plan-b-import", label: "Legacy Data Import", icon: <UploadIcon /> },
-      { href: "/dashboard/company/review-board", label: "Review Board", icon: <ClipboardCheckIcon /> },
-      { href: "/dashboard/company/review", label: "Data Diagnostics", icon: <CodeIcon /> },
-      { href: "/dashboard/assets", label: "Brand Assets", icon: <ImageIcon /> },
-      { href: "/dashboard/setup", label: "Setup Wizard", icon: <SparklesIcon /> },
-      { href: "/dashboard/settings", label: "Settings", icon: <SettingsIcon /> },
-    ],
-  },
-  {
-    title: "Engine",
-    roles: null as string[] | null,
-    links: [
-      { href: "/dashboard/analysis", label: "Global Analysis", icon: <BrainIcon /> },
-      { href: "/dashboard/matching", label: "Global Matching", icon: <PuzzleIcon /> },
-      { href: "/dashboard/compliance", label: "Global Compliance", icon: <ShieldIcon /> },
-      { href: "/dashboard/documents", label: "Document Archive", icon: <DocumentIcon /> },
-      { href: "/dashboard/export", label: "Export Hub", icon: <PackageIcon /> },
-      { href: "/dashboard/activity", label: "Activity Logs", icon: <ListIcon /> },
-      { href: "/dashboard/analytics", label: "System Analytics", icon: <BarChartIcon /> },
-      { href: "/dashboard/search", label: "Global Search", icon: <SearchIcon /> },
-    ],
-  },
-  {
-    title: "Admin",
-    roles: ["ADMIN"] as string[] | null,
-    links: [
-      { href: "/dashboard/users", label: "User Management", icon: <UsersIcon /> },
-      { href: "/dashboard/admin/ai-readiness", label: "AI Readiness", icon: <SparklesIcon /> },
-      { href: "/dashboard/system", label: "System Status", icon: <GaugeIcon /> },
-    ],
-  },
-];
+  DASHBOARD_NAV_GROUPS,
+  filterDashboardNavGroupsByRole,
+} from "../../lib/dashboard-navigation";
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const userId = await getSession();
@@ -84,9 +29,8 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   ]);
   if (!user) redirect("/login");
 
-  const groups = NAV_GROUPS_BASE
-    .filter((group) => !group.roles || group.roles.includes(user.role))
-    .map((group) => ({ title: group.title, links: group.links }));
+  const groups = filterDashboardNavGroupsByRole(DASHBOARD_NAV_GROUPS, user.role);
+  const canDeleteTenders = user.role === "ADMIN" || user.role === "PROPOSAL_MANAGER";
 
   return (
     <div className="min-h-screen min-w-0 bg-slate-50 xl:flex">
@@ -130,10 +74,23 @@ export default async function DashboardLayout({ children }: { children: ReactNod
       </aside>
 
       <main id="main-content" className="min-w-0 flex-1" tabIndex={-1}>
-        <div className="sticky top-0 z-30 flex min-w-0 justify-end border-b bg-white/90 px-4 py-2 backdrop-blur-sm xl:px-8">
-          <NotificationBell initialUnread={unreadCount} />
+        <div className="sticky top-0 z-30 flex min-w-0 items-center justify-between border-b bg-white/90 px-4 py-2 backdrop-blur-sm xl:px-8">
+          <HeaderPageTitle />
+          <div className="flex items-center gap-2">
+            <TenderDetailDeleteControl canDelete={canDeleteTenders} />
+            <Link
+              href="/dashboard/search"
+              aria-label="Global Search"
+              title="Global Search"
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+            >
+              <SearchIcon />
+            </Link>
+            <NotificationBell initialUnread={unreadCount} />
+          </div>
         </div>
         <div className="mx-auto w-full min-w-0 max-w-7xl p-4 sm:p-6 xl:p-8">
+          <DashboardGroupSubnav setupComplete={Boolean(company?.setupCompletedAt)} />
           {children}
         </div>
       </main>

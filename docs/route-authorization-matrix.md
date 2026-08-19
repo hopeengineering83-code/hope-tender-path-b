@@ -33,7 +33,6 @@ Audited at PR #936 head (`hotfix/metadata-repair-crash-and-snapshot-consistency`
 | /api/tenders/[id]/authority-review | GET | requireRole | A, PM | Y | no | |
 | /api/tenders/[id]/auto-finalize | POST | requireRole | A, PM | Y | MUTATION | see P0 fallback-eligibility finding (audit §9) |
 | /api/tenders/[id]/bid-decision | GET/POST | requireRole | A, PM | Y | MUTATION | writes status "NO_BID" (outside canonical set) |
-| /api/tenders/[id]/bid-outcome | PATCH/GET | requireRole / getSession | A,PM / any | Y | MUTATION | writes status "ACTIVE" (outside canonical set) |
 | /api/tenders/[id]/bid-strategy | GET | requireUser | any auth | Y | no | |
 | /api/tenders/[id]/build-plan | POST | requireRole | A, PM | Y | no | |
 | /api/tenders/[id]/build-plan/confirm | POST | requireRole | A, PM | Y | no | Serializable tx + optimistic guard |
@@ -54,7 +53,6 @@ Audited at PR #936 head (`hotfix/metadata-repair-crash-and-snapshot-consistency`
 | /api/tenders/[id]/evaluator-objections | GET/PATCH | requireRole | A, PM | Y | MUTATION | |
 | /api/tenders/[id]/evaluator-simulation | POST | requireUser | any auth | Y | AI persistent | P2: any role |
 | /api/tenders/[id]/export | POST | requireRole | A, PM | Y | MUTATION | P1: status flip + audit outside package tx |
-| /api/tenders/[id]/export-policy/repair-assets | POST | requireRole | A, PM | Y | no | |
 | /api/tenders/[id]/export-readiness | GET | requireRole | A, PM, REV | Y | no | |
 | /api/tenders/[id]/extraction-quality | GET | getSession | any | Y | no | |
 | /api/tenders/[id]/files/[fileId] | GET/DELETE | getSession / requireRole(DEL) | any / A,PM | Y | MUTATION persistent | GET returns bytes, owner-scoped; DELETE hard-deletes (P1 lifecycle) |
@@ -66,7 +64,6 @@ Audited at PR #936 head (`hotfix/metadata-repair-crash-and-snapshot-consistency`
 | /api/tenders/[id]/link-vault-evidence | GET/POST | requireRole | A, PM | Y | MUTATION | |
 | /api/tenders/[id]/link-vault-evidence-auto | POST | requireRole | A, PM | Y | MUTATION | |
 | /api/tenders/[id]/matches | PUT | requireRole | A, PM | Y | MUTATION | |
-| /api/tenders/[id]/matching-diagnostics | GET | getSession | any | Y | no | |
 | /api/tenders/[id]/matching-quality | GET | getSession | any | Y | no | |
 | /api/tenders/[id]/metadata-override | GET/POST | requireRole | A, PM | Y | MUTATION | |
 | /api/tenders/[id]/pipeline-diagnostic | GET | requireRole | A, PM | Y | no | |
@@ -135,7 +132,6 @@ Audited at PR #936 head (`hotfix/metadata-repair-crash-and-snapshot-consistency`
 | /api/users | GET/POST | requireRole | ADMIN | N/A | MUTATION | |
 | /api/users/[id] | GET/PUT/DELETE | mixed | self-or-admin | Y | no | |
 | /api/system/readiness | GET | requireRole | ADMIN | N/A | no | |
-| /api/system/deep-reasoning-status | GET | getSession | any | N/A | no | |
 | /api/system/deep-reasoning-estimate | POST | getSession | any | N/A | no | |
 | /api/system/deep-reasoning-runs | GET | requireUser + role gate | A, PM | **N** | no | **P1**: query-string userId/tenderId filters, never constrained to actor — PM reads any user's runs |
 | /api/ai-runtime | GET | requireRole | A, PM | N/A | no | |

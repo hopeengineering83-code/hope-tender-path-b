@@ -84,13 +84,17 @@ export async function DELETE(
   const file = await prisma.tenderFile.findFirst({ where: { id: fileId, tenderId } });
   if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
+  let deletion;
   try {
-    await durableDeleteTenderFile(prisma, fileId, tenderId, actor.id);
+    deletion = await durableDeleteTenderFile(prisma, fileId, tenderId, actor.id);
   } catch (error) {
     logger.error("[file-delete] durable deletion failed", {
       tenderId,
       fileId,
       errorName: error instanceof Error ? error.constructor.name : typeof error,
+      errorCode: error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code ?? "")
+        : null,
     });
     return NextResponse.json(
       {
@@ -106,7 +110,22 @@ export async function DELETE(
     action: "DELETE",
     entityType: "TenderFile",
     entityId: fileId,
-    description: `Deleted a tender file from tender "${tender.title}"`,
+    description: deletion.storageCleanupPending
+      ? `Removed a tender file from active use in tender "${tender.title}"; external storage cleanup remains pending`
+      : `Deleted a tender file from tender "${tender.title}"`,
+    metadata: {
+      tenderId,
+      storageCleanupPending: deletion.storageCleanupPending,
+      alreadyDeleted: deletion.alreadyDeleted === true,
+    },
   });
-  return NextResponse.json({ success: true });
+
+  return NextResponse.json(
+    {
+      success: true,
+      storageCleanupPending: deletion.storageCleanupPending,
+      alreadyDeleted: deletion.alreadyDeleted === true,
+    },
+    { status: deletion.storageCleanupPending ? 202 : 200 },
+  );
 }

@@ -16,9 +16,16 @@ import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { requireUser, unauthorizedResponse, forbiddenResponse } from "../../../../../lib/auth";
 import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
+import { countTraceable } from "../../../../../lib/engine/requirement-source-traceability";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
-import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
+import {
+  VAULT_REVIEW_CONSUMER_SELECT,
+  canUseVaultRecord,
+} from "../../../../../lib/vault-review-provenance";
+import { loadDurableCompanySupportRecords } from "../../../../../lib/prisma-schema-compatibility";
+import { manualGateGuidance } from "../../../../../lib/ui/manual-gate-guidance";
 
 // Confidence ceiling applied to bid-strategy win probability when the tender
 // analysis came from regex/deterministic fallback. The strategy is computed
@@ -49,19 +56,23 @@ function hasExtractionUnsafeStatus(status: string | null | undefined, analysisEx
   return /EXTRACTION_CORRUPTED|OCR_REQUIRED|EXTRACTION_WEAK_REVIEW_REQUIRED|REGEX_FALLBACK_FROM_WEAK_EXTRACTION/.test(combined);
 }
 
-function computeMandatoryEvidenceCoverageRatio(requirements: Array<{
+function computeMandatoryEvidenceCoverage(requirements: Array<{
   priority: string;
   complianceMatrixRows?: Array<{ supportLevel: string | null }> | null;
-}>): number {
+}>): { releaseRatio: number; progressRatio: number; partial: number } {
   const mandatory = requirements.filter((r) => String(r.priority ?? "").toUpperCase() === "MANDATORY");
-  if (mandatory.length === 0) return 0;
+  if (mandatory.length === 0) return { releaseRatio: 0, progressRatio: 0, partial: 0 };
   const covered = mandatory.filter((r) =>
     (r.complianceMatrixRows ?? []).some((row) => {
       const level = String(row.supportLevel ?? "").toUpperCase();
       return level === "FULL" || level === "SUBSTANTIAL";
     }),
   ).length;
-  return covered / mandatory.length;
+  const partial = mandatory.filter((r) =>
+    (r.complianceMatrixRows ?? []).some((row) => String(row.supportLevel ?? "").toUpperCase() === "PARTIAL")
+      && !(r.complianceMatrixRows ?? []).some((row) => ["FULL", "SUBSTANTIAL"].includes(String(row.supportLevel ?? "").toUpperCase())),
+  ).length;
+  return { releaseRatio: covered / mandatory.length, progressRatio: (covered + partial * 0.5) / mandatory.length, partial };
 }
 
 export async function GET(
@@ -93,6 +104,10 @@ export async function GET(
             requiredQuantity: true,
             exactFileName: true,
             sourceConfidence: true,
+            sourceTenderFileId: true,
+            sourcePageNumber: true,
+            sourceExactQuote: true,
+            sectionReference: true,
             complianceMatrixRows: { select: { supportLevel: true } },
           },
         },
@@ -121,20 +136,13 @@ export async function GET(
     prisma.company.findUnique({
       where: { userId: actor.id },
       select: {
+        id: true,
         name: true,
         sectors: true,
         serviceLines: true,
         licenseGrade: true,
         country: true,
         headcount: true,
-        _count: {
-          select: {
-            experts: { where: { trustLevel: "REVIEWED" } },
-            projects: { where: { trustLevel: "REVIEWED" } },
-            legalRecords: true,
-            financialRecords: true,
-          },
-        },
       },
     }),
     // Historical bid outcomes — all past tenders with a resolved outcome
@@ -147,9 +155,35 @@ export async function GET(
   if (!tender) return NextResponse.json({ error: "Tender not found" }, { status: 404 });
   if (!company) return NextResponse.json({ error: "Company profile required" }, { status: 400 });
 
+  const [expertRecords, projectRecords, supportRecords] = await Promise.all([
+    prisma.expert.findMany({
+      where: { companyId: company.id, deletedAt: null, isActive: true },
+      select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT,
+    }),
+    prisma.project.findMany({
+      where: { companyId: company.id, deletedAt: null },
+      select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT,
+    }),
+    loadDurableCompanySupportRecords(prisma, company.id),
+  ]);
+  const companyEvidenceCounts = {
+    experts: expertRecords.filter((record) => canUseVaultRecord(record, "GENERATION")).length,
+    projects: projectRecords.filter((record) => canUseVaultRecord(record, "GENERATION")).length,
+    legalRecords: supportRecords.legalRecords.length,
+    financialRecords: supportRecords.financialRecords.length,
+  };
+
   const historicalTotal = pastTenders.length;
   const historicalWins = pastTenders.filter((t) => t.bidOutcome === "WON").length;
-  const analysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => "UNKNOWN" as const);
+  // Use the same durable, hash-bound authority shown by Analysis Quality and
+  // enforced by release gates. Legacy notes can describe an old AI run but
+  // cannot prove that the promoted result belongs to the current source set.
+  const releaseSnapshot = await getTenderReleaseSnapshot(prisma, id, actor.id).catch(() => null);
+  const analysisSource = releaseSnapshot?.analysis.state === "AI_SUCCEEDED"
+    && releaseSnapshot.analysis.contentHashMatch
+    && releaseSnapshot.analysis.canonicalJobId
+    ? "AI" as const
+    : "UNKNOWN" as const;
 
   // ── Bid Strategy extraction gate ─────────────────────────────────────────
   // Block bid strategy when extraction or analysis is unreliable. Bid strategy
@@ -162,19 +196,33 @@ export async function GET(
     extractionStatus === "EXTRACTION_CORRUPTED_AI_SKIPPED" ||
     extractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION";
   if (extractionBlocked) {
+    // Gap A: the guidance is chosen by the first unmet condition, and every
+    // string it can emit respects both manual gates. Extraction is genuinely
+    // automatic; AI Analyze and Run Engine are not, and no response here may
+    // imply an upload starts either of them.
+    const guidance = manualGateGuidance({ extractionReliable: false, analysisCurrent: false });
     return NextResponse.json({
       strategy: null,
       blocked: true,
       reason: "BID_STRATEGY_UNAVAILABLE_EXTRACTION_WEAK",
-      message:
-        "Bid strategy unavailable — extraction or analysis is unreliable. Run OCR extraction or re-run AI Analyze before requesting bid strategy.",
+      nextAction: guidance.nextAction,
+      message: `Bid strategy unavailable — extraction is unreliable, so extracted requirements cannot be trusted. ${guidance.message}`,
     }, { status: 200 });
   }
 
-  const evidenceCoverageRatio = computeMandatoryEvidenceCoverageRatio(tender.requirements);
+  const evidenceCoverage = computeMandatoryEvidenceCoverage(tender.requirements);
+  const evidenceCoverageRatio = evidenceCoverage.releaseRatio;
   const totalPages = extractedPageTotal(tender.files);
   const mandatoryCount = tender.requirements.filter((req) => String(req.priority ?? "").toUpperCase() === "MANDATORY").length;
-  const sourceRefCount = tender.requirements.filter((req) => (req.sourceConfidence ?? 0) > 0).length;
+  // Canonical predicate. This previously counted only requirements whose
+  // AI-supplied `sourceConfidence` was > 0, which is not a source anchor at all:
+  // mapToDraft stores `sourceTenderFileId ? (req.sourceConfidence ?? 0) : 0`, so
+  // a requirement with a real active file, a proven page and a verbatim quote
+  // still scores 0 whenever the model omitted the field. That made this route
+  // report "Extracted requirements have no source traceability" on the very same
+  // tender where the workflow panel showed 4/4 mandatory requirements traced and
+  // the analysis panel showed Grounding 100.
+  const sourceRefCount = countTraceable(tender.requirements);
   const requiredDocsKnown = Boolean(
     (tender.exactFileNaming ?? "").trim() ||
       (tender.exactFileOrder ?? "").trim() ||
@@ -205,12 +253,20 @@ export async function GET(
   if (totalPages > 5 && !requiredDocsKnown) unsafeBlockers.push("Required documents/forms are not known from explicit or derived plan inputs.");
 
   if (unsafeBlockers.length > 0) {
+    // Same guidance source as the blocked branch above. `error` is the string
+    // the panel renders when the response is not ok, so it carries the
+    // truthful next step rather than leaving the client to invent one.
+    const guidance = manualGateGuidance({
+      extractionReliable: !hasExtractionUnsafeStatus(tender.status, tender.analysisExtractionStatus),
+      analysisCurrent: !isUnapprovedFallbackOrUnknown(analysisSource),
+      engineRunForCurrentRevision: false,
+    });
     return NextResponse.json(
       {
         unavailable: true,
-        error: "Bid strategy unavailable — extraction/analysis is unreliable.",
+        error: `Bid strategy unavailable — extraction or analysis is not reliable enough to score. ${guidance.message}`,
         code: "BID_STRATEGY_UNAVAILABLE_ANALYSIS_UNRELIABLE",
-        nextAction: hasExtractionUnsafeStatus(tender.status, tender.analysisExtractionStatus) ? "RUN_OCR_OR_UPLOAD_CLEARER_SCAN" : "RETRY_AI_ANALYZE",
+        nextAction: guidance.nextAction,
         blockers: unsafeBlockers,
         analysisSource,
         extractionStatus: tender.analysisExtractionStatus ?? null,
@@ -235,6 +291,7 @@ export async function GET(
       submissionMethod: tender.submissionMethod,
       analysisSource,
       evidenceCoverageRatio,
+      evidenceProgressRatio: evidenceCoverage.progressRatio,
     },
     company: {
       name: company.name,
@@ -243,10 +300,10 @@ export async function GET(
       licenseGrade: company.licenseGrade,
       country: company.country,
       headcount: company.headcount,
-      expertCount: company._count.experts,
-      projectCount: company._count.projects,
-      legalRecordCount: company._count.legalRecords,
-      financialRecordCount: company._count.financialRecords,
+      expertCount: companyEvidenceCounts.experts,
+      projectCount: companyEvidenceCounts.projects,
+      legalRecordCount: companyEvidenceCounts.legalRecords,
+      financialRecordCount: companyEvidenceCounts.financialRecords,
       historicalWins,
       historicalTotal,
     },
@@ -257,13 +314,14 @@ export async function GET(
   // without the new context fields.
   const fallbackSource = isFallbackLikeAnalysisSource(analysisSource);
   const zeroEvidence = evidenceCoverageRatio === 0;
+  const evidenceLimited = evidenceCoverageRatio < 0.8;
   const confidenceCeiling = fallbackSource
     ? Math.min(FALLBACK_CONFIDENCE_CEILING, zeroEvidence ? ZERO_EVIDENCE_CONFIDENCE_CEILING : FALLBACK_CONFIDENCE_CEILING)
     : zeroEvidence
       ? ZERO_EVIDENCE_CONFIDENCE_CEILING
       : null;
 
-  let confidenceCapped = false;
+  let confidenceCapped = evidenceLimited;
   if (confidenceCeiling !== null && strategy.winProbability > confidenceCeiling) {
     strategy.winProbability = confidenceCeiling;
     confidenceCapped = true;
@@ -275,7 +333,9 @@ export async function GET(
     confidenceNotes.push("Bid strategy confidence is capped because the tender analysis used regex/deterministic fallback or an unknown source. Re-run AI Analyze for full-confidence strategy.");
   }
   if (zeroEvidence) {
-    confidenceNotes.push("Bid strategy confidence is capped because mandatory evidence coverage is 0%. Confirm reviewed evidence links before relying on the win probability.");
+    confidenceNotes.push("Bid strategy confidence is capped because mandatory evidence coverage is 0%. Add or strengthen eligible source-backed evidence before relying on the win probability.");
+  } else if (evidenceLimited) {
+    confidenceNotes.push(`Evidence confidence is limited: ${Math.round(evidenceCoverageRatio * 100)}% of mandatory requirements are release-qualified; ${evidenceCoverage.partial} have partial evidence. Competitive fit may still be strong, but strengthen eligible source-backed evidence before committing.`);
   }
   const confidenceNote = confidenceNotes.length > 0 ? confidenceNotes.join(" ") : null;
 

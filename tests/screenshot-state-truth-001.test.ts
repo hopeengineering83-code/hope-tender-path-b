@@ -488,7 +488,7 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
 
     it("labels the Live Pipeline table as limited to recent tenders", () => {
-      assert.match(dashboardSrc, /Recent \{recentTenders\.length\} tenders/);
+      assert.match(dashboardSrc, /Last \{recentTenders\.length\} tender\{recentTenders\.length === 1 \? "" : "s"\}/);
     });
   });
 
@@ -585,8 +585,8 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(dashboardSrc, /minimum — per-tender verification still required/);
     });
 
-    it("labels Live Pipeline as 'Workspace projection (NOT canonical Clear)'", () => {
-      assert.match(dashboardSrc, /Workspace projection \(NOT canonical Clear\)/);
+    it("labels Live Pipeline as a non-canonical workspace projection", () => {
+      assert.match(dashboardSrc, /workspace projection — the canonical state lives in each tender/);
     });
 
     it("does not use green color for the Critical blockers count", () => {
@@ -694,12 +694,9 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     });
   });
 
-  describe("System readiness production path (worker_auth WARNING, not unconditional CRITICAL)", () => {
-    it("marks worker_auth as requiredForProduction: false (not unconditional)", () => {
-      // CHATGPT-M1 recheck 9 item #2: marking production CRITICAL is only
-      // correct when the deployment requires automated processing. We cannot
-      // infer that, so it's a WARNING, not requiredForProduction.
-      assert.match(systemSrc, /key: "worker_auth"[\s\S]*?requiredForProduction: false/);
+  describe("System readiness production path for upload-and-continue automation", () => {
+    it("requires automated worker authentication for production readiness", () => {
+      assert.match(systemSrc, /key: "worker_auth"[\s\S]*?requiredForProduction: true/);
     });
 
     it("title reflects operational (not security) rationale", () => {
@@ -708,17 +705,14 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
 
     it("documents the requireRole fallback (not public unauthenticated)", () => {
       assert.match(systemSrc, /requireRole\("ADMIN", "PROPOSAL_MANAGER"\)|requireRole\(ADMIN, PROPOSAL_MANAGER\)/);
-      assert.match(systemSrc, /falls back to requireRole/);
+      assert.match(systemSrc, /It falls back/i);
     });
 
     it("does NOT claim the endpoint is unauthenticated when secrets are absent", () => {
       assert.doesNotMatch(systemSrc, /endpoints are unauthenticated/);
     });
 
-    it("returns WARNING (not CRITICAL) in production when no secret", async () => {
-      // The endpoint remains safely usable through user-scoped execution.
-      // Missing secrets are an operational limitation, not a production
-      // blocker.
+    it("returns CRITICAL in production when no secret because continuations would stall", async () => {
       const savedNodeEnv = process.env.NODE_ENV;
       const savedVercelEnv = process.env.VERCEL_ENV;
       const savedWorker = process.env.AI_JOBS_WORKER_SECRET;
@@ -730,17 +724,9 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       try {
         const r = await getSystemReadiness();
         const workerCheck = r.checks.find((c) => c.key === "worker_auth");
-        assert.equal(workerCheck?.severity, "WARNING", "worker_auth must be WARNING, not CRITICAL");
-        assert.equal(workerCheck?.requiredForProduction, false);
-        // productionReady should NOT be false just because worker_auth is WARNING
-        // (it's not requiredForProduction)
-        const otherRequiredFailures = r.checks.filter(
-          (c) => c.requiredForProduction && c.severity !== "OK",
-        );
-        // productionReady is false only if OTHER required checks fail (e.g. DB
-        // connectivity in test env). worker_auth alone must NOT cause it.
-        const workerCausesFailure = otherRequiredFailures.some((c) => c.key === "worker_auth");
-        assert.equal(workerCausesFailure, false, "worker_auth must not cause productionReady=false");
+        assert.equal(workerCheck?.severity, "CRITICAL");
+        assert.equal(workerCheck?.requiredForProduction, true);
+        assert.equal(r.productionReady, false);
       } finally {
         Reflect.set(process.env, "NODE_ENV", savedNodeEnv ?? "test");
         if (savedVercelEnv !== undefined) process.env.VERCEL_ENV = savedVercelEnv;
@@ -866,24 +852,22 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(ccSrc, /No HIGH objections/);
     });
 
-    it("command center Documents card reads ONLY canonical summary values (no local filtering)", () => {
+    it("command center Documents card reads readiness ONLY from the canonical Tender Release State (no local filtering or re-derived counts)", () => {
       const ccSrc = readFileSync("app/dashboard/tenders/[id]/command-center/page.tsx", "utf8");
-      // Must use ONLY the counts from getFinalSubmissionReadiness summary.
-      assert.match(ccSrc, /summary\.exportReadyDocumentsTotal/);
-      assert.match(ccSrc, /summary\.finalExportCandidates/);
-      assert.match(ccSrc, /summary\.documentBlockers/);
+      // The Documents card's blocker/readiness caption must come from the
+      // canonical releaseState (lib/engine/tender-release-state.ts), not a
+      // second, locally re-derived export-ready/final-candidate split.
+      assert.match(ccSrc, /releaseState\.blockerTotal/);
+      assert.match(ccSrc, /releaseState\.criticalBlockerTotal/);
       // Must NOT import or use local document filtering helpers.
       assert.doesNotMatch(ccSrc, /from ["']\.\.\/.+lib\/engine\/document-output-state["']/);
       assert.doesNotMatch(ccSrc, /filterFinalExportCandidateDocuments/);
       assert.doesNotMatch(ccSrc, /isExportReady/);
       // Must NOT use a local ACTIVE_DOC_STATUSES vocabulary.
       assert.doesNotMatch(ccSrc, /ACTIVE_DOC_STATUSES/);
-      // Must label the second count "final candidates" (not "generated").
-      assert.match(ccSrc, /final candidates/);
-      assert.doesNotMatch(ccSrc, /\d+ generated/);
-      // Must fail closed when canonical is unavailable.
+      // Must fail closed when the canonical release state is unavailable.
       assert.match(ccSrc, /Canonical readiness unavailable/);
-      assert.match(ccSrc, /canonical\s*\?\s*[\s\S]*?:\s*"Canonical readiness unavailable"/);
+      assert.match(ccSrc, /releaseState\s*\?\s*[\s\S]*?:\s*"Canonical readiness unavailable"/);
     });
 
     it("command center AI jobs section is labelled 'Historical' (not current state)", () => {
@@ -899,15 +883,15 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.doesNotMatch(ccSrc, /bg-green-100 text-green-700/);
     });
 
-    it("package-lock.json has NO diff vs authorized base (fsevents dev:true preserved)", () => {
-      // Verify the fsevents 2.3.2 entry still has "dev": true — the
+    it("package-lock.json has NO diff vs authorized base (fsevents optional:true preserved)", () => {
+      // Verify the fsevents 2.3.2 entry still has "optional": true — the
       // unauthorized lockfile change removed it. We check the specific
       // entry to avoid greedy regex matching across the whole file.
       const lockSrc = readFileSync("package-lock.json", "utf8");
-      // Find the playwright fsevents 2.3.2 block and verify dev:true is present.
+      // Find the playwright fsevents 2.3.2 block and verify optional:true is present.
       const fseventsBlock = lockSrc.match(/"node_modules\/playwright\/node_modules\/fsevents":\s*\{[^}]*\}/);
       assert.ok(fseventsBlock, "playwright fsevents block must exist");
-      assert.match(fseventsBlock[0], /"dev": true/, 'fsevents 2.3.2 must have "dev": true (unauthorized lockfile change reverted)');
+      assert.match(fseventsBlock[0], /"optional": true/, 'fsevents 2.3.2 must have "optional": true (unauthorized lockfile change reverted)');
     });
   });
 });

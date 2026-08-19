@@ -15,13 +15,22 @@ import {
   deleteCompanyDocumentDurably,
 } from "../../../../lib/company-document-durable-deletion";
 
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+function parseBoundedLimit(value: string | null): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PAGE_SIZE;
+  return Math.min(parsed, MAX_PAGE_SIZE);
+}
+
 export async function GET(req: Request) {
   const userId = await getSession();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   await prismaReady;
 
   const { searchParams } = new URL(req.url);
-  const limit = Math.min(Number(searchParams.get("limit") ?? "100"), 200);
+  const limit = parseBoundedLimit(searchParams.get("limit"));
   const cursor = searchParams.get("cursor") ?? undefined;
   const category = searchParams.get("category") ?? undefined;
   const q = searchParams.get("q") ?? "";
@@ -38,7 +47,7 @@ export async function GET(req: Request) {
       ...(category ? { category } : {}),
       ...(q ? { OR: [{ fileName: { contains: q } }, { originalFileName: { contains: q } }, { category: { contains: q } }] } : {}),
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     take: limit + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     select: {
@@ -65,11 +74,15 @@ export async function GET(req: Request) {
       : [];
   const lengthById = Object.fromEntries(textLengths.map((r) => [r.id, r.len]));
   const fileContentLengthById = Object.fromEntries(textLengths.map((r) => [r.id, (r as { fileContentLength?: number }).fileContentLength ?? 0]));
-  const itemsWithLength = items.map((doc) => ({
-    ...doc,
-    extractedTextLength: lengthById[doc.id] ?? 0,
-    hasInlineFileContent: (fileContentLengthById[doc.id] ?? 0) > 0,
-  }));
+  const itemsWithLength = items.map((doc) => {
+    const { storagePath: privateStoragePath, ...publicDoc } = doc;
+    return {
+      ...publicDoc,
+      extractedTextLength: lengthById[doc.id] ?? 0,
+      hasInlineFileContent: (fileContentLengthById[doc.id] ?? 0) > 0,
+      hasPrivateStorage: Boolean(privateStoragePath?.trim()),
+    };
+  });
 
   return NextResponse.json({ items: itemsWithLength, nextCursor, hasMore });
 }

@@ -90,7 +90,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
   }
 
   if (versions.length === 0) {
-    return <p className="text-sm text-slate-400 py-2">No proposal versions saved yet. Run the engine to create the first version.</p>;
+    return <p className="text-sm text-slate-400 py-2">No proposal versions saved yet. Versions appear automatically when the canonical workflow reaches generation.</p>;
   }
 
   return (
@@ -167,7 +167,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
                     ) : (
                       <button
                         onClick={() => setConfirmRestoreId(v.id)}
-                        className="rounded border border-amber-200 px-2 py-0.5 text-xs text-amber-700 hover:bg-amber-50"
+                        className="rounded border border-amber-200 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50"
                       >
                         Restore
                       </button>

@@ -32,7 +32,7 @@ function statusColor(status: string): string {
     COMPLIANCE_REVIEW: "bg-orange-100 text-orange-700",
     READY_FOR_GENERATION: "bg-teal-100 text-teal-700",
     GENERATED: "bg-cyan-100 text-cyan-700",
-    IN_REVIEW: "bg-amber-100 text-amber-700",
+    IN_REVIEW: "bg-amber-100 text-amber-800",
     APPROVED: "bg-green-100 text-green-700",
     EXPORTED: "bg-emerald-100 text-emerald-700",
     CLOSED: "bg-slate-200 text-slate-500",
@@ -60,12 +60,6 @@ function qualityTextColor(score: number): string {
   if (score >= 80) return "text-green-600";
   if (score >= 60) return "text-amber-600";
   return "text-red-500";
-}
-
-function qualityLabel(score: number): string {
-  if (score >= 80) return "Excellent";
-  if (score >= 60) return "Good";
-  return "Needs work";
 }
 
 // ─── page ─────────────────────────────────────────────────────────────────
@@ -109,8 +103,13 @@ export default async function AnalyticsPage() {
         updatedAt: true,
         _count: {
           select: {
-            experts: true,
-            projects: true,
+            // A relation _count with no `where` counts every row including
+            // soft-deleted ones. Every other expert/project count in the app
+            // filters deletedAt: null, so after deleting a record the Company
+            // Vault page correctly showed it gone while these tiles kept the
+            // pre-delete total — "one place says present, another says zero".
+            experts: { where: { deletedAt: null } },
+            projects: { where: { deletedAt: null } },
             documents: true,
           },
         },
@@ -612,7 +611,7 @@ export default async function AnalyticsPage() {
                   {(
                     [
                       { label: "Excellent (≥80)", count: excellentCount, color: "bg-green-500", textColor: "text-green-700", bgLight: "bg-green-50" },
-                      { label: "Good (60–79)", count: goodCount, color: "bg-amber-400", textColor: "text-amber-700", bgLight: "bg-amber-50" },
+                      { label: "Good (60–79)", count: goodCount, color: "bg-amber-400", textColor: "text-amber-800", bgLight: "bg-amber-50" },
                       { label: "Needs work (<60)", count: needsWorkCount, color: "bg-red-400", textColor: "text-red-700", bgLight: "bg-red-50" },
                     ] as const
                   ).map(({ label, count, color, textColor, bgLight }) => {

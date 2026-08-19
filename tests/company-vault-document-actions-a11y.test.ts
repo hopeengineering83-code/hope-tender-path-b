@@ -61,7 +61,16 @@ describe("Company Vault document re-extraction action", () => {
     assert.match(source, /reextractingDocId/);
     assert.match(source, /if \(reextractingDocId\) return/);
     assert.match(source, /aria-busy=\{reextractingDocId===doc\.id\}/);
-    assert.match(source, /disabled=\{reextractingDocId!==null \|\| deletingDocId!==null\}/);
+    // The re-extract control moved out of the document rows and into the
+    // collapsed "Diagnostics and Recovery" disclosure, where it also guards
+    // against acting on a document that is already pending deletion. Assert
+    // the guards this test exists to protect — no concurrent re-extract, no
+    // re-extract during a delete — rather than the exact disabled expression,
+    // which would fail on a strictly stronger condition.
+    const reextractDisabled = source.match(/disabled=\{reextractingDocId[^}]*\}/);
+    assert.ok(reextractDisabled, "expected a disabled guard on the re-extract control");
+    assert.match(reextractDisabled[0], /reextractingDocId!==null/);
+    assert.match(reextractDisabled[0], /deletingDocId!==null/);
     assert.match(source, /Re-extracting…/);
   });
 
@@ -124,17 +133,19 @@ describe("Company Vault add/reimport mutation failures", () => {
     assert.match(source, /We could not add that compliance record/);
     assert.match(source, /We could not add that legal record/);
     assert.match(source, /We could not add that financial record/);
-    assert.match(source, /We could not re-import Company Vault documents/);
-    assert.match(source, /Network interruption while re-importing Company Vault documents/);
+    assert.match(source, /We could not queue a Company Vault re-import/);
+    assert.match(source, /Network interruption while queuing the Company Vault re-import/);
     assert.doesNotMatch(source, /String\(err\)|stack|trace/i);
   });
 });
 
 
-describe("Company Vault profile, expert, and project save failures", () => {
-  it("surfaces safe failures and duplicate-submit guards for profile, expert, and project saves", () => {
-    assert.match(source, /We could not save the Company Profile/);
-    assert.match(source, /Network interruption while saving the Company Profile/);
+describe("Company Vault expert and project save failures", () => {
+  it("surfaces safe failures and duplicate-submit guards for expert and project saves", () => {
+    // Profile saving moved entirely to the dedicated /dashboard/company/profile
+    // editor (see single-company-profile-editor.test.ts) — the Knowledge
+    // Vault's own legacy inline profile form and handleSubmit were removed as
+    // dead code once its "Company Profile" tab was suppressed and delisted.
     assert.match(source, /if \(expertSaving\) return/);
     assert.match(source, /if \(projectSaving\) return/);
     assert.match(source, /We could not add that expert record/);
@@ -161,7 +172,7 @@ describe("Company Vault profile, expert, and project save failures", () => {
 describe("Company Vault truthful guidance and reduced-motion navigation", () => {
   it("does not claim every uploaded document is fully extracted", () => {
     assert.doesNotMatch(source, /All types extracted fully/);
-    assert.match(source, /Review each file before using it as tender evidence/);
+    assert.match(source, /Ingestion extracts and source-verifies eligible evidence before Run Engine uses it for matching/);
   });
 
   it("uses a scoped project form ref instead of a global querySelector smooth scroll", () => {
@@ -181,7 +192,10 @@ describe("Company Vault truthful guidance and reduced-motion navigation", () => 
 
 describe("Company Vault loading and upload announcements", () => {
   it("announces page, upload, and compliance loading states to assistive technology", () => {
-    assert.match(source, /role="status" aria-live="polite" className="text-sm text-slate-400 py-16 text-center">Loading Company Vault…/);
+    // Updated: the Company Vault loading state now uses a spinner + darker
+    // text (text-slate-700) for WCAG AA contrast, per VLM screenshot audit.
+    // The role="status" and aria-live="polite" are preserved.
+    assert.match(source, /role="status" aria-live="polite"[\s\S]*?Loading Company Vault…/);
     assert.match(source, /role="status" aria-live="polite" aria-label="Upload progress"/);
     assert.match(source, /role="status" aria-live="polite" className="text-sm text-slate-400">Loading compliance records…/);
   });

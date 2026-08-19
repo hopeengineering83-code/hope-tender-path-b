@@ -9,7 +9,6 @@ import {
   getCanonicalProviderEntries,
   getProviderModel,
   isProviderConfigured,
-  providerDisplayName,
   openRouterModelValidity,
   CANONICAL_AI_FALLBACK_CHAIN_DISPLAY,
 } from "../lib/ai-provider-registry";
@@ -137,7 +136,7 @@ function getAIHealth(): AIHealthResponse {
   const anyHasRecentSuccess = configuredProviders.some((p) => p.runtime.lastSuccessAt);
   const allConfiguredCooling = anyConfigured && configuredProviders.every((p) => p.runtime.coolingDown);
   if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires.");
-  if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this instance yet — runtime availability is not verified. Run AI Analyze or Generate Docs to confirm.");
+  if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this instance yet — runtime availability is not verified. The first analysis or document generation on this instance will confirm it.");
 
   const nextAction = blockers.length > 0
     ? "CONFIGURE_AI_KEYS"
@@ -185,13 +184,13 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
     : p.status === "GENERATION_VERIFIED"
       ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Available (runtime verified)</span>
       : p.status === "RATE_LIMITED"
-        ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Rate-limited{p.runtime.cooldownUntil ? ` until ${new Date(p.runtime.cooldownUntil).toLocaleTimeString()}` : ""}</span>
+        ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Rate-limited{p.runtime.cooldownUntil ? ` until ${new Date(p.runtime.cooldownUntil).toLocaleTimeString()}` : ""}</span>
         : p.status === "UNAUTHORIZED"
           ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Unauthorized — fix API key</span>
           : p.status === "TIMEOUT"
-            ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Timeout — retrying shortly</span>
+            ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Timeout — retrying shortly</span>
             : p.status === "BILLING_BLOCKED"
-              ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Unavailable{p.runtime.lastErrorCategory ? ` (${p.runtime.lastErrorCategory})` : ""}</span>
+              ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">Unavailable{p.runtime.lastErrorCategory ? ` (${p.runtime.lastErrorCategory})` : ""}</span>
               : p.status === "CONFIGURED"
                 ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Configured — not yet tested on this instance</span>
                 : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Unknown — not yet verified</span>;
@@ -207,7 +206,7 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
       {p.configured && <p className="mt-1 text-xs text-slate-600">Model: {p.model ?? "provider default"}</p>}
       {p.configured && p.detail && <p className="mt-1 text-xs text-slate-500">{p.detail}</p>}
       {p.configured && failing && !p.runtime.coolingDown && (
-        <p className="mt-1 text-xs text-amber-700">
+        <p className="mt-1 text-xs text-amber-800">
           Last response failed or returned empty{p.runtime.lastErrorCategory ? ` (${p.runtime.lastErrorCategory})` : ""}. Check {p.label} model access or retry after cooldown.
         </p>
       )}
@@ -226,7 +225,7 @@ export async function AIHealthPanel() {
   const verified = health.nextAction === "READY";
   const degraded = health.nextAction === "RUNTIME_NOT_VERIFIED" || health.nextAction === "REVIEW_AI_CONFIGURATION" || health.nextAction === "ALL_PROVIDERS_COOLING";
   const sectionTone = verified ? "border-emerald-200 bg-emerald-50" : degraded ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
-  const labelTone = verified ? "text-emerald-700" : degraded ? "text-amber-700" : "text-red-700";
+  const labelTone = verified ? "text-emerald-700" : degraded ? "text-amber-800" : "text-red-700";
   const pillTone = verified ? "bg-emerald-100 text-emerald-800" : degraded ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800";
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionTone}`}>

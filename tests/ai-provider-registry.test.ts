@@ -99,24 +99,13 @@ describe("5. zai + cerebras appear in health surfaces", () => {
 
 // 6. Z.ai endpoint + model — resolver-based endpoint/model compatibility
 describe("6. Z.ai general endpoint + configured model", () => {
-  it("uses the general Z.ai endpoint and default model (glm-4-flash)", () => {
+  it("uses the general Z.ai endpoint and default model (glm-4.7-flash)", () => {
     delete process.env.ZAI_PROPOSAL_MODEL;
     delete process.env.ZAI_ANALYSIS_MODEL;
     delete process.env.ZAI_FAST_MODEL;
     delete process.env.ZAI_BASE_URL;
     assert.equal(getProviderBaseUrl("zai"), "https://api.z.ai/api/paas/v4");
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
-  });
-  it("Coding Plan model glm-coding is accepted as valid override", () => {
-    // Z.ai support confirmed: both plans use the SAME endpoint (api.z.ai).
-    // The Coding Plan model is "glm-coding". The resolver accepts it.
-    delete process.env.ZAI_PROPOSAL_MODEL;
-    delete process.env.ZAI_ANALYSIS_MODEL;
-    delete process.env.ZAI_FAST_MODEL;
-    delete process.env.ZAI_BASE_URL;
-    process.env.ZAI_PROPOSAL_MODEL = "glm-coding";
-    assert.equal(getProviderModel("zai", "proposal"), "glm-coding");
-    delete process.env.ZAI_PROPOSAL_MODEL;
+    assert.equal(getProviderModel("zai", "proposal"), "glm-4.7-flash");
   });
   it("open.bigmodel.cn is NOT a valid Z.ai endpoint (different platform)", () => {
     delete process.env.ZAI_BASE_URL;
@@ -127,13 +116,13 @@ describe("6. Z.ai general endpoint + configured model", () => {
       "open.bigmodel.cn is NOT a valid Z.ai endpoint — must be skipped");
     delete process.env.ZAI_BASE_URL;
   });
-  it("accepts a valid explicit Z.ai model override (glm-4-flash)", () => {
+  it("accepts the deployed explicit Z.ai model override (glm-4.7-flash)", () => {
     delete process.env.ZAI_PROPOSAL_MODEL;
     delete process.env.ZAI_ANALYSIS_MODEL;
     delete process.env.ZAI_FAST_MODEL;
     delete process.env.ZAI_BASE_URL;
-    process.env.ZAI_PROPOSAL_MODEL = "glm-4-flash";
-    assert.equal(getProviderModel("zai", "proposal"), "glm-4-flash");
+    process.env.ZAI_PROPOSAL_MODEL = "glm-4.7-flash";
+    assert.equal(getProviderModel("zai", "proposal"), "glm-4.7-flash");
     delete process.env.ZAI_PROPOSAL_MODEL;
   });
   it("is NOT a Coding Plan endpoint by default", () => {
@@ -203,11 +192,13 @@ describe("10. unconfigured providers are skipped", () => {
 
 // 12. Attempt budget
 describe("12. provider attempt budget", () => {
-  it("caps actual outbound attempts at 5 by default (raised from 3 in PR #1041)", () => {
-    // Default raised from 3 to 5 so later capable providers (Groq, OpenRouter,
-    // Gemini, etc.) get tried when earlier ones (Z.ai, Cerebras, Mistral) fail.
-    // Set AI_MAX_PROVIDER_ATTEMPTS=3 to restore the old tighter budget.
-    assert.equal(MAX_PROVIDER_ATTEMPTS_PER_REQUEST, 5);
+  it("caps actual outbound attempts at 10 by default (raised from 5 in Gap 3)", () => {
+    // Default raised from 5 to 10 so ALL eligible providers get a real
+    // attempt before the chain declares ALL_PROVIDERS_EXHAUSTED. This
+    // eliminates ATTEMPT_BUDGET_EXHAUSTED as a workflow blocker in the
+    // normal case. Set AI_MAX_PROVIDER_ATTEMPTS to a lower value to
+    // restore a tighter budget.
+    assert.equal(MAX_PROVIDER_ATTEMPTS_PER_REQUEST, 10);
   });
   it("reserves time for error handling within the shared deadline", () => {
     assert.equal(ERROR_HANDLING_RESERVE_MS, 5000);

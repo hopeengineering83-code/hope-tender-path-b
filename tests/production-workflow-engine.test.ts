@@ -12,10 +12,12 @@ type Run = any;
 function createMockPrisma(options: { failCreateOnceWithUnique?: boolean } = {}) {
   const runs: Run[] = [];
   const documents: any[] = [];
+  const audits: any[] = [];
   let failedCreateOnce = false;
   return {
     runs,
     documents,
+    audits,
     tenderWorkflowRun: {
       findUnique: async ({ where }: any) => runs.find((r) => r.companyId === where.companyId_tenderId_operation_idempotencyKey.companyId && r.tenderId === where.companyId_tenderId_operation_idempotencyKey.tenderId && r.operation === where.companyId_tenderId_operation_idempotencyKey.operation && r.idempotencyKey === where.companyId_tenderId_operation_idempotencyKey.idempotencyKey) ?? null,
       findFirst: async ({ where }: any) => runs.find((r) => r.companyId === where.companyId && r.tenderId === where.tenderId && (!where.operation || r.operation === where.operation) && where.status.in.includes(r.status)) ?? null,
@@ -25,7 +27,13 @@ function createMockPrisma(options: { failCreateOnceWithUnique?: boolean } = {}) 
     generatedDocument: {
       create: async ({ data }: any) => { const row = { id: `doc-${documents.length + 1}`, ...data }; documents.push(row); return row; },
     },
-    auditLog: { create: async () => ({ id: "audit-1" }) },
+    auditLog: {
+      create: async ({ data }: any) => {
+        const row = { id: `audit-${audits.length + 1}`, ...data };
+        audits.push(row);
+        return row;
+      },
+    },
     $transaction: async (fn: any) => fn({ generatedDocument: { create: async ({ data }: any) => { const row = { id: `doc-${documents.length + 1}`, ...data }; documents.push(row); return row; } } }),
   } as any;
 }
@@ -58,6 +66,18 @@ describe("production tender workflow runner", () => {
     assert.deepEqual(second.createdDocumentIds, first.createdDocumentIds);
     assert.equal(second.replayed, true);
     assert.equal(prisma.documents.length, 1);
+    assert.equal(prisma.audits.length, 1);
+    assert.equal(prisma.audits[0].action, "TENDER_WORKFLOW_RUN");
+    assert.equal(prisma.audits[0].userId, "user");
+    assert.equal(prisma.audits[0].entityId, "tender");
+    const auditMetadata = JSON.parse(prisma.audits[0].metadata);
+    assert.equal(auditMetadata.tenantId, "tenant");
+    assert.equal(auditMetadata.tenderId, "tender");
+    assert.equal(auditMetadata.operation, "GENERATE_DRAFT");
+    assert.equal(auditMetadata.status, "succeeded");
+    assert.deepEqual(auditMetadata.createdDocumentIds, first.createdDocumentIds);
+    assert.equal(auditMetadata.blockersCount, 0);
+    assert.equal(auditMetadata.warningsCount, 0);
   });
 
   it("operation already running returns OPERATION_IN_PROGRESS instead of starting a duplicate", async () => {
@@ -104,6 +124,17 @@ describe("production tender workflow runner", () => {
     const retry = await runTenderWorkflow({ prisma, tenantId: "tenant", tenderId: "tender", userId: "user", operation: "AI_ANALYZE", idempotencyKey: "retry-1", execute: async () => ({ warnings: [], blockers: [] }) });
     assert.equal(retry.ok, true);
     assert.equal(prisma.runs.length, 2);
+    assert.equal(prisma.audits.length, 2);
+    assert.deepEqual(
+      prisma.audits.map((audit: any) => {
+        const metadata = JSON.parse(audit.metadata);
+        return { status: metadata.status, errorCode: metadata.errorCode };
+      }),
+      [
+        { status: "failed", errorCode: "PROVIDER_FAILURE" },
+        { status: "succeeded", errorCode: null },
+      ],
+    );
     assert.doesNotMatch(JSON.stringify(prisma.runs), /sk-test-secret/);
   });
 

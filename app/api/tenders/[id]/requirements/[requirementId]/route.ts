@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../../lib/auth";
-import { prisma } from "../../../../../../lib/prisma";
+import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
 import { z } from "zod";
 
@@ -42,6 +42,11 @@ export async function PATCH(
   }
 
   const { id: tenderId, requirementId } = await params;
+
+  // Ensure the runtime schema bootstrap has completed before any DB query.
+  // Without this, the first request after a fresh deploy / DB reset can
+  // fail with "relation does not exist" before bootstrap finishes.
+  await prismaReady;
 
   // Verify tender ownership (tenant isolation)
   const tender = await prisma.tender.findFirst({

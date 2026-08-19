@@ -3,7 +3,9 @@ import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { runAuthorityReview, type ManifestEntry, type DocumentInput } from "../../../../../lib/engine/authority-review";
-import { safeParseJsonArray } from "../../../../../lib/safe-json";
+import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
+import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
+import { resolveAuthorityReviewAvailability } from "../../../../../lib/engine/authority-review-availability";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 15;
@@ -13,52 +15,14 @@ function jsonError(message: string, status = 500, extra: Record<string, unknown>
   return NextResponse.json({ ok: false, success: false, code, message, error: message, ...extra }, { status });
 }
 
-/**
- * Derive required sections from exactFileNaming / exactFileOrder JSON arrays.
- * Falls back to common section names inferred from document names.
- */
-function deriveRequiredSections(
-  exactFileNaming: string | null,
-  exactFileOrder: string | null,
-  documentNames: string[],
-): string[] {
-  const sections = new Set<string>();
-
-  // Parse exact file naming/order hints
-  for (const raw of [exactFileNaming, exactFileOrder]) {
-    if (!raw) continue;
-    const parsed = safeParseJsonArray(raw);
-    if (parsed.length > 0) {
-      for (const entry of parsed) {
-        if (typeof entry === "string" && entry.trim()) {
-          sections.add(entry.trim());
-        } else if (entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).name === "string") {
-          sections.add(((entry as Record<string, unknown>).name as string).trim());
-        }
-      }
-    } else {
-      // ignore empty / non-array
-    }
-  }
-
-  // If no manifest hints, infer from document names (just return them as-is)
-  if (sections.size === 0) {
-    for (const name of documentNames) {
-      sections.add(name);
-    }
-  }
-
-  return Array.from(sections);
-}
-
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     let actor;
     try {
       actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "";
-      return msg === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      return message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
     }
 
     await prismaReady;
@@ -68,8 +32,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       where: { id, userId: actor.id },
       select: {
         id: true,
-        exactFileNaming: true,
-        exactFileOrder: true,
         generatedDocuments: {
           select: {
             id: true,
@@ -81,69 +43,136 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             generationStatus: true,
           },
         },
-        requirements: {
-          select: {
-            exactFileName: true,
-          },
-        },
       },
     });
 
     if (!tender) return jsonError("Tender not found", 404, { code: "TENDER_NOT_FOUND" });
 
-    // Build manifest entries from requirements with exactFileName + generated docs
-    const manifestEntries: ManifestEntry[] = [];
+    const finalPackage = await getFinalPackageReadinessModel(prisma, id, actor.id);
+    const manifestEntries: ManifestEntry[] = finalPackage.documents.planned.map((document) => ({
+      exactFileName: document.displayName,
+      documentType: document.envelope === "financial"
+        ? "FINANCIAL_PROPOSAL"
+        : document.envelope === "common"
+          ? "ADMIN"
+          : "TECHNICAL_PROPOSAL",
+    }));
 
-    // From requirements that have an explicit exactFileName
-    for (const req of tender.requirements) {
-      if (req.exactFileName) {
-        manifestEntries.push({
-          exactFileName: req.exactFileName,
-          documentType: "TENDER_REQUIRED_FILE",
-        });
-      }
-    }
-
-    // From exactFileNaming JSON array
-    const exactFileNamingRaw = tender.exactFileNaming ?? "[]";
-    const parsedFileNaming = safeParseJsonArray(exactFileNamingRaw);
-    if (parsedFileNaming.length > 0) {
-      for (const entry of parsedFileNaming) {
-        if (typeof entry === "string" && entry.trim()) {
-          manifestEntries.push({ exactFileName: entry.trim(), documentType: "TENDER_REQUIRED_FILE" });
-        } else if (entry && typeof entry === "object" && typeof (entry as Record<string, unknown>).name === "string") {
-          const e = entry as Record<string, unknown>;
-          manifestEntries.push({ exactFileName: (e.name as string).trim(), documentType: (e.documentType as string | undefined) ?? "TENDER_REQUIRED_FILE" });
-        }
-      }
-    }
-
-    // Only check GENERATED documents (not PLANNED stubs)
     const documents: DocumentInput[] = tender.generatedDocuments
-      .filter((d) => d.generationStatus === "GENERATED")
-      .map((d) => ({
-        id: d.id,
-        name: d.name,
-        documentType: d.documentType,
-        contentSummary: d.contentSummary ?? null,
-        reviewNotes: d.reviewNotes ?? null,
-        exactFileName: d.exactFileName ?? null,
+      .filter((document) => document.generationStatus === "GENERATED")
+      .map((document) => ({
+        id: document.id,
+        name: document.name,
+        documentType: document.documentType,
+        contentSummary: document.contentSummary ?? null,
+        reviewNotes: document.reviewNotes ?? null,
+        exactFileName: document.exactFileName ?? null,
       }));
 
-    // Derive required sections from manifest entries
-    const documentNames = documents.map((d) => d.name);
-    const tenderRequiredSections = deriveRequiredSections(
-      tender.exactFileNaming ?? null,
-      tender.exactFileOrder ?? null,
-      documentNames,
-    );
+    const canonicalBlockers = [
+      ...finalPackage.requirements.blockers,
+      ...finalPackage.documents.blockers,
+      ...finalPackage.export.blockers,
+    ];
 
+    const requiredDocuments = finalPackage.documents.required;
+    const requiredDocumentCount = finalPackage.documents.required.length;
+    const generatedRequiredDocumentCount = requiredDocuments.filter((document) => Boolean(document.generatedDocumentId)).length;
+    const validRequiredDocumentCount = requiredDocuments.filter((document) =>
+      document.status === "valid" || document.status === "approved" || document.status === "export_ready"
+    ).length;
+    const availability = resolveAuthorityReviewAvailability({
+      buildPlanConfirmed: finalPackage.buildPlan.confirmed,
+      requiredDocumentCount,
+      missingRequiredCount: finalPackage.documents.missingRequired.length,
+      validDocumentCount: validRequiredDocumentCount,
+      generatedDocumentCount: generatedRequiredDocumentCount,
+    });
+
+    const finalPackageFacts = {
+      requiredDocumentsTotal: requiredDocumentCount,
+      generatedRequiredDocumentsTotal: generatedRequiredDocumentCount,
+      validRequiredDocumentsTotal: validRequiredDocumentCount,
+      generatedDocumentsTotal: finalPackage.documents.generated.length,
+      validDocumentsTotal: finalPackage.documents.valid.length,
+      exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+    };
+
+    if (!availability.available) {
+      const envelope = buildPublicReadinessEnvelope({
+        ok: false,
+        blockers: canonicalBlockers.map((blocker) => ({
+          code: blocker.code,
+          message: blocker.reason,
+          nextAction: blocker.nextAction,
+        })),
+        warnings: [],
+        requiredDocumentsTotal: requiredDocumentCount,
+        generatedDocumentsTotal: generatedRequiredDocumentCount,
+        exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+      });
+      return NextResponse.json({
+        success: true,
+        available: false,
+        unavailableCode: availability.code,
+        unavailableReason: availability.reason,
+        ...envelope,
+        tenderId: id,
+        authorityReview: null,
+        buildPlan: finalPackage.buildPlan,
+        finalPackageBlockers: canonicalBlockers,
+        finalPackageFacts,
+      });
+    }
+
+    const tenderRequiredSections = requiredDocuments.map((document) => document.displayName);
     const result = runAuthorityReview(documents, manifestEntries, tenderRequiredSections);
+
+    const publicBlockers = [
+      ...canonicalBlockers.map((blocker) => ({
+        code: blocker.code,
+        message: blocker.reason,
+        nextAction: blocker.nextAction,
+      })),
+      ...result.blockers.map((blocker) => ({
+        code: blocker.code,
+        message: blocker.detail,
+        nextAction: blocker.recoveryAction,
+        severity: blocker.severity,
+      })),
+    ];
+    const ok = result.status === "AUTHORITY_READY"
+      && canonicalBlockers.length === 0
+      && finalPackage.buildPlan.confirmed;
+
+    const envelope = buildPublicReadinessEnvelope({
+      ok,
+      blockers: publicBlockers,
+      warnings: result.warnings,
+      requiredDocumentsTotal: requiredDocumentCount,
+      generatedDocumentsTotal: generatedRequiredDocumentCount,
+      exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+    });
+
+    const recommendedFixes = ok
+      ? result.recommendedFixes
+      : result.recommendedFixes.filter((fix) => fix !== "All authority review checks pass. Document is ready for final export.");
 
     return NextResponse.json({
       success: true,
+      available: true,
+      unavailableCode: null,
+      unavailableReason: null,
+      ...envelope,
       tenderId: id,
-      authorityReview: result,
+      authorityReview: {
+        ...result,
+        status: ok ? "AUTHORITY_READY" : "BLOCKED",
+        recommendedFixes,
+      },
+      buildPlan: finalPackage.buildPlan,
+      finalPackageBlockers: canonicalBlockers,
+      finalPackageFacts,
     });
   } catch (error) {
     logger.error("Authority review route failed", { detail: error });

@@ -3,10 +3,12 @@ import { getTenderGenerationReadinessStrict } from "./tender-generation-readines
 import { assessMatchingQuality } from "./matching-quality";
 import { getCompanyIngestionReadiness } from "./company-ingestion-readiness";
 import { findMissingGeneratedDocuments } from "./engine/submission-plan";
+import { filterFinalExportCandidateDocuments } from "./engine/document-output-state";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./engine/build-plan";
 import { computeTenderReadinessState } from "./tender-readiness-state";
 import { buildCanonicalModulePayload, computeCanonicalModuleStates, type CanonicalModuleStatePayload } from "./engine/canonical-readiness-state";
 import { detectAnalysisSourceWithApproval } from "./engine/analysis-source";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
 
 export type CanonicalTenderReadiness = {
   readyForAnalysis: boolean;
@@ -22,6 +24,54 @@ export type CanonicalTenderReadiness = {
   nextActions: string[];
 };
 
+/**
+ * Compact canonical readiness payload for mutation-route responses.
+ *
+ * Mutation routes that change plan state, document state, or evidence
+ * selection should include this in their success response so the client
+ * has the authoritative final-export verdict without a separate round-trip
+ * to /api/tenders/:id/readiness. The full CanonicalTenderReadiness (with
+ * modules, warnings, nextActions) is still available from that endpoint —
+ * this is the trim version that answers "did this mutation unblock export?".
+ */
+export type CanonicalReadinessSummary = {
+  readyForFinalExport: boolean;
+  readyForFullProposal: boolean;
+  readyForSupportPackage: boolean;
+  blockers: string[];
+  nextActions: string[];
+};
+
+/**
+ * Re-query the canonical final-export authority after a mutation.
+ *
+ * Returns null when the tender doesn't exist for this user (the query is
+ * user-scoped, so a cross-tenant id is indistinguishable from a missing one).
+ * Mutation routes should spread this into their success response as
+ * `canonicalReadiness` so the client can update its UI without a separate
+ * round-trip.
+ *
+ * This is the SINGLE authority for "is final export unblocked?" after any
+ * mutation. Routes that previously returned only submission-plan counts or
+ * partial readiness fields now return this — the client no longer has to
+ * infer final-export readiness from intermediate signals.
+ */
+export async function getCanonicalReadinessSummary(
+  client: PrismaClient,
+  userId: string,
+  tenderId: string,
+): Promise<CanonicalReadinessSummary | null> {
+  const full = await getCanonicalTenderReadiness(client, userId, tenderId);
+  if (!full) return null;
+  return {
+    readyForFinalExport: full.readyForFinalExport,
+    readyForFullProposal: full.readyForFullProposal,
+    readyForSupportPackage: full.readyForSupportPackage,
+    blockers: full.blockers,
+    nextActions: full.nextActions,
+  };
+}
+
 export async function getCanonicalTenderReadiness(client: PrismaClient, userId: string, tenderId: string): Promise<CanonicalTenderReadiness | null> {
   const readiness = await getTenderGenerationReadinessStrict(client, userId, tenderId);
   if (!readiness) return null;
@@ -30,8 +80,8 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     where: { id: tenderId, userId },
     include: {
       requirements: true,
-      expertMatches: { include: { expert: { select: { trustLevel: true } } } },
-      projectMatches: { include: { project: { select: { trustLevel: true } } } },
+      expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
+      projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },
       // Feeds computeTenderReadinessState's exportAllowed/complianceCurrent
       // below — without this, unresolved CRITICAL compliance gaps are
       // silently invisible to this resolver's export readiness, even though
@@ -71,11 +121,33 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   const confirmedPlan = await getCurrentConfirmedBuildPlan(client, tenderId, userId);
   const planItems: BuildPlanItem[] = confirmedPlan.ok ? confirmedPlan.items : [];
   const plan = { files: planItems, warnings: confirmedPlan.ok ? [] : [confirmedPlan.blocker] } as any;
-  const missing = findMissingGeneratedDocuments(plan, tender.generatedDocuments);
+  // Only export candidates can satisfy a required plan file. Without this
+  // filter a row marked NOT_EXPORTABLE or REPLACE_WITH_ORIGINAL, a CONTROL
+  // format, a SUBMISSION_CONTROL type, or an internal draft counted as "the
+  // required file exists" — so MISSING_PLANNED_FILES never fired and
+  // readyForFinalExport went true while final-submission-readiness.ts, which
+  // filters at line 565 before asking the same question, refused the same
+  // tender. Readiness must not promise what the export gate will decline.
+  const missing = findMissingGeneratedDocuments(plan, filterFinalExportCandidateDocuments(tender.generatedDocuments as never));
+
+  // Gap 1: detect reused tender-issued forms that are still awaiting manual
+  // completion. A reused form carries the machine:tender-issued-form-reuse
+  // provenance marker in contentSummary and is left in PENDING review (never
+  // APPROVED/READY_FOR_EXPORT — that's fabricated human state). It must be
+  // completed and signed by a person. The blocker is more specific than
+  // MISSING_PLANNED_FILES — it tells the reviewer exactly what to do next.
+  const tenderFormsAwaitingCompletion = tender.generatedDocuments.filter((doc) => {
+    const summary = (doc.contentSummary ?? "").toLowerCase();
+    const isReusedTenderForm = summary.includes("machine:tender-issued-form-reuse");
+    if (!isReusedTenderForm) return false;
+    const rev = (doc.reviewStatus ?? "").toUpperCase();
+    return rev !== "READY_FOR_EXPORT" && rev !== "APPROVED";
+  });
+
   const expertRequirementExists = tender.requirements.some((r) => r.requirementType === "EXPERT");
   const projectRequirementExists = tender.requirements.some((r) => r.requirementType === "PROJECT_EXPERIENCE");
-  const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && m.expert?.trustLevel === "REVIEWED").length;
-  const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.isSelected && m.project?.trustLevel === "REVIEWED").length;
+  const reviewedSelectedExperts = tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length;
+  const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length;
   const unresolvedCriticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
 
   const analysisSource = await detectAnalysisSourceWithApproval(client, tenderId, tender);
@@ -104,6 +176,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...(projectRequirementExists && reviewedSelectedProjects === 0 ? ["NO_SELECTED_REVIEWED_PROJECTS"] : []),
     ...(tender.generatedDocuments.length === 0 ? ["NO_ACTIVE_GENERATED_DOCUMENTS"] : []),
     ...(missing.length > 0 ? ["MISSING_PLANNED_FILES"] : []),
+    ...(tenderFormsAwaitingCompletion.length > 0 ? ["MISSING_TENDER_FORM_FIELDS"] : []),
     ...(confirmedPlan.ok ? [] : ["NO_CURRENT_CONFIRMED_BUILD_PLAN"]),
   ];
 
@@ -111,6 +184,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...readiness.fullProposalBlockers.map((b) => b.nextAction).filter(Boolean) as string[],
     ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["RUN_ENGINE"] : []),
     ...(confirmedPlan.ok ? [] : ["BUILD_SUBMISSION_PLAN"]),
+    ...(tenderFormsAwaitingCompletion.length > 0 ? ["COMPLETE_TENDER_FORM_FIELDS"] : []),
   ]));
 
   const states = computeCanonicalModuleStates({
@@ -135,7 +209,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     matchingState: matching.state,
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
-    readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
+    readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
     modules,
     blockers,
     warnings: readiness.warnings.map((w) => w.code),

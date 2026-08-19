@@ -314,16 +314,13 @@ describe("no raw Prisma error in UI", () => {
     assert.ok(fnBody.includes("diagnosticId"), "must return diagnostic ID for server logs");
   });
 
-  it("health score panel catches errors safely", () => {
-    const src = read("components/tender-health-score-panel.tsx");
-    assert.ok(src.length > 0, "tender-health-score-panel.tsx must be readable");
-    assert.ok(src.includes("PanelErrorFallback"), "must use PanelErrorFallback for safe error handling");
+  it("next-action panel catches release-state errors safely", () => {
+    // Replaces the retired tender-health-score-panel.tsx / bid-control-verdict-panel.tsx
+    // / tender-release-state-panel.tsx — all superseded, in turn, by
+    // components/next-action-panel.tsx.
+    const src = read("components/next-action-panel.tsx");
+    assert.ok(src.length > 0, "next-action-panel.tsx must be readable");
     assert.ok(src.includes("catch"), "must catch errors");
-  });
-
-  it("bid control panel catches errors safely", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    assert.ok(src.length > 0, "bid-control-verdict-panel.tsx must be readable");
-    assert.ok(src.includes("catch"), "must catch errors");
+    assert.ok(!src.includes("{error}"), "must not render the raw error state value in JSX");
   });
 });

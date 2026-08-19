@@ -1,29 +1,24 @@
 import { logger } from "../../../../../lib/observability";
 import { NextRequest, NextResponse } from "next/server";
-import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
-import { prisma } from "../../../../../lib/prisma";
+import { requireRole, unauthorizedResponse } from "../../../../../lib/auth";
+import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
 import { getCanonicalTenderWorkflowState } from "../../../../../lib/engine/workflow/workflow-state";
 import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
-import { isMutationAction } from "../../../../../lib/recovery-command-actions";
+import { presentTwoActionWorkflowDecision } from "../../../../../lib/engine/two-action-workflow-presentation";
+import { TENDER_WORKFLOW_STAGE_LABELS } from "../../../../../lib/tender-workflow-stages";
+import { getTenderAction, type TenderActionId } from "../../../../../lib/ui/action-registry";
+import { computeEngineSourceRevision } from "../../../../../lib/engine/engine-source-revision";
+import { selectCurrentDownstreamActivity } from "../../../../../lib/engine/workflow-panel-presentation";
 
-// Map the canonical decision's stageStates (READY/BLOCKED/BLOCKED_BY_PRIOR_STEP/
-// WAITING_ON_PRIOR_STEP/COMPLETE/IN_PROGRESS) to the workflow-center status
-// vocabulary. The canonical decision is the SINGLE source of stage truth —
-// this route must NOT hardcode PENDING for any stage.
-function stageStatusFromCanonical(
-  canonicalState: string | undefined,
-  fallback: string,
-): string {
-  if (!canonicalState) return fallback;
-  // Pass through directly — the frontend handles all canonical states.
-  // The canonical states are: READY, BLOCKED, BLOCKED_BY_PRIOR_STEP,
-  // WAITING_ON_PRIOR_STEP, COMPLETE, IN_PROGRESS.
-  return canonicalState;
+const ACTIVE_DOWNSTREAM_STATUSES = ["QUEUED", "RUNNING"] as const;
+
+function stageStatusFromCanonical(canonicalState: string | undefined, fallback: string): string {
+  return canonicalState || fallback;
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
@@ -31,28 +26,70 @@ export async function GET(
     if (!actor) return unauthorizedResponse();
 
     const { id: tenderId } = await params;
+    await prismaReady;
 
-    // The canonical decision is the SINGLE source of stage truth.
-    // workflow-center still calls getCanonicalTenderWorkflowState for the
-    // legacy readyFor* flags, but stage statuses come from the decision.
-    const [snapshot, workflow, decision] = await Promise.all([
+    // A deleted or cross-tenant tender is a normal terminal state for polling.
+    // Check ownership before running the parallel workflow resolvers so a poll
+    // that races a successful permanent deletion returns 404, never 500.
+    const ownedTender = await prisma.tender.findFirst({
+      where: { id: tenderId, userId: actor.id },
+      select: { id: true },
+    });
+    if (!ownedTender) {
+      return NextResponse.json(
+        { error: "Tender not found", code: "TENDER_NOT_FOUND", terminal: true },
+        { status: 404 },
+      );
+    }
+
+    const [snapshot, workflow, rawDecision] = await Promise.all([
       getTenderReleaseSnapshot(prisma, tenderId, actor.id),
       getCanonicalTenderWorkflowState(prisma, actor.id, tenderId),
       getCanonicalTenderWorkflowDecision(prisma, actor.id, tenderId),
     ]);
 
     if (!snapshot) {
-      return NextResponse.json({ error: "Tender not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Tender not found", code: "TENDER_NOT_FOUND", terminal: true },
+        { status: 404 },
+      );
     }
 
-    // ─── Page Ledger summary for extraction stage ──────────────────────────
-    const pageLedgerSummary = (snapshot.pageLedgers ?? []).map((pl, i) => {
-      const fileName = snapshot.extraction.files[i]?.fileName ?? `File ${i + 1}`;
-      return { fileName, ...pl };
+    const decision = presentTwoActionWorkflowDecision(rawDecision);
+    const company = await prisma.company.findUnique({
+      where: { userId: actor.id },
+      select: { id: true },
     });
-    const hasUnsafePages = (snapshot.pageLedgers ?? []).some(pl => !pl.isSafeForAnalysis);
+    const engineRevision = company
+      ? await computeEngineSourceRevision(prisma, {
+          tenderId,
+          userId: actor.id,
+          companyId: company.id,
+        }).catch(() => null)
+      : null;
+    const downstreamCandidates = engineRevision
+      ? await prisma.aiJob.findMany({
+          where: {
+            tenderId,
+            userId: actor.id,
+            jobType: { in: ["PROPOSAL_GENERATION", "AUTO_FINALIZE"] },
+            status: { in: [...ACTIVE_DOWNSTREAM_STATUSES] },
+          },
+          orderBy: { createdAt: "desc" },
+          select: { jobType: true, status: true, analysisInputHash: true, input: true },
+        })
+      : [];
+    const activeDownstreamJob = selectCurrentDownstreamActivity(
+      engineRevision?.sourceRevision ?? null,
+      downstreamCandidates,
+    );
+    const pageLedgerSummary = (snapshot.pageLedgers ?? []).map((pageLedger, index) => ({
+      fileName: snapshot.extraction.files[index]?.fileName ?? `File ${index + 1}`,
+      ...pageLedger,
+    }));
+    const hasUnsafePages = (snapshot.pageLedgers ?? []).some((pageLedger) => !pageLedger.isSafeForAnalysis);
+    const ds = decision?.stageStates ?? {};
 
-    // ─── Tender Classification summary ─────────────────────────────────────
     const classification = snapshot.tenderClassification;
     const classificationSummary = classification
       ? {
@@ -65,132 +102,126 @@ export async function GET(
         }
       : null;
 
-    // ─── Per-stage status from the canonical decision ─────────────────────
-    // Each stage's status is driven by decision.stageStates[stageKey]. When
-    // the decision is null (tender not found /w owner scope), we fall back
-    // to a safe default — never the old hardcoded PENDING.
-    const ds = decision?.stageStates ?? {};
+    const analysisExplanation = snapshot.analysis.state === "AI_SUCCEEDED"
+      ? "AI Analyze completed and the grounded canonical revision is ready for review before Run Engine."
+      : snapshot.analysis.state === "RUNNING"
+        ? "AI Analyze is running as a durable job."
+        : snapshot.analysis.blocker ?? "Extraction is ready. An authorized user must select AI Analyze.";
 
-    // Each stage maps its actionLabel to a recovery-command action name so the
-    // server can classify it as mutation or read-only. The client receives
-    // actionKind: "mutation" | "readonly" and uses it to HIDE mutation controls
-    // for REVIEWER — no URL inference on the client.
+    const requirementExplanation = snapshot.requirements.mandatory > 0
+      ? `${snapshot.requirements.total} requirements recorded; ${snapshot.requirements.groundedMandatory}/${snapshot.requirements.mandatory} mandatory requirements are source-traced.`
+      : `${snapshot.requirements.total} requirements recorded; no mandatory requirements are currently identified.`;
+
+    const evidenceNeedsSourceReview = decision?.currentBlockingStage === "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE";
+
+    const stage = (
+      number: number,
+      status: string,
+      explanation: string,
+      actionId: TenderActionId,
+      extra: Record<string, unknown> = {},
+    ) => {
+      const action = getTenderAction(actionId);
+      return {
+        stage: number,
+        label: TENDER_WORKFLOW_STAGE_LABELS[number as keyof typeof TENDER_WORKFLOW_STAGE_LABELS],
+        status,
+        explanation,
+        actionId,
+        actionLabel: action.label,
+        actionName: actionId,
+        actionKind: action.mutation ? "mutation" as const : "navigation" as const,
+        actionTarget: action.anchor,
+        actionAvailability: action.availability,
+        mutation: action.mutation,
+        mutationOwner: action.owner,
+        iconName: action.iconName,
+        ...extra,
+      };
+    };
+
     const stages = [
-      {
-        stage: 1,
-        label: "Source Files",
-        status: stageStatusFromCanonical(ds["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"),
-        explanation: "Manage uploaded tender PDFs and DOCX files.",
-        actionLabel: "Manage Files",
-        actionName: "UPLOAD_TENDER_DOCUMENT",
-        actionKind: isMutationAction("UPLOAD_TENDER_DOCUMENT") ? "mutation" as const : "readonly" as const,
-      },
-      {
-        stage: 2,
-        label: "Extraction Quality",
-        status: stageStatusFromCanonical(ds["FIX_EXTRACTION"], hasUnsafePages ? "BLOCKED" : snapshot.extraction.overallOk ? "COMPLETE" : "BLOCKED"),
-        explanation: hasUnsafePages
-          ? pageLedgerSummary.map(pl => `${pl.fileName}: ${pl.summary}`).join(" | ")
-          : "Verify text density and page coverage.",
-        blocker: hasUnsafePages
-          ? pageLedgerSummary.filter(pl => !pl.isSafeForAnalysis).map(pl => pl.summary).join(" | ")
-          : !snapshot.extraction.overallOk ? (snapshot.extraction.blocker ?? "Extraction inconsistent or weak.") : undefined,
-        actionLabel: "Repair Extraction",
-        actionName: "REPAIR_EXTRACTION",
-        actionKind: isMutationAction("REPAIR_EXTRACTION") ? "mutation" as const : "readonly" as const,
-        pageLedgers: pageLedgerSummary,
-      },
-      {
-        stage: 3,
-        label: "AI Analyze",
-        status: stageStatusFromCanonical(ds["RUN_AI_ANALYZE"],
-          snapshot.analysis.state === "AI_SUCCEEDED" ? "COMPLETE" :
-          snapshot.analysis.state === "RUNNING" ? "IN_PROGRESS" : "BLOCKED"),
-        explanation: snapshot.analysis.blocker ?? "AI Analyze pending or failed.",
-        actionLabel: decision?.partialAnalysis ? "Resume AI Analyze" : "Run AI Analyze",
-        actionName: decision?.partialAnalysis ? "RESUME_AI_ANALYZE" : "RUN_AI_ANALYZE",
-        actionKind: isMutationAction(decision?.partialAnalysis ? "RESUME_AI_ANALYZE" : "RUN_AI_ANALYZE") ? "mutation" as const : "readonly" as const,
-      },
-      {
-        stage: 4,
-        label: "Confirm Requirements",
-        status: stageStatusFromCanonical(ds["CONFIRM_REQUIREMENTS"],
-          snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : "WAITING_ON_PRIOR_STEP"),
-        explanation: `${snapshot.requirements.total} requirements recorded (${snapshot.requirements.groundedMandatory} grounded).`,
-        actionLabel: "Review Requirements",
-        actionName: "REVIEW_MATCHES",
-        actionKind: isMutationAction("REVIEW_MATCHES") ? "mutation" as const : "readonly" as const,
-      },
-      {
-        stage: 5,
-        label: "Tender Details",
-        // METADATA IS NO LONGER A HARD BLOCKER — the snapshot's metadata.gateValid
-        // is always true per the unified runtime model. Tender Details are
-        // advisory; the >80%-valid ratio only distinguishes READY from WARNING.
-        status: snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING",
-        explanation: `Tender Details: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`,
-        actionLabel: "Edit Tender Details",
-        actionName: "EDIT_TENDER_METADATA",
-        actionKind: isMutationAction("EDIT_TENDER_METADATA") ? "mutation" as const : "readonly" as const,
-      },
-      {
-        stage: 6,
-        label: "Verified Submission Plan",
-        // Canonical decision drives status — uses gateValid (not the count-based
-        // valid flag) so it agrees with the generation gate.
-        status: stageStatusFromCanonical(ds["BUILD_SUBMISSION_PLAN"],
-          snapshot.buildPlan.gateValid ? "COMPLETE" : "BLOCKED"),
-        explanation: snapshot.buildPlan.gateBlocker ?? snapshot.buildPlan.blocker ?? "Build plan pending.",
-        actionLabel: "Build Plan",
-        actionName: "BUILD_SUBMISSION_PLAN",
-        actionKind: isMutationAction("BUILD_SUBMISSION_PLAN") ? "mutation" as const : "readonly" as const,
-      },
-      {
-        stage: 7,
-        label: "Match Evidence",
-        // NO LONGER hardcoded PENDING — driven by the canonical decision.
-        // When upstream blockers exist, this shows BLOCKED_BY_PRIOR_STEP or
-        // WAITING_ON_PRIOR_STEP so the user knows it is gated, not just "pending".
-        status: stageStatusFromCanonical(ds["MATCH_EVIDENCE"], "WAITING_ON_PRIOR_STEP"),
-        explanation: decision?.currentBlockingStage && decision.currentBlockingStage !== "EXPORT_ZIP_READY" && decision.currentBlockingStage !== "MANDATORY_NO_COMPLIANCE_ROWS" && decision.currentBlockingStage !== "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"
+      stage(
+        1,
+        stageStatusFromCanonical(ds["UPLOAD_TENDER"], snapshot.extraction.activeFileCount > 0 ? "COMPLETE" : "READY"),
+        "Upload the tender package once. The server extracts it automatically; AI Analyze and Run Engine remain the two explicit workflow actions.",
+        "UPLOAD_TENDER_FILES",
+      ),
+      stage(
+        2,
+        stageStatusFromCanonical(ds["FIX_EXTRACTION"], hasUnsafePages ? "BLOCKED" : snapshot.extraction.overallOk ? "COMPLETE" : "BLOCKED"),
+        hasUnsafePages
+          ? pageLedgerSummary.map((item) => `${item.fileName}: ${item.summary}`).join(" | ")
+          : "Text density and page coverage are verified automatically.",
+        "REEXTRACT_SOURCE",
+        {
+          blocker: hasUnsafePages
+            ? pageLedgerSummary.filter((item) => !item.isSafeForAnalysis).map((item) => item.summary).join(" | ")
+            : !snapshot.extraction.overallOk ? snapshot.extraction.blocker ?? "Extraction inconsistent or weak." : undefined,
+          pageLedgers: pageLedgerSummary,
+        },
+      ),
+      stage(
+        3,
+        stageStatusFromCanonical(
+          ds["RUN_AI_ANALYZE"],
+          snapshot.analysis.state === "AI_SUCCEEDED" ? "COMPLETE" : snapshot.analysis.state === "RUNNING" ? "IN_PROGRESS" : "READY",
+        ),
+        analysisExplanation,
+        "AI_ANALYZE",
+      ),
+      stage(
+        4,
+        stageStatusFromCanonical(ds["CONFIRM_REQUIREMENTS"], snapshot.analysis.state === "AI_SUCCEEDED" ? "READY" : "WAITING_ON_PRIOR_STEP"),
+        requirementExplanation,
+        "REVIEW_SOURCES",
+      ),
+      stage(
+        5,
+        snapshot.metadata.totalFields > 0 && snapshot.metadata.validFields / snapshot.metadata.totalFields > 0.8 ? "READY" : "WARNING",
+        `Tender Details: ${snapshot.metadata.validFields} / ${snapshot.metadata.totalFields} valid (${snapshot.metadata.blockedFields} blocked).`,
+        "OPEN_TENDER_SETTINGS",
+      ),
+      stage(
+        6,
+        stageStatusFromCanonical(ds["BUILD_SUBMISSION_PLAN"], snapshot.buildPlan.gateValid ? "COMPLETE" : "READY"),
+        snapshot.buildPlan.gateValid
+          ? "The current Build Plan is source-verified."
+          : snapshot.buildPlan.gateBlocker ?? "Run Engine uses the verified source and current AI analysis to create and verify the Build Plan automatically.",
+        snapshot.buildPlan.gateValid ? "BUILD_SUBMISSION_PLAN" : "RUN_ENGINE",
+      ),
+      stage(
+        7,
+        stageStatusFromCanonical(ds["MATCH_EVIDENCE"], "WAITING_ON_PRIOR_STEP"),
+        decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "MANDATORY_NO_COMPLIANCE_ROWS", "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
-          : "Link experts and project experience to requirements.",
-        actionLabel: "Match Evidence",
-        actionName: "LINK_VAULT_EVIDENCE",
-        actionKind: isMutationAction("LINK_VAULT_EVIDENCE") ? "mutation" as const : "readonly" as const,
-      },
-      {
-        stage: 8,
-        label: "Generate Documents",
-        status: stageStatusFromCanonical(ds["GENERATE_DOCUMENTS"],
-          snapshot.generationEligible ? "READY" : "BLOCKED"),
-        explanation: snapshot.generationBlockers.length > 0 ? snapshot.generationBlockers[0] : "Ready for generation.",
-        actionLabel: "Generate",
-        actionName: "GENERATE_REQUIRED_DOCUMENTS",
-        actionKind: isMutationAction("GENERATE_REQUIRED_DOCUMENTS") ? "mutation" as const : "readonly" as const,
-      },
-      {
-        stage: 9,
-        label: "Validate and Approve",
-        // NO LONGER hardcoded PENDING — driven by the canonical decision.
-        status: stageStatusFromCanonical(ds["VALIDATE_DOCS"], "WAITING_ON_PRIOR_STEP"),
-        explanation: decision?.currentBlockingStage && decision.currentBlockingStage !== "EXPORT_ZIP_READY" && decision.currentBlockingStage !== "DOCS_NOT_VALIDATED" && decision.currentBlockingStage !== "DOCS_NOT_APPROVED_EXPORT_READY" && decision.currentBlockingStage !== "AUTHORITY_OR_QUALITY_BLOCKERS"
+          : evidenceNeedsSourceReview
+            ? "Automatic matching found insufficient source-verified coverage. Review or add genuine Company Vault evidence."
+            : "Run Engine scores and persists eligible company evidence automatically.",
+        evidenceNeedsSourceReview ? "REVIEW_EVIDENCE" : "RUN_ENGINE",
+      ),
+      stage(
+        8,
+        stageStatusFromCanonical(ds["GENERATE_DOCUMENTS"], snapshot.generationEligible ? "IN_PROGRESS" : "BLOCKED"),
+        snapshot.generationBlockers[0] ?? "Document generation continues automatically after Run Engine and the canonical generation gate pass.",
+        snapshot.generationEligible ? "GENERATE_REQUIRED_DOCUMENTS" : "RUN_ENGINE",
+      ),
+      stage(
+        9,
+        stageStatusFromCanonical(ds["VALIDATE_DOCS"], "WAITING_ON_PRIOR_STEP"),
+        decision?.currentBlockingStage && !["EXPORT_ZIP_READY", "DOCS_NOT_VALIDATED", "DOCS_NOT_APPROVED_EXPORT_READY", "AUTHORITY_OR_QUALITY_BLOCKERS"].includes(decision.currentBlockingStage)
           ? `Waiting on earlier step: ${decision.nextRequiredActionLabel}.`
-          : "Review and approve generated documents.",
-        actionLabel: "Review Documents",
-        actionName: "VALIDATE_DOCS",
-        actionKind: isMutationAction("VALIDATE_DOCS") ? "mutation" as const : "readonly" as const,
-      },
-      {
-        stage: 10,
-        label: "Export ZIP",
-        status: stageStatusFromCanonical(ds["EXPORT_ZIP"],
-          snapshot.exportEligible ? "READY" : "BLOCKED"),
-        explanation: snapshot.exportBlockers.length > 0 ? snapshot.exportBlockers[0] : "Ready for export.",
-        actionLabel: "Export",
-        actionName: "DOWNLOAD_FINAL_ZIP",
-        actionKind: isMutationAction("DOWNLOAD_FINAL_ZIP") ? "mutation" as const : "readonly" as const,
-      }
+          : decision?.currentBlockingStage === "DOCS_NOT_VALIDATED"
+            ? "Automatic document validation/finalization is in progress."
+            : "Review only genuine final authority, source, quality or legal blockers.",
+        "FINAL_APPROVAL",
+      ),
+      stage(
+        10,
+        stageStatusFromCanonical(ds["EXPORT_ZIP"], snapshot.exportEligible ? "READY" : "BLOCKED"),
+        snapshot.exportBlockers[0] ?? "Ready for byte-verified final ZIP download.",
+        "DOWNLOAD_FINAL_ZIP",
+      ),
     ];
 
     return NextResponse.json({
@@ -198,12 +229,17 @@ export async function GET(
       snapshot,
       workflow,
       decision: decision ?? undefined,
+      downstreamActivity: activeDownstreamJob
+        ? activeDownstreamJob
+        : null,
       stages,
       classification: classificationSummary,
       pageLedgers: pageLedgerSummary,
     });
   } catch (error) {
-    logger.error("[workflow-center]", { detail: error });
+    logger.error("[workflow-center]", {
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

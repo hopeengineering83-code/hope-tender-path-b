@@ -82,8 +82,9 @@ describe("diagnostics endpoint", () => {
 describe("AI Analyze panel exposes the diagnostic", () => {
   const panel = readFileSync("components/ai-analyze-panel.tsx", "utf8");
 
-  it("has a Diagnose providers action that calls the live endpoint", () => {
-    assert.match(panel, /Diagnose providers/);
+  it("has a Diagnose providers function that calls the live endpoint", () => {
+    // Gap 2: the Diagnose providers button was removed from the normal path.
+    // The function still exists for automatic/diagnostic use.
     assert.match(panel, /\/api\/ai-providers\/diagnostics\?live=1/);
     assert.match(panel, /function runProviderDiagnostics/);
   });

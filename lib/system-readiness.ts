@@ -1,5 +1,6 @@
 import { prisma, prismaReady } from "./prisma";
-import { resolveStorageProvider } from "./storage";
+import { isEmailDeliveryConfigured } from "./email";
+import { getStorageReadiness } from "./storage";
 import {
   CANONICAL_AI_PROVIDER_ORDER,
   CANONICAL_AI_PROVIDER_DISPLAY_NAMES,
@@ -96,11 +97,20 @@ async function databaseChecks(): Promise<ReadinessCheck[]> {
 export async function getSystemReadiness(): Promise<SystemReadiness> {
   const checks = await databaseChecks();
   const configuredProviders = configuredAiProviders();
-  const storageProvider = resolveStorageProvider();
+  // getStorageReadiness() (lib/storage.ts) is the single canonical policy
+  // resolver for storage readiness -- it already accounts for
+  // isDatabaseStorageAllowed()'s default-allow-when-unset-and-no-token
+  // behavior. This check previously re-derived its own, subtly different
+  // condition (requiring ALLOW_DB_FILE_STORAGE === "true" exactly), which
+  // reported CRITICAL for a configuration lib/storage.ts itself treats as
+  // ready (unset ALLOW_DB_FILE_STORAGE + no Blob token, the default
+  // bounded-fallback-allowed state) -- an operator dashboard false alarm
+  // for storage that was actually working. Delegating avoids the two
+  // modules disagreeing about the same fact.
+  const storageReadiness = getStorageReadiness();
   const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
   const strongSessionSecret = (process.env.SESSION_SECRET ?? process.env.AUTH_SECRET ?? "").length >= 32;
-  const smtpConfigured = has(process.env.SMTP_HOST) && has(process.env.SMTP_USER) && has(process.env.SMTP_PASS) && has(process.env.EMAIL_FROM);
-  const durableStorage = storageProvider === "blob" || (storageProvider === "db-base64" && process.env.ALLOW_DB_FILE_STORAGE === "true");
+  const smtpConfigured = isEmailDeliveryConfigured();
 
   checks.push(
     {
@@ -113,11 +123,9 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
     {
       key: "file_storage",
       title: "Durable private file storage",
-      severity: !production || durableStorage ? "OK" : "CRITICAL",
+      severity: !production || storageReadiness.ready ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail: !production || durableStorage
-        ? `Storage provider: ${storageProvider}.`
-        : "Production requires Vercel Blob or an explicitly approved durable database storage mode.",
+      detail: `Storage provider: ${storageReadiness.provider}. ${storageReadiness.detail}`,
     },
     {
       key: "ai_providers",
@@ -145,21 +153,21 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
       // (automated global callers — cron, external orchestrators — cannot
       // invoke the worker without a user session), not a security hole.
       //
-      // This is NOT an unconditional production blocker — the endpoint
-      // remains safely usable through authenticated user-scoped execution.
-      // Marking production CRITICAL is only correct when this deployment
-      // is configured to require cron/global automated processing. Since
-      // we cannot infer that from the environment, we keep this as a
-      // WARNING with a precise operational limitation, and do NOT mark
-      // it requiredForProduction. Deployments that require automated
-      // callers should monitor this check and set secrets accordingly.
+      // This product's target workflow is upload-and-continue: later Engine
+      // and proposal jobs must keep moving after the browser closes. The
+      // endpoint remains secure without a secret, but the promised background
+      // automation does not. Treat missing automated-caller authentication as
+      // a production-readiness blocker rather than silently degrading to a
+      // manual, browser-dependent workflow.
       severity: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
         ? "OK"
-        : "WARNING",
-      requiredForProduction: false,
+        : !production
+          ? "WARNING"
+          : "CRITICAL",
+      requiredForProduction: true,
       detail: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
         ? "Automated worker authentication is configured (AI_JOBS_WORKER_SECRET or CRON_SECRET)."
-        : "No automated worker secret is configured. The worker endpoint falls back to requireRole(ADMIN, PROPOSAL_MANAGER) — user-scoped execution remains available. Set AI_JOBS_WORKER_SECRET or CRON_SECRET ONLY if this deployment requires automated callers (cron, external orchestrators).",
+        : "No automated worker secret is configured. User-scoped execution remains secure, but queued Engine and proposal continuations cannot reliably progress after the browser closes. Configure AI_JOBS_WORKER_SECRET or CRON_SECRET and the queue-drain scheduler.",
     },
   );
 

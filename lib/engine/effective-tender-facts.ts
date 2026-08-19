@@ -277,7 +277,7 @@ export type EffectiveTenderFactsResult = {
   submissionAddress: string | null;
   physicalSubmissionRequired: boolean;
   portalSubmissionRequired: boolean;
-  financialProposalRequired: boolean;
+  financialProposalRequired: boolean | null;
   financialProposalInstruction: string | null;
   evaluationMethodology: string | null;
   requiredDocuments: string[];
@@ -390,7 +390,7 @@ export async function getEffectiveTenderFacts(
   facts.push({ key: "serviceStreams", label: "Service Streams", value: serviceStreams.length > 0 ? serviceStreams : null, status: serviceStreams.length > 0 ? "resolved_from_source_text" : "missing", requiredFor: "optional", source: serviceStreams.length > 0 ? "parser" : "none" });
 
   // Project title (parser → scalar)
-  const projectTitle = resolveSimple({ key: "projectTitle", label: "Project Title", parserValue: intelligence?.projectTitle ?? null, scalarValue: tender.title, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("title"), isClean: isCleanScalarValue, requiredFor: "draft_context", facts });
+  const projectTitle = resolveSimple({ key: "projectTitle", ledgerKeys: ["projectTitle", "title"], label: "Project Title", parserValue: intelligence?.projectTitle ?? null, scalarValue: tender.title, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("title"), isClean: isCleanScalarValue, requiredFor: "draft_context", facts });
 
   // Client
   const clientOrProcuringEntity = resolveSimple({ key: "clientName", label: "Client / Procuring Entity", parserValue: intelligence?.clientOrProcuringEntity ?? null, scalarValue: tender.clientName || tender.procuringEntityName, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("clientName"), isClean: (v) => isCleanScalarValue(v) && isValidClientName(v), requiredFor: "draft_context", facts });
@@ -425,10 +425,11 @@ export async function getEffectiveTenderFacts(
   // Submission address
   const submissionAddress = resolveSimple({ key: "submissionAddress", label: "Submission Address", parserValue: intelligence?.submissionInstructions.physicalAddress ?? null, scalarValue: tender.submissionAddress, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("submissionAddress"), isClean: isCleanScalarValue, requiredFor: submissionMethod === "Physical" || submissionMethod === "Hybrid" ? "final_submission" : "optional", facts });
 
-  // Financial proposal
-  const financialProposalRequired = intelligence ? intelligence.financialProposalRequired : true;
-  const financialProposalInstruction = !financialProposalRequired ? "Not required at this stage. Do not generate a financial proposal." : null;
-  facts.push({ key: "financialProposalRequired", label: "Financial Proposal Required", value: financialProposalRequired ? "Yes" : "No", status: intelligence ? "resolved_from_source_text" : "missing", requiredFor: "optional", source: intelligence ? "parser" : "none" });
+  // Financial proposal — per Pillar 6, default is UNKNOWN (null) instead of
+  // true. Only set to true/false when the source explicitly states it.
+  const financialProposalRequired: boolean | null = intelligence ? intelligence.financialProposalRequired : null;
+  const financialProposalInstruction = financialProposalRequired === false ? "Not required at this stage. Do not generate a financial proposal." : null;
+  facts.push({ key: "financialProposalRequired", label: "Financial Proposal Required", value: financialProposalRequired === null ? "Unknown" : financialProposalRequired ? "Yes" : "No", status: intelligence ? "resolved_from_source_text" : "missing", requiredFor: "optional", source: intelligence ? "parser" : "none" });
 
   // Evaluation methodology
   const evaluationMethodology = resolveSimple({ key: "evaluationMethodology", label: "Evaluation Methodology", parserValue: intelligence?.evaluationMethodology?.methodology ?? null, scalarValue: tender.evaluationMethodology, ledgerFacts: ledgerSnapshot?.facts, overrideValue: manualOverrideValue("evaluationMethodology"), isClean: isCleanScalarValue, requiredFor: "optional", facts });
@@ -461,11 +462,12 @@ export async function getEffectiveTenderFacts(
 
 function resolveSimple(args: {
   key: string; label: string; parserValue: string | null; scalarValue: string | null | undefined;
+  ledgerKeys?: string[];
   ledgerFacts: ReadonlyArray<any> | undefined; overrideValue?: string | null; isClean: (v: string | null | undefined) => boolean;
   requiredFor: EffectiveTenderFactRequiredFor; facts: EffectiveTenderFactEntry[];
 }): string | null {
-  const { key, label, parserValue, scalarValue, ledgerFacts, overrideValue, isClean, requiredFor, facts } = args;
-  const ledgerFact = ledgerFacts?.find((f) => f.semanticKey === key);
+  const { key, label, parserValue, scalarValue, ledgerKeys = [key], ledgerFacts, overrideValue, isClean, requiredFor, facts } = args;
+  const ledgerFact = ledgerFacts?.find((f) => ledgerKeys.includes(f.semanticKey));
   if (ledgerFact) {
     const ls = String(ledgerFact.authorityState).toUpperCase();
     if (ls === AUTHORITY_STATE.SOURCE_GROUNDED_CONFIRMED || ls === "HUMAN_CONFIRMED_OPERATIONAL") {
@@ -641,7 +643,7 @@ function emptyResult(tenderId: string, warnings: string[]): EffectiveTenderFacts
     deadlineDisplay: null, deadlineIso: null, submissionMethod: "Unknown", submissionFormat: null,
     submissionEmails: [], submissionEmailSubject: null, submissionAddress: null,
     physicalSubmissionRequired: false, portalSubmissionRequired: false,
-    financialProposalRequired: true, financialProposalInstruction: null,
+    financialProposalRequired: null, financialProposalInstruction: null,
     evaluationMethodology: null, requiredDocuments: [], facts: [], warnings,
   };
 }

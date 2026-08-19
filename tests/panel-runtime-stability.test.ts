@@ -257,7 +257,7 @@ describe("analysis-quality assessor — stable with empty inputs", () => {
     });
     assert.ok(typeof result === "object" && result !== null, "assessTenderAnalysisQuality must return an object");
     assert.ok(typeof result.score === "number", "result must have a numeric score");
-    assert.ok(["GOOD", "FAIR", "POOR", "UNSAFE"].includes(result.severity), `result.severity must be a valid value, got: ${result.severity}`);
+    assert.ok(["GOOD", "WARNING", "POOR", "UNSAFE"].includes(result.severity), `result.severity must be a valid value, got: ${result.severity}`);
   });
 
   it("extraction quality summarizer handles zero files gracefully", () => {

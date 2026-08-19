@@ -6,6 +6,7 @@ import {
   getActiveDashboardHref,
   type DashboardNavGroup,
 } from "../lib/dashboard-navigation";
+import { DashboardNavIcon } from "./dashboard-nav-icon";
 
 export function NavLinks({ groups }: { groups: DashboardNavGroup[] }) {
   const pathname = usePathname();
@@ -32,7 +33,9 @@ export function NavLinks({ groups }: { groups: DashboardNavGroup[] }) {
                       : "text-slate-700 hover:bg-slate-100 hover:text-slate-950"
                   }`}
                 >
-                  <span aria-hidden="true" className="text-base leading-none">{link.icon}</span>
+                  <span aria-hidden="true" className="text-base leading-none">
+                    <DashboardNavIcon iconName={link.iconName} />
+                  </span>
                   <span className="min-w-0 truncate">{link.label}</span>
                 </Link>
               );

@@ -202,19 +202,10 @@ hope-tender-path-b/
 │   ├── proposal-proof-density.ts     # Proof-density measurement
 │   ├── proposal-strengthening-sections.ts # Evaluator-decision narrative
 │   ├── proof-density-repair-guidance.ts
-│   ├── controlled-proposal-assembler.ts # Strips AI traces line by line
 │   ├── benchmark-output-polisher.ts
-│   ├── client-language-finalizer.ts
-│   ├── markdown-heading-dedupe.ts
+│   ├── internal-review-stripper.ts  # Removes bid-team-only material
 │   ├── apply-active-letterhead.ts    # Apply brand assets if AppSettings allow
 │   ├── docx-letterhead-template.ts
-│   │
-│   │ ── Reserved / experimental (not currently invoked) ────────────────
-│   ├── fallback-abcd-structure.ts
-│   ├── fallback-proof-opening.ts
-│   ├── quick-draft-benchmark.ts
-│   ├── quick-draft-evidence-context.ts
-│   └── quick-draft-provisional-evidence.ts
 │
 ├── components/                       # Reusable UI
 │   ├── login-form.tsx
@@ -483,7 +474,7 @@ SESSION_SECRET="<64-character random hex>"
 # unconfigured/cooled-down/invalid-OpenRouter providers are skipped for free.
 
 # Z.ai GLM — first-tier, general OpenAI-compatible endpoint (NOT a Coding Plan).
-# ZAI_API_KEY="..."           # ZAI_BASE_URL default https://api.z.ai/api/paas/v4, model glm-4-flash
+# ZAI_API_KEY="..."           # ZAI_BASE_URL default https://api.z.ai/api/paas/v4, model glm-4.7-flash
 
 # Cerebras — second-tier, OpenAI-compatible (uses max_completion_tokens).
 # CEREBRAS_API_KEY="..."      # default model gpt-oss-120b
@@ -651,7 +642,7 @@ The user-stated guardrails map directly to existing code:
 | Do not invent data | `Expert.trustLevel` / `Project.trustLevel` enum + filter in `lib/engine/run-tender-engine.ts`; only `REVIEWED` flows to final |
 | Do not generate beyond tender scope | `lib/engine/scope-policy.ts` |
 | Do not leave placeholders | `lib/engine/validate.ts` `PLACEHOLDER_PATTERNS` + `BLOCK`-severity issue `PLACEHOLDER_IN_DOCUMENT` |
-| Do not expose AI traces | `lib/engine/controlled-proposal-assembler.ts:33` filter; `lib/engine/proposal-evaluator-matrix.ts:30` filter; `lib/engine/humanize.ts` rewrites |
+| Do not expose AI traces | `lib/engine/internal-review-stripper.ts`; `lib/engine/proposal-benchmark-guard.ts`; `lib/engine/humanize.ts` rewrites |
 | Do not force cover pages if prohibited | `AppSettings.allowBrandingDefault` + per-tender override; `lib/engine/apply-active-letterhead.ts` checks before applying |
 | Do not force signature/stamp if prohibited | `AppSettings.allowSignatureDefault` / `allowStampDefault` checked at generation |
 | Do not use unsupported company facts | trust-level system; `GeneratedDocument.draftExpertCount` records every draft source used so reviewers can audit |

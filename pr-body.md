@@ -1,101 +1,91 @@
-## fix(tender-analysis): keep requirements and drafting resilient to missing metadata
+## Consolidated recovery — release acceptance contract
 
-**Main SHA:** ccdb24dae44c611e990a6afb5dcf084a708eef7d
+> **Status:** Draft and unmerged. This branch is a release candidate, not a
+> production release. Exact-head evidence belongs in the live pull-request
+> description and CI artifacts; this tracked document intentionally contains no
+> frozen SHA, deployment ID, test count, or percentage that can become stale.
 
-### Three-Pass Audit
+### Governing refs
 
-**PASS 1:** Inspected main branch, extraction pipeline (`lib/engine/analysis.ts`), AI Analyze route (`app/api/tenders/[id]/ai-analyze/route.ts`), page ledger, requirement routes, classification (`lib/engine/tender-classification.ts`), company evidence matching paths, BuildPlan input paths, and current tests.
+- Head branch: `release/consolidated-recovery-20260717`
+- Base branch: `integration/controlled-recovery`
+- Pull request: `#1175`
+- Production promotion: prohibited until separately authorized by the owner
 
-**PASS 2:** Traced the full workflow:
-- Upload → extraction → page ledger → AI Analyze → requirements → classification → company evidence matching → draft proposal/BuildPlan inputs
-- Identified metadata blocking points in `lib/engine/build-plan.ts`, `bid-strategy/route.ts`, and `generate/route.ts`
-- Confirmed core extraction engine (`analysis.ts`) and AI orchestrator do NOT block on missing metadata
+### Canonical product workflow
 
-**PASS 3:** Verified no overlap with Tool A files or PR #954 files. Red-team checked partial extraction, corrupted PDF handling, missing metadata scenarios, requirement gaps, manual requirements, tenant isolation.
+1. Upload Company Vault documents and Brand Assets once.
+2. Upload the source package for each tender.
+3. Source-byte verification, Vault ingestion, and tender extraction run automatically.
+4. An authorized user selects **AI Analyze**.
+5. Grounded analysis must complete and promote a current canonical revision.
+6. An authorized user selects **Run Engine**.
+7. Matching, Build Plan creation and source verification, proposal generation,
+   validation, finalization, package reconciliation, and ZIP readiness continue
+   automatically.
+8. The Final ZIP is available only after all fail-closed integrity, authority,
+   currentness, compliance, document, PDF, and manifest gates pass.
 
-### Exact Ownership Exclusions
+AI Analyze and Run Engine are the only two normal post-upload workflow
+mutations. Build Plan, matching, generation, validation, finalization, and
+package reconciliation must not reappear as normal user buttons.
 
-**NOT MODIFIED (Tool A):**
-- `app/api/tenders/[id]/metadata-override/route.ts`
-- `lib/engine/canonical-field-state.ts`
-- `lib/engine/tender-policy-registry.ts`
-- `lib/engine/final-submission-readiness.ts`
+### Non-negotiable safety rules
 
-**NOT MODIFIED (PR #954):**
-- `app/api/tenders/[id]/generate-missing-plan-files/route.ts`
-- `app/api/tenders/[id]/regenerate-cvs/route.ts`
-- `lib/engine/generate-elite.ts`
-- `tests/generated-document-unique-constraint.test.ts`
-- `operator_handoff.md`
-- `worklog.md`
+- Preserve tenant ownership and role authorization on every mutation.
+- Never promote regex fallback, partial analysis, weak grounding, or stale
+  source revisions as canonical success.
+- Never fabricate reviewed experts, projects, requirements, signatures,
+  stamps, prices, or source provenance.
+- Company Vault evidence must bind to owned, verified source documents.
+- Official source bytes and approved originals take precedence over generated
+  substitutes.
+- Generation and export remain fail-closed when extraction, analysis, Build
+  Plan, matching, authority, quality, PDF, storage, currentness, or manifest
+  integrity is unproven.
+- Claude remains the final AI provider in the configured fallback order.
+- No merge, production deployment, production migration, credential change,
+  or destructive cleanup is authorized by this document.
 
-**PR #937 remains frozen.**
+### Exact-head acceptance requirements
 
-### Extraction/Page-Ledger Findings
+The live PR head may be considered ready for owner UAT only when evidence tied
+to that same SHA proves all of the following:
 
-- Core extraction (`lib/engine/analysis.ts`) works from extracted text, not metadata — COMPLIANT
-- AI analysis preflight depends on source quality and page completeness, not metadata — COMPLIANT
-- Missing page blocking, corruption blocking, and quality blocking are correct per spec
+- Prisma validation and client generation pass.
+- Complete migration history applies to a fresh PostgreSQL database.
+- A second migration deploy is idempotent and schema drift is zero.
+- Release-integrity checks, typecheck, and lint pass.
+- The complete unit and PostgreSQL integration suite passes with no hidden DB skips.
+- Production build passes without tracked-source mutation.
+- Authenticated browser smoke, upload flow, and cross-user isolation pass.
+- Complete route/screenshot inventory passes at desktop, tablet, and mobile widths.
+- Dependency audit reports zero high or critical production vulnerabilities.
+- An exact-head Vercel Preview is READY and reports the same commit identity.
+- Provider-backed AI Analyze and Run Engine complete on a synthetic tenant.
+- Actual DOCX, PDF, and ZIP bytes are opened and validated.
+- ZIP entry names, lengths, SHA-256 values, and manifest records reconcile exactly.
+- Cleanup removes only synthetic test data.
 
-### Requirement Extraction Behavior
+### External release holds
 
-- Requirements extracted from text via regex patterns (EXPERT, PROJECT_EXPERIENCE, DECLARATION, ANNEX, SCHEDULE, FORM, FINANCIAL, ELIGIBILITY, COMPANY_PROFILE, FORMAT, SUBMISSION_RULE, METHODOLOGY, TECHNICAL)
-- Priority inferred: MANDATORY, SCORED, INFORMATIONAL
-- Low confidence requirements marked NEEDS_REVIEW, never dropped
+The following remain owner/infrastructure obligations and cannot be represented
+as code-complete merely because CI is green:
 
-### Manual Requirement Behavior
+- rotate any previously exposed credentials and revoke affected sessions;
+- confirm production and preview secrets are current and correctly scoped;
+- sanitize retained artifacts and logs where required;
+- remove or disable the duplicate failing Vercel project;
+- verify backup restoration and rollback procedures;
+- complete owner UAT on a real preview using representative tender and Vault files;
+- explicitly authorize merge and production promotion.
 
-- New route: `POST /api/tenders/[id]/requirements` — create manual requirement
-- New route: `GET /api/tenders/[id]/requirements` — list requirements with manual flag
-- New route: `PATCH /api/tenders/[id]/requirements/[requirementId]` — edit manual requirements
-- Role-based access: ADMIN, PROPOSAL_MANAGER only for create/edit
-- REVIEWER, VIEWER can read but NOT add/edit
-- Tenant-isolated, auditable, preserves through re-analysis
+### Scoring rule
 
-### Tender Classification Result
+Do not preserve a fixed percentage in this tracked file. Calculate percentages
+from the live exact-head evidence ledger, separating:
 
-- `lib/engine/tender-classification.ts` works from extracted text
-- Types: RFP, RFQ, EOI, REOI, ITB, RFT, prequalification, consultancy, works, goods, framework, mixed, unknown
-- Procurement: technical-only, financial-only, technical-financial, separate-envelopes, single-envelope, email, portal, physical, mixed, unknown
-- Services: architecture, urban-planning, roads-transport, water-sanitation, geotechnical, structural, mep, interior-design, supervision, feasibility, environmental-social, project-management, multidisciplinary, goods-supply, unknown
-- "unknown" preserved, never forced
+1. code-remediable gap closure; and
+2. overall production-readiness closure, including external proof and owner actions.
 
-### Company Matching Result
-
-- Evidence matching uses real company documents (profile, services, projects, experts/CVs, legal, certificates, financial)
-- Matching shows: requirement, evidence source, reason, confidence, gaps, human review needed
-- No invented experience, experts, or qualifications
-
-### Draft-Proposal Readiness Result
-
-- BuildPlan draft creation now uses `phase: "draft"` — metadata gaps are NON-BLOCKING
-- Final submission retains strict evidence validation (Tool A domain)
-- Bid-strategy metadata gaps downgraded from blockers to warnings
-- Generate route draft mode bypasses missing submission email blocker
-
-### Test Commands and Outcomes
-
-**NOT RUN** — Tests require isolated PostgreSQL and full environment setup. The following test scenarios are designed:
-
-1. Clean consultancy RFP with no reference number — analysis succeeds
-2. Works tender with no email — requirements, matching, draft readiness succeed
-3. EOI with no deadline — analysis succeeds; deadline labelled "not stated"
-4. Two-envelope tender — requirements classify both envelopes
-5. Scanned PDF — extraction and OCR state truthful
-6. Corrupted-text PDF — AI analysis blocked, no provider call
-7. Human-entered required document — auditable, in draft planning, not source-grounded
-8. Re-analysis preserves reviewed manual requirements
-9. Company matching returns gaps, not invented evidence
-10. Reviewer/Viewer cannot add/edit manual requirements
-11. Cross-user access rejected without existence leakage
-12. Desktop and tablet (800×1280) workflows usable
-
-### Remaining Dependencies
-
-- Tool A must verify final-submission gates still enforce strict metadata evidence
-- Full test suite execution pending environment setup
-- Browser/tablet E2E tests require Playwright configuration
-
-### Explicit Statement
-
-**No merge, deployment, Vercel configuration change, production database mutation, or modification of PR #954 was performed.**
+Unverified evidence receives no credit.

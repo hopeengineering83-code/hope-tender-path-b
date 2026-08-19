@@ -24,6 +24,7 @@ import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
 import { resolveReviewedSectionEvidence, sectionEvidenceBlocker } from "../../../../../lib/engine/regenerate-section-evidence";
 import { extractRequestId } from "../../../../../lib/request-id";
+import { loadDurableCompanySupportRecords } from "../../../../../lib/prisma-schema-compatibility";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -123,7 +124,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       }, { status: notFound ? 404 : 422 });
     }
 
-    const [tender, company] = await Promise.all([
+    const [tender, companyBase] = await Promise.all([
       prisma.tender.findFirst({
         where: { id, userId },
         include: {
@@ -147,9 +148,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         where: { userId },
         include: {
           documents: { orderBy: { updatedAt: "desc" }, take: 24 },
-          legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-          financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
-          complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
           experts: {
             where: { trustLevel: "REVIEWED", deletedAt: null },
             orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
@@ -166,7 +164,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     ]);
 
     if (!tender) return NextResponse.json({ success: false, error: "Tender not found", code: "TENDER_NOT_FOUND" }, { status: 404 });
-    if (!company) return NextResponse.json({ success: false, error: "Company not found", code: "COMPANY_NOT_FOUND" }, { status: 404 });
+    if (!companyBase) return NextResponse.json({ success: false, error: "Company not found", code: "COMPANY_NOT_FOUND" }, { status: 404 });
+    const supportRecords = await loadDurableCompanySupportRecords(prisma, companyBase.id, 12);
+    const company = { ...companyBase, ...supportRecords };
 
     const evidence = resolveReviewedSectionEvidence({
       selectedExperts: tender.expertMatches.map((match) => match.expert),

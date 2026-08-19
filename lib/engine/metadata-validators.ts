@@ -289,11 +289,19 @@ export function isValidClientContact(value: string | null | undefined): boolean 
  * pipes (|) or suspicious phrase combinations suggesting mixed content.
  * Examples: "ABC Ministry | Tender Portal | Old Tender: XYZ"
  */
+// Extraction-label echo: a real organization name never contains field
+// labels like "Client Name:" or "Project Name:" inside it. Values such as
+// "X Procuring Entity / Client Name: X Legal Client Name: X Project Name: Y"
+// are several extracted fields concatenated with their labels (observed live
+// on the dashboard pipeline) and must be treated as contaminated.
+const EMBEDDED_FIELD_LABEL = /\b(?:client|legal\s+client|project|entity|contact(?:\s+person)?|procuring\s+entity|reference)\s*(?:name)?\s*:/i;
+
 export function isClientNameContaminated(value: string | null | undefined): boolean {
   const text = (value ?? "").trim();
   if (text.length === 0) return false;
   // Pipe characters almost always indicate merged portal/navigation text
   if (text.includes("|")) return true;
+  if (EMBEDDED_FIELD_LABEL.test(text)) return true;
   // Detect phrases that suggest portal/navigation contamination
   if (/(tender\s+portal|old\s+tender|alert|notification|browse|tenders?|portal|dashboard|published|deadline.*passed|archived|closed)/i.test(text)) {
     // But allow legitimate phrases like "Ministry of Health & Tender Division"
@@ -311,6 +319,9 @@ export function clientNameContaminationReason(value: string | null | undefined):
   if (text.length === 0) return null;
   if (text.includes("|")) {
     return "Client name contains pipe separators (|), indicating mixed portal/navigation text. Manually separate the legitimate client name from portal artifacts.";
+  }
+  if (EMBEDDED_FIELD_LABEL.test(text)) {
+    return "Client name contains embedded field labels (e.g. \"Client Name:\", \"Project Name:\") — several extracted fields were concatenated into one value. Manually enter only the procuring entity's name.";
   }
   if (/(tender\s+portal|old\s+tender|alert|notification|dashboard|published|deadline.*passed|archived|closed)/i.test(text)) {
     if (!/&|and|division|department/i.test(text)) {

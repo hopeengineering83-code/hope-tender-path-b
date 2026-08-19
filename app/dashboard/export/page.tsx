@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "../../../lib/auth";
 import { prisma, prismaReady } from "../../../lib/prisma";
 import { ExportTenderCard } from "./export-tender-card";
-import { getFinalSubmissionReadiness, type FinalSubmissionReadiness } from "../../../lib/engine/final-submission-readiness";
+import { getTenderReleaseState, type TenderReleaseState } from "../../../lib/engine/tender-release-state";
 
 export default async function ExportPage() {
   const userId = await getSession();
@@ -29,22 +29,18 @@ export default async function ExportPage() {
     take: 20,
   });
 
-  // ── Canonical readiness per tender ──────────────────────────────────
+  // ── Canonical release state per tender ──────────────────────────────
   // The export page must NOT compute readiness locally from generated count
-  // and persisted CRITICAL gaps. The canonical server authority
-  // (getFinalSubmissionReadiness) checks extraction, analysis, source
-  // grounding, reviewed evidence, Build Plan, approvals, storage, manifest,
-  // and byte integrity. We call it for each tender and pass the result
-  // (blocker codes + next action) to the card.
-  const readinessResults: Array<{ tenderId: string; readiness: FinalSubmissionReadiness | null }> = [];
+  // and persisted CRITICAL gaps, and must NOT rebuild its own next-action
+  // text. getTenderReleaseState is the same canonical payload the tender
+  // workspace, command center, and report pages read — its reconciled
+  // blocker list and primaryNextAction pass straight through to the card.
+  const releaseStateResults: Array<{ tenderId: string; releaseState: TenderReleaseState | null }> = [];
   for (const tender of tenders) {
-    const readiness = await getFinalSubmissionReadiness(prisma, {
-      tenderId: tender.id,
-      userId,
-    }).catch(() => null);
-    readinessResults.push({ tenderId: tender.id, readiness });
+    const releaseState = await getTenderReleaseState(prisma, tender.id, userId).catch(() => null);
+    releaseStateResults.push({ tenderId: tender.id, releaseState });
   }
-  const readinessByTenderId = new Map(readinessResults.map((r) => [r.tenderId, r.readiness]));
+  const releaseStateByTenderId = new Map(releaseStateResults.map((r) => [r.tenderId, r.releaseState]));
 
   return (
     <div className="space-y-6">
@@ -76,17 +72,16 @@ export default async function ExportPage() {
           const warningGaps = highGaps.length + unresolvedMediumLow.length;
           const mandatoryReqs = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
 
-          // ── Canonical readiness from server authority ──────────────
-          const canonical = readinessByTenderId.get(tender.id) ?? null;
-          const canonicalBlockers = canonical?.tenderLevelBlockers ?? [];
-          const canonicalAdvisories = canonical?.advisoryWarnings ?? [];
-          const isCanonicalReady = canonical?.ok === true && canonicalBlockers.length === 0;
-          // FinalReadinessTenderBlocker has {category, severity, title, recommendedAction}.
-          // Use category as the blocker code and title/recommendedAction for the next action.
+          // ── Canonical release state from server authority ──────────
+          const releaseState = releaseStateByTenderId.get(tender.id) ?? null;
+          const canonicalBlockers = releaseState?.blockers ?? [];
+          const isCanonicalReady = releaseState?.exportEligible === true && (releaseState?.blockerTotal ?? 1) === 0;
           const canonicalBlockerCodes = canonicalBlockers.map((b) => b.category);
-          const canonicalNextAction = canonicalBlockers.length > 0
-            ? canonicalBlockers[0]?.recommendedAction ?? canonicalBlockers[0]?.title ?? "Resolve the primary blocker below."
-            : "All canonical gates passed. Download the final package.";
+          const canonicalNextAction = releaseState?.primaryNextAction
+            ? releaseState.primaryNextAction.label
+            : canonicalBlockers.length > 0
+              ? canonicalBlockers[0]?.nextAction ?? canonicalBlockers[0]?.title ?? "Resolve the primary blocker below."
+              : "All canonical gates passed. Download the final package.";
 
           const checks = [
             // Checks generatedDocuments (system-authored output rows), not the
@@ -118,7 +113,6 @@ export default async function ExportPage() {
               key={tender.id}
               tenderId={tender.id}
               tenderTitle={tender.title}
-              tenderStatus={tender.status}
               isReady={isReady}
               isExported={isExported}
               generatedCount={generated.length}

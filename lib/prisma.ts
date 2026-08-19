@@ -1,7 +1,7 @@
 import { logger } from "./observability";
 import { PrismaClient } from "@prisma/client";
 import { checkEnv } from "./env-check";
-import { resolveBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "./bootstrap-admin-policy";
+import { resolveRuntimeBootstrapAdminPolicy, BOOTSTRAP_ADMIN_EMAIL } from "./bootstrap-admin-policy";
 
 // Validate env vars before anything else. Crashes loudly on bad config.
 checkEnv();
@@ -100,7 +100,11 @@ async function verifySchemaPresent(client: PrismaClient): Promise<void> {
   }
 }
 
-async function bootstrap(client: PrismaClient): Promise<void> {
+// Exported so DB-integration tests can exercise the real seed path (schema
+// bootstrap + role/admin seeding) against a live database, instead of only
+// asserting on source text. Not used by any other application code path —
+// ensureBootstrapped() below is what production code actually calls.
+export async function bootstrap(client: PrismaClient): Promise<void> {
   if (!isRuntimeSchemaBootstrapEnabled()) {
     // Gap 6 — production path: never mutate schema or seed bootstrap users.
     // We only verify connectivity and that the schema exists so the first
@@ -221,6 +225,29 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE
   )`);
+
+  // Plan B staging — deliberately NOT a CompanyDocument. Synthetic JSON from a
+  // Plan B import is diagnostic only and must never be reachable as official
+  // uploaded evidence, so it lives in its own table with no provenance columns
+  // and nothing downstream treats it as a source.
+  await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "PlanBStaging" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "companyId" TEXT NOT NULL,
+    "originalFileName" TEXT NOT NULL,
+    "sourceType" TEXT,
+    "sourceCategory" TEXT,
+    "normalizedCategory" TEXT,
+    "rawText" TEXT,
+    "parsedExperts" INTEGER,
+    "parsedProjects" INTEGER,
+    "suppliedSha256" TEXT,
+    "reviewNotes" TEXT,
+    "createdAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    "updatedAt" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE CASCADE
+  )`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "PlanBStaging_companyId_idx" ON "PlanBStaging"("companyId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "PlanBStaging_originalFileName_idx" ON "PlanBStaging"("originalFileName")`);
 
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "CompanyAsset" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -617,19 +644,15 @@ async function bootstrap(client: PrismaClient): Promise<void> {
   await ensureColumn(client, "Project", "deletedAt", "TIMESTAMPTZ");
   await ensureColumn(client, "Project", "deletedBy", "TEXT");
 
-  // ── Schema-drift repair: DocumentReview / DocumentComment ─────────────────
-  // Ensure correct column names exist. The schema uses documentId, action, notes
-  // from initial creation; no data migration from old names is needed.
-  await ensureColumn(client, "DocumentReview", "documentId", "TEXT");
-  await ensureColumn(client, "DocumentReview", "action", "TEXT");
-  await ensureColumn(client, "DocumentReview", "notes", "TEXT");
-  await ensureColumn(client, "DocumentReview", "priorStatus", "TEXT");
-  await ensureColumn(client, "DocumentReview", "newStatus", "TEXT");
-  await ensureColumn(client, "DocumentComment", "documentId", "TEXT");
-  await ensureColumn(client, "DocumentComment", "visibility", "TEXT NOT NULL DEFAULT 'INTERNAL'");
-  await ensureColumn(client, "DocumentComment", "resolvedAt", "TIMESTAMPTZ");
-  await ensureColumn(client, "DocumentComment", "resolvedBy", "TEXT");
-  await ensureColumn(client, "DocumentComment", "parentId", "TEXT");
+  // The DocumentReview / DocumentComment drift repair used to sit here, ~270
+  // lines BEFORE those tables are created below. ensureColumn issues an
+  // ALTER TABLE, so on a genuinely empty database the very first call threw
+  // `relation "DocumentReview" does not exist` and aborted the whole bootstrap
+  // — the one situation bootstrap exists for. It survived because every
+  // database it had ever run against was created by `prisma migrate deploy`,
+  // which makes the table first, and because the coverage test compares table
+  // NAMES in this file without ever executing it. The repair now runs directly
+  // after the CREATE TABLE statements it depends on.
 
   // Notification table
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "Notification" (
@@ -919,6 +942,22 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     FOREIGN KEY ("documentId") REFERENCES "GeneratedDocument"("id") ON DELETE CASCADE
   )`);
 
+  // ── Schema-drift repair: DocumentReview / DocumentComment ─────────────────
+  // Ensure correct column names exist. The schema uses documentId, action, notes
+  // from initial creation; no data migration from old names is needed.
+  // Must stay AFTER the two CREATE TABLE statements above — these are ALTER
+  // TABLEs and fail outright on a database where the tables do not exist yet.
+  await ensureColumn(client, "DocumentReview", "documentId", "TEXT");
+  await ensureColumn(client, "DocumentReview", "action", "TEXT");
+  await ensureColumn(client, "DocumentReview", "notes", "TEXT");
+  await ensureColumn(client, "DocumentReview", "priorStatus", "TEXT");
+  await ensureColumn(client, "DocumentReview", "newStatus", "TEXT");
+  await ensureColumn(client, "DocumentComment", "documentId", "TEXT");
+  await ensureColumn(client, "DocumentComment", "visibility", "TEXT NOT NULL DEFAULT 'INTERNAL'");
+  await ensureColumn(client, "DocumentComment", "resolvedAt", "TIMESTAMPTZ");
+  await ensureColumn(client, "DocumentComment", "resolvedBy", "TEXT");
+  await ensureColumn(client, "DocumentComment", "parentId", "TEXT");
+
   // ── tables added by feature migrations (missing from original bootstrap) ──
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderShare" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -1176,15 +1215,19 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     `CREATE INDEX IF NOT EXISTS "Project_deletedAt_idx" ON "Project"("deletedAt")`,
     `CREATE INDEX IF NOT EXISTS "ProposalVersion_tenderId_idx" ON "ProposalVersion"("tenderId")`,
     `CREATE INDEX IF NOT EXISTS "ProposalVersion_tenderId_version_idx" ON "ProposalVersion"("tenderId", "version")`,
-    // G3 — MatchScoreBreakdown
-    `CREATE UNIQUE INDEX IF NOT EXISTS "MatchScoreBreakdown_unique_dim" ON "MatchScoreBreakdown"("tenderId", "entityType", "entityId", "dimensionCode")`,
+    // G3 — MatchScoreBreakdown. The uniqueness of (tenderId, entityType,
+    // entityId, dimensionCode) is enforced by the Prisma-declared constraint
+    // (…_dimensionC_key from the migrations); do NOT re-create it here under
+    // another name — a second identical unique index doubles write cost and
+    // makes app-booted databases fail the release zero-drift check.
     `CREATE INDEX IF NOT EXISTS "MatchScoreBreakdown_tenderId_entityType_idx" ON "MatchScoreBreakdown"("tenderId", "entityType")`,
     `CREATE INDEX IF NOT EXISTS "MatchScoreBreakdown_tenderId_entityId_idx" ON "MatchScoreBreakdown"("tenderId", "entityId")`,
     // G4 — EvaluatorObjection
     `CREATE INDEX IF NOT EXISTS "EvaluatorObjection_tenderId_status_idx" ON "EvaluatorObjection"("tenderId", "status")`,
     `CREATE INDEX IF NOT EXISTS "EvaluatorObjection_tenderId_severity_status_idx" ON "EvaluatorObjection"("tenderId", "severity", "status")`,
-    // G5 — SectionEvidenceMap
-    `CREATE UNIQUE INDEX IF NOT EXISTS "SectionEvidenceMap_unique_section" ON "SectionEvidenceMap"("tenderId", "proposalVersion", "sectionId")`,
+    // G5 — SectionEvidenceMap. Uniqueness of (tenderId, proposalVersion,
+    // sectionId) is enforced by the Prisma-declared …_key constraint from the
+    // migrations — see the MatchScoreBreakdown note above.
     `CREATE INDEX IF NOT EXISTS "SectionEvidenceMap_tenderId_idx" ON "SectionEvidenceMap"("tenderId")`,
     // G6 — AiJob / AiJobStep
     `CREATE INDEX IF NOT EXISTS "AiJob_userId_status_idx" ON "AiJob"("userId", "status")`,
@@ -1200,7 +1243,11 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     // DocumentReview / DocumentComment — correct Prisma-matching index names
     `CREATE INDEX IF NOT EXISTS "DocumentReview_documentId_createdAt_idx" ON "DocumentReview"("documentId", "createdAt")`,
     `CREATE INDEX IF NOT EXISTS "DocumentReview_reviewerId_idx" ON "DocumentReview"("reviewerId")`,
-    `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_idx" ON "DocumentComment"("documentId")`,
+    // NOTE: no single-column DocumentComment(documentId) index here — the
+    // schema declares only the two composite documentId-leading indexes below,
+    // which already serve documentId lookups. Creating an extra undeclared
+    // index at runtime makes app-booted databases fail zero-drift.
+    `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_createdAt_idx" ON "DocumentComment"("documentId", "createdAt")`,
     `CREATE INDEX IF NOT EXISTS "DocumentComment_documentId_parentId_idx" ON "DocumentComment"("documentId", "parentId")`,
     `CREATE INDEX IF NOT EXISTS "DocumentComment_authorId_idx" ON "DocumentComment"("authorId")`,
     // PasswordResetToken indexes (migration 20260614*)
@@ -1281,39 +1328,82 @@ async function bootstrap(client: PrismaClient): Promise<void> {
     }
   }
 
-  // SubmissionPlanRevision: audit trail of plan revisions (migration 20260703100000)
+  // SubmissionPlanRevision: durable, revisioned submission-plan authority.
+  // Columns MUST match prisma/schema.prisma — drift here breaks dev cold-starts
+  // (CI runs migrations first, so this block is a no-op there). Audit test:
+  // tests/bootstrap-schema-coverage.test.ts.
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanRevision" (
     "id" TEXT NOT NULL,
     "tenderId" TEXT NOT NULL,
     "revision" INTEGER NOT NULL,
-    "status" TEXT NOT NULL,
-    "contentHash" TEXT NOT NULL,
-    "itemsJson" TEXT NOT NULL,
-    "validationJson" TEXT,
-    "builtById" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'DRAFT',
+    "sourceContentHash" TEXT NOT NULL,
+    "requirementsHash" TEXT NOT NULL,
+    "createdById" TEXT NOT NULL,
+    "confirmedById" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "confirmedAt" TIMESTAMP(3),
+    "supersededAt" TIMESTAMP(3),
+    "invalidatedAt" TIMESTAMP(3),
+    "invalidationReason" TEXT,
+    "confirmationHash" TEXT,
     CONSTRAINT "SubmissionPlanRevision_pkey" PRIMARY KEY ("id")
   )`);
-  // SubmissionPlanItem: individual items in a plan revision (migration 20260703100000)
+  await client.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "SubmissionPlanRevision_tenderId_revision_key"
+    ON "SubmissionPlanRevision" ("tenderId", "revision")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "SubmissionPlanRevision_tenderId_idx"
+    ON "SubmissionPlanRevision" ("tenderId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "SubmissionPlanRevision_status_idx"
+    ON "SubmissionPlanRevision" ("status")`);
+  // SubmissionPlanItem: individual planned documents in a revision.
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "SubmissionPlanItem" (
     "id" TEXT NOT NULL,
-    "revisionId" TEXT NOT NULL,
+    "submissionPlanId" TEXT NOT NULL,
     "exactFileName" TEXT NOT NULL,
     "exactOrder" INTEGER NOT NULL,
-    "documentType" TEXT,
-    "format" TEXT,
+    "documentType" TEXT NOT NULL DEFAULT 'TENDER_REQUIRED_FILE',
+    "format" TEXT NOT NULL DEFAULT 'DOCX',
+    "envelope" TEXT NOT NULL DEFAULT 'TECHNICAL',
+    "status" TEXT NOT NULL DEFAULT 'PLANNED',
+    "sourceRequirementIds" TEXT NOT NULL DEFAULT '[]',
+    "sourceFileCitations" TEXT NOT NULL DEFAULT '[]',
+    "requiresOriginalUpload" BOOLEAN NOT NULL DEFAULT FALSE,
+    "generatedDocumentId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "SubmissionPlanItem_pkey" PRIMARY KEY ("id")
   )`);
-  // RequirementEvidenceDecision: evidence approval decisions (migration 20260703100000)
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "SubmissionPlanItem_submissionPlanId_idx"
+    ON "SubmissionPlanItem" ("submissionPlanId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "SubmissionPlanItem_generatedDocumentId_idx"
+    ON "SubmissionPlanItem" ("generatedDocumentId")`);
+  // RequirementEvidenceDecision: durable per-field evidence review records.
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "RequirementEvidenceDecision" (
     "id" TEXT NOT NULL,
-    "tenderId" TEXT NOT NULL,
-    "requirementId" TEXT,
-    "decision" TEXT NOT NULL,
-    "decidedById" TEXT,
+    "tenderRequirementId" TEXT NOT NULL,
+    "tenderFileId" TEXT NOT NULL,
+    "pageNumber" INTEGER NOT NULL,
+    "exactQuote" TEXT NOT NULL,
+    "evidenceType" TEXT NOT NULL,
+    "companyAssetType" TEXT NOT NULL,
+    "companyAssetId" TEXT NOT NULL,
+    "relevanceExplanation" TEXT NOT NULL,
+    "reviewerId" TEXT NOT NULL,
+    "decisionStatus" TEXT NOT NULL DEFAULT 'DRAFT',
+    "sourceContentHash" TEXT NOT NULL,
+    "companyEvidenceHash" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "invalidatedAt" TIMESTAMP(3),
+    "invalidationReason" TEXT,
     CONSTRAINT "RequirementEvidenceDecision_pkey" PRIMARY KEY ("id")
   )`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RequirementEvidenceDecision_tenderRequirementId_idx"
+    ON "RequirementEvidenceDecision" ("tenderRequirementId")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RequirementEvidenceDecision_decisionStatus_idx"
+    ON "RequirementEvidenceDecision" ("decisionStatus")`);
+  await client.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "RequirementEvidenceDecision_companyAssetId_idx"
+    ON "RequirementEvidenceDecision" ("companyAssetId")`);
   // TenderFactsLedger: universal tender facts authority ledger (migration 20260708000000)
   await client.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "TenderFactsLedger" (
     "id" TEXT NOT NULL,
@@ -1375,17 +1465,15 @@ async function bootstrap(client: PrismaClient): Promise<void> {
 
   // ── seed admin user ───────────────────────────────────────────────────────
   //
-  // Gap 2 — never seed admin@hope.local with the built-in "Admin123!" default
-  // in production. The runtime seed is gated by the same policy the login
-  // route uses to repair a missing password hash. In development the seed
-  // still runs with the legacy password so `npm run dev` continues to work
-  // without ceremony.
-  const policy = resolveBootstrapAdminPolicy();
+  // Never seed admin@hope.local with a built-in default password in ANY
+  // environment. Runtime seeding requires explicit BOOTSTRAP_ADMIN_ENABLED
+  // plus a strong, non-default BOOTSTRAP_ADMIN_PASSWORD (validated by the
+  // policy module) — including development and test. Login-time credential
+  // repair is permanently disabled (resolveBootstrapAdminPolicy).
+  const policy = resolveRuntimeBootstrapAdminPolicy();
   if (!policy.allowRepair) {
     if (process.env.NODE_ENV === "production") {
-      logger.warn(
-        "[bootstrap] Skipping bootstrap admin seed in production. Set BOOTSTRAP_ADMIN_ENABLED=true with a secure BOOTSTRAP_ADMIN_PASSWORD to enable.",
-      );
+      logger.debug("[bootstrap] Bootstrap admin seed is disabled by policy.");
     }
     return;
   }

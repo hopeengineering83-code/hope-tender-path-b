@@ -20,12 +20,14 @@ type Tender = {
 
 const SEV: Record<string,string> = {
   CRITICAL:"bg-red-100 text-red-700 border-red-200",HIGH:"bg-orange-100 text-orange-700 border-orange-200",
-  MEDIUM:"bg-amber-100 text-amber-700 border-amber-200",LOW:"bg-slate-100 text-slate-600 border-slate-200",
+  MEDIUM:"bg-amber-100 text-amber-800 border-amber-200",LOW:"bg-slate-100 text-slate-600 border-slate-200",
 };
 const SUPP: Record<string,string> = {
   SUPPORTED:"bg-green-100 text-green-700",
   EVIDENCE_PENDING_REVIEW:"bg-blue-100 text-blue-700",
-  PARTIAL:"bg-amber-100 text-amber-700",
+  SUBSTANTIAL:"bg-emerald-100 text-emerald-700",
+  FULL:"bg-emerald-100 text-emerald-700",
+  PARTIAL:"bg-amber-100 text-amber-800",
   UNSUPPORTED:"bg-red-100 text-red-700",
 };
 
@@ -146,9 +148,16 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
       {subTab==="gaps" && (
         <>
           <div className="flex flex-wrap gap-2">
-            <select value={filterTender} onChange={e=>setFilterTender(e.target.value)} className="rounded-lg border px-3 py-1.5 text-xs bg-white">
+            {/* max-w-full + min-w-0 so the select shrinks to fit its flex
+                container on mobile instead of expanding to the width of the
+                longest tender title (which caused the 131px mobile overflow
+                on /dashboard/compliance found by the live audit). The
+                option text is truncated with max-w-[60ch] so long titles
+                don't force the dropdown list itself to be wider than the
+                viewport. */}
+            <select value={filterTender} onChange={e=>setFilterTender(e.target.value)} className="max-w-full min-w-0 rounded-lg border px-3 py-1.5 text-xs bg-white">
               <option value="all">All tenders</option>
-              {tenders.map(t=><option key={t.id} value={t.id}>{t.title}</option>)}
+              {tenders.map(t=><option key={t.id} value={t.id} className="max-w-[60ch] truncate">{t.title}</option>)}
             </select>
             <select value={filterSeverity} onChange={e=>setFilterSeverity(e.target.value)} className="rounded-lg border px-3 py-1.5 text-xs bg-white">
               <option value="all">All severities</option>
@@ -255,7 +264,10 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
           ) : matrixByTender.length > 0 ? (
             matrixByTender.map(({ tender, rows }) => {
               const isOpen = expandedMatrixTenders.has(tender.id);
-              const supported = rows.filter(r => r.supportLevel === "SUPPORTED").length;
+              // Rows written before the Engine spoke the gates' vocabulary still say
+              // SUPPORTED, so both are counted here rather than silently dropping
+              // the history.
+              const supported = rows.filter(r => ["SUBSTANTIAL", "FULL", "SUPPORTED"].includes(r.supportLevel)).length;
               return (
                 <div key={tender.id} className="rounded-2xl border bg-white shadow-sm overflow-hidden">
                   <button
@@ -268,7 +280,7 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                       <p className="text-xs text-slate-400 mt-0.5">{rows.length} evidence entries · {supported}/{rows.length} supported</p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${supported === rows.length ? "bg-green-100 text-green-700" : supported > 0 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${supported === rows.length ? "bg-green-100 text-green-700" : supported > 0 ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-700"}`}>
                         {Math.round((supported / rows.length) * 100)}% supported
                       </span>
                       <ChevronIcon open={isOpen} />
@@ -276,7 +288,13 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                   </button>
                   {isOpen && (
                     <div className="border-t border-slate-100 overflow-hidden">
-                      <table className="w-full text-sm">
+                      {/* overflow-x-auto so the evidence table scrolls
+                          horizontally on narrow viewports (mobile / tablet)
+                          instead of pushing the page width past the viewport
+                          — fixed the 131px mobile overflow on
+                          /dashboard/compliance found by the live audit. */}
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
                         <thead className="bg-slate-50 text-left text-xs text-slate-500">
                           <tr>
                             <th className="px-5 py-3 font-medium">Evidence Type</th>
@@ -296,6 +314,7 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -304,7 +323,11 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
           ) : (
             // Fallback: show flat table when tenders have no complianceMatrix but allMatrix has data
             <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
-              <table className="w-full text-sm">
+              {/* overflow-x-auto so the fallback evidence table scrolls
+                  horizontally on narrow viewports — same fix as the
+                  per-tender matrix table above. */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
                 <thead className="bg-slate-50 text-left text-xs text-slate-500">
                   <tr>
                     <th className="px-5 py-3 font-medium">Tender</th>
@@ -326,6 +349,7 @@ export function ComplianceDashboard({ tenders: initial }: { tenders: Tender[] })
                   ))}
                 </tbody>
               </table>
+              </div>
             </div>
           )}
         </div>

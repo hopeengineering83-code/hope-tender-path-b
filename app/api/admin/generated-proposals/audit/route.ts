@@ -131,7 +131,7 @@ function why(row: AuditRow): { recommendedAction: string; severity: Severity } {
   }
   if (!row.finalExportCandidate) {
     const reason = row.excludedReason ?? "Workspace-only row";
-    return { recommendedAction: `${reason} — not a final-export file. Use Generate Docs to produce the actual submission file.`, severity: "LOW" };
+    return { recommendedAction: `${reason} — not a final-export file. The automatic generation stage produces the actual submission file.`, severity: "LOW" };
   }
   if (!row.readyForExport) {
     return { recommendedAction: "Document is not yet READY_FOR_EXPORT. Complete validation + reviewer approval.", severity: "MEDIUM" };

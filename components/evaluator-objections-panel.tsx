@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import { subscribeTenderWorkflowSync } from "@/lib/ui/tender-workflow-sync";
+import { severityBadgeClassesCompact, severityToUISeverity } from "../lib/ui-tokens";
 
 type Objection = {
   id: string;
@@ -27,11 +29,9 @@ type Summary = {
   exportBlockedByHighObjections: boolean;
 };
 
-const SEVERITY_BADGE: Record<string, string> = {
-  HIGH: "bg-red-100 text-red-700",
-  MEDIUM: "bg-amber-100 text-amber-700",
-  LOW: "bg-slate-100 text-slate-600",
-};
+// SEVERITY_BADGE migrated to lib/ui-tokens.ts::severityBadgeClassesCompact(severityToUISeverity(...)).
+// Single source of truth for severity color mapping across all panels.
+// Unknown severity strings fall back to LOW/muted via severityToUISeverity.
 
 const STATUS_BADGE: Record<string, string> = {
   OPEN: "bg-red-100 text-red-700",
@@ -48,7 +48,7 @@ export function EvaluatorObjectionsPanel({ tenderId, canMutate = false }: { tend
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -62,7 +62,11 @@ export function EvaluatorObjectionsPanel({ tenderId, canMutate = false }: { tend
     } finally {
       setLoading(false);
     }
-  }
+  }, [tenderId]);
+
+  // Auto-load on mount + auto-refresh on workflow sync — no manual button needed.
+  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => subscribeTenderWorkflowSync(tenderId, () => { void refresh(); }), [refresh, tenderId]);
 
   async function updateObjection(objectionId: string, status: "RESOLVED" | "WAIVED") {
     const resolutionNote = (notes[objectionId] ?? "").trim();
@@ -106,9 +110,7 @@ export function EvaluatorObjectionsPanel({ tenderId, canMutate = false }: { tend
               {summary.exportBlockedByHighObjections ? `${summary.openHigh} high blocker(s)` : "No high blockers"}
             </span>
           )}
-          <button type="button" onClick={() => void refresh()} disabled={loading} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-60">
-            {loading ? "Loading…" : hasLoaded ? "Refresh" : "Load objections"}
-          </button>
+          {/* Auto-loads on mount + workflow sync — no manual Refresh button. */}
         </div>
       </div>
 
@@ -135,7 +137,7 @@ export function EvaluatorObjectionsPanel({ tenderId, canMutate = false }: { tend
             return (
               <li key={objection.id} className="rounded-xl border border-slate-100 bg-white p-3 text-xs">
                 <div className="flex flex-wrap items-start gap-2">
-                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${SEVERITY_BADGE[objection.severity] ?? SEVERITY_BADGE.LOW}`}>{objection.severity}</span>
+                  <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${severityBadgeClassesCompact(severityToUISeverity(objection.severity))}`}>{objection.severity}</span>
                   <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${STATUS_BADGE[objection.status] ?? STATUS_BADGE.OPEN}`}>{objection.status}</span>
                   <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">{objection.category}</span>
                   <div className="min-w-0 flex-1">

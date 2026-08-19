@@ -5,7 +5,6 @@ export type PublicReadinessBlocker = {
   message: string;
   nextAction?: string | null;
   severity?: string | null;
-  [key: string]: unknown;
 };
 
 export type PublicReadinessWarning = PublicReadinessBlocker;
@@ -26,11 +25,23 @@ function asNonNegativeInteger(value: unknown): number {
   return Math.max(0, Math.trunc(typeof value === "number" && Number.isFinite(value) ? value : 0));
 }
 
+const INTERNAL_ERROR_TEXT = /Prisma|SQLSTATE|DATABASE_URL|SESSION_SECRET|stack\s+trace|TypeError|ReferenceError|\bP20\d{2}\b/i;
+
+function sanitizePublicText(value: string): string {
+  const text = value.trim().slice(0, 500);
+  if (INTERNAL_ERROR_TEXT.test(text)) return "Readiness check could not be completed safely.";
+  return text
+    .replace(/\bmetadata\s+is\b/gi, "tender details are")
+    .replace(/\bmetadata\b/gi, "tender details");
+}
+
 function normalizeMessage(value: unknown): string {
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return sanitizePublicText(value);
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    return String(record.message ?? record.title ?? record.reason ?? record.code ?? "Readiness blocker");
+    for (const candidate of [record.message, record.title, record.reason, record.code]) {
+      if (typeof candidate === "string" && candidate.trim()) return sanitizePublicText(candidate);
+    }
   }
   return "Readiness blocker";
 }
@@ -43,10 +54,9 @@ function normalizeAction(value: unknown): string | null {
 }
 
 export function normalizePublicBlocker(value: unknown): PublicReadinessBlocker {
-  if (typeof value === "string") return { message: value };
+  if (typeof value === "string") return { message: sanitizePublicText(value) };
   const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
-    ...record,
     code: typeof record.code === "string" ? record.code : typeof record.category === "string" ? record.category : null,
     message: normalizeMessage(value),
     nextAction: normalizeAction(value),
@@ -67,19 +77,42 @@ export function buildPublicReadinessEnvelope(input: {
 }): PublicReadinessEnvelope {
   const blockers = (input.blockers ?? []).map(normalizePublicBlocker);
   const warnings = (input.warnings ?? []).map(normalizePublicBlocker);
-  const primary = blockers[0] ?? warnings[0] ?? null;
   const requiredDocumentsTotal = asNonNegativeInteger(input.requiredDocumentsTotal);
   const generatedDocumentsTotal = asNonNegativeInteger(input.generatedDocumentsTotal);
   const exportReadyDocumentsTotal = asNonNegativeInteger(input.exportReadyDocumentsTotal);
-  const status = input.status ?? (Boolean(input.ok) && blockers.length === 0 ? "READY" : "BLOCKED");
-  const ok = Boolean(input.ok) && blockers.length === 0 && status === "READY";
+
+  if (exportReadyDocumentsTotal > generatedDocumentsTotal) {
+    blockers.push({
+      code: "READINESS_COUNT_CONTRADICTION",
+      message: "Export-ready document count exceeds generated document count.",
+      nextAction: "RECHECK_DOCUMENT_READINESS",
+      severity: "HIGH",
+    });
+  }
+  if (requiredDocumentsTotal > 0 && exportReadyDocumentsTotal > requiredDocumentsTotal) {
+    blockers.push({
+      code: "READINESS_COUNT_CONTRADICTION",
+      message: "Export-ready document count exceeds required document count.",
+      nextAction: "RECONCILE_OUTSIDE_PLAN_DOCS",
+      severity: "HIGH",
+    });
+  }
+
+  const blocked = !input.ok || blockers.length > 0;
+  const status: PublicReadinessStatus = input.status === "PARTIAL" && blockers.length === 0
+    ? "PARTIAL"
+    : blocked
+      ? "BLOCKED"
+      : "READY";
+  const ok = status === "READY";
+  const primary = blockers[0] ?? warnings[0] ?? null;
   return {
     ok,
     status,
     blockers,
     warnings,
-    primaryBlockerReason: input.primaryBlockerReason ?? primary?.message ?? null,
-    primaryFixAction: input.primaryFixAction ?? primary?.nextAction ?? null,
+    primaryBlockerReason: primary?.message ?? input.primaryBlockerReason ?? null,
+    primaryFixAction: primary?.nextAction ?? input.primaryFixAction ?? null,
     requiredDocumentsTotal,
     generatedDocumentsTotal,
     exportReadyDocumentsTotal,

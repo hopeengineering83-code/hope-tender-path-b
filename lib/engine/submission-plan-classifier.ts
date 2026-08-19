@@ -49,28 +49,85 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
     exactFileName: input.exactFileName,
     documentType: input.requirementType,
   });
-  if (officialTemplate.required) {
+
+  // An explicit tender-issued form/template wins outright: those must be
+  // obtained and completed, never invented, so they stay fail-closed.
+  if (officialTemplate.required && officialTemplate.confidence === "HIGH") {
     return result("FORM_TEMPLATE_TO_COMPLETE", officialTemplate.reason ?? "Official tender-issued form/template detected.");
   }
 
-  if (/financial proposal exclusion|separate envelope|two[-\s]envelope|sealed envelope|technical only|do not include price|do not include financial/.test(value)) {
-    return result("COMMERCIAL_SEPARATION_RULE", "Financial/technical separation rule, not a deliverable file.");
+  // A MEDIUM template signal does NOT outrank explicit rule language below.
+  //
+  // MEDIUM_SIGNALS includes a bare file extension (/\.(xls|xlsx|pdf)\b/), so
+  // any row carrying a filename was being read as "possible official
+  // form/template" before the rule checks ever ran. A file extension describes
+  // a format, not a fact about who issues the document.
+
+  // Negative financial instructions are RULES, never deliverables. This must
+  // match natural-language variants such as "No Financial Proposal.docx" and
+  // "Financial proposal: not required at this stage" before the later positive
+  // `financial proposal` deliverable rule sees those words. The retained Pharo
+  // Build Plan previously invented a required file literally named
+  // "No Financial Proposal.docx", making package convergence impossible even
+  // though the tender expressly prohibited/omitted that deliverable.
+  if (
+    /financial proposal exclusion|separate envelope|two[-\s]envelope|sealed envelope|technical only|do not include price|do not include financial/.test(value) ||
+    /\bno\s+financial\s+(?:proposal|offer)\b/.test(value) ||
+    /\bfinancial\s+(?:proposal|offer)\s*(?:[:;,.\-–—]\s*)?(?:is\s+)?(?:not\s+required|not\s+requested|not\s+applicable|excluded|omitted)\b/.test(value) ||
+    /\b(?:do\s+not|must\s+not|shall\s+not)\s+(?:generate|submit|include)\s+(?:a\s+)?financial\s+(?:proposal|offer)\b/.test(value) ||
+    /\bwithout\s+(?:a\s+)?financial\s+(?:proposal|offer)\b/.test(value)
+  ) {
+    return result("COMMERCIAL_SEPARATION_RULE", "Financial/technical separation or no-financial rule, not a deliverable file.");
   }
 
   // Submission method / deadline / delivery rules → SUBMISSION_RULE (not TECHNICAL_PROPOSAL)
-  if (/email recipients|both contacts|deadline|submit before|submit by|cc both|portal address|submission method|submission deadline|delivery rules|delivery instructions|how to submit|where to submit/.test(value)) {
-    return result("SUBMISSION_RULE", "Submission process/timing/recipient rule, not a deliverable file.");
+  //
+  // The email SUBJECT LINE belongs here and was missing. A tender line such as
+  // "Required Email Subject: Technical Proposal for Pharo Ventures" describes
+  // how to address the submission email; it is not something the bidder hands
+  // over. Without these patterns the row fell through to the deliverable branch
+  // and the Build Plan invented a mandatory file literally named
+  // "Required Email Subject.docx" — which automatic generation can never
+  // produce, so the package could never converge and the owner was told a
+  // required submission document was permanently missing.
+  //
+  // Same failure shape as the "No Financial Proposal.docx" rule above: an
+  // instruction about the submission was read as a thing to submit.
+  if (
+    /email recipients|both contacts|deadline|submit before|submit by|cc both|portal address|submission method|submission deadline|delivery rules|delivery instructions|how to submit|where to submit/.test(value) ||
+    /\b(?:required\s+)?(?:e-?mail\s+)?subject\s*(?:line|title|header)?\s*[:\-–—]/.test(value) ||
+    /\bemail\s+subject\b|\bsubject\s+line\b|\bsubject\s+of\s+the\s+e-?mail\b|\bmark\s+the\s+(?:e-?mail|envelope)\b|\bemail\s+body\b|\bcovering\s+e-?mail\b/.test(value)
+  ) {
+    return result("SUBMISSION_RULE", "Submission process/timing/recipient/subject rule, not a deliverable file.");
   }
 
   // Formatting rules → INTERNAL_COMPLIANCE_CONTROL (not TECHNICAL_PROPOSAL)
-  if (/document control|formatting rules|labelling rules|file naming|internal checklist|compliance control|page limit|font size|margin requirement|document format/.test(value)) {
+  if (
+    /document control|formatting rules|labelling rules|file naming|internal checklist|compliance control|page limit|font size|margin requirement|document format/.test(value) ||
+    /\b(formatting|packaging|labell?ing|naming|numbering|binding|collation)\b[^.;]{0,60}\b(rules?|instructions?|requirements?|conventions?)\b/.test(value) ||
+    /\b(rules?|instructions?)\b[^.;]{0,60}\b(formatting|packaging|labell?ing|file naming)\b/.test(value)
+  ) {
     return result("INTERNAL_COMPLIANCE_CONTROL", "Internal format/control rule, not a generated file.");
+  }
+
+  // A generic bidder-assembled supporting-document annex is not the same thing
+  // as an official Annex form. An explicit attached/provided/prescribed Annex
+  // would already have matched the HIGH official-template detector above and
+  // remains fail-closed. This narrower form is a bidder-produced package/index.
+  if (/\bannex(?:es)?\s+(?:for|of)\s+(?:supporting\s+(?:documents?|evidence)|company\s+documents?|credentials?)\b/.test(value)) {
+    return result("REQUIRED_OUTPUT_FILE", "Bidder-assembled supporting-document annex/package.");
+  }
+
+  // Explicit rule language has now had its say, so a weaker template signal
+  // (including a bare file extension) may take the row.
+  if (officialTemplate.required) {
+    return result("FORM_TEMPLATE_TO_COMPLETE", officialTemplate.reason ?? "Official tender-issued form/template detected.");
   }
 
   // Financial capacity / audited financial statements → ORIGINAL_EVIDENCE_ATTACHMENT (not TECHNICAL_PROPOSAL)
   // Legal eligibility / registration / license → ORIGINAL_EVIDENCE_ATTACHMENT (not TECHNICAL_PROPOSAL)
   if (/business license|trade license|tax clearance|audited\s+(financial\s+)?statements?|financial statements?|financial capacity|turnover statement|bank statement|annual report|registration\s+certificate|certificate\s+of\s+registration|incorporation\s+certificate|certificate\s+of\s+incorporation|tin certificate|vat certificate|grade certificate|good standing certificate|legal eligibility|eligibility certificate|company registration|license to operate|contractor registration|professional license|legal entity certificate/.test(value)) {
-    return result("ORIGINAL_EVIDENCE_ATTACHMENT", "Evidence attachment must be uploaded as an original document, not generated.");
+    return result("ORIGINAL_EVIDENCE_ATTACHMENT", "Evidence attachment must be sourced from Company Vault, not generated.");
   }
 
   if (/bid form|tender form|declaration form|undertaking form|integrity pact|price schedule|rate card|boq|bill of quantities|annex|annexure|appendix|attachment|template/.test(value)) {

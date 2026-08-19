@@ -1,13 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { AiAnalyzeRunner } from "../lib/ai-analyze/runner";
 import { toSafeAiFailureCategory } from "../lib/engine/analysis/safe-diagnostics";
-
-test("AiAnalyzeRunner exports required methods", () => {
-  assert.strictEqual(typeof AiAnalyzeRunner.startOrResume, "function");
-  assert.strictEqual(typeof AiAnalyzeRunner.runNextChunk, "function");
-  assert.strictEqual(typeof AiAnalyzeRunner.finalize, "function");
-});
 
 test("toSafeAiFailureCategory maps errors correctly", () => {
   assert.strictEqual(toSafeAiFailureCategory(new Error("Rate limit exceeded")), "RATE_LIMITED");

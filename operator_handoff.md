@@ -74,6 +74,1226 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-18 UTC — Claude Code (dependency advisory blocking CI *and* Vercel Preview)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; base `49c0f63a`.
+- **Symptom:** two different red signals on the branch — the CI check "Reject high and critical dependency vulnerabilities", and the Vercel deployment on the authoritative `hope-tender-path-b` project. Both red on `cbe26fea` and again on `49c0f63a`, i.e. across commits from two different sessions.
+- **One root cause.** `npm audit --omit=dev` reports three high findings that are all the same advisory — 1145093, "DeepmergeTS has stack exhaustion when merging recursive object graphs" — reachable from production via `@prisma/client@6.19.3 -> prisma@6.19.3 -> @prisma/config -> deepmerge-ts (<8.0.0)`. It is not from any commit on this branch; no dependency file was touched. It is a newly published advisory against the existing lockfile. The Vercel failure is the *same* gate: `scripts/vercel-build.mjs` runs `scripts/audit-dependencies.mjs`, whose build log shows "Dependency audit failed: 3 blocking vulnerability finding(s)". So the Preview deployments owner UAT depends on were being failed by the advisory, not by a build defect.
+- **Fix:** one `overrides` entry, `"deepmerge-ts": "^8.0.1"` — the mechanism this repo already uses for six other transitive advisories (postcss, rimraf, glob, sharp, nanoid, js-yaml). npm's own suggested remedy was `prisma@6.12.0`, flagged `isSemVerMajor` — a downgrade of the ORM across 47 migrations, which was rejected as far riskier than the advisory.
+- **Risk checked rather than assumed:** `@prisma/config` pins `deepmerge-ts: "7.1.5"` *exactly*, so the override forces a major bump past a deliberate pin. Against the real installed tree (`node_modules` at 8.0.1, not just a lockfile edit): `prisma validate`, `prisma generate`, `prisma migrate deploy` and `migrate diff` zero-drift all pass; `npm audit --omit=dev` reports 0 vulnerabilities; and `scripts/audit-dependencies.mjs` — the exact gate Vercel runs — prints "Dependency audit passed: no known vulnerabilities."
+- **Files changed:** `package.json`, `package-lock.json`, `operator_handoff.md`. Both dependency files are "shared high-risk" per the PR template; nothing else in either file was altered.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`): full suite **10,114 passed / 0 failed / 0 cancelled / 0 skipped**; migrate deploy clean; zero drift; lint 0 warnings/errors; `next build` exit 0.
+- **Risks / assumptions:** if Prisma later ships a release that bumps `deepmerge-ts` itself, this override becomes redundant and should be dropped rather than left to pin the tree. The override applies repo-wide, so any other consumer of `deepmerge-ts` also moves to 8.x — there is currently only the one.
+- **Next action:** exact-head CI plus a Vercel Preview on the pushed SHA; the Preview should now build, which unblocks the authenticated owner UAT that has been blocked since the Neon outage.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — PR remains draft.
+
+### 2026-08-17 UTC — Claude Code (gap found by running the app locally)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; base `273f522e`.
+- **How it was found:** built and ran the real app (`next build` + `next start`) against local PostgreSQL 16, seeded the two e2e users with `scripts/seed-e2e-user.mjs`, logged in through the actual form, and drove the dashboard, tenders list, tender detail and Command Center in Chromium.
+- **Gap:** on a tender with zero files, Command Center correctly showed one canonical action — "Upload tender document. No tender file has been uploaded." — while the Tender Detail panel directly below offered **"Re-extract from PDF"**. Two panels on one screen contradicting each other, and the owner could only discover the second was impossible by clicking it. `POST /api/tenders/[id]/re-extract-metadata` was already fail-closed (400, "Tender has no uploaded files to re-extract from"), so this was never a successful no-op — it was an unreachable action being advertised, the contradiction class this PR exists to remove.
+- **Fix:** gate `<ReExtractMetadataButton>` on `hasSourceFile`, derived from the file list `page.tsx` already passes the panel. Presentation only — no gate relaxed, the route is untouched and still refuses.
+- **Files changed:** `app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx`, `tests/re-extract-action-requires-a-source.test.ts` (new), `operator_handoff.md`.
+- **Verified live in the running app**, before and after the rebuild: 0 "Re-extract from PDF" buttons on a tender with no files, 1 on a tender with one file. Zero console errors, zero 5xx, and the only server-log warnings were the local `SENTRY_DSN` notice.
+- **Also confirmed by the same run (no change needed):** `/api/health` returns **200 healthy** locally, so the health route and its probes are correct code and the Preview 503 was purely the unreachable Neon endpoint. And the C-5 fix from `273f522e` was proven end to end rather than by test: with a live session `/api/tenders`, `/api/company` and `/api/search` all returned 200; after soft-deleting the user, the **same cookie** got 401 from all three; re-login returned 401 `INVALID_CREDENTIALS`; after restoring the user, 200 again. Those are precisely the routes that authorize on `getSession()` alone and never reach `getCurrentUser`.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`): full suite **10,112 passed / 0 failed / 0 cancelled / 0 skipped**; `prisma migrate deploy` clean; `migrate diff` zero drift; `tsc --noEmit` clean; `next lint` 0 warnings/errors; `next build` exit 0.
+- **Risks / assumptions:** the panel now reads `tender.files` for reachability only; if a future page stops passing `files`, the button hides rather than misleads — fail-safe in the honest direction. Real-Preview UAT still not run from here (agent proxy returns 403 CONNECT for the preview host).
+- **Next action:** exact-head CI on the pushed SHA.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — PR remains draft.
+
+### 2026-08-17 UTC — Claude Code (audit-remediation gap closure on the PR branch)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; base `7cbf855a`.
+- **Scope:** three gaps left by the C-3/C-4/C-5/H-6 remediation, all the same shape — the check landed in one place and the test asserted that place, while the reachable surface was wider.
+  1. **Worker-wake chain.** `c5b2ee46` repointed four guards from `/api/ai-jobs/run-next` to `/api/ai-jobs/dispatch` after the dispatcher refactor. Nothing then asserted that `worker-dispatch.ts` reaches `run-next`, so "defers to the durable worker instead of running the Engine inline" stopped proving its own title, and the `AI_JOBS_WORKER_SECRET`/`CRON_SECRET` prohibition was checked only on the wake — not on the hop that now calls `run-next`. Both hops are pinned.
+  2. **C-4 legacy plaintext share tokens.** `20260817120000` backfills `tokenHash` but keeps `token` populated "for the transition window" (up to 365 days). The backfill computes `encode(digest("token",'sha256'),'hex')`, byte-for-byte `hashTenderShareToken`, so legacy rows already resolve by hash and the plaintext is never needed to serve them — while leaving exactly the exposure C-4 names ("a DB leak … would expose every active share URL instantly"), which `deep-remediation-c3-c4-c5-h6.test.ts` already asserts is closed. New migration clears the plaintext only where a hash exists; the fallback path still serves any hash-less row.
+  3. **C-5 soft-delete did not reject auth.** Deactivation revokes sessions atomically, but the login route never checked `deletedAt`, so a deactivated user who knew their password logged straight back in; and ~20 routes authorize on `getSession()` alone, never reaching the `getCurrentUser` guard. Login now folds `deletedAt` into the existing `INVALID_CREDENTIALS` branch (same status/body, after bcrypt — no account enumeration), and `getSession()` selects `user.deletedAt` inside its existing session query, so no extra round trip.
+- **Files changed:** `lib/auth.ts`, `app/api/auth/login/route.ts`, `prisma/migrations/20260817140000_tender_share_clear_legacy_plaintext_tokens/migration.sql`, `tests/soft-delete-blocks-reauthentication.test.ts` (new), `tests/tender-share-legacy-plaintext-token-cleared.test.ts` (new), `tests/engine-worker-wake-constraints.test.ts`, `tests/request-scoped-upload-worker-wake.test.ts`, `tests/login-fail-closed-current.test.ts`, `operator_handoff.md`.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`): full suite **10,109 passed / 0 failed / 0 cancelled / 0 skipped**; `prisma migrate deploy` clean; `prisma migrate diff` zero drift; `tsc --noEmit` clean; `next lint` 0 warnings/errors; `next build` exit 0. Database verified alive before and after — an earlier run was discarded when it died mid-run (the 84-failed/313-cancelled signature) and re-run.
+- **One test expectation updated, deliberately:** `login-fail-closed-current.test.ts` pinned the branch by literal source text, so adding `|| user.deletedAt` broke the regex. The property it names — one generic invalid-credentials code for every account state — is strengthened, not relaxed: the assertion now *requires* `deletedAt` to sit in that shared branch, so a dedicated branch or early return for deactivated accounts fails the test.
+- **Risks / assumptions:** the two new source-text assertions are coupled to how the dispatcher builds its URL, the same maintenance cost the existing guards carry. The plaintext-clearing migration is data-only (no schema change, hence no drift) and non-destructive — it drops no column, index or row. Real-Preview UAT was not run from here; the agent proxy returns 403 CONNECT for the preview host, so `/api/health` is unreachable in this container and I make no claim about the Neon restoration.
+- **Next action:** exact-head CI on the pushed SHA, then owner Preview UAT.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — PR remains draft.
+
+### 2026-08-14 UTC — Codex (exact-Preview Build Plan hash owner follow-up)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; follow-up to SHA `c4daa25dead3617858b9203c35e8fe9c92a75b95`.
+- **Real Preview finding:** exact-SHA deployment `dpl_5zjJ3L96pDyH8bkzndo45wxXYZKc` was READY and healthy. A new manual AI Analyze succeeded, automatic requirement grounding repaired 2/2, and manual Run Engine passed its route-level current-analysis check. It then failed at Automatic Build Plan verification with safe reference `da42c065`: `ANALYSIS_HASH_MISMATCH`. Build Plan retained a private company-inclusive currentness computation after Release Snapshot, Runtime Readiness, and Generation Readiness had moved to the terminal tender-source binding.
+- **Scope / repair:** Automatic Build Plan now consumes the same tender-source terminal analysis binding as every other gate. The immutable provider snapshot still binds the full Vault input; chunk integrity remains bound to the canonical analysis job ID; page/title evidence validation is unchanged and fail-closed. PostgreSQL hash-binding expectations now distinguish the pre-promotion full provider hash from the post-promotion public tender-source binding, and the chunk query regression recognizes the job-bound query.
+- **Files changed:** `lib/engine/build-plan.ts`, `tests/ai-analyze-hash-binding-db.test.ts`, `tests/ai-analyze-chunk-relation-regression.test.ts`, and `operator_handoff.md` (in addition to the prior `c4daa25` changes already on this branch).
+- **Tests/checks:** 57/57 focused reachable assertions passed; Prisma validate/generate, typecheck, targeted lint, and diff check passed. The first `c4daa25` exact-head CI exposed six stale test expectations (9,985/10,008 passed, 6 failed, 17 cancelled); this follow-up repairs those expectations. Exact-head PostgreSQL CI and real Preview rerun remain required after push.
+- **Risk / next action:** push one follow-up SHA, require exact-head CI/security/screenshot/Preview, then repeat the retained Pharo tender manual Run Engine and inspect all canonical panels and final package outputs. Provider availability may still produce a truthful external-provider blocker; it must not be misreported as a workflow success.
+- **Exact Preview after-state:** on `cd64e1c6`, retrying manual Run Engine completed successfully, including automatic source-reverified Build Plan revision 1. The canonical workflow now truthfully stops at `MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE` because only 2/4 mandatory requirements have release-qualified evidence; Generation Readiness is `BLOCKED` despite its secondary 95 score, Export Readiness leads with the identical evidence blocker, and downstream document defects are suppressed from the primary action. Exact-head CI then found two additional stale test fixtures (the golden static chunk-query assertion and the owner-workflow terminal hash seed); both are corrected in this follow-up.
+- **Later exact-head check:** SHA `7f90b790` passed 10,008/10,008 PostgreSQL assertions, migrations/zero-drift, typecheck, lint, and production build; authenticated Playwright passed 183 scenarios but the Phase 2 screenshot fixture alone still seeded the old company-inclusive terminal hash and failed 3/3 retries at Build Plan with `ANALYSIS_HASH_MISMATCH`. That final fixture seed is now tender-source-only; no production behavior changed.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** until exact-head real Preview acceptance is complete.
+
+### 2026-08-14 UTC — Codex (real Preview Vault/current-analysis contradiction)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; starting SHA `b16b9c2c67dba7996e3f5bd3e94d656ca35b0ea0`, original fixture `b4903c03` / `03b9c928`.
+- **Real Preview before-state:** the original exact deployment failed at Vercel after producing no outputs. An authorized redeploy of the same SHA became READY and healthy, enabling authenticated UAT against the retained real Pharo tender. Manual AI Analyze succeeded and automatic source grounding repaired 2/2 ungrounded requirements; manual Run Engine then failed immediately with safe reference `20e22a68`. Runtime logs proved `CURRENT_ANALYSIS_REQUIRED`: Engine's automatic Vault verification changed Company Vault state after the route had accepted current AI analysis, while analysis currentness incorrectly included the Vault digest. The same manual click therefore invalidated itself before execution.
+- **Scope / root cause repair:** provider-input snapshots remain immutable and continue to bind their bounded Vault context before provider calls, but the public terminal analysis currentness binding is now tender-source-only (title, description/intake context, active source files/text). Company Vault revisions remain fully bound by `computeEngineSourceRevision`. Release Snapshot, Generation Readiness, and Runtime Readiness now use the same tender-source binding; chunk integrity is checked by the canonical analysis job ID rather than conflating the provider-input hash with the public currentness hash. This preserves source drift detection while preventing Run Engine's own Vault preflight from staling a just-completed analysis.
+- **Files changed:** `lib/engine/tender-analysis-content.ts`, `lib/engine/tender-release-snapshot.ts`, `lib/engine/generation-readiness-gate.ts`, `lib/engine/runtime-readiness-facts.ts`, their three PostgreSQL panel fixtures, `tests/tender-analysis-content-parity.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** 72/72 reachable focused assertions passed; Prisma validate/generate, typecheck, lint (one standing warning) and diff check passed. Direct DB tests remain pointed at the unreachable old local Neon URL; exact-head disposable-PostgreSQL CI must run the full suite.
+- **Risks / next action:** no page, title quote, tenant, evidence, manual authority, legal/owner, package envelope, signature, hash or ZIP-byte gate was relaxed. Push once, require all exact-head CI/security/screenshot checks and one Preview, then repeat real Preview manual AI Analyze → source grounding → manual Run Engine and cross-panel/package inspection. Delete no Production data and do not promote.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION**; real Preview after-state is required on the resulting SHA.
+
+### 2026-08-14 UTC — Codex (latest-head canonical-action audit)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; starting SHA `cf76816774f79d86387af0049f4f1142d045acb5`, original real failure fixture `b4903c03` / reference `03b9c928`.
+- **Scope:** latest-head inspection found four residual independent-action paths that the prior screenshot route did not exercise. Pipeline Diagnostic now returns the same canonical workflow decision/action as the live panels instead of independently guessing Generate/Validate/Build actions; auto-finalize returns `AUTOMATIC_PROCESSING` or `EXPORT_READY` rather than inventing a manual export-readiness re-check; the legacy tender-next-action resolver treats missing/stale generated documents as durable post-Engine processing; derived-draft Build Plan recovery is manual Run Engine, not confirmation; and the compatibility Engine recovery copy no longer says Engine starts automatically.
+- **Files changed:** `app/api/tenders/[id]/pipeline-diagnostic/route.ts`, `app/api/tenders/[id]/auto-finalize/route.ts`, `lib/tender-next-action.ts`, `lib/tender-generation-readiness.ts`, `lib/recovery-command-actions.ts`, `tests/tender-next-action.test.ts`, `tests/preview-panel-canonical-action-regression.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** 161 focused non-database assertions passed; five Pharo PostgreSQL subtests could not start because the configured Neon endpoint is unreachable. Prisma validate/generate, typecheck, lint (one standing warning), release-integrity audits, dependency audit (0 vulnerabilities), and production build passed. Exact-head real PostgreSQL, migration/zero-drift, Playwright/isolation, screenshot, dependency, and Preview checks are required after push.
+- **Real Preview status:** the starting exact Preview `/api/version` reports `cf768167`; `/api/health` responds with an unhealthy payload and all five database probes false. Only `VERCEL_TOKEN` and an unrelated unreachable `DATABASE_URL` are available locally; no authorized Preview login credential/session exists. No environment, credential, database, or Production state was changed to fabricate acceptance.
+- **Risks / assumptions:** no provenance, page validation, tenant query, evidence strength, legal/authority gate, package isolation, or stored-byte/ZIP integrity logic changed. The new Pipeline Diagnostic authority adds one canonical read but preserves its owner-scoped tender access and safe error boundary.
+- **Next action:** commit/push once, require all exact-head automation and Preview deployment, then retry real Preview health. Owner/provider must restore the configured Preview database and provide an authorized session before the requested final authenticated real-tender walkthrough can honestly pass.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION**; live Preview acceptance remains externally blocked until database restoration.
+
+### 2026-08-14 UTC — Codex (latest-head Command Center canonical blocker repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from exact latest remote head `ac9201993428d6a81be71d01a1b23bfb4bc953bb` after restoring the externally removed local Git remote. Primary real failure fixture remains Preview `b4903c03` / reference `03b9c928`.
+- **Audit and scope:** independently verified that the landed title reconciliation, Engine-failure precedence, canonical Generation/Export readiness, separate-package execution and PostgreSQL fixtures exist. Downloading and visually inspecting the exact-head screenshot artifact exposed one remaining contradiction: Command Center showed canonical “Upload tender document” while simultaneously listing eight unreachable downstream export blockers and manual recovery instructions. `getTenderReleaseState` now projects exactly the currently reachable canonical blocker/action and suppresses fail-closed downstream diagnostics until their stage is reachable; automatic post-Engine stages expose no invented manual action. The underlying final-submission/export model remains strict and unchanged.
+- **Files changed:** `lib/engine/tender-release-state.ts`, `app/dashboard/tenders/[id]/command-center/version-actions.tsx`, `tests/command-center-canonical-blocker-suppression.test.ts`, and `operator_handoff.md`. Exact-head screenshot inspection also caught and removed the adjacent empty-version sentence that told an intake-stage tender to Run Engine; versions now truthfully appear when canonical processing reaches generation.
+- **Tests before commit:** 15/15 focused canonical/readiness assertions passed; Prisma generation and typecheck passed. The prior exact head passed both full CI runs (9,999 PostgreSQL tests), migrations/zero drift, build, Playwright/isolation, screenshots and security; all exact-head checks must rerun after this commit.
+- **Real Preview status:** exact `ac920199` `/api/version` is correct, but `/api/health` returns HTTP 503 with all five critical database probes false. Vercel runtime logs confirm `PrismaClientInitializationError: Can't reach database server` for the configured Neon endpoint. Authenticated real-tender Preview UAT therefore remains externally blocked; no database credential, Vercel environment, owner account, alias or Production state was modified to bypass it.
+- **Risks / next action:** this is presentation reconciliation only: tenant isolation, provenance, page bounds, evidence levels, legal/authority gates, document validation, envelope isolation, file signatures/hashes and ZIP bytes are unchanged. Push once, require exact-head CI/security/screenshot/Preview, visually inspect the repaired Command Center, then retry Preview health. Owner/provider database restoration remains required if health stays 503.
+- **Merge status:** **DO NOT MERGE**; Production untouched; do not claim complete real-Preview acceptance while its database is unreachable.
+
+### 2026-08-14 UTC — Codex (real-fixture acceptance hardening; Preview DB outage remains)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from actual latest remote head `8008961bdf88ffc3e573018ba8c01650e237e5df` after restoring the externally removed local `origin` and fetching without discarding work. Original failing Preview fixture remains `b4903c03` / reference `03b9c928`.
+- **Audit result / scope:** the landed runtime repairs are present and exact-head automation was green, but the Pharo PostgreSQL regression still proved title reconciliation only as a helper call and asserted Engine failure precedence only by reading source text. Strengthened it into behavioral database acceptance: the 8-requirement/6-mandatory/selected-expert/selected-project fixture now runs Automatic Build Plan verification from an invalid page 99, proves source-byte/page reconciliation to page 2, and obtains a machine-confirmed plan without relaxing validation; the unprovable fixture asserts the exact bounded-page blocker; and a current-revision failed Engine row plus `build-plan.blocked` checkpoint now proves canonical `TITLE_SOURCE_PROVENANCE_INVALID` outranks a secondary ungrounded-requirement consequence with a safe reference. Added reopened-ZIP assertions for independently executable Financial and Admin envelopes alongside the existing Technical isolation check.
+- **Files changed:** `tests/preview-title-provenance-engine-postgres.test.ts`, `tests/final-zip-integration.test.ts`, and `operator_handoff.md`. No production gate, tenant query, workflow mutation, or package-byte implementation changed.
+- **Tests/checks before commit:** installed and started isolated local PostgreSQL 16; all 47 migrations applied; real-DB targeted acceptance **10/10 passed**; combined provenance/package suite **28/28 passed**; typecheck passed. Full exact-head CI, migration idempotency/zero drift, 9,997+ PostgreSQL suite, lint, build, authenticated/cross-user Playwright, screenshots, security, and Vercel must rerun after push.
+- **Real Preview status:** exact `8008961b` `/api/version` is reachable, but `/api/health` still returns 503 with all five database probes false; Production health shows the same shared database outage. Therefore owner-authenticated real-tender Preview UAT cannot run and no 100% claim is made. No Vercel environment, credential, database, user, Production alias, or provider state was changed to bypass the outage.
+- **Next action:** commit/push the behavioral acceptance hardening, require all exact-head checks, then retry the final Preview health and real owner flow. The remaining blocker is external database restoration by the owner/provider if health remains 503.
+- **Merge status:** **DO NOT MERGE**; Production untouched; promotion prohibited; real Preview acceptance incomplete while its database is unavailable.
+
+### 2026-08-13 UTC — Codex (current Engine failure-cause preservation)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from actual latest remote head `85b61507015e961ff5a83b2e3d8e5e62d45ace47` after discovering the local workspace had been reset to `work` and its `origin` removed, then restoring the documented remote and fetching without discarding local changes.
+- **Real Preview acceptance:** exact `85b61507` deployment and `/api/version` are reachable, but `/api/health` returns 503 with all five database probes false. The configured Preview Neon endpoint remains unavailable, so authenticated login and the requested real-tender walkthrough cannot honestly run. No credential, Vercel environment, database, Production alias, or user state was modified to bypass that external outage.
+- **Scope / root cause fixed:** review of the landed `03b9c928` repair found a remaining P0 path hidden by green tests. `build-plan.blocked` persisted only the generic Build Plan message, omitting the validator blocker, while canonical workflow preferred that step over `AiJob.errorMessage`; therefore a current title-page failure could still degrade to generic `ENGINE_RUN_FAILED` instead of `TITLE_SOURCE_PROVENANCE_INVALID`. Failed Build Plan steps now retain deterministic blockers, canonical classification safely combines the failed step and terminal error, maps through `publicJobFailureMessage`, and deterministically breaks same-time job ordering by `analysisVersion`. No raw error is returned and no validation/provenance gate is relaxed.
+- **Files changed:** `lib/ai-job-handlers.ts`, `lib/engine/canonical-workflow-decision.ts`, `app/api/tenders/[id]/engine-readiness/route.ts`, `tests/preview-title-provenance-engine-postgres.test.ts`, and `operator_handoff.md`.
+- **Tests before commit:** Prisma validate/generate passed; 46 reachable focused assertions passed with the four PostgreSQL fixture cases explicitly skipped under `RUN_DB_INTEGRATION=false`; a direct DB-enabled attempt failed only because the configured Neon endpoint is unreachable. Exact-head disposable-PostgreSQL CI, migrations/zero drift, full suite, typecheck, lint, build, Playwright/isolation, screenshots, dependency security and Preview deployment must rerun after push.
+- **Risks / next action:** code-level acceptance is not enough while the real Preview database contradicts deployment readiness. Push once, require exact-head automation, then retry `/api/health` and authenticated real-tender UAT. If Neon remains unavailable, report the external acceptance blocker and do not claim 100%.
+- **Merge status:** **DO NOT MERGE**; Production untouched and promotion prohibited.
+
+### 2026-08-13 UTC — Codex (real final-Preview analysis-title revision repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from latest remote head `81c962f29c08884229dbe97118e6636f3b1e842d` after restoring the missing local `origin` remote and verifying all its CI checks were green.
+- **Real Preview reproduction:** authenticated successfully to the exact `81c962f2` Preview using its configured preview credential, uploaded a real three-page Pharo-shaped tender through `/api/tenders/upload-first`, observed durable extraction succeed, then manually ran AI Analyze. AI Analyze succeeded through Cerebras and promoted the source-proven page-2 title, but every canonical panel immediately classified that just-finished analysis as `STALE_ANALYSIS`; manual Run Engine returned `CURRENT_ANALYSIS_REQUIRED` with `contentHashMatch=false`. This contradicted the prior exact-head synthetic acceptance and blocked the requested real Preview flow.
+- **Root cause / scope:** `buildTenderAnalysisContent` deliberately includes the tender title. The analysis job stored the pre-provider hash while canonical promotion replaced the intake label with the AI-proven source title, so the public post-promotion hash could never reproduce the just-authorized success. The immutable authorized provider hash remains preserved in the job snapshot; in the same promotion transaction, the terminal job now binds `analysisInputHash` to the exact tenant-owned persisted post-promotion tender/files/Vault state. No page, provenance, analysis-promotion, tenant, evidence, or export gate is relaxed.
+- **Files changed:** `lib/engine/tender-analysis-content.ts`, `lib/ai-jobs/analysis-job-service.ts`, `tests/preview-title-provenance-engine-postgres.test.ts`, and `operator_handoff.md`.
+- **Tests before commit:** Prisma generation and typecheck passed; 25 non-DB targeted assertions passed. Local DB-backed assertions reached only the configured unreachable Neon host and failed at connection setup, not behavior; exact-head PostgreSQL CI is required. The real Preview before-state and request/response artifacts are retained under `/tmp` only and contain no committed credentials.
+- **Risks / next action:** deploy this single repair commit through the existing PR Preview, re-run manual AI Analyze and manual Run Engine on the same real Preview tender, then inspect all canonical panels and separate-envelope downloads. Require full exact-head PostgreSQL/zero-drift/build/Playwright/isolation/screenshots/security before any completion claim; delete the temporary Preview tender after acceptance.
+- **Merge status:** **DO NOT MERGE**; Production untouched and promotion prohibited.
+
+### 2026-08-13 UTC — Codex (latest-head title proof hardening)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from actual latest remote SHA `eb68400388d77513cce8fbf09ecf086f2ea878bc`, twelve commits beyond the reported failing Preview SHA `b4903c03`. Restored the externally removed local `origin` configuration before fetching; no source edits occurred on the unrelated reset branch.
+- **Scope:** independently audited the landed Preview `03b9c928` repair and found one remaining provenance weakness: title reconciliation accepted any stored quote that existed at a valid page, even if that quote did not contain/prove the title value. It now reuses stored title evidence only when the normalized quote contains the normalized title; otherwise it deterministically locates the actual title in active extracted text and derives its real bounded page, or leaves the strict gate blocked. Added a Pharo-shaped regression with a valid-but-unrelated page-1 quote and the real title on page 2. Also removed the last independently-derived `BUILD_SUBMISSION_PLAN` next action in Generation Readiness in favor of the canonical manual `RUN_ENGINE` action.
+- **Files changed:** `lib/engine/automatic-build-plan.ts`, `app/api/tenders/[id]/generation-readiness/route.ts`, `tests/preview-title-provenance-engine-postgres.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** Prisma validate/generate, typecheck, lint (one standing unused-disable warning), diff check, and 55 reachable focused assertions passed. The three PostgreSQL title fixture subtests were invoked but could not connect to the configured external Neon hostname; exact-head CI must run them against its disposable PostgreSQL. Full migrations/zero-drift/PostgreSQL, build, Playwright/isolation, screenshot/security and final Preview acceptance remain required on the resulting SHA.
+- **Real Preview audit:** exact `eb684003` Preview was reached. Vercel environment access supplied the configured bootstrap policy, but login was correctly refused because the existing database account no longer matches the configured bootstrap seed password; no credential, user, session, or database state was modified to bypass authentication. Final owner-authenticated Preview UAT is therefore not claimed yet.
+- **Risks / assumptions:** no page-boundary, quote-containment, tenant, evidence-strength, legal/authority, package-envelope, byte-signature/hash, or final ZIP gate was relaxed. Failure to prove the exact title remains fail-closed. Separate Technical/Financial/Admin downloads and partial-Engine diagnostic labeling remain unchanged.
+- **Next action:** commit/push once, require exact-head CI and Preview, then use an authorized existing Preview session/credential for real-tender panel UAT; if unavailable, report that acceptance boundary honestly rather than claiming 100%.
+- **Merge status:** **DO NOT MERGE**; exact-head and authenticated real-Preview acceptance pending; Production promotion prohibited.
+
+### 2026-08-13 UTC — Codex (latest-head Preview contradiction cleanup)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from the actual latest remote SHA `30fe2268bbe8961c1d9ca9fd86663b6158b25f51` after restoring the missing local Git remote and re-fetching PR #1175. No merge or Production promotion.
+- **Scope:** independently audited the already-landed Preview `03b9c928` provenance/Engine/canonical-readiness/separate-package repair and found remaining live P1 contradictions that its green checks did not cover. Removed routine Build Plan confirmation/re-confirmation actions and invented Generate/Validate/Approve/Re-check instructions from generation, auto-finalize, PDF finalization, reconciliation, submission-plan, authority-review, export/download, workflow-stage and human-label surfaces. A final screenshot/manual source audit also removed residual “unconfirmed” plan labels and per-row manual generation/review instructions. Missing plans now point to manual Run Engine; downstream generation/validation/finalization remains automatic; genuine source/original/quality/authority blockers remain fail-closed. The compatibility `requiresUserConfirmation` field is now false in the resolver itself, not only overwritten by its API route. Separate Technical/Financial/Admin ZIP behavior and byte/signature/hash checks were left strict.
+- **Files changed:** generation/auto-finalize/finalize-PDF/reconcile/export/download API copy/actions; submission-plan and authority-review resolvers/panels; Build Plan fail-closed messages; workflow/human labels; focused unit/E2E regressions; and `operator_handoff.md`.
+- **Tests before commit:** 113/113 focused non-DB assertions passed for Preview truth, Build Plan authority, submission completeness, authority availability, canonical generation/export blockers and separate package mode. The first exact-head PostgreSQL run reached 9,994 assertions and correctly exposed three stale source-copy contracts (authority-score suppression, machine-validated PDF source eligibility, and automatic document generation); those assertions were aligned with the stricter runtime contract rather than reverting production behavior. The Pharo PostgreSQL test was also invoked locally but its two DB subtests could not connect to the configured Neon hostname; their structural companion assertions passed. Prisma/full PostgreSQL/migrations/zero-drift, full tests, typecheck, lint, build, authenticated/cross-user Playwright, exact-head screenshots, security and Preview must rerun on the resulting SHA.
+- **Risks / assumptions:** no page-range, quote, provenance, tenant, evidence strength, legal/authority, package isolation, file signature, byte hash or final ZIP gate was relaxed. Internal persisted enum/code names containing `CONFIRMED` remain database compatibility identifiers; user-facing text now describes the authority as source-verified automation.
+- **Next action:** commit and push once, require every exact-head check and Preview, then authenticate to and manually inspect the final real Preview tender/panels before updating PR truth.
+- **Merge status:** **DO NOT MERGE**; exact-head acceptance pending; Production promotion prohibited.
+
+### 2026-08-13 UTC — Codex (real Preview Engine runtime and panel-truth repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting SHA `c679a416d863b970088e93bcbfbea9418722cfba`; no merge or Production promotion.
+- **Scope:** authenticated against the exact Vercel Preview with the configured bootstrap owner and reran the real Pharo tender `e65aa856-20c0-4034-a52f-efb627703dc9`. The title repair worked—the prior `TENDER_FACTS_INVALID` failure did not recur—but the live worker exposed a new P0 hidden by green synthetic checks: job `0cb7d836-e270-4bd1-b060-cfb1725d552b` reached matching, persisted 8 requirements/coverage, and entered `build-plan.automatic`, then the route's explicit 60-second limit killed the invocation. Lazy recovery truthfully converted it to `ASYNC_ENGINE_TIMEOUT`, but only after 180 seconds. Raised the bounded worker route to 300 seconds with a 240-second soft deadline and propagated that absolute deadline into `runTenderEngine` so expensive reranking can yield before persistence reserve is exhausted. On exact Preview `10e6517e`, rerun `4538078a-5b0c-4f03-8f78-5e61a9fc2ca2` completed Engine, matching, 8-requirement persistence, and automatic source-verified Build Plan revision 4 in 53 seconds; proposal job `4bfce13d-ec50-4ef3-baf5-b36efc1cf250` then generated four real documents automatically. The same live cross-panel audit exposed one remaining contradiction: Generation Readiness used legacy notes to claim `FULL_PROPOSAL_NOT_ANALYZED` while canonical Workflow Center truthfully reported current source-evidence coverage. Generation Readiness now consumes and returns the canonical decision, suppressing legacy/downstream blockers and stale `RETRY_AI_ANALYZE` warnings whenever canonical analysis is complete and another canonical stage owns truth.
+- **Files changed:** `app/api/ai-jobs/run-next/route.ts`, `app/api/tenders/[id]/generation-readiness/route.ts`, `lib/ai-job-handlers-legacy.ts`, `tests/preview-engine-worker-budget.test.ts`, and the three pre-existing worker-budget source-contract tests (`behavioral-authority-proof`, `persisted-stage-checkpoints`, `worker-deadline-architecture`) plus `operator_handoff.md`.
+- **Tests/checks before commit:** 39/39 initial reachable focused regressions passed; Prisma generate, typecheck, lint (one pre-existing unused-disable warning), release-integrity audits, and dependency audit (0 vulnerabilities) passed. The first exact-head CI ran all 9,993 PostgreSQL/unit assertions: 9,990 passed and three stale source-contract assertions still expected the superseded 40-second budget; all three were updated and the resulting 53 focused assertions pass. The two Pharo PostgreSQL subtests could not connect to the configured Neon URL locally; preceding exact-head CI passed them. Authenticated exact Preview `ced593cc` displayed one canonical action across the real dashboard and Generation Readiness API (score 95 informational, BLOCKED, `MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE`), and a full-page real-state screenshot was manually inspected. Full PostgreSQL/migrations/zero-drift, build, authenticated Playwright/isolation, and screenshot CI must rerun on the resulting final SHA.
+- **Risks / assumptions:** no page, quote, ownership, evidence, authority, legal, or ZIP byte/signature gate changed. The longer route is still bounded and reserves 60 seconds below its hard cap. Automatic finalization truthfully failed because one generated document failed canonical validation and two of three planned package files were absent; canonical workflow suppresses those downstream consequences behind the genuine 4/6 FULL/SUBSTANTIAL evidence blocker. This is not 100% closure until the resulting exact Preview proves Generation Readiness agrees with that canonical action and exact-head CI is green.
+- **Next action:** commit/push the canonical consumer repair, require exact-head CI/Preview, then repeat the authenticated cross-panel audit and report remaining genuine evidence/package gaps without claiming completion.
+- **Merge status:** **DO NOT MERGE**; real Preview rerun pending; Production promotion prohibited.
+
+### 2026-08-13 UTC — Codex (Preview 03b9c928 contradiction re-audit)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, audited from latest remote head `81571fcdc75e7d03149b7196f803fa0a26bf88a9`; no merge or Production promotion.
+- **Scope:** treated the reported real Preview failure as primary and reviewed the already-landed title/Engine/package repair rather than trusting its green checks. Found one remaining canonical-consumer contradiction: Export Readiness added the Engine failure to its public blocker list but still computed `ok`, READY styling, and blocker totals exclusively from independent downstream models. A stale independent `ok` could therefore still render READY beside `ENGINE_RUN_FAILED`. Made canonical blockers part of export `ok`, suppressed unreachable document counts, and made the visible total exactly match the canonical-first list. Also made title scalar provenance and `TenderFactsLedger` synchronization one tenant-scoped transaction so an interrupted repair cannot expose split authority.
+- **Files changed:** `app/api/tenders/[id]/export-readiness/route.ts`, `lib/engine/automatic-build-plan.ts`, `lib/engine/tender-facts-ledger-service.ts`, `tests/readiness-ui-contradictions.test.ts`, `tests/preview-title-provenance-engine-postgres.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** 51/51 reachable focused assertions passed, including canonical generation/export truth, safe Engine failure projection, atomic source/ledger contract, and separate technical/financial/admin package behavior. The two real-PostgreSQL fixture cases could not connect to the configured Neon host and failed only at `prisma.user.create`; exact-head CI must rerun them against PostgreSQL. The first pushed exact head correctly failed 2/9,990 tests because the ledger sync service owns its own transaction; nested use of a Prisma transaction client has no `$transaction`. Reworked the API so the owner-scoped scalar mutation runs inside the ledger service's existing advisory-locked transaction; typecheck and the 8 reachable focused assertions pass. Full exact-head CI must rerun. Full Prisma/migrations/zero-drift, PostgreSQL, lint, build, Playwright/isolation, screenshot audit, dependency security, and Preview acceptance remain required on the resulting SHA.
+- **Risks / assumptions:** no page limit, quote containment, source ownership, evidence, legal/authority, or byte/signature gate was relaxed. Separate package downloads remain envelope-filtered. Manual owner credentials for the pre-existing Preview tender are not present locally; automated authenticated exact-Preview acceptance can be claimed only from exact-head CI artifacts, while owner UAT must be stated as unavailable if credentials remain absent.
+- **Next action:** run local static checks, commit/push once, require every exact-head check, download and inspect exact-head artifacts, then update PR truth without another source commit.
+- **Merge status:** **DO NOT MERGE**; exact-head acceptance pending; Production promotion prohibited.
+
+### 2026-08-12 UTC — Codex (Preview 03b9c928 exact-head follow-up)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from latest remote head `1a4b2b597fa63c61ee683ede31a0e62e98127873`; no merge or Production promotion.
+- **Scope:** audited the concurrent Preview repair against the real failure rather than its green-check claim. Exact-head CI was actually red (5 stale/contradictory assertions). Reconciled those tests with the owner contract; made the latest current-revision Engine attempt authoritative in Engine Readiness so an older success cannot mask a newer failure; sanitized Engine failure messages and canonical blocker details; kept the real 95/100 score informational instead of falsifying it to 45; removed remaining manual validate/review/export-gate wording; preserved executable isolated technical/financial/admin ZIPs and strict byte/signature gates. Expanded the Pharo-shaped database fixture to the reported 8/6 requirements, selected-match, no-Build-Plan state, and made proven title reconciliation always converge the canonical facts ledger after an interrupted prior attempt.
+- **Files changed:** Engine readiness route, canonical workflow failure projection, Generation/Export/Final Package UI copy, PDF download error copy, affected truth/package/operation regression tests, `tests/preview-title-provenance-engine-postgres.test.ts`, and this handoff.
+- **Tests/checks before commit:** 105 focused non-database assertions and typecheck passed. The expanded real PostgreSQL title fixture could not run locally because the configured Neon host is unreachable (its 3 non-database assertions passed); the prior exact-head CI ran the database fixture but ended **9983 pass / 5 fail**, all five now-reconciled expectations. Prisma generation, typecheck, lint, full PostgreSQL/migrations/zero-drift, build, Playwright/isolation, screenshot audit, security, and real Preview acceptance must rerun on the resulting SHA.
+- **Risks / assumptions:** the title repair still accepts only an ACTIVE tenant-owned source whose actual extracted text proves the quote/title at a valid page boundary; otherwise strict `TENDER_FACTS_INVALID` remains. No page validation, provenance, tenant, evidence, legal/authority, or byte-integrity gate was relaxed.
+- **Next action:** commit/push once, require every exact-head check, then manually exercise the exact Preview tender state and inspect all canonical panels before updating PR truth.
+- **Merge status:** **DO NOT MERGE**; exact-head acceptance pending; Production promotion prohibited.
+
+### 2026-08-12 UTC — Codex (Preview 03b9c928 real-failure repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, repaired from exact latest remote head `b4903c03baaa28edeafe9ccb9c8c7ffeb29355c4` without merging or Production promotion.
+- **Scope:** traced the real Preview title-page failure through Build Plan verification; added tenant-scoped, byte/text-bound title evidence reconciliation without relaxing page validation; made a current-revision terminal Engine failure canonical; made Generation and Export readiness consume that canonical truth; removed routine Build Plan confirmation/export copy contradictions; labelled revision-bound matches completed before Engine failure; and enabled the already-isolated technical/financial/admin ZIP surfaces instead of blocking separate-package mode.
+- **Files changed:** `lib/engine/automatic-build-plan.ts`, `lib/engine/canonical-workflow-decision.ts`, readiness/package/gate helpers under `lib/engine/`, `lib/prisma-schema-compatibility.ts`, affected readiness/matching/submission components, export-readiness and pipeline-diagnostic routes, regression tests, and this handoff.
+- **Tests/checks before commit:** Prisma generate and TypeScript were started after the final route reconciliation; the first run exposed and fixed a nullable canonical-decision type error. Focused regressions had previously passed 175 assertions with database integration intentionally skipped after the configured external Neon host was unreachable. Final exact-head lint, build, PostgreSQL, migration/zero-drift, Playwright/isolation, security, screenshot/route, and real Preview acceptance remain required after the single commit/push.
+- **Risks / assumptions:** reconciliation only accepts an ACTIVE tenant-owned source and a quote/title located within actual extracted page boundaries; otherwise strict verification still fails. No human/legal/final-owner gate is bypassed. Real Preview inspection is still pending, so this entry does not claim 100% closure.
+- **Next action:** finish local checks, commit/push once, require exact-head CI and Preview, manually inspect the real tender state, and update PR #1175 truth to the resulting SHA.
+- **Merge status:** **DO NOT MERGE**; Production promotion prohibited.
+
+### 2026-08-12 UTC — Codex (post-Engine second-click deadlock closure)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from exact remote head `1e438727241a1c41871e866eec01dd66ad46dff3` after its two CI runs, dependency checks, screenshot audit, and Preview all passed.
+- **Scope:** closed the one remaining explicitly documented contradiction: `presentTwoActionWorkflowDecision` still mapped `REQUIRED_DOCS_NOT_GENERATED` to a second manual Run Engine click after the current-revision Engine run had already handed generation to the durable pipeline. It now truthfully presents generation, validation, finalization, and package assembly as automatic post-Engine work; the tender next-action banner and the real-PostgreSQL 4/4 evidence fixture agree. No source, evidence, quality, integrity, authority, legal, tenant, or final-owner gate was changed.
+- **Files changed:** `lib/engine/two-action-workflow-presentation.ts`, `components/next-action-panel.tsx`, `tests/two-action-workflow-presentation.test.ts`, `tests/mandatory-evidence-fixtures-db.test.ts`, and `operator_handoff.md`.
+- **Tests/checks before commit:** 102 focused non-database assertions passed, including the new no-second-Engine-click regression, provenance confirmation safety, unknown-blocker exhaustiveness, approval-deadlock coverage, and workflow-copy truth. Prisma generation, typecheck, lint, release-integrity, dependency audit, production build, full PostgreSQL, migrations/zero-drift, authenticated/cross-tenant Playwright, screenshot/route audit, and Preview must all pass again on the resulting commit before the PR is described as exact-head complete.
+- **Risks / assumptions:** the mapping remains presentation-only and does not fabricate a running job or weaken readiness. `NO_CONFIRMED_BUILD_PLAN` and `MANDATORY_NO_COMPLIANCE_ROWS` still map to the one legitimate manual Run Engine gate before downstream ownership begins. Production remains untouched.
+- **Next action:** commit and push once, wait for every exact-head check and the one Preview, inspect the screenshot evidence, then update the PR body/comment to that final SHA without another source commit.
+- **Merge status:** **DO NOT MERGE** until the resulting exact head is completely green; never promote Production in this session.
+
+### 2026-08-12 UTC — Codex (latest-remote-head workflow-copy audit)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, audited from latest remote head `a36fa30a48f0df4d337b7ba3909d8bd5d540b740` after checking the current worktree, open PRs, and CI.
+- **Scope:** found and corrected one remaining live Recovery Command action-registry contradiction: it still claimed AI Analyze and Engine matching start automatically and that Run Engine performs source verification. The registry now preserves manual AI Analyze and manual Run Engine authority, states that verification/extraction happen first, and describes post-Engine matching, Build Plan, and downstream automation accurately. Extended the existing PR #1175 regression surface so this registry cannot silently drift again.
+- **Files changed:** `lib/recovery-command-actions.ts`, `tests/pr1175-final-gap-closure.test.ts`, `operator_handoff.md`.
+- **Tests/checks:** focused non-database regressions passed (147 assertions); the included PostgreSQL owner-workflow test failed only during setup because the configured Neon hostname was unreachable. `npx prisma generate`, typecheck, lint (one pre-existing unused-disable warning), release-integrity audits, `npm audit --audit-level=high` (0 vulnerabilities), and the production build with a non-secret build-time placeholder passed. The parent head `a36fa30a` already had exact-head CI and screenshot jobs running when this audit began; new exact-head CI/Preview evidence is required after push.
+- **Risks / assumptions:** no workflow gate, tenant query, evidence semantics, or persistence behavior changed; this is user-facing action copy plus a regression guard. Local real-PostgreSQL, authenticated Playwright, build, route/screenshot, and Preview validation remain delegated to exact-head CI because the configured database is unreachable locally.
+- **Next action:** push the single commit, require all exact-head CI/security/screenshot checks and the one Vercel Preview to pass, then update PR #1175 truth to that SHA. Do not merge or promote Production.
+- **Merge status:** **DO NOT MERGE** — exact-head verification pending; Production promotion prohibited.
+
+### 2026-08-12 UTC — Claude Code (Opus), PR #1175 gaps A–F closed, and CI brought back to green
+
+Supersedes my earlier entry in this file, which recorded verification at
+`12680b1d6444b27246059bf0f529dbde968f6403`. That SHA is still in the branch
+history and none of its work was reverted, but the branch has advanced seven
+commits since, so the statement below is the current authoritative one.
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175. Verified head: `270c60dadac7975d9e9139ec00b111ef53898053`.
+- **Gaps A–F** (Bid Strategy false-automation copy, release status inferred from absent data, whole-pipeline automatic copy, Tender Control suggestions naming controls that do not exist, controls-resolver failure rendering as zero controls, and the controls match-context query scoped by tender id alone) are closed as described in the entry below this one. New modules: `lib/ui/manual-gate-guidance.ts`, `lib/ui/release-stage-copy.ts`. New tests: `tests/pr1175-final-gap-closure.test.ts`, `tests/tender-controls-failure-and-tenant-scope-db.test.ts`, `tests/mandatory-evidence-fixtures-db.test.ts`.
+
+**CI was red on this branch and is now green.** Three failures, none from the gap-closure commit, all from copy corrections and a removed action leaving assertions behind them:
+
+1. `Company Vault usable-evidence count` — a correction narrowed "no action is needed here" to "no confirmation click is needed here", which a regression test pins. The broader phrase is restored; the correction it carried (vault ingestion source-verifies, not Run Engine) is untouched.
+2. `Company Vault — zero-document honesty` — the test pinned the whole old sentence including "Run Engine verifies them automatically", an attribution that was false. Restoring it in the page to green the test would have put the falsehood back to satisfy a test written to keep the product honest, so the test moved to the corrected sentence and now also asserts the false attribution cannot return.
+3. `Recovery Command Center — nextAction code coverage` — `REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN` was removed from the registry along with the route that emitted it, because it offered requirement review as a way to promote provenance the source did not support. Two test lists still named it, so the coverage test demanded a registry entry for a code nothing can emit.
+
+**One further defect, found by inspecting the rendered 2/4 screenshot rather than by any test.** Analysis Quality was headed "Tender analysis is stale, incomplete, or blocked" directly beneath the AI Analyze panel's "AI Analysis is complete and current." Both sentences are about the tender analysis and contradicted each other. Neither was lying: `ready` is false when any of its five inputs fails, and one of them, `canonicalExtractionReady`, is about the SOURCE. On that tender the analysis was current and trusted and the source file's byte integrity was unverified — which the reason list underneath already said. The heading now names what is actually wrong. `ready` itself is untouched, so the score cap, tone, badge and every downstream consumer behave exactly as before. Pinned by three assertions in `tests/pr1175-final-gap-closure.test.ts`.
+
+**Verified at `270c60da`:**
+
+- Full suite on real local PostgreSQL 16 with `RUN_DB_INTEGRATION=true`: **9,981 passed, 0 failed, 0 skipped**.
+- Typecheck clean. Lint clean but for the one standing unused-disable warning.
+- Production build passed; `git diff --exit-code` clean afterwards (no build-time source mutation).
+- Migrations applied to a fresh database and re-applied idempotently; `prisma migrate diff` reports **no difference** (zero drift); critical-schema check 30 tables / 10 column groups / 3 functions, 0 failures.
+- `npm audit --omit=dev` and `scripts/audit-dependencies.mjs`: **0 vulnerabilities**.
+- Release-integrity audits: 431 routes, 1,548 files, 0 failures.
+- Authenticated Playwright at the previous verified head: **184 passed, 4 environment-conditional skipped, 0 failed**; the phase-2 rendered 2/4 workflow-truth spec re-run and passing at this head.
+- Screenshot audit at this head: **237 screenshots, route/viewport coverage 111/111 (100%), 0 critical findings, 0 horizontal overflow, 0 warnings** across desktop, tablet and mobile.
+- **Rendered screenshots actually inspected**, not merely exited zero. The 2/4 tender confirms: source traced 4/4, release-qualified 2/4, partial 2, genuine gaps 0, stale 0, "Blocked — source evidence required", matching labelled as relevance only, evidence cited by recognisable name rather than UUID, Bid Strategy evidence-limited at BID CAREFULLY, no Generate Docs instruction, and Analysis Quality no longer contradicting AI Analyze. Mobile Company Vault confirms the honest zero-document branch and the corrected ingestion attribution.
+- **Exact-head CI on #1175 is green**: the full migrations/typecheck/lint/tests/build/authenticated-isolation job (both runs), the screenshot capture job, both dependency-vulnerability jobs, and Vercel Preview.
+
+**Deployment convergence.** PR head, Preview and the verified local head are all `270c60da`. Production remains `d699935351fe9b843a5b9ca082f4d105eb6b9ffa` and is intentionally behind. Nothing was promoted.
+
+**Known remaining gaps.** `presentTwoActionWorkflowDecision` maps `REQUIRED_DOCS_NOT_GENERATED` to "Run Engine" even after a successful Engine run for the current revision. That is the app's existing designed contract — the Engine is what starts the downstream pipeline — so it was deliberately left alone under a closure pass and pinned by the 4/4 fixture instead, making any future decision a visible one. The two non-app Vercel projects (`pr1175`, `repo`) report Error; they are separate projects, inaccessible via the API from here, and were failing before this work began.
+
+**Concurrency note.** Another agent pushed to this branch throughout this session; I rebased twice rather than force-push, and on the second rebase it had independently converged on the same resolution. Nothing of that agent's work was discarded.
+
+**Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration.
+
+### 2026-08-12 16:27 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; continued from latest remote head `da358c164f9c8bdb4d3c2e711e75acfb871c014e`.
+- **Scope:** closed only the remaining owner-automation/provenance/status/copy gaps: removed the legacy requirement-review/plan action shortcut; made the compatibility requirement-confirm endpoint refuse manual provenance promotion; classified AI-analysis, missing-requirement, and quality failures as explicit non-automatic recovery; reconciled the Build Plan test with manual Run Engine authority; and corrected Company Vault copy so ingestion/source verification precedes AI Analyze and Run Engine.
+- **Files changed:** `app/api/tenders/[id]/requirement-coverage/confirm/route.ts`, `app/dashboard/company/page.tsx`, `components/vault-evidence-search-panel.tsx`, `lib/recovery-command-actions.ts`, `lib/release-status-classifier.ts`, their focused regression tests, and this handoff.
+- **Tests run:** Prisma generation passed; focused 192-test regression set passed; typecheck passed; release-integrity/safe-error/metadata/reconciliation audits passed; dependency audit reported zero vulnerabilities. Exact-head CI proved migrations, zero drift, typecheck, lint, and PostgreSQL execution, then exposed stale test-only wording/action expectations; these assertions and the normal-path informational wording were reconciled without restoring either defect. Full local `npm test` was correctly refused because the supplied `DATABASE_URL` is a Neon host; this container has no local PostgreSQL. Exact-head full tests, build, authenticated/cross-tenant Playwright, and screenshot capture must rerun on the final SHA; exact-head Vercel Previews passed.
+- **Risks / assumptions:** no 100% claim. The compatibility `CONFIRM_REQUIREMENTS` stage key remains in canonical payloads only as disabled/non-promoting historical schema; the mutating confirmation path now fails closed. Production was not merged, deployed, or promoted.
+- **Next action:** push the single final commit, update PR #1175 to its exact SHA, and require exact-head CI plus the one Vercel Preview to pass before human review.
+- **Merge status:** **unsafe until exact-head CI/Preview pass; do not merge; do not promote Production.**
+
+### 2026-08-12 15:53 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; audited from remote head `a20c0ad762ee83eac0361362cfcd086b70265fb4` on isolated local branch `audit/pr-1175-final`.
+- **Scope / files:** closed the four requested remaining gaps without changing AI Analyze or Run Engine manual authority: separated machine-validated export eligibility from human review audit metadata in `lib/engine/final-package-readiness-model.ts`; made empty/unexplained release state fail closed in `lib/release-status-classifier.ts`; removed the remaining generation response that offered requirement review/manual confirmation as a provenance shortcut; corrected PDF finalization comments and Company Vault ingestion copy; updated focused regression tests.
+- **Tests passed:** Prisma client generation; 146 focused tests; full non-DB suite with the fail-closed local PostgreSQL URL (DB integration tests skipped by design); typecheck; lint (one pre-existing unused-disable warning); release-integrity audits; dependency audit (0 vulnerabilities); production build with a non-secret dummy Z.ai build-time key.
+- **Tests blocked / not yet claimed:** real PostgreSQL migrations, zero-drift, DB-integration/cross-tenant suite, and authenticated Playwright could not run locally because the supplied `DATABASE_URL` points to an unreachable Neon host and the repository's test DB guard correctly rejects all Neon hosts. Exact-head CI, screenshot capture, and Vercel Preview must be observed after the final commit is pushed; no Production deployment is authorized.
+- **Risks / assumptions:** human/legal/signature/authority gates remain separate and fail closed; the manifest's legacy `approved` field remains truthful human-review metadata but no longer blocks a routine machine-validated export. No 100% claim is made until exact-head remote checks complete.
+- **Next action:** commit and push one final SHA, update PR #1175 body/comment to that SHA, then observe exact-head CI, Preview, screenshot, authenticated isolation and security results without merging or promoting Production.
+- **Merge status:** **not reviewed for merge**; DO NOT MERGE / DO NOT PROMOTE PRODUCTION.
+
+### 2026-08-12 15:42 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr-1175-final-gap-audit`, based exactly on PR #1175 remote head `989539d1ab314ec87a6412a9ad20c86b809a755e`; intended for PR #1175 (`release/consolidated-recovery-20260717`) only.
+- **Scope:** closed the remaining owner-workflow truth gaps without merging or promoting Production: canonical machine validation now satisfies routine Build Plan document eligibility without a per-document approval click; tender-issued originals and genuine legal/authority/quality blockers remain fail-closed; requirement confirmation/review shortcuts were removed from active next-action types/presentation; missing Build Plan routes to manual Run Engine; stale copy now says ingestion/source verification precede AI Analyze and that Run Engine starts matching/Build Plan/downstream work; finalized-PDF copy no longer requests routine approval.
+- **Files changed:** `lib/engine/build-plan.ts`, `lib/engine/canonical-workflow-decision.ts`, `lib/tender-generation-readiness.ts`, `lib/tender-next-action.ts`, `components/next-action-panel.tsx`, `app/api/tenders/[id]/finalize-pdf/route.ts`, `app/dashboard/company/page.tsx`, `tests/pr1175-final-gap-closure.test.ts`, and this handoff.
+- **Tests passed:** targeted PR #1175/build-plan/classifier/workflow/next-action suite (122 tests); Prisma client generation; TypeScript typecheck; lint (0 errors, one pre-existing unused-disable warning); release-integrity/safe-error/metadata/reconciliation audits; dependency audit (0 vulnerabilities); production build with a development-only placeholder Z.ai key.
+- **Environment limitations:** the supplied Neon `DATABASE_URL` is unreachable and is also deliberately rejected by the repository test DB guard; no local PostgreSQL binaries or Docker are installed. Therefore real-PostgreSQL migrations/full tests, zero-drift, authenticated/cross-tenant Playwright, exact-head screenshot/route audit, and Vercel Preview must be run by CI/Preview on the final pushed SHA. No 100% or fully-green claim is made locally.
+- **Risks / assumptions:** the compatibility-only canonical `CONFIRM_REQUIREMENTS` stage key and confirm API route remain for historical payload/API compatibility, but are non-actionable and cannot promote provenance; removing those public contracts requires a separately coordinated API migration. The machine eligibility change is intentionally limited to canonical validation success or a genuine tender-issued-original path.
+- **Next action:** push the final commit to PR #1175, run/observe its required PostgreSQL, authenticated isolation, route/screenshot, security and Vercel Preview checks on that exact SHA, and fix any contradiction before review.
+- **Merge status:** **not reviewed / do not merge** until the exact-head CI and Preview evidence above are green. Do not promote Production.
+
+### 2026-08-12 15:10 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / PR #1175, updated directly from its latest remote head `cd11dc017652d7ed223964df4839164762351eb8`; final SHA is the commit containing this entry.
+- **Scope:** Completed the four requested gaps: routine machine export eligibility now follows successful byte/format validation without a per-document human approval click; explicit legal/signature/authority/final-owner blockers remain separate and fail closed; requirement confirmation/review cannot promote unsupported provenance and automatic source repair remains the first recovery when the active source can prove it; unknown release blockers return `STATUS_UNAVAILABLE`, with reachable-code exhaustiveness coverage; and Run Engine/workflow labels now state that verified extraction and manual AI Analyze precede matching, Build Plan, generation, validation, finalization, and packaging. FULL/SUBSTANTIAL evidence semantics, current-analysis binding, tenant isolation, provenance, and security/integrity gates were preserved.
+- **Files changed:** release/workflow classifiers and readiness counters, canonical document output copy, tender detail readiness counts, workflow-stage labels, focused unit/E2E regressions, and this handoff. No schema or migration files changed.
+- **Verification:** local PostgreSQL 16 applied all 47 migrations; critical-schema, retroactive-init, idempotency, and zero-drift checks passed. Prisma generate/validate, typecheck, release-integrity audits, dependency audit (0 vulnerabilities), production build, and targeted regressions passed. Lint passed with one pre-existing unused-disable warning. The complete real-PostgreSQL suite passed **9,977/9,977**. After installing the missing local Chromium binary, the complete authenticated/anonymous desktop/tablet Playwright run passed **184**, with **4** explicitly skipped; it included the golden manual-AI/manual-Engine flow, cross-tenant isolation, exact-head screenshot audit, and full route/mobile/tablet audit. The two renamed workflow shortcuts are rerun after this entry before commit.
+- **Deployment:** no Production merge or promotion. Exactly one Vercel Preview will be created from the final pushed SHA.
+- **Known risk / truth:** local runs used an intentionally nonfunctional CI-shaped Gemini placeholder, so provider-exhaustion recovery—not a paid live-provider success—was exercised. Do not claim literal 100%; exact-head GitHub CI and the Preview remain review evidence, not authorization to merge.
+- **Next action:** push the final SHA to PR #1175, create one Preview, update the PR body/comment with that SHA and exact results, then await review without merging.
+- **Merge status:** **not reviewed / do not merge**.
+
+### 2026-08-12 UTC — Claude Code (Opus), PR #1175 final remaining-gap closure (Gaps A–F)
+
+- **Branch / PR:** `claude/pr-1175-gap-closure-a2o8u6`, branched from the exact remote head of `release/consolidated-recovery-20260717` (`a0b6f98a57d4b4fa64b6c0549b59e02cc5583d32`). Nothing on #1175 was reset, reverted, rebased away, or overwritten.
+- **Scope:** the six remaining gaps named in the audit, plus every additional occurrence the repo-wide copy sweep turned up. Preserved verbatim: both manual gates and their authority boundaries, the request-scoped wakes, exactly-once claiming, source-revision/hash binding, the FULL/SUBSTANTIAL vs PARTIAL evidence vocabulary, the `SUPPORTED → SUBSTANTIAL` translation, the 2-FULL/2-PARTIAL repair, the matching relevance wording, the evidence-by-name repair, and Bid Strategy's evidence awareness.
+
+**Gap A — Bid Strategy claimed a manual gate was automatic.** `components/bid-strategy-panel.tsx` fell back to "Uploading a clearer copy of the source re-runs both automatically". Extraction is automatic; AI Analyze and Run Engine are authenticated manual actions, so an owner who followed that sentence waited for a job nothing had queued. New `lib/ui/manual-gate-guidance.ts` picks the sentence for the first unmet condition — bad extraction → upload, then run AI Analyze; usable extraction with no current analysis → run AI Analyze; current analysis with no Engine run → run Engine — and both Bid Strategy responses plus the client fallback now read from it. The sweep also found `components/submission-plan-completeness-panel.tsx` telling the owner "Extraction and analysis run automatically", which was the same false claim in a second panel.
+
+**Gap B — "no data" was reported as "work is running".** `deriveReleaseStatus(null, null)` returned `PROCESSING_AUTOMATICALLY`, so a readiness outage rendered identically to healthy progress. `classifyReleaseStatus` now takes an explicit `{ readinessResolved: false }` and returns the new `STATUS_UNAVAILABLE`; `deriveTruthfulReleaseStatus` returns it again one layer down, when no job is running, the canonical decision could not be loaded, and not one blocker code arrived from any of the four readiness sources. Resolved readiness that genuinely reports zero blockers still classifies exactly as before — that is a fact, and a different one.
+
+**Gap C — one sentence claimed the whole pipeline was automatic.** The panel's `PROCESSING_AUTOMATICALLY` explanation listed byte verification through package reconciliation, analysis included, as automatic — read at a tender waiting on AI Analyze, it promised a step nobody would take. New `lib/ui/release-stage-copy.ts` is a pure mapping from three inputs the panel already holds (the canonical classification, `CanonicalWorkflowDecision.nextRequiredAction` after `presentTwoActionWorkflowDecision`, and the durable `AiJob` row that is QUEUED or RUNNING). It is not a second stage detector: no I/O, no inference the canonical decision has not already made. A stage is described as running only when a job row for it exists. `POST_ENGINE_AUTOMATIC_COPY` is the only string that may claim the rest of the pipeline continues on its own, and it is reachable from exactly one stage.
+
+**Gap D — controls pointed at buttons that do not exist.** `tender-control-suggestions.ts` told the owner about a "Repair-all button" and a "Repair source references" action on a "Recovery panel"; neither exists, and source grounding is repaired automatically by `automatic-requirement-coverage.ts` and the auto-finalize continuation service. Every `ControlSuggestionCode` is now audited in `CONTROL_SUGGESTION_REGISTER` with its condition, canonical stage, and kind — CURRENT / DOWNSTREAM / INFORMATIONAL — and each emitted suggestion carries its kind. DOWNSTREAM rows (planned-docs-not-generated, zero export candidates, plan-not-built) are worded as diagnostics rather than instructions. Accepting or dismissing a suggestion still writes only an audit-log row.
+
+**Gap E — a failed resolver looked like a clean tender.** `deriveSuggestedControls` ended in `catch { return []; }`, and the panel renders an empty suggestion array as "nothing to do". The route now returns an explicit state: a failure carries `TENDER_CONTROLS_RESOLVER_FAILED`, a request id, and the message "Current workflow controls could not be verified." The real error is logged server-side; no Prisma text, stack, or table name crosses the response boundary. The panel suppresses the "All resolved" badge and renders an em dash for the derived-bearing counts, because a zero is a claim this path cannot support. No stale suggestion is synthesised from lifecycle data the canonical authority just failed to confirm.
+
+**Gap F — the match-context read was scoped by id alone.** `prisma.tender.findFirst({ where: { id: tenderId } })` inherited its scope from an ownership check earlier in the request. Not exploitable — both handlers verify ownership first, and ids are globally unique — but a convention is not a scope, and this is the query that reads expert names, project names and match labels. It is now `{ id: tenderId, userId }`.
+
+- **Evidence-reference integrity, extended.** `recognizableEvidenceReference` in `compliance.ts` now backs the expert/project lookups and the legal, financial and compliance branches. It skips blank candidates — `referenceNumber ?? title` kept an empty string and never reached the title — and holds a bare UUID/cuid back behind any real name, while still returning the id rather than dropping the reference. Nothing is fabricated.
+
+- **Repo-wide copy sweep (audit §12).** Fixed in active UI and API responses: the two false-automation claims above; `Generate Docs` as a manual instruction in `tender-lifecycle-orchestrator.ts`, `submission-plan-completeness.ts`, `final-submission-readiness.ts`, the ai-proposal and evaluator-simulation routes, the admin proposal-audit route and both submission-plan panels; `Records are auto-approved and ready for use` in the Vault repair route. Stale comments naming Generate Docs as an action were corrected in `icons.tsx`, `tender-policy-registry.ts`, `extraction-quality-gate.ts` and `bid-strategy-panel.tsx`. Historical operator entries and regression fixtures were left intact; three stale tests were updated to assert the current contract rather than deleted.
+
+- **Tests actually run**, all at the final source SHA, against local PostgreSQL 16 with `RUN_DB_INTEGRATION=true`:
+  - new `tests/pr1175-final-gap-closure.test.ts` — 54/54 pure assertions across all six gaps, evidence-reference identity and support vocabulary;
+  - new `tests/tender-controls-failure-and-tenant-scope-db.test.ts` — 7/7, including a forced resolver failure through the real route, proof that the failure changes nothing in the canonical decision, and a cross-tenant attempt that leaks neither names nor existence;
+  - new `tests/mandatory-evidence-fixtures-db.test.ts` — 11/11, holding both required fixtures: 4/4 traced with 2/4 release-qualified, 2 partial, 0 genuine gaps, 0 stale, fail-closed, every panel naming one action; and the 4/4 path where the Engine's `SUPPORTED` is persisted through `toCanonicalSupportLevel` as `SUBSTANTIAL`, clears the coverage blocker, and lets the workflow reach the post-Engine pipeline — the state that used to be inescapable;
+  - existing manual-gate non-regression coverage re-run and green: `manual-ai-analyze-wakes-its-worker`, `manual-authority-negative-regression`, `engine-enqueue-authority.integration`, `job-claim-concurrency-stress-db`, `ai-analyze-hash-binding-db`, `engine-route-worker-analysis-authority-postgres` — 42/42.
+- **Known limitation, stated rather than glossed:** Vercel Preview cannot be verified at this SHA. `vercel.json` enables Git deployments only for `main` and `release/consolidated-recovery-20260717`, so this branch produces no Preview. The newest Preview remains `a0b6f98a` and Production remains `d699935351fe9b843a5b9ca082f4d105eb6b9ffa`; both are unchanged by this work, and neither was promoted.
+- **No gate was weakened.** No threshold moved, no blocker was removed, no fail-closed path was opened, no tenant boundary was widened, no manual gate was automated, and no advisory surface gained authority. `STATUS_UNAVAILABLE` is strictly more conservative than what it replaced.
+- **Merge status:** DO NOT MERGE. Draft; PR #1175 untouched and unmerged; no Production promotion, no deployment, no migration.
+
+### 2026-08-11 UTC — Claude Code (Opus), the two subsystems now speak one language
+
+- **Closes the item the previous entry left open**, and the answer turned out not to be a judgement call at all. The Engine and the automatic coverage writer were not disagreeing about how strong a requirement's evidence was. They were using different words for it.
+- **The defect.** `lib/engine/compliance.ts` grades every requirement `SUPPORTED` / `EVIDENCE_PENDING_REVIEW` / `PARTIAL` / `UNSUPPORTED`, and `run-tender-engine.ts` persisted that string verbatim as `ComplianceMatrix.supportLevel`. Every gate counts `FULL` / `SUBSTANTIAL` (`canonical-workflow-decision.ts:569`, `export-readiness.ts:844`). Nothing translated between them, so an Engine row reading `SUPPORTED` — its strongest verdict, meaning reviewed or selected evidence is on file — counted for exactly nothing. A requirement backed by real selected projects sat uncovered beside a panel asking the owner for evidence they had already supplied.
+- **Fix.** `toCanonicalSupportLevel` in `compliance.ts`, applied at the persistence site in `run-tender-engine.ts`, so one vocabulary reaches the database and every reader after it. `SUPPORTED` → `SUBSTANTIAL`, deliberately not `FULL`: FULL is for a generated artifact whose bytes exist and validate, or a record whose required facets all match, whereas the Engine's SUPPORTED means selected evidence is on file — exactly what SUBSTANTIAL denotes. Mapping to the lower of the two counting levels keeps the strongest claim honest. `EVIDENCE_PENDING_REVIEW` → `PARTIAL`, because evidence a human has not looked at must not become countable by translation. `PARTIAL`, `UNSUPPORTED` and anything unrecognised pass through untouched rather than being guessed upward.
+- **Backwards compatibility.** Rows written before this say `SUPPORTED`; `app/dashboard/compliance/compliance-dashboard.tsx` now counts `SUBSTANTIAL`, `FULL` and `SUPPORTED` together, so historical rows are not silently dropped. `run-tender-engine.ts:517` reads the in-memory `matrix.supportStatus` before persistence and is unaffected.
+- **No gate was relaxed.** No threshold moved, no blocker removed, no fail-closed path changed. A translation that leaves UNSUPPORTED and pending-review evidence uncountable cannot make an unsupported requirement pass; it only lets an already-computed strong verdict be read by the code that was looking for it.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, DB verified alive after): new `tests/engine-support-level-speaks-the-gate-vocabulary.test.ts` 6/6 pinning both directions of the mapping, the refusal to promote to FULL, application at the persistence site, and the legacy count. Full suite **9,899/9,899, 0 failures** — no gate, readiness, or export suite objected. Typecheck clean; lint clean but for the one standing warning.
+- **Not verified by me:** the live effect on Hope's tender, which needs a Re-run Engine so the rows are rewritten in the new vocabulary.
+- **Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration.
+
+### 2026-08-11 UTC — Claude Code (Opus), compliance evidence that names the record
+
+- **The gap, closed.** The Match Evidence panel showed a mandatory requirement supported by `PROJECT e6ed6bac-1811-49b8-a245-fe8f4c27411e, cccb66a6-…, 324cd171-…`. My earlier note called that a "legacy row the automatic writer never reconciles". That framing was wrong and is corrected here: the row is written by `run-tender-engine.ts` on every run from `lib/engine/compliance.ts`, and the matching behind it was correct. The defect was purely that the expert and project branches wrote primary keys as `evidenceReference` while every other branch already wrote something checkable — a registration number, a fiscal year, an original file name.
+- **Why it mattered.** Those two branches are the ones a reviewer most needs to read, because they are where the proposal claims particular people and particular past work. A compliance matrix citing UUIDs cannot be checked, so a correctly matched hospital and an unrelated record are indistinguishable on the page.
+- **Fix.** `lib/engine/compliance.ts` builds `expertNameById` / `projectNameById` from the same `knowledge` records the matcher used — so the panel and the match cannot disagree about which record was cited — and resolves references through `nameOrId`, which falls back to the id rather than dropping the reference. Losing it would be worse than showing an id: the requirement would read as unsupported when it is not. The `requirementDocument` fallback branches were updated the same way.
+- **Not changed.** No support level, no coverage count, no gate, no matching score. This is what the row says, not what it is worth.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, DB verified alive after): new `tests/evidence-reference-names-the-record.test.ts` 4/4, pinning both lookups, both resolutions, the id fallback, and the absence of the two expressions that produced the unreadable row. Full suite **9,893/9,893, 0 failures**; typecheck clean; lint clean but for the one standing warning.
+- **Still open, and honestly stated.** Whether the Engine's own compliance row and the automatic coverage writer's row should agree on a support level for the same requirement is unresolved. They are written by different subsystems (`run-tender-engine.ts` via `compliance.ts`, and `automatic-requirement-coverage.ts` with its `automatic-requirement-evidence:v1:` prefix, which reconciles only its own rows), and on the reported tender they disagreed — the Engine linked the selected projects at PARTIAL while the coverage writer linked a different record. Choosing the single authority changes what the release gate counts as supported evidence, so it needs a deliberate decision rather than a drive-by change. The manual confirm route (`evidenceSource: "VAULT_CONFIRMED"`) must stay untouched by whatever is decided.
+- **Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration.
+
+
+### 2026-08-11 UTC — Codex (PR #1175 final remaining-gap closure)
+
+- **Mode:** final scoped semantic/UX/release-readiness closure; preserve both manual gates and the Phase 1/2 truth repairs.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting from exact remote head `b4b5bf75b2a6ecc47e3870c668631c3f42787bee`.
+- **Scope / files changed:** upload-first/additional-upload contracts and New Tender/source-file copy now own extraction only; Tender Controls project exactly one canonical current action and never mutate Tender stage/status; Requirement Coverage separates release-qualified and weighted partial progress; Bid Strategy consumes canonical mandatory evidence ratios and caps materially evidence-limited recommendations; Matching labels relevance and hides internal rationale; Release Status suppresses unreachable downstream symptoms; Company Vault moves implementation detail under Technical details; focused architecture regressions cover the changes.
+- **Tests so far:** focused Phase 1/Phase 2/manual wake/upload/controls/Bid Strategy suite passed 84/84 non-DB tests; exact 2/4 PostgreSQL fixture was discovered but cancelled locally because no configured PostgreSQL was reachable; typecheck and lint pass. Fresh exact-head CI, PostgreSQL, build, Playwright, screenshots, audits and Preview convergence remain required after push.
+- **Risks / assumptions:** no canonical gate, evidence trust predicate, source hash/revision, tenant boundary, generation/finalization worker, document/ZIP integrity rule, legal authority, or provider order was weakened. Control acceptance is now audit-only rather than a second lifecycle mutation.
+- **Next action:** commit/push, inspect both exact-head CI runs and rendered artifacts, repair any failure, then stop without merge or Production promotion.
+- **Merge status:** DO NOT MERGE; draft, unreviewed, no Production promotion.
+
+### 2026-08-11 UTC — Claude Code (Opus), AI Analyze never woke its worker
+
+- **Reported live:** Hope pressed Run AI Analyze on the Preview and the panel sat on "AI Analyze is queued" for minutes. The panel was telling the truth.
+- **Root cause.** `POST /api/tenders/[id]/manual-ai-analyze` created the job under verified manual authority and then nothing claimed it. Run Engine has had `scheduleRequestScopedEngineWorkerWake` since it was written; AI Analyze had no equivalent. The request-scoped upload wakes are forbidden from naming a manual gate (correctly — a wake must never *start* one), and the drain cron fires only from the repository default branch, so on a Preview deployment an authorized AI_ANALYZE job stayed QUEUED indefinitely.
+- **Fix.** `lib/ai-jobs/request-scoped-engine-worker-wake.ts` now serves both manual gates through a shared internal `scheduleManualJobWake`, exporting `scheduleRequestScopedAnalyzeWorkerWake` alongside the unchanged Engine one. The analyze route calls it immediately after `createAnalysisJob` returns. This follows the precedent the Engine route already set rather than widening `request-scoped-worker-wake.ts`, whose ban on naming a manual gate stays exactly as it was — that module and its tests are untouched.
+- **Why this is not a gate crossing.** The wake creates nothing and authorizes nothing. It runs only after the route has checked `manualAuthority` and persisted the row, and a job that does not exist cannot be claimed. The atomic claim still owns QUEUED to RUNNING, so a duplicate wake cannot run the work twice. Without a session cookie the wake declines rather than throwing, so the owner still receives their job id.
+- **A source-text assertion was re-pointed, not removed.** `tests/engine-worker-wake-constraints.test.ts` matched the literal `searchParams.set("jobType", "ENGINE_RUN")`, which is now a parameter. It calls the real function and asserts the URL it builds instead — same property, no longer dependent on one spelling.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, DB verified alive after): new `tests/manual-ai-analyze-wakes-its-worker.test.ts` 5/5, driving the real wake with an injected scheduler and fetch — it proves the request asks for `AI_ANALYZE` on the right tender, forwards the caller's own cookie and no worker secret, declines without a session, and that the route calls it after job creation. `tests/engine-worker-wake-constraints.test.ts` 12/12. Full suite **9,883/9,883, 0 failures**; typecheck clean; lint clean but for the one standing warning. The database died mid-run once (82 fail / 328 cancelled) and was restarted and re-run before any result was believed; one intermediate run showed the documented `owner-workflow-complete-postgres` flake and the following clean run had no failures at all.
+- **Not verified by me:** that Hope's next Run AI Analyze completes promptly on the deployed Preview. That is the click that proves it.
+- **Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration.
+
+### 2026-08-11 UTC — Claude Code (Opus), the generation deadlock
+
+- **Owner-approved scope.** Hope chose "exempt at the generation gate only" from two options after I presented the deadlock proof; the alternative (counting a plan row as SUBSTANTIAL) was rejected because it shifts evidence semantics for every consumer.
+- **The defect.** A submission requirement is answered by a document this app generates, so its only automatic evidence is the confirmed Build Plan row for that exact file. `supportForCandidate` correctly caps every `BUILD_PLAN_ITEM` at PARTIAL — the bytes do not exist — so the requirement never reached FULL/SUBSTANTIAL, and `MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE` refused to let generation start until it did. The app declined to generate a file until the file already existed, and no Company Vault upload could ever resolve it because the missing item was an output, not a source. Observed live at 3/4 coverage with the plan row reading "planned output pending generated bytes" beside a panel advising "Generate the required file (Technical Proposal.pdf)".
+- **The fix.** `canonical-workflow-decision` now counts mandatory requirements that carry an `AUTO_PLANNED_ARTIFACT` compliance row and are not otherwise covered, and treats them as satisfied **at the generation gate only**. The count is measured from the database, never assumed; the `NOT` clause prevents double counting a requirement already covered by real evidence; the input field is optional and defaults to 0, so any caller that does not supply it keeps the old, stricter behaviour.
+- **What was NOT relaxed.** Evidence semantics are untouched: a plan row is still never FULL or SUBSTANTIAL. Export is untouched: `REQUIRED_DOCS_NOT_GENERATED` now surfaces in place of the coverage blocker, and `MISSING_PLANNED_FILES`, `NO_ACTIVE_GENERATED_DOCUMENTS`, package reconciliation and the ZIP byte gates are independent and still fire. A tender with no generated documents remains blocked — for the honest reason.
+- **A guard was re-pointed, deliberately and with justification.** `tests/generation-panel-evidence-blocker-reachability.test.ts` pinned the literal comparison expression specifically so a future "fix" could not relax the gate. My change replaces that expression, so it failed. I did not delete it: it now asserts the gate still exists, is still unbypassable by a confirmation click, that the ONLY subtraction permitted is the planned-output count, that an absent count defaults to zero, and that the count is derived from real `AUTO_PLANNED_ARTIFACT` rows excluding already-covered requirements. That is a stricter guard than the regex it replaced.
+- **An earlier attempt was reverted rather than forced through.** I first made a matching plan row count as SUBSTANTIAL in `automatic-requirement-coverage.ts`. The full suite returned 9,876 pass / 1 fail, and the failure was the deliberate guard "keeps a planned output PARTIAL until real validated bytes exist". That guard is right, so I reverted the change and asked Hope rather than re-point it.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, DB verified alive after): full suite **9,878/9,878, 0 failures**; new `tests/planned-output-generation-deadlock.test.ts` 4/4 covering both directions plus the fail-closed default; typecheck clean; lint clean but for the one standing warning. `tests/owner-workflow-complete-postgres.test.ts` failed once mid-session and passed in isolation and on re-run — the documented standing flake, not this change. The database also died during one earlier run (82 fail / 328 cancelled); it was restarted and re-run before any result was believed.
+- **Not verified by me:** that Hope's tender now proceeds past Match Evidence to generation. That needs a Re-run Engine click on the deployed Preview.
+- **Still open:** "Healthcare Facility Design Experience" links a feasibility study for an abattoir at 76% rather than the hospital projects the Engine selected, and its reason string carries no shared capability family — so the hospitals are not reaching that requirement's candidate pool. Hope approved diagnosing it; not started.
+- **Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration.
+
+### 2026-08-11 UTC — Claude Code (Opus), two owner-reported live defects
+
+Both reported by Hope from the deployed Preview on commit `1d1d7d0d`, with screenshots.
+
+**1. The two manual controls were absent, not disabled.** `AIAnalyzePanel` rendered its button behind `canMutate && !analysisComplete`, and `MatchingSelectedEvidencePanel` behind `canMutate && !engineComplete`, so both vanished from the page once their stage had succeeded. `engine-readiness` agreed, withholding `canRunEngine` on `!engineComplete`. The owner opening a finished tender therefore saw no AI Analyze and no Run Engine control at all, and had no way to re-run — which matters most after uploading Company Vault evidence, since that does not move the tender's source revision and so leaves a stale run looking "current". Neither POST route ever refused a re-run; this was purely visibility plus one readiness flag. Both buttons are now always rendered for a user entitled to press them, labelled "Re-run …" when the stage is complete, with a note saying what pressing it will do. The protection that matters is untouched: `!analyzing` and `!engineRunning` still make two concurrent jobs impossible, and manual authority is unchanged.
+
+**2. Requirement coverage could not tell that a hospital is a healthcare facility.** The reported tender showed "2/4 mandatory requirements have FULL/SUBSTANTIAL coverage" while Dessie Specialized Hospital and G+6 General Hospital sat in the selected evidence for "Healthcare Facility Design Experience". Root cause, and it is exact: the app labels requirements Project, Eligibility, Expert, Submission; `inferAutomaticEvidenceKinds` matched `ELIGIBILITY` and `EXPERT` but tested only the longer `PROJECT_EXPERIENCE`, so `"PROJECT"` matched nothing. The requirement inferred no evidence kind, fell through to `GENERAL`, and its candidates started at 30 instead of 68 — below the 70 needed to link at all. That is the whole difference between the Eligibility and Expert requirements reading "Fully verified" and the Project one reading "Partially verified". Fixed by accepting `PROJECT`/`SIMILAR_PROJECTS` and widening a phrase list that demanded the tender say "relevant experience" or "past performance". Separately, scoring compared raw tokens, so "hospital" earned nothing toward "healthcare"; it now also credits a shared `capabilityFamilies` family — the same vocabulary the matching engine already uses to select these records, whose HEALTHCARE_FACILITIES patterns include `/\bhospital/` — and names the shared family in the reason string so a reviewer can check the inference.
+
+- **Nothing was weakened to achieve this.** No threshold was lowered, no gate removed, no fail-closed path relaxed. Both sides of the new signal are derived from text already on file — the tender's own requirement and the record's uploaded content — so nothing is invented. A record sharing no family gains nothing, and a record of the wrong evidence kind still scores zero and is not selected; both are pinned by tests, and the negative cases are the point of them.
+- **A correction to my own first analysis:** I initially told Hope the hospital project scored 68 + 8 = 76 and missed SUBSTANTIAL by eight points. That arithmetic assumed the requirement had inferred `PROJECT_REFERENCE`. It had not — it was `GENERAL`, so the true base was 30 and the record could not link at all. The test header carries the corrected explanation.
+- **Files changed:** `app/api/tenders/[id]/engine-readiness/route.ts`, `components/ai-analyze-panel.tsx`, `components/matching-selected-evidence-panel.tsx`, `lib/engine/automatic-requirement-coverage.ts`, `tests/manual-button-visibility.test.ts` (two assertions replaced — they pinned the hide-on-complete rule, and its header documented it as an owner requirement; the header now records why it changed), and `tests/coverage-reads-capability-not-just-words.test.ts` (new).
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, DB verified alive after): full suite **9,874/9,874, 0 failures**; the 25 targeted button-visibility and coverage tests pass; typecheck clean; lint clean but for the one standing warning. Notably no existing gate, readiness, or export-truth suite broke, which is the check that mattered for change 2.
+- **Not verified by me:** that the reported tender now reaches 4/4 coverage. That depends on its actual Vault records and needs a re-run of the Engine on the deployed Preview, which is Hope's click to make. The mechanism is fixed and proven in tests; the live outcome is not yet observed.
+- **Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration.
+
+### 2026-08-11 UTC — Claude Code (Opus), last client field with no ledger row
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, from exact remote head `ae7438f463d400b99940ab4d0ecf97234e7b4039` (fast-forwarded; Codex's fourteen Phase 1/Phase 2 commits are all contained, nothing rebased or discarded).
+- **Mode:** closing the "Pass 6 — client-detail provenance: CONFIRMED GAP" item recorded further down this log. That entry listed twelve client fields with no `TenderFactsLedger` row. Eleven were wired up in the meantime; this entry closes the twelfth.
+- **Scope / files changed:** `lib/engine/tender-facts-ledger-service.ts` — `clientCity` added to `clientDetailFields` **and** to the backfill query's explicit `select`; `prisma/schema.prisma` — corrected the `contactDetailsSourceJson` comment, which listed only eight of the nineteen keys AI Analyze actually writes there; `tests/client-detail-ledger-provenance.test.ts` — `clientCity` added to the covered key set, plus two new real-PostgreSQL tests for the grounded and partial-evidence directions.
+- **Why it mattered:** `clientCity` is CLAUDE.md item 9 ("City / project location"). AI Analyze extracts it, the extraction prompt asks the provider for its page and quote, promotion persists that triple into `contactDetailsSourceJson`, and the tender detail panel displays it. The ledger was the only consumer that could not see it — and the ledger is the surface a reviewer uses to ask whether a displayed value is traceable. Every other consumer (`effective-tender-facts`, `metadata-override`, `tender-metadata-completeness`, `final-submission-readiness`, `tender-release-snapshot`, `source-driven-tender-detail`) already knew the field; the ledger was the sole outlier.
+- **Two-part fix, and why the second part is not cosmetic:** adding the field to `clientDetailFields` alone did not work. The backfill's `select` enumerates columns explicitly, so an unselected column arrives as `undefined` and the candidate is silently skipped — the exact trap the comment above that `select` already warned about. The test caught it: the suite stayed red after the first edit and only went green after the `select` was extended too.
+- **Tests actually run** (local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, database verified alive before and after): the provenance suite was proven RED first (4 of 6 failing, `clientCity` had no row), then GREEN 6/6. `npx prisma validate` passed; `npx prisma generate` passed; `prisma migrate diff` reported **No difference detected** (comment-only schema edit, zero drift); `npm run typecheck` passed clean; `npm run lint` passed with only the one standing unused-disable warning in `tests/superseded-job-status-projection.test.ts`; the full suite passed **9,869/9,869, 0 failures**. Fresh CI on the pushed head is the binding check.
+- **New coverage, stated precisely:** the pre-existing tests only proved the ungrounded direction — that a field with no evidence stays `CANDIDATE_NEEDS_REVIEW`. The two added tests prove the direction requirement 20 actually asks for: a complete `{fileId, page, quote}` triple reaches `SOURCE_GROUNDED_CONFIRMED` carrying the real page and verbatim quote, and partial evidence (quote without a proven page, page without a file, quote under the ten-character minimum, page 0) is dropped to null and never rounded up.
+- **Risks / assumptions:** no gate, resolver, authority state, tenant filter, manual-authority contract, Company Vault reconciliation, worker continuation, or ZIP/byte integrity logic changed. `backfillTenderFactsForTender` remains the only writer of ledger rows in the codebase — `scripts/backfill-tender-facts-ledger.ts` is its sole caller — so no second write path needed the same field. No migration was added and none is required.
+- **Recurrence guard (`tests/ledger-backfill-select-parity.test.ts`, added after the fix):** the behavioural suite next door can only prove the twelve fields it names, so it could not catch a thirteenth added to `clientDetailFields` but not to the `select` — the precise failure above. The new test derives both lists from the source and fails naming the offending column. It was verified by reintroducing the exact bug: it went red identifying `clientCity`, and green again on restore. It also pins semanticKey-to-column equality, because provenance in `contactDetailsSourceJson` is keyed by those same names, so drift there would write rows under a name no reader looks for.
+- **Correction to an earlier claim in this same entry:** I first wrote that acceptance criterion 8 ("does not build an empty submission plan when requirements exist") was still not exercised, carrying that forward from the Pass 6 entry below. That is out of date. `tests/p1-submission-plan-never-silently-empty.test.ts` drives the real guards against a real database — refusal with an explicit reason, no CONFIRMED BuildPlan created on refusal, independent rejection of an empty item list at confirmation, and a positive case that is not blocked — and it passed in the full run reported above. Criterion 8 is exercised.
+- **On the ledger's write path, so the next session does not re-derive it:** `backfillTenderFactsForTender` is still the only writer, and `scripts/backfill-tender-facts-ledger.ts` its only caller, so ledger rows do not appear during ordinary AI Analyze. That is not a defect today and was deliberately not "fixed" here: the readers — `effective-tender-facts`, `final-submission-readiness`, `fact-parity` and `facts-ledger` routes — take the snapshot as one input beside parser, scalar and override values and fail soft to `null`, so an empty ledger is neutral rather than harmful. Wiring a live write path would change fact resolution for every tender and needs owner scoping, not a drive-by commit.
+- **Next action:** owner review.
+- **Merge status:** DO NOT MERGE. Draft; no Production promotion, no deployment, no migration run.
+
+### 2026-08-11 UTC — Codex (PR #1175 Phase 2 downstream-truth repair)
+
+- **Mode:** Phase 2 only — reconcile completed Engine execution with canonical downstream workflow truth at the Stage 3 presentation boundary.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting from exact remote head `170c58a8586620ed1158b8f5782bd89867420477` after confirming the 16 Phase 1 semantic tests still passed.
+- **Scope / files changed:** `lib/engine/workflow-panel-presentation.ts` now formats current-revision Engine truth together with a presentation-safe projection of the existing canonical workflow decision and exact-revision persisted successor activity; `app/api/tenders/[id]/workflow-center/route.ts` exposes that observed activity without changing eligibility; `components/matching-selected-evidence-panel.tsx` consumes and polls both existing authorities and fails closed when downstream truth is unavailable; focused semantic/PostgreSQL tests were strengthened; `e2e/phase2-workflow-truth-screenshot.spec.ts` creates and screenshots the exact current-analysis/current-Engine/selected-evidence/confirmed-plan/2-of-4 state; `playwright.config.ts` runs it in authenticated CI.
+- **Tests so far:** the pre-edit Phase 1 suite passed 16/16; the exact old Stage 3 source path was reproduced returning the unconditional automatic-continuation sentence; 53 focused Phase 1/Phase 2/manual-button tests pass; 28 additional workflow-center/two-action/route semantic tests pass; typecheck passes; lint passes with the one standing unused-disable warning. On first pushed head `a1846ef`, one CI full suite reached 9,868/9,869 with the standing nondeterministic owner-workflow PDF validation failure while the other passed the full real-PostgreSQL unit phase and reached Playwright. On `b9cf39b`, `72b432f`, and `c2c557c`, both full real-PostgreSQL unit phases passed. After correcting three setup-only issues, exact head `ad36a0c` passed both independent real-PostgreSQL CI runs (9,869/9,869), production build, the new rendered Phase 2 check, and the full authenticated Playwright suite (184 passed, 4 environment-conditional skips); dependency audit, Vercel Preview, and the 237-page route/screenshot audit also passed. The Phase 2 screenshot is now also written under `browser-results/` so the credential-free success artifact retains it for mandatory visual inspection on the final SHA.
+- **Risks / assumptions:** no workflow resolver, readiness/gate calculation, mutation route, evidence trust, source revision, tenant filter, Company Vault reconciliation, generated-file/ZIP integrity, manual authority, or automatic worker continuation was changed. The new activity selector observes only `PROPOSAL_GENERATION`/`AUTO_FINALIZE` rows bound to the current Engine source revision.
+- **Next action:** push the Phase 2 implementation, inspect all fresh exact-head failures and the attached real 2/4 rendered screenshot, repair if necessary, and stop after Phase 2 verification.
+- **Merge status:** DO NOT MERGE; draft, unreviewed, no Production promotion.
+
+### 2026-08-11 UTC — Codex (PR #1175 full-suite reconciliation)
+
+- **Mode:** continue-to-green verification of the AI Analyze/Engine cross-panel truth repair.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting at exact remote head `6f8e66ac640f6d8187f9e22f1cf22b5851bea47c`.
+- **Scope / files changed:** reconciled five stale source-text tests with the shared presentation-only workflow wording module (`tests/durable-ai-analyze-workflow.test.ts`, `tests/manual-button-visibility.test.ts`, `tests/status-panels-do-not-report-stale-pending.test.ts`); strengthened `tests/generation-panel-coverage-blocker-truth-db.test.ts` so real PostgreSQL now contains the exact reported combination (current AI Analysis, selected source-verified expert/project evidence, confirmed Build Plan, current-revision successful Engine job, and canonical Source evidence required) and proves both rendered panel presenters announce no contradictory manual action; recorded this handoff. Production behavior and all workflow authorities/gates are unchanged.
+- **Tests / CI:** both initial real-PostgreSQL CI runs reached 9,848/9,853 before the same five stale assertions failed; their failures were inspected and reproduced. The reconciled focused set passed 54/54 locally, and local production `npm run build` passed with development-only missing-provider/worker/Sentry warnings. On exact application/test head `e6690e179b5cc739ce4cccba7b85062ca515c25e`, both fresh CI events passed Prisma/migrations/zero-drift, release-integrity audits, typecheck, lint, the full real-PostgreSQL suite (9,854/9,854), production build, and authenticated Playwright (184 passed, 3 environment-conditional skips). Both exact-head screenshot jobs passed; the indexed audit captured 237 screenshots with 0 missing routes, 0 critical findings, 0 horizontal overflow, and 0 warnings. Vercel Preview and dependency audit passed.
+- **Risks / assumptions:** the repaired tests now exercise the exported shared presenters rather than demanding that their copy remain textually duplicated inside each React component. Manual AI Analyze and Run Engine authority, automatic post-Engine continuation, tenant/source/Vault/generated-file integrity, and fail-closed gates remain unchanged.
+- **Next action:** owner review of the still-draft PR; no further scoped code gap is known.
+- **Merge status:** scoped fix is verified safe for review, but PR remains draft and MUST NOT be merged or promoted without Hope's explicit approval.
+
+### 2026-08-11 UTC — Codex (PR #1175 exact-head follow-up)
+
+- **Mode:** narrow exact-head CI repair and user-facing diff-limit investigation.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting at exact head `4f2e0d18bdf4a7b942c43f843090840ef2b36063`.
+- **Scope / files changed:** corrected the shared Engine presentation helper's input type so its intentionally supported missing-active-job fallback compiles (`lib/engine/workflow-panel-presentation.ts`); recorded this handoff. The quoted generated-diff size-limit notice is not present in repository files, the PR body, issue comments, or reviews and therefore cannot be removed from application code; it is external review-tool output caused by the consolidated PR's exceptionally large diff.
+- **Tests:** `npx prisma generate` passed; 16/16 targeted Engine/AI/cross-panel workflow truth tests passed; `npm run typecheck` passed; `npm run lint` passed with one pre-existing unused-disable warning in `tests/superseded-job-status-projection.test.ts`.
+- **Risks / assumptions:** no workflow derivation, Company Vault reconciliation, source integrity, tenant isolation, release gate, or manual-action authority changed. Full PostgreSQL/full-suite/build and exact-head screenshot evidence remain governed by fresh CI after this commit.
+- **Next action:** push the commit to #1175 and require fresh exact-head CI plus screenshot audit before merge consideration.
+- **Merge status:** DO NOT MERGE — draft; no deployment or production migration performed.
+
+### 2026-08-11 UTC (AI/Engine semantic consolidation follow-up) — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175, started from exact remote head `c6e0676a51dd8433f8251c898a575bd217dc6ea6`.
+- **Scope:** moved AI Analyze and Matching Engine wording into one presentation-only module while retaining the existing tenant-scoped, current-revision `/engine-readiness` authority. Strengthened the cross-panel regression so “Source evidence required” is produced by the real canonical workflow decision instead of being hard-coded in the test.
+- **Files changed:** `lib/engine/workflow-panel-presentation.ts`, `components/ai-analyze-panel.tsx`, `components/matching-selected-evidence-panel.tsx`, `tests/ai-analyze-engine-workflow-truth.test.ts`, and this handoff.
+- **Tests:** targeted AI/Engine semantic tests passed (16/16); Prisma generation, typecheck, lint, and production build passed. The local full-suite attempt could not complete because the fail-closed DB guard correctly rejected the configured Neon URL and no local PostgreSQL server is installed; the pre-existing PR-head CI PostgreSQL run completed 9851/9853 with two unrelated failures before this follow-up.
+- **Risks / assumptions:** no gate, route authorization, source-integrity calculation, tenant filter, job revision filter, or manual/automatic workflow ownership changed. Exact authenticated Preview screenshot audit still requires the deployment/test account available to the operator capture workflow.
+- **Next action:** push this commit, let PR #1175 CI run against ephemeral PostgreSQL, and complete the exact-head authenticated screenshot capture before merge.
+- **Merge status:** unsafe until fresh CI and screenshot audit complete; do not merge yet.
+
+### 2026-08-11 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175, started from exact remote head `48ee3d40ea46bc705eb184832dbf15456104d0c0`.
+- **Scope:** removed the Stage 2 contradiction that told users to Run Engine after Engine had already completed. `AIAnalyzePanel` now reads the existing tenant-scoped, current-revision `/engine-readiness` authority, distinguishes queued/running/completed/failed/stale states, polls active Engine work, and stops at AI-analysis truth after current Engine completion so the canonical Next Required Action owns downstream blockers. The matching panel now routes its existing state copy through an exported pure presenter used by cross-panel regression coverage.
+- **Files changed:** `components/ai-analyze-panel.tsx`, `components/matching-selected-evidence-panel.tsx`, `tests/ai-analyze-engine-workflow-truth.test.ts`, and this handoff.
+- **Tests:** targeted 40-test workflow/status set passed; `npx prisma generate` passed; `npm run typecheck` passed; `npm run lint` passed with one pre-existing unused-disable warning in `tests/superseded-job-status-projection.test.ts`; production `npm run build` passed with placeholder local provider/worker variables. The first post-push CI typecheck found that the test fixture omitted the Engine job `id`; the production payload and fixture type were aligned before the follow-up push. A full test attempt was stopped after 2,365 passing suites because this container has no local PostgreSQL and the repository intentionally fails DB-required files when `RUN_DB_INTEGRATION=false`; the configured Neon URL was correctly rejected by the fail-closed test DB guard.
+- **Risks / assumptions:** no gate, revision resolver, tenant query, automatic continuation, Vault reconciliation, or source/generated-file integrity logic changed. The Engine readiness endpoint revision-filters `ENGINE_RUN` jobs, so an old-revision success correctly presents as not run for the current revision. Exact-head preview screenshot audit remains the next action after this commit deploys.
+- **Next action:** push this commit, wait for PR #1175 exact-head CI/preview, then capture the authenticated original tender state and verify AI Analyze, Next Required Action, and Matching panels are non-contradictory.
+- **Merge status:** not reviewed; do not merge until exact-head CI, real PostgreSQL tests, and authenticated screenshot audit pass.
+
+### 2026-08-10 19:40 UTC — Claude Code (Opus), root cause of the live 0/28 · 0/112 Company Vault
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, from head `d35b8130`.
+- **Symptom (owner's live Preview):** Company Vault showed `DOCUMENTS 4 / 4 extracted` beside
+  `VERIFIED EXPERTS 0 (28 total)`, `VERIFIED PROJECTS 0 (112 total)`, `VERIFIED SUPPORT 0`, and Run
+  Engine then selected 0 experts and 0 projects. Every automatic reconciliation path from the P0 was
+  already implemented and `tests/company-vault-zero-bureaucracy-db.test.ts` was green.
+- **Root cause — byte integrity, not identity matching.** `CompanyDocument.integrityStatus` defaults
+  to `"UNKNOWN"` and `remapUnlinkedVaultSources` filters `integrityStatus: "VERIFIED"`, so a vault
+  whose documents were persisted before integrity was computed has **no eligible evidence source at
+  all**. Extraction and byte integrity are independent, so the page truthfully reports "4 extracted"
+  while nothing can bind, and every verified count is 0.
+- **Reproduced by measurement, not inference.** Same 28 experts / 112 projects / 4 documents /
+  169 KB of source text through `prepareCompanyVaultForEngine`:
+  | documents | experts | projects | elapsed |
+  |---|---|---|---|
+  | byte-VERIFIED | 11/28 | **112/112** | 2988 ms |
+  | `LEGACY_INTEGRITY_UNKNOWN` | **0/28** | **0/112** | 223 ms |
+  | VERIFIED but `contentSha256` missing | **0/28** | **0/112** | 236 ms |
+  The 223 ms is the tell: it returns immediately because no document qualifies as a source. (11/28
+  in the healthy row is a fixture artifact — those synthetic names carry numeric suffixes absent
+  from the CV text, so failing closed was correct.)
+- **Fix:** new `lib/company-document-byte-integrity-reconcile.ts`, called before the remap in both
+  `lib/engine/prepare-company-vault.ts` and `lib/company-vault-ingestion.ts`. For owned documents
+  whose integrity was never established it inspects the **persisted bytes** and records their real
+  hash, length, MIME type and detected format via the production producer
+  `verifiedIntegrityDataFromBase64` — which throws unless the bytes inspect clean. This does not
+  bypass the gate and does not mark unknown bytes verified: it performs, once, the verification that
+  was never performed. A document whose bytes are unrecoverable or corrupt stays blocked and records
+  an `integrityFailureCode`. Documents stored only via `storagePath` with no `fileContent` are still
+  out of scope and remain blocked.
+- **Regression:** `tests/company-vault-legacy-integrity-db.test.ts`. Proven **RED before the fix**
+  (0/2, failing on "both documents must establish byte integrity from their stored bytes") and
+  **GREEN after** (2/2). It also pins the honest half — a document with no recoverable bytes must
+  stay blocked, invent no hash, and leave its dependent experts blocked — and asserts zero
+  manufactured human review.
+- **Tests actually run:** full `RUN_DB_INTEGRATION=true npm test` — **9,813/9,813 passed, 0 failed**,
+  exit 0. An earlier full run showed one failure in
+  `tests/owner-workflow-complete-postgres.test.ts` ("1 auto-finalized PDF(s) failed canonical
+  validation"); it passes in isolation and in the clean full re-run, and touches
+  `GeneratedDocument`, not `CompanyDocument` — recorded here as an observed concurrency flake rather
+  than hidden. `npx tsc --noEmit` exit 0; `npm run lint` 0 errors, 1 pre-existing warning;
+  `npm run build` exit 0.
+- **Disproved and reverted:** I had theorised the route's Vault preflight caused the 60s
+  `POST /engine` timeout and moved it to the worker. That broke two tests deliberately pinning
+  "Vault verification before enqueue", so I measured instead of arguing: the preflight takes ~1.5 s
+  at owner scale. Hypothesis wrong, change reverted, route unchanged.
+- **CI / deployment:** No merge, force-push, rebase, base change, history rewrite, new PR,
+  credential rotation, Production migration, or Production deployment.
+- **Merge status:** Not reviewed; not merged. Draft.
+
+### 2026-08-10 18:40 UTC — Claude Code (Opus), restore green CI on the Company Vault P0
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. Started from
+  head `028e0aaf` (21 commits of Company Vault P0 work by Codex and the owner's account).
+- **Problem:** exact-head CI was red at step 19 for six consecutive pushes (`8e75e437`, `a5c00152`,
+  `89888d9d`, `d0cd261a`, `028e0aaf`). Build, Playwright and the two-user isolation stage were
+  *skipped* as a consequence, so nothing past the test step was proven on any of those heads.
+- **Diagnosis:** four failures, all owner-facing wording colliding with the reviewed→verified
+  rename the P0 deliberately makes. **None was a product regression.** Note the first local run
+  showed six failures because PostgreSQL died mid-run — restarted and re-ran before believing it,
+  per the rule in CLAUDE.md.
+  1. `main-engine-source-verified-selection` — test bans the substring `human promotion`; the new
+     rationale *denies* it ("no separate human promotion step is required…"). Fixed in the
+     **implementation** (→ "no separate approval step"), so the assertion stays strict.
+  2. `matching-quality-state` — expected `/await\s+engine\s+run/`; the message now says "await Run
+     Engine". The durable human-REVIEWED record is still counted correctly; only word order moved.
+  3. `panel-route-parity` — expected "28 reviewed vault expert(s)"; now "28 verified/source-backed
+     Vault expert(s)".
+  4. `pipeline-authority-regression` — pinned `findSourceDocument` and an old warning string in
+     `lib/company-vault-ingestion.ts`; both moved when source binding was unified onto
+     `remapUnlinkedVaultSources` (P0 §7). Re-pointed at the delegation, which is a stronger guard.
+     The safety assertion (`doesNotMatch(/trustLevel:\s*"REVIEWED"/)`) was **not** touched and
+     still passes — ingestion never fabricates human review.
+- **Tests actually run:** full `RUN_DB_INTEGRATION=true npm test` against real PostgreSQL 16 —
+  **9,811/9,811 passed, 0 failed, 0 skipped**, exit 0 (was 9,807/9,811 before). `npx tsc --noEmit`
+  exit 0. `npm run lint` 0 errors, 1 pre-existing unused-disable warning. `npm run build` exit 0 —
+  the first time the build has been proven on this head, since CI skipped it.
+- **P0 audit — already implemented by the other tool, verified not re-done:** §2 one canonical
+  matcher (`matchReviewEvidenceField`, consumed by both `collectEvidence` and
+  `buildPartialSourceVerificationProvenance`; NFC, strict-ordered first, identity-token fallback
+  for identity fields only, every token required, no fuzzy/phonetic matching); §3 `recordType`
+  passed through; §5 deadlock broken by ordering `remapUnlinkedVaultSources` before
+  `autoVerifyCompanyKnowledge` in both `lib/engine/prepare-company-vault.ts` and
+  `lib/company-vault-ingestion.ts`; §7 classifier unified on
+  `shouldScanForExperts`/`shouldScanForProjects`; §8 `VAULT_INGEST` is woken by
+  `scheduleRequestScopedWorkerWake` from `app/api/upload/route.ts:46` and
+  `app/api/company/ingestion-readiness/route.ts:23`. Affix stripping covers the owner's real
+  context including Ethiopian honorifics (`ato`, `wro`, `weyzero`, `obo`).
+- **Not done — cannot be done from here:** the deployed-Preview proof that the owner's real
+  0/28 and 0/112 screenshots no longer reproduce. This session's egress policy denies CONNECT to
+  `*.vercel.app`, so no authenticated browser run against the Preview is possible. Reported, not
+  routed around; no internal-function run substituted for it.
+- **CI / deployment:** No merge, force-push, rebase, base change, history rewrite, new PR,
+  credential rotation, Production migration, or Production deployment.
+- **Next action:** owner re-runs the real tender on the exact-head Preview and reports Vault
+  verified counts and Engine candidate counts.
+- **Merge status:** Not reviewed; not merged. Draft.
+
+### 2026-08-10 15:40 UTC — Codex (GPT-5.6 Sol), P0 acceptance strengthening
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175; verified remote head moved from the supplied `b6d6ee26ba9b704ac167a945992ca5deff350498` to `a5c001529619423f79fc194b97d71d8369f31997` and inspected only the three intervening commits.
+- **Scope / files:** audited the P0 reconciliation already on the governing PR; strengthened `tests/company-vault-zero-bureaucracy-db.test.ts` to require zero blockers and prove 28 Experts/112 Projects can share their respective authoritative bundles; strengthened `tests/identity-verification-accepts-normalised-names.test.ts` to pin stable canonical identity-fallback quotes and coordinates; updated this handoff. No production gate was relaxed.
+- **Tests:** Prisma generation passed. The focused real-PostgreSQL run was attempted, but the configured Neon host was unreachable; focused non-DB tests, typecheck, lint, and build results are recorded in the final PR report.
+- **CI / deployment:** #1175 CI was running at session start; dependency audit and the existing Vercel check were green. Codex created no deployment and did not promote or merge anything.
+- **Risk / next action:** authenticated live owner totals (28/112) and live Engine candidate/selection counts remain unproven. Re-run the full matrix with reachable PostgreSQL, then test the exact final-SHA Preview with owner data.
+- **Merge status:** unsafe pending PostgreSQL and live Preview acceptance.
+
+### 2026-08-10 UTC — Codex (P0 Vault reconciliation follow-up)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175; started from current PR head `8e75e437fc5073756f020646988d313c157da21d` after inspecting only the two commits after the owner-supplied SHA.
+- **Scope / files:** completed stale/existing Expert and Project reconciliation in `lib/company-vault-source-remap.ts` (current-binding priority, deterministic ambiguity/no-match diagnostics, automatic stale authority demotion/rebinding, including the zero-current-documents case); fixed canonical Unicode identity matching and Unicode property boundaries in `lib/vault-review-provenance.ts`; added a decomposed/precomposed Unicode identity regression in `tests/identity-verification-accepts-normalised-names.test.ts`.
+- **Tests:** focused non-DB provenance/classifier suites pass; `tsc --noEmit` passes. The required PostgreSQL regression was attempted with `RUN_DB_INTEGRATION=true` but the configured Neon host was unreachable from this environment, so no live DB, Preview, authenticated Playwright, or owner-data counts are claimed by this follow-up.
+- **CI / deployment:** PR checks were in progress when inspected. No deployment was created or promoted.
+- **Risks / assumptions:** Legal/Financial/Compliance source-less stale-row reconciliation remains in the pre-existing support-record path rather than the new Expert/Project blocker diagnostics. Exact deployed Preview acceptance remains mandatory before a GO decision.
+- **Next action:** run the full PostgreSQL/Playwright/build matrix and validate the exact final SHA on PR #1175's Preview with the owner's 28 Experts, 112 Projects, and tender.
+- **Merge status:** unsafe until CI and exact-Preview owner acceptance complete.
+
+### 2026-08-10 15:19 UTC — Codex (GPT-5.6 Sol), P0 continuation
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; fetched the PR ref and verified that its head had advanced from the owner's starting SHA `b6d6ee26ba9b704ac167a945992ca5deff350498` to `e549885952d0384604edec9e18de5a8d20456320`, then inspected only that single intervening commit.
+- **Scope / files changed:** continued the Company Vault zero-bureaucracy repair by fixing the canonical classifier to honor explicit `EXPERT_CV`, `PROJECT_REFERENCE`, `PROJECT_CONTRACT`, and `PORTFOLIO` owner categories even when generic filenames/text have no classifier keyword; added `tests/company-document-classifier-vault-scan.test.ts`; updated this handoff. No UI, PDF, ZIP, CSP, provider-order, or unrelated workflow files were touched.
+- **Tests:** 35 focused provenance, classifier, Vault-preflight, durable-engine-enqueue, and request-scoped worker-wake tests passed. The requested real PostgreSQL regression was attempted with `RUN_DB_INTEGRATION=true` but the configured Neon endpoint was unreachable, so its setup hook failed before assertions and real 28/112 acceptance is still unverified.
+- **Risks / assumptions:** no Preview was deployed (Hope approval is required), no owner data was accessed, and live 28/112 reconciliation is not proven. The preceding commit's realistic DB test remains substantially narrower than the full requested acceptance matrix (tie blocker persistence, two-tenant falsification, replacement/delete/re-extraction, deterministic matching under provider outage, and selected matches still need executable DB coverage).
+- **Next action:** run the expanded PostgreSQL acceptance suite against a reachable isolated database, close the remaining acceptance gaps, then deploy and validate the exact final SHA only after Hope authorizes a Preview.
+- **Merge status:** unsafe — partial code repair with focused tests only; DB and live acceptance remain outstanding.
+
+### 2026-08-10 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / governing draft PR #1175; verified exact starting head `b6d6ee26ba9b704ac167a945992ca5deff350498` before editing.
+- **Scope:** P0 Company Vault automatic reconciliation. Added one canonical identity-aware field matcher shared by full and partial provenance, passed `recordType` through source remapping, replaced database-order/unique-document selection with deterministic evidence-authority ranking and fail-closed ties, unified ingestion scan decisions on the canonical classifier, expanded CV/project indicators, and added the requested 28-Expert/112-Project PostgreSQL fixture plus a focused RED→GREEN partial-identity regression.
+- **Files changed:** `lib/vault-review-provenance.ts`, `lib/company-vault-source-remap.ts`, `lib/company-vault-ingestion.ts`, `lib/company-document-classifier.ts`, `tests/identity-verification-accepts-normalised-names.test.ts`, `tests/company-vault-zero-bureaucracy-db.test.ts`, and this handoff.
+- **Tests:** focused identity regression passed (11/11) after first reproducing the new partial-verifier case RED; `npx prisma generate`, `npm run typecheck`, lint, and `git diff --check` passed. Real PostgreSQL tests were attempted but the configured Neon endpoint was unreachable, so database acceptance remains unverified in this environment.
+- **Risks / assumptions:** this is not live acceptance. No Preview was deployed or owner data inspected; queue dispatch and Engine timeout code were already wired on this exact starting SHA and were not changed. The new DB regression could not execute against PostgreSQL here. Explicit auto-detected category persistence, blocker-code persistence for ambiguous matches, source replacement scenarios, provider-outage matching, and exact live 28/112 reconciliation remain to be proven.
+- **Next action:** restore a reachable PostgreSQL test database, run the new regression and full required suite, then deploy the exact SHA only with Hope's approval and validate the real Preview owner state before calling the P0 fixed.
+- **Merge status:** unsafe — partial root-cause repair only; live and DB acceptance outstanding.
+
+### 2026-08-10 13:50 UTC — Claude Code (Opus), PR #1175 release-hardening audit at exact head
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175. Audit started
+  from head `fe612ab0`; no Codex commits had landed after it.
+- **Scope / files:** One new test file, `tests/job-claim-concurrency-stress-db.test.ts`, plus this
+  handoff entry. **No production source changed** — the audit found no defect that justified one.
+- **Gap closed:** the queue's exactly-once claim had small-scale coverage only
+  (`tests/engine-worker-wake-constraints.test.ts`: 4 mixed racers, 12 concurrent wakes, ENGINE_RUN
+  only). The new file stresses `claimJobForCaller` at 2, 10 and 25 concurrent callers with the two
+  real caller shapes interleaved (cron `global: true`, request wake tenant-scoped), then covers
+  25-callers-vs-25-jobs (no double-hand-out, no starvation), FIFO order, 20-way two-tenant
+  contention with ownership assertions, cross-tender isolation inside one tenant, job-type
+  isolation, the fail-closed unidentified caller, and the `nextAttemptAt` backoff window against a
+  25-caller stampede. 12 tests, all pinned to tenders the file creates — an unpinned `global: true`
+  claim steals other suites' rows, which is what broke `not ok 814` on this branch before.
+- **Correction to the record:** the full-suite count previously reported as 9,779 on this head is
+  wrong. Measured twice today on the same tree: **9,777** without the new file, **9,789** with it.
+  9,777 + 12 = 9,789 exactly.
+- **Tests actually run:** full `RUN_DB_INTEGRATION=true npm test` against real PostgreSQL 16 —
+  9,789/9,789 passed, 0 failed, 0 skipped, exit 0. Baseline re-measurement 9,777/9,777, exit 0.
+  Focused new file standalone 12/12. `npx tsc --noEmit` exit 0. `npm run lint` 0 errors, 1
+  pre-existing unused-disable warning in `tests/superseded-job-status-projection.test.ts`
+  (threshold is 50). Note `npx next lint` is not this project's lint entry point and crashes on
+  module load — use `npm run lint`.
+- **Exact-head CI verified by inspection, not badge:** run `31391888387`, job `93465334960`,
+  head_sha `fe612ab07c9e1b9204ea63ca4eece0402f22d7c6`, conclusion success. 27 steps executed; the
+  only `skipped` step is #28, the failure-only diagnostics upload. Step 19 (unit + DB integration)
+  ran 3m03s; step 24 (authenticated browser: smoke, intake, golden workflow, cross-user isolation)
+  ran 3m39s and is separate from step 22's 22s Playwright install — so the browser stage executes
+  tests rather than merely booting.
+- **Deployed Preview identity proven:** `dpl_GbNQUmCWCxQfpT8t8oMr4tQDbGAa` is READY and its own
+  `/api/health` returns `release: fe612ab07c9e1b9204ea63ca4eece0402f22d7c6`, matching the head.
+- **Blocked — deployed Preview golden path NOT performed.** This session's egress policy denies
+  CONNECT to `*.vercel.app` (proxy `connect_rejected`, gateway 403), so no browser or authenticated
+  multi-step HTTP run against the Preview is possible from here. Only single-shot reads via the
+  Vercel MCP fetch tool work. Per the standing rule this was reported, not routed around, and no
+  internal-function run was substituted for it. This remains the largest open verification gap and
+  is owner-executable — see the PR body.
+- **Audited, no change made (no defect found):** workflow action versions (all v4/v5, DataDog
+  SHA-pinned, no `@v1/@v2/@v3`, no node12/16 runtimes) — but CI still emits
+  `Node.js 20 is deprecated … actions/upload-artifact@v5 … forced to run on Node.js 24`, which is a
+  property of the published action, not of this repository, and has no newer major to move to;
+  `CREATE INDEX` errors in the CI Postgres log (`Expert.deletedAt`, `Project.deletedAt`,
+  `TenderRequirement.sourceTenderFileId`) are `lib/prisma.ts`'s deliberately-tolerated bootstrap
+  failures on a non-migrated scratch database — on the migrated schema all three columns and all
+  three indexes exist, verified directly with `psql`.
+- **Findings recorded as healthy:** `enqueueEngineJobForCurrentSources` has exactly one caller
+  (the manual Run Engine route) and `createAnalysisJob` exactly one (the manual AI Analyze route);
+  run-next additionally logs and ignores any handler returning `output.automaticEngineJob`.
+  Handlers receive `userId`/`tenderId` from the claimed row, never from the request — there is no
+  `userId` query parameter anywhere in run-next. A PostgreSQL trigger
+  (`enforce_ai_job_tender_owner` → `AI_JOB_TENDER_OWNER_MISMATCH`) rejects tenant-mismatched AiJob
+  inserts *and* userId updates at the database. Vault records reach matching eligibility
+  automatically via `SOURCE_VERIFIED` (`lib/company-auto-verification.ts`,
+  `lib/plan-b-source-reconcile.ts` promote on `provenance.ok` and demote to `AI_DRAFT` otherwise),
+  so `REVIEWED` is the optional human path, not a mandatory promotion gate. No secret shapes in
+  `.next/static`, no client source maps emitted, and `NEXT_PUBLIC_ANTHROPIC_API_KEY` /
+  `NEXT_PUBLIC_DATABASE_URL` / `NEXT_PUBLIC_SESSION_SECRET` appear only in tests asserting they are
+  never exposed. Zero unresolved PR review threads and zero Vercel toolbar threads.
+- **Runtime logs:** no error cluster in the last 7 days belongs to `dpl_GbNQUmCWCxQfpT8t8oMr4tQDbGAa`
+  — but that is because no workload has been driven against it, not proof of health. The named
+  historical timeouts (`/api/tenders/[id]/evaluator-objections` and
+  `/api/tenders/[id]/requirement-coverage` at `maxDuration = 10`, `/api/ai-jobs/run-next` at 60)
+  last occurred 2026-08-09 16:33 on `dpl_5k9qJYdpr5WaUUqoMntxttQQB6R6`: **not reproduced, not
+  disproven.** run-next's budget is counted from request start (`startTime` precedes the recovery
+  sweeps), leaving 20s of headroom, so an overrun means a handler outran its `deadlineMs`.
+- **CI / deployment:** No merge, force-push, rebase, base change, history rewrite, new PR,
+  credential rotation, Production migration, or Production deployment.
+- **Next action:** owner runs the deployed-Preview golden path (steps in the PR body) on this exact
+  SHA; nothing else in the audit is blocked.
+- **Merge status:** Not reviewed; not merged. Draft.
+
+### 2026-08-09 19:35 UTC — Codex (GPT-5.6 Sol), post-Engine Vault transition and Bid Strategy authority
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175.
+- **Scope / files:** Fixed the first reproduced post-Engine transition in `lib/company-vault-source-remap.ts`; made `app/api/tenders/[id]/bid-strategy/route.ts` consume `getTenderReleaseSnapshot`; removed the misleading normal-path “Confirm evidence coverage” wording in `lib/engine/canonical-workflow-decision.ts`; updated three focused existing tests plus this handoff.
+- **Real PostgreSQL reproduction:** A byte-verified owned CompanyDocument contained the exact expert/project identity but not AI-inferred secondary fields. Before the fix `remapUnlinkedVaultSources` returned 1 instead of 2 for both experts and projects, leaving the identity-grounded rows unbound and therefore unreachable by the existing partial SOURCE_VERIFIED verifier.
+- **Fix / safety:** Full-field matching remains preferred. When that fails, remap uses the canonical partial source-verification predicate and binds only when exactly one owned, byte-verified document proves the record identity. Zero or ambiguous matches remain untouched. The following canonical verifier promotes the bound identity only, records unverified fields, never fabricates REVIEWED metadata, and repeated remap remains idempotent. Bid Strategy now accepts only promoted `AI_SUCCEEDED` plus matching canonical content hash and canonical job ID, exactly like Analysis Quality/release gates; stale/fallback/missing states remain blocked.
+- **Tests:** Focused PostgreSQL/relevant set — 33/33 passed; typecheck passed; lint passed with one pre-existing unused-disable warning; production build passed with an explicit test-only provider placeholder and local PostgreSQL. Full `RUN_DB_INTEGRATION=true npm test` passed: 9,773/9,773, 0 failed.
+- **CI / deployment:** Not pushed yet at entry time. No merge, approval, force-push, rebase, base change, manual Preview request, or Production deployment.
+- **Known limitation / remaining proof:** The focused database coverage proves owned-byte remap → SOURCE_VERIFIED, source-less blocking, idempotent remap, current-analysis Bid Strategy agreement, worker handoff, AUTO_FINALIZE retry/PDF, and ZIP assembly across the relevant executed suites. It does not yet constitute one monolithic provider-backed test executing AI Analyze through final ZIP; no live provider credential was available locally.
+- **Next action:** Push the bounded commit, require exact-head CI, and inspect only the automatically created Preview for the five truthful Vault states.
+- **Merge status:** Not reviewed; not merged.
+
+### 2026-08-09 19:20 UTC — Codex (GPT-5.6 Sol), PR #1175 bounded-review verification
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175.
+- **Scope / files:** Review-tooling safeguard verification only; this handoff entry is the sole repository change. No production or test source changed.
+- **Finding / solution:** GitHub reports PR #1175 as a 1,056-file consolidation (83,244 additions / 43,990 deletions), so any tool that requests the full PR patch can exceed its extraction limit. The PR description now starts with a permanent instruction not to request the full patch and gives the bounded current range `811942fb...0f366cb9` plus the three named commits/files. Reviewers and automation must fetch the head and inspect only those bounded commits or named files. Rewriting history, retargeting, or opening another PR was deliberately avoided.
+- **Checks actually run:** `gh api repos/hopeengineering83-code/hope-tender-path-b/pulls/1175` — open draft, head `0f366cb9`, 1,056 files; `gh api repos/hopeengineering83-code/hope-tender-path-b/pulls/1175/comments` — no inline comments; previous-head GitHub check-runs — all completed successfully; exact-head checks started after this documentation push; `git status --short --branch` — clean before this entry.
+- **CI / deployment:** Previous-head CI was green; exact-head CI is running after this documentation-only push. No merge, approval, force-push, rebase, base change, new PR, Preview request, or Production deployment performed.
+- **Known limitation:** The warning cannot be prevented when a client ignores the safeguard and explicitly requests the full 1,056-file patch; avoiding that request and using the bounded compare/commit views is the non-destructive remedy for this existing consolidation PR.
+- **Next action:** Review only the bounded range and keep PR #1175 draft until owner-only release blockers are resolved.
+- **Merge status:** Not reviewed; not merged.
+
+### 2026-08-09 18:05 UTC — Claude Code (Opus), PR #1175 Engine wake constraint coverage
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175.
+- **Scope / files:** One new test file, `tests/engine-worker-wake-constraints.test.ts`. No production
+  source changed.
+- **Duplicate avoided:** I had independently written a manual-Engine wake
+  (`lib/ai-jobs/manual-engine-worker-wake.ts` plus its own route wiring and tests) before fetching.
+  Codex had already shipped the same feature in `cdae73cb` as
+  `lib/ai-jobs/request-scoped-engine-worker-wake.ts`. Committing mine would have left two competing
+  wake modules on one route, so I deleted mine and kept Codex's — theirs additionally skips the wake
+  when the reused job is already RUNNING. The new tests target Codex's module.
+- **Gap closed:** `tests/engine-worker-handoff.test.ts` proves the sequential happy path (one QUEUED
+  job across duplicate enqueue, claimed, SUCCEEDED). It does not cover the properties the wake newly
+  puts at risk. The added file covers only those, with no overlapping assertions: exactly-once when
+  the wake races the cron (exactly 1 winner of 4 mixed racers; 1 of 12 concurrent wakes), the wake
+  sitting behind all six fail-closed source gates, the wake never authenticating as an automated
+  caller (so `failStuckJobs` / `reapStaleQueuedJobs` / `findJobsDueForRetry` stay cron-only), and
+  tenant / tender / jobType scope.
+- **Tests actually run:** `npx prisma generate` — passed. `npx tsc --noEmit` — passed.
+  `npx next lint` — no warnings or errors. Full `npm test` against a real local PostgreSQL 16 with
+  `RUN_DB_INTEGRATION=true` — **9767/9767 passed, 0 failed**. This includes
+  `tests/engine-worker-handoff.test.ts`, which the two Codex entries below record as **not executed
+  locally** because the configured Neon host was unreachable; it is now verified against a real
+  database and passes.
+- **CI / deployment:** PR #1175 exact-head CI was re-running when checked; the earlier `d7d93afc`
+  failures are superseded by `3d53eb6a`. No merge, approval, force-push, base change, new PR, or
+  production deployment performed.
+- **Risks / assumptions:** The wake keeps the engine route's invocation alive until `run-next`
+  responds (bounded by its `maxDuration = 60`). If Vercel kills it first the job is left for
+  `failStuckJobs`, which is the intended cron-as-recovery path.
+- **Next action:** Prove the gated `generateTenderDocuments -> finalizeRequiredPdf ->
+  assembleFinalSubmissionZip` route end-to-end; it remains the last open engineering item.
+- **Merge status:** Not reviewed; not merged.
+
+### 2026-08-09 18:20 UTC — Claude Code (Opus), auto-finalize chain behavioural coverage
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / existing draft PR #1175.
+- **Scope / files:** One new test file, `tests/auto-finalize-pipeline-behavioral-db.test.ts`. No
+  production source changed.
+- **Gap closed:** `runAutoFinalizeAfterGeneration` is the application's real bridge from generated
+  DOCX documents to a downloadable package, and its only coverage
+  (`gap3-durable-auto-finalize.test.ts`, `auto-finalize-continuation-gap4.test.ts`) was `readFileSync`
+  plus regex over the source. Those assert the calls are *written*, not that the chain *works* — they
+  would stay green if the renderer emitted zero bytes or an unvalidated DOCX were promoted into the
+  package. The new tests run the real function against real PostgreSQL with real `docx`-generated
+  bytes and assert on persisted rows: a required PDF is rendered from a VALIDATED DOCX and persisted
+  with a real `%PDF-` header plus a matching SHA-256; an unvalidated source finalizes nothing and
+  creates no PDF row; a missing source is skipped rather than thrown, so the durable worker survives.
+- **Tests actually run:** `npx tsc --noEmit` — passed.
+  `RUN_DB_INTEGRATION=true npx tsx --test tests/auto-finalize-pipeline-behavioral-db.test.ts` —
+  3/3 passed against local PostgreSQL 16.
+- **OPEN LEAD (not a confirmed defect, do not treat as one):** while writing these I observed that a
+  freshly finalized PDF is persisted and then marked `validationStatus = FAILED` by
+  `runCanonicalValidation`, and that a second `runAutoFinalizeAfterGeneration` on the same tender
+  reported `failed: 1` with the PDF row no longer present. `checkFullExportReadiness` reported
+  `FILE_BYTES_NOT_VERIFIED: LEGACY_INTEGRITY_UNKNOWN` for the finalized PDF — but it reported the
+  same for the seeded source DOCX despite `integrityStatus: "VERIFIED"`, which strongly suggests my
+  hand-built fixture does not carry whatever real generation sets for byte verification. So this may
+  be fixture fidelity rather than a product bug. It is worth resolving because, if real, an
+  AUTO_FINALIZE retry would destroy a finalized PDF and never converge. The idempotency assertion was
+  therefore NOT committed: a red test would block CI on an unproven claim.
+- **CI / deployment:** No merge, approval, force-push, base change, new PR, or production deployment.
+- **Next action:** Seed a generated document through the real generation path (not a hand-built row)
+  and re-check whether the finalized-PDF retry behaviour above reproduces.
+- **Merge status:** Not reviewed; not merged.
+
+### 2026-08-09 16:35 UTC — Codex (GPT-5.6 Sol), PR #1175 diff-review safeguard
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
+- **Scope / files:** Investigated the reported diff-extraction size warning and updated this handoff only. PR #1175 is a long-lived consolidation with 1,052 changed files (82,227 additions / 43,983 deletions), while the Run Engine handoff is isolated to commits `cdae73cb` and `9f621545`. No production or test code changed in this follow-up.
+- **Tests / checks:** `npx prisma generate` — passed; `npx tsx --test tests/engine-worker-handoff.test.ts` — environment warning because the configured non-production Neon database was unreachable before fixture creation; `npm run typecheck` and `git diff --check` — passed; `gh pr view 1175 --json ...` and `gh pr checks 1175` — confirmed the exact PR/head and current checks; GitHub reports no inline review comments.
+- **CI / deployment:** Exact-head dependency audit, screenshot audit, and Vercel Preview passed; the duplicated CI jobs were still pending when checked. No merge, approval, force-push, base change, new PR, or production deployment performed.
+- **Risks / assumptions:** GitHub cannot render/extract the complete consolidation diff reliably at this size. Review automation must use the two-commit incremental range (`b35cb7f5..9f621545`) rather than requesting the full PR diff. Shrinking the PR itself would require rewriting or retargeting its established consolidation history, which was not owner-authorized.
+- **Next action:** Review the incremental Run Engine range and require exact-head PostgreSQL CI before merge consideration.
+- **Merge status:** Not reviewed; not merged.
+
+### 2026-08-09 16:23 UTC — Codex (GPT-5.6 Sol), PR #1175 review correction
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
+- **Scope / files:** Replaced the source-text/simulated worker assertion in `tests/engine-worker-handoff.test.ts` with one real PostgreSQL behavioral regression using the canonical Engine enqueue authority, atomic claim policy, and durable completion API. No production source changed in this follow-up; this entry records the correction.
+- **Tests:** `npm run typecheck` — passed. `RUN_DB_INTEGRATION=true npx tsx --test tests/engine-worker-handoff.test.ts` — environment warning: the configured non-production Neon test database was unreachable before fixture creation, so the behavioral test did not execute locally.
+- **CI / deployment:** PR #1175 exact-head CI was still pending when checked. No merge, approval, or production deployment performed.
+- **Risks / assumptions:** The new regression requires PostgreSQL by design and will run in CI's isolated PostgreSQL service. It proves one persisted job across duplicate enqueue, actual `QUEUED -> RUNNING -> SUCCEEDED` database transitions, and no third user action.
+- **Next action:** Push the correction to PR #1175 and require its PostgreSQL CI result before calling the defect complete.
+- **Merge status:** Not reviewed; not merged.
+
+### 2026-08-09 16:19 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` (local `pr-1175`) / existing draft PR #1175.
+- **Scope / files:** Run Engine worker handoff only: `app/api/tenders/[id]/engine/route.ts`, new `lib/ai-jobs/request-scoped-engine-worker-wake.ts`, new `tests/engine-worker-handoff.test.ts`, and this handoff entry.
+- **Fix:** After the authenticated manual route durably enqueues or reuses a claimable `ENGINE_RUN`, it schedules exactly one authenticated, tender-scoped server wake of the existing `run-next` worker. RUNNING jobs are not woken; failed wakes leave persisted state unchanged for recovery.
+- **Tests:** `npx tsx --test tests/engine-worker-handoff.test.ts` — 1 passed; `npx prisma generate` — passed without tracked generated output; `npm run typecheck` — passed.
+- **CI / deployment:** Existing PR #1175 head checks were green before this change. New exact-head CI not yet run. No merge, approval, or production deployment performed.
+- **Risks / assumptions:** Wake delivery is best-effort through Next.js `after()`; durability remains in the `AiJob` row. The tender-scoped worker filter prevents another queued Engine job for the same user from consuming this wake.
+- **Next action:** Push this commit directly to PR #1175 and review its exact-head CI.
+- **Merge status:** Not reviewed; not merged.
+
+### 2026-08-08 18:05 UTC — Claude Code
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, head `a72071be`. Audit passes 5–6; one confirmed open gap recorded, no code change in this entry.
+- **Pass 5 — extraction quality: SOUND, left unchanged.** `classifyPageText` in `lib/extraction-quality.ts` implements every one of CLAUDE.md's six conditions for a "perfectly extracted page", and `status === "GOOD"` requires all of them. Condition 5 ("not only headers/footers/noise") is implemented the hard way — density is measured on `meaningfulPageCharCount`, which strips headers and footers first — so a page padded with boilerplate cannot reach GOOD on raw character count. Acceptance criteria 1 and 2 are satisfied.
+- **Pass 6 — client-detail provenance: CONFIRMED GAP.** Acceptance criterion 4 and requirement 20 demand a source page and source quote for **every** extracted client field. All 19 client data fields exist in the AI schema, and `TenderFactsLedger` carries the correct generic provenance triple (`sourceFileId`, `sourcePage`, `sourceQuote`) with a real grounding check (`hasSourceEvidence`). The design is right. But only **9** semanticKeys are ever written — `title, clientName, reference, deadline, submissionMethod, submissionEmails, submissionAddress, country, submissionEmailSubject` — all as literals in `lib/engine/tender-facts-ledger-service.ts:799-1046`, with no dynamic key writing anywhere. **12 client fields therefore have no ledger row and no provenance:** legalClientName, donorAgency, implementingAgency/projectOwner, city, clientAddress, clientContactName, clientContactTitle, clientContactEmail, clientContactPhone, clientWebsite, preBidChannel, clientRepresentative. Full evidence and the implementation plan are in the Active Workboard item; the fix extends the existing write block rather than adding scalar `xSourcePage`/`xSourceQuote` columns, which the ledger exists to replace.
+- **Honest acceptance-matrix position (10 criteria):** 8 verified PASS, 1 verified FAIL (criterion 4, above), 1 not yet exercised (criterion 8 — "does not build an empty submission plan when requirements exist"). This is **not** 100%. Two prior sessions' worth of "score" claims in this repo were asserted without exercising the criteria; this entry states what was actually run.
+- **Tests actually run:** no code changed in this entry. The last full run on this head was 9636/9636 pass with `RUN_DB_INTEGRATION=true` against local PostgreSQL 16, database verified alive before and after.
+- **Risks / assumptions:** the 12 missing fields are extracted by the AI and may be displayed, so the gap is provenance and grounding, not absence of data — a reviewer cannot trace those values to a page and quote, and no gate can treat them as source-grounded.
+- **Next action:** implement the workboard item (12 ledger mappings + DB-integration tests asserting `hasSourceEvidence`, and `NOT_STATED_IN_SOURCE` rather than a placeholder when the AI supplied none).
+- **Merge status:** not reviewed.
+
+### 2026-08-08 17:35 UTC — Claude Code
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175. Pushed `d6999353..d2b5a71a` (four commits from the two prior entries), then this follow-up.
+- **CORRECTION to the previous entry.** Commit `d2b5a71a` claimed the phrase "to be confirmed by bid team" "travelled all the way into a client-facing tender submission with nothing objecting." **That was wrong, and the claim overstated the defect.** Re-checking the export path end to end shows the delivered content *was* already gated:
+  - `PLACEHOLDER_PATTERNS` (= `DOCUMENT_PLACEHOLDER_PATTERNS`) contains `/to\s+be\s+(?:added|filled|completed|provided|confirmed|determined)\b/i`, which matches that phrase;
+  - `app/api/tenders/[id]/download` extracts each DOCX's **real visible text** via `extractDocxVisibleText` and runs `validateDocumentQuality`, returning 409 `QUALITY_VALIDATION_BLOCKED` on BLOCKED;
+  - `lib/engine/workflow/pdf-finalizer.ts` runs the same validator plus hygiene and internal-artifact scans on the extracted text **before** a PDF is produced, so failing content never becomes a deliverable.
+  `d2b5a71a` is still correct and worth keeping — it makes Authority Review agree with itself, since one phrasing of the identical stub was classified CRITICAL and the other was invisible — but it is defense in depth, **not** the closure of an open export hole. The export gate was sound. Recording this because the earlier wording would leave the next reader believing a shipped submission had been possible.
+- **Scope / files:** `lib/engine/authority-review.ts` — documented the module's actual scope. It reads `contentSummary` and `reviewNotes` only, never document bytes or rendered text, while its blocker names imply otherwise (`TODO_FIXME_IN_CONTENT` says "IN_CONTENT" outright). The note names the two checks that do carry the content guarantee and warns against collapsing the export path into this module on the assumption that it covers the same categories.
+- **Verified sound, deliberately left unchanged:** the layered content gate above. This is proven-good work; the correct action was to document it, not to add a redundant fourth check.
+- **Tests actually run:** local PostgreSQL 16, `RUN_DB_INTEGRATION=true`. `npx tsc --noEmit` PASS. Full suite **9636/9636 pass, 0 fail**, database verified alive before and after.
+- **Risks / assumptions:** comment-only change to `authority-review.ts`; no behavior altered. The residual (accepted) limitation is that a non-DOCX final artifact is not re-scanned at ZIP time — `visibleText` is extracted for `.docx` only and base64 content is deliberately skipped to avoid false negatives. That is safe **because** `pdf-finalizer` gates the content before the PDF exists; it would stop being safe if any path ever produced a final PDF without going through that finalizer.
+- **Next action:** continue the audit into the Vault review UI items on this workboard.
+- **Merge status:** not reviewed.
+
+### 2026-08-08 15:20 UTC — Claude Code
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, rebased onto exact head `d6999353`. No other agent's commits rebased or discarded.
+- **Scope / files:** deep audit pass. Two confirmed defects, both the same failure mode — the system asserting confidence it had not earned.
+  - `lib/engine/proposal-benchmark-guard.ts` — **placeholder laundering.** `normalizeWeakText()` rewrites every placeholder, TBD, TODO, template variable and AI refusal into the phrase "to be confirmed by bid team", and runs *before* `hasForbiddenWeakness()` scores the document. That detector tested for `placeholder|tbd|todo|to be determined` — none of which survive the rewrite. A proposal left full of unresolved spots therefore scored **+5 and collected the strength "No obvious AI/placeholder/TBD language detected"**, while the module's own reviewer checklist ("Confirm that no placeholder wording remains") was guaranteed to be answered wrongly. Added `countUnresolvedPlaceholders()`, taught the detector the substituted phrase, replaced the false strength with a gap stating the count, and exposed `unresolvedPlaceholderCount` on `ClientReadyProposal`. Rewriting a raw `${var}` into readable wording is still done — only the claim that the result is clean is removed.
+  - `CLAUDE.md` — **the guide contradicted the contract it names as authority.** Its Product-goal section said AI Analyze and Run Engine are "durable server-owned stages, not mandatory normal-path user actions", while `OWNER_AUTOMATION_CONTRACT.md` and the shipped code make both explicit manual gates (`createAnalysisJob()` requires `manualAuthority`; the engine route requires `manualRequested: true`; `continueSuccessfulAnalysis()` always returns `MANUAL_ENGINE_REQUIRED`). This sent successive sessions back and forth undoing each other. Rewrote the section to match, with an explicit note not to re-automate them.
+  - `CLAUDE.md` — removed a pinned "Current Main State (SHA: 63369f03 … 6000+ tests)" block (the suite is now 9628) and a four-item priority list whose every engineering item had already shipped (`TenderFactsLedger` wiring, `scripts/backfill-tender-facts-ledger.ts`, `CONDITIONAL_OR_UNSCHEDULED`, the 800×1280 E2E viewport). Both were sending each new session to redo finished work or to trust a status nobody had re-run.
+  - `tests/proposal-placeholder-laundering.test.ts` (new, 4 behavioral tests).
+- **Verified clean in the same pass (no change needed):** the placeholder ban on tender metadata is genuinely enforced end to end — every occurrence of "Bid-Team to confirm"/TBD/N/A in `lib/` is detection or rejection (AI prompt prohibition, `tender-metadata-completeness.ts`, `final-submission-readiness.ts`), none produce placeholders as values. All 32 TODO/FIXME hits in production code are content-detection regexes, not developer debt.
+- **Tests actually run:** local PostgreSQL 16, `RUN_DB_INTEGRATION=true`. `npx tsc --noEmit` PASS. Full suite `npm test` **9628/9628 pass, 0 fail**; database verified alive before and after the run. The new test fails 4/4 against the pre-fix guard.
+- **Risks / assumptions:** the benchmark score now drops 5 points and reports NEEDS REVIEW for any document carrying unresolved spots. `score.passed` gates nothing downstream (its only consumer, `generate-elite.ts`, uses `finalized.markdown`), so this changes reporting, not generation. Open question for the owner: whether a document with `unresolvedPlaceholderCount > 0` should additionally fail-close the final export gate. Not changed here — that is a behavioral decision, not a defect fix.
+- **Next action:** owner decision on the export-gate question above; continue the audit into the Vault review UI items on this workboard.
+- **Merge status:** not reviewed.
+
+### 2026-08-08 13:40 UTC — Claude Code
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175. Fast-forwarded local to the exact remote head `977831ae` before editing; no other agent's commits were rebased, discarded, or amended.
+- **Scope / files:** Company Vault re-extraction reported success for documents it never processed. `reextractAllCompanyDocuments` excluded rows with no inline `fileContent` and no `storagePath` in its `where` clause and `continue`d past any that got through, so those rows landed in neither `reextracted` nor `failedFiles` — a vault made entirely of them returned `{ reextracted: 0, failedFiles: [] }`, a clean success for a run that did nothing. That is the reported "DOCUMENTS 6 — 0 extracted" with an unverified-integrity banner, no stated cause, and no action that could ever change it.
+  - `lib/company-vault-reextraction.ts` — stopped filtering byteless rows out of the query; classify them as a terminal `SOURCE_BYTES_UNAVAILABLE` state on the row (`integrityStatus: "MISSING"`, `contentSha256: null`, `aiExtractionStatus: "FAILED"`, explicit `aiExtractionError`, metadata `extractionStatus: "SOURCE_BYTES_MISSING"`); added an `unrecoverable` array to `ReextractAllResult`.
+  - `lib/ai-job-handlers-legacy.ts` — VAULT_INGEST step message, audit metadata (`docsUnrecoverable`) and job output (`reextractionUnrecoverableFiles`) now name the affected files and state re-upload as the remedy.
+  - `app/api/company/knowledge/repair/route.ts` — per-document `SOURCE_BYTES_MISSING` status plus a separate CRITICAL gap, so it is no longer folded into "unverified until their bytes have a digest" (wording that implies a pending fix that will never arrive).
+  - `tests/vault-reextraction-unrecoverable-bytes.test.ts` (new, 4 behavioral DB tests), `tests/extraction-quality-round9.test.ts` (return-shape assertion updated + a guard against the skip returning).
+  - No schema/migration change. No new user-facing click: the two manual gates remain AI Analyze and Run Engine.
+- **Tests actually run:** local PostgreSQL 16, `RUN_DB_INTEGRATION=true`, migrations deployed. `npx tsc --noEmit` PASS (exit 0). `next lint --dir lib --dir tests` PASS (no warnings or errors). Full suite `npm test` **9601/9601 pass, 0 fail** (2391 suites, 237s). `npx next build` PASS (compiled in 91s, 57/57 static pages). New test verified to genuinely catch the defect: 3 of its 4 cases fail against the pre-fix code and all 4 pass after.
+- **CI / deployment:** not yet run for this commit. On the previous head the `hope-tender-path-b` Vercel project reported Ready/DEPLOYED. The `pr1175` and `repo` Vercel projects report Error with empty preview URLs; they were already failing before this work and are stray projects, not a signal from this branch.
+- **Risks / assumptions:** documents that already carried `extractedText` but lost their bytes keep that text rather than having it deleted — destroying stored data was judged out of scope, and downstream evidence already refuses text without a verified digest. Re-upload is the only real remedy for these rows; nothing here recovers bytes that are gone.
+- **Next action:** watch PR #1175 CI on this commit.
+- **Merge status:** not reviewed.
+
+### 2026-08-02 16:25 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; re-fetched and verified exact starting head `2f90c465e7207159b0dba7211509f94fc7760f82` before editing.
+- **Scope / files:** inspected both duplicate failed GitHub CI jobs and found the same two stale source-contract assertions in `tests/canonical-vault-engine-panels.test.ts`: they still required the retired phrase `Partially supported` after the canonical runtime state was intentionally renamed `PARTIALLY_VERIFIED` / `Partially verified`. Updated those assertions to enforce the canonical state vocabulary and changed this handoff. No application, schema, provider, release-gate, deployment, or unrelated behavior changed.
+- **Tests:** the 32-test focused requirement/evidence and canonical-panel set passed; Prisma generation, TypeScript, full lint, Prisma validation, dependency audit (0 vulnerabilities), and `git diff --check` passed.
+- **CI / deployment:** exact starting-head check jobs `91518513556` and `91518508323` each reached the complete test run and failed only the same two stale assertions (8,983/8,985 assertions passed); dependency and Vercel comment checks passed, while exact-head capture was still running when inspected. No deployment was requested or created.
+- **Risks / assumptions:** updated-head PostgreSQL/full-suite/build/authenticated browser/capture results remain CI-dependent. This correction reconciles tests with the already-covered canonical runtime truth rather than weakening an acceptance condition.
+- **Next action:** push this commit to the existing PR #1175 head, let exact-head CI/capture rerun, and inspect any newly exposed failure while keeping the PR draft and unmerged.
+- **Merge status:** not reviewed for merge; draft and unmerged.
+
+### 2026-08-02 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; re-fetched and verified starting head `87fa6a28b9461900dd9c0471539cf37c4f3c6cc8` before editing.
+- **Scope / files:** corrected Requirements and Evidence runtime-state truth so `AUTO_RESOLVING` is emitted only when a tenant-scoped `ENGINE_RUN` job is actually queued/running/partial, removed zero-processing copy that said automatic work was running, and strengthened the exact runtime-fixture contract. Changed `app/api/tenders/[id]/requirement-coverage/route.ts`, `components/requirement-coverage-panel.tsx`, `tests/requirement-evidence-resolver-runtime-fixture.test.ts`, and this handoff.
+- **Tests:** focused requirement/evidence suites passed (41 tests, then 18 tests after the final change); Prisma generation, typecheck, scoped ESLint, full lint, Prisma validation, `npm audit --audit-level=high` (0 vulnerabilities), and production build with non-secret build-only provider/cron placeholders passed. The full PostgreSQL run could not proceed because the configured Neon host returned Prisma P1001; migration status had the same external database limitation. Provider-backed preview execution, Vercel runtime logs, authenticated screenshots, and Playwright were not claimed without working preview/database credentials.
+- **Risks / assumptions:** the existing PR already contains the canonical resolver and fixture fixes; this session deliberately made no release-gate, provider-order, schema, deployment, or unrelated-area change. `PARTIAL_SUCCESS` remains an active durable Engine state because current enqueue/recovery code treats it as resumable.
+- **Next action:** after the configured PostgreSQL/preview environment is reachable, run the remaining exact-head migration/full-DB/Playwright/provider-backed preview checks and inspect deployment `dpl_AKr8QMbzMcS1rcNn5SAnj1auw8JL` logs before considering the draft ready.
+- **Merge status:** not reviewed for merge; draft and unmerged.
+
+### 2026-08-02 15:44 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; re-fetched exact starting head `e8ff72ac23eaebb2e1ea37ac8b4a36e1a39a36e2` before editing.
+- **Scope / files:** repaired the only failing CI assertion left by the canonical Requirements and Evidence change. `tests/requirement-coverage-safe-errors-current.test.ts` now verifies the intentional `flatMap` path and its rejection of malformed automatic and null-reference rows instead of requiring the superseded `map` implementation. No application or release-gate behavior changed in this follow-up.
+- **Tests:** focused requirement/evidence suite passed (37/37); `npx prisma generate`, typecheck, lint, and the release-integrity audit passed. Full `RUN_DB_INTEGRATION=true npm test` could not complete because the configured Neon PostgreSQL host was unreachable; the first DB hook failed in `tests/ai-job-concurrency.test.ts` with Prisma connectivity, not an assertion failure. Production build reached the fail-closed `next.config.js` preflight and stopped because this local environment has no supported AI-provider key.
+- **CI / deployment:** inspected exact-head CI; both duplicate primary jobs failed only on the stale structural assertion corrected here. Dependency checks and Vercel capture/comment checks were green. No deployment was requested or created.
+- **Risks / assumptions:** provider-backed preview execution, Vercel runtime-log inspection, full PostgreSQL, build, and Playwright remain to be re-run by CI or an environment with database/preview credentials. Fail-closed behavior is unchanged.
+- **Next action:** push this commit to the existing PR head and let PR #1175 CI re-run; keep the PR draft and unmerged.
+- **Merge status:** not reviewed; draft and unmerged.
+
+### 2026-08-02 15:05 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175; began from exact re-fetched head `c5a7a654228a378ec6953b45c111317fcf2945f6`.
+- **Scope:** Requirements and Evidence runtime repair for deployment `dpl_AKr8QMbzMcS1rcNn5SAnj1auw8JL` / tender `e15b9e35-d8a8-4136-97e8-9f087cd1078a`: family-specific FULL evaluation for verified expert/project/current bytes, complementary quantity enforcement, audit-complete automatic-link metadata, structural source-quote rejection, stable semantic requirement identity/deduplication, exact canonical UI states, unweighted mandatory coverage, and removal of panel-open POST as workflow authority.
+- **Files changed:** `lib/engine/automatic-requirement-coverage.ts`, `lib/engine/requirement-source-extractor.ts`, `lib/engine/stable-requirements.ts`, `lib/vault-review-provenance.ts`, `app/api/tenders/[id]/requirement-coverage/route.ts`, `components/requirement-coverage-panel.tsx`, `tests/automatic-requirement-coverage-behavior.test.ts`, `tests/requirement-coverage-confirm-safety.test.ts`, and `tests/requirement-evidence-resolver-runtime-fixture.test.ts`.
+- **Tests:** focused requirement/evidence run 26/26 passed; `npx prisma generate` passed; `npx tsc --noEmit` passed; `npm run lint` passed; `npm run prisma:validate` passed; `npm audit --audit-level=high` passed with 0 vulnerabilities. Full `npm test` was stopped after the external Neon database was unreachable; the first DB-backed suite failed only with connection error. Production build reached Next config and was blocked because this container has no AI provider key.
+- **CI/deployment:** pre-edit PR checks and Vercel status were green. Exact supplied deployment is READY and bound to the verified starting SHA. Build events were available; the Vercel CLI returned no runtime invocation logs for the requested window. No deployment was created.
+- **Risks / assumptions:** no provider credentials or reachable PostgreSQL were available, so provider-backed synthetic execution, full PostgreSQL, browser fixture login/screenshot, and post-change deployed runtime logs remain unverified. The implementation remains fail-closed; current fixture coverage must be recomputed on a preview before any 6/6 claim.
+- **Next action:** run the full PostgreSQL and Playwright matrices with deployment credentials, deploy this committed head through the existing draft PR only if Hope authorizes it, then rerun the exact fixture and inspect runtime logs.
+- **Merge status:** unsafe to merge until those environment-dependent checks complete; PR remains draft and unmerged.
+
+### 2026-08-01 18:45 UTC — Codex (GPT-5.6 Sol), PR #1175 exact-head 100% acceptance
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at exact application/test head `9a939aa85bc9e004316b5d48d45c9b3b9b2a7184`; zero inline comments and zero reviews. No merge or production deployment.
+- **Scope:** verification-only closure of the remaining external 5%. Reconciled the live PR head after an initially stale/no-remote local checkout, downloaded both exact-head CI logs and the exact-head route/screenshot artifact, and visually inspected the desktop and mobile Global Matching screenshots. No application, schema, migration, provider, workflow, gate, or test behavior changed.
+- **Evidence:** both duplicated exact-head workflows passed migrations, PostgreSQL, release integrity, typecheck, lint, 8,909/8,909 assertions, 58-page production build, source-mutation checks, and authenticated Playwright (180 and 179 passes respectively). Exact-head capture artifact `8822470731` contains 237 screenshots over desktop/tablet/mobile and reports 111/111 expected route cases, 100% coverage, zero critical findings, zero horizontal overflow, and zero warnings. Global Matching visibly renders the read-only automatic authority with no selection/rematch controls at desktop and mobile widths.
+- **Completion assessment:** the explicit Company Vault → durable Run Engine → automatic matching → requirement-evidence goal is now 100% implemented and 100% verified across static contracts, PostgreSQL, full tests, production build, authenticated browser flows, and visual capture. No known scoped gap or external verification hold remains.
+- **Next action:** keep PR #1175 draft/unmerged until Hope's explicit approval; investigate only a new reproducible owner-data correlation reference or screenshot.
+- **Merge status:** scoped goal safe and fully verified; repository-level merge remains Hope-controlled.
+
+### 2026-08-01 18:33 UTC — Codex (GPT-5.6 Sol), PR #1175 final anchor-audit reconciliation
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `828ac69`; no merge or production deployment.
+- **Scope / root cause:** exact-head CI reached the complete unit suite and found one stale source-shape assertion in `tests/final-overlap-consolidation.test.ts`. The production panel now renders its canonical anchor through the typed default `sectionId` prop so Global Matching can supply unique per-tender ids, but this older audit recognized only literal ids and workflow-stage ids. Extended the audit to recognize the rendered default-id contract without weakening anchor existence: the default value and `id={sectionId}` binding must both exist.
+- **Files changed:** `tests/final-overlap-consolidation.test.ts`, `operator_handoff.md` only. No application, schema, provider, Engine, Vault, matching, readiness, generation, or export behavior changed.
+- **Tests / evidence:** focused workflow/canonical-panel/UI tests, targeted ESLint, and `git diff --check` are required before commit. Both exact-head CI copies failed only this stale assertion after the preceding application correction; updated-head full CI/capture remains required for final external acceptance.
+- **Known risk / assumption:** this is a static-test reconciliation for an already-tested responsive unique-id implementation; it does not substitute for authenticated browser and PostgreSQL acceptance.
+- **Next action:** commit and push to PR #1175, require exact-head CI/capture green, inspect the final capture, and keep the PR draft/unmerged.
+- **Merge status:** not reviewed — exact-head external acceptance pending.
+
+### 2026-08-01 18:20 UTC — Codex (GPT-5.6 Sol), PR #1175 matching responsive/DOM closure
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `c22950b`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** the corrected shortcut passed, and exact-head CI then exposed two real Global Matching defects that the collapsed capture did not exercise: rendering the shared canonical panel once per tender repeated `id="matching-selected-evidence"`, and an injected long unbroken tender title expanded the 390px page to 1420px. Added an optional section id with the canonical tender-page default, assigned deterministic per-tender ids in Global Matching, bounded/hidden overflow, and allowed summary titles to break. Updated static anchor ownership tests to recognize the rendered default-id contract.
+- **Files changed:** `components/matching-selected-evidence-panel.tsx`, `app/dashboard/matching/matching-dashboard.tsx`, `tests/canonical-vault-engine-panels.test.ts`, `tests/ui-gap-analysis.test.ts`, `tests/workflow-shortcut-anchor-contract.test.ts`, `operator_handoff.md`.
+- **Tests / evidence:** Prisma generation and TypeScript passed; focused panel/matching/UI/shortcut assertions pass after updating the default-id static contract; targeted ESLint and `git diff --check` pass. Predecessor exact CI passed all migrations, PostgreSQL, release integrity, complete unit/database suite, build, and the corrected shortcut, then failed only the duplicate-id and long-title overflow browser assertions. Exact capture passed 111/111 with zero findings but used ordinary collapsed fixture titles, demonstrating why adversarial authenticated browser coverage remained necessary.
+- **Completion assessment:** both final browser-discovered defects are corrected with regression assertions. Exact-head CI/capture must rerun green before declaring 100% externally verified.
+- **Next action:** push, require final exact-head green, inspect matching screenshots, and keep #1175 draft/unmerged.
+- **Merge status:** not reviewed — local correction passes; exact-head external acceptance pending.
+
+### 2026-08-01 18:08 UTC — Codex (GPT-5.6 Sol), PR #1175 authenticated shortcut closure
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `73db723b`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** exact-head capture passed 111/111 route/viewport cases with zero findings, and both full CI copies passed migrations, PostgreSQL, release integrity, typecheck, lint, the complete unit/database suite, and production build. Authenticated Playwright then exposed the final stale in-between contract: `e2e/workflow-control-center-action-buttons.spec.ts` still required retired `#match-evidence`. Because its `beforeEach` checked every target, that single stale selector failed all 12 shortcut cases. Updated it to `#matching-selected-evidence` and added a static cross-contract assertion so browser and production anchor registries cannot diverge again.
+- **Files changed:** `e2e/workflow-control-center-action-buttons.spec.ts`, `tests/workflow-shortcut-anchor-contract.test.ts`, `operator_handoff.md`.
+- **Tests / evidence:** 24/24 focused canonical-panel/UI/shortcut assertions passed; targeted ESLint and `git diff --check` passed. Exact-head capture artifact `8821969864` was downloaded and inspected: desktop/tablet/mobile Global Matching screenshots show the read-only automatic authority without manual controls; audit summary reports 111/111 coverage, zero critical findings, zero overflow, and zero warnings.
+- **Completion assessment:** this fixes the only failing authenticated assertion. A final exact-head CI rerun must confirm the corrected browser suite before claiming 100% externally verified completion.
+- **Next action:** push, require exact-head checks green, and keep #1175 draft/unmerged pending Hope's approval.
+- **Merge status:** not reviewed — focused correction and exact predecessor capture pass; corrected-head full CI pending.
+
+### 2026-08-01 17:45 UTC — Codex (GPT-5.6 Sol), PR #1175 full-suite stale-contract closure
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `ee45407`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** both exact-head CI copies progressed through PostgreSQL and the full suite, then exposed three additional assertions that still described removed behavior: a live-route test required manual `PUT /matches`; a zero-coverage test required superseded non-neutral copy; and a presentation test required check/warning/chevron icons in the retired dashboard instead of the shared canonical panel. Updated those tests to enforce the intended goal: GET-only matching, `Automatic verification running`, and the canonical panel's single warning/disclosure icons with no repeated check icon.
+- **Files changed:** `tests/action-registry-live-route-contract.test.ts`, `tests/canonical-workflow-truth-precondition-gates.test.ts`, `tests/compliance-gap-export-parity.test.ts`, `operator_handoff.md`.
+- **Tests / checks:** all newly exposed static assertions pass along with the earlier 24 focused tests; release integrity has zero failures; `git diff --check` passes. The local combined file also contains PostgreSQL cases that cannot reach the configured Neon host here, but those same database cases passed in exact-head CI before the stale static assertions failed.
+- **Completion assessment:** all known application and in-between contract gaps are corrected. A final exact-head CI/capture rerun is still required for the remaining external acceptance percentage.
+- **Next action:** push, require exact-head checks green, download/inspect capture evidence, and record final acceptance.
+- **Merge status:** not reviewed — corrections pass locally; exact-head external acceptance pending.
+
+### 2026-08-01 17:33 UTC — Codex (GPT-5.6 Sol), PR #1175 exact-head full-suite correction
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `54124fa4`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** downloaded both exact-head CI logs. PostgreSQL and the complete 8,900+ assertion run reached the final UI contract group and exposed two stale in-between contracts: `REVIEW_EVIDENCE` had been changed to the `match` verb but retained `ClipboardCheckIcon`, conflicting with the canonical `LinkIcon`; and the workflow consumer test still required the deleted `MatchingQualityPanel`/`EvidenceCoveragePanel`. Unified the matching verb icon and updated the ordering assertion to the live `RequirementCoveragePanel` then `MatchingSelectedEvidencePanel` authority sequence.
+- **Files changed:** `lib/ui/action-registry.ts`, `tests/workflow-center-consumer-contract.test.ts`, `operator_handoff.md`.
+- **Tests / checks:** the two failed CI assertions now pass; 24/24 focused canonical-panel/action-registry/workflow-consumer tests passed; release-integrity audit remains zero-failure; `git diff --check` passed. Predecessor capture passed, while both full CI copies failed only on these two final assertions after the database/full suite had otherwise run.
+- **Completion assessment:** no known scoped implementation gap remains. Updated-head exact CI must turn green before declaring the final 5% externally verified.
+- **Next action:** push, require both full CI copies and capture green, inspect the exact-head capture artifact, then record final verification without changing application code unless acceptance exposes another defect.
+- **Merge status:** not reviewed — focused correction passes; exact-head external acceptance pending.
+
+### 2026-08-01 17:22 UTC — Codex (GPT-5.6 Sol), PR #1175 release-integrity reconciliation
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175 at `61be8dfb`; zero inline comments/reviews. No merge or production deployment.
+- **Scope / root cause:** exact-head CI correctly caught one missed in-between contract after the standalone AI-rematch route was deleted: `scripts/audit-release-integrity.mjs` still required that retired file and attempted to audit its persistent limiter. Updated the release audit to remove the obsolete required-route entry and add the inverse invariant that the standalone route must remain absent so AI rematching stays inside the durable Engine authority.
+- **Files changed:** `scripts/audit-release-integrity.mjs`, `operator_handoff.md` only.
+- **Tests / checks:** release-integrity audit passed with zero failures; 26/26 focused canonical-panel/job-handler/matching tests passed; `git diff --check` passed. The preceding head's two CI runs failed only at the stale release-integrity assertion before the full suite; updated-head CI must rerun PostgreSQL, full tests, build, browser, and capture.
+- **Completion assessment:** the code-path audit remains 100% implemented, but production-grade end-to-end verification remains pending until the corrected exact head is green. No honest 100% verification claim is made before then.
+- **Next action:** push this reconciliation, require updated-head CI/capture green, inspect its screenshots, and keep #1175 draft/unmerged.
+- **Merge status:** not reviewed — local correction passes; exact-head external acceptance pending.
+
+### 2026-08-01 17:13 UTC — Codex (GPT-5.6 Sol), PR #1175 final manual-owner removal
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, started from exact GitHub head `7bfc7324b11dee94f04abeb20fb207e0a9d55ca7`; zero inline comments and zero reviews. No merge or production deployment performed.
+- **Scope / root cause:** the prior tender workspace repair hid the manual matching controls but left a second live `/dashboard/matching` mutation UI, a writable `PUT /matches` selection owner, a standalone `/ai-rematch` route/background handler, and five now-unreferenced panel components. Those paths still contradicted the requested single durable Engine selection/rematch authority. The matching dashboard is now read-only and reuses `MatchingSelectedEvidencePanel`; the manual selection mutation and standalone rematch route/handler/queue admission were removed; obsolete panels were deleted; all workflow links now target the one canonical selected-evidence anchor.
+- **Files changed:** matching dashboard/page contracts, matches API, AI job registry/policy/worker admission, canonical workflow anchors, five deleted standalone panels, focused matching/Engine/UI tests, related stale comments, and `operator_handoff.md`. No schema, migration, provider order, generation gate, export gate, or production configuration changed.
+- **Tests / checks:** Prisma generation passed; TypeScript passed after clearing stale `.next` route types; 100/100 focused authority/UI tests passed; complete zero-warning lint passed; production build passed with 58/58 static pages; `git diff --check` passed. The previous exact head's CI was still running when this audit began; this new head requires its normal PostgreSQL/authenticated-browser/capture checks.
+- **Completion assessment:** implementation coverage for the explicit Company Vault → durable Engine → automatic matching → canonical requirement-evidence prompt is 100% by code-path audit. End-to-end verification is 95% until updated-head CI supplies PostgreSQL, authenticated browser, and screenshot evidence; this is an external verification hold, not a known code gap.
+- **Risks / assumptions:** historical `AI_REMATCH` job rows remain representable by the persisted job type for database compatibility but are no longer admitted, dispatched, or handled. Run Engine retains the sole 12-perspective rematch implementation. Human review remains truthful where separately and legitimately performed, but it is not required by the normal automated workflow.
+- **Next action:** commit/push to PR #1175, require updated-head CI and capture green, inspect the generated authenticated screenshots, and keep the PR draft/unmerged pending Hope's approval.
+- **Merge status:** not reviewed — all local executable checks pass; exact-head external acceptance pending.
+
+### 2026-08-01 16:56 UTC — Codex (GPT-5.6 Sol), PR #1175 final evidence-panel fail-closed repair
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, started from exact GitHub head `8f396df90a8604c1f4800e5930e8a863830b2446`; zero inline review comments and zero submitted reviews. No merge or production deployment performed.
+- **Scope / root cause:** audited the new two-panel Company Vault/Engine workspace and found two remaining presentation-authority gaps: a stale persisted `isSelected` flag could still render an unpromoted/tampered expert or project as “Automatically linked,” and any non-zero partial score produced an “all requirements” traceability claim. The matching panel now applies the Engine's fail-closed `SOURCE_VERIFIED`/`REVIEWED` trust boundary before rendering selected or candidate rows, and the requirements panel claims `Verified and ready` only when partial, processing, and genuine-gap counts are all zero.
+- **Files changed:** `components/matching-selected-evidence-panel.tsx`, `components/requirement-coverage-panel.tsx`, `tests/canonical-vault-engine-panels.test.ts`, `tests/requirement-coverage-confirm-safety.test.ts`, `operator_handoff.md`.
+- **Tests / checks:** Prisma generation passed; the focused non-PostgreSQL Vault/Engine/matching/evidence suite passed 84/84; TypeScript, targeted zero-warning ESLint, `git diff --check`, and the complete production build passed. A broader 279-test selection reached 255 passes but could not complete its PostgreSQL cases because the configured Neon host is unreachable from this container; the one stale wording assertion exposed by that run was updated and passed in the clean 84-test rerun.
+- **CI / deployment:** predecessor exact-head checks were in progress at session start. Updated-head CI remains required after push. No manual preview was created.
+- **Risks / assumptions:** machine `SOURCE_VERIFIED` and truthful human `REVIEWED` remain eligible; all other trust states are silently excluded from the canonical selected-evidence panel. This UI guard supplements rather than weakens backend provenance, tenant, byte-integrity, and source-revision enforcement.
+- **Next action:** push this commit to PR #1175, require exact-head PostgreSQL/CI/browser checks, and keep the PR draft/unmerged pending Hope's approval.
+- **Merge status:** not reviewed — local application checks pass; external PostgreSQL and updated-head CI remain pending.
+
+### 2026-08-01 16:45 UTC — Codex (GPT-5.6 Sol), PR #1175 canonical Vault/Engine panels
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175, started from exact GitHub head `dac9ff76b914da9e998af182d04a501fa60c2314`; zero inline review comments and zero submitted reviews. No merge or production deployment performed.
+- **Scope:** closed the remaining screenshot/workflow contradiction after the durable Company Vault and Engine backend repairs: the tender workspace still rendered five competing evidence/matching panels plus manual selection, rematch, Vault-management, and synchronization controls. The normal workflow now renders only `Requirements and Evidence` and `Matching and Selected Evidence`; persisted selected experts/projects are first, unselected candidates/diagnostics are collapsed, requirement statuses use the final-package readiness payload, and partial evidence receives weighted display credit without weakening fail-closed release status.
+- **Files changed:** `app/dashboard/tenders/[id]/page.tsx`, `app/api/tenders/[id]/requirement-coverage/route.ts`, `components/requirement-coverage-panel.tsx`, `components/matching-selected-evidence-panel.tsx`, `tests/canonical-vault-engine-panels.test.ts`, `operator_handoff.md`.
+- **Tests / checks:** Prisma generation passed; 64 focused Vault/Engine/matching/requirements assertions passed; TypeScript passed; targeted zero-warning ESLint passed; `git diff --check` passed. Full-repository lint and local Next build were terminated by the constrained local process environment after starting; updated-head CI remains required for the complete suite/build/PostgreSQL/browser acceptance.
+- **CI / deployment:** predecessor head checks were running when work began. No preview was manually created; the normal PR integration may create its canonical preview after push.
+- **Known risks / assumptions:** backend automatic ingestion, source verification, single revision-bound Engine authority, retry idempotency, tenant isolation, and tamper rejection are unchanged and remain covered by the existing PostgreSQL/browser suites. This change removes the final live UI owners that contradicted that backend authority. Exact-head CI and authenticated preview screenshots remain required before merge readiness.
+- **Next action:** push this commit to PR #1175, require its complete exact-head CI and screenshot capture, and keep the PR draft/unmerged pending Hope's release approval.
+- **Merge status:** not reviewed — focused local checks pass; exact-head CI/browser/build are pending.
+
+### 2026-08-01 16:35 UTC — Codex (GPT-5.6 Sol), PR #1175 final scoped Engine confirmation
+
+- **Branch / PR:** `work`, aligned exactly to draft PR #1175 head `274989d1da43c8b366b8135b766938a11e92ac52` on `release/consolidated-recovery-20260717`; zero inline comments and zero submitted reviews.
+- **Scope:** final verification of the screenshot-reported Company Vault → AI Analyze → durable Run Engine failure after reconciling an initially stale local checkout to the actual PR head. Confirmed the repair commits `7899ebc` and `19d9760` are present, all exact-head checks are green, and no subsequent commit reverted or competed with the immutable-input revision and single automatic continuation authority. No application behavior, schema, migration, dependency, or gate changed.
+- **Files changed:** `operator_handoff.md` only.
+- **Tests / evidence:** local Prisma generation passed; 42 focused Run Engine/Vault/automatic-continuation/runtime assertions passed with the PostgreSQL-only suite intentionally skipped locally; TypeScript, zero-warning lint, and `git diff --check` passed. Exact-head GitHub CI passed both duplicated migration/integrity/typecheck/lint/test/build/authenticated-isolation workflows, including the PostgreSQL self-invalidation regression; dependency rejection and 111-route capture also passed.
+- **CI / deployment:** all seven current checks on `274989d1` are green. The verified application-code preview remains `dpl_GuASMSrwN75hqS5ima8GcEGDS4Tu`, READY and healthy at exact application SHA `19d97609`; commits after it are documentation/test-only and do not alter deployed runtime behavior.
+- **Risks / assumptions:** no known scoped code, database, CI, browser, screenshot, or deployment gap remains. Automation cannot impersonate the supplied real account or mutate its failed job without credentials; pressing **Retry durable Engine** is the sole user-specific replay action and creates/reuses corrected revision v3 automatically, without a Company Vault review/attachment step.
+- **Next action:** Hope may retry the supplied tender in the verified preview; investigate only if that owner-specific replay produces a new correlation reference.
+- **Merge status:** the Company Vault/AI Analyze/Run Engine scope is fully repaired and verified by all available automated acceptance layers; PR #1175 remains draft and unmerged pending Hope's explicit approval and unrelated repository-level external holds.
+
+### 2026-08-01 16:30 UTC — Codex (GPT-5.6 Sol), live release-control refresh
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / governing draft PR #1175; independently frozen at `274989d1da43c8b366b8135b766938a11e92ac52`, base `b3c9db5de89a2a665e61a83facbff0f276f9983c`; #1175 remains open, draft, and unmerged.
+- **Scope:** refetched GitHub and Vercel; confirmed #1175 is the only open PR; proved closed #1274 head `0611690b` and the prepared heads `130f1c13`/`b8f15162` are ancestral; inspected closure comments for #1266, #1267, #1270, #1274 and #1287; downloaded and reopened the exact-head acceptance artifact; verified the matching preview identity/health; replaced the stale narrow `pr-body.md` with the complete recovery description and explicit external holds.
+- **Files changed:** `pr-body.md`, `operator_handoff.md`. No application, schema, migration, dependency, workflow authority, safety gate, or executable test changed.
+- **Tests / evidence:** exact-head GitHub runs `30707024137`, `30707022343`, and `30707024138` passed all 44 migrations, critical schema/bootstrap/idempotency/zero drift, release audits, typecheck, zero-warning lint, 8,916/8,916 unit/PostgreSQL assertions, production build, 180 Playwright passes with three documented conditional skips, and 111/111 responsive route cases with zero findings. Artifact hashes independently recomputed for DOCX `04a07b29…` (12,094 bytes), PDF `3aff6bd5…` (985 bytes), and ZIP `90aa7480…` (10,419 bytes). Local `npm audit --omit=dev` reports zero vulnerabilities.
+- **CI / deployment:** exact application-head preview `dpl_3o2HfYVb9VaLktAXzLo5mbJ1TKNR` is READY; `/api/version` and `/api/health` return the exact SHA, healthy critical tables, and durable private Blob storage. This documentation-only commit must receive its own normal Git-triggered checks and preview before the PR body can cite the final documentation SHA.
+- **Risks / assumptions:** a fresh provider-backed persisted preview workflow was not run because approved synthetic credentials were not established. Password rotation, session revocation, automation-secret replacement, artifact sanitation, owner UAT, duplicate Vercel-project remediation, and post-workflow retained-log acceptance remain external holds.
+- **Next action:** commit and push this documentation/control-plane refresh, update the live #1175 body with the resulting exact SHA, require the normal exact-head checks, and keep #1175 draft/unmerged.
+- **Merge status:** unsafe while the external security and acceptance holds remain unresolved.
+
+### 2026-08-01 16:00 UTC — Codex (GPT-5.6 Sol), final open-PR forensic disposition
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / governing draft PR #1175; starting exact head `7100ec7ba40e66eb98fdd54441899132297c2927`; #1175 remains open, draft, and unmerged.
+- **Scope:** refetched GitHub and deployment state; proved closed #1274 heads `0611690b`, `130f1c13`, and frozen parent `b8f15162` are ancestral to #1175; audited every commit and all eight files in the sole remaining donor PR #1287; classified its already-incorporated compliance hardening and rejected its synchronous/client-policy Engine path and in-worker Vault mutation as competing or unsafe.
+- **Files changed:** `docs/audits/open-pr-unique-code-ledger-20260728.md`, `operator_handoff.md`. No application, schema, migration, dependency, workflow gate, or test implementation changed.
+- **Tests / evidence:** `npx prisma generate` passed; seven focused live-owner files passed 86/86 assertions. Downloaded exact-head GitHub artifacts for `7100ec7b`: 8,916/8,916 unit/PostgreSQL assertions, 180 Playwright passes with three documented conditional skips, production build, migrations/critical schema/idempotency/zero drift, release integrity, source-mutation checks, and 111/111 screenshot cases with zero findings all passed.
+- **CI / deployment:** all GitHub checks on starting head `7100ec7b` are green. GitHub deployment records were refetched; no production deployment or migration was initiated. The new documentation-only head still requires its own normal Git-triggered exact-head checks before donor closure or final PR-description claims.
+- **Risks / assumptions:** #1287's compliance-document matching value is already present with stronger regression coverage; replaying the remaining donor code would restore a synchronous Engine default, client-controlled policy parameters, and a late Vault mutation competing with the current pre-enqueue verification/revision authority. External credential remediation, approved synthetic provider-backed preview acceptance, owner UAT, and duplicate Vercel-project configuration remain unresolved holds.
+- **Next action:** commit and push this disposition, wait for the normal exact-head CI/preview, then close only #1287 with the verified superseding SHA and refresh #1175's stale description while keeping it draft.
+- **Merge status:** not reviewed for merge; #1175 must remain draft and unmerged.
+
+### 2026-08-01 15:25 UTC — Codex (GPT-5.6 Sol), PR #1175 exact-head Engine verification
+
+- **Branch / PR:** `work`, aligned exactly to draft PR #1175 head `19d97609920d3f808542387f90bf3b3c7ffab824` on `release/consolidated-recovery-20260717`; no inline comments or submitted reviews.
+- **Scope:** verification-only follow-up for the screenshot-reported Company Vault → AI Analyze → durable Run Engine failure. Reconciled the initially stale local checkout to GitHub shared truth, downloaded and inspected the exact-head CI and route/screenshot artifacts, verified the PostgreSQL regression for Engine self-invalidation, and checked the exact-head Vercel deployment identity/health. No application behavior, schema, migration, dependency, or gate changed.
+- **Files changed:** `operator_handoff.md` only.
+- **Tests / evidence:** both duplicated exact-head CI workflows passed migrations, critical schema, zero drift, typecheck, lint, 8,916/8,916 unit/PostgreSQL assertions, production build, browser acceptance, and source-mutation checks. The database suite specifically passed preservation of the Engine revision after derived requirement replacement and supersession after real tender source-byte changes. Exact-head route capture covered 111/111 cases with zero critical, overflow, or warning findings. The authenticated browser suite passed 181 tests and four documented conditional skips, including the durable upload/automatic-analysis golden flow and Company Vault routes.
+- **CI / deployment:** all current PR checks are green. Vercel deployment `dpl_GuASMSrwN75hqS5ima8GcEGDS4Tu` is READY at `https://hope-tender-path-9gp9xz79y-hopeengineering83-codes-projects.vercel.app`; `/api/version` returned `19d97609`, and `/api/health` returned healthy with exact release SHA, durable private Blob storage, required tables present, and 8/10 providers configured.
+- **Risks / assumptions:** the supplied real-user failed job itself was not mutated or replayed because its credentials are not available to automation. Revision v3 ensures its UI retry creates/reuses the corrected immutable-input revision and supersedes the failed v2 row. Repository, PostgreSQL, browser, capture, build, and exact preview checks expose no remaining known defect in the scoped path.
+- **Next action:** Hope can press **Retry durable Engine** on the supplied tender in the exact-head preview; no code or manual Company Vault review step remains before automatic processing.
+- **Merge status:** scoped code is verified and safe with all exact-head checks green; PR #1175 remains draft and must not be merged without Hope's explicit approval.
+
+### 2026-08-01 15:08 UTC — Codex (GPT-5.6 Sol), PR #1175 updated-head Engine verification
+
+- **Branch / PR:** local `work` at exact draft PR #1175 head `7899ebc`; target `integration/controlled-recovery`. GitHub reports zero inline comments and zero submitted reviews.
+- **Scope:** independently verified the updated-head repair for the screenshot's durable Engine precondition failure. Strengthened the PostgreSQL regression to mirror `runTenderEngine`'s complete derived-output mutation shape: update Tender workflow fields, delete/recreate TenderRequirement output, then prove the canonical source revision and active job remain unchanged. Real tender-file byte changes remain separately proven to supersede the stale job.
+- **Files changed:** `tests/engine-enqueue-authority.integration.test.ts`, `operator_handoff.md`.
+- **Tests / CI:** predecessor exact-head CI is fully green: PostgreSQL canonical Engine enqueue suite 4/4, complete unit/database suite 8,916/8,916, production build, 180 Playwright passes with three documented skips, exact-head route capture, dependency audit, and source-mutation checks. Downloaded and inspected both exact-head acceptance artifacts. Local focused rerun and updated-head CI are required for this strengthened assertion.
+- **Deployment:** exact-head Vercel preview `dpl_3x33cf81Nu8Co7poNDA8SXEipYGW` is READY at `https://hope-tender-path-9csoukcyu-hopeengineering83-codes-projects.vercel.app`; `/api/version` reports `7899ebc4`, and `/api/health` reports healthy schema, durable private Blob storage, and 8/10 configured providers.
+- **Risks / assumptions:** CI provider credentials intentionally exercise deterministic fallback rather than paid provider output. The scoped Engine revision/queue failure is behaviorally covered against PostgreSQL; owner-data preview interaction remains credential-controlled.
+- **Next action:** push this strengthened proof, require updated-head CI green, and keep #1175 draft until Hope clears the repository's separate external release holds.
+- **Merge status:** not reviewed — predecessor is green; strengthened updated-head CI pending.
+
+### 2026-08-01 14:29 UTC — Codex (GPT-5.6 Sol), PR #1175 Run Engine self-invalidation repair
+
+- **Branch / PR:** local `work`, aligned with and intended for draft PR #1175 head branch `release/consolidated-recovery-20260717`; predecessor head `ee27f98`. GitHub reported no inline comments or submitted reviews; dependency/Vercel checks passed while capture and full CI were still running when this repair began.
+- **Scope:** investigated the exact Vercel screenshots showing terminal `ASYNC_ENGINE_FAILED` precondition references. Found that the source-revision snapshot included Engine-owned `Tender.updatedAt` and `TenderRequirement` rows even though `runTenderEngine` necessarily updates/replaces them; therefore the mandatory post-run stale-source check invalidated every otherwise-successful run against its own writes. Revision v3 now hashes only stable tender-source and Company Vault inputs while retaining requirement count as non-hashed diagnostics. Also removed the competing post-analysis continuation: `run-next` now consumes the canonical source-bound `automaticEngineJob` already persisted by the AI handler instead of creating a second legacy analysis-hash-only ENGINE_RUN job; the old path remains only as compatibility fallback.
+- **Files changed:** `lib/engine/engine-source-revision.ts`, `app/api/ai-jobs/run-next/route.ts`, `tests/engine-async-job-queue.test.ts`, `tests/engine-enqueue-authority.integration.test.ts`, `operator_handoff.md`.
+- **Tests:** Prisma generation and TypeScript passed; focused Run Engine/Vault/automatic-continuation/runtime tests passed 42/42; zero-warning lint and `git diff --check` passed. The focused PostgreSQL integration test could not start because this container cannot reach the configured Neon host; CI must execute its new assertions that derived requirement writes preserve a job revision while changed tender source bytes supersede it.
+- **CI / deployment:** exact predecessor `ee27f98` checks were partially complete at session start. No additional preview was created before local validation and commit; updated-head CI/preview is required.
+- **Risks / assumptions:** the post-run authority check remains fail-closed for real tender-file or Company Vault changes. Existing failed v2 jobs will be superseded automatically on retry because revision v3 creates a different canonical idempotency key.
+- **Next action:** commit/push into PR #1175, require green updated-head CI, then use the authorized preview workflow to rerun the same authenticated tender and confirm the Engine reaches success rather than the screenshot's precondition failure.
+- **Merge status:** not reviewed — focused local checks pass; PostgreSQL CI and updated-head preview acceptance remain required.
+
+### 2026-08-01 14:18 UTC — Codex (GPT-5.6 Sol), PR #1175 screenshot-driven Vault UI repair
+
+- **Branch / PR:** local `work`; governing draft PR #1175 head branch `release/consolidated-recovery-20260717` at `ff40a63` before this repair. No inline comments or submitted reviews.
+- **Scope:** downloaded the exact-head 23 MB route/screenshot artifact from successful capture run `30703008819` and inspected the real desktop Company Vault and Automatic Verification pages. The Vault screenshot exposed surviving manual bureaucracy: “Review each file before using it,” human-reviewed/draft completeness counts, and Experts/Projects “Review …” CTAs. Replaced those active UI paths with truthful Run Engine automatic extraction/source-verification guidance and Automatic Verification links. Runtime eligibility remains source-backed and fail-closed.
+- **Files changed:** `app/dashboard/company/page.tsx`, `tests/company-vault-experts-projects-review-cta.test.ts`, `tests/company-vault-document-actions-a11y.test.ts`, `operator_handoff.md`.
+- **Tests:** focused Company Vault UI, accessibility, pipeline, and automatic-promotion suites passed 35/35; clean-cache TypeScript passed; zero-warning lint passed; `git diff --check` passed.
+- **CI / deployment:** exact predecessor preview `dpl_71CbsVmTCjwCCSFhK1z4uwxaKpgz` returned healthy HTTP 200 with exact SHA `ff40a63b`, durable private Blob storage, and 8/10 providers. Capture and one complete duplicated full workflow passed; the second full workflow was in browser acceptance when this screenshot-derived repair began.
+- **Risks / assumptions:** authenticated human `REVIEWED` evidence remains optional and eligible, but the primary Vault UI no longer presents human approval as a prerequisite. Automatic verification does not promote stale, altered, source-less, unmatched, or unusable evidence.
+- **Next action:** push this commit into PR #1175 and require updated-head CI, preview identity/health, and fresh route screenshots.
+- **Merge status:** not reviewed — local focused checks pass; updated-head remote acceptance is required.
+
+### 2026-08-01 14:08 UTC — Codex (GPT-5.6 Sol), PR #1175 automatic-handoff cleanup
+
+- **Branch / PR:** local `work`; governing draft PR #1175 head branch `release/consolidated-recovery-20260717` at `77dba9a` before this follow-up. GitHub reports no inline comments or submitted reviews.
+- **Scope:** removed the remaining Company Vault client-pipeline message that incorrectly said re-imported evidence remained subject to human review. Successful byte re-import now explicitly hands eligible evidence to Run Engine automatic source verification. Also replaced the remaining generic compliance “source review” wording with automatic source verification; evidence eligibility and fail-closed source authority are unchanged.
+- **Files changed:** `lib/ui/auto-pipeline.ts`, `lib/engine/compliance.ts`, `tests/auto-pipeline.test.ts`, `operator_handoff.md`.
+- **Tests:** focused automatic-pipeline, pipeline-authority, Company Vault evidence, and preview-runtime tests passed 23/23; clean-cache TypeScript passed; zero-warning lint passed; `git diff --check` passed.
+- **CI / deployment:** predecessor `77dba9a` dependency and capture checks passed; both full duplicated workflows were still running when this follow-up was prepared. Vercel Preview Comments passed. No extra manual deployment was created; pushing this commit lets the governing PR integration create its canonical preview.
+- **Risks / assumptions:** human `REVIEWED` provenance remains a supported optional evidence authority, but it is not required between Company Vault and Run Engine. Automatic verification still cannot invent evidence or promote stale, altered, source-less, or unmatched records.
+- **Next action:** push this commit to PR #1175, verify updated-head CI/preview, and keep the PR draft until external release holds are cleared.
+- **Merge status:** not reviewed — local focused checks pass; updated-head CI is required.
+
+### 2026-08-01 13:27 UTC — Codex (GPT-5.6 Sol), PR #1175 evidence-gap repair
+
+- **Branch / PR:** local `work` aligned exactly to `origin/release/consolidated-recovery-20260717` at `8768590`; governing draft PR #1175 targets `integration/controlled-recovery`. GitHub API showed zero inline comments and zero submitted reviews; all seven latest-head checks were green before this repair.
+- **Scope:** discarded the incompatible local pre-PR architecture from the active branch after verifying that #1175 already owns a newer enqueue-only, server-policy-controlled Engine with automatic Vault preparation, source revisions, `SOURCE_VERIFIED` provenance, and automatic Build Plan continuation. Repaired the remaining non-overlapping compliance gap: unrelated, empty, scanned, or first-in-list Vault documents can no longer become legal/financial/compliance/profile/general evidence merely because any document exists. Typed evidence now also requires the correct Vault category (so an ISO certificate cannot masquerade as legal registration), and requirement matching uses exact normalized tokens rather than substrings (so `audit` cannot match `auditorium`) while preserving #1175's draft-only proposal-response semantics.
+- **Files changed:** `lib/engine/compliance.ts`, `tests/company-vault-compliance-evidence.test.ts`, `tests/preview-runtime-truth-regression.test.ts`, `operator_handoff.md`.
+- **Tests:** `npx prisma generate` passed; focused Company Vault compliance tests passed 6/6; `tests/core-engine-regressions.test.ts` and `tests/production-workflow-engine.test.ts` passed (27 total assertions across the combined run); `npx tsc --noEmit` passed; `npm run lint -- --quiet` passed; `git diff --check` passed.
+- **CI / deployment:** governing head `8768590` CI baseline is green, including migrations/integrity/typecheck/lint/tests/build/authenticated isolation and capture. Final application-code head `6f63436` deployed READY as `dpl_CNXdw7d1mn4dNSAFeJzCYb9dSVhs` at `https://hope-tender-path-aqsuxbobz-hopeengineering83-codes-projects.vercel.app`; remote build found 44 migrations with none pending, passed schema verification, compiled/typechecked, and completed successfully. Exact-head `/api/health` and `/api/version` returned HTTP 200, healthy/durable Blob storage, 8/10 configured providers, and SHA `6f634361`.
+- **Known risks / assumptions:** selection is intentionally conservative: a document with unusable extraction stays unmapped even if its filename/category appears relevant. Existing legal/financial/compliance structured records remain valid evidence with meaningful record references. No client policy override or duplicate Engine owner was introduced.
+- **CI follow-up:** commit `312eb40` was pushed to the governing PR branch. Updated-head CI exposed one intentional-contract mismatch: an ungenerated proposal response with no relevant Vault evidence retained the correct low strength and no evidence reference but moved from the canonical automatic `EVIDENCE_PENDING_REVIEW` workflow state to `PARTIAL`. The follow-up preserves pending automatic generation/verification without inventing a source reference and adds regression assertions for both properties.
+- **Next action:** push this focused CI repair to `release/consolidated-recovery-20260717` and verify the resulting PR checks.
+- **Merge status:** not reviewed — local verification and updated-head CI rerun remain pending.
+
+### 2026-07-30 01:45 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr1175-final-verification-20260730` / documentation-only child targeting `release/consolidated-recovery-20260717`; governing draft #1175 verified at `0c28bf03d37bb24cc8f45fd3e7c2453c00d5c2c3`.
+- **Scope / files changed:** refetched GitHub and Vercel; proved closed #1274 head `0611690b…` is ancestral; dispositioned the only other open PR, #1280, as documentation-only and already incorporated; independently inspected exact-head CI, migrations, test/build/browser evidence, preview identity/events, responsive screenshots, and generated DOCX/PDF/ZIP bytes. Refreshed `docs/audits/open-pr-unique-code-ledger-20260728.md`, `docs/audits/pr1175-principal-release-recheck-20260730.md`, and this handoff. No application, schema, migration, dependency, test, gate, or workflow authority changed.
+- **Tests:** clean `npm ci`; Prisma validate/generate; local release-integrity (418 routes / 1,390 files), workflow-consistency audit, typecheck, zero-warning lint, and production build passed without tracked-source mutation. Exact-head GitHub push/PR CI passed all 43 migrations, critical schema, retroactive bootstrap, idempotency, zero drift, 8,930/8,930 assertions, build, 179 Playwright passes / four documented skips, and 111/111 responsive route cases with zero findings. Exact secret-value scan found zero tracked matches. `npm audit --omit=dev` still reports two inherited high-severity Next/Sharp findings.
+- **CI / deployment:** governing-head runs `30505634865`, `30505637154`, and `30505637135` succeeded. Intended exact-SHA deployment `dpl_5hD9SdNUZwhJ7AsxRqnJHd6cN6bP` is READY; version/health returned 200 and exact identity; 100 events contained zero prohibited runtime/credential patterns. Duplicate project `repo` exact-SHA deployment remains ERROR.
+- **Generated bytes:** DOCX 12,091 bytes / `08e13b00…`; PDF 984 bytes / `d30b536e…`; ZIP 10,415 bytes / `8e336f4b…`. Office/PDF signatures, archive integrity, entry order, lengths, and manifest hashes were independently recomputed.
+- **Risks / assumptions:** approved synthetic preview credentials remain unavailable, so provider-backed persisted preview acceptance and post-workflow log inspection were not rerun. Real-account testing remains prohibited pending password rotation, session revocation, automation-secret replacement, and artifact sanitation. Owner UAT, duplicate-project remediation, and compatible Sharp/libvips remediation remain external holds.
+- **Next action:** obtain green CI for this documentation-only child, incorporate it into #1175, reverify the resulting exact head, update #1175's description, and close redundant child PRs without merging #1175.
+- **Merge status:** not safe to merge #1175; draft/unmerged with external release holds.
+
+### 2026-07-30 01:15 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr1175-final-release-audit-20260730` / child audit PR targeting `release/consolidated-recovery-20260717`; governing draft #1175 frozen at `1e113fa529718b9052e762efd15fbf51144ccaca`.
+- **Scope / files changed:** independently refetched GitHub and Vercel; confirmed #1175 was the only open PR before this documentation-only child was opened and that closed #1274 is fully ancestral; repeated the five-pass ancestry, schema, security, concurrency, workflow-owner, browser, preview, and generated-byte falsification. Added `docs/audits/pr1175-principal-release-recheck-20260730.md`, refreshed `docs/audits/open-pr-unique-code-ledger-20260728.md`, and added this handoff entry. No application, schema, migration, dependency, test, gate, or workflow authority changed.
+- **Tests:** clean install/source-mutation check; Prisma validate/generate; all 43 migrations on isolated PostgreSQL 16; critical schema; retroactive bootstrap; idempotency; zero drift; release-integrity (418 routes / 1,390 files); workflow consistency; typecheck; zero-warning lint; 8,930/8,930 unit/PostgreSQL assertions; production build/source-mutation check; 179 Playwright passed / 4 documented conditional skips; fresh DOCX/PDF/ZIP container, structure, byte-length, order, and SHA-256 proof.
+- **CI / deployment:** exact governing head GitHub runs `30502385737`, `30502388446`, and `30502388414` are successful. Intended preview `dpl_4UUnQvdQeoNaJK8tqewsp5mprg65` is READY and exact-SHA `/api/version` and `/api/health` returned HTTP 200. A fresh 100-event query contained no prohibited runtime-error/credential pattern; normal build-time Prisma generation messages were not misclassified as runtime errors. Duplicate Vercel project `repo` still fails.
+- **Risks / assumptions:** approved synthetic preview credentials remain unavailable, so the complete provider-backed persisted preview workflow and post-workflow log audit were not rerun. Real-account testing remains prohibited pending password rotation, session revocation, automation-secret replacement, and artifact sanitation. Owner UAT, duplicate-project remediation, and compatible Sharp/libvips remediation remain external holds. `npm audit --omit=dev` still reports two inherited high-severity findings.
+- **Next action:** keep #1175 draft and unmerged; an authorized owner must clear the external credential/UAT/project/dependency holds and run the complete provider-backed synthetic preview acceptance.
+- **Merge status:** unsafe while the documented external security and acceptance holds remain open.
+
+### 2026-07-30 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; audited product head `c3c2f834a438d9848fd383fdec1cddef6e82b382`.
+- **Scope / files changed:** independently refetched GitHub and Vercel; proved #1274's complete head is incorporated; inspected exact-head CI, screenshots, generated bytes, preview health, and deployment events; repeated disposable-PostgreSQL migrations, schema checks, audits, full tests, and build. Added `docs/audits/pr1175-exact-head-recheck-20260730.md` and this handoff entry only; no application, schema, migration, dependency, or gate change.
+- **Tests:** local PostgreSQL 16 accepted all 43 migrations; critical schema, retroactive init, idempotency, zero drift, release-integrity (418 routes / 1,390 files), typecheck, zero-warning lint, 8,928/8,928 local tests, and production build passed. Exact-head GitHub evidence reports 8,930/8,930 tests, 179 passed / 4 environment-conditional skipped Playwright checks on the push run, 180 passed / 3 skipped on the PR run, and 111/111 screenshot combinations without findings.
+- **CI / deployment:** exact-product-head runs `30498185202`, `30498188486`, and `30498188073` succeeded. Intended preview `dpl_CyLnTGypAQTq5Q59sMiFHP6xpv2V` was READY and `/api/version` plus `/api/health` identified the exact SHA. A fresh 100-event query found no prohibited runtime-error pattern. The duplicate `repo` project still failed.
+- **Risks / assumptions:** approved synthetic preview credentials remain unavailable, so provider-backed persisted preview acceptance was not rerun. Real-account testing remains prohibited pending password rotation, session revocation, automation-secret replacement, and artifact sanitation. Owner UAT, duplicate-project remediation, and compatible residual dependency remediation remain external holds.
+- **Next action:** keep #1175 draft and unmerged; obtain approved synthetic preview credentials and complete the remaining external security/UAT/project-configuration actions.
+- **Merge status:** unsafe while the documented external security and acceptance holds remain open.
+
+### 2026-07-29 23:05 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175. Started from exact head `c0f442427b53f2e58b9738b17814e1f3fb83278d`; live GitHub refetch found #1175 as the only open PR and confirmed closed #1274 head `0611690b1486402df6fb5431b055b219390517e7` is an ancestor. The matching Vercel preview was READY before this repair.
+- **Scope:** independently falsified the green exact-head screenshot evidence and found the canonical Review Inbox displayed under a misleading `Diagnostics` tab beside a duplicate `Review Board` tab that only redirected to the same page. Removed the duplicate presented control, renamed the canonical tab, and redirected all live Company Vault actions/guidance to `/dashboard/company/review`; the legacy `/review-board` page remains redirect-only for bookmarks.
+- **Files changed:** `components/company-subnav.tsx`, `components/generation-readiness-panel.tsx`, `app/dashboard/company/plan-b-import/page.tsx`, `app/dashboard/company/page.tsx`, `app/api/company/plan-b-import/route.ts`, `lib/engine/deep-reasoning-readiness.ts`, `lib/company-vault-source-remap.ts`, `tests/vault-review-contract.test.ts`, and `docs/audits/pr1175-review-inbox-authority-falsification-20260729.md`.
+- **Tests:** clean `npm ci` and tracked-source mutation check passed; Prisma validate/generate passed; release-integrity passed (418 routes / 1,390 files); workflow consistency passed with the three existing warning-only wording heuristics; targeted tests passed 41/41; typecheck passed; lint passed with zero warnings; all 43 migrations deployed on fresh local PostgreSQL 16, second deploy idempotent, critical schema/retroactive bootstrap/zero drift passed; full unit/PostgreSQL suite passed 8,928/8,928; production build passed; authenticated `exact-head-evidence.spec.ts` passed 1/1 with retries disabled and generated fresh desktop/tablet/mobile screenshots without overflow or runtime errors. Two earlier Playwright launches failed before application execution because Chromium and then its OS libraries were absent; installing them resolved the environment limitation.
+- **Evidence:** `docs/audits/pr1175-review-inbox-authority-falsification-20260729.md`; fresh tablet screenshot visibly shows one active Review Inbox tab and no Review Board/Diagnostics duplicate. Independent reopening of the prior exact-head artifact also found its current manifest hashes differ from stale generated-byte hashes in the PR body, so the body must be regenerated after the new exact head is verified.
+- **Risks / holds:** no safety gate, schema, migration, trust state, or mutation authority was weakened. The forthcoming pushed SHA requires exact-head GitHub CI, Git-triggered preview identity, preview log inspection, and PR-body refresh. Provider-backed preview acceptance remains blocked on approved synthetic preview credentials; real credentials remain prohibited pending password/session/automation-secret remediation. Duplicate Vercel project and residual dependency advisory holds remain external.
+- **Next action:** commit and push this repair, wait for exact-head CI and the Git-triggered preview, inspect their artifacts/logs, then update #1175's description without claiming completion of blocked external acceptance.
+- **Merge status:** not reviewed for merge; keep #1175 draft and unmerged.
+
+### 2026-07-29T19:37Z — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr1175-final-independent-acceptance-20260729` / child
+  PR targeting `release/consolidated-recovery-20260717`; governing draft #1175
+  frozen at `893beb326d1c43fa1f5dfd52563c7609dd5a10de` before this repair.
+- **Scope:** independently refetched GitHub/Vercel, revalidated #1274 ancestry
+  and the one-open-PR ledger, reproduced the full migration/unit/browser matrix,
+  and repaired a flaky release audit that treated the redirect-only legacy
+  Company Review Board bookmark as a second rendered authority. The audit now
+  tests rendered canonical routes separately and behaviorally proves the legacy
+  URL converges on the single Review Inbox.
+- **Files changed:** `e2e/pr1175-independent-release-audit.spec.ts`,
+  `docs/audits/pr1175-exact-head-independent-recheck-20260729.md`, and
+  `operator_handoff.md`. No product route, schema, migration, gate, dependency,
+  or workflow authority changed.
+- **Local checks:** clean `npm ci` and mutation hash; Prisma validate/generate;
+  all 43 migrations on disposable PostgreSQL 16; critical schema;
+  retroactive-bootstrap parity; migration idempotency; zero drift;
+  release-integrity (418 routes / 1,390 files); workflow consistency;
+  typecheck; zero-warning lint; production build and mutation hash;
+  8,930/8,930 unit/PostgreSQL assertions; focused affected Playwright with
+  retries disabled (5 passed / 1 environment skip); complete Playwright with
+  retries disabled (179 passed / 4 environment skips / 0 failed / 0 flaky).
+- **Remote/artifact evidence:** exact-parent GitHub checks green; intended
+  exact-SHA Vercel preview `READY`; duplicate `repo` deployment `ERROR`; live
+  version/health HTTP 200 at the exact parent SHA; 111/111 screenshot audit with
+  zero findings; DOCX/PDF/ZIP containers and recorded hashes independently
+  recomputed. A fresh runtime-log request timed out without bytes and is not
+  claimed as new log evidence.
+- **Risks / assumptions:** no approved synthetic preview credential exists, so
+  provider-backed persisted preview acceptance remains blocked. Real-account
+  password rotation, session revocation, automation-secret replacement,
+  credential-artifact sanitation, owner UAT, duplicate-project remediation,
+  and compatible residual dependency remediation remain external holds.
+- **Next action:** publish the child for exact-head CI, incorporate only after it
+  is green, then rerun exact #1175 head/preview identity checks; keep #1175 draft
+  and unmerged.
+- **Merge status:** not reviewed for release merge; release completion is not
+  claimed.
+
+### 2026-07-29T18:30Z — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft PR #1175.
+- **Scope:** independently refetched GitHub and Vercel authority after the final
+  consolidation. Confirmed #1175 is the only open PR, #1274 is closed and fully
+  ancestral, all three exact-head GitHub workflows are green, and the intended
+  preview identifies the exact governing SHA. Updated only the exact-head audit
+  record and this handoff; no product, schema, migration, dependency, test, or
+  workflow-authority code changed.
+- **Files changed:**
+  `docs/audits/pr1175-exact-head-independent-recheck-20260729.md` and
+  `operator_handoff.md`.
+- **Checks:** GitHub PR/check/artifact API refetch; git ancestry; Vercel project,
+  deployment and exact-SHA identity refetch; live `/api/version` and
+  `/api/health` (HTTP 200); deployment-scoped 24-hour runtime-log query (12
+  records, no error/fatal/500/P2022/P2002/Prisma/timeout/stuck/duplicate match).
+- **Risks / assumptions:** no approved synthetic preview credentials are
+  available, so the complete provider-backed persisted preview workflow is not
+  independently rerun. Real-account use remains prohibited pending password
+  rotation, session revocation, automation-secret replacement and artifact
+  sanitation. Owner UAT, duplicate Vercel project cleanup, and compatible
+  residual dependency remediation remain external blockers.
+- **Next action:** let exact-head CI and the normal Git-triggered preview verify
+  this documentation-only commit; keep PR #1175 draft and unmerged.
+- **Merge status:** not reviewed for merge; release completion is not claimed.
+
+### 2026-07-29T17:15Z — Codex
+
+- **Branch / PR:** `codex/pr1175-live-state-reconciliation-20260729` / child PR pending, targeting `release/consolidated-recovery-20260717`; governing PR #1175 remains draft and unmerged at frozen parent `272b5823c6e118ac7e56f9c38e8f1b8c959b93d5`.
+- **Scope / files:** refetched GitHub PR/check/deployment authority; proved closed #1274 head `0611690b…` is an ancestor of #1175; preserved documentation-only #1277 commit and corrected its live publication disposition in `docs/audits/pr1175-exact-head-independent-recheck-20260729.md`; updated this handoff. No product, schema, migration, dependency, route, workflow-authority, or test code changed.
+- **Local checks:** clean `npm ci` passed with no tracked-file mutation (npm reports three unresolved high-severity advisories); `npx prisma validate`; `npx prisma generate`; `npm run audit:release-integrity` (418 routes / 1,390 files); `npm run audit:workflow-state-consistency` (pass in warning-only mode with three recorded heuristic warnings); `npx tsc --noEmit`; `npm run lint -- --max-warnings 0`; production `npm run build` with synthetic build-only secrets; post-build tracked-file mutation check — all passed. A first build invocation without the required synthetic provider variable failed closed as designed and was rerun correctly.
+- **Remote evidence:** exact-parent GitHub runs `30471518423`, `30471523601`, and `30471524083` are successful; intended Vercel deployment `5661364922` is successful at exact SHA, while duplicate-project deployment `5661315682` remains failed.
+- **Risks / assumptions:** this documentation-only child does not supersede the required exact-head verification after incorporation. Full provider-backed synthetic preview acceptance and runtime-log inspection remain blocked by unavailable approved synthetic credentials and `VERCEL_TOKEN`; credential rotation/session revocation/automation-secret replacement/artifact sanitation, owner UAT, duplicate Vercel-project remediation, and compatible dependency remediation remain external holds.
+- **Next action:** incorporate this documentation-only child into #1175, rerun exact-head CI/preview identity checks, then close redundant documentation PR #1277 with an evidence comment; do not merge #1175.
+- **Merge status:** safe as documentation evidence only; release merge remains unsafe/blocked by the stated external holds.
+
+### 2026-07-29 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr1175-exact-head-release-proof`; documentation-only follow-up prepared against draft PR #1175. PR #1175 was not modified, merged, approved, retargeted, or closed.
+- **Scope:** independently refetched GitHub deployment/check state and falsified the frozen #1175 head `272b5823c6e118ac7e56f9c38e8f1b8c959b93d5`; confirmed #1274 head `0611690b1486402df6fb5431b055b219390517e7` is incorporated and #1175 is the only open PR; recorded evidence in `docs/audits/pr1175-exact-head-independent-recheck-20260729.md`.
+- **Files changed:** `docs/audits/pr1175-exact-head-independent-recheck-20260729.md`, `operator_handoff.md` only.
+- **Tests:** clean `npm ci` plus install mutation hash passed; Prisma validate/generate passed; release-integrity passed (418 routes / 1,390 files); workflow-state audit passed with three known warning-only wording heuristics; TypeScript passed; ESLint passed with zero warnings; production build with synthetic build-only configuration plus build mutation hash passed. A local DB-enabled full-suite attempt was stopped because the configured remote Neon test database was unreachable; no migration was run against it. Exact-head GitHub workflows remained successful with 8,930 tests, build, Playwright, disposable migration, and screenshot evidence.
+- **CI / deployment:** exact-head GitHub runs `30471518423`, `30471523601`, and `30471524083` are successful. The intended Git-triggered preview is healthy and identifies the exact SHA; the duplicate `repo` Vercel project still fails.
+- **Risks / assumptions:** no approved synthetic preview credentials, no Vercel token/log access, and no disposable local PostgreSQL service were available. Real-account testing remains prohibited. Credential rotation/session revocation/automation-secret replacement/artifact sanitation, owner UAT, duplicate-project repair, provider-backed persisted preview acceptance, runtime-log certification, and remaining compatible dependency remediation remain external holds.
+- **Next action:** an authorized owner should satisfy the external holds and rerun the complete synthetic persisted preview workflow and runtime-log audit before considering merge.
+- **Merge status:** **unsafe**; keep #1175 draft and unmerged.
+
+### 2026-07-29 UTC — Codex (dependency-security falsification)
+
+- **Branch / PR:** `codex/pr1175-release-proof-20260729` / draft #1276; governing draft #1175 frozen at `d514027ca9dd46e904726f50e250c74586f507fa`.
+- **Scope / files:** refetched every open PR and GitHub deployment; revalidated #1274 ancestry and open-PR dispositions; patched compatible current dependency advisories in `package.json` and `package-lock.json`; updated `scripts/audit-release-integrity.mjs` so the release audit enforces the new PostCSS pin; refreshed `docs/audits/open-pr-unique-code-ledger-20260728.md` and this handoff. No workflow, schema, migration, gate or production deployment changed.
+- **Tests:** clean `npm ci`; Prisma validate/generate; release-integrity and workflow-consistency audits; typecheck; lint with zero warnings; production build with a synthetic provider value; clean install/build mutation guards. Falsification found and repaired the release audit's stale PostCSS 8.5.10 expectation. The configured Neon endpoint was unreachable; the full PostgreSQL run was stopped after repeated setup failures and is not claimed. The reconciled dependency head requires new exact-head CI after push.
+- **Security:** Next.js 15.5.22 and PostCSS 8.5.18 close the compatible current advisory ranges. `npm audit --omit=dev` still reports Next's nested Sharp 0.34.5, and the development audit reports minimatch/brace-expansion through ESLint; npm offers no compatible non-major remediation. These remain explicit blockers rather than forcing an unverified framework/toolchain major change.
+- **CI / deployment:** parent #1175 exact-head CI and route/screenshot checks remain green; intended exact-SHA Vercel preview is successful; duplicate `repo` project remains failed. #1276 was externally closed before this commit reached GitHub and was reopened draft so its unincorporated head can receive exact-head CI. No `VERCEL_TOKEN`, retained logs or approved synthetic preview account are available.
+- **Risks / next action:** wait for the dependency-patched #1276 exact-head CI, then independently validate its artifact. Do not incorporate or close PRs until the remaining preview/runtime, external credential/UAT, duplicate-project and dependency-advisory holds are resolved.
+- **Merge status:** unsafe; #1175 and #1276 remain draft and unmerged.
+
+
+### 2026-07-28 UTC — Codex (GPT-5.6 Sol)
+
+- **Branch / PR:** `codex/pr1175-auto-verification-audit-blocked` / no GitHub PR created or verified. The local `make_pr` integration recorded title/body metadata only and returned no PR number or URL.
+- **Requested scope:** Freeze draft PR #1175, independently audit it against draft PR #1266, implement automatic Company Vault evidence verification and Plan-B import corrections, and run the full release verification matrix.
+- **Files changed:** `operator_handoff.md` only; no application, schema, migration, workflow, test, or documentation implementation file was changed.
+- **Checks actually run:** read `AGENTS.md`, `operator_handoff.md`, `CLAUDE.md`, and `CLAUDE_TASKS.md`; inspected the working tree, configured remotes, environment credential names, all local refs, unreachable Git objects, and recent history; attempted `git ls-remote` for PR #1175 and #1266 twice, including this follow-up recheck.
+- **Result / blocker:** blocked before the mandatory freeze. The checkout has no configured remote, GitHub CLI, GitHub credential environment variable, local PR ref, or unreachable commit containing either requested PR head. It contains local branch `work` at `820c9cb0bb382f56645b3494fe083ccefdd744fa`, while direct GitHub access fails with `CONNECT tunnel failed, response 403`. The exact #1175 head, #1266 audit diff/comments, open-PR state, and CI therefore cannot be verified. No audit, fix, test completion, draft PR number, or child-PR target is claimed.
+- **Risk:** creating implementation changes or asserting a frozen SHA from this checkout would target an unverified base and violate the request's freeze-first rule.
+- **Next action:** restore authenticated GitHub/private-remote access (or provide local refs/bundles for `refs/pull/1175/head` and `refs/pull/1266/head`), then restart from the freeze step and discard this blocker-only branch if desired.
+- **Merge status:** unsafe; draft-only blocker record, do not merge.
+
 ### 2026-07-17 UTC (follow-up 3) — Claude Code
 
 - **Mode:** responding to automated `chatgpt-codex-connector[bot]` PR review on #1161 (the mobile-overflow-gap-repair PR below). Verified every finding empirically before acting — none were taken on faith.
@@ -457,3 +1677,27 @@ Never claim a fix is complete unless the stated tests passed.
 - **Risks:** The regex-based extractors are deterministic but may miss non-standard formatting. Release gates are now significantly stricter, which may block some "borderline" tenders until manually overridden or repaired.
 - **Next Action:** Monitor user feedback on the stricter release gates; expand regex patterns if common variations are missed.
 - **Merge Status:** PR Created (claude/extraction-and-gates-hardening). DO NOT MERGE YET.
+
+### 2026-08-09 UTC — Codex
+
+- **Mode:** focused PR #1175 owner-workflow acceptance and minimal repair
+- **Branch / PR:** `release/consolidated-recovery-20260717` / #1175
+- **Scope:** real-PostgreSQL AI Analyze → Engine claim → Vault verification → matching → Build Plan → generation → validation → AUTO_FINALIZE → PDF → ZIP acceptance; fixed the first three observed transitions without weakening gates.
+- **Files changed:** `lib/engine/generate-elite.ts`, `lib/engine/document-quality-validator.ts`, `lib/ai-jobs/auto-finalize-continuation-service.ts`, `tests/owner-workflow-complete-postgres.test.ts`, `operator_handoff.md`.
+- **Tests:** focused PostgreSQL acceptance passed; typecheck passed; lint passed with one pre-existing warning; relevant 119 tests passed; full `RUN_DB_INTEGRATION=true npm test` passed; production build passed with local missing-secret warnings.
+- **Risks / blockers:** authenticated Preview acceptance and owner-only Production UAT/credential rotation/backup-restore/rollback proof remain; no Production deployment performed.
+- **Next action:** exact-head CI and automatic Preview verification.
+- **Merge status:** DO NOT MERGE — awaiting owner review and Preview evidence.
+
+### 2026-08-09 UTC — Codex (release-hardening continuation)
+
+- **Mode:** exact-head CI failure triage and narrow reliability repair.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting at `8a46f05c57d6cac396cde3caecbcc6731a3a018a`.
+- **Scope:** inspected failed run `31337251918` attempt 2 without requesting the consolidated PR diff. The run reported two behavioral failures (not five): the Engine wake regression swallowed an assertion inside the production best-effort wake boundary, and the stale-queue reaper treated another tenant's newer job as proof that this tenant's job was passed over. Preserved canonical AI Analyze authority and all fail-closed gates.
+- **Files changed:** `lib/engine/stale-job-reaper.ts` (tenant-scope pass-over evidence), `tests/stale-job-reaper.test.ts` (cross-tenant regression), `tests/engine-worker-handoff.test.ts` (make claim/RUNNING assertions observable outside the intentional wake catch), `.github/workflows/ci.yml` (Node-24-compatible checkout/setup/upload action majors), `operator_handoff.md`.
+- **Tests:** `npx prisma generate`, `npm run typecheck`, and `npm run lint` passed (one pre-existing unused-disable warning). Local PostgreSQL-focused execution is blocked by the configured Neon host being unreachable; exact-head CI must supply the real-PostgreSQL result. Non-database worker authority checks passed; database subtests failed only at connection setup.
+- **Risks / blockers:** full PostgreSQL suite, build, authenticated Playwright, exact-SHA Preview golden path/runtime logs, and artifact validation remain unverified until exact-head CI/Preview completes. Owner-only Production UAT, credential rotation, backup/restore, rollback, merge, and Production deploy remain explicitly outstanding.
+- **Next action:** push the focused commit, require exact-head CI green, then inspect only its automatically generated exact-SHA Preview and logs; do not merge.
+- **Merge status:** DO NOT MERGE — draft; no Production deployment performed.
+
+Follow-up exact-head CI exposed legitimate test-suite contention: another real global worker can atomically win the focused job before its injected wake callback. The regression now accepts either claimant only when the same durable job is already `RUNNING`, then completes and verifies the single job; it still fails if no worker claimed it. No production behavior changed.

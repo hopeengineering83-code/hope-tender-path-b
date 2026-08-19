@@ -56,7 +56,7 @@ const CANONICAL_CHAIN = "Z.ai → Cerebras → Mistral → Groq → OpenRouter �
 // (ALL_PROVIDER_API_KEY_ENVS). AI_PROVIDER_KEYS below is derived from it.
 const PROVIDER_KEY_META = {
   ZAI_API_KEY: {
-    description: `Z.ai GLM API key. Rank 1 automatic provider in the canonical chain (${CANONICAL_CHAIN}). General OpenAI-compatible endpoint (ZAI_BASE_URL, default https://api.z.ai/api/paas/v4). Models override via ZAI_PROPOSAL_MODEL / ZAI_ANALYSIS_MODEL / ZAI_FAST_MODEL (default glm-4-flash).`,
+    description: `Z.ai GLM API key. Rank 1 automatic provider in the canonical chain (${CANONICAL_CHAIN}). General OpenAI-compatible endpoint (ZAI_BASE_URL, default https://api.z.ai/api/paas/v4). Models override via ZAI_PROPOSAL_MODEL / ZAI_ANALYSIS_MODEL / ZAI_FAST_MODEL (default glm-4.7-flash).`,
     validate: (_v) => null,
   },
   CEREBRAS_API_KEY: {

@@ -9,8 +9,8 @@ import {
   classifyTenderCurrentnessBatch,
   isCanonicalCurrentnessCritical,
 } from "../../lib/engine/tender-currentness";
-import { BrainIcon, PuzzleIcon, ShieldIcon, DatabaseIcon, PackageIcon, SparklesIcon, AlertCircleIcon, CrossIcon } from "../../components/icons";
-import type { ReactNode } from "react";
+import { isClientNameContaminated } from "../../lib/engine/metadata-validators";
+import { SparklesIcon, AlertCircleIcon, CrossIcon } from "../../components/icons";
 
 export default async function DashboardPage() {
   const userId = await getSession();
@@ -18,7 +18,6 @@ export default async function DashboardPage() {
   await prismaReady;
 
   const now = new Date();
-  const in3days = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
   const in7days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   // Truthful workspace totals — use real COUNT / GROUP-BY queries so global
@@ -33,7 +32,6 @@ export default async function DashboardPage() {
   const [
     activeTenderCount,
     overdueCount,
-    dueSoon3Count,
     dueSoon7Count,
     criticalComplianceGapCount,
     extractionStateRows,
@@ -48,13 +46,6 @@ export default async function DashboardPage() {
       where: {
         userId,
         deadline: { lt: now },
-        status: { notIn: ["EXPORTED", "CLOSED"] },
-      },
-    }),
-    prisma.tender.count({
-      where: {
-        userId,
-        deadline: { gte: now, lte: in3days },
         status: { notIn: ["EXPORTED", "CLOSED"] },
       },
     }),
@@ -144,7 +135,6 @@ export default async function DashboardPage() {
       requirementsCount: r._count?.requirements ?? 0,
     })),
   );
-  const recentTenderIds = recentTenders.map((t) => t.id);
   const recentCurrentnessVerdicts = await classifyTenderCurrentnessBatch(
     prisma,
     recentTenders.map((t) => ({
@@ -302,7 +292,7 @@ export default async function DashboardPage() {
             <div>
               <h2 className="font-bold text-slate-900">Live Pipeline</h2>
               <p className="mt-0.5 text-[10px] text-slate-400">
-                Recent {recentTenders.length} tenders · Workspace projection (NOT canonical Clear).
+                Last {recentTenders.length} tender{recentTenders.length === 1 ? "" : "s"} · workspace projection — the canonical state lives in each tender&apos;s Workflow Control Center.
               </p>
             </div>
             <Link href="/dashboard/tenders" className="text-sm font-medium text-blue-600 hover:underline">View All</Link>
@@ -338,7 +328,11 @@ export default async function DashboardPage() {
                     <tr key={tender.id} className="hover:bg-slate-50 group">
                       <td className="max-w-[240px] px-6 py-4">
                         <Link href={`/dashboard/tenders/${tender.id}`} className="break-words font-semibold text-slate-900 group-hover:text-blue-600 transition-colors">{tender.title}</Link>
-                        {tender.clientName && <p className="text-xs text-slate-400 mt-0.5">{tender.clientName}</p>}
+                        {tender.clientName && (
+                          isClientNameContaminated(tender.clientName)
+                            ? <p className="text-xs text-amber-600 mt-0.5">Client name needs review — the extracted value mixes several fields. Open the tender to correct it.</p>
+                            : <p className="text-xs text-slate-400 mt-0.5">{tender.clientName}</p>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <span className={isLate ? "text-red-600 font-bold" : "text-slate-500"}>
@@ -373,28 +367,6 @@ export default async function DashboardPage() {
         </div>
 
         <div className="space-y-4">
-          <div className="rounded-2xl border bg-slate-900 p-6 text-white shadow-lg">
-            <h3 className="text-lg font-bold">Quick Engine Access</h3>
-            <p className="mt-1 text-xs text-slate-400">Jump directly to specialized engine views.</p>
-            <div className="mt-6 space-y-2">
-              {(
-                [
-                  { href: "/dashboard/analysis", label: "Global Analysis", icon: <BrainIcon /> },
-                  { href: "/dashboard/matching", label: "Global Matching", icon: <PuzzleIcon /> },
-                  { href: "/dashboard/compliance", label: "Global Compliance", icon: <ShieldIcon /> },
-                  { href: "/dashboard/company", label: "Knowledge Vault", icon: <DatabaseIcon /> },
-                  { href: "/dashboard/export", label: "Export Hub", icon: <PackageIcon /> },
-                ] as { href: string; label: string; icon: ReactNode }[]
-              ).map((item) => (
-                <Link key={item.href} href={item.href}
-                  className="flex items-center gap-3 rounded-xl bg-slate-800/50 p-3 text-sm hover:bg-slate-800 transition-colors border border-slate-700/50">
-                  <span className="text-lg">{item.icon}</span>
-                  <span className="font-medium">{item.label}</span>
-                </Link>
-              ))}
-            </div>
-          </div>
-
           {recentActivity.length > 0 && (
             <div className="rounded-2xl border bg-white p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4">

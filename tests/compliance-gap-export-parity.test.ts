@@ -1,22 +1,14 @@
 // Compliance-gap / final-export readiness parity.
 //
 // Bug found by owner-requested contradiction recheck: the final ZIP download
-// route (app/api/tenders/[id]/download/route.ts) hard-blocks with a 409 on
-// ANY unresolved CRITICAL compliance gap, but getFinalSubmissionReadiness()
-// and getCanonicalTenderReadiness() — the resolvers that drive the "Ready
-// for export" tile on the Bid Control panel, the Export Hub, and the
-// Command Center's "Export gate is open" banner — never checked compliance
-// gaps at all. A tender could show a green "Ready" badge and an enabled
-// download link that then 409s when actually clicked.
-//
-// Fix: both resolvers now fetch unresolved CRITICAL complianceGaps and fold
-// them into their readiness signal, so the badge and the real gate agree.
+// route hard-blocks unresolved CRITICAL compliance gaps, while the UI-facing
+// readiness resolvers previously did not. Both authorities must agree.
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 
-const read = (p: string) => readFileSync(p, "utf8");
+const read = (path: string) => readFileSync(path, "utf8");
 
 describe("final-submission-readiness.ts — unresolved CRITICAL compliance gaps block export readiness", () => {
   const src = read("lib/engine/final-submission-readiness.ts");
@@ -30,19 +22,19 @@ describe("final-submission-readiness.ts — unresolved CRITICAL compliance gaps 
     assert.match(src, /category:\s*"CRITICAL_COMPLIANCE_GAPS"/);
   });
 
-  it("ok is computed from tenderLevelBlockers (which now includes the gap blocker)", () => {
+  it("ok is computed from tenderLevelBlockers", () => {
     assert.match(src, /const ok = readiness\.ok && documentBlockers\.length === 0 && tenderLevelBlockers\.length === 0;/);
   });
 });
 
-describe("canonical-tender-readiness.ts — complianceGaps wired into computeTenderReadinessState + readyForFinalExport", () => {
+describe("canonical-tender-readiness.ts — complianceGaps wired into canonical export readiness", () => {
   const src = read("lib/canonical-tender-readiness.ts");
 
   it("includes complianceGaps on the tender query", () => {
     assert.match(src, /complianceGaps:\s*\{\s*select:\s*\{\s*severity:\s*true,\s*isResolved:\s*true\s*\}\s*\}/);
   });
 
-  it("passes complianceGaps into computeTenderReadinessState (previously defaulted to [] and never reflected real gaps)", () => {
+  it("passes complianceGaps into computeTenderReadinessState", () => {
     assert.match(src, /complianceGaps:\s*tender\.complianceGaps,\s*\n\s*\}\);/);
   });
 
@@ -51,10 +43,6 @@ describe("canonical-tender-readiness.ts — complianceGaps wired into computeTen
     assert.match(src, /readyForFinalExport:.*&&\s*unresolvedCriticalGaps === 0,/);
   });
 });
-
-// ─── DB-gated behavioral proof ──────────────────────────────────────────────
-// Mirrors the seed pattern from tests/screenshot-export-gates-003-server.test.ts
-// Gap 4 (user + tender, no company row required by these resolvers).
 
 const RUN_DB = process.env.RUN_DB_INTEGRATION === "true";
 const dbDescribe = RUN_DB ? describe : describe.skip;
@@ -90,12 +78,9 @@ dbDescribe("compliance-gap export parity — PostgreSQL behavioral", () => {
       const { getFinalSubmissionReadiness } = await import("../lib/engine/final-submission-readiness");
       const readiness = await getFinalSubmissionReadiness(prisma, { tenderId: tender.id, userId: user.id });
 
-      assert.ok(readiness, "readiness must return a result");
-      assert.equal(readiness.ok, false, "tender with an unresolved CRITICAL compliance gap must NOT be export-ready");
-      assert.ok(
-        readiness.tenderLevelBlockers.some((b) => b.category === "CRITICAL_COMPLIANCE_GAPS"),
-        "tenderLevelBlockers must include the CRITICAL_COMPLIANCE_GAPS blocker",
-      );
+      assert.ok(readiness);
+      assert.equal(readiness.ok, false);
+      assert.ok(readiness.tenderLevelBlockers.some((blocker) => blocker.category === "CRITICAL_COMPLIANCE_GAPS"));
 
       await prisma.complianceGap.deleteMany({ where: { tenderId: tender.id } });
       await prisma.tender.delete({ where: { id: tender.id } });
@@ -139,8 +124,8 @@ dbDescribe("compliance-gap export parity — PostgreSQL behavioral", () => {
       const { getCanonicalTenderReadiness } = await import("../lib/canonical-tender-readiness");
       const canonical = await getCanonicalTenderReadiness(prisma, user.id, tender.id);
 
-      assert.ok(canonical, "canonical readiness must return a result");
-      assert.equal(canonical.readyForFinalExport, false, "tender with an unresolved CRITICAL compliance gap must NOT be readyForFinalExport");
+      assert.ok(canonical);
+      assert.equal(canonical.readyForFinalExport, false);
 
       await prisma.complianceGap.deleteMany({ where: { tenderId: tender.id } });
       await prisma.tender.delete({ where: { id: tender.id } });
@@ -151,15 +136,7 @@ dbDescribe("compliance-gap export parity — PostgreSQL behavioral", () => {
   });
 });
 
-// ─── NO_BID status — another contradiction found in the same recheck pass ──
-// The bid-decision route sets tender.status = "NO_BID" as a real reachable
-// value, but neither TENDER_STATUSES/TENDER_STATUS_LABELS nor the
-// StatusBadge color map had an entry for it, so it silently fell back to
-// the same plain grey used for a brand-new DRAFT tender — on the dashboard
-// and tenders-list pages a "decided not to bid" tender looked identical to
-// one nobody has touched yet.
-
-describe("NO_BID tender status — distinct label + color, not a silent DRAFT fallback", () => {
+describe("NO_BID tender status — distinct label and color", () => {
   it("TENDER_STATUSES includes NO_BID", () => {
     const src = read("lib/tender-workflow.ts");
     assert.match(src, /"NO_BID",\n\] as const;/);
@@ -170,31 +147,24 @@ describe("NO_BID tender status — distinct label + color, not a silent DRAFT fa
     assert.match(src, /NO_BID:\s*"No Bid",/);
   });
 
-  it("StatusBadge styles map has a NO_BID entry distinct from DRAFT's grey", () => {
+  it("StatusBadge styles NO_BID differently from DRAFT", () => {
     const src = read("components/status-badge.tsx");
-    assert.match(src, /NO_BID:\s*"[^"]+"/);
     const draftStyle = /DRAFT:\s*"([^"]+)"/.exec(src)?.[1];
     const noBidStyle = /NO_BID:\s*"([^"]+)"/.exec(src)?.[1];
-    assert.ok(draftStyle && noBidStyle && draftStyle !== noBidStyle, "NO_BID must not share DRAFT's style string");
+    assert.ok(draftStyle && noBidStyle && draftStyle !== noBidStyle);
   });
 });
 
-// ─── Real Playwright screenshot recheck findings ───────────────────────────
-// Found by taking actual rendered screenshots against a real local
-// production build + Postgres (owner-requested visual recheck), not just
-// source inspection. Full behavioral coverage lives in the DB/E2E-gated
-// tests below; these are fast source-inspection guards against regression.
-
-describe("canonical-readiness-state.ts — CANONICAL_STATUS_CONFIG icons are rendered SVG, not raw Unicode", () => {
+describe("canonical-readiness-state.ts — status icons are SVG components", () => {
   const src = read("lib/engine/canonical-readiness-state.ts");
 
-  it("no longer assigns raw Unicode glyphs to the icon field", () => {
+  it("does not assign raw Unicode glyphs to the icon field", () => {
     for (const glyph of ["✓", "⚠", "✗", "↻", "◑", "○"]) {
-      assert.ok(!src.includes(`icon: "${glyph}"`), `icon field must not be the raw glyph ${glyph}`);
+      assert.ok(!src.includes(`icon: "${glyph}"`));
     }
   });
 
-  it("uses createElement with real icon components instead", () => {
+  it("uses real icon components", () => {
     assert.match(src, /icon: createElement\(CheckIcon\)/);
     assert.match(src, /icon: createElement\(WarningIcon\)/);
     assert.match(src, /icon: createElement\(CrossIcon\)/);
@@ -204,54 +174,58 @@ describe("canonical-readiness-state.ts — CANONICAL_STATUS_CONFIG icons are ren
   });
 });
 
-describe("matching.ts — trust-level rationale text has no raw Unicode icon prefix", () => {
-  const src = read("lib/engine/matching.ts");
+describe("matching presentation removes legacy raw Unicode prefixes", () => {
+  const page = read("app/dashboard/matching/page.tsx");
+  const dashboard = read("app/dashboard/matching/matching-dashboard.tsx");
+  // presentMatchRationale lives in its own module, not exported from page.tsx —
+  // Next.js App Router page.tsx files may only export `default` and a small
+  // reserved set (generateMetadata, dynamic, ...); an arbitrary named function
+  // export fails the build ("is not a valid Page export field").
+  const rationaleHelper = read("app/dashboard/matching/present-match-rationale.ts");
 
-  it("trustLevelLabel returns plain text, not a glyph-prefixed string", () => {
-    assert.doesNotMatch(src, /return "✓ Reviewed"/);
-    assert.doesNotMatch(src, /return "⚠ AI draft/);
-    assert.doesNotMatch(src, /return "⚠ Regex draft/);
-    assert.match(src, /return "Reviewed"/);
+  it("sanitizes legacy stored rationales before rendering", () => {
+    assert.match(page, /import \{ presentMatchRationale \} from "\.\/present-match-rationale"/);
+    assert.match(rationaleHelper, /export function presentMatchRationale/);
+    assert.match(rationaleHelper, /replace\(\/\[✓✔☑⚠⚠️▲▼←→\]\/gu, ""\)/);
+    assert.match(page, /rationale: presentMatchRationale\(match\.rationale\)/);
   });
 
-  it("sort-priority detection matches the updated plain-text label", () => {
-    assert.doesNotMatch(src, /rationale\.includes\("✓ Reviewed"\)/);
-    assert.match(src, /rationale\.includes\("\[Reviewed\]"\)/);
+  it("page.tsx does not export presentMatchRationale itself (Next.js Page contract)", () => {
+    assert.ok(
+      !/^export function presentMatchRationale/m.test(page),
+      "page.tsx must not export arbitrary named functions — Next.js App Router rejects the build otherwise",
+    );
+  });
+
+  it("renders trust and selection states with icon components", () => {
+    assert.match(dashboard, /MatchingSelectedEvidencePanel/);
+    const canonical = read("components/matching-selected-evidence-panel.tsx");
+    assert.match(canonical, /WarningIcon/);
+    assert.match(canonical, /ChevronDownIcon/);
+    assert.doesNotMatch(canonical, /CheckIcon/);
+    assert.doesNotMatch(dashboard, /[✓⚠▲▼←→]/u);
   });
 });
 
-describe("ai-multi-perspective-matcher.ts — assessment rationale has no raw Unicode icon prefix", () => {
+describe("ai-multi-perspective-matcher rationale uses plain-text labels", () => {
   const src = read("lib/engine/ai-multi-perspective-matcher.ts");
-
-  it("strength/concern parts use plain-text labels, not glyph prefixes", () => {
-    assert.doesNotMatch(src, /parts\.push\(`✓ /);
-    assert.doesNotMatch(src, /parts\.push\(`⚠ /);
-    assert.match(src, /parts\.push\(`Strength: /);
-    assert.match(src, /parts\.push\(`Concern: /);
-  });
+  assert.doesNotMatch(src, /parts\.push\(`✓ /);
+  assert.doesNotMatch(src, /parts\.push\(`⚠ /);
+  assert.match(src, /parts\.push\(`Strength: /);
+  assert.match(src, /parts\.push\(`Concern: /);
 });
 
-describe("tender-intake-detail-panel.tsx — Detail value column has min-w-0 (mobile overflow fix)", () => {
-  it("flex-1 value div has min-w-0 and break-words so long unbreakable values (e.g. submission emails) cannot push the page past the viewport", () => {
+describe("mobile source-inspection guards", () => {
+  it("tender intake detail values cannot push past the viewport", () => {
     const src = read("app/dashboard/tenders/[id]/tender-intake-detail-panel.tsx");
     assert.match(src, /className=\{`min-w-0 flex-1 break-words text-sm/);
   });
-});
 
-describe("tender report page — every table has an overflow-x-auto wrapper (mobile overflow fix)", () => {
-  it("all 5 tables are wrapped so a wide table scrolls horizontally instead of pushing the whole page past the viewport", () => {
+  it("every report table has an overflow-x-auto wrapper", () => {
     const src = read("app/dashboard/tenders/[id]/report/page.tsx");
     const tableCount = (src.match(/<table className="w-full text-sm border-collapse">/g) ?? []).length;
     const wrapperCount = (src.match(/<div className="overflow-x-auto">/g) ?? []).length;
-    assert.equal(tableCount, 5, "expected exactly 5 tables on the report page (regression guard if tables are added/removed)");
-    assert.equal(wrapperCount, tableCount, "every table must have a matching overflow-x-auto wrapper");
-  });
-});
-
-describe("empty-state.tsx — icon prop accepts a rendered element, not a raw emoji string", () => {
-  it("icon prop is typed ReactNode and the JSDoc example no longer uses a raw emoji", () => {
-    const src = read("components/empty-state.tsx");
-    assert.match(src, /icon\?:\s*ReactNode/);
-    assert.doesNotMatch(src, /icon="📋"/);
+    assert.equal(tableCount, 5);
+    assert.equal(wrapperCount, tableCount);
   });
 });

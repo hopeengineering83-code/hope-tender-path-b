@@ -6,89 +6,68 @@ import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync, existsSync } from "node:fs";
 
-const read = (p: string) => readFileSync(p, "utf8");
+const read = (path: string) => readFileSync(path, "utf8");
+const migrationPath = "prisma/migrations/20260704000000_add_unique_constraints_and_content_hash/migration.sql";
 
-describe("round 13 — schema unique constraints", () => {
+describe("round 13 — schema and migration-managed unique constraints", () => {
   const schema = read("prisma/schema.prisma");
+  const sql = read(migrationPath);
 
-  it("ProposalVersion has @@unique([tenderId, version])", () => {
-    assert.ok(
-      schema.includes('@@unique([tenderId, version]) // Prevents duplicate version numbers'),
-      "ProposalVersion must have @@unique([tenderId, version]) — prevents duplicate version numbers",
-    );
+  it("ProposalVersion has a Prisma-expressible tender/version unique constraint", () => {
+    assert.ok(schema.includes("@@unique([tenderId, version]) // Prevents duplicate version numbers"));
   });
 
-  it("GeneratedDocument has @@index([tenderId, exactFileName]) (partial unique via migration)", () => {
-    // The full @@unique was replaced with a PARTIAL unique index (via migration
-    // 20260705000000) that only applies to non-SUPERSEDED rows. The schema
-    // uses @@index because Prisma doesn't support partial unique indexes in
-    // the schema language — the actual unique constraint is in the migration SQL.
-    assert.ok(
-      schema.includes("@@index([tenderId, exactFileName])"),
-      "GeneratedDocument must have @@index([tenderId, exactFileName]) (partial unique via migration)",
-    );
-    assert.ok(
-      !schema.includes("@@unique([tenderId, exactFileName])"),
-      "full @@unique must be removed (replaced by partial unique index in migration)",
-    );
+  it("GeneratedDocument documents and migrates its partial unique filename authority", () => {
+    assert.match(schema, /Partial unique index on \(tenderId, exactFileName\)[\s\S]*migration-managed because Prisma cannot express the WHERE clause/);
+    assert.doesNotMatch(schema, /@@unique\(\[tenderId, exactFileName\]\)/);
+    assert.match(sql, /CREATE UNIQUE INDEX "GeneratedDocument_tenderId_exactFileName_key"/);
+    assert.match(sql, /ON "GeneratedDocument"\("tenderId", "exactFileName"\)/);
+    assert.match(sql, /WHERE "exactFileName" IS NOT NULL/);
   });
 
-  it("TenderFile has contentHash column + @@unique([tenderId, contentHash])", () => {
-    assert.ok(
-      schema.includes('contentHash      String?'),
-      "TenderFile must have contentHash column",
-    );
-    assert.ok(
-      schema.includes("@@unique([tenderId, contentHash])"),
-      "TenderFile must have @@unique([tenderId, contentHash]) — prevents duplicate uploads",
-    );
+  it("TenderFile declares contentHash and documents its partial unique migration authority", () => {
+    assert.match(schema, /contentHash\s+String\?/);
+    assert.match(schema, /Partial unique index on \(tenderId, contentHash\)[\s\S]*migration-managed so[\s\S]*NULL legacy hashes remain compatible/);
+    assert.doesNotMatch(schema, /@@unique\(\[tenderId, contentHash\]\)/);
+    assert.match(sql, /CREATE UNIQUE INDEX "TenderFile_tenderId_contentHash_key"/);
+    assert.match(sql, /WHERE "contentHash" IS NOT NULL AND "contentHash" != ''/);
   });
 });
 
 describe("round 13 — migration file", () => {
-  it("migration file exists with dedup + unique index SQL", () => {
-    const migrationPath = "prisma/migrations/20260704000000_add_unique_constraints_and_content_hash/migration.sql";
-    assert.ok(existsSync(migrationPath), "migration file must exist");
+  it("exists with dedup and partial unique-index SQL", () => {
+    assert.ok(existsSync(migrationPath));
     const sql = read(migrationPath);
-    // ProposalVersion dedup + unique
-    assert.ok(sql.includes("ProposalVersion_tenderId_version_key"), "must create ProposalVersion unique index");
-    assert.ok(sql.includes('DISTINCT ON ("tenderId", "version")'), "must dedup ProposalVersion before adding constraint");
-    // GeneratedDocument dedup + unique (partial index for non-null exactFileName)
-    assert.ok(sql.includes("GeneratedDocument_tenderId_exactFileName_key"), "must create GeneratedDocument unique index");
-    assert.ok(sql.includes('WHERE "exactFileName" IS NOT NULL'), "must use partial index for non-null exactFileName");
-    // TenderFile contentHash + dedup + unique
-    assert.ok(sql.includes('ADD COLUMN "contentHash"'), "must add contentHash column");
-    assert.ok(sql.includes("TenderFile_tenderId_contentHash_key"), "must create TenderFile unique index");
-    assert.ok(sql.includes("md5(COALESCE"), "must backfill contentHash with md5");
+    assert.ok(sql.includes("ProposalVersion_tenderId_version_key"));
+    assert.ok(sql.includes('DISTINCT ON ("tenderId", "version")'));
+    assert.ok(sql.includes("GeneratedDocument_tenderId_exactFileName_key"));
+    assert.ok(sql.includes('WHERE "exactFileName" IS NOT NULL'));
+    assert.ok(sql.includes('ADD COLUMN "contentHash"'));
+    assert.ok(sql.includes("TenderFile_tenderId_contentHash_key"));
+    assert.ok(sql.includes("md5(COALESCE"));
+    assert.ok(sql.includes('WHERE "contentHash" IS NOT NULL AND "contentHash" != \'\''));
   });
 });
 
 describe("round 13 — contentHash computation in upload", () => {
-  const src = read("lib/tender-upload-first.ts");
+  const source = read("lib/tender-upload-first.ts");
 
-  it("computes contentHash at upload time", () => {
-    assert.ok(
-      src.includes('crypto.createHash("md5")'),
-      "must compute md5 contentHash at upload time",
-    );
-    assert.ok(
-      src.includes("contentHash,"),
-      "must store contentHash in the TenderFile create",
-    );
+  it("computes contentHash from the actual-byte SHA-256 integrity digest at upload time", () => {
+    assert.ok(source.includes("upload.integrity.contentSha256"));
+    assert.ok(source.includes("contentHash,"));
   });
 });
 
-describe("round 13 — T6: export route tender status in transaction", () => {
-  const src = read("app/api/tenders/[id]/export/route.ts");
+describe("round 13 — T6: live Final ZIP lifecycle state is transaction-bound", () => {
+  const download = read("app/api/tenders/[id]/download/route.ts");
+  const persistence = read("lib/engine/export-package-persistence.ts");
 
-  it("wraps tender status update in a transaction (not bare update)", () => {
-    // The old pattern was a bare prisma.tender.update OUTSIDE the export
-    // package transaction. Now it's in its own $transaction.
-    assert.ok(
-      src.includes("prisma.$transaction(async (tx) => {") &&
-      src.includes("tx.tender.update"),
-      "must use $transaction with tx.tender.update (was bare prisma.tender.update outside tx)",
-    );
+  it("the live route delegates verified ZIP persistence to one transaction owner", () => {
+    assert.match(download, /persistVerifiedExportPackageDownload/);
+    assert.match(persistence, /prisma\.\$transaction\(async \(tx\) => \{/);
+    assert.match(persistence, /tx\.exportPackage\.(?:create|update)/);
+    assert.match(persistence, /tx\.tender\.update/);
+    assert.match(persistence, /status:\s*"EXPORTED",\s*stage:\s*"EXPORT"/);
   });
 });
 
@@ -98,18 +77,9 @@ describe("round 13 — O4: company doc delete preserves REVIEWED provenance", ()
   const detail = read("app/api/company/documents/[id]/route.ts");
 
   it("counts REVIEWED dependencies and blocks instead of orphaning them", () => {
-    assert.ok(
-      service.includes("reviewedExperts") && service.includes("reviewedProjects"),
-      "must count reviewed expert and project dependencies before deletion",
-    );
-    assert.ok(
-      service.includes('trustLevel: "REVIEWED"'),
-      "must filter source dependencies by REVIEWED trust level",
-    );
-    assert.ok(
-      service.includes('code: "REVIEWED_PROVENANCE_DEPENDENCY"'),
-      "must return a fail-closed provenance blocker",
-    );
+    assert.ok(service.includes("reviewedExperts") && service.includes("reviewedProjects"));
+    assert.ok(service.includes('trustLevel: "REVIEWED"'));
+    assert.ok(service.includes('code: "REVIEWED_PROVENANCE_DEPENDENCY"'));
   });
 
   it("uses the same durable deletion service from both routes", () => {

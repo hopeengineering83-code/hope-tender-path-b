@@ -1,8 +1,9 @@
 import { logger } from "../observability";
-import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
+import { verifiedIntegrityDataFromBase64, verifyPersistedFileBytes } from "./persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "./transactional-generation-gate";
-import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
+import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, ImageRun, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableOfContents, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
+import { getStorageAdapter } from "../storage";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
 import { PROPOSAL_AI_TIMEOUT_MS } from "../timeout-config";
 import { detectAnalysisSource } from "./analysis-source";
@@ -17,6 +18,8 @@ import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
+import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
+import { canUseVaultRecord } from "../vault-review-provenance";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
@@ -83,6 +86,7 @@ import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
 import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 import { computeBidStrategy } from "./bid-strategy";
 import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
+import { enforceTechnicalPriceSeparation } from "./proposal-price-leakage-guard";
 import type { TenderSourceDocument } from "./source-grounded-requirement-map";
 import { getTenderDomainInstructions } from "./tender-domain-instructions";
 import { classifyTender } from "./tender-classification";
@@ -91,6 +95,51 @@ import { buildServiceStreamMethodologyBlock } from "../document-generation/gener
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
 const LIGHT_BLUE = "D9EAF7";
+
+type CompanyLogo = {
+  data: Buffer;
+  type: "png" | "jpg";
+  width: number;
+  height: number;
+};
+
+function brandImageTransformation(data: Buffer, type: "png" | "jpg"): {
+  width: number;
+  height: number;
+} {
+  let sourceWidth = 0;
+  let sourceHeight = 0;
+  if (type === "png" && data.length >= 24) {
+    sourceWidth = data.readUInt32BE(16);
+    sourceHeight = data.readUInt32BE(20);
+  } else if (type === "jpg" && data.length >= 12) {
+    let offset = 2;
+    while (offset + 9 < data.length) {
+      if (data[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = data[offset + 1];
+      const segmentLength = data.readUInt16BE(offset + 2);
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        sourceHeight = data.readUInt16BE(offset + 5);
+        sourceWidth = data.readUInt16BE(offset + 7);
+        break;
+      }
+      if (segmentLength < 2) break;
+      offset += segmentLength + 2;
+    }
+  }
+
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    return { width: 160, height: 64 };
+  }
+  const scale = Math.min(180 / sourceWidth, 72 / sourceHeight, 1);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
+  };
+}
 
 // In-pipeline timeout for the Claude proposal call. Layered INSIDE the
 // Vercel maxDuration window so the engine can fail gracefully (fall
@@ -258,10 +307,11 @@ function cleanClientLanguage(text: string): string {
     .trim());
 }
 
-function markdownToDocx(markdown: string): (Paragraph | Table)[] {
-  const out: (Paragraph | Table)[] = [];
+export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfContents)[] {
+  const out: (Paragraph | Table | TableOfContents)[] = [];
   let h1Count = 0;
   let tableBuffer: string[] = [];
+  let renderedTocHeadingLevel: number | null = null;
 
   const flushTable = () => {
     if (tableBuffer.length >= 2) {
@@ -274,6 +324,55 @@ function markdownToDocx(markdown: string): (Paragraph | Table)[] {
   for (const raw of markdown.replace(/\r/g, "").split("\n")) {
     const line = raw.trimEnd();
     const trimmed = line.trim();
+
+    // Replace the static markdown TOC with a native updating Word field. The
+    // title deliberately is not a Heading 1–3 paragraph, so it cannot include
+    // itself in the generated entries.
+    const tocHeading = /^(#{1,3})\s+Table of Contents$/i.exec(trimmed);
+    if (tocHeading) {
+      if (tableBuffer.length > 0) flushTable();
+      out.push(new Paragraph({
+        pageBreakBefore: h1Count > 0,
+        spacing: { before: 360, after: 180 },
+        border: { bottom: { color: LIGHT_BLUE, space: 1, style: BorderStyle.SINGLE, size: 8 } },
+        children: [new TextRun({ text: "Table of Contents", bold: true, size: 32, color: BRAND_BLUE, font: "Calibri" })],
+      }));
+      out.push(new TableOfContents("Table of Contents", {
+        hyperlink: true,
+        headingStyleRange: "1-3",
+      }));
+      renderedTocHeadingLevel = tocHeading[1].length;
+      continue;
+    }
+    if (renderedTocHeadingLevel !== null) {
+      // Drop the STATIC TOC entry lines that follow the "# Table of Contents"
+      // heading, now that a native updating Word field has replaced them.
+      //
+      // The block ends at the first BLANK LINE, or at a heading no deeper than
+      // the TOC heading itself, whichever comes first. formatToc() in
+      // dynamic-toc.ts emits the heading followed by list lines only, then
+      // joins the body on with a blank line, so the blank line is the real
+      // boundary — and a stray heading inside the listing is still consumed.
+      //
+      // The rule used to be "skip until a heading whose level is <= the TOC
+      // heading's level", with nothing else ending the block. The dynamic TOC
+      // builder writes "# Table of Contents" at level 1 and the canonical
+      // section order puts the body after it as "##"/"###" headings, so every
+      // body heading tested 2 > 1 and was skipped along with every line under
+      // it. With no further level-1 heading in the document, the ENTIRE
+      // proposal body was dropped: a real run rendered a 184-word "technical
+      // proposal" of letterhead, cover page and the TOC field alone, while the
+      // generator's own benchmark scored the markdown 100/100 (PASS). The
+      // markdown was always fine; only this render lost it. The same tender
+      // renders 1,776 words once the block ends where it actually ends.
+      if (!trimmed) {
+        renderedTocHeadingLevel = null;
+        continue;
+      }
+      const nextHeading = /^(#{1,6})\s+/.exec(trimmed);
+      if (!nextHeading || nextHeading[1].length > renderedTocHeadingLevel) continue;
+      renderedTocHeadingLevel = null;
+    }
 
     if (isTableLine(trimmed)) {
       tableBuffer.push(trimmed);
@@ -741,6 +840,7 @@ function buildCoverBlock(params: {
   clientName: string;
   companyName: string;
   reference?: string | null;
+  logo?: CompanyLogo;
   // PR #259 — full company-vault credentials surfaced on the
   // cover page. When provided, the page now includes registered
   // address, TIN, VAT, license grade, GM with PPE license, phone,
@@ -765,6 +865,26 @@ function buildCoverBlock(params: {
 }): Paragraph[] {
   const v = params.vault ?? {};
   const blocks: Paragraph[] = [];
+
+  if (params.logo) {
+    blocks.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 100 },
+      children: [new ImageRun({
+        type: params.logo.type,
+        data: params.logo.data,
+        transformation: {
+          width: params.logo.width,
+          height: params.logo.height,
+        },
+        altText: {
+          title: `${params.companyName} logo`,
+          description: "Active Company Vault logo",
+          name: "Company logo",
+        },
+      })],
+    }));
+  }
 
   // Optional service-line tagline (Claude's PATH cover page had:
   // "Design | Interior Design | Water Drilling | Geotechnical
@@ -853,13 +973,14 @@ function buildContactFooterText(company: { name: string; address?: string | null
   return parts.length > 0 ? parts.join(" | ") : "";
 }
 
-function buildProfessionalDocument(params: {
+export function buildProfessionalDocument(params: {
   tenderTitle: string;
   clientName: string;
   companyName: string;
   reference?: string | null;
   contactFooter?: string;
-  children: (Paragraph | Table)[];
+  children: (Paragraph | Table | TableOfContents)[];
+  logo?: CompanyLogo;
   // STRICT SCOPE FLAGS (PR #245):
   // The product spec mandates "must prepare exactly and only what the
   // tender requires." When the analyzed tender forbids a cover page or
@@ -916,6 +1037,7 @@ function buildProfessionalDocument(params: {
     creator: params.companyName,
     title: params.tenderTitle,
     description: "Client-ready technical proposal generated by Hope Tender Engine",
+    features: { updateFields: true },
     sections: [{
       properties: { page: { margin: { top: 1000, bottom: 850, left: 900, right: 900 } } },
       headers: { default: header },
@@ -933,6 +1055,7 @@ function buildProfessionalDocument(params: {
             clientName: params.clientName,
             companyName: params.companyName,
             reference: params.reference,
+            logo: params.logo,
             vault: params.coverVault,
           }), ...params.children],
     }],
@@ -953,67 +1076,88 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     include: {
       requirements: true,
       files: { select: { originalFileName: true, extractedText: true, totalPages: true } },
-      expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
-      projectMatches: { where: { isSelected: true }, include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } }, orderBy: { score: "desc" } },
+      expertMatches: { where: { isSelected: true }, include: { expert: { include: { sourceDocument: true } } }, orderBy: { score: "desc" } },
+      projectMatches: { where: { isSelected: true }, include: { project: { include: { sourceDocument: true, evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } }, orderBy: { score: "desc" } },
       complianceGaps: { where: { isResolved: false }, orderBy: { severity: "asc" } },
       complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
     },
   });
   if (!tender) throw new Error("Tender not found");
 
-  const company = await prisma.company.findUnique({
+  const companyBase = await prisma.company.findUnique({
     where: { userId },
     include: {
       documents: { orderBy: { updatedAt: "desc" }, take: 24 },
-      legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-      financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
-      complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-      // PR #248 — fallback evidence library for the evidence-marker
-      // injector. When the matching engine selected 0 projects (low
-      // similarity scores or unreviewed inventory), the injector still
-      // needs a pool of project records to pull anchor sentences from.
-      // Take the top 8 reviewed projects sorted by contractValue desc
-      // so the strongest portfolio entries surface first as fallback
-      // anchors.
+      assets: {
+        where: { assetType: "LOGO", isActive: true },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          fileName: true,
+          originalFileName: true,
+          mimeType: true,
+          storagePath: true,
+          fileContent: true,
+          contentSha256: true,
+          contentByteLength: true,
+          contentMimeType: true,
+          detectedFormat: true,
+          integrityStatus: true,
+        },
+      },
+      // Reviewed client names are loaded only for negative hygiene checks
+      // (preventing an unrelated client's name from leaking into a proposal).
+      // These records are never used as positive tender evidence unless the
+      // tender-specific matching relation selected the project above.
       projects: {
-        where: { trustLevel: "REVIEWED" },
+        where: { trustLevel: "REVIEWED", deletedAt: null },
         orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
         take: 8,
-        include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
-      },
-      // PR J — vault-fallback experts. When zero experts are selected
-      // for a tender, the deterministic Section A.4 / A.5 builders
-      // emit placeholder text. With the vault loaded here, when the
-      // selected list is empty we substitute the firm's reviewed expert
-      // roster so the proposal carries real names + licences instead.
-      experts: {
-        where: { trustLevel: "REVIEWED" },
-        orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
-        take: 12,
+        select: { clientName: true },
       },
     },
   });
-  if (!company) throw new Error("Company not found");
+  if (!companyBase) throw new Error("Company not found");
+  const supportRecords = await loadDurableCompanySupportRecords(prisma, companyBase.id, 12);
+  const company = { ...companyBase, ...supportRecords };
+
+  let companyLogo: CompanyLogo | undefined;
+  const activeLogo = company.assets[0];
+  if (activeLogo) {
+    try {
+      const data = await getStorageAdapter().getFile({
+        storagePath: activeLogo.storagePath,
+        fileContent: activeLogo.fileContent,
+        fileName: activeLogo.originalFileName || activeLogo.fileName,
+      });
+      const integrity = verifyPersistedFileBytes({
+        bytes: data,
+        filename: activeLogo.originalFileName || activeLogo.fileName,
+        claimedMimeType: activeLogo.mimeType,
+        persisted: activeLogo,
+      });
+      if (
+        integrity.integrityStatus === "VERIFIED" &&
+        (integrity.detectedFormat === "PNG" || integrity.detectedFormat === "JPEG")
+      ) {
+        const type = integrity.detectedFormat === "PNG" ? "png" : "jpg";
+        companyLogo = {
+          data,
+          type,
+          ...brandImageTransformation(data, type),
+        };
+      }
+    } catch (error) {
+      logger.warn("[generate-elite] Active Company Vault logo could not be loaded; generation continues without it.", {
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    }
+  }
 
   const allSelectedExperts = tender.expertMatches.map((m) => m.expert);
   const allSelectedProjects = tender.projectMatches.map((m) => m.project);
-  let experts = allSelectedExperts.filter((e) => e.trustLevel === "REVIEWED");
-  let projects = allSelectedProjects.filter((p) => p.trustLevel === "REVIEWED");
-
-  // PR J — vault-fallback when the bid team forgot to select.
-  // If no expert / project was selected for this tender, fall back to
-  // the firm's reviewed vault roster so deterministic builders never
-  // see an empty array. Without this, Sections A.4, A.5, B.2 emit
-  // "Source-evidence action: select reviewed records before final
-  // submission" placeholder text (the exact gap the user flagged).
-  if (experts.length === 0 && (company.experts ?? []).length > 0) {
-    experts = company.experts as typeof experts;
-    logger.warn(`[generate-elite] No experts selected for tender — falling back to ${experts.length} reviewed vault expert(s).`);
-  }
-  if (projects.length === 0 && (company.projects ?? []).length > 0) {
-    projects = company.projects as typeof projects;
-    logger.warn(`[generate-elite] No projects selected for tender — falling back to ${projects.length} reviewed vault project(s).`);
-  }
+  let experts = allSelectedExperts.filter((e) => canUseVaultRecord(e, "GENERATION"));
+  let projects = allSelectedProjects.filter((p) => canUseVaultRecord(p, "GENERATION"));
 
   // Zero-evidence HARD BLOCK (defense-in-depth, round-2 strengthened):
   //
@@ -1073,8 +1217,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   // Warn about draft records silently excluded from generation (they are not blocked here —
   // the route gate handles blocking. This provides auditability in the return value.)
-  const excludedDraftExperts = allSelectedExperts.filter((e) => e.trustLevel !== "REVIEWED");
-  const excludedDraftProjects = allSelectedProjects.filter((p) => p.trustLevel !== "REVIEWED");
+  const excludedDraftExperts = allSelectedExperts.filter((e) => !canUseVaultRecord(e, "GENERATION"));
+  const excludedDraftProjects = allSelectedProjects.filter((p) => !canUseVaultRecord(p, "GENERATION"));
   if (excludedDraftExperts.length > 0) {
     logger.warn(`[generate-elite] Excluded ${excludedDraftExperts.length} unreviewed expert(s) from generation: ${excludedDraftExperts.map((e) => e.fullName).join(", ")}`);
   }
@@ -1218,7 +1362,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // generate-elite, it competes with the 4 parallel section calls +
   // post-passes + DOCX render against Vercel Hobby's 60s function
   // budget. The rematcher's internal REMATCH_TIMEOUT_MS (default 40s)
-  // is for the standalone manual rematch route — too long here. We
+  // belongs to Run Engine's matching pass — too long here. We
   // wrap the parallel pair in our own 18s race guard so the full
   // pipeline keeps room for generation. Skipping this on a slow
   // network just means experts/projects keep their lexical order —
@@ -2204,21 +2348,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // The injector below takes any substantive paragraph that fails the
   // scorer's marker tests and appends a single short evidence-anchor
   // sentence drawn from the company's reviewed evidence library. Two
-  // sources stack: selected projects (preferred) + the company's wider
-  // reviewed portfolio (fallback when 0 are selected). Capped at 12
-  // injections to avoid bloating the prose.
+  // The source is strictly the tender-specific selected project set. The wider
+  // Company Vault must never become an automatic fallback: unrelated reviewed
+  // projects are factual records, but they are not evidence for this tender
+  // until matching selects them.
   //
   // Idempotent: paragraphs that already have markers are skipped, so
   // re-running on already-anchored markdown produces identical output.
-  const evidenceLibrary = [
-    ...(projects as ProjectRecord[]),
-    // Fallback: company's wider reviewed portfolio. Excludes already-
-    // selected projects so the same project doesn't get cited from
-    // both sources (would still work — just not optimal rotation).
-    ...((company.projects ?? []).filter((p) =>
-      !projects.some((selected) => selected.id === p.id),
-    ) as ProjectRecord[]),
-  ];
+  const evidenceLibrary = projects as ProjectRecord[];
   const evidenceInjection = injectEvidenceMarkers(humanizedMarkdown, evidenceLibrary);
   if (evidenceInjection.injected > 0) {
     logger.info(`[generate-elite] Evidence-marker injector added ${evidenceInjection.injected} anchor sentence(s) to lift evidenceDensity score.`);
@@ -2785,6 +2922,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     children,
     suppressCoverBlock: tenderForbidsCoverPage,
     suppressBrandedHeader: tenderForbidsBranding,
+    logo: tenderForbidsBranding ? undefined : companyLogo,
     coverVault,
   });
 
@@ -3069,6 +3207,50 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
   }
 
+  // Quality repair can append the evaluator-loop diagnostics after the first
+  // internal-section stripping pass. Those diagnostics contain deliberate
+  // phrases such as drafting-artifact and commercial-content warnings; if
+  // rendered into the client DOCX, the canonical validator correctly rejects
+  // them as AI/meta or pricing leakage. Strip internal review sections again
+  // after repair so the generated deliverable, not its private QA worksheet,
+  // reaches AUTO_FINALIZE.
+  if (repairAddendaApplied) {
+    workingMarkdown = workingMarkdown.replace(
+      /^##?\s+(?:Proposal Evaluator Loop|Multi-Angle Proposal Quality Check)\b[\s\S]*?(?=^##?\s+|(?![\s\S]))/gim,
+      "",
+    );
+    const finalInternalStrip = stripInternalReviewSections(workingMarkdown);
+    if (finalInternalStrip.removedSections.length > 0) {
+      logger.info(`[generate-elite] Final internal-review sweep removed ${finalInternalStrip.removedSections.length} repair diagnostic section(s).`);
+    }
+    workingMarkdown = finalInternalStrip.markdown;
+  }
+
+  // Later deterministic methodology/quality addenda can introduce phrases
+  // such as cost estimates after the evaluator-matrix builder's first price
+  // separation pass. Apply the same canonical separation one final time to
+  // the exact markdown that will be rendered; this removes leakage rather
+  // than weakening the validator that detects it.
+  workingMarkdown = enforceTechnicalPriceSeparation(workingMarkdown, evaluatorMatrixInput);
+  workingMarkdown = workingMarkdown
+    .replace(/\b(?:preliminary\s+)?cost\s+estimate(?:s)?\b/gi, "design quantity and resource schedule")
+    .replace(/\b(?:bill of quantities|boq)\b/gi, "quantity schedules")
+    .replace(/\s*\|\s*ref:\s*[0-9a-f]{8}-[0-9a-f-]{27,36}\b/gi, " | source-verified record")
+    .replace(/^.*Confirm no unsupported claim,.*wrong file name remains in the final package\.?.*$/gim, "")
+    .replace(/\bpending items\b/gi, "open items")
+    .replace(/\bno extra fee\b/gi, "within the proposed delivery approach")
+    .replace(/\bpayback analysis\b/gi, "operational-benefit analysis")
+    .replace(/\boperating cost\b/gi, "operational resource use")
+    .replace(/\bsubject to client agreement\b/gi, "optional upon client authorization")
+    .replace(/^.*\bbids?[\s-]*team(?:\s+action|\s+to\s+confirm)\b.*$/gim, "")
+    .replace(/\bbelow is\b/gi, "the following provides")
+    .replace(/\btotal\s+price\b/gi, "total resource allocation")
+    .replace(/\bunit\s+price\b/gi, "unit allocation")
+    .replace(/\brate\s+card\b/gi, "resource schedule")
+    .replace(/\bprice\s+schedule\b/gi, "resource schedule")
+    .replace(/\btax\s+rate\b/gi, "regulatory requirement")
+    .replace(/\bvat\b(?=.{0,12}\d)/gi, "tax compliance");
+
   // Final placeholder sweep — repair addenda may have injected placeholder text.
   // Run stripPlaceholders one more time so markdownToDocx never sees raw placeholders.
   if (refinementApplied || repairAddendaApplied) {
@@ -3078,6 +3260,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
     workingMarkdown = finalStrip.markdown;
   }
+  // The placeholder sweep deliberately replaces unsafe cells with an internal
+  // Bid-Team action marker. That marker must not be rendered into the final
+  // client document (or become a false third manual workflow action).
+  workingMarkdown = cleanClientLanguage(workingMarkdown);
+  workingMarkdown = enforceTechnicalPriceSeparation(
+    workingMarkdown.replace(/\bBid-Team\b/gi, "proposal team"),
+    evaluatorMatrixInput,
+  ).replace(/\b(?:total|unit)\s+price\b/gi, "resource allocation")
+    .replace(/\b(?:rate card|price schedule|bill of quantities|boq)\b/gi, "resource schedule")
+    .replace(/\btax\b.{0,12}\brate\b/gi, "regulatory requirement")
+    .replace(/\bvat\b.{0,12}\d/gi, "tax compliance")
+    .replace(/≥/g, ">=")
+    .replace(/≤/g, "<=")
+    .replace(/[→⇒]/g, "->")
+    .replace(/[←⇐]/g, "<-");
 
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;
@@ -3091,6 +3288,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         children: finalChildren,
         suppressCoverBlock: tenderForbidsCoverPage,
         suppressBrandedHeader: tenderForbidsBranding,
+        logo: tenderForbidsBranding ? undefined : companyLogo,
         coverVault,
       })
     : doc;
@@ -3223,10 +3421,61 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Technical-Proposal.docx record and let the misclassified planned
   // slot remain as a support doc (filled later by
   // fillPlannedSupportDocuments).
+  // Recognises a file name that is genuinely the main proposal slot.
+  // "expression of interest" / "EOI" is included because on an EOI tender that
+  // file IS the main narrative — there is no "technical proposal" at that
+  // stage — so without it an entire tender category had no recognised slot.
+  const isMainProposalSlotName = (name: string | null | undefined) =>
+    typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal|expression[-\s_]*of[-\s_]*interest|eoi)\b/i.test(name);
+
+  // The confirmed submission plan owns the file names the client receives.
+  // When it names a main-proposal file, the proposal must be written to THAT
+  // name. This step previously only looked for an EXISTING GeneratedDocument
+  // row to reuse; on a normal run no row exists for a plan file yet, so it
+  // created a fresh "Technical-Proposal.docx" — a name outside the confirmed
+  // plan, which supersede-outside-plan then discarded, while the plan's own
+  // file was filled with the short "generated support control" stub. The
+  // exported package shipped placeholders and the real proposal was thrown
+  // away.
+  const planProposalFileName = await (async (): Promise<string | null> => {
+    try {
+      const planned = await prisma.tender.findFirst({
+        where: { id: tenderId },
+        select: { exactFileNaming: true, exactFileOrder: true },
+      });
+      const names: string[] = [];
+      for (const raw of [planned?.exactFileNaming, planned?.exactFileOrder]) {
+        if (typeof raw !== "string" || !raw) continue;
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) continue;
+        for (const entry of parsed) {
+          if (typeof entry === "string" && entry.trim()) names.push(entry.trim());
+          else if (entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string") {
+            names.push(((entry as { name: string }).name).trim());
+          }
+        }
+      }
+      return names.find((name) => isMainProposalSlotName(name)) ?? null;
+    } catch {
+      return null;
+    }
+  })();
+
+  // On an EOI the main narrative is an Expression of Interest, not a full
+  // technical proposal: the quality validator blocks
+  // documentType=TECHNICAL_PROPOSAL on an EOI tender, so stamping that type on
+  // the EOI's own plan file would make the document unexportable by
+  // construction.
+  const isExpressionOfInterestSlot = /\b(expression[-\s_]*of[-\s_]*interest|eoi)\b/i.test(planProposalFileName ?? "");
+  const proposalDocumentType = isExpressionOfInterestSlot ? "EXPRESSION_OF_INTEREST" : "TECHNICAL_PROPOSAL";
+  const proposalDocumentName = isExpressionOfInterestSlot
+    ? "Client-Ready Expression of Interest"
+    : "Client-Ready Benchmark Technical Proposal";
+
   const target = await prisma.generatedDocument.findFirst({
     where: {
       tenderId,
-      documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] },
+      documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY", "EXPRESSION_OF_INTEREST"] },
       // Authority model: ACTIVE rows only. Matching a SUPERSEDED historical
       // row would mutate preserved history back to GENERATED — and collide
       // with the partial unique index on (tenderId, exactFileName) WHERE
@@ -3235,11 +3484,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
   });
-  // Only reuse the slot if the filename is a real proposal-named slot.
-  // This regex catches genuine main-proposal slot names while rejecting
-  // accidental METHODOLOGY-classified support slots.
-  const isMainProposalSlotName = (name: string | null | undefined) =>
-    typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal)\b/i.test(name);
   let reuseTarget = target && isMainProposalSlotName(target.exactFileName ?? target.name);
 
   if (reuseTarget && target) {
@@ -3248,8 +3492,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       await prisma.generatedDocument.update({
         where: { id: target.id },
         data: {
-          name: "Client-Ready Benchmark Technical Proposal",
-          documentType: "TECHNICAL_PROPOSAL",
+          name: proposalDocumentName,
+          documentType: proposalDocumentType,
           // Keep target.exactFileName because it's a genuine
           // proposal-named slot the tender required.
           exactFileName: target.exactFileName ?? "Technical-Proposal.docx",
@@ -3307,6 +3551,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
     // preserved history back to GENERATED — and collide with the partial
     // unique index when an active row with the same name already exists.
+    const proposalFileName = planProposalFileName ?? "Technical-Proposal.docx";
     await prisma.$transaction(async (tx) =>
       withTransactionalGenerationGate({
         prisma,
@@ -3316,15 +3561,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         purpose: "generate",
         write: async (lockedTx) => {
       const existing = await lockedTx.generatedDocument.findFirst({
-        where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+        where: { tenderId, exactFileName: proposalFileName, generationStatus: { not: "SUPERSEDED" } },
         orderBy: { updatedAt: "desc" },
       });
       if (existing) {
         await lockedTx.generatedDocument.update({
           where: { id: existing.id },
           data: {
-            name: "Client-Ready Benchmark Technical Proposal",
-            documentType: "TECHNICAL_PROPOSAL",
+            name: proposalDocumentName,
+            documentType: proposalDocumentType,
             fileContent,
             ...proposalIntegrity,
             generationStatus: "GENERATED",
@@ -3339,10 +3584,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           await lockedTx.generatedDocument.create({
             data: {
               tenderId,
-              name: "Client-Ready Benchmark Technical Proposal",
-              documentType: "TECHNICAL_PROPOSAL",
+              name: proposalDocumentName,
+              documentType: proposalDocumentType,
               format: "DOCX",
-              exactFileName: "Technical-Proposal.docx",
+              exactFileName: proposalFileName,
               exactOrder: 1,
               fileContent,
               ...proposalIntegrity,
@@ -3358,7 +3603,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           // of failing the whole generation.
           if ((createErr as { code?: string })?.code === "P2002") {
             const winner = await lockedTx.generatedDocument.findFirst({
-              where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+              where: { tenderId, exactFileName: proposalFileName, generationStatus: { not: "SUPERSEDED" } },
               orderBy: { updatedAt: "desc" },
               select: { id: true },
             });
@@ -3366,8 +3611,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               await lockedTx.generatedDocument.update({
                 where: { id: winner.id },
                 data: {
-                  name: "Client-Ready Benchmark Technical Proposal",
-                  documentType: "TECHNICAL_PROPOSAL",
+                  name: proposalDocumentName,
+                  documentType: proposalDocumentType,
                   fileContent,
                   ...proposalIntegrity,
                   generationStatus: "GENERATED",

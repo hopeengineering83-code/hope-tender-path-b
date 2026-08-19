@@ -16,7 +16,7 @@
 
 import { createElement, type ReactNode } from "react";
 import type { TenderReadinessState } from "../tender-readiness-state";
-import { CheckIcon, WarningIcon, CrossIcon, RefreshIcon, AlertCircleIcon, CircleIcon } from "../../components/icons";
+import { CheckIcon, WarningIcon, CrossIcon, RefreshIcon, AlertCircleIcon, CircleIcon, DashIcon } from "../../components/icons";
 
 export type CanonicalModuleStatus =
   | "READY"
@@ -71,13 +71,19 @@ export type CanonicalStatusConfig = {
 
 export const CANONICAL_STATUS_CONFIG: Record<CanonicalModuleStatus, CanonicalStatusConfig> = {
   READY: { label: "Ready", icon: createElement(CheckIcon), textClass: "text-emerald-700", bgClass: "bg-emerald-50", borderClass: "border-emerald-200" },
-  WARNING: { label: "Warning", icon: createElement(WarningIcon), textClass: "text-amber-700", bgClass: "bg-amber-50", borderClass: "border-amber-200" },
+  WARNING: { label: "Warning", icon: createElement(WarningIcon), textClass: "text-amber-800", bgClass: "bg-amber-50", borderClass: "border-amber-200" },
   BLOCKED: { label: "Blocked", icon: createElement(CrossIcon), textClass: "text-red-700", bgClass: "bg-red-50", borderClass: "border-red-200" },
   STALE: { label: "Stale", icon: createElement(RefreshIcon), textClass: "text-purple-700", bgClass: "bg-purple-50", borderClass: "border-purple-200" },
   PARTIAL: { label: "Partial", icon: createElement(AlertCircleIcon), textClass: "text-blue-700", bgClass: "bg-blue-50", borderClass: "border-blue-200" },
   NOT_RUN: { label: "Not run", icon: createElement(CircleIcon), textClass: "text-slate-500", bgClass: "bg-slate-50", borderClass: "border-slate-200" },
-  RUNNING: { label: "Running", icon: createElement(RefreshIcon), textClass: "text-blue-700", bgClass: "bg-blue-50", borderClass: "border-blue-200" },
-  NOT_APPLICABLE: { label: "N/A", icon: "—", textClass: "text-slate-400", bgClass: "bg-slate-50", borderClass: "border-slate-100" },
+  // RUNNING shares STALE's refresh glyph by design (see the canonical status
+  // model in docs/audits/icon-status-contradiction-audit.md section 5), but
+  // must render with a spin animation — otherwise "actively running right
+  // now" and "outdated, needs a rerun" are visually identical static icons,
+  // which is exactly the kind of icon contradiction this resolver exists to
+  // prevent.
+  RUNNING: { label: "Running", icon: createElement(RefreshIcon, { className: "animate-spin" }), textClass: "text-blue-700", bgClass: "bg-blue-50", borderClass: "border-blue-200" },
+  NOT_APPLICABLE: { label: "N/A", icon: createElement(DashIcon), textClass: "text-slate-400", bgClass: "bg-slate-50", borderClass: "border-slate-100" },
 };
 
 export type ComputeCanonicalStatesInput = TenderReadinessState & {

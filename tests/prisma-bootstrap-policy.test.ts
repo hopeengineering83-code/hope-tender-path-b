@@ -9,7 +9,7 @@
 // We pin the policy by source-inspection rather than executing the
 // bootstrap (which requires a real Postgres instance):
 //   - ENABLE_RUNTIME_SCHEMA_BOOTSTRAP gates the entire bootstrap in production
-//   - admin seed is gated by resolveBootstrapAdminPolicy()
+//   - admin seed is gated by resolveRuntimeBootstrapAdminPolicy()
 //   - verifyConnectivity + verifySchemaPresent run when bootstrap is skipped
 
 import { describe, it } from "node:test";
@@ -40,7 +40,7 @@ describe("Gap 6 — lib/prisma.ts runtime schema bootstrap policy", () => {
   it("never seeds admin@hope.local without policy permission", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../lib/prisma.ts", import.meta.url), "utf8");
-    assert.match(src, /resolveBootstrapAdminPolicy/);
+    assert.match(src, /resolveRuntimeBootstrapAdminPolicy/);
     // No literal Admin123! used as a real password — comments referencing
     // the historical default are fine, but the bcrypt.hash() call must not
     // receive that literal.
@@ -56,8 +56,7 @@ describe("Gap 6 — lib/prisma.ts runtime schema bootstrap policy", () => {
   it("development still runs the bootstrap (so npm run dev works first-time)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../lib/prisma.ts", import.meta.url), "utf8");
-    // The flag function returns true in non-production:
-    //   if (process.env.NODE_ENV !== "production") return true;
+    // The schema-bootstrap flag function returns true in non-production.
     assert.match(src, /NODE_ENV\s*!==\s*"production".*return true/s);
   });
 });

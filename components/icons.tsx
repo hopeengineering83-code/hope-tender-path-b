@@ -46,7 +46,7 @@ export function SparklesIcon(props: IconProps) {
   );
 }
 
-/** Lightning bolt — Generate Docs. Replaces ⚡ */
+/** Lightning bolt — document generation. Replaces ⚡ */
 export function BoltIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -208,6 +208,18 @@ export function CheckCircleIcon(props: IconProps) {
       {props.title ? <title>{props.title}</title> : null}
       <circle cx="12" cy="12" r="9" />
       <path d="M9 12l2 2 4-4" />
+    </svg>
+  );
+}
+
+/** Horizontal dash — explicitly not applicable / no value.
+ *  Used by the canonical readiness model for the NOT_APPLICABLE module state
+ *  so every state uses an inline SVG icon (no Unicode glyph dependency). */
+export function DashIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M6 12h12" />
     </svg>
   );
 }
@@ -631,6 +643,40 @@ export function CoinIcon(props: IconProps) {
       {props.title ? <title>{props.title}</title> : null}
       <circle cx="12" cy="12" r="9" />
       <path d="M12 7v10M9.5 9.3c0-1.3 1.2-2 2.5-2s2.5.7 2.5 1.9-1 1.6-2.5 1.8c-1.5.2-2.5.7-2.5 1.9S10.7 15 12 15s2.5-.6 2.5-1.9" />
+    </svg>
+  );
+}
+
+/**
+ * Wrench — Repair / fix action. Distinct from RefreshIcon (which means
+ * "retry the same operation"): Wrench means "fix the underlying input then
+ * retry". Used by Extraction Quality "Repair Extraction" and any future
+ * repair affordance, so "repair" never has to compete with "retry" for the
+ * circular-arrow icon.
+ */
+export function WrenchIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.1-.4-.4-2.1 2.4-2.4z" />
+    </svg>
+  );
+}
+
+/**
+ * Trash — Permanent delete. Used by DeleteTenderButton's compact mode so
+ * the action stays available on dense table rows without forcing the row's
+ * Action cell past the table's available width. The full "Permanently
+ * delete" label is exposed via aria-label and the native title tooltip, so
+ * screen readers and hover users still see the verb; only the visible
+ * glyph is compressed.
+ */
+export function TrashIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      {props.title ? <title>{props.title}</title> : null}
+      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
     </svg>
   );
 }

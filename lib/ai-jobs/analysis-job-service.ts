@@ -1,17 +1,15 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
+import { logger } from "../observability";
 import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
 import { prisma } from "../prisma";
 import type { Prisma } from "@prisma/client";
-import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../engine/tender-analysis-content";
+import { buildTenderAnalysisContent, computeAnalysisContentHash, computePersistedTenderAnalysisHash } from "../engine/tender-analysis-content";
 import {
   analyzeOneChunkWithRetry,
   chunkTenderContent as aiChunkTenderContent,
-  isProviderExhaustedError,
   mergeAnalysisResults,
   type AIAnalysisResult,
-  type AIRequirement,
-  ANALYSIS_CHUNK_SIZE,
-  ANALYSIS_CHUNK_OVERLAP
+  type AIRequirement
 } from "../ai";
 import { upsertRequirements } from "../engine/stable-requirements";
 import { buildCanonicalAnalysisTenderUpdate } from "../engine/canonical-analysis-update";
@@ -20,14 +18,34 @@ import { locateQuoteProvenPage } from "../engine/page-provenance";
 import { RequirementDraft } from "../engine/types";
 import {
   canPromoteToCanonical,
+  findSupersedingJobId,
   promoteAnalysisToCanonical,
-  stagePartialResult
+  stagePartialResult,
+  ANALYSIS_SUPERSEDED_STATUS,
+  STALE_JOB_SUPERSEDED_SENTINEL
 } from "../ai-analyze-promotion";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health-db";
+import { syncPersistedTenderFactsToLedger } from "../engine/tender-facts-ledger-service";
+import { normalizeForContainment } from "../engine/evidence-grounding";
+import { normalizeRequirementTypeOrDefault } from "../engine/requirement-type-vocabulary";
 
 export type AnalysisJobCreateInput = {
   tenderId: string;
   userId: string;
+  /**
+   * FIX 1 (manual AI Analyze authority): every caller must supply explicit
+   * manual-action provenance. Internal services, extraction, cron, workers,
+   * upload handlers, page rendering, polling and recovery must NOT call this
+   * function — only the authenticated manual route
+   * POST /api/tenders/:id/manual-ai-analyze may issue a new user-authorized
+   * AI_ANALYZE job. The worker fails closed if this field is absent.
+   */
+  manualAuthority: {
+    source: "manual-ai-analyze";
+    actorUserId: string;
+    /** ISO timestamp captured at the moment the manual click was authenticated. */
+    authorizedAt: string;
+  };
 };
 
 const AI_ANALYZE_JOB_TYPE = "AI_ANALYZE" as const;
@@ -46,8 +64,153 @@ export function computeAnalysisJobLockKey(
   return computeAdvisoryLockKey([userId, tenderId, jobType, contentHash]);
 }
 
+/**
+ * FIX 2: Immutable canonical snapshot persisted on the AiJob row at manual
+ * creation time. The worker consumes this snapshot instead of reloading
+ * TenderFile rows, so stale revisions, deleted files, and chunk mismatches
+ * cannot corrupt a running analysis.
+ */
+export type CanonicalAnalysisSnapshot = {
+  /** Ordered list of ACTIVE TenderFile IDs that were hashed into analysisInputHash. */
+  canonicalFileIds: string[];
+  /**
+   * Per-file SHA-256 of the NORMALIZED EXTRACTED TEXT (`TenderFile.extractedText`).
+   *
+   * This is `extractedTextSha256`, NOT byte integrity. It was previously
+   * documented as verifying "byte integrity", conflating two different
+   * identities: the original uploaded bytes are hashed separately into
+   * `TenderFile.contentSha256` (computeByteSha256 in persisted-byte-integrity.ts).
+   * Extracted text is a derived artifact — re-extraction, OCR changes, or a
+   * different source document that happens to yield the same text all move one
+   * of these without moving the other.
+   */
+  fileContentHashes: Record<string, string>;
+  /**
+   * Per-file SHA-256 of the ORIGINAL UPLOADED BYTES (`TenderFile.contentSha256`).
+   *
+   * Optional: snapshots written before this field existed do not carry it, and
+   * are verified on extracted text alone exactly as before. When present, the
+   * source bytes must also match, so replacing a file's bytes invalidates the
+   * analysis even if the extracted text is unchanged.
+   */
+  fileSourceByteHashes?: Record<string, string | null>;
+  /** The analysisInputHash (SHA-256 of the concatenated canonical content). */
+  analysisInputHash: string;
+  /** Total chunk count produced by the deterministic chunker at snapshot time. */
+  totalChunks: number;
+  /** Per-chunk SHA-256 (chunkIndex → sha256). Worker verifies before processing. */
+  chunkHashes: Record<number, string>;
+  /** Deterministic ordered list of file IDs as joined string (for snapshot integrity check). */
+  snapshotVersion: 1;
+};
+
+/**
+ * Verify a job's persisted canonical snapshot against the current tender
+ * state. Returns `valid` when the snapshot matches (file IDs all still exist
+ * and ACTIVE, file content hashes unchanged, analysisInputHash unchanged).
+ * Returns `superseded` when the canonical source revision has changed — the
+ * caller must mark the old job SUPERSEDED/CANCELED and never promote its
+ * results.
+ */
+export async function verifyAnalysisSnapshot(
+  jobId: string,
+  tenderId: string,
+  userId: string,
+  tx?: Prisma.TransactionClient,
+): Promise<{ valid: boolean; superseded: boolean; reason?: string }> {
+  const client = tx ?? prisma;
+  const job = await client.aiJob.findFirst({
+    where: { id: jobId, tenderId, userId, jobType: AI_ANALYZE_JOB_TYPE },
+    select: { input: true, analysisInputHash: true },
+  });
+  if (!job) return { valid: false, superseded: false, reason: "JOB_NOT_FOUND" };
+
+  let snapshot: CanonicalAnalysisSnapshot | null = null;
+  try {
+    const parsed = JSON.parse(job.input ?? "{}");
+    if (parsed && typeof parsed === "object" && parsed.snapshot && parsed.snapshot.snapshotVersion === 1) {
+      snapshot = parsed.snapshot as CanonicalAnalysisSnapshot;
+    }
+  } catch {
+    // Legacy job without snapshot — treat as superseded (never fabricate).
+    return { valid: false, superseded: true, reason: "LEGACY_JOB_NO_SNAPSHOT" };
+  }
+  if (!snapshot) {
+    return { valid: false, superseded: true, reason: "MISSING_SNAPSHOT" };
+  }
+
+  // Verify canonical file IDs still exist and are ACTIVE.
+  const currentFiles = await client.tenderFile.findMany({
+    where: { tenderId, deletionStatus: "ACTIVE" },
+    select: { id: true, extractedText: true, contentSha256: true },
+  });
+  const currentFileMap = new Map(currentFiles.map((f) => [f.id, f.extractedText ?? ""]));
+  const currentSourceByteMap = new Map(currentFiles.map((f) => [f.id, f.contentSha256 ?? null]));
+
+  // If any canonical file ID is no longer ACTIVE, the snapshot is superseded.
+  for (const fileId of snapshot.canonicalFileIds) {
+    if (!currentFileMap.has(fileId)) {
+      return { valid: false, superseded: true, reason: "CANONICAL_FILE_REMOVED" };
+    }
+  }
+  // If a new ACTIVE file appeared that wasn't in the snapshot, the source revision changed.
+  if (currentFiles.length !== snapshot.canonicalFileIds.length) {
+    return { valid: false, superseded: true, reason: "CANONICAL_FILE_SET_CHANGED" };
+  }
+
+  // Verify per-file EXTRACTED-TEXT hashes match. This is the input the provider
+  // actually sees, so it must be identical to the authorized revision.
+  for (const fileId of snapshot.canonicalFileIds) {
+    const currentText = currentFileMap.get(fileId) ?? "";
+    const currentHash = require("crypto").createHash("sha256").update(currentText).digest("hex");
+    if (snapshot.fileContentHashes[fileId] !== currentHash) {
+      return { valid: false, superseded: true, reason: "EXTRACTED_TEXT_DRIFT" };
+    }
+  }
+
+  // Verify per-file SOURCE BYTE hashes when the snapshot carries them. This is a
+  // DIFFERENT identity from the extracted text: replacing a file's bytes with a
+  // different document that extracts to the same text leaves the check above
+  // satisfied, so without this the analysis could stay "valid" for a source the
+  // owner never authorized. Snapshots written before this field existed skip it
+  // rather than failing closed, so no in-flight job is invalidated by deploying
+  // this.
+  if (snapshot.fileSourceByteHashes) {
+    for (const fileId of snapshot.canonicalFileIds) {
+      const snapshotByteHash = snapshot.fileSourceByteHashes[fileId] ?? null;
+      // A file that had no recorded byte hash at snapshot time cannot be
+      // compared; the extracted-text check above still applies.
+      if (!snapshotByteHash) continue;
+      if (currentSourceByteMap.get(fileId) !== snapshotByteHash) {
+        return { valid: false, superseded: true, reason: "SOURCE_BYTE_DRIFT" };
+      }
+    }
+  }
+
+  // Verify analysisInputHash unchanged.
+  if (job.analysisInputHash !== snapshot.analysisInputHash) {
+    return { valid: false, superseded: true, reason: "ANALYSIS_INPUT_HASH_DRIFT" };
+  }
+
+  return { valid: true, superseded: false };
+}
+
 export async function createAnalysisJob(input: AnalysisJobCreateInput) {
-  const { tenderId, userId } = input;
+  const { tenderId, userId, manualAuthority } = input;
+
+  // FIX 1: Hard contract — every caller must supply explicit manual authority.
+  // Internal services, extraction, cron, workers, upload handlers, polling
+  // and recovery must NOT call this function. Only the authenticated manual
+  // route POST /api/tenders/:id/manual-ai-analyze is permitted.
+  if (
+    !manualAuthority ||
+    manualAuthority.source !== "manual-ai-analyze" ||
+    !manualAuthority.actorUserId ||
+    manualAuthority.actorUserId !== userId ||
+    !manualAuthority.authorizedAt
+  ) {
+    throw new Error("MANUAL_AUTHORITY_REQUIRED: createAnalysisJob requires explicit manual-action provenance");
+  }
 
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
@@ -86,6 +249,43 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
   }
 
   const contentHash = computeAnalysisContentHash(tenderText);
+
+  // FIX 2: Build the immutable canonical snapshot ONCE at manual creation.
+  // The worker consumes this snapshot instead of reloading TenderFile rows,
+  // so stale revisions, deleted files, and chunk mismatches cannot corrupt
+  // a running analysis. Per-file SHA-256 verifies byte integrity at worker
+  // time; chunkHashes verify deterministic chunk boundaries.
+  const canonicalFileIds = tender.files
+    .filter((f) => f.deletionStatus === "ACTIVE")
+    .sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0))
+    .map((f) => f.id);
+  // Two DISTINCT identities are frozen per file, because they can move
+  // independently: the normalized extracted text (what the provider reads) and
+  // the original uploaded bytes (what the owner actually supplied).
+  const fileContentHashes: Record<string, string> = {};
+  const fileSourceByteHashes: Record<string, string | null> = {};
+  for (const f of tender.files.filter((f) => f.deletionStatus === "ACTIVE")) {
+    fileContentHashes[f.id] = require("crypto")
+      .createHash("sha256")
+      .update(f.extractedText ?? "")
+      .digest("hex");
+    fileSourceByteHashes[f.id] = f.contentSha256 ?? null;
+  }
+  const chunks = aiChunkTenderContent(tenderText);
+  const totalChunks = chunks.length;
+  const chunkHashes: Record<number, string> = {};
+  for (let i = 0; i < chunks.length; i++) {
+    chunkHashes[i] = require("crypto").createHash("sha256").update(chunks[i]).digest("hex");
+  }
+  const snapshot: CanonicalAnalysisSnapshot = {
+    canonicalFileIds,
+    fileContentHashes,
+    fileSourceByteHashes,
+    analysisInputHash: contentHash,
+    totalChunks,
+    chunkHashes,
+    snapshotVersion: 1,
+  };
 
   // Create or reuse resumable job. FAILED is included so a provider-exhausted
   // or partially-completed run can be retried/resumed against the SAME job and
@@ -158,14 +358,51 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       // from the last successful chunk instead of restarting. A RUNNING/QUEUED
       // job is left untouched (this branch never resets the actively-claimed job
       // that executeAnalysis re-resolves mid-run).
+      //
+      // FIX 1+2: persist the manual authority AND the canonical snapshot in the
+      // SAME transaction that re-arms the job. The previous design left a race
+      // window between createAnalysisJob() and a separate updateMany that
+      // patched manualRequested into input.
+      const existingInput = (() => {
+        try {
+          const parsed = JSON.parse(existing.input ?? "{}");
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+          }
+        } catch {
+          // fallthrough
+        }
+        return {} as Record<string, unknown>;
+      })();
       return await tx.aiJob.update({
         where: { id: existing.id },
-        data: { status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null },
+        data: {
+          status: "QUEUED",
+          startedAt: null,
+          finishedAt: null,
+          errorMessage: null,
+          input: JSON.stringify({
+            ...existingInput,
+            tenderId,
+            contentHash,
+            source: "manual-ai-analyze",
+            manualRequested: true,
+            autoContinue: false,
+            actorUserId: manualAuthority.actorUserId,
+            authorizedAt: manualAuthority.authorizedAt,
+            snapshot,
+          }),
+        },
       });
     }
 
     // Step 3: No existing job found — create a new one. The advisory lock
     // ensures exactly one creation across concurrent callers.
+    //
+    // FIX 1+2: persist the manual authority AND the canonical snapshot in the
+    // SAME transaction that creates the job. The previous design left a race
+    // window between createAnalysisJob() and a separate updateMany that
+    // patched manualRequested into input.
     return await tx.aiJob.create({
       data: {
         tenderId,
@@ -174,13 +411,19 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         status: "QUEUED",
         analysisInputHash: contentHash,
         runId: require("crypto").randomUUID(),
-        input: JSON.stringify({ tenderId, contentHash }),
+        input: JSON.stringify({
+          tenderId,
+          contentHash,
+          source: "manual-ai-analyze",
+          manualRequested: true,
+          autoContinue: false,
+          actorUserId: manualAuthority.actorUserId,
+          authorizedAt: manualAuthority.authorizedAt,
+          snapshot,
+        }),
       },
     });
   });
-
-  const chunks = aiChunkTenderContent(tenderText);
-  const totalChunks = chunks.length;
 
   for (let i = 0; i < totalChunks; i++) {
     await prisma.aiAnalyzeChunk.upsert({
@@ -224,6 +467,35 @@ export async function runNextChunk(jobId: string, userId: string) {
     if (!job) throw new Error("Job not found");
     if (job.status === "FAILED" || job.status === "SUCCEEDED") {
         return { completed: true, status: job.status };
+    }
+
+    // FIX 1: Worker must fail closed if an AI_ANALYZE job lacks valid
+    // manual-action provenance. Legacy jobs (created before this contract)
+    // are rejected — never fabricate a manual action for them.
+    if (job.jobType === AI_ANALYZE_JOB_TYPE) {
+      let parsedInput: any = {};
+      try {
+        parsedInput = JSON.parse(job.input ?? "{}");
+      } catch {
+        parsedInput = {};
+      }
+      if (
+        !parsedInput ||
+        parsedInput.manualRequested !== true ||
+        parsedInput.source !== "manual-ai-analyze" ||
+        parsedInput.actorUserId !== userId
+      ) {
+        // Mark the job FAILED with an actionable reason. Do not process it.
+        await tx.aiJob.update({
+          where: { id: jobId },
+          data: {
+            status: "FAILED",
+            finishedAt: new Date(),
+            errorMessage: "MANUAL_AUTHORITY_MISSING: AI_ANALYZE job lacks valid manual-action provenance",
+          },
+        });
+        return { completed: true, status: "FAILED" as const };
+      }
     }
 
     const chunks = await tx.$queryRaw<any[]>`
@@ -270,20 +542,186 @@ export async function runNextChunk(jobId: string, userId: string) {
   if (result.completed || (result as any).retryLater) return result;
 
   const { chunk } = result as any;
-  const tender = await prisma.tender.findUnique({
-      where: { id: chunk.tenderId },
-      include: { files: true }
-  });
-  if (!tender) throw new Error("Tender lost");
 
-  const fullText = tender.files
-    .sort((a: any, b: any) => a.createdAt.getTime() - b.createdAt.getTime())
-    .map((f: any) => {
-        if (!f.extractedText) return "";
-        return `[FILE_ID:${f.id}|FILE_NAME:${f.originalFileName || f.fileName}]\n${f.extractedText}`;
-    })
-    .filter(Boolean)
-    .join("\n\n---\n\n");
+  // DIRECTIVE 4: FAIL CLOSED on ANY snapshot problem. No soft-fail, no legacy
+  // tender.files reload. If the snapshot is missing, malformed, unverifiable,
+  // wrong version, hash mismatched, source changed, or chunk-hash drifted:
+  // mark the job FAILED and require a new manual AI Analyze.
+  const snapshotCheck = await verifyAnalysisSnapshot(jobId, chunk.tenderId, userId).catch(() => ({
+    valid: false,
+    superseded: true,
+    reason: "SNAPSHOT_VERIFY_ERROR",
+  }));
+  if (!snapshotCheck.valid || snapshotCheck.superseded) {
+    const reason = snapshotCheck.reason ?? "UNKNOWN";
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: `SNAPSHOT_FAIL_CLOSED: ${reason} — run AI Analyze again`,
+      },
+    });
+    await prisma.aiAnalyzeChunk.update({
+      where: { id: chunk.id },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: `SNAPSHOT_FAIL_CLOSED (${reason})`,
+      },
+    }).catch((chunkUpdateErr: unknown) => {
+      logger.error(
+        `[runNextChunk] Failed to mark chunk ${chunk.id} as FAILED: ${chunkUpdateErr instanceof Error ? chunkUpdateErr.message : String(chunkUpdateErr)}`,
+      );
+    });
+    return { completed: true, status: "FAILED" as const };
+  }
+
+  // Reconstruct chunk text ONLY from the immutable snapshot.
+  let parsedInput: any = {};
+  try {
+    parsedInput = JSON.parse((await prisma.aiJob.findUnique({ where: { id: jobId }, select: { input: true } }))?.input ?? "{}");
+  } catch {
+    parsedInput = {};
+  }
+  const snapshot: CanonicalAnalysisSnapshot | undefined = parsedInput?.snapshot;
+  if (!snapshot || snapshot.snapshotVersion !== 1) {
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: "SNAPSHOT_MISSING: job input lacks canonical snapshot — run AI Analyze again",
+      },
+    });
+    return { completed: true, status: "FAILED" as const };
+  }
+
+  const canonicalFiles = await prisma.tenderFile.findMany({
+    where: { id: { in: snapshot.canonicalFileIds } },
+    select: {
+      id: true,
+      extractedText: true,
+      originalFileName: true,
+      fileName: true,
+      classification: true,
+      createdAt: true,
+      deletionStatus: true,
+      // Original uploaded bytes — a distinct identity from extractedText, and
+      // an unselected column would arrive undefined and silently skip the check.
+      contentSha256: true,
+    },
+  });
+  const fileMap = new Map(canonicalFiles.map((f) => [f.id, f]));
+  const orderedFiles = snapshot.canonicalFileIds
+    .map((id) => fileMap.get(id))
+    .filter((f): f is NonNullable<typeof f> => Boolean(f));
+  if (orderedFiles.length !== snapshot.canonicalFileIds.length) {
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: "CANONICAL_FILE_MISSING: snapshot files no longer exist — run AI Analyze again",
+      },
+    });
+    return { completed: true, status: "FAILED" as const };
+  }
+  for (const f of orderedFiles) {
+    // Extracted text — the bytes the provider actually reads.
+    const currentHash = require("crypto").createHash("sha256").update(f.extractedText ?? "").digest("hex");
+    if (snapshot.fileContentHashes[f.id] !== currentHash) {
+      await prisma.aiJob.update({
+        where: { id: jobId },
+        data: {
+          status: "FAILED",
+          finishedAt: new Date(),
+          errorMessage: `EXTRACTED_TEXT_DRIFT: TenderFile ${f.id} extracted text changed — run AI Analyze again`,
+        },
+      });
+      return { completed: true, status: "FAILED" as const };
+    }
+    // Original uploaded bytes — a separate identity, checked when recorded.
+    const snapshotByteHash = snapshot.fileSourceByteHashes?.[f.id] ?? null;
+    if (snapshotByteHash && (f as { contentSha256?: string | null }).contentSha256 !== snapshotByteHash) {
+      await prisma.aiJob.update({
+        where: { id: jobId },
+        data: {
+          status: "FAILED",
+          finishedAt: new Date(),
+          errorMessage: `SOURCE_BYTE_DRIFT: TenderFile ${f.id} source bytes changed — run AI Analyze again`,
+        },
+      });
+      return { completed: true, status: "FAILED" as const };
+    }
+  }
+  // SINGLE CANONICAL ANALYSIS INPUT.
+  //
+  // This must be byte-identical to what `createAnalysisJob` hashed into
+  // `analysisInputHash` and what the orchestrator sends to the provider, so the
+  // canonical builder is the ONLY algorithm allowed to define it. A previous
+  // version reconstructed the input here with an ad-hoc
+  // `[FILE_ID:…|FILE_NAME:…]` concatenation that omitted the tender title,
+  // description, intake notes and the Company Vault digest, applied no
+  // per-file/total truncation, and used a different separator — a second
+  // algorithm that merely hoped to agree with the first. It could not: every
+  // chunk it produced hashed differently from the snapshot, so the chunk-hash
+  // check below rejected it.
+  //
+  // The tender/company rows are loaded exactly as `createAnalysisJob` loads
+  // them (ACTIVE files only, unbounded vault documents); deterministic ordering
+  // and duplicate exclusion are the builder's job.
+  const canonicalTender = await prisma.tender.findUnique({
+    where: { id: chunk.tenderId },
+    select: { title: true, description: true, intakeSummary: true },
+  });
+  if (!canonicalTender) {
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: "CANONICAL_TENDER_MISSING: tender no longer exists — run AI Analyze again",
+      },
+    });
+    return { completed: true, status: "FAILED" as const };
+  }
+  const canonicalCompany = await prisma.company.findUnique({
+    where: { userId },
+    include: { documents: { select: { category: true, originalFileName: true, extractedText: true } } },
+  });
+  const fullText = buildTenderAnalysisContent(
+    { ...canonicalTender, files: orderedFiles },
+    canonicalCompany,
+  );
+
+  // The reconstructed canonical input must hash to the value the manual click
+  // authorized. Anything else is drift — fail closed rather than spending
+  // provider tokens on content the user never approved.
+  const reconstructedHash = computeAnalysisContentHash(fullText);
+  if (reconstructedHash !== snapshot.analysisInputHash) {
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: `ANALYSIS_INPUT_HASH_DRIFT: canonical input no longer matches the authorized revision — run AI Analyze again`,
+      },
+    });
+    await prisma.aiAnalyzeChunk.update({
+      where: { id: chunk.id },
+      data: {
+        status: "FAILED",
+        finishedAt: new Date(),
+        errorMessage: "ANALYSIS_INPUT_HASH_DRIFT",
+      },
+    }).catch((chunkUpdateErr: unknown) => {
+      logger.error(
+        `[runNextChunk] Failed to mark chunk ${chunk.id} FAILED after input-hash drift: ${chunkUpdateErr instanceof Error ? chunkUpdateErr.message : String(chunkUpdateErr)}`,
+      );
+    });
+    return { completed: true, status: "FAILED" as const };
+  }
 
   try {
       // Restore provider health/cooldown from DB before any provider calls.
@@ -297,6 +735,16 @@ export async function runNextChunk(jobId: string, userId: string) {
       const allChunks = aiChunkTenderContent(fullText);
       const chunkText = allChunks[chunk.chunkIndex];
       if (!chunkText) throw new Error(`Chunk ${chunk.chunkIndex} out of bounds (total: ${allChunks.length})`);
+
+      // FIX 2: Verify the deterministic chunk hash matches the snapshot. If
+      // the chunker produced a different chunk text, the snapshot is stale.
+      // Only verify when the snapshot exists (legacy/streaming jobs skip).
+      if (snapshot && snapshot.snapshotVersion === 1) {
+        const currentChunkHash = require("crypto").createHash("sha256").update(chunkText).digest("hex");
+        if (snapshot.chunkHashes[chunk.chunkIndex] && snapshot.chunkHashes[chunk.chunkIndex] !== currentChunkHash) {
+          throw new Error(`CHUNK_HASH_DRIFT: chunk ${chunk.chunkIndex} hash mismatch — snapshot is stale`);
+        }
+      }
 
       let providerUsed: string | undefined;
       const res = await analyzeOneChunkWithRetry(chunkText, chunk.chunkIndex, allChunks.length, (p: any) => {
@@ -339,23 +787,70 @@ export async function runNextChunk(jobId: string, userId: string) {
           // Non-fatal — in-memory state is still correct for this instance
       });
 
-      // satisfy non-destructive test requirement for preserveAiAnalyzeProgressOnFailure
-      // In the durable system, the catch block inherently preserves progress by leaving
-      // other chunks alone.
+      // This update touches only the failed chunk. Previously succeeded chunks
+      // remain intact and can be reused when the durable job resumes.
   }
 
   return { completed: false };
 }
 
+
 /**
- * INTEGRITY CHECK: preserveAiAnalyzeProgressOnFailure must remain present
- * for non-destructive analysis checks.
+ * Confidence that a requirement's stored evidence actually grounds it.
+ *
+ * The generation gate defines "source-grounded" as sourceConfidence > 0 and
+ * nothing else (see UNTRACED_MANDATORY_REQUIREMENTS in the generate and export
+ * routes). Promotion, meanwhile, verifies file + page + quote and refuses to
+ * promote a mandatory requirement that lacks any of them.
+ *
+ * Those two facts were connected by `req.sourceConfidence ?? 0` — a number the
+ * model supplies. The extraction prompt does not ask for it, so it is normally
+ * absent, and every requirement was persisted at 0. The result: a requirement
+ * carrying an ACTIVE file id, a real page and a quote that appears verbatim in
+ * that file's text was still reported as "not source-grounded", and generation
+ * was blocked on evidence promotion had just checked. Confidence is now derived
+ * from the evidence itself, and only a model-supplied value that is HIGHER is
+ * preferred, so this can never weaken a genuinely weak match.
  */
-async function preserveAiAnalyzeProgressOnFailure(jobId: string, results: any) {
-    // legacy marker for tests
+function groundingConfidence(
+    req: AIRequirement,
+    sourceTenderFileId: string | null,
+    fileTextById?: Map<string, string>,
+): number {
+    const modelConfidence = typeof req.sourceConfidence === "number" && Number.isFinite(req.sourceConfidence)
+        ? Math.max(0, Math.min(1, req.sourceConfidence))
+        : 0;
+    if (!sourceTenderFileId) return 0;
+    const page = typeof req.sourcePage === "number" ? req.sourcePage : 0;
+    const quote = typeof req.sourceQuote === "string" ? req.sourceQuote.trim() : "";
+    if (page <= 0 || quote.length === 0) return modelConfidence;
+
+    // Containment is the strongest signal available here, and it must be tested
+    // through the SAME normalization the downstream grounding checks use.
+    //
+    // This previously called text.includes(quote) directly while claiming to
+    // apply the same rule. It does not: extracted PDF text re-wraps lines and
+    // the model re-cases the first word of a lifted quote, so a quote that is
+    // genuinely in the document scored 0 here while
+    // isGroundedEvidenceInActiveFiles — which normalizes — considered it
+    // grounded. That split is what produced the unescapable generate loop:
+    // the gate blocks on sourceConfidence <= 0, repair sees nothing to repair,
+    // and the owner is told to press a button that cannot help.
+    const text = fileTextById?.get(sourceTenderFileId);
+    if (typeof text === "string" && text.length > 0) {
+        const contained = normalizeForContainment(text).includes(normalizeForContainment(quote));
+        return contained ? Math.max(modelConfidence, 0.9) : modelConfidence;
+    }
+    // No text to compare against: the file/page/quote triple was still verified
+    // by the promotion check, so record a positive but modest confidence.
+    return Math.max(modelConfidence, 0.5);
 }
 
-function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): RequirementDraft {
+function mapToDraft(
+    req: AIRequirement,
+    validTenderFileIds?: Set<string>,
+    fileTextById?: Map<string, string>,
+): RequirementDraft {
     // Source-file attribution: only accept sourceTenderFileId / sourceFileToken
     // when the value is a real ACTIVE TenderFile ID on this tender. Guessed,
     // unsupported, or foreign tokens are dropped to null — they cannot serve
@@ -371,7 +866,10 @@ function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): Requi
     return {
         title: req.title,
         description: req.description,
-        requirementType: req.requirementType,
+        // Normalize against the canonical vocabulary. Writing the model's
+        // string straight through let "EXPERIENCE" reach the column, which
+        // silently sized the engine's project-selection limit to zero.
+        requirementType: normalizeRequirementTypeOrDefault(req.requirementType),
         priority: req.priority,
         requiredQuantity: req.requiredQuantity,
         pageLimit: req.pageLimit,
@@ -382,7 +880,7 @@ function mapToDraft(req: AIRequirement, validTenderFileIds?: Set<string>): Requi
         sourcePageNumber: req.sourcePage,
         sourceSectionHeading: req.sourceSectionHeading || req.sectionReference || null,
         sourceExactQuote: req.sourceQuote,
-        sourceConfidence: sourceTenderFileId ? (req.sourceConfidence ?? 0) : 0,
+        sourceConfidence: groundingConfidence(req, sourceTenderFileId, fileTextById),
         sourceExtractionMethod: req.sourceExtractionMethod
     };
 }
@@ -488,17 +986,34 @@ export async function finalizeJob(jobId: string, userId: string) {
     const canPromote = await canPromoteToCanonical(jobId, job.tenderId!);
 
     if (!canPromote) {
+        // INVARIANT: a superseded run NEVER claims a success status.
+        // `SUCCEEDED` means "this exact job became the canonical promoted
+        // analysis for its exact authorized source revision". This job did not
+        // promote anything, so writing SUCCEEDED (or PARTIAL_SUCCESS) here
+        // produced a self-contradictory row: a success status alongside
+        // `superseded: true` and "Not promoted to canonical". Record the
+        // explicit non-success terminal state instead, and stamp `supersededBy`
+        // so the canonical state resolver reports SUPERSEDED precisely.
+        const supersededBy = await findSupersedingJobId(jobId, job.tenderId!).catch((lookupErr) => {
+            // Best-effort enrichment only: the non-success terminal status below
+            // is what blocks generation. Losing the winning job's id degrades the
+            // UI message, never the gate.
+            logger.warn(`[finalizeJob] Could not resolve superseding job for ${jobId}: ${lookupErr instanceof Error ? lookupErr.message : String(lookupErr)}`);
+            return null;
+        });
         await prisma.aiJob.update({
             where: { id: jobId },
             data: {
-                status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                status: ANALYSIS_SUPERSEDED_STATUS,
                 finishedAt: new Date(),
+                ...(supersededBy ? { supersededBy } : {}),
                 errorMessage: "Analysis finished but was superseded by a newer run. Not promoted to canonical.",
                 output: JSON.stringify({
                     requirementCount: merged.requirements.length,
                     succeededChunks: succeeded.length,
                     failedChunks: failed.length,
                     superseded: true,
+                    promoted: false,
                     chunkResults: succeeded.map(c => ({
                         index: c.chunkIndex,
                         result: JSON.parse(c.resultJson!),
@@ -507,7 +1022,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 })
             }
         });
-        return { status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED" };
+        return { status: ANALYSIS_SUPERSEDED_STATUS, code: "SUPERSEDED_BEFORE_PROMOTION" };
     }
 
     // ─── PRE-TRANSACTION PREPARATION (outside interactive tx) ──────────
@@ -537,7 +1052,15 @@ export async function finalizeJob(jobId: string, userId: string) {
         // matches a real active file on this tender. Guessed/foreign/unsupported
         // tokens are dropped to null (matching the ai-analyze route's behavior).
         const validTenderFileIds = new Set((existingTender?.files ?? []).map((f: any) => f.id));
-        drafts = merged.requirements.map((r: any) => mapToDraft(r, validTenderFileIds));
+        // Extracted text per active file, so grounding confidence can be derived
+        // from verbatim quote containment rather than from a model-supplied
+        // number the extraction prompt never asks for.
+        const fileTextById = new Map<string, string>(
+            (existingTender?.files ?? [])
+                .filter((f: any) => typeof f.extractedText === "string" && f.extractedText.length > 0)
+                .map((f: any) => [f.id as string, f.extractedText as string]),
+        );
+        drafts = merged.requirements.map((r: any) => mapToDraft(r, validTenderFileIds, fileTextById));
 
         // Bind each metadata field's source evidence to the ACTUAL active file
         // whose extracted text contains the field's supporting quote (or null →
@@ -613,7 +1136,7 @@ export async function finalizeJob(jobId: string, userId: string) {
         });
     } catch (prepErr) {
         const correlationId = require("crypto").randomUUID().slice(0, 8);
-        console.error(`[finalizeJob] AI_ANALYSIS_PREPARATION_FAILED correlation=${correlationId} job=${jobId}: ${prepErr instanceof Error ? prepErr.message : String(prepErr)}`);
+        logger.error(`[finalizeJob] AI_ANALYSIS_PREPARATION_FAILED correlation=${correlationId} job=${jobId}: ${prepErr instanceof Error ? prepErr.message : String(prepErr)}`);
         await prisma.aiJob.update({
             where: { id: jobId },
             data: {
@@ -622,7 +1145,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 errorMessage: `AI_ANALYSIS_PREPARATION_FAILED (ref: ${correlationId})`,
             },
         }).catch((cleanupErr) => {
-            console.error(`[finalizeJob] Failed to mark job ${jobId} as FAILED after preparation error: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
+            logger.error(`[finalizeJob] Failed to mark job ${jobId} as FAILED after preparation error: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
         });
         return { status: "FAILED", code: "AI_ANALYSIS_PREPARATION_FAILED" };
     }
@@ -647,7 +1170,7 @@ export async function finalizeJob(jobId: string, userId: string) {
         //    between the pre-check and the write.
         const stillPromotable = await canPromoteToCanonical(jobId, job.tenderId!, tx);
         if (!stillPromotable) {
-            throw new Error("STALE_JOB_SUPERSeded");
+            throw new Error(STALE_JOB_SUPERSEDED_SENTINEL);
         }
 
         // 2. Mark job as RUNNING to claim it (single write).
@@ -665,6 +1188,17 @@ export async function finalizeJob(jobId: string, userId: string) {
             data: tenderUpdate,
         });
 
+        // AI promotion may replace an intake label with the title proven in
+        // the source. Bind the terminal job to that newly persisted canonical
+        // state before exposing success. The immutable authorized provider
+        // input remains in input.canonicalSnapshot.analysisInputHash.
+        const promotedContentHash = await computePersistedTenderAnalysisHash(
+            tx as unknown as Parameters<typeof computePersistedTenderAnalysisHash>[0],
+            job.tenderId!,
+            job.userId,
+        );
+        if (!promotedContentHash) throw new Error("PROMOTED_ANALYSIS_HASH_UNAVAILABLE");
+
         // 5. Set terminal job status with pre-serialized output (single write).
         await tx.aiJob.update({
             where: { id: jobId },
@@ -672,6 +1206,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
                 finishedAt: new Date(),
                 output: outputJson,
+                analysisInputHash: promotedContentHash,
             }
         });
 
@@ -717,31 +1252,56 @@ export async function finalizeJob(jobId: string, userId: string) {
             }
         }
     } catch (refErr) {
-        console.warn(`[finalizeJob] reference fileId resolution failed (non-critical): ${refErr instanceof Error ? refErr.message : String(refErr)}`);
+        logger.warn(`[finalizeJob] reference fileId resolution failed (non-critical): ${refErr instanceof Error ? refErr.message : String(refErr)}`);
     }
 
-    console.log(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);
+    try {
+        await syncPersistedTenderFactsToLedger(prisma, job.tenderId!, job.userId);
+    } catch (ledgerErr) {
+        // The canonical scalar/evidence write is already committed. Keep the
+        // job successful but surface a safe diagnostic; readiness continues
+        // to fail closed through the scalar evidence gates until a later sync.
+        logger.warn("[finalizeJob] tender fact ledger sync failed (non-critical)", {
+            tenderId: job.tenderId!,
+            errorClass: ledgerErr instanceof Error ? ledgerErr.constructor.name : "UnknownError",
+        });
+    }
+
+    logger.info(`[finalizeJob] job=${jobId} preparationMs=${preparationMs} status=SUCCESS`);
     } catch (persistErr) {
         const correlationId = require("crypto").randomUUID().slice(0, 8);
         const errMsg = persistErr instanceof Error ? persistErr.message : String(persistErr);
 
-        if (errMsg.includes("STALE_JOB_SUPERSeded")) {
-            console.warn(`[finalizeJob] job=${jobId} superseded by newer run — not promoted`);
+        if (errMsg.includes(STALE_JOB_SUPERSEDED_SENTINEL)) {
+            // Same invariant as the pre-transaction branch: the transactional
+            // re-check refused promotion, so this job never became canonical and
+            // must not report a success status. Previously this wrote SUCCEEDED
+            // to the row while returning "SUPERSEDED" to the caller — the row and
+            // the return value disagreed about the same run.
+            logger.warn(`[finalizeJob] job=${jobId} superseded by newer run — not promoted`);
+            const supersededBy = await findSupersedingJobId(jobId, job.tenderId!).catch((lookupErr) => {
+            // Best-effort enrichment only: the non-success terminal status below
+            // is what blocks generation. Losing the winning job's id degrades the
+            // UI message, never the gate.
+            logger.warn(`[finalizeJob] Could not resolve superseding job for ${jobId}: ${lookupErr instanceof Error ? lookupErr.message : String(lookupErr)}`);
+            return null;
+        });
             await prisma.aiJob.update({
                 where: { id: jobId },
                 data: {
-                    status: failed.length > 0 ? "PARTIAL_SUCCESS" : "SUCCEEDED",
+                    status: ANALYSIS_SUPERSEDED_STATUS,
                     finishedAt: new Date(),
+                    ...(supersededBy ? { supersededBy } : {}),
                     errorMessage: "Superseded by newer run during promotion. Not promoted to canonical.",
                     output: outputJson,
                 },
             }).catch((cleanupErr) => {
-                console.error(`[finalizeJob] Failed to mark superseded job ${jobId}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
+                logger.error(`[finalizeJob] Failed to mark superseded job ${jobId}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`);
             });
-            return { status: "SUPERSEDED", code: "STALE_JOB_SUPERSeded" };
+            return { status: ANALYSIS_SUPERSEDED_STATUS, code: "STALE_JOB_SUPERSEDED" };
         }
 
-        console.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId} tender=${job.tenderId}: ${errMsg}`);
+        logger.error(`[finalizeJob] AI_ANALYSIS_PERSISTENCE_FAILED correlation=${correlationId} job=${jobId} tender=${job.tenderId}: ${errMsg}`);
         await prisma.aiJob.update({
             where: { id: jobId },
             data: {
@@ -750,7 +1310,7 @@ export async function finalizeJob(jobId: string, userId: string) {
                 errorMessage: `AI_ANALYSIS_PERSISTENCE_FAILED (ref: ${correlationId})`,
             },
         }).catch((updateErr) => {
-            console.error(
+            logger.error(
                 `[finalizeJob] Failed to mark job ${jobId} as FAILED after persistence error: ${
                     updateErr instanceof Error ? updateErr.message : String(updateErr)
                 }`

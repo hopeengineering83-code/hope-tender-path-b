@@ -17,6 +17,17 @@ const PANEL_ROUTE_FILES = [
   "app/api/tenders/[id]/route.ts",
 ];
 
+const DIRECT_PACKAGE_ROUTES = [
+  "app/api/tenders/[id]/generation-readiness/route.ts",
+  "app/api/tenders/[id]/export-readiness/route.ts",
+  "app/api/tenders/[id]/workflow-status/route.ts",
+];
+
+const DELEGATED_AUTHORITY_ROUTES: Record<string, RegExp> = {
+  "app/api/tenders/[id]/lifecycle/route.ts": /computeTenderLifecycle/,
+  "app/api/tenders/[id]/readiness-score/route.ts": /getFinalSubmissionReadiness/,
+};
+
 const SERVER_ERROR_TERMS = /\b(PrismaClientKnownRequestError|PrismaClient|stack trace|TypeError|ReferenceError|DATABASE_URL|SESSION_SECRET)\b/i;
 const USER_FACING_METADATA_TERMS = /\b(metadata|Prisma|stack trace|Server Error|TypeError|ReferenceError)\b/i;
 
@@ -71,31 +82,129 @@ function assertBlockedRoutes(payloads: Array<PublicReadinessEnvelope & { route: 
 }
 
 describe("route-driven workflow truth verification", () => {
-  it("panel-facing routes all use the shared public readiness envelope and do not expose raw server errors", () => {
+  it("panel-facing routes use the shared public readiness envelope and do not expose raw server errors", () => {
     for (const file of PANEL_ROUTE_FILES) {
       const source = read(file);
       assert.match(source, /buildPublicReadinessEnvelope/, `${file} must use the shared route envelope`);
       assert.match(source, /ok:/, `${file} must expose ok`);
       assert.match(source, /blockers/, `${file} must expose blockers[]`);
       assert.match(source, /warnings/, `${file} must expose warnings[]`);
-      // primaryBlockerReason/primaryFixAction are supplied by the shared envelope,
-      // so routes must either mention them directly or delegate to the helper.
-      assert.match(source, /primaryBlockerReason|buildPublicReadinessEnvelope/, `${file} must expose primaryBlockerReason`);
-      assert.match(source, /primaryFixAction|buildPublicReadinessEnvelope/, `${file} must expose primaryFixAction`);
       assert.match(source, /requiredDocumentsTotal/, `${file} must expose requiredDocumentsTotal`);
       assert.match(source, /generatedDocumentsTotal/, `${file} must expose generatedDocumentsTotal`);
       assert.match(source, /exportReadyDocumentsTotal/, `${file} must expose exportReadyDocumentsTotal`);
       assert.doesNotMatch(source, /return\s+NextResponse\.json\([^)]*error\.message/s, `${file} must not return raw error.message`);
-      const publicStringLiterals = [...source.matchAll(/NextResponse\.json\(([^;]+)/gs)].map((m) => m[1]).join("\n");
+      const publicStringLiterals = [...source.matchAll(/NextResponse\.json\(([^;]+)/gs)].map((match) => match[1]).join("\n");
       assert.doesNotMatch(publicStringLiterals, SERVER_ERROR_TERMS, `${file} must not embed server error terminology in public payload text`);
     }
   });
 
-  it("generation-readiness counts requirements even before a confirmed Build Plan exists", () => {
+  it("count-bearing routes use either the direct package model or an approved canonical resolver", () => {
+    for (const file of DIRECT_PACKAGE_ROUTES) {
+      const source = read(file);
+      assert.match(source, /getFinalPackageReadinessModel/, `${file} must use final-package readiness directly`);
+      assert.match(source, /finalPackage\.documents\.required\.length/, `${file} required total must be canonical`);
+      assert.match(source, /finalPackage\.documents\.generated\.length/, `${file} generated total must be canonical`);
+      assert.match(source, /finalPackage\.documents\.exportReady\.length/, `${file} export-ready total must be canonical`);
+    }
+    for (const [file, resolver] of Object.entries(DELEGATED_AUTHORITY_ROUTES)) {
+      assert.match(read(file), resolver, `${file} must delegate to its approved canonical authority`);
+    }
+  });
+
+  it("generation-readiness uses confirmed Build Plan authority and canonical final-package counts", () => {
     const source = read("app/api/tenders/[id]/generation-readiness/route.ts");
-    assert.match(source, /tender\._count\.requirements/, "generation-readiness denominator must include extracted requirements");
-    assert.match(source, /plannedDocumentsTotal/, "generation-readiness denominator must include planned document rows");
-    assert.match(source, /Math\.max\(planEntries\.length, orderEntries\.length, tender\._count\.requirements \?\? 0, plannedDocumentsTotal\)/);
+    assert.match(source, /getFinalPackageReadinessModel/);
+    assert.match(source, /submissionPlanBuilt = finalPackage\.buildPlan\.confirmed/);
+    assert.match(source, /requiredDocumentsTotal = finalPackage\.documents\.required\.length/);
+    assert.doesNotMatch(source, /safeParseJsonArray|exactFileNaming|exactFileOrder/);
+  });
+
+  it("final-package readiness requires a current confirmed Build Plan", () => {
+    const source = read("lib/engine/final-package-readiness-model.ts");
+    assert.match(source, /parseConfirmedBuildPlan/);
+    assert.match(source, /row\.confirmedRevision !== row\.revision/);
+    assert.match(source, /row\.confirmedContentHash !== row\.contentHash/);
+    assert.match(source, /code: "NO_CONFIRMED_BUILD_PLAN"/);
+    assert.match(source, /ready: buildPlanAuthority\.confirmed && documentManifest\.ready/);
+    assert.match(source, /source: buildPlanAuthority\.confirmed \? "CONFIRMED" : "DERIVED_FALLBACK"/);
+  });
+
+  it("authority review and validation consume canonical package blockers", () => {
+    for (const file of [
+      "app/api/tenders/[id]/authority-review/route.ts",
+      "app/api/tenders/[id]/validate/route.ts",
+    ]) {
+      const source = read(file);
+      assert.match(source, /getFinalPackageReadinessModel/);
+      assert.match(source, /buildPublicReadinessEnvelope/);
+      assert.match(source, /finalPackage\.documents\.blockers/);
+      assert.match(source, /finalPackage\.export\.blockers/);
+      assert.match(source, /finalPackage\.documents\.required\.length/);
+      assert.match(source, /finalPackage\.documents\.exportReady\.length/);
+    }
+    const authority = read("app/api/tenders/[id]/authority-review/route.ts");
+    assert.doesNotMatch(authority, /safeParseJsonArray|exactFileNaming|exactFileOrder/);
+  });
+
+  it("public blocker normalization whitelists fields and drops internal details", () => {
+    const envelope = buildPublicReadinessEnvelope({
+      ok: false,
+      blockers: [{
+        code: "SAFE_CODE",
+        message: "Safe message",
+        nextAction: "SAFE_ACTION",
+        detail: "PrismaClientKnownRequestError: secret database detail",
+        stack: "private stack",
+      }],
+    });
+    assert.deepEqual(envelope.blockers[0], {
+      code: "SAFE_CODE",
+      message: "Safe message",
+      nextAction: "SAFE_ACTION",
+      severity: null,
+    });
+    assert.doesNotMatch(JSON.stringify(envelope), /Prisma|private stack|secret database detail/);
+  });
+
+  it("public blocker messages sanitize raw server errors and user-facing metadata terminology", () => {
+    const rawError = buildPublicReadinessEnvelope({
+      ok: false,
+      blockers: ["PrismaClientKnownRequestError P2021: DATABASE_URL failed"],
+    });
+    assert.equal(rawError.blockers[0]?.message, "Readiness check could not be completed safely.");
+
+    const wording = buildPublicReadinessEnvelope({
+      ok: false,
+      blockers: [{ message: "Critical metadata is incomplete.", nextAction: "REVIEW_TENDER_DETAILS" }],
+    });
+    assert.equal(wording.blockers[0]?.message, "Critical tender details are incomplete.");
+    assert.doesNotMatch(JSON.stringify(wording), /metadata/i);
+  });
+
+  it("impossible document counts become a production blocker", () => {
+    const envelope = buildPublicReadinessEnvelope({
+      ok: true,
+      requiredDocumentsTotal: 1,
+      generatedDocumentsTotal: 0,
+      exportReadyDocumentsTotal: 2,
+    });
+    assert.equal(envelope.ok, false);
+    assert.equal(envelope.status, "BLOCKED");
+    assert.ok(envelope.blockers.some((blocker) => blocker.code === "READINESS_COUNT_CONTRADICTION"));
+  });
+
+  it("explicit READY cannot override false ok or blockers", () => {
+    const falseOk = buildPublicReadinessEnvelope({ ok: false, status: "READY" });
+    assert.equal(falseOk.ok, false);
+    assert.equal(falseOk.status, "BLOCKED");
+
+    const blockedPayload = buildPublicReadinessEnvelope({
+      ok: true,
+      status: "READY",
+      blockers: [{ message: "Still blocked", nextAction: "FIX" }],
+    });
+    assert.equal(blockedPayload.ok, false);
+    assert.equal(blockedPayload.status, "BLOCKED");
   });
 
   it("shared envelope treats explicit PARTIAL status as not ok", () => {
@@ -112,7 +221,7 @@ describe("route-driven workflow truth verification", () => {
     assert.equal(envelope.status, "PARTIAL");
   });
 
-  it("shared envelope fails closed: ok cannot stay true when blockers exist", () => {
+  it("shared envelope fails closed when blockers exist", () => {
     const envelope = buildPublicReadinessEnvelope({
       ok: true,
       blockers: [{ code: "NO_CONFIRMED_BUILD_PLAN", message: "No confirmed Build Plan.", nextAction: "BUILD_SUBMISSION_PLAN" }],
@@ -139,7 +248,7 @@ describe("route-driven workflow truth verification", () => {
     assert.match(JSON.stringify(payloads), /RESUME_AI_ANALYZE|RETRY_AI_ANALYZE/);
   });
 
-  it("Scenario 2: no confirmed Build Plan is the primary blocker and no route says ready to generate full proposal", () => {
+  it("Scenario 2: no confirmed Build Plan is the primary blocker", () => {
     const payloads = ["lifecycle", "generation-readiness", "readiness-score", "export-readiness", "workflow-status", "tender-detail"].map((route) => blocked(route, {
       blockers: [{ code: "NO_CONFIRMED_BUILD_PLAN", message: "No confirmed Build Plan.", nextAction: "BUILD_SUBMISSION_PLAN" }],
       requiredDocumentsTotal: 1,
@@ -148,7 +257,7 @@ describe("route-driven workflow truth verification", () => {
     assert.ok(payloads.every((payload) => payload.primaryBlockerReason === "No confirmed Build Plan."));
   });
 
-  it("Scenario 3: planned docs without content have required total > 0, generated = 0, export-ready = 0, never 0/0", () => {
+  it("Scenario 3: planned docs without content never become 0/0", () => {
     const payloads = ["readiness-score", "generation-readiness", "export-readiness", "workflow-status", "tender-detail"].map((route) => blocked(route, {
       blockers: [{ code: "PLANNED_DOCUMENTS_NOT_GENERATED", message: "Required documents are planned but not generated.", nextAction: "GENERATE_REQUIRED_DOCUMENTS" }],
       requiredDocumentsTotal: 3,
@@ -162,28 +271,19 @@ describe("route-driven workflow truth verification", () => {
     }
   });
 
-  it("Scenario 4: missing Technical Proposal.pdf stays structured across authority/review, validation, and export readiness", () => {
+  it("Scenario 4: a required PDF remains blocked across review, validation, and export", () => {
     const payloads = [
-      blocked("authority-review", { blockers: [{ code: "MISSING_REQUIRED_DOCUMENT", message: "Technical Proposal.pdf is missing.", nextAction: "UPLOAD_OR_GENERATE_TECHNICAL_PROPOSAL_PDF" }] }),
-      blocked("document-validation", { blockers: [{ code: "DOCUMENT_VALIDATION_BLOCKED", message: "Technical Proposal.pdf is required before validation can pass.", nextAction: "UPLOAD_OR_GENERATE_TECHNICAL_PROPOSAL_PDF" }] }),
-      blocked("export-readiness", { blockers: [{ code: "MISSING_REQUIRED_DOCUMENT", message: "Technical Proposal.pdf is missing.", nextAction: "UPLOAD_OR_GENERATE_TECHNICAL_PROPOSAL_PDF" }] }),
+      blocked("authority-review", { blockers: [{ code: "PDF_REQUIRED_NOT_READY", message: "Technical Proposal.pdf is required.", nextAction: "UPLOAD_FINAL_PDF" }] }),
+      blocked("validate", { blockers: [{ code: "PDF_REQUIRED_CONVERSION_UNAVAILABLE", message: "Required PDF is unavailable.", nextAction: "UPLOAD_FINAL_PDF" }] }),
+      blocked("export-readiness", { blockers: [{ code: "FINAL_ZIP_FILE_NOT_READY", message: "Technical Proposal.pdf is not export-ready.", nextAction: "UPLOAD_FINAL_PDF" }] }),
     ];
     assertBlockedRoutes(payloads);
-    assert.match(JSON.stringify(payloads), /Technical Proposal\.pdf/);
   });
 
-  it("Scenario 5: final export only unlocks when generated, validated, approved, and required counts agree", () => {
-    const before = blocked("export-readiness", {
-      blockers: [{ code: "REVIEW_REQUIRED", message: "Generated document needs validation and approval.", nextAction: "VALIDATE_AND_APPROVE" }],
-      requiredDocumentsTotal: 1,
-      generatedDocumentsTotal: 1,
-      exportReadyDocumentsTotal: 0,
-    });
-    assertBlockedRoutes([before]);
-
-    const afterRoutes = ["lifecycle", "generation-readiness", "readiness-score", "export-readiness", "workflow-status", "tender-detail"].map((route) => ready(route));
-    for (const payload of afterRoutes) assertPayloadContract(payload);
-    assert.deepEqual(assertPublicReadinessAgreement(afterRoutes).contradictions, []);
-    assert.ok(afterRoutes.every((payload) => payload.ok && payload.status === "READY"));
+  it("Scenario 5: all routes agree when canonical counts and blockers are ready", () => {
+    const payloads = ["lifecycle", "generation-readiness", "readiness-score", "export-readiness", "workflow-status", "tender-detail"].map((route) => ready(route));
+    for (const payload of payloads) assertPayloadContract(payload);
+    const agreement = assertPublicReadinessAgreement(payloads);
+    assert.deepEqual(agreement.contradictions, []);
   });
 });

@@ -1,12 +1,13 @@
 "use client";
 import { Fragment, useEffect, useRef, useState, useCallback } from "react";
 import { classifyDeleteResponse, type DeleteResponse } from "../../../lib/company-vault-delete-classifier";
+import { startQueuedVaultIngestion } from "../../../lib/ui/auto-pipeline";
 import { CheckIcon, CrossIcon, PersonIcon, FolderIcon, ChevronDownIcon } from "../../../components/icons";
 
 type CompanyDoc = {
   id: string; originalFileName: string; mimeType: string; category: string;
   size: number; extractedTextLength?: number | null; aiExtractionStatus?: string | null; createdAt: string;
-  storagePath?: string | null; hasInlineFileContent?: boolean | null;
+  hasPrivateStorage?: boolean | null; hasInlineFileContent?: boolean | null;
 };
 type Expert = {
   id: string; fullName: string; title: string | null; disciplines: string[];
@@ -30,7 +31,26 @@ type Company = {
   experts?: Expert[]; projects?: Project[];
 };
 type UploadItem = { file: File; status: "queued"|"uploading"|"done"|"error"; error?: string; category: string };
-type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean; storagePath?: string | null; hasInlineFileContent?: boolean | null };
+
+/**
+ * Pipeline status surfaced after a company-document upload completes.
+ *
+ * The secure-upload handler enqueues a background VAULT_INGEST job when
+ * `companyDoc=true` rather than running the ingestion inline (a full AI
+ * extraction pass over every usable document could otherwise risk the
+ * upload request's timeout). This badge tells the user their newly
+ * uploaded document has been queued for extraction and source-verification,
+ * so they know the result is not instant, without needing a live-polling
+ * progress indicator. No user action follows: the job source-verifies
+ * eligible evidence on its own and Run Engine consumes it automatically.
+ */
+type VaultPipelineStatus = {
+  phase: "queued" | "failed";
+  message: string;
+  /** ISO timestamp so the badge can fade after a few seconds if desired. */
+  at: number;
+};
+type CompanyAsset = { id: string; assetType: string; originalFileName: string; isActive: boolean; hasPrivateStorage?: boolean | null; hasInlineFileContent?: boolean | null };
 
 const REQUIRED_ASSET_TYPES = ["LOGO", "LETTERHEAD", "SIGNATURE", "STAMP"];
 
@@ -48,11 +68,11 @@ const CATEGORY_LABELS: Record<string,string> = {
 const CAT_COLORS: Record<string,string> = {
   COMPANY_PROFILE:"bg-blue-100 text-blue-700",EXPERT_CV:"bg-purple-100 text-purple-700",
   PROJECT_REFERENCE:"bg-green-100 text-green-700",PROJECT_CONTRACT:"bg-emerald-100 text-emerald-700",
-  FINANCIAL_STATEMENT:"bg-amber-100 text-amber-700",LEGAL_REGISTRATION:"bg-red-100 text-red-700",
+  FINANCIAL_STATEMENT:"bg-amber-100 text-amber-800",LEGAL_REGISTRATION:"bg-red-100 text-red-700",
   CERTIFICATION:"bg-orange-100 text-orange-700",MANUAL:"bg-slate-100 text-slate-600",
   PORTFOLIO:"bg-teal-100 text-teal-700",COMPLIANCE_RECORD:"bg-rose-100 text-rose-700",OTHER:"bg-slate-100 text-slate-500",
 };
-const ACCEPT = ".pdf,.doc,.docx,.xls,.xlsx,.ods,.ppt,.pptx,.csv,.txt,.rtf,.jpg,.jpeg,.png,.gif,.webp";
+const ACCEPT = ".pdf,.docx,.xlsx,.csv,.txt";
 const empty: Company = { name:"",legalName:"",description:"",website:"",address:"",phone:"",email:"",knowledgeMode:"PROFILE_FIRST",serviceLines:[],sectors:[],profileSummary:"",gmName:"",gmTitle:"",gmLicense:"",foundingYear:null,headcount:null,licenseGrade:"",registrationNumber:"",tin:"",vat:"" };
 
 const PLACEHOLDER_PATTERNS = /^\s*(tbd|tbc|n\/a|unknown|not provided|placeholder|pending|to be confirmed|to be determined)\s*$/i;
@@ -65,7 +85,7 @@ function hasReal(v: unknown): boolean { return !isPlaceholder(v); }
 function fmt(b: number) { return b<1024?`${b} B`:b<1048576?`${(b/1024).toFixed(0)} KB`:`${(b/1048576).toFixed(1)} MB`; }
 function ext(name: string) { return name.toLowerCase().split(".").pop()??""; }
 
-type Tab = "profile"|"documents"|"experts"|"projects"|"compliance";
+type Tab = "documents"|"experts"|"projects"|"compliance";
 
 type ComplianceRecord = {
   id: string; complianceType: string; title: string; status: string;
@@ -81,17 +101,26 @@ type FinancialRecord = {
 };
 
 export default function CompanyPage() {
-  const [tab, setTab] = useState<Tab>("profile");
+  const [tab, setTab] = useState<Tab>("documents");
   const [company, setCompany] = useState<Company>(empty);
+  /**
+   * How many Expert/Project records the Engine will actually accept as
+   * evidence. Computed server-side, because durable verification compares a
+   * record's current values against the stored source-document bytes and the
+   * browser has neither. Displayed, not acted on: nothing here asks the user
+   * to review or approve anything. It exists so the page cannot claim records
+   * are "automatically verified before use" while the Engine is silently
+   * excluding some of them.
+   */
+  const [usableEvidence, setUsableEvidence] = useState<{ experts: number; projects: number } | null>(null);
   const [docs, setDocs] = useState<CompanyDoc[]>([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
-  const [serviceLinesTxt, setServiceLinesTxt] = useState("");
-  const [sectorsTxt, setSectorsTxt] = useState("");
   const [docCategory, setDocCategory] = useState("AUTO_DETECT");
   const [uploadQueue, setUploadQueue] = useState<UploadItem[]>([]);
+  /** Vault pipeline status — shown as a live badge after a successful
+   * company-document upload. Null when no upload has happened recently. */
+  const [vaultPipeline, setVaultPipeline] = useState<VaultPipelineStatus | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [searchDoc, setSearchDoc] = useState("");
   const [filterCat, setFilterCat] = useState("ALL");
@@ -111,18 +140,21 @@ export default function CompanyPage() {
   const [expertEditForm, setExpertEditForm] = useState({ fullName:"",title:"",disciplines:"",sectors:"",certifications:"",yearsExperience:"",profile:"" });
   const [deletingExpertId, setDeletingExpertId] = useState<string|null>(null);
   const [confirmingDeleteExpertId, setConfirmingDeleteExpertId] = useState<string|null>(null);
+  const [confirmingDeleteAllExperts, setConfirmingDeleteAllExperts] = useState(false);
+  const [deletingAllExperts, setDeletingAllExperts] = useState(false);
 
   // Project state
-  const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+  const [projectForm, setProjectForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"",summary:"" });
   const projectFormRef = useRef<HTMLFormElement>(null);
   const [projectSaving, setProjectSaving] = useState(false);
   const [editProject, setEditProject] = useState<Project|null>(null);
   const [projectEditSaving, setProjectEditSaving] = useState(false);
-  const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+  const [projectEditForm, setProjectEditForm] = useState({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"",summary:"" });
   const [deletingProjectId, setDeletingProjectId] = useState<string|null>(null);
   const [confirmingDeleteProjectId, setConfirmingDeleteProjectId] = useState<string|null>(null);
+  const [confirmingDeleteAllProjects, setConfirmingDeleteAllProjects] = useState(false);
+  const [deletingAllProjects, setDeletingAllProjects] = useState(false);
   const [reimporting, setReimporting] = useState(false);
-  const [reimportResult, setReimportResult] = useState<{expertsCreated:number;projectsCreated:number;docsProcessed:number}|null>(null);
   const [assets, setAssets] = useState<CompanyAsset[]>([]);
   const [searchExpert, setSearchExpert] = useState("");
   const [searchProject, setSearchProject] = useState("");
@@ -134,7 +166,7 @@ export default function CompanyPage() {
   const [complianceLoading, setComplianceLoading] = useState(false);
   const [complianceForm, setComplianceForm] = useState({ complianceType:"", title:"", status:"ACTIVE", evidenceSummary:"", referenceNumber:"", expiryDate:"" });
   const [legalForm, setLegalForm] = useState({ recordType:"", title:"", authority:"", referenceNumber:"", status:"ACTIVE", issueDate:"", expiryDate:"" });
-  const [financialForm, setFinancialForm] = useState({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" });
+  const [financialForm, setFinancialForm] = useState({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"", amount:"", notes:"" });
   const [complianceSaving, setComplianceSaving] = useState(false);
   const [legalSaving, setLegalSaving] = useState(false);
   const [financialSaving, setFinancialSaving] = useState(false);
@@ -156,9 +188,9 @@ export default function CompanyPage() {
     setComplianceLoading(true);
     try {
       const [cr, lr, fr] = await Promise.all([
-        fetch("/api/company/compliance-records").then(r=>r.json()),
-        fetch("/api/company/legal-records").then(r=>r.json()),
-        fetch("/api/company/financial-records").then(r=>r.json()),
+        fetch("/api/company/compliance-records?limit=50").then(r=>r.json()),
+        fetch("/api/company/legal-records?limit=50").then(r=>r.json()),
+        fetch("/api/company/financial-records?limit=50").then(r=>r.json()),
       ]);
       setComplianceRecords(cr.records ?? []);
       setLegalRecords(lr.records ?? []);
@@ -201,7 +233,7 @@ export default function CompanyPage() {
     try {
       const res = await fetch("/api/company/financial-records", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ ...financialForm, fiscalYear: Number(financialForm.fiscalYear), amount: financialForm.amount ? Number(financialForm.amount) : null }) });
       if (!res.ok) { setError("We could not add that financial record. Please check the required fields and try again."); return; }
-      setFinancialForm({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"USD", amount:"", notes:"" }); await loadComplianceData();
+      setFinancialForm({ recordType:"", fiscalYear: String(new Date().getFullYear()), currency:"", amount:"", notes:"" }); await loadComplianceData();
     } catch {
       setError("Network interruption while adding the financial record. Please retry when your connection is stable.");
     } finally { setFinancialSaving(false); }
@@ -260,7 +292,7 @@ export default function CompanyPage() {
 
   async function loadDocs(): Promise<boolean> {
     try {
-      const r = await fetch("/api/company/documents");
+      const r = await fetch("/api/company/documents?limit=50");
       if (!r.ok) return false;
       const d = await r.json() as { items?: CompanyDoc[] };
       if (!d || !Array.isArray(d.items)) return false;
@@ -271,20 +303,52 @@ export default function CompanyPage() {
     }
   }
 
+  /**
+   * Re-read the usable-evidence counts from the canonical server-side
+   * resolver. Deleting a record cannot be compensated for locally: whether the
+   * removed row was source-verified is exactly the thing the browser cannot
+   * determine, so decrementing by one here would drift away from what the
+   * Engine reports. Ask the same resolver again instead.
+   */
+  const refreshUsableEvidence = useCallback(async () => {
+    try {
+      const res = await fetch("/api/company/ingestion-readiness");
+      if (!res.ok) return;
+      const readiness = await res.json() as { totals?: { reviewedExperts?: number; reviewedProjects?: number } };
+      if (!readiness?.totals) return;
+      setUsableEvidence({
+        experts: readiness.totals.reviewedExperts ?? 0,
+        projects: readiness.totals.reviewedProjects ?? 0,
+      });
+    } catch {
+      // Leave the last known counts in place rather than showing a wrong one.
+    }
+  }, []);
+
   useEffect(() => {
     Promise.all([
       fetch("/api/company").then(r=>r.json()),
-      fetch("/api/company/documents").then(r=>r.json()),
-      fetch("/api/company/assets").then(r=>r.json()),
-    ]).then(([c, d, a]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }]) => {
+      fetch("/api/company/documents?limit=50").then(r=>r.json()),
+      fetch("/api/company/assets?limit=50").then(r=>r.json()),
+      // Usable-evidence counts come from lib/company-ingestion-readiness.ts —
+      // the same canonical resolver the Engine's matching gate uses — so this
+      // page cannot report a different number from what the Engine accepts.
+      // A raw trustLevel flag is not sufficient: it can be stale, or was never
+      // durably backed by source bytes.
+      fetch("/api/company/ingestion-readiness").then(r=>r.json()).catch(() => null),
+    ]).then(([c, d, a, readiness]: [{ company?: Company } & Company, { items?: CompanyDoc[] }, { assets?: CompanyAsset[] }, { totals?: { reviewedExperts?: number; reviewedProjects?: number } } | null]) => {
       const co = c.company ?? c;
       if (co.name !== undefined) {
         setCompany({ ...empty, ...(co as Company) });
-        setServiceLinesTxt(((co as Company).serviceLines||[]).join(", "));
-        setSectorsTxt(((co as Company).sectors||[]).join(", "));
       }
       setDocs(d.items ?? []);
       setAssets(a.assets ?? []);
+      if (readiness?.totals) {
+        setUsableEvidence({
+          experts: readiness.totals.reviewedExperts ?? 0,
+          projects: readiness.totals.reviewedProjects ?? 0,
+        });
+      }
     }).finally(() => setLoading(false));
   }, []);
 
@@ -299,13 +363,45 @@ export default function CompanyPage() {
       fd.append("category", docCategory==="AUTO_DETECT" ? "AUTO" : docCategory);
       try {
         const res = await fetch("/api/upload", { method:"POST", body:fd });
-        const data = await res.json() as { success?: boolean; results?: Array<{ error?: string }> };
+        const data = await res.json() as {
+          success?: boolean;
+          results?: Array<{ error?: string }>;
+          /** Vault re-ingest status — present when companyDoc=true. The
+           * secure-upload handler enqueues a background VAULT_INGEST job
+           * rather than running ingestion inline, so this reports "QUEUED"
+           * or "FAILED" (enqueue failure), not the finished result. */
+          companyImport?: { status?: string; jobId?: string; error?: string } | null;
+        };
         const firstErr = data.results?.[0] && "error" in data.results[0] ? data.results[0].error : undefined;
         if (!res.ok || firstErr) {
           setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:firstErr??"Upload failed" } : x));
         } else {
           setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"done" } : x));
           await loadDocs();
+          // Surface the auto-pipeline status. Ingestion runs in the
+          // background, so this badge tells the user the newly uploaded
+          // document has been queued for extraction and source-verification,
+          // rather than the old "already done" message. Nothing is asked of
+          // the user either way — the queued job is the whole workflow.
+          if (data.companyImport && data.companyImport.status === "QUEUED") {
+            setVaultPipeline({
+              phase: "queued",
+              message: "Document stored. Extraction and source-verification queued — this completes automatically, no action needed.",
+              at: Date.now(),
+            });
+            // Claim the job the upload just queued. Without this the message
+            // above is false: the two repair controls woke the worker but
+            // upload never did, so a vault uploaded on a preview deployment
+            // (where the scheduled drain does not reach) stayed unextracted
+            // and could not source-verify a single record.
+            void startQueuedVaultIngestion();
+          } else if (data.companyImport && data.companyImport.status === "FAILED") {
+            setVaultPipeline({
+              phase: "failed",
+              message: "Document stored, but automatic extraction could not be queued. It retries on its own; Diagnostics and Recovery can force a retry.",
+              at: Date.now(),
+            });
+          }
         }
       } catch {
         setUploadQueue(q => q.map(x => x.file===item.file ? { ...x, status:"error", error:"Network interruption — please retry" } : x));
@@ -396,37 +492,24 @@ export default function CompanyPage() {
   }
 
   async function reimportAll() {
-    setReimporting(true); setReimportResult(null);
+    setReimporting(true);
     try {
       const res = await fetch("/api/company/reimport", { method:"POST" });
-      if (!res.ok) { setError("We could not re-import Company Vault documents. Please retry, or re-extract the specific failed document first."); return; }
-      const data = await res.json() as { expertsCreated?:number; projectsCreated?:number; docsProcessed?:number };
-      setReimportResult({ expertsCreated: data.expertsCreated ?? 0, projectsCreated: data.projectsCreated ?? 0, docsProcessed: data.docsProcessed ?? 0 });
-      await loadDocs();
-      // Refresh experts/projects in company state
-      const c = await fetch("/api/company").then(r=>r.json()) as Company;
-      setCompany(prev => ({ ...prev, experts: c.experts ?? [], projects: c.projects ?? [] }));
+      if (!res.ok) { setError("We could not queue a Company Vault re-import. Please retry, or re-extract the specific failed document first."); return; }
+      const data = await res.json() as { status?: string };
+      if (data.status === "QUEUED") {
+        setVaultPipeline({
+          phase: "queued",
+          message: "Re-extraction and re-import queued — large document sets can take a few minutes. Refresh this page shortly to see updated documents, experts, and projects.",
+          at: Date.now(),
+        });
+        void startQueuedVaultIngestion();
+      }
     } catch {
-      setError("Network interruption while re-importing Company Vault documents. Please retry when your connection is stable.");
+      setError("Network interruption while queuing the Company Vault re-import. Please retry when your connection is stable.");
     } finally {
       setReimporting(false);
     }
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault(); setSaving(true); setError(""); setSuccess(false);
-    try {
-      const res = await fetch("/api/company", {
-        method:"PUT", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ ...company, serviceLines:serviceLinesTxt, sectors:sectorsTxt }),
-      });
-      if (!res.ok) { setError("We could not save the Company Profile. Please check the required fields and try again."); return; }
-      const updated = await res.json() as Company;
-      setCompany({ ...empty, ...updated });
-      setServiceLinesTxt((updated.serviceLines||[]).join(", "));
-      setSectorsTxt((updated.sectors||[]).join(", "));
-      setSuccess(true); setTimeout(() => setSuccess(false), 3000);
-    } catch { setError("Network interruption while saving the Company Profile. Please retry when your connection is stable."); } finally { setSaving(false); }
   }
 
   async function addExpert(e: React.FormEvent) {
@@ -488,11 +571,38 @@ export default function CompanyPage() {
         return;
       }
       setCompany(c => ({ ...c, experts:(c.experts||[]).filter(x => x.id!==id) }));
+      void refreshUsableEvidence();
       setConfirmingDeleteExpertId(null);
     } catch {
       setError("Network interruption while deleting the expert record. Please retry when your connection is stable.");
     } finally {
       setDeletingExpertId(null);
+    }
+  }
+
+  async function deleteAllExperts() {
+    if (deletingAllExperts) return;
+    setDeletingAllExperts(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/experts/batch`, { method:"DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "We could not delete all expert records. Please retry.");
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setCompany(c => ({ ...c, experts: [] }));
+      setUsableEvidence(prev => ({ experts: 0, projects: prev?.projects ?? 0 }));
+      void refreshUsableEvidence();
+      setConfirmingDeleteAllExperts(false);
+      if (data.deletedCount > 0) {
+        setError(`Deleted ${data.deletedCount} expert record(s).`);
+      }
+    } catch {
+      setError("Network interruption while deleting expert records. Please retry when your connection is stable.");
+    } finally {
+      setDeletingAllExperts(false);
     }
   }
 
@@ -508,7 +618,7 @@ export default function CompanyPage() {
       if (!res.ok) { setError("We could not add that project record. Please check the required fields and try again."); return; }
       const project = await res.json() as Project;
       setCompany(c => ({ ...c, projects:[project, ...(c.projects||[])] }));
-      setProjectForm({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"USD",summary:"" });
+      setProjectForm({ name:"",clientName:"",sector:"",country:"",serviceAreas:"",contractValue:"",currency:"",summary:"" });
     } catch {
       setError("Network interruption while adding the project record. Please retry when your connection is stable.");
     } finally {
@@ -521,7 +631,7 @@ export default function CompanyPage() {
     setProjectEditForm({
       name:p.name, clientName:p.clientName??"", sector:p.sector??"", country:p.country??"",
       serviceAreas:(p.serviceAreas||[]).join(", "), contractValue:p.contractValue?.toString()??"",
-      currency:p.currency??"USD", summary:p.summary??"",
+      currency:p.currency??"", summary:p.summary??"",
     });
   }
 
@@ -555,11 +665,38 @@ export default function CompanyPage() {
         return;
       }
       setCompany(c => ({ ...c, projects:(c.projects||[]).filter(x => x.id!==id) }));
+      void refreshUsableEvidence();
       setConfirmingDeleteProjectId(null);
     } catch {
       setError("Network interruption while deleting the project record. Please retry when your connection is stable.");
     } finally {
       setDeletingProjectId(null);
+    }
+  }
+
+  async function deleteAllProjects() {
+    if (deletingAllProjects) return;
+    setDeletingAllProjects(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/company/projects/batch`, { method:"DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? "We could not delete all project records. Please retry.");
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      setCompany(c => ({ ...c, projects: [] }));
+      setUsableEvidence(prev => ({ experts: prev?.experts ?? 0, projects: 0 }));
+      void refreshUsableEvidence();
+      setConfirmingDeleteAllProjects(false);
+      if (data.deletedCount > 0) {
+        setError(`Deleted ${data.deletedCount} project record(s).`);
+      }
+    } catch {
+      setError("Network interruption while deleting project records. Please retry when your connection is stable.");
+    } finally {
+      setDeletingAllProjects(false);
     }
   }
 
@@ -588,10 +725,20 @@ export default function CompanyPage() {
     (p.sector ?? "").toLowerCase().includes(searchProject.toLowerCase())
   );
 
-  if (loading) return <div role="status" aria-live="polite" className="text-sm text-slate-400 py-16 text-center">Loading Company Vault…</div>;
+  if (loading) return (
+    <div role="status" aria-live="polite" className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+      {/* Spinner + darker text for WCAG AA contrast (was text-slate-400 on
+          white — too low contrast per live VLM audit). The spinner gives
+          visible feedback that the page is actively loading, not stuck. */}
+      <svg className="h-8 w-8 animate-spin text-slate-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+      </svg>
+      <p className="text-sm font-medium text-slate-700">Loading Company Vault…</p>
+    </div>
+  );
 
   const TABS: { id: Tab; label: string; count?: number }[] = [
-    { id:"profile", label:"Company Profile" },
     { id:"documents", label:"Documents", count:docs.length },
     { id:"experts", label:"Experts", count:(company.experts||[]).length },
     { id:"projects", label:"Projects", count:(company.projects||[]).length },
@@ -609,10 +756,12 @@ export default function CompanyPage() {
         const activeAssetTypes = new Set(assets.filter(a => a.isActive).map(a => a.assetType));
         const allExperts = company.experts ?? [];
         const allProjects = company.projects ?? [];
-        const reviewedExpertCount = allExperts.filter(e => e.trustLevel === "REVIEWED").length;
-        const reviewedProjectCount = allProjects.filter(p => p.trustLevel === "REVIEWED").length;
-        const draftExpertCount = allExperts.length - reviewedExpertCount;
-        const draftProjectCount = allProjects.length - reviewedProjectCount;
+        // "Profile completeness" below counts whether fields and records
+        // exist. It is deliberately not a readiness score: a 100% complete
+        // profile can still be unusable for matching, generation, or export if
+        // the evidence behind it is not source-verified. The usable-evidence
+        // counts rendered underneath come from the canonical server-side
+        // resolver instead, so the two never contradict each other.
         const checks = [
           { label: "Company name", done: hasReal(company.name) },
           { label: "Legal name", done: hasReal(company.legalName) },
@@ -657,9 +806,36 @@ export default function CompanyPage() {
             <div className="border-t pt-3">
               <p className="text-xs font-medium text-slate-600 mb-1.5">Knowledge vault</p>
               <div className="flex flex-wrap gap-4 text-xs text-slate-500">
-                <span>Experts: <span className="font-medium text-slate-700">{reviewedExpertCount} reviewed</span>{draftExpertCount > 0 ? `, ${draftExpertCount} draft` : ""}</span>
-                <span>Projects: <span className="font-medium text-slate-700">{reviewedProjectCount} reviewed</span>{draftProjectCount > 0 ? `, ${draftProjectCount} draft` : ""}</span>
+                <span>Experts: <span className="font-medium text-slate-700">{allExperts.length} record{allExperts.length === 1 ? "" : "s"}</span>{usableEvidence ? <> · <span className="font-medium text-slate-700">{usableEvidence.experts}</span> source-verified and usable</> : " · automatically verified before use"}</span>
+                <span>Projects: <span className="font-medium text-slate-700">{allProjects.length} record{allProjects.length === 1 ? "" : "s"}</span>{usableEvidence ? <> · <span className="font-medium text-slate-700">{usableEvidence.projects}</span> source-verified and usable</> : " · automatically verified before use"}</span>
               </div>
+              {usableEvidence && (usableEvidence.experts < allExperts.length || usableEvidence.projects < allProjects.length) && (
+                docs.length === 0 ? (
+                  // "Run Engine will verify them, no action needed" is only true
+                  // when there is something to verify against. With no owned
+                  // documents there is nothing to match these records to, so
+                  // Run Engine will verify exactly zero of them however many
+                  // times it runs — and saying otherwise sends the owner round
+                  // a loop that cannot terminate. Records imported with declared
+                  // sources whose files were never uploaded land here.
+                  <p className="mt-1.5 text-xs text-amber-700">
+                    None of these records can be source-verified yet: this vault has <span className="font-medium">no uploaded documents</span> to verify them against, so matching and generation will keep excluding all {allExperts.length + allProjects.length} of them. Run Engine cannot change that. Add your company documents under Documents — verification then runs automatically, with no approval step.
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-xs text-slate-400">
+                    {/* Two things are load-bearing in this sentence. Ingestion
+                        source-verifies, not Run Engine — the earlier wording
+                        credited Run Engine with work it never does. And it ends
+                        "no action is needed here", which
+                        tests/company-vault-usable-evidence-count.test.ts pins:
+                        this block must offer no control and no wording implying
+                        a pending human step. "No confirmation click is needed"
+                        is narrower, and leaves the owner to wonder whether some
+                        OTHER action is expected of them here. None is. */}
+                    Records that are not yet source-verified are excluded from matching and generation. Vault ingestion verifies them automatically against uploaded documents before AI Analyze and Run Engine use them — no action is needed here.
+                  </p>
+                )
+              )}
             </div>
           </div>
         );
@@ -690,75 +866,14 @@ export default function CompanyPage() {
       </div>
 
       {error && <div role="alert" aria-live="assertive" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
-      {success && <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">Profile saved successfully.</div>}
-
-      {/* Profile Tab */}
-      {tab==="profile" && (
-        <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
-          <h2 className="font-semibold text-slate-900">Company Profile</h2>
-          <div className="grid gap-3 md:grid-cols-2">
-            <input value={company.name} onChange={e=>setCompany({...company,name:e.target.value})} placeholder="Company name *" className="rounded-lg border px-3 py-2 text-sm" />
-            <input value={company.legalName} onChange={e=>setCompany({...company,legalName:e.target.value})} placeholder="Legal registered name" className="rounded-lg border px-3 py-2 text-sm" />
-            <input value={company.email} onChange={e=>setCompany({...company,email:e.target.value})} type="email" placeholder="Contact email" className="rounded-lg border px-3 py-2 text-sm" />
-            <input value={company.phone} onChange={e=>setCompany({...company,phone:e.target.value})} placeholder="Phone number" className="rounded-lg border px-3 py-2 text-sm" />
-            <input value={company.website} onChange={e=>setCompany({...company,website:e.target.value})} placeholder="Website URL" className="rounded-lg border px-3 py-2 text-sm" />
-            <select value={company.knowledgeMode} onChange={e=>setCompany({...company,knowledgeMode:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
-              <option value="PROFILE_FIRST">Mode A — Profile First</option>
-              <option value="FULL_LIBRARY">Mode B — Full Document Library</option>
-            </select>
-          </div>
-          <input value={company.address} onChange={e=>setCompany({...company,address:e.target.value})} placeholder="Registered address" className="w-full rounded-lg border px-3 py-2 text-sm" />
-          <textarea value={company.description} onChange={e=>setCompany({...company,description:e.target.value})} rows={2} placeholder="Company description" className="w-full rounded-lg border px-3 py-2 text-sm" />
-          <textarea value={company.profileSummary} onChange={e=>setCompany({...company,profileSummary:e.target.value})} rows={4} placeholder="Profile summary — used in proposal drafting" className="w-full rounded-lg border px-3 py-2 text-sm" />
-          <input value={serviceLinesTxt} onChange={e=>setServiceLinesTxt(e.target.value)} placeholder="Service lines (comma-separated)" className="w-full rounded-lg border px-3 py-2 text-sm" />
-          <input value={sectorsTxt} onChange={e=>setSectorsTxt(e.target.value)} placeholder="Sectors (comma-separated)" className="w-full rounded-lg border px-3 py-2 text-sm" />
-
-          <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Authorising representative & institutional details</h3>
-            <p className="mb-3 text-xs text-slate-500">Used in the proposal&apos;s D.4 Declaration of Eligibility, Cover Page Submitted-by block, A.1 Company Background, and A.2 Corporate Information.</p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <input value={company.gmName ?? ""} onChange={e=>setCompany({...company,gmName:e.target.value})} placeholder="GM / authorising representative name (e.g., Eng. Ahmed Kebede Tekaw)" className="rounded-lg border px-3 py-2 text-sm" />
-              <input value={company.gmTitle ?? ""} onChange={e=>setCompany({...company,gmTitle:e.target.value})} placeholder="GM title (e.g., General Manager and Founder)" className="rounded-lg border px-3 py-2 text-sm" />
-              <input value={company.gmLicense ?? ""} onChange={e=>setCompany({...company,gmLicense:e.target.value})} placeholder="GM license / registration (e.g., IPSTE/6884)" className="rounded-lg border px-3 py-2 text-sm" />
-              <input value={company.licenseGrade ?? ""} onChange={e=>setCompany({...company,licenseGrade:e.target.value})} placeholder="License grade / category (e.g., Grade I)" className="rounded-lg border px-3 py-2 text-sm" />
-              <div className="flex flex-col gap-1">
-                <input value={company.registrationNumber ?? ""} onChange={e=>setCompany({...company,registrationNumber:e.target.value})} placeholder="Business registration number" className="rounded-lg border px-3 py-2 text-sm" />
-                <p className="text-xs text-slate-400">Use exact value from official company registration documents.</p>
-              </div>
-              <div className="flex flex-col gap-1">
-                <input value={company.tin ?? ""} onChange={e=>setCompany({...company,tin:e.target.value})} placeholder="TIN (Tax Identification Number)" className="rounded-lg border px-3 py-2 text-sm" />
-                <p className="text-xs text-slate-400">Use exact value from official TIN documents.</p>
-              </div>
-              <input value={company.vat ?? ""} onChange={e=>setCompany({...company,vat:e.target.value})} placeholder="VAT registration" className="rounded-lg border px-3 py-2 text-sm" />
-              <input value={company.foundingYear ?? ""} onChange={e=>setCompany({...company,foundingYear:e.target.value?Number(e.target.value):null})} type="number" placeholder="Founding year (e.g., 2019)" className="rounded-lg border px-3 py-2 text-sm" />
-              <input value={company.headcount ?? ""} onChange={e=>setCompany({...company,headcount:e.target.value?Number(e.target.value):null})} type="number" placeholder="Permanent staff headcount" className="rounded-lg border px-3 py-2 text-sm" />
-            </div>
-          </div>
-
-          <button type="submit" disabled={saving||!company.name} className="rounded-lg bg-black px-6 py-2 text-sm text-white hover:bg-slate-800 disabled:opacity-60">
-            {saving ? "Saving…" : "Save Profile"}
-          </button>
-        </form>
-      )}
 
       {/* Documents Tab */}
       {tab==="documents" && (
         <div className="rounded-2xl border bg-white p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <div>
-              <h2 className="font-semibold text-slate-900">Document Library</h2>
-              <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Review each file before using it as tender evidence</p>
-            </div>
-            <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
-              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60 font-medium">
-              {reimporting ? "Re-importing…" : "Re-extract & Re-import All"}
-            </button>
+          <div>
+            <h2 className="font-semibold text-slate-900">Document Library</h2>
+            <p className="text-xs text-slate-400 mt-0.5">{docs.length} file{docs.length!==1?"s":""} · Ingestion extracts and source-verifies eligible evidence before Run Engine uses it for matching</p>
           </div>
-          {reimportResult && (
-            <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-2.5 text-xs text-green-800">
-              Re-import complete — {reimportResult.docsProcessed} docs processed · {reimportResult.expertsCreated} expert{reimportResult.expertsCreated!==1?"s":""} added · {reimportResult.projectsCreated} project{reimportResult.projectsCreated!==1?"s":""} added
-            </div>
-          )}
           <div className="flex gap-2 items-center">
             <select value={docCategory} onChange={e=>setDocCategory(e.target.value)} className="flex-1 rounded-lg border px-2 py-1.5 text-xs bg-white">
               {DOC_CATEGORIES.map(c => <option key={c} value={c}>{CATEGORY_LABELS[c]??c}</option>)}
@@ -771,7 +886,7 @@ export default function CompanyPage() {
             onClick={()=>fileInputRef.current?.click()}
             className={`cursor-pointer rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors ${dragOver?"border-blue-400 bg-blue-50":"border-slate-200 hover:border-slate-400"}`}>
             <p className="text-sm font-medium text-slate-600">{dragOver?"Drop files here":"Drag & drop files here"}</p>
-            <p className="mt-1 text-xs text-slate-400">PDF · DOCX · XLSX · Images · and more · Up to 10 MB</p>
+            <p className="mt-1 text-xs text-slate-400">PDF · DOCX · XLSX · CSV · TXT · Up to 10 MB</p>
           </div>
           {uploadQueue.length>0 && (
             <div role="status" aria-live="polite" aria-label="Upload progress" className="space-y-1.5">
@@ -783,6 +898,27 @@ export default function CompanyPage() {
                   </span>
                 </div>
               ))}
+            </div>
+          )}
+          {vaultPipeline && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+                vaultPipeline.phase === "queued"
+                  ? "border-blue-200 bg-blue-50 text-blue-800"
+                  : "border-amber-200 bg-amber-50 text-amber-800"
+              }`}
+            >
+              <span
+                aria-hidden="true"
+                className={`mt-0.5 inline-block h-2 w-2 shrink-0 rounded-full ${
+                  vaultPipeline.phase === "queued"
+                    ? "animate-pulse bg-blue-600"
+                    : "bg-amber-600"
+                }`}
+              />
+              <span className="leading-5">{vaultPipeline.message}</span>
             </div>
           )}
           {docs.length>0 && (
@@ -804,7 +940,7 @@ export default function CompanyPage() {
                     <p className="text-xs font-medium text-slate-800 truncate">{doc.originalFileName}</p>
                     <div className="flex flex-wrap items-center gap-1.5 mt-1">
                       <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${CAT_COLORS[doc.category]??"bg-slate-100 text-slate-500"}`}>{CATEGORY_LABELS[doc.category]??doc.category}</span>
-                      <span className="text-[10px] text-slate-400">{fmt(doc.size)}{doc.hasInlineFileContent && !(doc.storagePath ?? "").trim() ? " · Restored inline file available" : ""}</span>
+                      <span className="text-[10px] text-slate-400">{fmt(doc.size)}{doc.hasInlineFileContent && !doc.hasPrivateStorage ? " · Restored inline file available" : ""}</span>
                       {(doc.extractedTextLength ?? 0) > 0 ? <span className="text-[10px] text-green-600"><CheckIcon /> {(doc.extractedTextLength ?? 0).toLocaleString()} chars</span> : doc.aiExtractionStatus === "FAILED" ? <span className="text-[10px] text-red-500">text extraction failed</span> : <span className="text-[10px] text-slate-400">no text</span>}
                     </div>
                   </div>
@@ -813,7 +949,6 @@ export default function CompanyPage() {
                       <span className="text-[10px] font-medium text-amber-600 px-2 py-1" aria-label={`Deletion pending for ${doc.originalFileName}`}>Deletion pending</span>
                     ) : (
                       <>
-                        <button type="button" onClick={()=>void reextractDoc(doc)} disabled={reextractingDocId!==null || deletingDocId!==null} aria-busy={reextractingDocId===doc.id} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-slate-200" title="Re-extract text">{reextractingDocId===doc.id ? "Re-extracting…" : "Re-extract"}</button>
                         <a href={`/api/company/documents/${doc.id}`} download={doc.originalFileName} aria-label={`Download ${doc.originalFileName}`} className="inline-flex min-h-8 items-center justify-center rounded border px-2 py-1 text-xs text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 border-blue-200">Download</a>
                         <button ref={(node)=>{ if (node) deleteButtonRefs.current[doc.id]=node; else delete deleteButtonRefs.current[doc.id]; }} type="button" onClick={()=>openDeleteConfirmation(doc.id)} disabled={deletingDocId!==null || reextractingDocId!==null} aria-expanded={confirmingDeleteDocId===doc.id} {...(confirmingDeleteDocId===doc.id ? { "aria-controls": `delete-confirm-${doc.id}`, "aria-describedby": `delete-confirm-help-${doc.id}` } : {})} aria-label={`Delete ${doc.originalFileName} from Company Vault`} className="min-h-8 rounded border px-2 py-1 text-xs text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60 border-red-200">{deletingDocId===doc.id ? "Deleting…" : "Delete"}</button>
                       </>
@@ -833,12 +968,65 @@ export default function CompanyPage() {
               </div>
             ))}
           </div>
+
+          {/* ── Diagnostics and Recovery ────────────────────────────────────
+              Extraction, source-verification and Vault-to-Engine handoff are
+              automatic: uploading a document is the entire user workflow. The
+              controls below re-run work the pipeline already does on its own
+              and already retries on its own, so they exist only for the case
+              where a document is genuinely stuck. They are collapsed by
+              default and deliberately absent from the document rows, because
+              a re-extract button sitting next to every file reads as a step
+              the user is expected to take. Nothing here grants review,
+              approval, or REVIEWED provenance — re-extraction re-derives
+              SOURCE_VERIFIED evidence from the stored bytes exactly as the
+              automatic path does. */}
+          <details className="rounded-xl border border-slate-200 bg-slate-50">
+            <summary className="cursor-pointer list-none px-4 py-2.5 text-xs font-semibold text-slate-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">
+              Diagnostics and Recovery
+              <span className="ml-2 font-normal text-slate-400">optional — normal processing needs none of this</span>
+            </summary>
+            <div className="space-y-3 border-t border-slate-200 px-4 py-3">
+              <p className="text-xs text-slate-500">
+                Extraction and source-verification run automatically after upload and retry on their own. Use these only if a document stays without text.
+              </p>
+              <button onClick={()=>void reimportAll()} disabled={reimporting||docs.length===0}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-60">
+                {reimporting ? "Re-importing…" : "Re-extract & Re-import All"}
+              </button>
+              {docs.length > 0 && (
+                <ul className="space-y-1.5">
+                  {docs.map(doc => (
+                    <li key={doc.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5">
+                      <span className="min-w-0 flex-1 truncate text-xs text-slate-600">{doc.originalFileName}</span>
+                      <button type="button" onClick={()=>void reextractDoc(doc)} disabled={reextractingDocId!==null || deletingDocId!==null || doc.aiExtractionStatus === "PENDING_DELETE"} aria-busy={reextractingDocId===doc.id} aria-label={`Re-extract text from ${doc.originalFileName}`} className="min-h-8 shrink-0 rounded border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-60" title="Re-extract text">{reextractingDocId===doc.id ? "Re-extracting…" : "Re-extract"}</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </details>
         </div>
       )}
 
       {/* Experts Tab */}
       {tab==="experts" && (
         <div className="space-y-6">
+          {(() => {
+            const totalExperts = (company.experts ?? []).length;
+            if (totalExperts === 0) return null;
+            // With no owned documents no record is eligible, so the reassuring
+            // version of this banner describes something that cannot happen.
+            return docs.length === 0 ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                These {totalExperts} expert record{totalExperts === 1 ? "" : "s"} cannot be source-verified until their original document is uploaded — this vault currently has none, so Run Engine will keep excluding them from matching and generation.
+              </div>
+            ) : (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                Vault ingestion automatically source-verifies eligible expert records before AI Analyze; Run Engine later uses the verified records for matching and generation.
+              </div>
+            );
+          })()}
           <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
             <h2 className="font-semibold text-slate-900 mb-4">Add Expert</h2>
             <form onSubmit={addExpert} className="space-y-3">
@@ -932,6 +1120,28 @@ export default function CompanyPage() {
                   </button>
                 </div>
               )}
+              {filteredExperts.length > 0 && (
+                <div className="border-t px-5 py-2.5 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingDeleteAllExperts(v => !v)}
+                    disabled={deletingAllExperts || deletingExpertId !== null}
+                    className="text-xs text-red-600 hover:text-red-800 font-medium disabled:opacity-60"
+                  >
+                    {confirmingDeleteAllExperts ? "Cancel" : "Delete all experts"}
+                  </button>
+                  {confirmingDeleteAllExperts && (
+                    <button
+                      type="button"
+                      onClick={() => void deleteAllExperts()}
+                      disabled={deletingAllExperts}
+                      className="rounded bg-red-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-800 disabled:opacity-60"
+                    >
+                      {deletingAllExperts ? "Deleting all…" : `Yes, delete all ${filteredExperts.length} experts`}
+                    </button>
+                  )}
+                </div>
+              )}
               </>
             )}
           </div>
@@ -941,6 +1151,15 @@ export default function CompanyPage() {
       {/* Projects Tab */}
       {tab==="projects" && (
         <div className="space-y-6">
+          {(() => {
+            const totalProjects = (company.projects ?? []).length;
+            if (totalProjects === 0) return null;
+            return (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+                Vault ingestion automatically source-verifies eligible project records before AI Analyze; Run Engine later uses the verified records for matching and generation.
+              </div>
+            );
+          })()}
           <div className="rounded-2xl border bg-white p-6 shadow-sm max-w-3xl">
             <h2 className="font-semibold text-slate-900 mb-4">Add Project</h2>
             <form ref={projectFormRef} onSubmit={addProject} className="space-y-3">
@@ -951,6 +1170,7 @@ export default function CompanyPage() {
                 <input value={projectForm.country} onChange={e=>setProjectForm({...projectForm,country:e.target.value})} placeholder="Country" className="rounded-lg border px-3 py-2 text-sm" />
                 <input value={projectForm.contractValue} onChange={e=>setProjectForm({...projectForm,contractValue:e.target.value})} type="number" placeholder="Contract value" className="rounded-lg border px-3 py-2 text-sm" />
                 <select value={projectForm.currency} onChange={e=>setProjectForm({...projectForm,currency:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
+                  <option value="">Currency unresolved</option>
                   {["USD","EUR","GBP","AED","SAR","KWD","EGP","ZAR"].map(c=><option key={c}>{c}</option>)}
                 </select>
               </div>
@@ -1035,6 +1255,28 @@ export default function CompanyPage() {
                   <button onClick={() => setShowAllProjects(v => !v)} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
                     {showAllProjects ? `Show fewer` : <>Show all {filteredProjects.length} projects <ChevronDownIcon /></>}
                   </button>
+                </div>
+              )}
+              {filteredProjects.length > 0 && (
+                <div className="border-t px-5 py-2.5 flex items-center justify-between">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingDeleteAllProjects(v => !v)}
+                    disabled={deletingAllProjects || deletingProjectId !== null}
+                    className="text-xs text-red-600 hover:text-red-800 font-medium disabled:opacity-60"
+                  >
+                    {confirmingDeleteAllProjects ? "Cancel" : "Delete all projects"}
+                  </button>
+                  {confirmingDeleteAllProjects && (
+                    <button
+                      type="button"
+                      onClick={() => void deleteAllProjects()}
+                      disabled={deletingAllProjects}
+                      className="rounded bg-red-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-800 disabled:opacity-60"
+                    >
+                      {deletingAllProjects ? "Deleting all…" : `Yes, delete all ${filteredProjects.length} projects`}
+                    </button>
+                  )}
                 </div>
               )}
               </>
@@ -1198,6 +1440,7 @@ export default function CompanyPage() {
                     <input value={financialForm.fiscalYear} onChange={e=>setFinancialForm({...financialForm,fiscalYear:e.target.value})} type="number" min="1990" max="2100" placeholder="Fiscal year *" className="rounded-lg border px-3 py-2 text-sm" />
                     <input value={financialForm.amount} onChange={e=>setFinancialForm({...financialForm,amount:e.target.value})} type="number" placeholder="Amount" className="rounded-lg border px-3 py-2 text-sm" />
                     <select value={financialForm.currency} onChange={e=>setFinancialForm({...financialForm,currency:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
+                      <option value="">Currency unresolved</option>
                       {["USD","EUR","GBP","ETB","AED","SAR","KWD","EGP","ZAR"].map(c=><option key={c}>{c}</option>)}
                     </select>
                   </div>
@@ -1284,6 +1527,7 @@ export default function CompanyPage() {
                 <input value={projectEditForm.country} onChange={e=>setProjectEditForm({...projectEditForm,country:e.target.value})} placeholder="Country" className="rounded-lg border px-3 py-2 text-sm" />
                 <input value={projectEditForm.contractValue} onChange={e=>setProjectEditForm({...projectEditForm,contractValue:e.target.value})} type="number" placeholder="Contract value" className="rounded-lg border px-3 py-2 text-sm" />
                 <select value={projectEditForm.currency} onChange={e=>setProjectEditForm({...projectEditForm,currency:e.target.value})} className="rounded-lg border px-3 py-2 text-sm bg-white">
+                  <option value="">Currency unresolved</option>
                   {["USD","EUR","GBP","AED","SAR","KWD","EGP","ZAR"].map(c=><option key={c}>{c}</option>)}
                 </select>
               </div>

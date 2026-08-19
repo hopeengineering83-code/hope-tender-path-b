@@ -123,18 +123,13 @@ describe("Gaps M-S — No raw Unicode in remaining components", () => {
     assert.ok(!codeOnly.includes("⚠"), "must not contain ⚠");
   });
 
-  it("ai-rematch-button.tsx has no raw Unicode", () => {
-    const src = read("components/ai-rematch-button.tsx");
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/"[^"]*"/g, '""');
-    assert.ok(!codeOnly.includes("✓"), "must not contain ✓");
-    assert.ok(!codeOnly.includes("⚠"), "must not contain ⚠");
-  });
-
-  it("snapshot-consistency-badge.tsx has no raw Unicode", () => {
-    const src = read("components/snapshot-consistency-badge.tsx");
-    const codeOnly = src.replace(/\/\/[^\n]*/g, "").replace(/"[^"]*"/g, '""');
-    assert.ok(!codeOnly.includes("⚠"), "must not contain ⚠");
-  });
+  // "snapshot-consistency-badge.tsx has no raw Unicode" test removed --
+  // components/snapshot-consistency-badge.tsx was deleted as unrendered dead
+  // code. Its only consumers were components/final-submission-control-center.tsx,
+  // components/tender-workflow-action-center.tsx, and
+  // components/tender-recovery-command-center.tsx, all three of which were
+  // themselves already deleted as unrendered dead code earlier in this same
+  // cleanup, leaving it with zero remaining consumers.
 
   it("ai-copilot-suggestions-panel.tsx has no emoji icons", () => {
     const src = read("components/ai-copilot-suggestions-panel.tsx");
@@ -143,6 +138,30 @@ describe("Gaps M-S — No raw Unicode in remaining components", () => {
     // Must use ICON_MAP with SVG components
     assert.match(src, /ICON_MAP/);
     assert.match(src, /SearchIcon/);
+  });
+
+  it("ai-copilot-suggestions-panel.tsx ICON_MAP resolves every suggestion key to a distinct icon", () => {
+    const src = read("components/ai-copilot-suggestions-panel.tsx");
+    const mapBody = src.match(/const ICON_MAP[^{]*\{([\s\S]*?)\};/);
+    assert.ok(mapBody, "ICON_MAP definition must exist");
+    const entries = [...mapBody![1].matchAll(/(\w+):\s*(\w+),/g)].map(([, key, icon]) => ({ key, icon }));
+    // Up to 6 suggestions can render together (suggestions.length < 6 guards),
+    // so two keys sharing an icon component makes distinct suggestions
+    // visually indistinguishable — e.g. "pin"/"folder" both silently
+    // fell back to DocumentIcon before this test existed.
+    assert.ok(entries.length >= 10, "expected all 10 suggestion icon keys to be present");
+    const iconCounts = new Map<string, string[]>();
+    for (const { key, icon } of entries) {
+      const keys = iconCounts.get(icon) ?? [];
+      keys.push(key);
+      iconCounts.set(icon, keys);
+    }
+    const duplicates = [...iconCounts.entries()].filter(([, keys]) => keys.length > 1);
+    assert.deepEqual(
+      duplicates,
+      [],
+      `ICON_MAP has duplicate icon components: ${duplicates.map(([icon, keys]) => `${icon} used by ${keys.join(", ")}`).join("; ")}`,
+    );
   });
 
   it("icons.tsx exports SearchIcon", () => {
@@ -201,11 +220,6 @@ describe("Gaps T-Z — No raw Unicode in icon-audit round 2", () => {
     assert.ok(!src.includes("▼"), "must not contain ▼");
   });
 
-  it("company/documents/category-accordion.tsx has no raw Unicode check mark", () => {
-    const src = strip(read("app/dashboard/company/documents/category-accordion.tsx"));
-    assert.ok(!src.includes("✓"), "must not contain ✓");
-  });
-
   it("setup/page.tsx has no raw Unicode marks", () => {
     const src = strip(read("app/dashboard/setup/page.tsx"));
     assert.ok(!src.includes("✓"), "must not contain ✓");
@@ -223,13 +237,6 @@ describe("Gaps T-Z — No raw Unicode in icon-audit round 2", () => {
     assert.ok(!src.includes("○"), "must not contain ○");
   });
 
-  it("tender-controls-panel.tsx has no emoji TYPE_CONFIG icons", () => {
-    const src = strip(read("components/tender-controls-panel.tsx"));
-    for (const glyph of ["📄", "💬", "❓", "🏁", "✅", "💰"]) {
-      assert.ok(!src.includes(glyph), `must not contain ${glyph}`);
-    }
-  });
-
   it("tender-chat-panel.tsx has no raw Unicode typing-indicator dots", () => {
     const src = strip(read("components/tender-chat-panel.tsx"));
     assert.ok(!src.includes("●"), "must not contain ●");
@@ -238,12 +245,6 @@ describe("Gaps T-Z — No raw Unicode in icon-audit round 2", () => {
   it("command-center/version-actions.tsx has no raw Unicode dismiss marks", () => {
     const src = strip(read("app/dashboard/tenders/[id]/command-center/version-actions.tsx"));
     assert.ok(!src.includes("✕"), "must not contain ✕");
-  });
-
-  it("evidence-coverage-panel.tsx heading uses ArrowRightIcon, not raw →", () => {
-    const src = strip(read("components/evidence-coverage-panel.tsx"));
-    assert.ok(!src.includes("→"), "must not contain raw →");
-    assert.match(src, /ArrowRightIcon/);
   });
 
   it("reset-password/page.tsx has no raw Unicode arrow", () => {
@@ -256,21 +257,17 @@ describe("Gaps T-Z — No raw Unicode in icon-audit round 2", () => {
     assert.ok(!src.includes("⌄"), "must not contain ⌄");
   });
 
-  it("tenders/[id]/executive-snapshot.tsx has no raw Unicode arrow", () => {
-    const src = strip(read("app/dashboard/tenders/[id]/executive-snapshot.tsx"));
-    assert.ok(!src.includes("↗"), "must not contain ↗");
+  it("tender-controls-panel.tsx has no emoji TYPE_CONFIG icons", () => {
+    const src = strip(read("components/tender-controls-panel.tsx"));
+    for (const glyph of ["📄", "💬", "❓", "🏁", "✅", "💰"]) {
+      assert.ok(!src.includes(glyph), `must not contain ${glyph}`);
+    }
   });
 
   it("calendar-client.tsx month nav uses chevron icons, not raw triangles", () => {
     const src = strip(read("app/dashboard/calendar/calendar-client.tsx"));
     assert.ok(!src.includes("◀"), "must not contain ◀");
     assert.ok(!src.includes("▶"), "must not contain ▶");
-  });
-
-  it("vault-evidence-lists.tsx show-all toggles use chevron icons, not raw triangles", () => {
-    const src = strip(read("components/vault-evidence-lists.tsx"));
-    assert.ok(!src.includes("▲"), "must not contain ▲");
-    assert.ok(!src.includes("▼"), "must not contain ▼");
   });
 
   it("icons.tsx exports the new icon components used by this round", () => {

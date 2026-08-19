@@ -2,26 +2,31 @@ import { NextResponse } from "next/server";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { Prisma } from "@prisma/client";
 import { generateTenderDocuments } from "../../../../../lib/engine/generate-elite";
 import { promoteBestAvailableReviewedMatchesForGeneration } from "../../../../../lib/engine/best-available-selection";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
+import { applyActiveSignatureAndStampToTenderDocuments } from "../../../../../lib/engine/apply-signature-stamp";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
-import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, hasExplicitSubmissionScope, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys, type SubmissionPlanFile } from "../../../../../lib/engine/submission-plan";
+import { checkAiQuota } from "../../../../../lib/ai-quota";
+import { buildSubmissionPlan, findExtraGeneratedDocuments, findMissingGeneratedDocuments, generatedDocumentSubmissionKey, plannedSubmissionTargetFiles, plannedSubmissionTargetKeys } from "../../../../../lib/engine/submission-plan";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT } from "../../../../../lib/vault-review-provenance";
 import { inferType as inferRequirementType } from "../../../../../lib/engine/analysis";
 import { polishBenchmarkOutput } from "../../../../../lib/engine/benchmark-output-polisher";
 import { cleanTenderTitle, cleanClientName, formatRequirementLine } from "../../../../../lib/engine/proposal-labels";
 import { logAction } from "../../../../../lib/audit";
 import { extractRequestId } from "../../../../../lib/request-id";
-import { createJob, advanceJob, completeJob, failJob } from "../../../../../lib/job-store";
+import { createJob, advanceJob, completeInMemoryJob, failInMemoryJob } from "../../../../../lib/job-store";
 import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
+import { reuseTenderIssuedForm } from "../../../../../lib/engine/tender-issued-form-discovery";
+import { getStorageAdapter } from "../../../../../lib/storage";
 import { createNotification } from "../../../../../lib/notifications";
 import { childLogger, reportError, time, logger } from "../../../../../lib/observability";
 import { mapGenerationError } from "../../../../../lib/engine/structured-generation-error";
 import { computeStoredMetadataPatch, listInvalidStoredFields } from "../../../../../lib/engine/sanitize-stored-metadata";
-import { isValidClientName, containsMetadataPlaceholder, isClientNameContaminated, clientNameContaminationReason } from "../../../../../lib/engine/metadata-validators";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 import { validateTenderBeforeGeneration } from "../../../../../lib/engine/pre-generation-validation";
+import { isValidClientName, containsMetadataPlaceholder } from "../../../../../lib/engine/metadata-validators";
 import { repairSourceGrounding } from "../../../../../lib/engine/repair-source-grounding";
 import { assertAnalysisReadyForFinalGeneration, detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
@@ -46,8 +51,14 @@ export const dynamic = "force-dynamic";
 
 type SupportDocKind = "EXPERT_CV" | "PROJECT_REFERENCES" | "METHODOLOGY" | "COMPANY_PROFILE" | "FINANCIAL_PLACEHOLDER" | "LEGAL_PLACEHOLDER" | "FORM_PLACEHOLDER" | "DECLARATION_PLACEHOLDER" | "ANNEX_PLACEHOLDER" | "SUBMISSION_RULES_PLACEHOLDER" | "SECTOR_TECHNICAL_SCOPE" | "GENERIC";
 
-function hasRealClientName(value?: string | null): boolean {
-  return isValidClientName(value);
+// PERMANENTLY DISABLED contract marker — do not remove. Creating
+// GeneratedDocument rows from the submission plan before preflight was a
+// bypass; the stub's name and `return 0;` body are pinned by
+// tests/quality-gaps-phase28.test.ts and tests/route-behavioral-gate.test.ts
+// so any re-enablement (under this name) fails loudly. Real document rows
+// are only ever created by the gated generation path below.
+async function ensurePlannedGeneratedDocumentRecords(_tenderId: string, _plannedFiles: unknown): Promise<number> {
+  return 0;
 }
 
 function criticalGapIsHardBlock(gap: { title: string; description: string; mitigationPlan: string | null }) {
@@ -69,37 +80,6 @@ function para(text: string, bold = false): Paragraph {
 }
 function heading(text: string): Paragraph { return new Paragraph({ text: clean(text), heading: HeadingLevel.HEADING_1, spacing: { before: 260, after: 140 } }); }
 function bullet(text: string): Paragraph { return new Paragraph({ text: shortText(text, 560), bullet: { level: 0 }, spacing: { after: 80, line: 260 } }); }
-
-function plannedRecordDocumentType(file: SubmissionPlanFile): string {
-  const label = `${file.exactFileName} ${file.documentType}`.toLowerCase();
-  if (/technical[-\s_]*proposal|methodology|technical approach/.test(label)) return "TECHNICAL_PROPOSAL";
-  if (/financial|price|commercial/.test(label)) return "FINANCIAL_PROPOSAL";
-  if (/expert|cv|personnel|staff/.test(label)) return "EXPERT_CV_PACKAGE";
-  if (/project|experience|reference/.test(label)) return "PROJECT_REFERENCE_PACKAGE";
-  if (/form|declaration|annex|schedule|certificate|compliance/.test(label)) return "FORM_OR_ANNEX";
-  return file.documentType || "TENDER_REQUIRED_FILE";
-}
-
-/**
- * @deprecated PERMANENTLY DISABLED — do not call.
- *
- * This helper previously created PLANNED GeneratedDocument rows during the
- * planOnly path. Per the gate safety fix, Build Plan and planOnly must create
- * zero GeneratedDocument rows before readiness. PLANNED rows must never count
- * as generated, reviewed, approved, export-ready, or ZIP-ready.
- *
- * This function is retained as a no-op stub so any future call site fails
- * closed (returns 0, creates nothing). Do NOT re-enable it.
- */
-
-
-/**
- * @deprecated PERMANENTLY DISABLED — do not call.
- * Creates zero GeneratedDocument rows. Retained as no-op stub.
- */
-async function ensurePlannedGeneratedDocumentRecords(_tenderId: string, _plannedFiles: SubmissionPlanFile[]): Promise<number> {
-  return 0;
-}
 
 async function makeSupportDocx(tenderTitle: string, title: string, sections: Array<{ title: string; lines: string[] }>): Promise<string> {
   const children: Paragraph[] = [para(title, true), para(`Tender: ${shortText(tenderTitle, 200)}. Package item: ${title}.`)];
@@ -125,10 +105,6 @@ function classifySupportDoc(docName: string): SupportDocKind {
   if (/submission|deadline|delivery|formatting|packaging|schedule|programme/.test(name)) return "SUBMISSION_RULES_PLACEHOLDER";
   if (/scope|water|solar|design|supervision|feasibility|technical requirement/.test(name)) return "SECTOR_TECHNICAL_SCOPE";
   return "GENERIC";
-}
-
-function isReplacementOriginalKind(kind: SupportDocKind): boolean {
-  return kind.endsWith("_PLACEHOLDER") || kind === "GENERIC";
 }
 
 function placeholderIntro(): string[] {
@@ -161,9 +137,25 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
   return [{ title: "Tender Package Item", lines: ["This file corresponds to a tender-required submission item. Refer to the tender document for the exact content and format."] }, { title: "Linked Tender Requirements", lines: context.requirements.slice(0, 8) }, { title: "Insertion Instructions", lines: placeholderIntro() }];
 }
 
+/**
+ * Is this row the tender's MAIN generated proposal?
+ *
+ * fillPlannedSupportDocuments overwrites every row it does NOT consider the
+ * main proposal with support/stub content, so a false answer destroys the
+ * generated proposal. The previous test recognised it only by the literal name
+ * "Client-Ready Benchmark Technical Proposal" or a filename ending
+ * "technical-proposal.docx". That held while the proposal was always written to
+ * "Technical-Proposal.docx", but fails now that it is written to the confirmed
+ * plan's own file name — an EOI tender's "01-Expression-Of-Interest.docx"
+ * matched neither, so the freshly generated proposal was immediately replaced
+ * by a 58-word stub and the package shipped placeholders.
+ */
 function isMainProposalLike(doc: { name: string; exactFileName: string | null; documentType: string }): boolean {
   const label = `${doc.name} ${doc.exactFileName ?? ""}`.toLowerCase();
-  return /\bclient-ready benchmark technical proposal\b|technical-proposal\.docx$/.test(label) || (doc.documentType === "TECHNICAL_PROPOSAL" && /feasibility, design and supervision technical scope/i.test(doc.name));
+  if (doc.documentType === "TECHNICAL_PROPOSAL" || doc.documentType === "EXPRESSION_OF_INTEREST") return true;
+  if (/\bclient-ready\b/.test(label)) return true;
+  if (/\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal|expression[-\s_]*of[-\s_]*interest|eoi)\b/.test(label)) return true;
+  return /technical-proposal\.docx$/.test(label);
 }
 
 // Kinds that represent company-produced deliverables and should have a real DOCX generated.
@@ -175,12 +167,25 @@ const COMPANY_PRODUCED_KINDS: ReadonlySet<SupportDocKind> = new Set<SupportDocKi
   "SECTOR_TECHNICAL_SCOPE",
 ]);
 
-async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: Set<string>): Promise<number> {
-  const tender = await prisma.tender.findUnique({ where: { id: tenderId }, select: { title: true, clientName: true, procuringEntityName: true, description: true, requirements: true, expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } }, projectMatches: { where: { isSelected: true }, include: { project: true }, orderBy: { score: "desc" } } } });
+async function fillPlannedSupportDocuments(tenderId: string, userId: string, plannedFileKeys?: Set<string>): Promise<number> {
+  const tender = await prisma.tender.findUnique({
+    where: { id: tenderId },
+    select: {
+      title: true, clientName: true, procuringEntityName: true, description: true, requirements: true,
+      expertMatches: { where: { isSelected: true }, include: { expert: { select: { ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT, profile: true, deletedAt: true } } }, orderBy: { score: "desc" } },
+      projectMatches: { where: { isSelected: true }, include: { project: { select: { ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT, summary: true, deletedAt: true } } }, orderBy: { score: "desc" } },
+    },
+  });
   if (!tender) return 0;
   const requirements = tender.requirements.map((r) => formatRequirementLine(r, 380));
-  const experts = tender.expertMatches.filter((m) => m.expert && m.expert.trustLevel === "REVIEWED").map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
-  const projects = tender.projectMatches.filter((m) => m.project && m.project.trustLevel === "REVIEWED").map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
+  // canUseVaultRecord(..., "GENERATION"), not a raw trustLevel==="REVIEWED"
+  // check — a stale or never-durably-provenance-backed record must not be
+  // quoted as real evidence in a generated, submittable support document,
+  // while a durably SOURCE_VERIFIED record (machine-verified against the
+  // company's own uploaded source) is accepted same as GENERATION elsewhere.
+  // A soft-deleted record (deletedAt set) must never surface here either.
+  const experts = tender.expertMatches.filter((m) => m.expert && !m.expert.deletedAt && canUseVaultRecord(m.expert, "GENERATION")).map((m) => `${m.expert.fullName}${m.expert.title ? ` — ${m.expert.title}` : ""}${m.expert.yearsExperience ? ` | ${m.expert.yearsExperience}+ years` : ""}${m.expert.profile ? ` | ${shortText(m.expert.profile, 260)}` : ""}`);
+  const projects = tender.projectMatches.filter((m) => m.project && !m.project.deletedAt && canUseVaultRecord(m.project, "GENERATION")).map((m) => `${m.project.name}${m.project.clientName ? ` — ${m.project.clientName}` : ""}${m.project.country ? ` | ${m.project.country}` : ""}${m.project.summary ? ` | ${shortText(m.project.summary, 300)}` : ""}`);
   const docs = await prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } }, select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, storagePath: true } });
   // Deduplicate by filename before filling: if multiple non-superseded records share the same
   // exactFileName (from prior generation runs), only fill the first one encountered to avoid
@@ -215,17 +220,34 @@ async function fillPlannedSupportDocuments(tenderId: string, plannedFileKeys?: S
       });
       filled += 1;
     } else {
-      // Placeholder / form / legal / financial / declaration / annex / submission-rules / generic:
-      // Do NOT generate a fake DOCX. Mark as PLANNED stub so the user knows to attach the real document.
-      // Only update if the record is not already in the correct placeholder state.
-      if (doc.generationStatus !== "PLANNED" || !generatedDocumentHasContent(doc)) {
+      // Tender-issued form / legal / financial / declaration / annex: never
+      // generate a lookalike — a generated file is not the client's form.
+      //
+      // Before asking for the original, look for it in the Tender Intake files
+      // the user already uploaded. When it is there, its bytes are reused
+      // unchanged with full provenance; asking someone to re-upload a file the
+      // app is already holding is the blocker this removes. Discovery is
+      // conservative and fails closed, so an ambiguous or absent match falls
+      // through to the same request as before — now carrying the specific
+      // reason no file could be reused.
+      const reuse = await reuseTenderIssuedForm({
+        client: prisma,
+        storage: getStorageAdapter(),
+        tenderId,
+        userId,
+        documentId: doc.id,
+        plannedFileName: doc.exactFileName ?? doc.name,
+      });
+      if (reuse.reused) {
+        filled += 1;
+      } else if (doc.generationStatus !== "PLANNED" || !generatedDocumentHasContent(doc)) {
         await prisma.generatedDocument.update({
           where: { id: doc.id },
           data: {
             generationStatus: "PLANNED",
             validationStatus: "PENDING",
             reviewStatus: "REPLACE_WITH_ORIGINAL",
-            reviewNotes: "Attach the tender-issued original / signed / stamped / certified document before final export. Do not submit a generated file in place of this item.",
+            reviewNotes: `Attach the tender-issued original / signed / stamped / certified document before final export. Do not submit a generated file in place of this item. Automatic reuse from the uploaded Tender Intake files was not possible: ${reuse.reason}`,
             contentSummary: `Placeholder for ${title}. Replace with the tender-issued original before final export. Do not submit this stub.`,
             updatedAt: new Date(),
           },
@@ -244,6 +266,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const userId = actor.id;
   const rl = rateLimit(`gen:${userId}`, AI_RATE_LIMIT);
   if (!rl.allowed) return NextResponse.json({ error: "Rate limit exceeded — too many generation requests. Please wait a minute and retry.", retryAfter: Math.ceil((rl.resetAt - Date.now()) / 1000) }, { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } });
+
+  // Audit H-6: per-user daily AI quota. Generation is the most token-expensive
+  // operation; enforce the daily cap before any provider call is made.
+  const quota = await checkAiQuota(userId, actor.role);
+  if (!quota.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((quota.resetAtMs - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: quota.reason ?? "Daily AI quota exceeded.", used: quota.used, limit: quota.limit },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
 
   await prismaReady;
   const { id } = await params;
@@ -523,7 +556,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
   if (analysisExtractionStatusForGen === "PARTIAL_EXTRACTION_AI_ANALYZED") {
-    const reqUrl2 = new URL(req.url);
     {
       return NextResponse.json({
         errorCode: "PARTIAL_EXTRACTION_ANALYSIS",
@@ -556,12 +588,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // requirements but classified none as MANDATORY, the mandatory-compliance
   // section may be incomplete. This is a warning for the user.
   {
-    const reqUrl0 = new URL(req.url);
-    {
-      const mandatoryCount = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
-      if (mandatoryCount === 0 && tender.requirements.length >= 3) {
-        logger.warn(`[generate] tender=${id} has ${tender.requirements.length} requirements but none classified as MANDATORY — advisory only for draft work`);
-      }
+    const mandatoryCount = tender.requirements.filter((r) => r.priority === "MANDATORY").length;
+    if (mandatoryCount === 0 && tender.requirements.length >= 3) {
+      logger.warn(`[generate] tender=${id} has ${tender.requirements.length} requirements but none classified as MANDATORY — advisory only for draft work`);
     }
   }
 
@@ -571,31 +600,27 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // absence is a warning only (documents can still be generated without it, but
   // the plan may under-score sections).
   {
-    const reqUrl = new URL(req.url);
-    {
-      const explicitScope = hasExplicitSubmissionScope(tender);
-      let anySubmission = false;
-      let anyRequiredDocs = false;
-      let anyEvaluation = false;
-      let totalDetected = 0;
-      for (const file of effectiveExtractionFiles) {
-        const pp = assessExtractionQualityPerPage(file.extractedText);
-        totalDetected += pp.totalDetectedPages;
-        if (pp.submissionInstructionPages.length > 0) anySubmission = true;
-        if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
-        if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
-      }
-      if (totalDetected > 0) {
-        const contentWarnings: string[] = [];
-        if (!anySubmission) contentWarnings.push("No submission instruction pages detected — submission details will be omitted from draft output.");
-        if (!anyRequiredDocs) contentWarnings.push("No required document pages detected — required documents may be missing from draft output.");
-        if (!anyEvaluation) contentWarnings.push("No evaluation criteria pages detected — evaluation guidance will be limited in draft output.");
-        if (contentWarnings.length > 0) {
-          // Content-page coverage is NOT a hard block for draft work.
-          // Missing submission/required-doc/evaluation pages are warnings —
-          // draft generation proceeds with available source text.
-          logger.warn(`[generate] tender=${id} content-page coverage incomplete: ${contentWarnings.join("; ")}`);
-        }
+    let anySubmission = false;
+    let anyRequiredDocs = false;
+    let anyEvaluation = false;
+    let totalDetected = 0;
+    for (const file of effectiveExtractionFiles) {
+      const pp = assessExtractionQualityPerPage(file.extractedText);
+      totalDetected += pp.totalDetectedPages;
+      if (pp.submissionInstructionPages.length > 0) anySubmission = true;
+      if (pp.requiredDocumentPages.length > 0) anyRequiredDocs = true;
+      if (pp.evaluationCriteriaPages.length > 0) anyEvaluation = true;
+    }
+    if (totalDetected > 0) {
+      const contentWarnings: string[] = [];
+      if (!anySubmission) contentWarnings.push("No submission instruction pages detected — submission details will be omitted from draft output.");
+      if (!anyRequiredDocs) contentWarnings.push("No required document pages detected — required documents may be missing from draft output.");
+      if (!anyEvaluation) contentWarnings.push("No evaluation criteria pages detected — evaluation guidance will be limited in draft output.");
+      if (contentWarnings.length > 0) {
+        // Content-page coverage is NOT a hard block for draft work.
+        // Missing submission/required-doc/evaluation pages are warnings —
+        // draft generation proceeds with available source text.
+        logger.warn(`[generate] tender=${id} content-page coverage incomplete: ${contentWarnings.join("; ")}`);
       }
     }
   }
@@ -644,80 +669,76 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // Policy point 7). This is a fast, targeted pre-check; the registry-backed
   // completeness gate further below is the full enforcing authority.
   {
-    const reqUrl = new URL(req.url);
-    {
-      const explicitScope = hasExplicitSubmissionScope(tender);
-      // Use canonical field-state resolver instead of raw column checks.
-      // A valid manual override must NOT fail just because the raw DB column is blank.
-      const overrides = await prisma.tenderMetadataOverride.findMany({
-        where: { tenderId: id },
-      }).catch(() => []);
-      const canonicalState = resolveCanonicalFieldState({
-        tender: {
-          ...tender,
-          submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
-          clientContactEmail: (tender as any).clientContactEmail ?? null,
-          // Per-field source-evidence columns — forward ALL of them so the
-          // canonical resolver can ground every critical field, not just
-          // clientName/submissionMethod. Without these, title/deadline/
-          // reference/submissionAddress/submissionEmails can never be
-          // GROUNDED in the generate route even when the DB has the evidence.
-          clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
-          clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
-          clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
-          titleSourcePage: (tender as any).titleSourcePage ?? null,
-          titleSourceQuote: (tender as any).titleSourceQuote ?? null,
-          titleSourceFileId: (tender as any).titleSourceFileId ?? null,
-          deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
-          deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
-          deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
-          submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
-          submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
-          submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
-          submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
-          submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
-          submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
-          submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
-          submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
-          submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
-          contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
-        } as any,
-        overrides: overrides as any[],
-        hasExtractedRequirements: tender.requirements.length > 0,
-        submissionMethodContext: tender.submissionMethod ?? undefined,
-        // Enforce active-file grounding: a fileId pointing to a
-        // deleted/superseded TenderFile must NOT count as GROUNDED.
-        activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f: any) => f.id)),
-        // Full active-file rows enable the STRONGEST shared grounding check
-        // (quote containment + page <= totalPages) — same rule the BuildPlan
-        // validator applies, so this pre-check and the validator agree.
-        activeFiles: (tender.files ?? [])
-          .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
-          .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
-      });
-      const policyCtx = { submissionMethod: tender.submissionMethod };
-      const missingCritical: string[] = canonicalState.fields
-        .filter(f => f.criticality !== "non-critical" && f.blockerReason)
-        .map(f => f.blockerReason!);
-      // Only require submissionEmails when the method clearly indicates email
-      // delivery — not when "email" appears in a prohibition phrase like
-      // "no email submissions" or "hard copy only; email not accepted".
-      if (
-        isCriticalField("submissionEndpoint", policyCtx) &&
-        tender.submissionMethod &&
-        /email/i.test(tender.submissionMethod) &&
-        !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&
-        !tender.submissionEmails
-      ) {
-        // Generation is DRAFT work — missing submission email is a warning,
-        // not a blocker. The user can still generate draft proposal material.
-        // Final submission gates enforce strict endpoint requirements.
-      }
-      if (missingCritical.length > 0) {
-        // Metadata is NOT a hard blocker for draft generation.
-        // Missing critical metadata is a warning — draft work proceeds.
-        logger.warn(`[generate] tender=${id} has missing critical metadata: ${missingCritical.join(", ")}`);
-      }
+    // Use canonical field-state resolver instead of raw column checks.
+    // A valid manual override must NOT fail just because the raw DB column is blank.
+    const overrides = await prisma.tenderMetadataOverride.findMany({
+      where: { tenderId: id },
+    }).catch(() => []);
+    const canonicalState = resolveCanonicalFieldState({
+      tender: {
+        ...tender,
+        submissionEmailSubject: (tender as any).submissionEmailSubject ?? null,
+        clientContactEmail: (tender as any).clientContactEmail ?? null,
+        // Per-field source-evidence columns — forward ALL of them so the
+        // canonical resolver can ground every critical field, not just
+        // clientName/submissionMethod. Without these, title/deadline/
+        // reference/submissionAddress/submissionEmails can never be
+        // GROUNDED in the generate route even when the DB has the evidence.
+        clientNameSourcePage: (tender as any).clientNameSourcePage ?? null,
+        clientNameSourceQuote: (tender as any).clientNameSourceQuote ?? null,
+        clientNameSourceFileId: (tender as any).clientNameSourceFileId ?? null,
+        titleSourcePage: (tender as any).titleSourcePage ?? null,
+        titleSourceQuote: (tender as any).titleSourceQuote ?? null,
+        titleSourceFileId: (tender as any).titleSourceFileId ?? null,
+        deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
+        deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
+        deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
+        submissionMethodSourcePage: (tender as any).submissionMethodSourcePage ?? null,
+        submissionMethodSourceQuote: (tender as any).submissionMethodSourceQuote ?? null,
+        submissionMethodSourceFileId: (tender as any).submissionMethodSourceFileId ?? null,
+        submissionAddressSourcePage: (tender as any).submissionAddressSourcePage ?? null,
+        submissionAddressSourceQuote: (tender as any).submissionAddressSourceQuote ?? null,
+        submissionAddressSourceFileId: (tender as any).submissionAddressSourceFileId ?? null,
+        submissionEmailSourcePage: (tender as any).submissionEmailSourcePage ?? null,
+        submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
+        submissionEmailSourceFileId: (tender as any).submissionEmailSourceFileId ?? null,
+        contactDetailsSourceJson: (tender as any).contactDetailsSourceJson ?? null,
+      } as any,
+      overrides: overrides as any[],
+      hasExtractedRequirements: tender.requirements.length > 0,
+      submissionMethodContext: tender.submissionMethod ?? undefined,
+      // Enforce active-file grounding: a fileId pointing to a
+      // deleted/superseded TenderFile must NOT count as GROUNDED.
+      activeTenderFileIds: new Set((tender.files ?? []).filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE").map((f: any) => f.id)),
+      // Full active-file rows enable the STRONGEST shared grounding check
+      // (quote containment + page <= totalPages) — same rule the BuildPlan
+      // validator applies, so this pre-check and the validator agree.
+      activeFiles: (tender.files ?? [])
+        .filter((f: any) => (f.deletionStatus ?? "ACTIVE") === "ACTIVE")
+        .map((f: any) => ({ id: f.id, extractedText: f.extractedText ?? null, totalPages: f.totalPages ?? null })),
+    });
+    const policyCtx = { submissionMethod: tender.submissionMethod };
+    const missingCritical: string[] = canonicalState.fields
+      .filter(f => f.criticality !== "non-critical" && f.blockerReason)
+      .map(f => f.blockerReason!);
+    // Only require submissionEmails when the method clearly indicates email
+    // delivery — not when "email" appears in a prohibition phrase like
+    // "no email submissions" or "hard copy only; email not accepted".
+    if (
+      isCriticalField("submissionEndpoint", policyCtx) &&
+      tender.submissionMethod &&
+      /email/i.test(tender.submissionMethod) &&
+      !/no.{0,30}email|email.{0,30}not.{0,10}(accepted|allowed)|hard.{0,10}copy.{0,30}only/i.test(tender.submissionMethod) &&
+      !tender.submissionEmails
+    ) {
+      // Generation is DRAFT work — missing submission email is a warning,
+      // not a blocker. The user can still generate draft proposal material.
+      // Final submission gates enforce strict endpoint requirements.
+    }
+    if (missingCritical.length > 0) {
+      // Metadata is NOT a hard blocker for draft generation.
+      // Missing critical metadata is a warning — draft work proceeds.
+      logger.warn(`[generate] tender=${id} has missing critical metadata: ${missingCritical.join(", ")}`);
     }
   }
 
@@ -941,9 +962,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({
         ok: false,
         planBuilt: false,
-        error: "Submission plan build produced zero required files. Review extraction/analysis output or manually confirm required submission documents before generation.",
+        error: "Submission plan build produced zero required files. Re-run AI Analyze against the current verified source, upload a better source, or correct the source-backed requirements before generation.",
         code: "SUBMISSION_PLAN_EMPTY_REVIEW_REQUIRED",
-        nextAction: "REVIEW_REQUIREMENTS_OR_ADD_MANUAL_PLAN",
+        nextAction: "RUN_AI_ANALYZE_OR_REPAIR_SOURCE",
         blockers: plan.warnings.length > 0 ? plan.warnings : ["No required submission files could be derived from tender requirements or exact file naming instructions."],
       }, { status: 422 });
     }
@@ -971,19 +992,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       draftBuildPlanRevision: draftPlan.revision,
       draftBuildPlanStatus: draftPlan.status,
       virtualFiles: plannedFiles.map((file) => ({ exactFileName: file.exactFileName, exactOrder: file.exactOrder, documentType: file.documentType, format: file.format })),
-      message: `DRAFT BuildPlan built — ${plannedFiles.length} required file(s) identified; 0 GeneratedDocument rows created; authorizesGeneration=false. Confirm the BuildPlan before any release action.`,
+      message: `DRAFT BuildPlan built — ${plannedFiles.length} required file(s) identified; 0 GeneratedDocument rows created; authorizesGeneration=false. Run Engine creates and source-verifies the authoritative Build Plan before automatic downstream processing.`,
     });
   }
 
   const promotion = await promoteBestAvailableReviewedMatchesForGeneration({ tenderId: id, requirements: tender.requirements });
-  const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { expert: { select: { fullName: true, trustLevel: true } } } });
-  const selectedProjectMatches = await prisma.tenderProjectMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { project: { select: { name: true, trustLevel: true } } } });
+  const selectedExpertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } });
+  const selectedProjectMatches = await prisma.tenderProjectMatch.findMany({ where: { tenderId: id, isSelected: true }, include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } });
   const [totalExpertMatches, totalProjectMatches] = await Promise.all([
     prisma.tenderExpertMatch.count({ where: { tenderId: id } }),
     prisma.tenderProjectMatch.count({ where: { tenderId: id } }),
   ]);
-  const draftExperts = selectedExpertMatches.filter((m) => m.expert.trustLevel !== "REVIEWED");
-  const draftProjects = selectedProjectMatches.filter((m) => m.project.trustLevel !== "REVIEWED");
+  // canUseVaultRecord(..., "GENERATION"), not raw trustLevel — see
+  // fillPlannedSupportDocuments above for the same reasoning: a stale
+  // REVIEWED record must gate generation identically to an unreviewed one,
+  // while a durably SOURCE_VERIFIED record is accepted.
+  const draftExperts = selectedExpertMatches.filter((m) => !canUseVaultRecord(m.expert, "GENERATION"));
+  const draftProjects = selectedProjectMatches.filter((m) => !canUseVaultRecord(m.project, "GENERATION"));
   const reviewedExpertCount = selectedExpertMatches.length - draftExperts.length;
   const reviewedProjectCount = selectedProjectMatches.length - draftProjects.length;
   // Reuses requiresExperts/requiresProjects computed above (already
@@ -992,33 +1017,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // checkpoints in this route consistent and avoids a redundant DB round trip.
   if (requiresExperts && selectedExpertMatches.length === 0) {
     if (totalExpertMatches > 0) {
-      return NextResponse.json({ error: "Generation blocked: tender requires experts but no expert matches are selected. Run Engine and review/select expert matches before generating.", code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
+      return NextResponse.json({ error: `Generation blocked: tender requires experts, and none of the ${totalExpertMatches} expert match(es) the Engine found could be selected automatically — selection promotes source-verified or reviewed vault records only. Upload or re-upload the CVs behind these experts under Company Vault so they verify against their documents, then run the Engine again.`, code: "NO_EXPERT_MATCHES_SELECTED", totalExpertMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    return NextResponse.json({ error: "Generation blocked: tender requires experts but no tender-specific expert match rows exist yet. Run Engine first to create tender expert match rows, then review/select expert matches.", code: "ENGINE_NOT_RUN_OR_NO_EXPERT_MATCH_ROWS", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
+    return NextResponse.json({ error: "Generation blocked: tender requires experts but no tender-specific expert match rows exist yet. Run Engine first — it creates the match rows and selects the source-verified ones automatically.", code: "ENGINE_NOT_RUN_OR_NO_EXPERT_MATCH_ROWS", totalExpertMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
   if (requiresProjects && selectedProjectMatches.length === 0) {
     if (totalProjectMatches > 0) {
-      return NextResponse.json({ error: "Generation blocked: tender requires project references but no project matches are selected. Run Engine and review/select project matches before generating.", code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
+      return NextResponse.json({ error: `Generation blocked: tender requires project references, and none of the ${totalProjectMatches} project match(es) the Engine found could be selected automatically — selection promotes source-verified or reviewed vault records only. Upload or re-upload the project reference sheets behind them under Company Vault so they verify against their documents, then run the Engine again.`, code: "NO_PROJECT_MATCHES_SELECTED", totalProjectMatches, nextAction: "REVIEW_MATCHES" }, { status: 422 });
     }
-    return NextResponse.json({ error: "Generation blocked: tender requires project references but no tender-specific project match rows exist yet. Run Engine first to create tender project match rows, then review/select project matches.", code: "ENGINE_NOT_RUN_OR_NO_PROJECT_MATCH_ROWS", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
+    return NextResponse.json({ error: "Generation blocked: tender requires project references but no tender-specific project match rows exist yet. Run Engine first — it creates the match rows and selects the source-verified ones automatically.", code: "ENGINE_NOT_RUN_OR_NO_PROJECT_MATCH_ROWS", totalProjectMatches: 0, nextAction: "RUN_ENGINE" }, { status: 422 });
   }
-  if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && requiresExperts) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} expert(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one expert before generating.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
-  if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && requiresProjects) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} project reference(s) are selected but NONE have been reviewed. Go to the Knowledge Review page and review at least one project before generating.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
+  if (selectedExpertMatches.length > 0 && reviewedExpertCount === 0 && requiresExperts) return NextResponse.json({ error: `Generation blocked: ${selectedExpertMatches.length} selected expert(s) could not be source-verified against their uploaded documents, so none can be cited as evidence. Re-upload or replace the CVs behind them under Company Vault and run the Engine again — verification is automatic and needs no approval step.`, code: "ALL_EXPERTS_UNREVIEWED", draftExperts: draftExperts.map((m) => m.expert.fullName) }, { status: 422 });
+  if (selectedProjectMatches.length > 0 && reviewedProjectCount === 0 && requiresProjects) return NextResponse.json({ error: `Generation blocked: ${selectedProjectMatches.length} selected project reference(s) could not be source-verified against their uploaded documents, so none can be cited as evidence. Re-upload or replace the project reference sheets behind them under Company Vault and run the Engine again — verification is automatic and needs no approval step.`, code: "ALL_PROJECTS_UNREVIEWED", draftProjects: draftProjects.map((m) => m.project.name) }, { status: 422 });
 
   // ── Empty vault hard gate ─────────────────────────────────────────────────
   // A proposal built from zero evidence is entirely generic and unsuitable for
   // submission. Block generation when the company vault has no reviewed experts
   // AND no reviewed projects so the user is prompted to add real evidence before
   // generating documents that will be submitted under their company name.
-  const [vaultReviewedExpertCount, vaultReviewedProjectCount] = await Promise.all([
-    prisma.expert.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
-    prisma.project.count({ where: { company: { userId }, trustLevel: "REVIEWED" } }),
+  const [vaultExpertsForGate, vaultProjectsForGate] = await Promise.all([
+    prisma.expert.findMany({ where: { company: { userId }, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT }),
+    prisma.project.findMany({ where: { company: { userId }, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT }),
   ]);
+  const vaultReviewedExpertCount = vaultExpertsForGate.filter((e) => canUseVaultRecord(e, "GENERATION")).length;
+  const vaultReviewedProjectCount = vaultProjectsForGate.filter((p) => canUseVaultRecord(p, "GENERATION")).length;
   if (vaultReviewedExpertCount === 0 && vaultReviewedProjectCount === 0) {
     return NextResponse.json({
       errorCode: "EMPTY_VAULT",
-      error: "Generation blocked: your company knowledge vault contains no reviewed experts or projects. A proposal built from zero evidence will be entirely generic and unsuitable for submission. Import and review at least one expert CV or one comparable project reference before generating documents.",
-      blockers: ["Company knowledge vault is empty — zero reviewed experts and zero reviewed projects found."],
+      error: "Generation blocked: your company knowledge vault contains no source-verified experts or projects. A proposal built from zero evidence will be entirely generic and unsuitable for submission. Upload at least one expert CV or one comparable project reference under Company Vault — the Engine verifies them automatically against the uploaded bytes, with no approval step.",
+      blockers: ["Company knowledge vault has no usable evidence — zero source-verified experts and zero source-verified projects found."],
       nextAction: "OPEN_COMPANY_READINESS",
       diagnosticId: `empty-vault-${id}`,
     }, { status: 422 });
@@ -1027,8 +1054,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const warnings: string[] = [...readiness.warnings, ...promotion.warnings];
   if (explicitSubmissionScope) warnings.push(`Submission plan target scope detected: ${plannedTargetFiles.length} tender-required file(s) will control generation reconciliation.`);
   if (seniorReviewCriticals.length > 0) warnings.push(`${seniorReviewCriticals.length} critical evidence/review gap(s) were carried into the proposal as senior bid-review items instead of blocking draft generation.`);
-  if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are unreviewed drafts: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
-  if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are unreviewed drafts: ${draftProjects.map((m) => m.project.name).join(", ")}. Review them in the Knowledge Review page for more accurate proposals.`);
+  if (draftExperts.length > 0) warnings.push(`${draftExperts.length} selected expert(s) are not source-verified and were excluded from the evidence base: ${draftExperts.map((m) => m.expert.fullName).join(", ")}. Upload the CVs they came from so the Engine can verify them automatically.`);
+  if (draftProjects.length > 0) warnings.push(`${draftProjects.length} selected project(s) are not source-verified and were excluded from the evidence base: ${draftProjects.map((m) => m.project.name).join(", ")}. Upload the reference sheets they came from so the Engine can verify them automatically.`);
 
   // ── Central authoritative readiness gate (final consolidated check) ───────
   // Last fail-closed check before full generation creates documents. Enforces
@@ -1077,11 +1104,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     advanceJob(job.id, "AI_GENERATE");
     await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
     advanceJob(job.id, "SAVE");
-    const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, plannedFileKeys), { tenderId: id });
+    const supportDocumentCount = await time("generate.fill_support_docs", () => fillPlannedSupportDocuments(id, userId, plannedFileKeys), { tenderId: id });
     if (supportDocumentCount > 0) warnings.push(explicitSubmissionScope ? `${supportDocumentCount} planned package document(s) were generated or marked for original replacement.` : `${supportDocumentCount} remaining package document(s) were generated or marked for original replacement.`);
     advanceJob(job.id, "LETTERHEAD");
     const letterheadAppliedCount = await applyActiveUploadedLetterheadToTenderDocuments(id, userId);
     if (letterheadAppliedCount > 0) warnings.push(`Uploaded Word letterhead applied to ${letterheadAppliedCount} generated DOCX file(s).`);
+    // Auto-apply company signature and stamp images (user uploads all company
+    // documents — the App uses them automatically, no human approval needed).
+    const { signatureApplied, stampApplied } = await applyActiveSignatureAndStampToTenderDocuments(id, userId);
+    if (signatureApplied > 0) warnings.push(`Company signature auto-applied to ${signatureApplied} generated DOCX file(s).`);
+    if (stampApplied > 0) warnings.push(`Company stamp auto-applied to ${stampApplied} generated DOCX file(s).`);
 
     const generatedDocsForPlan = explicitSubmissionScope ? await prisma.generatedDocument.findMany({ where: { tenderId: id }, select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true } }) : [];
     const missingPlanFiles = explicitSubmissionScope ? findMissingGeneratedDocuments(submissionPlan, generatedDocsForPlan) : [];
@@ -1104,7 +1136,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       },
     });
     const jobResult = { warnings, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount };
-    completeJob(job.id, jobResult);
+    completeInMemoryJob(job.id, jobResult);
     void createNotification({ userId, type: "TENDER_GENERATED", title: `Documents generated for "${tender.title}"`, body: `${(updatedTender?.generatedDocuments ?? []).length} document(s) ready for review.`, entityType: "Tender", entityId: id, link: `/dashboard/tenders/${id}` });
     // Extract quality score and axis scores from contentSummary so the UI
     // doesn't need to parse a text string — structured fields are more reliable.
@@ -1114,9 +1146,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const qualityScoreValue = qMatch ? parseInt(qMatch[1], 10) : null;
     let axisScoresValue: Record<string, number> | null = null;
     try { axisScoresValue = aMatch ? JSON.parse(aMatch[1]) as Record<string, number> : null; } catch { axisScoresValue = null; }
-    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, readiness: readiness.totals, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, qualityScore: qualityScoreValue, axisScores: axisScoresValue, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null, sourceDrivenDetail: { tenderId: sourceDrivenDetail.tenderId, extractedCount: sourceDrivenDetail.extractedCount, missingRelevantCount: sourceDrivenDetail.missingRelevantCount, coverageRatio: sourceDrivenDetail.coverageRatio, submissionMethod: sourceDrivenDetail.submissionMethod, requiresDeadline: sourceDrivenDetail.requiresDeadline, requiresEmailEndpoint: sourceDrivenDetail.requiresEmailEndpoint, requiresPhysicalAddress: sourceDrivenDetail.requiresPhysicalAddress }, operationGate: { ok: operationGate.ok, warnings: operationGate.warnings, placeholderFields: operationGate.placeholderFields }, ...(metadataOverrideLookupFailed ? { metadataOverrideLookupFailed: true, metadataOverrideLookupWarning: "TenderMetadataOverride table is not yet available — run database migration." } : {}) });
+    // Gap 4: re-query the canonical final-export authority after the mutation.
+    // The "readiness.totals" above is the generation-readiness totals (a different
+    // resolver). This is the authoritative final-export verdict the UI should use.
+    const canonicalReadiness = await getCanonicalReadinessSummary(prisma, userId, id);
+    return NextResponse.json({ success: true, jobId: job.id, tender: updatedTender, warnings, readiness: readiness.totals, plannedRecordCount, supportDocumentCount, letterheadAppliedCount, promotedExpertCount: promotion.promotedExpertCount, promotedProjectCount: promotion.promotedProjectCount, qualityScore: qualityScoreValue, axisScores: axisScoresValue, submissionPlan: explicitSubmissionScope ? { plannedTargetCount: plannedTargetFiles.length, missing: missingPlanFiles.map((file) => file.exactFileName), extras: extraGeneratedDocs.map((doc) => doc.exactFileName ?? doc.name ?? doc.documentType ?? doc.id ?? "document") } : null, sourceDrivenDetail: { tenderId: sourceDrivenDetail.tenderId, extractedCount: sourceDrivenDetail.extractedCount, missingRelevantCount: sourceDrivenDetail.missingRelevantCount, coverageRatio: sourceDrivenDetail.coverageRatio, submissionMethod: sourceDrivenDetail.submissionMethod, requiresDeadline: sourceDrivenDetail.requiresDeadline, requiresEmailEndpoint: sourceDrivenDetail.requiresEmailEndpoint, requiresPhysicalAddress: sourceDrivenDetail.requiresPhysicalAddress }, operationGate: { ok: operationGate.ok, warnings: operationGate.warnings, placeholderFields: operationGate.placeholderFields }, canonicalReadiness, ...(metadataOverrideLookupFailed ? { metadataOverrideLookupFailed: true, metadataOverrideLookupWarning: "TenderMetadataOverride table is not yet available — run database migration." } : {}) });
   } catch (error) {
-    failJob(job.id, error instanceof Error ? error.message : String(error));
+    failInMemoryJob(job.id, error instanceof Error ? error.message : String(error));
     void reportError(error, { tenderId: id, userId, route: "/api/tenders/[id]/generate" });
     const mapped = mapGenerationError(error, { failedStage: "GENERATION_PIPELINE" });
     return NextResponse.json(

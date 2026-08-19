@@ -63,16 +63,16 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   }
 
   // AUTHORITATIVE: reconciliation supersedes/relinks GeneratedDocument rows,
-  // so it must run against the current CONFIRMED BuildPlan only. A derived
-  // heuristic plan could supersede documents that the confirmed plan requires.
+  // so it must run against the current source-verified BuildPlan only. A derived
+  // heuristic plan could supersede documents that the verified plan requires.
   const confirmedPlan = await getCurrentConfirmedBuildPlan(prisma, tenderId, actor.id);
   if (!confirmedPlan.ok) {
     return NextResponse.json(
       {
         success: false,
         code: "BUILD_PLAN_NOT_CONFIRMED",
-        message: `Reconciliation requires a current confirmed Build Plan. ${confirmedPlan.blocker}`,
-        nextAction: "BUILD_SUBMISSION_PLAN",
+        message: `Reconciliation requires a current source-verified Build Plan. ${confirmedPlan.blocker}`,
+        nextAction: "RUN_ENGINE",
       },
       { status: 422 },
     );
