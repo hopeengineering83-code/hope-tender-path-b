@@ -10,8 +10,21 @@ const PUBLIC_LOGIN_ERRORS: Record<string, string> = {
   MISSING_CREDENTIALS: "Enter both email and password.",
   INVALID_LOGIN_REQUEST: "The sign-in request was invalid. Please try again.",
   AUTH_SERVICE_UNAVAILABLE: "Authentication is temporarily unavailable. Please try again shortly.",
+  AUTH_DATABASE_SCHEMA_OUTDATED: "Sign-in is unavailable because the database is behind this deployment. The pending database migrations must be applied \u2014 retrying will not clear this.",
   LOGIN_RATE_LIMITED: "Too many sign-in attempts. Wait briefly, then try again.",
 };
+
+/**
+ * 503 codes that retrying cannot clear.
+ *
+ * The countdown below exists for a database that is briefly unreachable, where
+ * waiting genuinely helps. A schema that is behind the deployment is not that:
+ * every retry re-runs the same query against the same missing column. A live
+ * preview sat in exactly this state, counting down and resubmitting on a loop,
+ * because this component mapped ANY 503 to "temporarily unavailable" and threw
+ * away the specific code the server had already worked out.
+ */
+const NON_RETRYABLE_503_CODES = new Set(["AUTH_DATABASE_SCHEMA_OUTDATED"]);
 
 function publicLoginMessage(code: string | undefined, status: number): string {
   if (code && PUBLIC_LOGIN_ERRORS[code]) return PUBLIC_LOGIN_ERRORS[code];
@@ -70,9 +83,10 @@ export function LoginForm() {
       }
 
       if (response.status === 503) {
-        setIsDbError(true);
+        const retryable = !(data?.code && NON_RETRYABLE_503_CODES.has(data.code));
+        setIsDbError(retryable);
         setError(publicLoginMessage(data?.code, response.status));
-        setRetryCountdown(DB_RETRY_COUNTDOWN_S);
+        if (retryable) setRetryCountdown(DB_RETRY_COUNTDOWN_S);
         return;
       }
 

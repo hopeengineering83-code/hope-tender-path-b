@@ -28,6 +28,7 @@ import { readFileSync } from "node:fs";
 
 const LIVENESS = readFileSync("lib/liveness.ts", "utf8");
 const LOGIN = readFileSync("app/api/auth/login/route.ts", "utf8");
+const LOGIN_FORM = readFileSync("components/login-form.tsx", "utf8");
 
 describe("health reports a database the deployed code cannot query", () => {
   it("probes the tables sign-in actually uses", () => {
@@ -102,5 +103,29 @@ describe("sign-in distinguishes a transient outage from a stale schema", () => {
     // schema failure and a genuine outage are indistinguishable in the logs —
     // which is exactly what made the live incident take a code read to explain.
     assert.match(LOGIN, /prismaCode: \(error as \{ code\?: unknown \} \| null\)\?\.code \?\? null/);
+  });
+});
+
+describe("the sign-in screen shows the reason the server worked out", () => {
+  it("knows the schema-drift code instead of collapsing it into the generic 503", () => {
+    // The server had already identified P2022 and answered
+    // AUTH_DATABASE_SCHEMA_OUTDATED. This component mapped ANY 503 to
+    // "temporarily unavailable" because the code was absent from its own map,
+    // so the specific reason never reached the screen.
+    assert.match(LOGIN_FORM, /AUTH_DATABASE_SCHEMA_OUTDATED/);
+    const message = /AUTH_DATABASE_SCHEMA_OUTDATED: "([^"]+)"/.exec(LOGIN_FORM)?.[1] ?? "";
+    assert.ok(message.length > 0, "the code needs a message in the client map");
+    assert.match(message, /migration/i);
+  });
+
+  it("does not count down and resubmit against an error retrying cannot clear", () => {
+    assert.match(LOGIN_FORM, /NON_RETRYABLE_503_CODES/);
+    // The countdown must be conditional now, not armed for every 503.
+    assert.doesNotMatch(
+      LOGIN_FORM,
+      /setIsDbError\(true\);\s*\n\s*setError\(publicLoginMessage\(data\?\.code, response\.status\)\);\s*\n\s*setRetryCountdown\(DB_RETRY_COUNTDOWN_S\);/,
+      "a non-retryable 503 must not arm the auto-retry countdown",
+    );
+    assert.match(LOGIN_FORM, /if \(retryable\) setRetryCountdown\(DB_RETRY_COUNTDOWN_S\);/);
   });
 });

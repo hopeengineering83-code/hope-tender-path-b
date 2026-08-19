@@ -3,6 +3,7 @@ export type LoginPublicErrorCode =
   | "MISSING_CREDENTIALS"
   | "INVALID_LOGIN_REQUEST"
   | "AUTH_SERVICE_UNAVAILABLE"
+  | "AUTH_DATABASE_SCHEMA_OUTDATED"
   | "LOGIN_RATE_LIMITED";
 
 const LOGIN_PUBLIC_MESSAGES: Record<LoginPublicErrorCode, string> = {
@@ -10,6 +11,7 @@ const LOGIN_PUBLIC_MESSAGES: Record<LoginPublicErrorCode, string> = {
   MISSING_CREDENTIALS: "Enter both email and password.",
   INVALID_LOGIN_REQUEST: "The sign-in request was invalid. Please try again.",
   AUTH_SERVICE_UNAVAILABLE: "Authentication is temporarily unavailable. Please try again shortly.",
+  AUTH_DATABASE_SCHEMA_OUTDATED: "Sign-in is unavailable because the database is behind this deployment. The pending database migrations must be applied \u2014 retrying will not clear this.",
   LOGIN_RATE_LIMITED: "Too many sign-in attempts. Wait briefly, then try again.",
 };
 
