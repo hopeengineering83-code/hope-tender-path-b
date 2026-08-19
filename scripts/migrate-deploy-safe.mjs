@@ -8,11 +8,21 @@ const allowPreviewMigrations = ["1", "true", "yes"].includes(
   String(process.env.ALLOW_PREVIEW_DB_MIGRATIONS ?? "").trim().toLowerCase(),
 );
 
-const isVercelPreview = process.env.VERCEL === "1" && process.env.VERCEL_ENV === "preview";
+// Any Vercel environment that is not Production is preview-class for this
+// policy. Testing VERCEL_ENV === "preview" alone left "development" — and any
+// environment name Vercel may add later — migrating unguarded. The caller
+// (scripts/vercel-build.mjs) always expressed the rule as "not production", so
+// the two now say the same thing in the same words.
+const vercelEnvironment = String(process.env.VERCEL_ENV ?? "").trim().toLowerCase();
+const isVercelPreview = process.env.VERCEL === "1" && vercelEnvironment !== "production";
 if (isVercelPreview && !allowPreviewMigrations) {
   console.warn("Skipping database migrations by preview safety policy.");
+  console.warn(`Vercel environment: ${vercelEnvironment || "unset"} (any environment that is not production is preview-class).`);
   console.warn(
     "This preview is build-only and is not database-verified. Configure an isolated preview database and set ALLOW_PREVIEW_DB_MIGRATIONS=true to enable preview migrations.",
+  );
+  console.warn(
+    "Until then the deployed code may be ahead of this database, and sign-in will answer AUTH_DATABASE_SCHEMA_OUTDATED rather than fail transiently.",
   );
   process.exit(0);
 }
