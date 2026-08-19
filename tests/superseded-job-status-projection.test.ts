@@ -34,7 +34,10 @@ function loadLegacyStatus(): (status: string) => string {
     .replace(/: string/g, "")
     .replace(/: "PENDING" \| "RUNNING" \| "DONE" \| "FAILED"/, "")
     .replace(/ANALYSIS_SUPERSEDED_STATUS/g, JSON.stringify(ANALYSIS_SUPERSEDED_STATUS));
-  // eslint-disable-next-line no-new-func
+  // Deliberate use of new Function: this test compiles the projection helper
+  // out of the source file so it exercises the real implementation rather than
+  // a copy. (No eslint-disable here — no-new-func is not enabled in this
+  // config, so the directive was inert and reported as unused.)
   return new Function(`${body}; return legacyStatus;`)() as (status: string) => string;
 }
 

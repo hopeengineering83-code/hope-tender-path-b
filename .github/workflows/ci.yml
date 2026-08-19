@@ -233,8 +233,38 @@ jobs:
           --
           git diff --exit-code
 
+      - name: Install Playwright system dependencies
+        # BEST EFFORT, and deliberately not a gate.
+        #
+        # This installs shared libraries that the ubuntu-latest image already
+        # ships, so it is an optimisation rather than a requirement. It is also
+        # the least reliable thing in the job: apt reaches for
+        # azure.archive.ubuntu.com, gets Ign: on every line when that mirror is
+        # unreachable, falls back to archive.ubuntu.com and can then sit for ten
+        # minutes. Unbounded, that once consumed a whole 55-minute run; bounded
+        # and required, it simply failed the build instead.
+        #
+        # Neither is right for an optimisation. If a library really is missing,
+        # the browser fails to launch in the very next step with an explicit
+        # "error while loading shared libraries", which is a clearer signal than
+        # an apt timeout. The download step below is still strict.
+        timeout-minutes: 10
+        continue-on-error: true
+        run: npx playwright install-deps chromium
+
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        timeout-minutes: 12
+        run: |
+          set -u
+          for attempt in 1 2 3; do
+            if npx playwright install chromium; then
+              exit 0
+            fi
+            echo "playwright browser download failed (attempt ${attempt}/3); retrying"
+            sleep $((attempt * 15))
+          done
+          echo "playwright browser download did not complete after 3 attempts"
+          exit 1
 
       - name: Seed isolated two-user browser fixtures
         run: node scripts/seed-e2e-user.mjs

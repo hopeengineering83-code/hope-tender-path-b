@@ -44,6 +44,27 @@ const blockers = [];
 const warnings = [];
 const passed = [];
 
+/**
+ * Strip credentials from anything that came back from a driver.
+ *
+ * This report is printed into build logs, and a Prisma connection failure
+ * quotes the connection string it tried — which carries the database
+ * password. The three `e.message` interpolations below are reached exactly
+ * when the database misbehaves, so the one moment this script is most likely
+ * to print something is also the moment it is most likely to print a
+ * credential. scripts/migrate-deploy-safe.mjs already redacts for this
+ * reason; this script did not.
+ */
+function redact(value) {
+  let text = String(value ?? "");
+  const databaseUrl = process.env.DATABASE_URL;
+  if (databaseUrl) text = text.split(databaseUrl).join("[REDACTED_DATABASE_URL]");
+  return text
+    .replace(/DATABASE_URL\s*[:=]\s*\S+/gi, "DATABASE_URL=[REDACTED]")
+    // Any URI carrying user:password@host, whoever produced it.
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s@/]+@/gi, "[REDACTED_CREDENTIAL_URI]@");
+}
+
 function logPassed(msg) { passed.push(`  PASS  ${msg}`); }
 function logWarning(msg) { warnings.push(`  WARN  ${msg}`); }
 function logBlocker(msg) { blockers.push(`  BLOCK  ${msg}`); }
@@ -88,7 +109,7 @@ async function checkRowCounts() {
       logPassed(`TenderRequirement row count (${tenderRequirementCount}) is below CONCURRENTLY threshold (${LOCK_THRESHOLD})`);
     }
   } catch (e) {
-    logBlocker(`Could not query row counts: ${e.message}. Is DATABASE_URL set and reachable?`);
+    logBlocker(`Could not query row counts: ${redact(e.message)}. Is DATABASE_URL set and reachable?`);
   }
 }
 
@@ -117,7 +138,7 @@ async function checkDuplicateSubmissionPlanRevisions() {
       logPassed("No duplicate (tenderId, revision) rows in SubmissionPlanRevision");
     }
   } catch (e) {
-    logWarning(`Could not check duplicates: ${e.message}`);
+    logWarning(`Could not check duplicates: ${redact(e.message)}`);
   }
 }
 
@@ -138,7 +159,9 @@ function checkEnvVars() {
   // SESSION_SECRET length check
   const secret = process.env.SESSION_SECRET ?? process.env.AUTH_SECRET ?? "";
   if (secret && secret.length < 32) {
-    logBlocker(`SESSION_SECRET / AUTH_SECRET is ${secret.length} chars (< 32). Must be ≥ 32 chars.`);
+    // The exact length is information about the secret; the threshold is what
+    // the operator needs.
+    logBlocker("SESSION_SECRET / AUTH_SECRET is shorter than the required 32 characters.");
   } else if (secret) {
     // Report the threshold, not the measurement. The exact length of a secret
     // is information about the secret, and this report is printed into build
@@ -159,7 +182,7 @@ function checkCsrfTrustBoundary() {
   if (vercelEnv) {
     logPassed("Deploying on Vercel — platform strips and re-sets x-forwarded-host from the edge.");
   } else if (trustedHosts) {
-    logPassed(`CSRF_TRUSTED_HOSTS is set (${trustedHosts.split(",").length} host(s)) — x-forwarded-host values not in this allowlist will be rejected.`);
+    logPassed("CSRF_TRUSTED_HOSTS is set — x-forwarded-host values not in this allowlist will be rejected.");
   } else if (isProduction) {
     logBlocker(
       `Production deploy without Vercel AND without CSRF_TRUSTED_HOSTS. ` +
@@ -206,7 +229,7 @@ async function checkMigrationHistory() {
       logPassed("Neither new migration is applied yet — fresh deploy.");
     }
   } catch (e) {
-    logWarning(`Could not query _prisma_migrations table: ${e.message}`);
+    logWarning(`Could not query _prisma_migrations table: ${redact(e.message)}`);
   }
 }
 
@@ -215,7 +238,7 @@ async function main() {
   console.log("  Pre-deploy safety verification");
   console.log("  PR #1175 — release/consolidated-recovery-20260717");
   console.log("=========================================");
-  console.log(`NODE_ENV: ${process.env.NODE_ENV || "(unset)"}`);
+  console.log(`NODE_ENV: ${redact(process.env.NODE_ENV) || "(unset)"}`);
   console.log(`Time:     ${new Date().toISOString()}`);
 
   await checkRowCounts();
