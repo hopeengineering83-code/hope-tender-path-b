@@ -225,25 +225,38 @@ describe("link-vault-evidence-auto — empty-vault response gives an actionable 
   // button would report failure with no guidance on what to actually do.
   // This mirrors the company-not-found (422) response, which already carried
   // nextAction: OPEN_COMPANY_READINESS.
-  it("candidates.length === 0 branch includes nextAction: OPEN_COMPANY_READINESS", () => {
-    const emptyBranch = routeSource.slice(
-      routeSource.indexOf("if (candidates.length === 0)"),
-      routeSource.indexOf("if (candidates.length === 0)") + 700,
-    );
+  // Read the whole branch rather than a fixed 700-character window from its
+  // start. The window was measured against a branch that could say only one
+  // thing; when the branch learned to tell the three causes apart, the very
+  // OPEN_COMPANY_READINESS this asserts slid past character 700 and the test
+  // failed on a route that had strictly improved. The properties below are what
+  // this suite actually cares about, and they are now checked across every
+  // message the branch can return.
+  const emptyBranch = (() => {
+    const start = routeSource.indexOf("if (candidates.length === 0)");
+    const end = routeSource.indexOf("\n  }", routeSource.indexOf("return NextResponse.json", start));
+    return routeSource.slice(start, end);
+  })();
+
+  it("every zero-candidates response carries an actionable nextAction", () => {
+    const actions = [...emptyBranch.matchAll(/nextAction: "([A-Z_]+)"/g)].map((m) => m[1]);
+    assert.ok(actions.length > 0, "the zero-candidates response must name a next action");
     assert.ok(
-      emptyBranch.includes("OPEN_COMPANY_READINESS"),
-      "the zero-candidates response must include nextAction: OPEN_COMPANY_READINESS so the caller can guide the user to populate the vault",
+      actions.includes("OPEN_COMPANY_READINESS"),
+      "a vault-related cause must still route the user to Company Readiness",
     );
+    for (const action of actions) {
+      assert.ok(
+        ["OPEN_COMPANY_READINESS", "AUTOMATIC_PROCESSING"].includes(action),
+        `${action} is not a next action this product renders`,
+      );
+    }
   });
 
   it("candidates.length === 0 branch tells the user what to add, not just that it failed", () => {
-    const emptyBranch = routeSource.slice(
-      routeSource.indexOf("if (candidates.length === 0)"),
-      routeSource.indexOf("if (candidates.length === 0)") + 700,
-    );
     assert.match(
       emptyBranch,
-      /expert CVs|project references|financial statements|compliance records/i,
+      /expert CVs|project references|financial statements|compliance records|licence|tax clearance|audited statements/i,
       "the message should name concrete document categories to add, not just report failure",
     );
   });

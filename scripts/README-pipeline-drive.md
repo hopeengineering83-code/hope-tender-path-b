@@ -58,9 +58,17 @@ curl -b "hope_session=<cookie>" \
 ```
 
 `DRIVE_FIXTURE=b` selects the EOI tender; the default is the two-envelope RFP.
-Tender A does not reach a ZIP by design — `detectSubmissionPackageMode` returns
-`SEPARATE_TECHNICAL_FINANCIAL` with `blockingForZip: true`, and envelope-aware
-packaging is not implemented. That refusal is correct behaviour, not a defect.
+Tender A is a two-envelope RFP, so `detectSubmissionPackageMode` returns
+`SEPARATE_TECHNICAL_FINANCIAL` and an un-enveloped `?type=zip` is refused with
+`SEPARATE_ENVELOPE_REQUIRED` — submitting one mixed archive would be
+non-compliant. That refusal is correct behaviour, not a defect. Envelope-aware
+packaging IS implemented: ask for each sealed envelope by name.
+
+```bash
+curl -b "hope_session=<cookie>" \
+  "http://127.0.0.1:3100/api/tenders/<id>/download?type=zip&envelope=technical" -o technical.zip
+# ...and &envelope=financial, &envelope=admin
+```
 
 For an assertion that runs in CI, see
 `tests/final-zip-produces-real-bytes.test.ts`.

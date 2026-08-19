@@ -75,13 +75,40 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   }).filter((x) => x.options.length > 0);
 
   if (candidates.length === 0) {
+    // Three different situations used to share one message, and it named the
+    // remedy for only one of them. Running this before generation — when the
+    // tender has no document rows at all — answered "No reviewed evidence
+    // available in the Knowledge Vault ... Add expert CVs, project references
+    // ..." to an owner whose vault held six verified documents. Following that
+    // advice could not help, because the vault was never the problem.
+    const awaitingOriginals = tender.generatedDocuments.length;
+    const { message, nextAction } = awaitingOriginals === 0
+      ? {
+        message: "This tender has no document rows awaiting an official original yet, so there is nothing to attach Vault documents to. The post-Engine workflow generates them; retry once it has.",
+        // AUTOMATIC_PROCESSING, not an invented GENERATE_DOCUMENTS: generation
+        // is owned by the durable workflow and there is no owner-facing
+        // generate action for the UI to offer.
+        nextAction: "AUTOMATIC_PROCESSING",
+      }
+      : vault.length === 0
+        ? {
+          message: "No Company Vault document has verified stored bytes, so none can be placed in the package. Upload the official company documents (licence, tax clearance, audited statements, CVs, project references) to the Company Vault, then retry.",
+          nextAction: "OPEN_COMPANY_READINESS",
+        }
+        : {
+          message: `None of the ${vault.length} verified Vault document(s) matches the category of the ${awaitingOriginals} document(s) awaiting an original on this tender. Upload an official document in the required category, then retry.`,
+          nextAction: "OPEN_COMPANY_READINESS",
+        };
+
     return NextResponse.json({
       success: true,
       linked: 0,
       skipped: 0,
       blockedReasons: [],
-      message: "No reviewed evidence available in the Knowledge Vault for this tender's documents. Add expert CVs, project references, financial statements, or compliance records to the Knowledge Vault, then retry.",
-      nextAction: "OPEN_COMPANY_READINESS",
+      documentsAwaitingOriginal: awaitingOriginals,
+      verifiedVaultDocuments: vault.length,
+      message,
+      nextAction,
     });
   }
 
