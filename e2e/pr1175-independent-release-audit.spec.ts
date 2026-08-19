@@ -57,7 +57,19 @@ function attachRuntimeEvidence(page: Page) {
   };
 
   page.on("console", (message) => {
-    if (message.type() === "error") evidence.consoleErrors.push(message.text());
+    // Record WHERE the error came from, not just its text. Chromium reports a
+    // failed resource as the bare string "Failed to load resource: the server
+    // responded with a status of 404 (Not Found)" with the URL only in the
+    // message location. Without it a failure reads as two anonymous 404s and
+    // says nothing about which resource is missing — which is exactly how a
+    // real run of this spec reported a 404 pair that then could not be
+    // identified or reproduced.
+    if (message.type() === "error") {
+      const where = message.location()?.url;
+      evidence.consoleErrors.push(
+        where && !message.text().includes(where) ? `${message.text()} [${where}]` : message.text(),
+      );
+    }
   });
   page.on("pageerror", (error) => evidence.pageErrors.push(error.message));
   page.on("requestfailed", (request) => {
