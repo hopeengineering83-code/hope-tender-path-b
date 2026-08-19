@@ -102,9 +102,16 @@ describe("/api/health (lib/liveness.ts) — storage awareness", () => {
   it("folds storage readiness into ok/status without changing the httpStatus contract", () => {
     assert.match(source, /storageHealth\.ready/);
     // The existing degraded-vs-503 contract (pinned by
-    // tests/parallel-uncovered-gap-audit.test.ts) must be unchanged: HTTP
-    // status still depends only on allCriticalTablesExist, never on ok.
-    assert.match(source, /const httpStatus = allCriticalTablesExist \? 200 : 503/);
+    // tests/parallel-uncovered-gap-audit.test.ts) must be unchanged: storage
+    // readiness folds into ok/status but must never reach the HTTP status,
+    // which is decided by database facts alone.
+    const httpStatusExpr = /const httpStatus = ([^;]+);/.exec(source)?.[1] ?? "";
+    assert.ok(httpStatusExpr.length > 0, "httpStatus must be computed in one place");
+    assert.ok(
+      !httpStatusExpr.includes("storageHealth"),
+      `storage readiness must not decide the HTTP status (got: ${httpStatusExpr})`,
+    );
+    assert.doesNotMatch(httpStatusExpr, /\bok\b/);
   });
 
   it("never leaks a Blob token or storage URL — the response only carries getStorageReadiness()'s pre-sanitized fields", () => {

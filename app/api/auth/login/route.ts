@@ -23,6 +23,7 @@ const PUBLIC_LOGIN_MESSAGES = {
   MISSING_CREDENTIALS: "Enter both email and password.",
   INVALID_LOGIN_REQUEST: "The sign-in request was invalid. Please try again.",
   AUTH_SERVICE_UNAVAILABLE: "Authentication is temporarily unavailable. Please try again shortly.",
+  AUTH_DATABASE_SCHEMA_OUTDATED: "Sign-in is unavailable because the database is behind this deployment. The pending database migrations must be applied \u2014 retrying will not clear this.",
   LOGIN_RATE_LIMITED: "Too many sign-in attempts. Wait briefly, then try again.",
 } as const;
 
@@ -112,8 +113,28 @@ function loginResult(
   ));
 }
 
-function authenticationUnavailable(req: Request, nativeForm: boolean, requestId: string): NextResponse {
-  return loginResult(req, nativeForm, "AUTH_SERVICE_UNAVAILABLE", 503, undefined, requestId);
+/**
+ * Prisma codes meaning the database does not match the deployed client:
+ * P2021 a table is missing, P2022 a column is missing.
+ *
+ * Separated from a transient outage because the advice is the opposite. "Try
+ * again shortly" tells the operator to wait, and waiting never fixes a missing
+ * column. A real deployment sat in exactly this state after its DATABASE_URL
+ * was repointed at a database that had the tables but not the latest
+ * migrations: /api/health reported healthy, every sign-in returned 503, and
+ * the message invited an endless retry against an error only a migration could
+ * clear.
+ */
+const SCHEMA_DRIFT_PRISMA_CODES = new Set(["P2021", "P2022"]);
+
+function isSchemaDrift(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && SCHEMA_DRIFT_PRISMA_CODES.has(code);
+}
+
+function authenticationUnavailable(req: Request, nativeForm: boolean, requestId: string, error?: unknown): NextResponse {
+  const code = isSchemaDrift(error) ? "AUTH_DATABASE_SCHEMA_OUTDATED" : "AUTH_SERVICE_UNAVAILABLE";
+  return loginResult(req, nativeForm, code, 503, undefined, requestId);
 }
 
 function tooManyAttempts(req: Request, nativeForm: boolean, resetAt: number): NextResponse {
@@ -186,8 +207,9 @@ export async function POST(req: Request) {
       logger.error("[login] database readiness failed", {
         requestId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        prismaCode: (error as { code?: unknown } | null)?.code ?? null,
       });
-      return authenticationUnavailable(req, nativeForm, requestId);
+      return authenticationUnavailable(req, nativeForm, requestId, error);
     }
 
     let persistentIpLimit;
@@ -201,8 +223,9 @@ export async function POST(req: Request) {
       logger.error("[login] persistent rate limiter failed", {
         requestId,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        prismaCode: (error as { code?: unknown } | null)?.code ?? null,
       });
-      return authenticationUnavailable(req, nativeForm, requestId);
+      return authenticationUnavailable(req, nativeForm, requestId, error);
     }
     if (!persistentIpLimit.allowed || !persistentAccountLimit.allowed) {
       return tooManyAttempts(
@@ -252,8 +275,9 @@ export async function POST(req: Request) {
         requestId,
         userId: user.id,
         errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+        prismaCode: (error as { code?: unknown } | null)?.code ?? null,
       });
-      return authenticationUnavailable(req, nativeForm, requestId);
+      return authenticationUnavailable(req, nativeForm, requestId, error);
     }
 
     void logAction({
@@ -276,7 +300,8 @@ export async function POST(req: Request) {
     logger.error("[login] unexpected failure", {
       requestId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      prismaCode: (error as { code?: unknown } | null)?.code ?? null,
     });
-    return authenticationUnavailable(req, nativeForm, requestId);
+    return authenticationUnavailable(req, nativeForm, requestId, error);
   }
 }

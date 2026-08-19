@@ -7,6 +7,13 @@ import { MAX_CANDIDATES_PER_MATCHER_BATCH, adaptiveBatchSize } from "./engine/ai
 import { PRE_FILTER_LIMIT } from "./engine/main-engine-ai-rematch";
 
 const CRITICAL_TABLES = [
+  // Authentication path. Without these nobody can sign in, so their absence is
+  // the most consequential thing this endpoint can report — yet none of them
+  // were probed until a live deployment answered "healthy" while every login
+  // returned 503.
+  "User",
+  "Session",
+  "AuditLog",
   "RateLimitBucket",
   "PasswordResetToken",
   "SubmissionPlanState",
@@ -14,12 +21,69 @@ const CRITICAL_TABLES = [
   "AiJob",
 ] as const;
 
+/**
+ * Models whose full-scalar read is exercised as a schema-agreement probe.
+ *
+ * Table existence is not enough. A database can hold every table this app
+ * needs and still reject every query, because Prisma selects each scalar the
+ * schema declares and a database missing one column fails the whole read. That
+ * is not hypothetical: after a DATABASE_URL was repointed at a database that
+ * had the tables but not the latest migrations, /api/health reported
+ * {"ok":true,"status":"healthy"} with all five probed tables true, while
+ * POST /api/auth/login returned 503 on every attempt — a
+ * PrismaClientKnownRequestError from `prisma.user.findUnique`, which is a
+ * column the client expects and the database does not have.
+ *
+ * Listing columns here would drift the moment a migration adds one. Instead
+ * each model is READ the way the application reads it, so the probe always
+ * asks exactly what the current client asks.
+ */
+const SCHEMA_PROBE_MODELS = ["user", "session", "auditLog"] as const;
+
+export type SchemaAgreement = {
+  matches: boolean;
+  failingModels: string[];
+  /** Prisma error code (e.g. P2022 for a missing column), when one was given. */
+  errorCode: string | null;
+};
+
+/**
+ * Does the live database actually satisfy the Prisma client compiled into this
+ * deployment?
+ *
+ * Each probe is a bounded read of one row. It touches no user data beyond
+ * existence and returns nothing from the row itself.
+ */
+async function schemaAgreement(): Promise<SchemaAgreement> {
+  const failingModels: string[] = [];
+  let errorCode: string | null = null;
+  try {
+    await prismaReady;
+  } catch {
+    return { matches: false, failingModels: [...SCHEMA_PROBE_MODELS], errorCode: null };
+  }
+  for (const model of SCHEMA_PROBE_MODELS) {
+    try {
+      await (prisma as unknown as Record<string, { findFirst: (args: unknown) => Promise<unknown> }>)[model]
+        .findFirst({ take: 1 });
+    } catch (error) {
+      failingModels.push(model);
+      const code = (error as { code?: unknown }).code;
+      if (!errorCode && typeof code === "string") errorCode = code;
+    }
+  }
+  return { matches: failingModels.length === 0, failingModels, errorCode };
+}
+
 async function tableStatus(): Promise<Record<string, boolean>> {
   try {
     await prismaReady;
     const rows = await prisma.$queryRaw<Array<{ name: string; exists: boolean }>>`
       SELECT name, to_regclass('"' || name || '"') IS NOT NULL AS exists
       FROM (VALUES
+        ('User'),
+        ('Session'),
+        ('AuditLog'),
         ('RateLimitBucket'),
         ('PasswordResetToken'),
         ('SubmissionPlanState'),
@@ -41,6 +105,9 @@ async function tableStatus(): Promise<Record<string, boolean>> {
 async function computeLivenessSnapshot() {
   const tables = await tableStatus();
   const allCriticalTablesExist = CRITICAL_TABLES.every((name) => tables[name] === true);
+  // Asked separately from table existence, because the two fail differently:
+  // a table can be present and still reject every query the client makes.
+  const schema = await schemaAgreement();
   const aiHealth = checkAiProviderHealth();
   // getStorageReadiness() (lib/storage.ts) is the single canonical storage
   // policy resolver — provider, ready/durable/boundedFallback flags, and a
@@ -55,8 +122,12 @@ async function computeLivenessSnapshot() {
   // storage. Any of the latter two missing makes the app "degraded" — it
   // can still serve pages but can't do AI analysis/generation, or can't
   // durably store uploads, respectively.
-  const ok = allCriticalTablesExist && aiHealth.healthy && storageHealth.ready;
-  const status = ok ? "healthy" : allCriticalTablesExist ? "degraded" : "unhealthy";
+  // A database the client cannot query is not a degraded app, it is a stopped
+  // one — sign-in fails outright — so schema disagreement counts with missing
+  // tables, not with the optional subsystems below it.
+  const databaseUsable = allCriticalTablesExist && schema.matches;
+  const ok = databaseUsable && aiHealth.healthy && storageHealth.ready;
+  const status = ok ? "healthy" : databaseUsable ? "degraded" : "unhealthy";
 
   // HTTP 200 when the DB is reachable (even if AI providers or durable
   // storage are not configured — the app is "degraded" but still serving
@@ -66,9 +137,12 @@ async function computeLivenessSnapshot() {
   // `verify-production-health.mjs` to fail even though pages rendered fine.
   // The same reasoning now applies to storage: a broken Blob/DB-fallback
   // configuration degrades uploads, not the whole app.
-  const httpStatus = allCriticalTablesExist ? 200 : 503;
+  //
+  // Schema disagreement joins missing tables on the 503 side for the same
+  // reason: the deployment cannot serve a login, so a monitor must not see 200.
+  const httpStatus = databaseUsable ? 200 : 503;
 
-  return { tables, allCriticalTablesExist, aiHealth, storageHealth, ok, status, httpStatus };
+  return { tables, allCriticalTablesExist, schema, databaseUsable, aiHealth, storageHealth, ok, status, httpStatus };
 }
 
 /**
@@ -102,6 +176,10 @@ export async function livenessResponse() {
       release: process.env.VERCEL_GIT_COMMIT_SHA || "unknown",
       deploymentId: process.env.VERCEL_DEPLOYMENT_ID || "unknown",
       tables: snapshot.tables,
+      // Named plainly so the reason is actionable without a log dive: when this
+      // is false the database is behind the deployed code and the fix is to run
+      // the pending migrations, not to wait and retry.
+      schemaMatchesDeployedCode: snapshot.schema.matches,
       timestamp: new Date().toISOString(),
     },
     { status: snapshot.httpStatus, headers: { "Cache-Control": "no-store" } },
@@ -128,6 +206,7 @@ export async function detailedLivenessPayload() {
     deploymentId: process.env.VERCEL_DEPLOYMENT_ID || "unknown",
     deploymentUrl: process.env.VERCEL_URL || "unknown",
     tables: snapshot.tables,
+    schema: snapshot.schema,
     aiProviders: aiHealth,
     storage: storageHealth,
     // Effective non-secret runtime configuration, so source, tests and the

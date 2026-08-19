@@ -165,8 +165,21 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 400 });
     }
 
+    // Re-read the documents. validateTender() above deliberately writes
+    // validationStatus on exactly these rows, and the `tender` snapshot was
+    // loaded before that write — so gating on it rejects documents this same
+    // request has already validated.
+    //
+    // The symptom was a first export refusing every document with
+    // "validationStatus is PENDING, expected PASSED or VALIDATED" while the
+    // rows in the database read PASSED, and an immediate second export
+    // succeeding on nothing but a fresh read. Export appeared to require being
+    // run twice, and the first refusal named a state that was no longer true.
+    const refreshedDocuments = await prisma.generatedDocument.findMany({
+      where: { tenderId: tender.id },
+    });
     const generatedDocuments = filterFinalExportCandidateDocuments(
-      tender.generatedDocuments.filter((document) => document.generationStatus === "GENERATED"),
+      refreshedDocuments.filter((document) => document.generationStatus === "GENERATED"),
     );
     if (generatedDocuments.length === 0) {
       return NextResponse.json({ error: "No generated documents are available for export." }, { status: 400 });

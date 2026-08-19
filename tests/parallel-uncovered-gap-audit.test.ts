@@ -36,10 +36,28 @@ describe("P1-2 — observability normalizes Error objects for JSON.stringify", (
 // ─── P1-7: liveness returns 200 for degraded (not 503) ─────────────────────
 
 describe("P1-7 — liveness returns HTTP 200 for degraded status", () => {
-  it("uses allCriticalTablesExist (not ok) for the HTTP status", () => {
+  it("decides the HTTP status from database usability, never from ok", () => {
     const src = read("lib/liveness.ts");
-    assert.match(src, /const httpStatus = allCriticalTablesExist \? 200 : 503/);
-    // The old code used `ok ? 200 : 503` which returned 503 for degraded.
+    // The invariant, not one spelling of it. The old code used `ok ? 200 : 503`
+    // and so returned 503 whenever an OPTIONAL subsystem (an AI provider, file
+    // storage) was unconfigured, even though pages served fine. What decides
+    // the status must be database facts only.
+    //
+    // "Database usable" later grew a second term — whether the deployed Prisma
+    // client can actually query the database, not merely whether its tables
+    // exist — after a live deployment answered 200/"healthy" on a database
+    // that rejected every sign-in. That term belongs here; AI and storage
+    // still do not.
+    const httpStatusExpr = /const httpStatus = ([^;]+);/.exec(src)?.[1] ?? "";
+    assert.ok(httpStatusExpr.length > 0, "httpStatus must be computed in one place");
+    assert.doesNotMatch(httpStatusExpr, /\bok\b/, "degraded must still return 200");
+    for (const optional of ["aiHealth", "storageHealth"]) {
+      assert.ok(
+        !httpStatusExpr.includes(optional),
+        `${optional} is an optional subsystem and must not decide the HTTP status (got: ${httpStatusExpr})`,
+      );
+    }
+    assert.match(httpStatusExpr, /allCriticalTablesExist|databaseUsable/);
     assert.doesNotMatch(src, /status: ok \? 200 : 503/);
   });
 });

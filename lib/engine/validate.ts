@@ -4,7 +4,7 @@ import { exactSelectionLimit } from "./scope-policy";
 import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";
 import { validateConstraints } from "./constraint-validator";
 import { filterFinalExportCandidateDocuments } from "./document-output-state";
-import { documentHygieneIssues } from "./export-readiness";
+import { documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
 import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
 
 export interface ValidationIssue {
@@ -137,14 +137,49 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
   if (generatedDocs.length === 0) issues.push({ code: "NO_GENERATED_DOCUMENTS", severity: "BLOCK", message: "No documents have been generated yet. Run document generation first." });
 
   for (const doc of generatedDocs) {
-    const textToCheck = [doc.contentSummary ?? "", doc.name, doc.exactFileName ?? ""].join(" ");
-    if (hasPlaceholder(textToCheck)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
+    // Check the DOCUMENT, not the metadata about it.
+    //
+    // Both checks below used to read doc.contentSummary. For a generated
+    // proposal that field holds the generator's own diagnostic report, which
+    // describes the document's problems in the document's own vocabulary — so
+    // a summary reading 'Proposal still has 6 unresolved spot(s) reading "to be
+    // confirmed by bid team"' tripped the placeholder block, and one reading
+    // "Executive Summary lacks a specific project name or contract value"
+    // tripped the pricing-leakage block. Both fired on proposals whose text
+    // contained neither a placeholder nor a price: the report of a problem was
+    // punished as the problem, and no edit to the document could clear it
+    // because the document was never what was read.
+    //
+    // The comment here previously claimed these were "the same checks the
+    // export-readiness gate runs". They now are — that gate extracts the
+    // document's visible text, so this does too.
+    const fileName = doc.exactFileName ?? doc.name ?? "";
+    const isDocx = fileName.toLowerCase().endsWith(".docx");
+    let documentText = "";
+    if (typeof doc.fileContent === "string" && doc.fileContent.length > 0 && doc.fileContent.length < 2_000_000) {
+      documentText = isDocx
+        ? (await extractDocxVisibleText(doc.fileContent, fileName)) ?? ""
+        : doc.fileContent;
+    }
 
-    // Document hygiene: catch pricing leakage in technical envelopes, AI disclosure
-    // phrases, and unresolved placeholder instructions. These are the same checks the
-    // export-readiness gate runs, but surfacing them at validation time means problems
-    // are caught one step earlier — before the user tries to export.
-    const hygieneIssues = documentHygieneIssues(doc.contentSummary, {
+    // A DOCX that carries bytes but yields no readable text is not evidence of
+    // cleanliness — say so rather than passing it silently. WARN, not BLOCK:
+    // export-readiness owns the byte-level verdict and refuses it there.
+    if (isDocx && documentText.trim().length === 0 && (doc.fileContent ?? "").length > 0) {
+      issues.push({
+        code: "DOCUMENT_TEXT_UNREADABLE",
+        severity: "WARN",
+        message: `Document "${doc.name}" has stored bytes but no readable text could be extracted, so placeholder and hygiene checks could not inspect it.`,
+      });
+    }
+
+    if (hasPlaceholder(documentText)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
+
+    // Document hygiene: catch pricing leakage in technical envelopes, AI
+    // disclosure phrases, and unresolved placeholder instructions. Surfacing
+    // them at validation time means problems are caught one step earlier —
+    // before the user tries to export.
+    const hygieneIssues = documentHygieneIssues(documentText, {
       name: doc.name,
       exactFileName: doc.exactFileName ?? null,
       documentType: (doc as { documentType?: string | null }).documentType ?? null,

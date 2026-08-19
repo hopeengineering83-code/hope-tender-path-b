@@ -345,7 +345,31 @@ export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfCo
       continue;
     }
     if (renderedTocHeadingLevel !== null) {
-      const nextHeading = /^(#{1,3})\s+/.exec(trimmed);
+      // Drop the STATIC TOC entry lines that follow the "# Table of Contents"
+      // heading, now that a native updating Word field has replaced them.
+      //
+      // The block ends at the first BLANK LINE, or at a heading no deeper than
+      // the TOC heading itself, whichever comes first. formatToc() in
+      // dynamic-toc.ts emits the heading followed by list lines only, then
+      // joins the body on with a blank line, so the blank line is the real
+      // boundary — and a stray heading inside the listing is still consumed.
+      //
+      // The rule used to be "skip until a heading whose level is <= the TOC
+      // heading's level", with nothing else ending the block. The dynamic TOC
+      // builder writes "# Table of Contents" at level 1 and the canonical
+      // section order puts the body after it as "##"/"###" headings, so every
+      // body heading tested 2 > 1 and was skipped along with every line under
+      // it. With no further level-1 heading in the document, the ENTIRE
+      // proposal body was dropped: a real run rendered a 184-word "technical
+      // proposal" of letterhead, cover page and the TOC field alone, while the
+      // generator's own benchmark scored the markdown 100/100 (PASS). The
+      // markdown was always fine; only this render lost it. The same tender
+      // renders 1,776 words once the block ends where it actually ends.
+      if (!trimmed) {
+        renderedTocHeadingLevel = null;
+        continue;
+      }
+      const nextHeading = /^(#{1,6})\s+/.exec(trimmed);
       if (!nextHeading || nextHeading[1].length > renderedTocHeadingLevel) continue;
       renderedTocHeadingLevel = null;
     }
