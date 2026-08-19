@@ -58,12 +58,17 @@ function cleanXmlTextNode(text: string): string {
 }
 
 function decodeXmlText(value: string): string {
+  // &amp; is decoded LAST. Decoding it first turns "&amp;lt;" into "&lt;",
+  // which the very next replacement then turns into "<" — the input claimed a
+  // literal "&lt;" and got a tag delimiter instead. Every other entity is
+  // decoded before the ampersand, so no replacement can produce input for
+  // another.
   return value
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'");
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
 }
 
 function encodeXmlText(value: string): string {

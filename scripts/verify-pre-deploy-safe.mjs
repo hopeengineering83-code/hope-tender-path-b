@@ -140,7 +140,10 @@ function checkEnvVars() {
   if (secret && secret.length < 32) {
     logBlocker(`SESSION_SECRET / AUTH_SECRET is ${secret.length} chars (< 32). Must be ≥ 32 chars.`);
   } else if (secret) {
-    logPassed(`SESSION_SECRET / AUTH_SECRET length is ${secret.length} chars (≥ 32)`);
+    // Report the threshold, not the measurement. The exact length of a secret
+    // is information about the secret, and this report is printed into build
+    // logs.
+    logPassed("SESSION_SECRET / AUTH_SECRET length is at least 32 chars");
   }
 }
 
@@ -154,7 +157,7 @@ function checkCsrfTrustBoundary() {
   const appUrl = process.env.APP_URL || process.env.NEXTAUTH_URL;
 
   if (vercelEnv) {
-    logPassed(`Deploying on Vercel (VERCEL_ENV=${vercelEnv}) — platform strips and re-sets x-forwarded-host from the edge.`);
+    logPassed("Deploying on Vercel — platform strips and re-sets x-forwarded-host from the edge.");
   } else if (trustedHosts) {
     logPassed(`CSRF_TRUSTED_HOSTS is set (${trustedHosts.split(",").length} host(s)) — x-forwarded-host values not in this allowlist will be rejected.`);
   } else if (isProduction) {
@@ -176,7 +179,9 @@ function checkCsrfTrustBoundary() {
       `when a user requests a password reset — the route returns 202 (no info leak) but no email is sent.`
     );
   } else if (appUrl) {
-    logPassed(`APP_URL / NEXTAUTH_URL is set (${appUrl})`);
+    // The value is deliberately not echoed: this report goes to build logs,
+    // and whether the variable is set is the whole question.
+    logPassed("APP_URL / NEXTAUTH_URL is set");
   }
 }
 

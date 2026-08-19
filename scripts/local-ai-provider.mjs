@@ -429,7 +429,11 @@ const server = createServer((req, res) => {
     // Require a UUID-shaped id: the prompt ALSO contains the literal instruction
     // template "[FILE_ID:<id>|FILE_NAME:<name>]", and matching that returns the
     // placeholder "<id>" — which promotion then rejects as not a real file.
-    const fileIdMatch = /\[FILE_ID:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\|/i.exec(prompt);
+    // One static pattern captures both fields. The file name used to be read
+    // with a RegExp built by concatenating the matched id into a pattern
+    // string, which is a regular-expression injection shape even though the id
+    // is UUID-constrained.
+    const fileIdMatch = /\[FILE_ID:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\|FILE_NAME:([^\]]+)\]/i.exec(prompt);
     const sourceFileToken = fileIdMatch ? fileIdMatch[1].trim() : null;
     const analysis = sourceFileToken
       ? {
@@ -437,7 +441,7 @@ const server = createServer((req, res) => {
           requirements: base.requirements.map((requirement) => ({
             ...requirement,
             sourceFileToken,
-            sourceFileName: fileIdMatch ? (new RegExp("\\[FILE_ID:" + fileIdMatch[1] + "\\|FILE_NAME:([^\\]]+)\\]").exec(prompt)?.[1]?.trim() ?? null) : null,
+            sourceFileName: fileIdMatch?.[2]?.trim() ?? null,
           })),
         }
       : base;

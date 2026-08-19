@@ -140,7 +140,15 @@ async function deadVisibleLinks(page: Page): Promise<string[]> {
       const style = getComputedStyle(element);
       if (style.display === "none" || style.visibility === "hidden" || element.getClientRects().length === 0) return [];
       const href = element.getAttribute("href")?.trim() ?? "";
-      return !href || href === "#" || href.startsWith("javascript:") ? [href || "(empty href)"] : [];
+      // javascript: is not the only scheme that makes a link a non-destination;
+      // data: and vbscript: execute too.
+      const scheme = href.toLowerCase();
+      const inert = !href
+        || href === "#"
+        || scheme.startsWith("javascript:")
+        || scheme.startsWith("data:")
+        || scheme.startsWith("vbscript:");
+      return inert ? [href || "(empty href)"] : [];
     }),
   );
 }

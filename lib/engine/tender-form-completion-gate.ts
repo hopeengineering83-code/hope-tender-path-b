@@ -231,8 +231,11 @@ function extractVisibleText(bytes: Buffer, mime: string, fileName: string): stri
       // pulling in a full unzipper. This is a known cheap heuristic.
       const xml = extractDocxDocumentXml(bytes);
       if (!xml) return "";
-      const texts = xml.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) ?? [];
-      return texts.map((t) => t.replace(/<[^>]+>/g, "")).join(" ");
+      // Take the captured run text directly. Stripping tags from the whole
+      // match is a single-pass sanitization, which cannot survive a nested
+      // construction like "<scr<script>ipt>" and is flagged as such. Reading
+      // group 1 needs no sanitization at all — it is defined as [^<]*.
+      return [...xml.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1]).join(" ");
     }
     // Plain text, HTML, or anything else: decode as UTF-8 and scan.
     return bytes.toString("utf8");
@@ -354,8 +357,8 @@ function detectEmptyDocxContentControls(bytes: Buffer): FormCompletionIssue[] {
       // Extract the visible text inside <w:sdtContent>.
       const contentMatch = block.match(/<w:sdtContent\b[^>]*>([\s\S]*?)<\/w:sdtContent>/);
       const content = contentMatch ? contentMatch[1] : block;
-      const textRuns = content.match(/<w:t[^>]*>([^<]*)<\/w:t>/g) ?? [];
-      const text = textRuns.map((t) => t.replace(/<[^>]+>/g, "")).join("");
+      // Captured group, not a tag strip — see the note on the extractor above.
+      const text = [...content.matchAll(/<w:t[^>]*>([^<]*)<\/w:t>/g)].map((m) => m[1]).join("");
       // Extract the field name from <w:alias> or <w:tag>.
       const aliasMatch = block.match(/<w:alias\s+w:val="([^"]+)"/);
       const tagMatch = block.match(/<w:tag\s+w:val="([^"]+)"/);
