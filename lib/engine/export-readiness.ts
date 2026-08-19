@@ -98,11 +98,31 @@ function looksLikePlainText(value: string): boolean {
 function visibleXmlText(xml: string): string {
   return xml
     .replace(/<w:tab\/>/g, " ")
+    // Keep the block boundaries Word encodes as structure rather than
+    // punctuation. Every tag used to become a single space and all whitespace
+    // was then collapsed, so a whole document — tables included — came out as
+    // one run-on line with no sentence breaks in it at all.
+    //
+    // Consumers split this text on sentence punctuation and newlines. With no
+    // newlines, a table's cells fused into a single "sentence", and a value in
+    // one cell could pair with an unrelated term several cells away. A real
+    // technical proposal was refused export for "financial/pricing language"
+    // because a compliance-matrix row put the words "Financial Proposal
+    // Controls" in one cell and "3 selected expert(s)" in another — the row
+    // contained no price at all.
+    //
+    // Paragraph, table-row and table-cell ends become newlines so each block is
+    // evaluated as its own unit. This stays lossy and markdown-free, as the
+    // note below requires; it adds whitespace only.
+    .replace(/<\/w:(p|tr|tc)>/g, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
-    .replace(/\s+/g, " ")
+    // Collapse runs of spaces/tabs, and runs of blank lines, without letting
+    // either swallow the other.
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ ?\n[ \n]*/g, "\n")
     .trim();
 }
 

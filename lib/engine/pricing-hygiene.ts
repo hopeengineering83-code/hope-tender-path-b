@@ -29,12 +29,55 @@ function sentences(text: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Remove tokens whose digits identify something rather than price it.
+ *
+ * A procurement reference, a requirement ID, a page marker and a year all
+ * carry digits and none of them is money. That distinction matters because
+ * `isSafeNoPriceSentence` exempts a sentence that merely NAMES the financial
+ * envelope — but only while the sentence carries no priced content, and the
+ * priced-content test treats any digit as evidence.
+ *
+ * A two-envelope tender defeats that exemption with its own reference number.
+ * The generated technical proposal must quote the submission instructions it
+ * is complying with, so it contains, verbatim:
+ *
+ *   The email subject line must read exactly
+ *   "MOWE/CS/RWS/2026/0117 - Technical and Financial Proposal".
+ *
+ * That names the financial envelope and contains digits, so the exemption did
+ * not apply, `financial proposal` then matched as a standalone financial term,
+ * and export was refused with "Possible financial/pricing language appears in
+ * a technical document" — on a proposal containing no price whatsoever. Every
+ * compliant two-envelope submission hit it, because quoting the required
+ * subject line is exactly what compliance means here.
+ *
+ * Stripping is deliberately narrow. A year is kept whenever a currency word
+ * sits next to it, so "ETB 2026" is still priced content; only a bare year is
+ * removed. Amounts, percentages and currency symbols are never touched.
+ */
+function withoutIdentifiers(sentence: string): string {
+  return sentence
+    // Provenance markers the generator emits: "[p.2]", "(§ SECTION II ...)".
+    .replace(/\[p\.\s*\d+\]/gi, " ")
+    // Reference numbers: two or more slash-separated alphanumeric segments,
+    // e.g. MOWE/CS/RWS/2026/0117.
+    .replace(/\b[A-Za-z0-9]+(?:\/[A-Za-z0-9]+){2,}\b/g, " ")
+    // Requirement and clause IDs: TRB-10, ITB-4, SEC-12.
+    .replace(/\b[A-Za-z]{2,6}-\d+\b/g, " ")
+    // A bare year, only when no currency token is adjacent.
+    .replace(/(?<!\b(?:EUR|USD|ETB|GBP|Birr)\s{0,3})\b(?:19|20)\d{2}\b(?!\s{0,3}(?:EUR|USD|ETB|GBP|Birr))/gi, " ");
+}
+
 function isSafeNoPriceSentence(sentence: string): boolean {
   const namesSeparateEnvelope =
     /\b(financial|commercial|price|pricing|fee)\s+(proposal|offer|envelope|submission|document|annex)\b/i.test(sentence);
+  // Identifiers are stripped before the digit test, so a reference number or a
+  // requirement ID cannot masquerade as a price. See withoutIdentifiers().
+  const withoutIds = withoutIdentifiers(sentence);
   const carriesPricedContent =
-    /[0-9%$€£]/.test(sentence)
-    || /\b(rate|rates|itemi[sz]ed|bill of quantities|BoQ|breakdown|lump sum|total|amount|amounts|quotation|quoted|invoice|unit price|price list|costing)\b/i.test(sentence);
+    /[0-9%$€£]/.test(withoutIds)
+    || /\b(rate|rates|itemi[sz]ed|bill of quantities|BoQ|breakdown|lump sum|total|amount|amounts|quotation|quoted|invoice|unit price|price list|costing)\b/i.test(withoutIds);
   if (namesSeparateEnvelope && !carriesPricedContent) return true;
 
   // "appear" / "be present" / "be included" belong beside include|contain|show.
@@ -61,6 +104,36 @@ function isSafeNoPriceSentence(sentence: string): boolean {
  * Keep this exemption intentionally narrow: it requires clear past/reference
  * context and rejects any sentence containing present-offer pricing language.
  */
+/**
+ * Words that name a CLIENT organisation rather than describe a price.
+ *
+ * Defined once and shared by the reference-value tests below. Two copies of a
+ * vocabulary drift apart, and a pricing gate that disagrees with itself either
+ * blocks a clean document or passes a leaky one.
+ */
+const CLIENT_ORGANISATION_RE =
+  /\b(enterprise|authority|ministry|bureau|commission|administration|agency|corporation|municipality|directorate|water\s+works|city\s+council|UNICEF|UNDP|UNOPS|World\s+Bank|African\s+Development\s+Bank|GIZ|USAID)\b/i;
+
+/**
+ * How many preceding fragments may establish that a value is historical.
+ *
+ * Two was enough while a whole table collapsed into one fragment. Now that
+ * DOCX extraction preserves cell boundaries, a comparable-projects row arrives
+ * as several fragments — project, client, country, sector, value — and the
+ * client that identifies the row as historical sits three or four back from
+ * the amount. A window narrower than a row cannot see it.
+ *
+ * Widening is safe in both directions: the same window feeds the current-offer
+ * veto, so more context also makes that veto harder to slip past, and only a
+ * fragment holding an amount and nothing else can appeal to context at all.
+ */
+const REFERENCE_CONTEXT_FRAGMENTS = 5;
+
+/** A fragment carrying a currency amount and essentially nothing else. */
+function isValueOnlyFragment(sentence: string): boolean {
+  return /^[^A-Za-z0-9]*(?:(?:EUR|USD|ETB|GBP|Birr)\s*)?[$€£]?\s*[0-9][0-9,]*(?:\.\d+)?\s*(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr)?[^A-Za-z0-9]*$/i.test(sentence.trim());
+}
+
 function isHistoricalReferenceValueSentence(sentence: string): boolean {
   const hasCurrencyValue = /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/i.test(sentence);
   if (!hasCurrencyValue) return false;
@@ -74,7 +147,22 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
   const labelledHistoricValue = /\b(project|contract)\s+value\b/i.test(sentence)
     && /\b(client|completed|completion|duration|location|reference|experience|project)\b/i.test(sentence);
 
-  return strongHistoricCue || datedReference || labelledHistoricValue;
+  // A comparable-projects table row names the client organisation next to the
+  // value, and carries none of the prose cues above: no verb, no year, no
+  // "contract value" label — just
+  //
+  //   Adama Town Water Supply Distribution Network — Detailed Design and
+  //   Construction Supervision — Oromia Water Works Design and Supervision
+  //   Enterprise Ethiopia Water and sanitation ETB 18.4M
+  //
+  // so the past project's value was read as this bid's price and export was
+  // refused. Requiring a named client organisation keeps this narrow: bare
+  // prose such as "Construction supervision: ETB 2,000,000" names no client
+  // and is still caught, and any current-bid phrasing has already been vetoed
+  // by currentOfferPricing above before this point is reached.
+  const namesClientOrganisation = CLIENT_ORGANISATION_RE.test(sentence);
+
+  return strongHistoricCue || datedReference || labelledHistoricValue || namesClientOrganisation;
 }
 
 /**
@@ -86,7 +174,13 @@ function isHistoricalReferenceValueSentence(sentence: string): boolean {
 function isHistoricalReferenceValueContinuation(sentence: string, priorContext: string): boolean {
   const hasCurrencyValue = /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/i.test(sentence);
   if (!hasCurrencyValue) return false;
-  if (!/^\s*(?:project|contract)\s+value\b/i.test(sentence)) return false;
+  // A labelled value ("Contract value: ETB …"), or a table cell that holds the
+  // amount and nothing else. The second case appears once DOCX extraction
+  // preserves cell boundaries: a comparable-projects row puts the project, the
+  // client and the value in separate cells, so the value arrives with no
+  // wording of its own and only its neighbours can say what it is.
+  const labelled = /^\s*(?:project|contract)\s+value\b/i.test(sentence);
+  if (!labelled && !isValueOnlyFragment(sentence)) return false;
 
   const currentOfferContext = /\b(this\s+(?:proposal|bid|assignment|tender)|our\s+(?:fee|price|rate|quotation|financial|commercial)|current\s+(?:proposal|bid|assignment|tender))\b/i.test(priorContext);
   if (currentOfferContext) return false;
@@ -94,8 +188,10 @@ function isHistoricalReferenceValueContinuation(sentence: string, priorContext: 
   const explicitReferenceCue = /\b(previous|prior|past|reference\s+project|project\s+reference|relevant\s+experience|comparable\s+project|similar\s+project|portfolio|track\s+record)\b/i.test(priorContext);
   const datedPastProjectCue = /\b(?:19|20)\d{2}\b/.test(priorContext)
     && /\b(completed|delivered|managed|supervised|designed|implemented|project|assignment|client|contract|hospital|building|road|bridge|water|master\s+plan|design|supervision|consultancy)\b/i.test(priorContext);
+  // A named client beside the value is the reference-table shape.
+  const clientRowCue = CLIENT_ORGANISATION_RE.test(priorContext);
 
-  return explicitReferenceCue || datedPastProjectCue;
+  return explicitReferenceCue || datedPastProjectCue || clientRowCue;
 }
 
 /**
@@ -121,11 +217,23 @@ export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocum
   if (isCvOrProfileDoc(doc)) return false;
 
   const textSentences = sentences(text);
+  // One pass, and the context window reads the ORIGINAL fragments.
+  //
+  // These were two chained filters, and the second received the array the
+  // first had already thinned — so whether a value counted as historical
+  // depended on which of its neighbours happened to survive exemption. That
+  // is the wrong question: context is what the document says around a value,
+  // not what is left after filtering. Exempting a comparable-projects row (a
+  // good outcome) silently deleted the client name that the value cell in the
+  // same row relied on to be recognised as historical, and the past project's
+  // value was then read as this bid's price.
   const scanText = textSentences
-    .filter((s) => !isSafeNoPriceSentence(s))
-    .filter((s, index, all) => {
+    .filter((s, index) => {
+      if (isSafeNoPriceSentence(s)) return false;
       if (isHistoricalReferenceValueSentence(s)) return false;
-      const priorContext = all.slice(Math.max(0, index - 2), index).join(" ");
+      const priorContext = textSentences
+        .slice(Math.max(0, index - REFERENCE_CONTEXT_FRAGMENTS), index)
+        .join(" ");
       return !isHistoricalReferenceValueContinuation(s, priorContext);
     })
     .join(" ");
