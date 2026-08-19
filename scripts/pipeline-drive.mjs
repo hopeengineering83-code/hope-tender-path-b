@@ -252,34 +252,24 @@ log("matching-diagnostics", r.status === 404 ? "INFO" : r.status < 400 ? "OK" : 
     ? "route not present on this branch — reading match state from the database"
     : `experts total=${r.json?.experts?.total} selected=${r.json?.experts?.selected}`);
 
-// Match IDs are not exposed by any list endpoint (the tender page renders them
-// server-side), so the harness reads the ids straight from the database and
-// then performs the SELECTION through the real PUT /matches route.
+// Match selection is Engine-owned and automatic — there is deliberately no
+// manual selection mutation, and the tender action registry pins
+// MATCH_EVIDENCE.mutation === null. So the harness does NOT select anything.
+// It records what the Engine selected on its own, and the generate step below
+// is what proves the automatic promotion actually fires: if this reads 0
+// selected and generation still succeeds, promoteBestAvailableReviewedMatches-
+// ForGeneration did the selecting.
 const { PrismaClient } = await import("@prisma/client");
 const prisma = new PrismaClient();
-const expertMatches = await prisma.tenderExpertMatch.findMany({ where: { tenderId }, select: { id: true, score: true } });
-const projectMatches = await prisma.tenderProjectMatch.findMany({ where: { tenderId }, select: { id: true, score: true } });
+const [expertMatches, projectMatches, selectedExperts, selectedProjects] = await Promise.all([
+  prisma.tenderExpertMatch.count({ where: { tenderId } }),
+  prisma.tenderProjectMatch.count({ where: { tenderId } }),
+  prisma.tenderExpertMatch.count({ where: { tenderId, isSelected: true } }),
+  prisma.tenderProjectMatch.count({ where: { tenderId, isSelected: true } }),
+]);
 await prisma.$disconnect();
-let selected = 0;
-let selectFailure = null;
-for (const m of [...expertMatches].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 4)) {
-  const res = await call("PUT", `/api/tenders/${tenderId}/matches`, {
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ matchId: m.id, matchType: "expert", isSelected: true }),
-  });
-  if (res.status < 400) selected += 1;
-  else if (!selectFailure) selectFailure = `expert PUT /matches HTTP ${res.status} ${body(res, 300)}`;
-}
-let selectedProjects = 0;
-for (const m of [...projectMatches].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).slice(0, 4)) {
-  const res = await call("PUT", `/api/tenders/${tenderId}/matches`, {
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ matchId: m.id, matchType: "project", isSelected: true }),
-  });
-  if (res.status < 400) selectedProjects += 1;
-  else if (!selectFailure) selectFailure = `project PUT /matches HTTP ${res.status} ${body(res, 300)}`;
-}
-log("select matches", selected > 0 || expertMatches.length === 0 ? "OK" : "INFO", `experts=${selected}/${expertMatches.length} projects=${selectedProjects}/${projectMatches.length}${selectFailure ? ` | first failure: ${selectFailure}` : ""}`);
+log("match selection (engine-owned)", "INFO",
+  `experts selected=${selectedExperts}/${expertMatches} projects selected=${selectedProjects}/${projectMatches} — selection is automatic; generate promotes source-verified matches`);
 
 // ── 6b2. Re-run Run Engine against the CONFIRMED Build Plan ─────────────────
 // Requirement coverage is computed by the engine, and BUILD_PLAN_ITEM evidence
@@ -393,16 +383,6 @@ r = await call("POST", `/api/tenders/${tenderId}/supersede-outside-plan`, {
   body: JSON.stringify({}),
 });
 log("supersede-outside-plan", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status} ${body(r, 300)}`);
-
-// ── 9c. Recompute requirement coverage now that the artifacts exist ─────────
-// Coverage was last computed before generation, when every plan item was still
-// a promise. Diagnostic probe: if validation only passes because of this call,
-// the product is missing an automatic recompute after generation.
-r = await call("POST", `/api/tenders/${tenderId}/requirement-coverage/auto-sync`, {
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({}),
-});
-log("requirement-coverage/auto-sync (post-generation)", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status} ${body(r, 300)}`);
 
 // ── 10. Validate ────────────────────────────────────────────────────────────
 r = await call("POST", `/api/tenders/${tenderId}/validate`, {

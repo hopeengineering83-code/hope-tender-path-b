@@ -5,6 +5,7 @@
  * Derived from DocumentValidatorPanel to ensure consistency between UI and server.
  */
 import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS, GENERIC_BOILERPLATE_PATTERNS } from "./detection-patterns";
+import { containsPricingLeakage } from "./pricing-hygiene";
 
 export interface DocumentValidationResult {
   hasContent: boolean;
@@ -19,7 +20,19 @@ export interface DocumentValidationResult {
 }
 
 const EMPTY_SECTION_RE = /^#+\s+.+\n+(?:\n|$)/m;
-const FINANCIAL_IN_TECHNICAL_RE = /total\s+price\s*(?:[:\$€£]|is\b)?\s*[\$€£]?\s*[\d,]|unit\s+price|rate\s+card|price\s+schedule|BOQ|bill\s+of\s+quantities|\btax\b.{0,24}\brate\b|\bvat\b.{0,24}\d/i;
+// Pricing leakage is decided by lib/engine/pricing-hygiene.ts, the same
+// detector the export-readiness gate uses. This module used to carry its own
+// regex, and the two disagreed on real documents.
+//
+// The regex included /\bvat\b.{0,24}\d/i, which matched the company's own
+// "VAT Reg. No.: 00098765" — a registration number that appears in the
+// letterhead of every document the app produces, and on many is legally
+// required. A technical proposal containing no price at all was refused at
+// download with "Financial pricing content detected in a TECHNICAL document",
+// while documentHygieneIssues() found nothing wrong with the identical text.
+// The canonical detector reads sentence by sentence and exempts identity,
+// quoted requirements and no-price assurances, so it does not confuse a tax
+// identifier with a quoted fee.
 const TECHNICAL_IN_FINANCIAL_RE = /methodology|work\s+plan|staffing\s+plan|technical\s+approach/i;
 
 export function validateDocumentQuality(doc: {
@@ -65,7 +78,7 @@ export function validateDocumentQuality(doc: {
 
   const dtype = (doc.documentType ?? "").toUpperCase();
   let envelopeMismatch: string | null = null;
-  if (text && (dtype === "TECHNICAL" || dtype === "TECHNICAL_PROPOSAL") && FINANCIAL_IN_TECHNICAL_RE.test(text)) {
+  if (text && (dtype === "TECHNICAL" || dtype === "TECHNICAL_PROPOSAL") && containsPricingLeakage(text, { name: doc.name, exactFileName: null, documentType: doc.documentType, format: null } as never)) {
     envelopeMismatch = "Financial pricing content detected in a TECHNICAL document";
   } else if (text && (dtype === "FINANCIAL" || dtype === "FINANCIAL_PROPOSAL") && TECHNICAL_IN_FINANCIAL_RE.test(text)) {
     envelopeMismatch = "Technical methodology content detected in a FINANCIAL document";

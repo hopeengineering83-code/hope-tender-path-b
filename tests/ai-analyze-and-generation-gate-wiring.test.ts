@@ -392,22 +392,33 @@ describe("deferred gap fixes — post-618 hardening", () => {
     // single-doc path also calls it
     assert.match(source, /AUTHORITY_REVIEW_BLOCKED/);
   });
-  it("document-quality-validator FINANCIAL_IN_TECHNICAL_RE requires numeric follow-on", () => {
+  it("document-quality-validator decides pricing leakage with the canonical detector", () => {
     const source = readFileSync("lib/engine/document-quality-validator.ts", "utf8");
-    // Pattern must require digit/currency after "total price" — the raw source
-    // must contain the tightened regex with [\d,] follow-on so that prose like
-    // "the total price of the contract was fair" does NOT trigger the rule.
-    // We use assert.ok + includes() because the source contains literal
-    // backslash characters (\s, \d) that make regex-based matching tricky.
-    assert.ok(
-      source.includes("total\\s+price\\s*(?:[:\\$€£]|is\\b)?\\s*[\\$€£]?\\s*[\\d,]"),
-      "FINANCIAL_IN_TECHNICAL_RE must require a numeric/currency follow-on after 'total price'",
+    // This module used to carry its own FINANCIAL_IN_TECHNICAL_RE. It had to be
+    // kept numerically guarded by hand so that prose ("the total price of the
+    // contract was fair") did not block a technical proposal — and it still
+    // disagreed with the export gate on real documents: its /\bvat\b.{0,24}\d/
+    // alternative matched the company's own "VAT Reg. No.: 00098765" in the
+    // letterhead of every generated document, refusing at download what
+    // documentHygieneIssues() had just passed.
+    //
+    // One detector cannot disagree with itself, so the numeric-follow-on rule
+    // now lives once, in pricing-hygiene.ts, and this module calls it. The
+    // behaviour that rule protects is pinned on real documents in
+    // tests/engine/tender-regression.test.ts.
+    assert.match(source, /import \{ containsPricingLeakage \} from "\.\/pricing-hygiene"/);
+    assert.match(source, /containsPricingLeakage\(text,/);
+    assert.doesNotMatch(
+      source,
+      /const FINANCIAL_IN_TECHNICAL_RE\s*=/,
+      "a second, private pricing regex here is what disagreed with the export gate",
     );
-    // Double-check: the old bare "total\s+price" pattern (without numeric guard)
-    // must not appear as its own leading alternative in FINANCIAL_IN_TECHNICAL_RE.
-    assert.ok(
-      !source.match(/FINANCIAL_IN_TECHNICAL_RE\s*=\s*\/total\\s\+price\|/),
-      "FINANCIAL_IN_TECHNICAL_RE must not start with bare 'total price' as its own alternative",
+
+    const canonical = readFileSync("lib/engine/pricing-hygiene.ts", "utf8");
+    assert.match(
+      canonical,
+      /total price[^\n]*\[0-9\]\[0-9,\]/,
+      "the canonical detector must still require a number near a priced term",
     );
   });
 });

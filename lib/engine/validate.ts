@@ -54,6 +54,39 @@ function staffingShortfallMessage(type: "expert" | "project", required: number, 
 export async function validateTender(tenderId: string): Promise<ValidationReport> {
   const issues: ValidationIssue[] = [];
 
+  // Bring requirement coverage up to date before judging it.
+  //
+  // The Engine computes coverage BEFORE generation, when every build-plan item
+  // is still a promise and no artifact exists, and nothing recomputed it once
+  // the documents were written. So the evidence this function reads was stale
+  // by construction: a requirement answered by the proposal's own deliverable
+  // stayed at PARTIAL for ever, mandatory-evidence blockers never cleared, and
+  // the only way past it was for someone to know to POST
+  // /api/tenders/{id}/requirement-coverage/auto-sync by hand — an step the
+  // owner is never told about and the automation contract does not allow.
+  //
+  // Reconciling here rather than at each generation site covers every path
+  // that reaches a verdict, since both POST /validate and POST /export come
+  // through this function. The service is an idempotent desired-state sync
+  // with its own retry, so calling it on an already-current tender is a no-op.
+  //
+  // A failure must not fail validation: coverage that could not be refreshed
+  // is reported as a warning, and the gates below still judge what is stored.
+  const owner = await prisma.tender.findUnique({ where: { id: tenderId }, select: { userId: true } });
+  if (owner?.userId) {
+    try {
+      const { reconcileAutomaticRequirementCoverage } = await import("./reconcile-automatic-requirement-coverage");
+      await reconcileAutomaticRequirementCoverage(prisma, tenderId, owner.userId);
+    } catch (error) {
+      logger.warn(`[validate] requirement-coverage reconcile failed; judging stored coverage: ${error instanceof Error ? error.message : String(error)}`);
+      issues.push({
+        code: "REQUIREMENT_COVERAGE_NOT_REFRESHED",
+        severity: "WARN",
+        message: "Requirement evidence could not be refreshed before validation, so the result reflects the last stored coverage.",
+      });
+    }
+  }
+
   const tender = await prisma.tender.findUnique({
     where: { id: tenderId },
     include: {

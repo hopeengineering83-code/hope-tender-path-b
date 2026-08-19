@@ -20,9 +20,9 @@
 // strict-domain filtering switched on, and all four source-verified water
 // supply experts — including a Team Leader with 22 years in water supply, on a
 // tender asking for fifteen — were hard-excluded to score 0. Generation then
-// refused with NO_EXPERT_MATCHES_SELECTED, whose advertised next action is
-// REVIEW_MATCHES, for which no write route exists. One unanchored three-letter
-// alternation made the tender unfinishable.
+// refused with NO_EXPERT_MATCHES_SELECTED — and since selection is automatic
+// and Engine-owned, there was nothing the owner could do to overrule it. One
+// unanchored three-letter alternation made the tender unfinishable.
 //
 // Every token short enough to appear inside an unrelated word is now anchored.
 // "ore" also sits inside score, before, more, store, restore, shore, core and

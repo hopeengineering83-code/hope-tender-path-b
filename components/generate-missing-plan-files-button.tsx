@@ -18,7 +18,7 @@ type GenerateResponse = {
 
 function nextActionLabel(action?: string) {
   if (action === "RUN_ENGINE") return "Matching has not produced evidence for this tender yet. It runs automatically; retry once it completes.";
-  if (action === "REVIEW_MATCHES") return "Review/select expert and project evidence, then retry.";
+  if (action === "REVIEW_MATCHES") return "Open proposal evidence readiness to see why no expert or project evidence could be selected. Selection is automatic once the vault records verify against their documents.";
   if (action === "OPEN_EXTRACTION_QUALITY") return "Open Extraction Quality and fix weak files.";
   if (action === "OPEN_ANALYSIS_QUALITY") return "Review Analysis Quality, then retry.";
   if (action === "OPEN_MATCHING_QUALITY") return "Review Matching Quality, then retry.";
