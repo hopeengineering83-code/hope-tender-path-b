@@ -98,17 +98,22 @@ jobs:
         run: npm run build
 
       - name: Install Chromium system dependencies
-        # Split deliberately. `playwright install --with-deps` shells out to
-        # apt-get, and killing it mid-apt orphans the process holding
-        # /var/lib/apt/lists/lock — every retry then fails instantly with
-        # "Could not get lock ... held by process N". That is exactly what a
-        # naive capped-retry around the combined command produced.
+        # BEST EFFORT, and deliberately not a gate.
         #
-        # So: the apt half runs once, bounded by the step timeout and never
-        # retried; the browser download, which touches no lock, is the only
-        # part retried. The step timeouts are what stop a stall consuming the
-        # whole 55/60-minute job budget, which was the original problem.
-        timeout-minutes: 12
+        # This installs shared libraries that the ubuntu-latest image already
+        # ships, so it is an optimisation rather than a requirement. It is also
+        # the least reliable thing in the job: apt reaches for
+        # azure.archive.ubuntu.com, gets Ign: on every line when that mirror is
+        # unreachable, falls back to archive.ubuntu.com and can then sit for ten
+        # minutes. Unbounded, that once consumed a whole 55-minute run; bounded
+        # and required, it simply failed the build instead.
+        #
+        # Neither is right for an optimisation. If a library really is missing,
+        # the browser fails to launch in the very next step with an explicit
+        # "error while loading shared libraries", which is a clearer signal than
+        # an apt timeout. The download step below is still strict.
+        timeout-minutes: 10
+        continue-on-error: true
         run: npx playwright install-deps chromium
 
       - name: Install Chromium
