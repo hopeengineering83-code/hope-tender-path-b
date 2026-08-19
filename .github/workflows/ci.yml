@@ -234,7 +234,23 @@ jobs:
           git diff --exit-code
 
       - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+        # A stalled browser download used to hang here until the JOB timeout —
+        # 55 min in ci.yml, 60 min in the capture workflow — burning the whole
+        # run on a CDN hiccup with no test ever executed. Each attempt is now
+        # capped so a stall is killed and retried instead of consuming the
+        # budget, and the step has its own backstop.
+        timeout-minutes: 20
+        run: |
+          set -u
+          for attempt in 1 2 3; do
+            if timeout 300 npx playwright install --with-deps chromium; then
+              exit 0
+            fi
+            echo "playwright install failed or stalled (attempt ${attempt}/3); retrying"
+            sleep $((attempt * 15))
+          done
+          echo "playwright install did not complete after 3 capped attempts"
+          exit 1
 
       - name: Seed isolated two-user browser fixtures
         run: node scripts/seed-e2e-user.mjs
