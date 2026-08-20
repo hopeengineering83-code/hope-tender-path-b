@@ -294,6 +294,20 @@ export function clearBillingLockout(provider?: AiProviderName): void {
   else billingLockout.clear();
 }
 
+/**
+ * Re-arm a lockout learned by a DIFFERENT instance.
+ *
+ * The lockout above is a module-level Map, and on a serverless platform that
+ * means one lambda. Instance A discovering that a provider demands payment did
+ * nothing for instance B, which would rediscover it on its own next request —
+ * once per cold start, forever. The lockout is reconstructed on restore from
+ * the persisted failure category, so it needs no schema change: BILLING is
+ * already the recorded category, and it is the only category that means this.
+ */
+export function restoreBillingLockout(provider: AiProviderName, at: number, message: string): void {
+  if (!billingLockout.has(provider)) billingLockout.set(provider, { at, message });
+}
+
 export function recordProviderFailure(provider: AiProviderName, error: unknown): AiProviderFailureCategory {
   const s = ensureState(provider);
   const category = classifyAiError(error);

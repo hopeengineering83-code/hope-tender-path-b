@@ -30,6 +30,7 @@
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { generateWithFallback, NoAiProviderReadyError } from "../lib/ai";
 import { resetProviderHealth, deriveProviderStatus, isBillingLockedOut } from "../lib/ai-provider-health";
 import { getAutomaticProviderOrder, PAID_ACCESS_PROVIDERS } from "../lib/ai-provider-registry";
@@ -233,5 +234,74 @@ describe("ZERO-PAID scenario — AI Analyze completes on the first usable free p
         return true;
       },
     );
+  });
+});
+
+// ─── Every operator-facing surface must agree about what an error means ──────
+//
+// Fixing the routing classifier is only half the job: three separate reporting
+// classifiers each decided independently, and all three mis-sorted billing. The
+// operator reads THOSE, so a routing fix nobody can see is not a fix.
+describe("all failure classifiers agree with the single authority", () => {
+  const CEREBRAS_402 = 'HTTP 402: {"error":{"message":"You have exceeded your free tier quota. Please add a payment method."}}';
+  const OPENAI_429 = 'HTTP 429: {"error":{"code":"insufficient_quota","message":"You exceeded your current quota, please check your plan and billing details."}}';
+  const GEMINI_429 = "429 RESOURCE_EXHAUSTED: Quota exceeded for quota metric 'Generate Content API requests per minute'";
+
+  it("safe-diagnostics calls a payment demand BILLING_BLOCKED, not RATE_LIMITED", async () => {
+    // Its ladder tested `429` before billing, so OpenAI — which reports an
+    // unpayable account as 429 — came out as a rate limit, and Cerebras' 402
+    // matched no branch at all and fell through to UNKNOWN.
+    const { toSafeAiFailureCategory } = await import("../lib/engine/analysis/safe-diagnostics");
+    assert.equal(toSafeAiFailureCategory(new Error(CEREBRAS_402)), "BILLING_BLOCKED");
+    assert.equal(toSafeAiFailureCategory(new Error(OPENAI_429)), "BILLING_BLOCKED");
+    assert.equal(toSafeAiFailureCategory(new Error(GEMINI_429)), "RATE_LIMITED");
+  });
+
+  it("fallback diagnostics stop telling the operator to wait for a bill to clear", async () => {
+    const { buildAnalysisFallbackDiagnostics } = await import("../lib/engine/analysis-fallback-diagnostics");
+    const billing = buildAnalysisFallbackDiagnostics(CEREBRAS_402);
+    assert.equal(billing.category, "BILLING_BLOCKED");
+    assert.equal(billing.retryRecommended, false, "waiting cannot clear a payment demand");
+    assert.match(billing.nextAction, /GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY/);
+    assert.match(billing.nextAction, /Waiting will not clear this/);
+
+    // A genuine rate limit keeps the advice that actually works.
+    const rateLimited = buildAnalysisFallbackDiagnostics(GEMINI_429);
+    assert.equal(rateLimited.category, "RATE_LIMIT");
+    assert.equal(rateLimited.retryRecommended, true);
+  });
+
+  it("the no-provider advice names free keys, never paid ones", async () => {
+    // It used to list all ten keys and state "All 10 providers are automatic",
+    // so an operator following it would reach for whichever key they had —
+    // which is how a paid provider gets configured on a zero-paid deployment.
+    const { buildAnalysisFallbackDiagnostics } = await import("../lib/engine/analysis-fallback-diagnostics");
+    const none = buildAnalysisFallbackDiagnostics("No AI provider configured");
+    assert.equal(none.category, "NO_PROVIDER_CONFIGURED");
+    assert.doesNotMatch(none.nextAction, /Set any AI provider key/);
+    assert.match(none.nextAction, /GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY/);
+    assert.match(none.nextAction, /require paid access and are excluded/);
+  });
+
+  it("an exhausted quota is BILLING in the engine store, not a 60-second cooldown", async () => {
+    // Mapped to RATE_LIMIT "for in-memory tracking parity", which made the two
+    // indistinguishable exactly where the difference matters.
+    const source = readFileSync("lib/engine/provider-health-store.ts", "utf8");
+    assert.match(source, /QUOTA_EXHAUSTED: "BILLING"/);
+    assert.doesNotMatch(source, /QUOTA_EXHAUSTED: "RATE_LIMIT"/);
+  });
+
+  it("fallback diagnostics use the shared redactor, not a fourth private copy", async () => {
+    // The three patterns it carried covered sk-, AIza and Bearer — missing
+    // Groq's gsk_, Cerebras' csk_, DeepSeek's dsk- and Google's AQ format. This
+    // string is operator-facing, so the gap showed real keys to whoever read it.
+    const source = readFileSync("lib/engine/analysis-fallback-diagnostics.ts", "utf8");
+    assert.match(source, /redactSecrets/);
+    assert.doesNotMatch(source, /AIza\[A-Za-z0-9_-\]\{30,\}/);
+
+    const { buildAnalysisFallbackDiagnostics } = await import("../lib/engine/analysis-fallback-diagnostics");
+    const groqKey = "gsk_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0";
+    const out = buildAnalysisFallbackDiagnostics(`Request failed with ${groqKey}`);
+    assert.ok(!out.message.includes(groqKey), "a Groq key must not survive into operator-facing text");
   });
 });

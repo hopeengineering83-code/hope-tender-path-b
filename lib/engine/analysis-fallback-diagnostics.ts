@@ -1,6 +1,15 @@
+import { classifyProviderError } from "../ai-provider-classification";
+import { redactSecrets } from "../sanitize-error";
+
 export type AnalysisFallbackCategory =
   | "TIMEOUT"
   | "RATE_LIMIT"
+  // A provider demanding payment. This category did not exist, so a 402 was
+  // reported as RATE_LIMIT and the operator was told to "wait for provider
+  // limits to reset" — advice for a condition that never clears. Waiting was
+  // the one thing guaranteed not to work.
+  | "BILLING_BLOCKED"
+  | "PROVIDER_OVERLOAD"
   | "AUTH_OR_ACCESS"
   | "MODEL_UNAVAILABLE"
   | "MALFORMED_AI_JSON"
@@ -20,11 +29,13 @@ export type AnalysisFallbackDiagnostics = {
   retryRecommended: boolean;
 };
 
+// Uses the shared redactor. The three patterns that used to live here were a
+// fourth divergent copy, and they covered only sk-, AIza and Bearer — missing
+// Groq's gsk_, Cerebras' csk_, DeepSeek's dsk-, and Google's newer AQ format.
+// This string is operator-facing, so the gap showed real keys to whoever was
+// reading the failure.
 function cleanMessage(value?: string | null): string {
-  return (value ?? "")
-    .replace(/sk-[^\s"']{8,}/g, "[REDACTED]")
-    .replace(/AIza[A-Za-z0-9_-]{30,}/g, "[REDACTED]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]{10,}/gi, "Bearer [REDACTED]")
+  return redactSecrets(value ?? "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);
@@ -55,25 +66,49 @@ export function buildAnalysisFallbackDiagnostics(rawError?: string | null): Anal
       retryRecommended: true,
     };
   }
-  if (/429|rate.?limit|quota|resource exhausted|tokens per minute/.test(lower)) {
+  // Billing, rate limit, overload, auth and model-availability are all decided
+  // by the single classifier in lib/ai-provider-classification.ts rather than by
+  // a second regex ladder here. The ladder matched a bare "quota" before it
+  // considered payment at all, so Cerebras' 402 and OpenAI's insufficient_quota
+  // both surfaced to the operator as "wait for limits to reset".
+  const shared = classifyProviderError(message);
+  if (shared === "BILLING") {
+    return {
+      category: "BILLING_BLOCKED",
+      risk: "HIGH",
+      message: message || "An AI provider requires payment before it will answer.",
+      nextAction: "This provider needs a paid account and is excluded from automatic use. Configure a free provider (GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY) and re-run AI Analyze. Waiting will not clear this.",
+      retryRecommended: false,
+    };
+  }
+  if (shared === "RATE_LIMIT") {
     return {
       category: "RATE_LIMIT",
       risk: "HIGH",
-      message: message || "AI provider rate limit or quota was reached.",
+      message: message || "AI provider rate limit was reached.",
       nextAction: "Wait for provider limits to reset, then re-run AI Analyze. Do not rely on regex fallback for final matching/generation.",
       retryRecommended: true,
     };
   }
-  if (/401|403|auth|api key|unauthorized|forbidden|access/.test(lower)) {
+  if (shared === "PROVIDER_OVERLOAD") {
+    return {
+      category: "PROVIDER_OVERLOAD",
+      risk: "HIGH",
+      message: message || "The AI provider is temporarily overloaded.",
+      nextAction: "This is provider-side capacity, not your configuration or your usage. Re-run AI Analyze shortly.",
+      retryRecommended: true,
+    };
+  }
+  if (shared === "AUTH") {
     return {
       category: "AUTH_OR_ACCESS",
       risk: "HIGH",
       message: message || "AI provider authentication or model access failed.",
-      nextAction: "Check provider API keys, account access, billing, and configured model names in Vercel environment variables, then re-run AI Analyze.",
+      nextAction: "Check provider API keys and configured model names in Vercel environment variables, then re-run AI Analyze.",
       retryRecommended: false,
     };
   }
-  if (/404|model.*not|not found|not supported|model unavailable|invalid_request/.test(lower)) {
+  if (shared === "MODEL_UNAVAILABLE") {
     return {
       category: "MODEL_UNAVAILABLE",
       risk: "HIGH",
@@ -105,7 +140,11 @@ export function buildAnalysisFallbackDiagnostics(rawError?: string | null): Anal
       category: "NO_PROVIDER_CONFIGURED",
       risk: "HIGH",
       message: message || "No AI provider is configured.",
-      nextAction: "Set any AI provider key (ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY) in Vercel, redeploy, then run AI Analyze. All 10 providers are automatic.",
+      // Names the FREE keys only. This used to list all ten and state that "All
+      // 10 providers are automatic" — so an operator following it would reach
+      // for whichever key they had, which is exactly how a paid provider gets
+      // configured on a deployment that must never spend money.
+      nextAction: "Set a free AI provider key (GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY) in Vercel, redeploy, then run AI Analyze. Cerebras, OpenAI, Together, DeepSeek and Anthropic require paid access and are excluded from automatic use.",
       retryRecommended: false,
     };
   }

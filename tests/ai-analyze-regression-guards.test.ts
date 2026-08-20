@@ -239,25 +239,40 @@ describe("REGRESSION: AIRequirement source-traceability fields are stable", () =
 // ─── Secret redaction in fallback diagnostics is stable ──────────────────────
 
 describe("REGRESSION: fallback diagnostics redacts secrets", () => {
-  it("cleanMessage redacts sk-* keys", () => {
-    const src = read("lib/engine/analysis-fallback-diagnostics.ts");
-    // The actual pattern is: /sk-[^\s"']{8,}/g
-    assert.match(src, /sk-\[/);
+  // These asserted that specific regex LITERALS appeared in the source. That
+  // pinned one implementation of redaction rather than redaction itself, and it
+  // failed the moment the three inline patterns were replaced by the shared
+  // redactor — which covers strictly more key formats than they did. Asserting
+  // the behaviour instead is both stronger and survives the delegation.
+  const SECRETS: ReadonlyArray<readonly [string, string]> = [
+    ["Anthropic", "sk-ant-api03-" + "realkey1234567890abcdefghijklmnop"],
+    ["OpenAI", "sk-" + "proj1234567890abcdefghijklmnopqrst"],
+    ["Gemini (legacy)", "AIza" + "SyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"],
+    ["Gemini (new)", "AQ" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8"],
+    ["Groq", "gsk_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"],
+    ["Cerebras", "csk_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"],
+    ["DeepSeek", "dsk-" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"],
+  ];
+
+  for (const [label, secret] of SECRETS) {
+    it(`removes a ${label} key from the operator-facing message`, async () => {
+      const { buildAnalysisFallbackDiagnostics } = await import("../lib/engine/analysis-fallback-diagnostics");
+      const { message } = buildAnalysisFallbackDiagnostics(`Auth error: ${secret}`);
+      assert.ok(!message.includes(secret), `${label} key must not survive into the message`);
+      assert.match(message, /REDACTED/);
+    });
+  }
+
+  it("redacts a Bearer token", async () => {
+    const { buildAnalysisFallbackDiagnostics } = await import("../lib/engine/analysis-fallback-diagnostics");
+    const { message } = buildAnalysisFallbackDiagnostics("Authorization: Bearer abc123def456ghi789");
+    assert.ok(!message.includes("abc123def456ghi789"));
   });
 
-  it("cleanMessage redacts AIza* keys", () => {
-    const src = read("lib/engine/analysis-fallback-diagnostics.ts");
-    assert.match(src, /AIza\[A-Za-z0-9_-\]\{30,\}/);
-  });
-
-  it("cleanMessage redacts Bearer tokens", () => {
-    const src = read("lib/engine/analysis-fallback-diagnostics.ts");
-    assert.match(src, /Bearer\\s\+/);
-  });
-
-  it("cleanMessage truncates to 300 chars", () => {
-    const src = read("lib/engine/analysis-fallback-diagnostics.ts");
-    assert.match(src, /\.slice\(0,\s*300\)/);
+  it("truncates the message so a huge provider body cannot flood the surface", async () => {
+    const { buildAnalysisFallbackDiagnostics } = await import("../lib/engine/analysis-fallback-diagnostics");
+    const { message } = buildAnalysisFallbackDiagnostics("x".repeat(5_000));
+    assert.ok(message.length <= 300, `expected <= 300 chars, got ${message.length}`);
   });
 });
 

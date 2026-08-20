@@ -159,6 +159,14 @@ const RATE_LIMIT_PHRASES = [
   "requests per day",
   "tokens per day",
   "quota exceeded for quota metric",
+  // Bare "quota exceeded", reached only AFTER every billing-specific phrase has
+  // been ruled out above. At that point a throughput cap is both the likelier
+  // reading and by far the safer one: calling it RATE_LIMIT costs a short
+  // backoff if we are wrong, while calling it BILLING would permanently lock a
+  // working free provider out of the chain. Gemini's free-tier cap says
+  // literally "Quota exceeded for quota metric '…requests per minute'", so the
+  // dangerous direction is the one that treats this phrase as unpayable.
+  "quota exceeded",
   "per-minute",
   "rpm limit",
   "tpm limit",

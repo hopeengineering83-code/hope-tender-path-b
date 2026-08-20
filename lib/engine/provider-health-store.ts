@@ -60,15 +60,23 @@ function redactError(raw: string | null | undefined): string {
 
 /**
  * Map a failure class string to an AiProviderFailureCategory.
- * QUOTA_EXHAUSTED maps to RATE_LIMIT for in-memory tracking parity.
+ *
+ * QUOTA_EXHAUSTED is BILLING, not RATE_LIMIT. It was mapped to RATE_LIMIT "for
+ * in-memory tracking parity", which made the two indistinguishable exactly
+ * where the difference matters: a rate limit clears by waiting and is worth
+ * retrying, an exhausted quota clears only by paying and must remove the
+ * provider from the automatic chain. Under that mapping an exhausted free tier
+ * got a 60-second cooldown and was then tried again, forever.
  */
 function toFailureCategory(failureClass: string): AiProviderFailureCategory {
   const map: Record<string, AiProviderFailureCategory> = {
     RATE_LIMIT: "RATE_LIMIT",
-    QUOTA_EXHAUSTED: "RATE_LIMIT",
+    QUOTA_EXHAUSTED: "BILLING",
+    BILLING: "BILLING",
     AUTH: "AUTH",
     TIMEOUT: "TIMEOUT",
     MODEL_UNAVAILABLE: "MODEL_UNAVAILABLE",
+    PROVIDER_OVERLOAD: "PROVIDER_OVERLOAD",
     NETWORK: "NETWORK",
     MALFORMED_RESPONSE: "MALFORMED_RESPONSE",
     PROVIDER_ERROR: "PROVIDER_ERROR",

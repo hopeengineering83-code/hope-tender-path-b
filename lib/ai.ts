@@ -712,8 +712,29 @@ function maxOutputTokensForUseCase(useCase: AiUseCase = "default", provider?: Ai
  * fetches with its own model defaults, which is how it could report a provider
  * healthy on a model AI Analyze never uses — the two had no code in common, so
  * there was nothing forcing them to agree.
+ *
+ * On success this also records WHICH capability was proven. Every branch of the
+ * switch below records a generic success, which the health state files as
+ * "generation verified". For an `extraction` call that is the wrong label: a
+ * successful extraction is precisely the evidence that the provider can do
+ * AI Analyze, and recording it as generation meant the ANALYSIS_VERIFIED state
+ * was only ever reachable through the operator diagnostic. A deployment could
+ * run AI Analyze successfully all day and never report an analysis-verified
+ * provider.
  */
 export async function callProvider(
+  name: AiProviderName,
+  prompt: string,
+  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
+): Promise<string | null> {
+  const result = await callProviderInner(name, prompt, opts);
+  if (result && (opts?.useCase ?? "default") === "extraction") {
+    recordProviderAnalysisSuccess(name);
+  }
+  return result;
+}
+
+async function callProviderInner(
   name: AiProviderName,
   prompt: string,
   opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
