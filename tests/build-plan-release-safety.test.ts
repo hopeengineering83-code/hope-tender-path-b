@@ -106,7 +106,7 @@ describe("Section C release safety", () => {
   });
 
   it("keeps Anthropic last in actual automatic runtime fallback", () => {
-    assert.deepEqual(CANONICAL_AI_PROVIDER_ORDER, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual(CANONICAL_AI_PROVIDER_ORDER, ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]);
   });
 
   it("FAIL-CLOSED: undefined hasCurrentConfirmedBuildPlan blocks (not just === false)", () => {

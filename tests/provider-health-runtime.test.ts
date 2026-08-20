@@ -55,6 +55,6 @@ describe("Provider Health Runtime & Status", () => {
   it("Provider order remains exact (canonical registry order)", () => {
     const health = getAllProviderHealth();
     const order = health.map(h => h.provider);
-    assert.deepEqual(order, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual(order, ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]);
   });
 });

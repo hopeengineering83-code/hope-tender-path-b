@@ -58,7 +58,7 @@ describe("canonical provider chain", () => {
     // CANONICAL_PROVIDER_CHAIN is re-exported from the registry; assert via import.
     const { CANONICAL_PROVIDER_CHAIN } = require("../lib/ai");
     const chain = [...CANONICAL_PROVIDER_CHAIN];
-    assert.deepEqual(chain, ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual(chain, ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]);
     assert.equal(chain[0], "zai", "Z.ai must be first in the canonical chain");
     assert.equal(chain[chain.length - 1], "anthropic", "Anthropic/Claude must be last in the canonical chain");
     assert.ok(chain.includes("together"), "Together MUST be in the automatic chain (rank 8)");

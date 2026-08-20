@@ -13,7 +13,7 @@ describe("safe provider status", () => {
     // breaking change that requires an explicit product decision in the registry.
     assert.deepEqual(
       AI_PROVIDER_ORDER.map((p) => p.provider),
-      ["Z.ai GLM", "Cerebras", "Mistral", "Groq", "OpenRouter", "Gemini", "OpenAI", "Together", "DeepSeek", "Anthropic / Claude"],
+      ["Gemini", "Groq", "Mistral", "Z.ai GLM", "OpenRouter", "Cerebras", "OpenAI", "Together", "DeepSeek", "Anthropic / Claude"],
     );
     assert.deepEqual(
       AI_PROVIDER_ORDER.map((p) => p.order),

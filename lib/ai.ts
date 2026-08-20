@@ -1040,7 +1040,21 @@ export async function generateWithFallback(
   // NoAiProviderReadyError so callers can branch on `err.code` /
   // `err.errorKind` / `err.nextAction` instead of parsing strings.
   const configuredCount = providerAttempts.filter((a) => a.configured).length;
-  const allConfiguredCooling = configuredCount > 0 && providerAttempts.filter((a) => a.configured).every((a) => a.coolingDown);
+  const triedCount = providerAttempts.filter((a) => a.tried).length;
+  // "All providers cooling" must mean SKIPPED because they were already cooling
+  // — a state that clears by waiting. It was computed as "every configured
+  // provider is cooling now", which recordProviderFailure makes true of every
+  // provider the chain just tried and failed. So a run that genuinely attempted
+  // every provider and exhausted them reported ALL_PROVIDERS_COOLING, and the
+  // caller was told to wait for a cooldown instead of that the providers were
+  // broken. ALL_PROVIDERS_EXHAUSTED was effectively unreachable.
+  //
+  // Requiring `!tried` restores the distinction: cooling is about providers we
+  // declined to call, exhaustion is about providers we called.
+  const allConfiguredCooling =
+    configuredCount > 0
+    && triedCount === 0
+    && providerAttempts.filter((a) => a.configured).every((a) => a.coolingDown);
   const errorKind: NoAiProviderReadyErrorKind =
     configuredCount === 0
       ? "NO_PROVIDER_CONFIGURED"
@@ -1055,6 +1069,18 @@ export async function generateWithFallback(
       : allConfiguredCooling
         ? "ALL_PROVIDERS_COOLING"
         : "RETRY_AFTER_PROVIDER_FIX";
+  if (configuredCount === 0) {
+    // Distinguish "no keys anywhere" from "keys exist, but every one of them is
+    // for a paid provider this deployment refuses to call". They need opposite
+    // actions from an operator, and the second is the likelier state on an
+    // account that used to run on paid providers.
+    const paidBlocked = failureDetails.filter((d) => /paid access|requires payment/i.test(d));
+    if (paidBlocked.length > 0) {
+      failureDetails.push(
+        "No free provider is configured. Set GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY — paid providers are excluded while zero-paid mode is on.",
+      );
+    }
+  }
   throw new NoAiProviderReadyError({
     useCase,
     providerAttempts,

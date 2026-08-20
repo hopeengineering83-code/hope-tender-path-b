@@ -21,19 +21,19 @@ import {
 // test fails loudly if the registry order ever changes without an explicit
 // product decision.
 const REQUIRED_ORDER = [
-  "zai",
-  "cerebras",
-  "mistral",
-  "groq",
-  "openrouter",
   "gemini",
+  "groq",
+  "mistral",
+  "zai",
+  "openrouter",
+  "cerebras",
   "openai",
   "together",
   "deepseek",
   "anthropic",
 ] as const;
 
-const REQUIRED_DISPLAY = "Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic / Claude";
+const REQUIRED_DISPLAY = "Gemini → Groq → Mistral → Z.ai GLM → OpenRouter → Cerebras → OpenAI → Together → DeepSeek → Anthropic / Claude";
 
 describe("AI provider chain policy — canonical order", () => {
   it("registry CANONICAL_AI_PROVIDER_ORDER is exactly the required order", () => {
@@ -56,9 +56,9 @@ describe("AI provider chain policy — canonical order", () => {
     });
   });
 
-  it("zai is first, anthropic is last", () => {
-    assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "zai");
-    assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "cerebras");
+  it("gemini is first, anthropic is last", () => {
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[0], "gemini");
+    assert.equal(CANONICAL_AI_PROVIDER_ORDER[1], "groq");
     assert.equal(CANONICAL_AI_PROVIDER_ORDER[CANONICAL_AI_PROVIDER_ORDER.length - 1], "anthropic");
   });
 
@@ -94,18 +94,24 @@ describe("no other automatic provider order exists in the repository", () => {
 describe("admin provider-chain ping budget", () => {
   const route = readFileSync("app/api/admin/ai-provider-health/test/route.ts", "utf8");
 
-  it("keeps provider pings within the route budget", () => {
-    assert.match(route, /export const maxDuration = 30/);
-    assert.match(route, /from.*timeout-config.*import.*PER_PROVIDER_TIMEOUT_MS|import.*PER_PROVIDER_TIMEOUT_MS.*from.*timeout-config/);
+  it("keeps provider tests within the route budget", () => {
+    assert.match(route, /export const maxDuration = 60/);
   });
 
-  it("does not ping every provider when one provider is requested", () => {
-    assert.match(route, /if \(onlyProvider && tester\.provider !== onlyProvider\) continue/);
-    assert.match(route, /results\.push\(await tester\.run\(\)\)/);
+  it("tests only the requested provider when one is named", () => {
+    assert.match(route, /testProviderCapabilities\(provider, \{ capabilities: \[capability\] \}\)/);
   });
 
-  it("iterates providers in canonical registry order", () => {
-    assert.match(route, /CANONICAL_AI_PROVIDER_ORDER/);
+  it("tests the ACTIVE chain when none is named — not every provider that has a key", () => {
+    // Iterating the full canonical order here would contact paid providers.
+    assert.match(route, /testAutomaticChainCapabilities\(/);
+  });
+
+  it("carries no second copy of the provider wire calls", () => {
+    // This route used to build its own fetch per provider, with its own model
+    // defaults — two of which contradicted the registry. Everything now
+    // delegates to the capability tester, which drives the runtime adapter.
+    assert.doesNotMatch(route, /api\.anthropic\.com|chat\/completions|GoogleGenerativeAI/);
   });
 });
 
@@ -120,7 +126,7 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
   });
 
   it("keeps configured-provider checks in the required canonical relative order", () => {
-    const order = ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
+    const order = ["GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ZAI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
     const positions = order.map((k) => envReadiness.indexOf(`status("${k}"`));
     for (let i = 1; i < positions.length; i++) {
       assert.ok(positions[i] > positions[i - 1], `${order[i]} must appear after ${order[i - 1]} in readiness`);
@@ -135,12 +141,12 @@ describe("browser-safe provider env-name list", () => {
   // client code). These tests pin both guarantees.
 
   const REQUIRED_ENV_NAMES = [
-    "ZAI_API_KEY",
-    "CEREBRAS_API_KEY",
-    "MISTRAL_API_KEY",
-    "GROQ_API_KEY",
-    "OPENROUTER_API_KEY",
     "GEMINI_API_KEY",
+    "GROQ_API_KEY",
+    "MISTRAL_API_KEY",
+    "ZAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "CEREBRAS_API_KEY",
     "OPENAI_API_KEY",
     "TOGETHER_API_KEY",
     "DEEPSEEK_API_KEY",

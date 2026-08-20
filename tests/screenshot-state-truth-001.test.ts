@@ -29,7 +29,7 @@ const currentnessSrc = readFileSync("lib/engine/tender-currentness.ts", "utf8");
 const aiEnvSrc = readFileSync("lib/ai-environment-readiness.ts", "utf8");
 const systemSrc = readFileSync("lib/system-readiness.ts", "utf8");
 
-const EXPECTED_ORDER = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
+const EXPECTED_ORDER = ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"];
 
 describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
   describe("dashboard critical-blockers count uses canonical currentness", () => {
@@ -369,12 +369,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     it("ready is false when no AI provider is configured", () => {
       const saved: Record<string, string | undefined> = {};
       const apiKeys = [
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "ZAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CEREBRAS_API_KEY",
         "OPENAI_API_KEY",
         "TOGETHER_API_KEY",
         "DEEPSEEK_API_KEY",
@@ -428,12 +428,12 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
     it("reports CRITICAL ai_providers check when no provider configured", async () => {
       const saved: Record<string, string | undefined> = {};
       const apiKeys = [
-        "ZAI_API_KEY",
-        "CEREBRAS_API_KEY",
-        "MISTRAL_API_KEY",
-        "GROQ_API_KEY",
-        "OPENROUTER_API_KEY",
         "GEMINI_API_KEY",
+        "GROQ_API_KEY",
+        "MISTRAL_API_KEY",
+        "ZAI_API_KEY",
+        "OPENROUTER_API_KEY",
+        "CEREBRAS_API_KEY",
         "OPENAI_API_KEY",
         "TOGETHER_API_KEY",
         "DEEPSEEK_API_KEY",

@@ -81,20 +81,24 @@ function status(
  * order so code review and source-contract diagnostics can verify the public
  * readiness surface without introducing a second runtime provider list:
  *
- * status("ZAI_API_KEY", ...)
- * status("CEREBRAS_API_KEY", ...)
- * status("MISTRAL_API_KEY", ...)
- * status("GROQ_API_KEY", ...)
- * status("OPENROUTER_API_KEY", ...)
  * status("GEMINI_API_KEY", ...)
+ * status("GROQ_API_KEY", ...)
+ * status("MISTRAL_API_KEY", ...)
+ * status("ZAI_API_KEY", ...)
+ * status("OPENROUTER_API_KEY", ...)
+ * status("CEREBRAS_API_KEY", ...)
  * status("OPENAI_API_KEY", ...)
  * status("TOGETHER_API_KEY", ...)
  * status("DEEPSEEK_API_KEY", ...)
  * status("ANTHROPIC_API_KEY", ...)
  *
- * Z.ai general API model default: glm-4.7-flash. The effective runtime value is
- * still resolved by the central provider registry; this note is diagnostic,
- * not an independent model configuration.
+ * The first four (plus OpenRouter with a verified ':free' model) are the
+ * zero-paid automatic chain. The remainder require paid access and are listed
+ * here so an operator can see their keys are recognised and deliberately not
+ * used — never contacted while zero-paid mode is on.
+ *
+ * Effective model values are resolved by the central provider registry; the
+ * notes emitted below are diagnostic, not an independent model configuration.
  */
 function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
   const registry = getProviderRegistry();
@@ -106,7 +110,7 @@ function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
       entry.env.apiKey,
       "ai",
       "critical",
-      `Rank ${entry.rank} ${entry.emergencyOnly ? "emergency-only " : ""}provider in the canonical chain. Configure at least one provider key.`,
+      `Rank ${entry.rank} ${entry.access === "paid" ? "paid-access (excluded while zero-paid mode is on)" : entry.access === "conditional-free" ? "free only with a verified ':free' model" : "free-tier"} provider. Configure at least one free provider key.`,
       { presentOverride: providerConfigured },
     ));
 
@@ -150,7 +154,7 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
       : "INACTIVE";
   const variables: AIEnvironmentVariableStatus[] = [
     ...providerVariableStatuses(),
-    status("GEMINI_FALLBACK_MODELS", "ai", "optional", "Fallback Gemini model chain (effective default: gemini-2.5-flash,gemini-2.0-flash).", { defaultWhenUnset: true, active: geminiConfigured }),
+    status("GEMINI_FALLBACK_MODELS", "ai", "optional", "Additional Gemini models to try if the primary is unavailable. Unset by default so the app never falls back to a model nobody chose.", { defaultWhenUnset: true, active: geminiConfigured }),
     status("ANTHROPIC_TIER", "ai", "recommended", "Used to select Claude output-token defaults; Tier 2 supports larger proposal outputs than Tier 1.", { active: anthropicConfigured }),
     status("ANTHROPIC_MAX_OUTPUT_TOKENS", "ai", "recommended", "Controls Claude proposal output budget. Use a realistic value for your Vercel timeout and Anthropic tier.", { active: anthropicConfigured }),
     status("PDF_OCR_ENABLED", "ocr", "optional", "Vision OCR defaults on when Anthropic is configured; set false to opt out.", { stateOverride: ocrFlagState }),

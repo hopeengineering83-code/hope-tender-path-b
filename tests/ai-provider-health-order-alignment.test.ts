@@ -27,7 +27,7 @@ import {
 import { CANONICAL_AI_PROVIDER_CHAIN, CANONICAL_AI_PROVIDER_RANK } from "../lib/ai-provider-policy";
 
 const CANONICAL_CHAIN = [
-  "zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic",
+  "gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic",
 ] as const;
 
 before(() => { resetProviderHealth(); });
@@ -105,8 +105,11 @@ describe("/api/ai/health reports the canonical runtime order", () => {
 describe("dashboard provider-health UI follows the canonical order", () => {
   const source = readFileSync("components/ai-health-panel.tsx", "utf8");
 
-  it("AI_FALLBACK_CHAIN string is generated from the registry", () => {
-    assert.match(source, /CANONICAL_AI_FALLBACK_CHAIN_DISPLAY/);
+  it("AI_FALLBACK_CHAIN string describes the ACTIVE chain, generated from the registry", () => {
+    // Printing the full canonical order unconditionally advertised a fallback
+    // path through five providers the app is forbidden to contact.
+    assert.match(source, /automaticChainDisplay\(\)/);
+    assert.match(source, /isZeroPaidMode\(\)/);
     assert.match(source, /deterministic draft fallback/);
     assert.match(source, /NOT an AI provider/);
   });
@@ -121,10 +124,34 @@ describe("dashboard provider-health UI follows the canonical order", () => {
     assert.match(source, /if\s*\(!p\.isAi\)/);
   });
 
-  it("pill colour for AI providers uses the unified status field", () => {
-    assert.match(source, /p\.status === "GENERATION_VERIFIED"/);
-    assert.match(source, /p\.status === "NOT_CONFIGURED"/);
-    assert.match(source, /p\.status === "RATE_LIMITED"/);
+  it("pill presentation covers EVERY status, with no fall-through", () => {
+    // The ternary ladder this replaced handled six of fifteen statuses and let
+    // the rest land on "Unknown — not yet verified", so a provider whose
+    // ANALYSIS capability had just been proven displayed as unverified. The
+    // Record<AiProviderStatus, …> typing now makes an unhandled status a
+    // compile error rather than a silent wrong label.
+    assert.match(source, /const STATUS_PRESENTATION: Record<AiProviderStatus, StatusPresentation>/);
+    for (const state of [
+      "GENERATION_VERIFIED", "ANALYSIS_VERIFIED", "CONNECTIVITY_VERIFIED",
+      "RATE_LIMITED", "PROVIDER_OVERLOAD", "BILLING_BLOCKED", "AUTH_FAILED",
+      "MODEL_UNAVAILABLE", "CONFIGURATION_INVALID", "NOT_CONFIGURED",
+      "CONFIGURED", "TIMEOUT", "NETWORK_ERROR", "PROVIDER_ERROR",
+      "MALFORMED_RESPONSE", "COOLING_DOWN", "UNKNOWN",
+    ]) {
+      assert.match(source, new RegExp(`\\n  ${state}: \\{`), `${state} must have its own presentation row`);
+    }
+  });
+
+  it("shows BILLING_BLOCKED as its own state, not a generic 'unavailable'", () => {
+    // Billing is the one cause an operator can act on directly. Collapsing it
+    // into "Unavailable" hid the only actionable thing on the card.
+    assert.match(source, /Billing blocked — excluded from automatic use/);
+  });
+
+  it("does not paint CONNECTIVITY_VERIFIED as healthy", () => {
+    // Reaching a provider proves the key and the route, not that it can return
+    // the structured analysis the workflow depends on.
+    assert.match(source, /CONNECTIVITY_VERIFIED: \{[\s\S]*?healthy: false/);
   });
 });
 
@@ -164,45 +191,60 @@ describe("AiProviderStatus enum + deriveProviderStatus()", () => {
     assert.equal(getProviderRuntimeSnapshot("groq").runtimeVerified, true);
   });
 
+  // These use FREE providers. They previously used openai / together / deepseek,
+  // which now resolve to BILLING_BLOCKED before any failure category is
+  // consulted — the money gate outranks health, so the health status they were
+  // written to check was no longer reachable through them.
   it("returns rate_limited after a RATE_LIMIT failure", () => {
-    process.env.OPENAI_API_KEY = "sk-test-openai";
-    recordProviderFailure("openai", new Error("HTTP 429 Too Many Requests"));
-    assert.equal(deriveProviderStatus("openai"), "RATE_LIMITED");
-    assert.equal(getProviderRuntimeSnapshot("openai").rateLimited, true);
+    process.env.GROQ_API_KEY = "gsk-test-groq";
+    recordProviderFailure("groq", new Error("HTTP 429 Too Many Requests"));
+    assert.equal(deriveProviderStatus("groq"), "RATE_LIMITED");
+    assert.equal(getProviderRuntimeSnapshot("groq").rateLimited, true);
   });
 
-  it("returns unauthorized after an AUTH failure", () => {
+  it("returns AUTH_FAILED after an AUTH failure", () => {
+    // AUTH_FAILED, not UNAUTHORIZED: "unauthorized" is also what an ownership
+    // check says about a USER, and the two were being read as the same thing.
     process.env.GEMINI_API_KEY = "AIzaFakeKey1234567890123456789012345";
-    recordProviderFailure("gemini", new Error("HTTP 403 Forbidden — API key invalid"));
-    assert.equal(deriveProviderStatus("gemini"), "UNAUTHORIZED");
+    recordProviderFailure("gemini", new Error("HTTP 403 Forbidden — API key not valid"));
+    assert.equal(deriveProviderStatus("gemini"), "AUTH_FAILED");
   });
 
   it("returns timeout after a TIMEOUT failure", () => {
-    process.env.TOGETHER_API_KEY = "together-test";
-    recordProviderFailure("together", new Error("Request timed out after 30s"));
-    assert.equal(deriveProviderStatus("together"), "TIMEOUT");
+    process.env.MISTRAL_API_KEY = "mistral-test";
+    recordProviderFailure("mistral", new Error("Request timed out after 30s"));
+    assert.equal(deriveProviderStatus("mistral"), "TIMEOUT");
+  });
+
+  it("returns PROVIDER_OVERLOAD for a capacity failure, distinct from a rate limit", () => {
+    // Capacity is not our usage and is not their bug. Collapsing it into
+    // RATE_LIMITED told an operator to slow down when the correct action was to
+    // do nothing at all — the same request works moments later.
+    process.env.ZAI_API_KEY = "zai-test";
+    recordProviderFailure("zai", new Error("The model is currently overloaded, please retry shortly"));
+    assert.equal(deriveProviderStatus("zai"), "PROVIDER_OVERLOAD");
   });
 
   it("maps MODEL_UNAVAILABLE, BILLING, and NETWORK to distinct statuses", () => {
-    process.env.DEEPSEEK_API_KEY = "dsk-test";
-    recordProviderFailure("deepseek", new Error("HTTP 404 model not found: deepseek-reasoner"));
-    assert.equal(deriveProviderStatus("deepseek"), "MODEL_UNAVAILABLE");
+    process.env.ZAI_API_KEY = "zai-test";
+    recordProviderFailure("zai", new Error("HTTP 404 model not found: glm-nonexistent"));
+    assert.equal(deriveProviderStatus("zai"), "MODEL_UNAVAILABLE");
 
     resetProviderHealth();
-    process.env.DEEPSEEK_API_KEY = "dsk-test";
-    recordProviderFailure("deepseek", new Error("HTTP 402 Insufficient balance"));
-    assert.equal(deriveProviderStatus("deepseek"), "BILLING_BLOCKED");
+    process.env.ZAI_API_KEY = "zai-test";
+    recordProviderFailure("zai", new Error("HTTP 402 Insufficient balance"));
+    assert.equal(deriveProviderStatus("zai"), "BILLING_BLOCKED");
 
     resetProviderHealth();
-    process.env.DEEPSEEK_API_KEY = "dsk-test";
-    recordProviderFailure("deepseek", new Error("fetch failed: ECONNRESET"));
-    assert.equal(deriveProviderStatus("deepseek"), "NETWORK_ERROR");
+    process.env.ZAI_API_KEY = "zai-test";
+    recordProviderFailure("zai", new Error("fetch failed: ECONNRESET"));
+    assert.equal(deriveProviderStatus("zai"), "NETWORK_ERROR");
   });
 
   it("returns unknown after an UNKNOWN-category failure", () => {
-    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
-    recordProviderFailure("anthropic", new Error("some weird failure"));
-    assert.equal(deriveProviderStatus("anthropic"), "UNKNOWN");
+    process.env.MISTRAL_API_KEY = "mistral-test";
+    recordProviderFailure("mistral", new Error("some weird failure"));
+    assert.equal(deriveProviderStatus("mistral"), "UNKNOWN");
   });
 
   it("OpenRouter with an invalid (non-:free) model surfaces CONFIGURATION_INVALID", () => {
@@ -399,8 +441,9 @@ describe("AiProviderStatus enum is exported and complete", () => {
   it("exports the AiProviderStatus type with all states including the new ones", () => {
     assert.match(source, /export type AiProviderStatus\s*=/);
     for (const state of [
-      "NOT_CONFIGURED", "CONFIGURED", "GENERATION_VERIFIED", "RATE_LIMITED",
-      "UNAUTHORIZED", "TIMEOUT", "BILLING_BLOCKED", "MODEL_UNAVAILABLE",
+      "NOT_CONFIGURED", "CONFIGURED", "CONNECTIVITY_VERIFIED", "ANALYSIS_VERIFIED",
+      "GENERATION_VERIFIED", "RATE_LIMITED", "AUTH_FAILED", "TIMEOUT",
+      "BILLING_BLOCKED", "MODEL_UNAVAILABLE", "PROVIDER_OVERLOAD", "PROVIDER_ERROR",
       "NETWORK_ERROR", "MALFORMED_RESPONSE", "CONFIGURATION_INVALID", "UNKNOWN",
     ]) {
       assert.match(source, new RegExp(`\\| "${state}"`));
@@ -434,10 +477,22 @@ describe("configured != healthy — the status enum distinguishes key-only from 
   });
 
   it("a provider with an API key + real success IS runtime_verified", () => {
-    process.env.CEREBRAS_API_KEY = "csk-test";
-    recordProviderSuccess("cerebras");
-    const snap = getProviderRuntimeSnapshot("cerebras");
+    // A free provider: for a paid one the money gate answers first, and
+    // BILLING_BLOCKED is the correct status however well it performed.
+    process.env.GROQ_API_KEY = "gsk-test";
+    recordProviderSuccess("groq");
+    const snap = getProviderRuntimeSnapshot("groq");
     assert.equal(snap.status, "GENERATION_VERIFIED");
     assert.equal(snap.runtimeVerified, true);
+    assert.equal(snap.analysisUsable, true);
+  });
+
+  it("connectivity alone is runtime-verified but NOT usable for AI Analyze", () => {
+    process.env.MISTRAL_API_KEY = "mistral-test";
+    recordProviderPingSuccess("mistral");
+    const snap = getProviderRuntimeSnapshot("mistral");
+    assert.equal(snap.status, "CONNECTIVITY_VERIFIED");
+    assert.equal(snap.runtimeVerified, true);
+    assert.equal(snap.analysisUsable, false, "a ping does not prove structured-output capability");
   });
 });

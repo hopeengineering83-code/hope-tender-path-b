@@ -50,20 +50,16 @@ function mockFetch(handler: (url: string, init: RequestInit) => { status: number
 }
 
 describe("12. provider attempt budget caps actual outbound attempts", () => {
-  it("makes at most 10 outbound provider calls with default budget (all eligible providers tried)", async () => {
-    // Configure enough providers to exceed the old budget of 5.
-    // All return HTTP 500 so the chain keeps falling over.
-    // Gap 3: the budget is now 10 so ALL eligible providers get a real
-    // attempt before the chain declares ALL_PROVIDERS_EXHAUSTED. This
-    // eliminates ATTEMPT_BUDGET_EXHAUSTED as a workflow blocker in the
-    // normal case.
-    process.env.OPENAI_API_KEY = "k";
+  it("tries every eligible provider in the zero-paid chain before declaring exhaustion", async () => {
+    // Configured with the FREE chain. This test previously configured OpenAI,
+    // DeepSeek, Together, Anthropic and Cerebras — all paid — and asserted the
+    // chain attempted them. Under zero-paid mode those providers are not merely
+    // deprioritised, they are unreachable, so the assertion had to change with
+    // the behaviour it describes.
+    process.env.GEMINI_API_KEY = "AIzaTestKey1234567890123456789012345";
     process.env.GROQ_API_KEY = "k";
-    process.env.DEEPSEEK_API_KEY = "k";
-    process.env.TOGETHER_API_KEY = "k";
-    process.env.ANTHROPIC_API_KEY = "k";
     process.env.MISTRAL_API_KEY = "k";
-    process.env.CEREBRAS_API_KEY = "k";
+    process.env.ZAI_API_KEY = "k";
 
     const m = mockFetch(() => ({ status: 500, body: { error: { message: "server error" } } }));
 
@@ -71,10 +67,29 @@ describe("12. provider attempt budget caps actual outbound attempts", () => {
       () => generateWithFallback("hello", { useCase: "proposal" }),
       (err: unknown) => err instanceof NoAiProviderReadyError,
     );
-    // Default budget is 10 — the chain must try every eligible provider
-    // (7 configured here) before declaring ALL_PROVIDERS_EXHAUSTED.
     assert.ok(m.calls() <= 10, `expected at most 10 outbound attempts, got ${m.calls()}`);
-    assert.ok(m.calls() >= 5, `expected at least 5 outbound attempts (all eligible providers tried), got ${m.calls()}`);
+    // Gemini goes through the Google SDK rather than fetch, so it does not add
+    // to the fetch count; the three OpenAI-compatible free providers do.
+    assert.ok(m.calls() >= 3, `expected every eligible free provider to be tried, got ${m.calls()}`);
+  });
+
+  it("never makes an outbound call to a paid provider, even with its key set", async () => {
+    // The money guarantee, stated as behaviour: keys present, chain exhausted,
+    // zero requests to any paid endpoint.
+    process.env.OPENAI_API_KEY = "k";
+    process.env.DEEPSEEK_API_KEY = "k";
+    process.env.TOGETHER_API_KEY = "k";
+    process.env.ANTHROPIC_API_KEY = "k";
+    process.env.CEREBRAS_API_KEY = "k";
+
+    const contacted: string[] = [];
+    mockFetch((url) => {
+      contacted.push(url);
+      return { status: 500, body: { error: { message: "fail" } } };
+    });
+
+    await assert.rejects(() => generateWithFallback("hi", { useCase: "proposal" }));
+    assert.deepEqual(contacted, [], `no paid provider may be contacted, but got: ${contacted.join(", ")}`);
   });
 });
 
@@ -82,10 +97,9 @@ describe("11. cooldown providers are skipped without consuming the budget", () =
   it("skips a cooled-down provider and still tries live providers", async () => {
     process.env.OPENROUTER_API_KEY = "k";       // will be put in cooldown
     process.env.OPENROUTER_PROPOSAL_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
-    process.env.OPENAI_API_KEY = "k";
     process.env.GROQ_API_KEY = "k";
-    process.env.DEEPSEEK_API_KEY = "k";
-    process.env.TOGETHER_API_KEY = "k";
+    process.env.MISTRAL_API_KEY = "k";
+    process.env.ZAI_API_KEY = "k";
 
     // Force openrouter into cooldown via a rate-limit failure.
     recordProviderFailure("openrouter", new Error("429 rate limit"));
@@ -94,14 +108,14 @@ describe("11. cooldown providers are skipped without consuming the budget", () =
     const seen: string[] = [];
     const m = mockFetch((url) => {
       if (url.includes("openrouter")) seen.push("openrouter");
-      else if (url.includes("openai") || url.includes("api.openai")) seen.push("openai");
       else if (url.includes("groq")) seen.push("groq");
-      else if (url.includes("deepseek")) seen.push("deepseek");
+      else if (url.includes("mistral")) seen.push("mistral");
+      else if (url.includes("z.ai")) seen.push("zai");
       return { status: 500, body: { error: { message: "fail" } } };
     });
 
     await assert.rejects(() => generateWithFallback("hi", { useCase: "proposal" }));
-    // openrouter is skipped (cooldown); live attempts among openai/groq/deepseek/together.
+    // openrouter is skipped (cooldown); live attempts among groq/mistral/zai.
     assert.ok(m.calls() >= 3, `expected at least 3 live attempts, got ${m.calls()}`);
     assert.ok(m.calls() <= 10, `expected at most 10 attempts (budget), got ${m.calls()}`);
     assert.ok(!seen.includes("openrouter"), "cooled-down openrouter must not be called");
@@ -109,24 +123,19 @@ describe("11. cooldown providers are skipped without consuming the budget", () =
 });
 
 describe("13. ATTEMPT_BUDGET_EXHAUSTED distinct from all-providers-exhausted", () => {
-  it("reports ATTEMPT_BUDGET_EXHAUSTED when eligible providers remain untried", async () => {
-    // Use 6 providers with budget=3 so 3 remain untried after 3 failures.
-    process.env.OPENAI_API_KEY = "k";
+  it("returns a structured, recoverable error when the free chain is exhausted", async () => {
     process.env.GROQ_API_KEY = "k";
-    process.env.DEEPSEEK_API_KEY = "k";
-    process.env.TOGETHER_API_KEY = "k";
-    process.env.ANTHROPIC_API_KEY = "k";
     process.env.MISTRAL_API_KEY = "k";
+    process.env.ZAI_API_KEY = "k";
     mockFetch(() => ({ status: 500, body: { error: { message: "fail" } } }));
     try {
       await generateWithFallback("hi", { useCase: "proposal" });
       assert.fail("should have thrown");
     } catch (err) {
       assert.ok(err instanceof NoAiProviderReadyError);
-      // With 6+ configured providers and default budget 5, either
-      // ATTEMPT_BUDGET_EXHAUSTED (budget hit before all tried) or
-      // ALL_PROVIDERS_EXHAUSTED (all tried) is acceptable — the key
-      // assertion is that the error is structured and recoverable.
+      // Either kind is acceptable — the point is that the error is structured
+      // and tells a caller which recovery path applies, rather than being a
+      // bare "all providers exhausted" string.
       assert.ok(["ATTEMPT_BUDGET_EXHAUSTED", "ALL_PROVIDERS_EXHAUSTED"].includes((err as NoAiProviderReadyError).errorKind));
     }
   });
