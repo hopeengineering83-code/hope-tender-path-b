@@ -86,9 +86,11 @@ a fallback is approved.
 
 **What to check:**
 - Check the AI Health panel for provider status.
-- The provider fallback order is: Z.ai → Cerebras → Mistral → Groq →
-  OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic. If all
-  providers fail, the system falls back to regex extraction.
+- The automatic fallback order is: Gemini → Groq → Mistral → Z.ai →
+  OpenRouter (only with a verified `:free` model). If all of them fail, the
+  system falls back to regex extraction. Cerebras, OpenAI, Together, DeepSeek
+  and Anthropic require paid access and are never contacted — if one shows
+  `BILLING_BLOCKED`, that is the intended state, not a fault to fix.
 - Check server logs for `[ai-analyze]` entries with the `failureCategory`.
 - Check `AI_ANALYSIS_TIMEOUT_MS` (default 50s on Hobby, 240s on Pro).
 - If using background mode (?mode=background), check the AiJob status in the

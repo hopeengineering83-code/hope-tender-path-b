@@ -46,10 +46,22 @@ describe("Provider Health Runtime & Status", () => {
   });
 
   it("Generation success marks GENERATION_VERIFIED", () => {
+    // A free provider. For a paid one the money gate answers first and
+    // BILLING_BLOCKED is the correct status no matter how well it performed —
+    // which is the point of the next test.
+    resetProviderHealth();
+    process.env.GROQ_API_KEY = "gsk-key";
+    recordProviderSuccess("groq");
+    assert.equal(deriveProviderStatus("groq"), "GENERATION_VERIFIED");
+  });
+
+  it("a successful paid provider is still BILLING_BLOCKED", () => {
+    // Working is not the question. "Would calling this cost money?" is asked
+    // first, and answers for the whole card.
     resetProviderHealth();
     process.env.OPENAI_API_KEY = "oa-key";
     recordProviderSuccess("openai");
-    assert.equal(deriveProviderStatus("openai"), "GENERATION_VERIFIED");
+    assert.equal(deriveProviderStatus("openai"), "BILLING_BLOCKED");
   });
 
   it("Provider order remains exact (canonical registry order)", () => {

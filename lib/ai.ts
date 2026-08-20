@@ -3,7 +3,7 @@ import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
-import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, PAID_ACCESS_PROVIDERS, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
@@ -1073,11 +1073,19 @@ export async function generateWithFallback(
     // Distinguish "no keys anywhere" from "keys exist, but every one of them is
     // for a paid provider this deployment refuses to call". They need opposite
     // actions from an operator, and the second is the likelier state on an
-    // account that used to run on paid providers.
-    const paidBlocked = failureDetails.filter((d) => /paid access|requires payment/i.test(d));
-    if (paidBlocked.length > 0) {
+    // account migrating off paid providers.
+    //
+    // The paid providers are NOT in `chain` — that is the whole point of the
+    // zero-paid order — so the loop above never saw them and `failureDetails`
+    // cannot mention them. Their keys have to be read directly, or the operator
+    // gets "no AI provider is configured" while looking at five configured keys.
+    const configuredPaid = PAID_ACCESS_PROVIDERS.filter((p) => readProviderKey(p));
+    if (configuredPaid.length > 0) {
       failureDetails.push(
-        "No free provider is configured. Set GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY — paid providers are excluded while zero-paid mode is on.",
+        `${configuredPaid.join(", ")} ${configuredPaid.length === 1 ? "is" : "are"} configured but require paid access and are excluded while zero-paid mode is on.`,
+      );
+      failureDetails.push(
+        "No free provider is configured. Set GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY.",
       );
     }
   }

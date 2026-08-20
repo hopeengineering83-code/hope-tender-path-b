@@ -12,15 +12,22 @@ import {
   getCanonicalProviderEntries,
   preferredConfiguredProviderName,
   CANONICAL_AI_FALLBACK_CHAIN_DISPLAY,
+  getAutomaticProviderOrder,
+  automaticChainDisplay,
+  providerAutomaticEligibility,
+  PAID_ACCESS_PROVIDERS,
 } from "../lib/ai-provider-registry";
 
 const REQUIRED_ORDER = [
-  "zai", "cerebras", "mistral", "groq", "openrouter",
-  "gemini", "openai", "together", "deepseek", "anthropic",
+  "gemini", "groq", "mistral", "zai", "openrouter",
+  "cerebras", "openai", "together", "deepseek", "anthropic",
 ];
 
+// The free chain the app may actually contact.
+const REQUIRED_AUTOMATIC_ORDER = ["gemini", "groq", "mistral", "zai", "openrouter"];
+
 describe("release-acceptance E — provider fallback order", () => {
-  it("preserves the exact canonical order Z.ai → … → Anthropic", () => {
+  it("preserves the exact canonical order Gemini → … → Anthropic", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], REQUIRED_ORDER);
   });
 
@@ -35,11 +42,50 @@ describe("release-acceptance E — provider fallback order", () => {
 
   it("the human-readable chain string follows the canonical order and ends at the deterministic fallback", () => {
     const chain = CANONICAL_AI_FALLBACK_CHAIN_DISPLAY.toLowerCase();
-    // Z.ai must appear before Anthropic, which must appear before the deterministic fallback.
-    const zai = chain.indexOf("z.ai") >= 0 ? chain.indexOf("z.ai") : chain.indexOf("zai");
-    assert.ok(zai >= 0, "chain names the first provider");
-    assert.ok(chain.indexOf("anthropic") > zai || chain.indexOf("claude") > zai, "Anthropic/Claude is later in the chain");
+    const gemini = chain.indexOf("gemini");
+    assert.ok(gemini >= 0, "chain names the first provider");
+    assert.ok(chain.indexOf("anthropic") > gemini || chain.indexOf("claude") > gemini, "Anthropic/Claude is later in the chain");
     assert.ok(/deterministic|draft fallback/.test(chain), "chain ends with the deterministic draft fallback");
+  });
+
+  it("the ACTIVE automatic chain excludes every paid provider", () => {
+    // Canonical enumeration and automatic reachability are different things.
+    // The first is what health reports on; the second is what the app may
+    // spend money through, and it is the one that is a release invariant here.
+    assert.deepEqual([...getAutomaticProviderOrder()], REQUIRED_AUTOMATIC_ORDER);
+    for (const paid of PAID_ACCESS_PROVIDERS) {
+      assert.ok(
+        !getAutomaticProviderOrder().includes(paid),
+        `${paid} requires paid access and must never be automatically reachable`,
+      );
+    }
+    assert.match(automaticChainDisplay(), /deterministic draft fallback$/);
+  });
+
+  it("refuses a paid provider even when its key is present", () => {
+    const eligibility = providerAutomaticEligibility("openai", { OPENAI_API_KEY: "sk-test" } as unknown as NodeJS.ProcessEnv);
+    assert.equal(eligibility.eligible, false);
+    assert.equal(eligibility.reason, "PAID_ACCESS_BLOCKED");
+  });
+
+  it("admits OpenRouter only with a verified ':free' model", () => {
+    // "Probably free" is not good enough to risk a charge, so the conditional
+    // -free class is treated exactly like paid until the condition is proven.
+    const unverified = providerAutomaticEligibility("openrouter", { OPENROUTER_API_KEY: "k" } as unknown as NodeJS.ProcessEnv);
+    assert.equal(unverified.eligible, false);
+    assert.equal(unverified.reason, "CONDITIONAL_FREE_UNVERIFIED");
+
+    const paidModel = providerAutomaticEligibility("openrouter", {
+      OPENROUTER_API_KEY: "k",
+      OPENROUTER_PROPOSAL_MODEL: "openai/gpt-4o",
+    } as unknown as NodeJS.ProcessEnv);
+    assert.equal(paidModel.eligible, false, "a non-':free' model must be refused");
+
+    const verified = providerAutomaticEligibility("openrouter", {
+      OPENROUTER_API_KEY: "k",
+      OPENROUTER_PROPOSAL_MODEL: "meta-llama/llama-3.3-70b-instruct:free",
+    } as unknown as NodeJS.ProcessEnv);
+    assert.equal(verified.eligible, true);
   });
 
   it("derives the preferred provider from the registry (highest-ranked configured), never a hardcode", () => {
@@ -52,6 +98,6 @@ describe("release-acceptance E — provider fallback order", () => {
     assert.equal(withGroq, "groq");
     // A higher-ranked provider outranks a lower one.
     const withZaiAndGroq = preferredConfiguredProviderName({ ZAI_API_KEY: "k", GROQ_API_KEY: "k" } as unknown as NodeJS.ProcessEnv);
-    assert.equal(withZaiAndGroq, "zai");
+    assert.equal(withZaiAndGroq, "groq", "Groq outranks Z.ai in the zero-paid order");
   });
 });

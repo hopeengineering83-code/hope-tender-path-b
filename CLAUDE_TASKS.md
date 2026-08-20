@@ -7,7 +7,7 @@
 - **Repo**: hopeengineering83-code/hope-tender-path-b
 - **Production URL**: https://hope-tender-path-b.vercel.app
 - **Stack**: Next.js 15.5 / React 19 / TypeScript 6 / Prisma 6.19.3 / PostgreSQL
-- **AI providers**: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic (canonical order in `lib/ai-provider-catalog.cjs`)
+- **AI providers**: STRICT ZERO-PAID. Automatic chain is Gemini → Groq → Mistral → Z.ai → OpenRouter (verified `:free` model only) → deterministic draft. Cerebras, OpenAI, Together, DeepSeek and Anthropic require paid access and are never contacted. Canonical order and policy in `lib/ai-provider-catalog.cjs`.
 - **Deployment**: Vercel (auto-deploy on merge to main)
 
 ## Development branch rule

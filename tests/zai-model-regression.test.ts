@@ -150,10 +150,14 @@ describe("No component keeps a private copy of Z.ai's model catalogue", () => {
     }
   });
 
-  it("Z.ai remains canonical rank 1", () => {
+  it("Z.ai is rank 4 — inside the zero-paid free chain", () => {
+    // Z.ai was rank 1 under the old order. Under zero-paid it sits behind
+    // Gemini, Groq and Mistral, but it is still a FREE provider and still in the
+    // automatic chain — which is the property that actually matters here.
     const reg = read("lib/ai-provider-registry.ts");
     const zaiBlock = reg.slice(reg.indexOf("  zai: {"), reg.indexOf("  cerebras: {"));
-    assert.match(zaiBlock, /rank:\s*1/);
+    assert.match(zaiBlock, /rank:\s*4/);
+    assert.match(zaiBlock, /access: "free"/);
   });
 });
 

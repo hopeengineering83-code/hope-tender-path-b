@@ -13,10 +13,15 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const catalog = require("../lib/ai-provider-catalog.cjs");
 
-// The documented canonical order (CLAUDE.md — NEVER change):
-// Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic
-const REQUIRED_ORDER = ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"];
-const REQUIRED_LABELS = "Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic";
+// The documented canonical order (CLAUDE.md), zero-paid first:
+// Gemini → Groq → Mistral → Z.ai → OpenRouter → Cerebras → OpenAI → Together → DeepSeek → Anthropic
+//
+// The first five are the automatic chain; the rest require paid access and are
+// enumerated only so health and diagnostics can report on them.
+const REQUIRED_ORDER = ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"];
+const REQUIRED_LABELS = "Gemini → Groq → Mistral → Z.ai → OpenRouter → Cerebras → OpenAI → Together → DeepSeek → Anthropic";
+const REQUIRED_AUTOMATIC_ORDER = ["gemini", "groq", "mistral", "zai", "openrouter"];
+const REQUIRED_PAID_PROVIDERS = ["cerebras", "openai", "together", "deepseek", "anthropic"];
 const failures = [];
 
 function read(path) {
@@ -50,8 +55,32 @@ requireRule(
   /export const CANONICAL_PROVIDER_CHAIN[^=]*=\s*CANONICAL_AI_PROVIDER_ORDER/.test(ai),
 );
 requireRule(
-  "lib/ai.ts providerChainForUseCase no longer returns the canonical order",
-  /providerChainForUseCase[\s\S]{0,200}?return CANONICAL_AI_PROVIDER_ORDER;/.test(ai),
+  "lib/ai.ts providerChainForUseCase no longer returns the active automatic order",
+  /providerChainForUseCase[\s\S]{0,600}?return getAutomaticProviderOrder\(\);/.test(ai),
+);
+
+// 2b. The zero-paid money gate. These are the invariants that make "no paid
+// provider can generate an accidental charge" structural rather than a matter
+// of leaving keys unset — so the audit pins them, not just the order.
+requireRule(
+  "Catalog ZERO_PAID_AUTOMATIC_ORDER drifted from the required free chain",
+  JSON.stringify(catalog.ZERO_PAID_AUTOMATIC_ORDER) === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
+);
+requireRule(
+  "Catalog PAID_ACCESS_PROVIDERS drifted from the required paid-provider list",
+  JSON.stringify(catalog.PAID_ACCESS_PROVIDERS) === JSON.stringify(REQUIRED_PAID_PROVIDERS),
+);
+requireRule(
+  "Zero-paid mode no longer defaults ON (a missing variable must fail closed to spending nothing)",
+  catalog.isZeroPaidMode({}) === true,
+);
+requireRule(
+  "Zero-paid mode no longer restricts the automatic chain to the free providers",
+  JSON.stringify(catalog.automaticProviderOrder({})) === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
+);
+requireRule(
+  "lib/ai.ts no longer refuses paid providers before building a request",
+  /providerAutomaticEligibility\(provider\)/.test(ai) && /isBillingLockedOut\(provider\)/.test(ai),
 );
 // No per-use-case literal chain may reappear (e.g. `extraction: ["mistral", ...]`).
 for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {
@@ -63,8 +92,8 @@ for (const useCase of ["default", "extraction", "proposal", "validation", "fast"
 
 // 3. Surfaces must expose the derived display order, not a hardcoded one.
 requireRule(
-  "AI health route no longer exposes the derived canonical fallback chain",
-  health.includes("CANONICAL_AI_FALLBACK_CHAIN_DISPLAY"),
+  "AI health route no longer exposes a registry-derived fallback chain",
+  health.includes("CANONICAL_AI_FALLBACK_CHAIN_DISPLAY") || health.includes("automaticChainDisplay"),
 );
 requireRule(
   "AI environment readiness no longer derives its display order from the canonical registry",

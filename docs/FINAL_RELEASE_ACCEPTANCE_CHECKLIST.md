@@ -86,4 +86,4 @@ Readiness.
 7. A public API route returns a raw exception / internal ID on failure.
 8. Partial or non-promoted AI Analyze authorizes generation or export.
 9. AI output overwrites a confirmed source-grounded fact without an audit reason.
-10. Provider fallback order deviates from Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic.
+10. Automatic provider fallback order deviates from Gemini → Groq → Mistral → Z.ai → OpenRouter (verified `:free` only), or any paid-access provider (Cerebras, OpenAI, Together, DeepSeek, Anthropic) becomes automatically reachable.

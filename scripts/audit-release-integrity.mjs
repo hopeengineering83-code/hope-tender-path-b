@@ -144,8 +144,30 @@ check("AI vault hash includes content digest", tenderAnalysisContent.includes("[
 // ─── P1: Release/secret governance — reject dangerous files ─────────
 import { execSync } from "node:child_process";
 
-// 1. .env file must NEVER be committed
-check(".env file is not committed", !existsSync(join(root, ".env")), "committing .env leaks credentials — use .env.example with placeholders only");
+// 1. .env file must NEVER be committed.
+//
+// Checked against git, not the filesystem. This used to test
+// `!existsSync(root/.env)`, which fails for every developer who has a local
+// .env — the ordinary, gitignored, .env.example-sanctioned way to run this app.
+// The check's own name and message say "committed"; only its implementation
+// said "exists". A check that reports a leak when nothing has leaked trains
+// people to ignore it, which is worse than not having it.
+function isTrackedByGit(relativePath) {
+  try {
+    execSync(`git ls-files --error-unmatch ${JSON.stringify(relativePath)}`, {
+      cwd: root,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+check(
+  ".env file is not committed",
+  !isTrackedByGit(".env"),
+  "committing .env leaks credentials — use .env.example with placeholders only. Remove with: git rm --cached .env",
+);
 
 // 2. .env.example must not contain real values
 const envExample = read(".env.example");

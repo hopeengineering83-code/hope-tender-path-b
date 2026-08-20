@@ -92,6 +92,14 @@ describe("DeepSeek runtime snapshot", () => {
       "lastSuccessAt",
       "rateLimited",
       "runtimeVerified",
+      // Whether the provider will answer only with a bill — either it said so,
+      // or zero-paid mode excludes it. Distinct from `available`, which is now
+      // false as a consequence.
+      "billingBlocked",
+      // Whether a real ANALYSIS call succeeded. `runtimeVerified` is true for a
+      // bare connectivity ping too, and a ping does not prove the provider can
+      // return the structured output AI Analyze needs.
+      "analysisUsable",
       // Unified operator-facing status enum (see AiProviderStatus in
       // lib/ai-provider-health.ts). The dashboard uses this field, NOT the
       // legacy `available` boolean, to decide whether to show a green pill.

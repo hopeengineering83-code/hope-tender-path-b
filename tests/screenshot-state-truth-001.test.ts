@@ -131,8 +131,11 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       assert.match(systemSrc, /CANONICAL_AI_PROVIDER_ORDER/);
     });
 
-    it("lib/system-readiness.ts uses REQUIRED_PROVIDER_ORDER from the canonical names", () => {
-      assert.match(systemSrc, /REQUIRED_PROVIDER_ORDER.*CANONICAL_AI_PROVIDER_DISPLAY_NAMES/);
+    it("lib/system-readiness.ts derives REQUIRED_PROVIDER_ORDER from the ACTIVE chain", () => {
+      // Previously derived from CANONICAL_AI_PROVIDER_DISPLAY_NAMES, i.e. all
+      // ten. Under zero-paid that told an operator to configure five providers
+      // the app is forbidden to contact.
+      assert.match(systemSrc, /REQUIRED_PROVIDER_ORDER\s*=\s*getAutomaticProviderOrder\(\)/);
     });
 
     it("the registry catalog defines Anthropic as the last provider", () => {
@@ -469,8 +472,16 @@ describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
       }
     });
 
-    it("REQUIRED_PROVIDER_ORDER matches CANONICAL order exactly", () => {
-      assert.ok(/REQUIRED_PROVIDER_ORDER\s*=\s*CANONICAL_AI_PROVIDER_DISPLAY_NAMES/.test(systemSrc));
+    it("REQUIRED_PROVIDER_ORDER matches the ACTIVE automatic chain exactly", () => {
+      assert.ok(/REQUIRED_PROVIDER_ORDER\s*=\s*getAutomaticProviderOrder\(\)/.test(systemSrc));
+    });
+
+    it("the AI readiness check requires a runtime-verified provider, not just a key", () => {
+      // It used to pass the moment any provider had a key, so production
+      // readiness reported green on an environment where every provider
+      // rejected every request — green exactly when it needed to be informative.
+      assert.match(systemSrc, /aiHealth\.state === "healthy" \? "OK"/);
+      assert.match(systemSrc, /aiHealth\.state === "degraded" \? "WARNING"/);
     });
   });
 

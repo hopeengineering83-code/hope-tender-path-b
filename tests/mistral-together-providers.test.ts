@@ -54,14 +54,26 @@ describe("optional provider adapters", () => {
 describe("canonical provider chain", () => {
   const source = readFileSync("lib/ai.ts", "utf8");
 
-  it("derives the chain from the registry (zai first, anthropic last)", () => {
+  it("derives the chain from the registry (gemini first, anthropic last)", () => {
     // CANONICAL_PROVIDER_CHAIN is re-exported from the registry; assert via import.
     const { CANONICAL_PROVIDER_CHAIN } = require("../lib/ai");
     const chain = [...CANONICAL_PROVIDER_CHAIN];
     assert.deepEqual(chain, ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]);
-    assert.equal(chain[0], "zai", "Z.ai must be first in the canonical chain");
+    assert.equal(chain[0], "gemini", "Gemini leads the zero-paid chain");
     assert.equal(chain[chain.length - 1], "anthropic", "Anthropic/Claude must be last in the canonical chain");
-    assert.ok(chain.includes("together"), "Together MUST be in the automatic chain (rank 8)");
+    assert.ok(chain.includes("together"), "Together must remain a KNOWN provider so health can report on it");
+  });
+
+  it("keeps Together and the other paid providers OUT of the automatic chain", () => {
+    // Being in the canonical enumeration and being in the automatic chain are
+    // different things. The first is what health reports on; the second is what
+    // the app may spend money through.
+    const { getAutomaticProviderOrder, PAID_ACCESS_PROVIDERS } = require("../lib/ai-provider-registry");
+    const automatic = [...getAutomaticProviderOrder()];
+    assert.deepEqual(automatic, ["gemini", "groq", "mistral", "zai", "openrouter"]);
+    for (const paid of PAID_ACCESS_PROVIDERS) {
+      assert.ok(!automatic.includes(paid), `${paid} requires paid access and must not be automatic`);
+    }
   });
 
   it("retains explicit adapter cases for all providers", () => {

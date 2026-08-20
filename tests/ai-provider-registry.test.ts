@@ -232,10 +232,32 @@ describe("16. inactive providers remain supported after OpenRouter", () => {
 
 // 17. Existing Mistral/Groq/OpenRouter functionality intact
 describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
-  it("Mistral keeps its endpoint + models", () => {
+  it("Mistral keeps its endpoint and defaults to its FREE-TIER model", () => {
+    // mistral-large-latest is a paid model, so it was the wrong default for a
+    // zero-paid deployment: rank-3 Mistral would answer every request with a
+    // billing error. The default is now the head of the provider's
+    // freeTierPreference list, so the source default and the live-verified
+    // choice cannot disagree.
     assert.equal(getProviderBaseUrl("mistral"), "https://api.mistral.ai/v1");
-    assert.equal(getProviderModel("mistral", "proposal"), "mistral-large-latest");
+    assert.equal(getProviderModel("mistral", "proposal"), "mistral-small-latest");
     assert.equal(getProviderModel("mistral", "fast"), "ministral-8b-latest");
+    assert.equal(getProviderEntry("mistral").freeTierPreference[0], "mistral-small-latest");
+  });
+
+  it("every free provider's default model is the head of its freeTierPreference", () => {
+    // Guards the class of defect above across all four free providers: a source
+    // default that names a model the free tier does not serve is a provider
+    // that fails on its first request, every time, for a reason no error
+    // message attributes to configuration.
+    for (const provider of ["gemini", "groq", "mistral", "zai"] as const) {
+      const entry = getProviderEntry(provider);
+      assert.equal(
+        entry.defaults.proposalModel,
+        entry.freeTierPreference[0],
+        `${provider}: registry default must match the first free-tier preference`,
+      );
+      assert.equal(entry.access, "free");
+    }
   });
   it("Groq keeps its endpoint + model", () => {
     assert.equal(getProviderBaseUrl("groq"), "https://api.groq.com/openai/v1");

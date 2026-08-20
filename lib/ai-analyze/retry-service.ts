@@ -74,8 +74,13 @@ export const TERMINAL_FAILURE_CATEGORIES = new Set<string>([
 export const PROVIDER_CONFIG_FAILURE_CATEGORIES = new Set<string>([
   "CONFIGURATION_INVALID", "PROVIDER_UNAUTHORIZED", "PROVIDER_AUTH_FAILED",
   "BILLING_BLOCKED", "MODEL_UNAVAILABLE", "NO_PROVIDER_CONFIGURED",
-  "ALL_PROVIDERS_COOLING", "AI_PROVIDERS_EXHAUSTED",
 ]);
+// Deliberately NOT here: AI_PROVIDERS_EXHAUSTED and ALL_PROVIDERS_COOLING.
+// Those describe a moment, not a misconfiguration — every provider happened to
+// be failing or cooling when the run went through. A later attempt genuinely
+// can clear them with nothing changed, so they belong in RETRYABLE_CATEGORIES
+// and keep their automatic backoff. Listing them as provider-config failures
+// would have stopped the cron retrying exactly the case it exists for.
 
 // Everything that must not auto-retry, from either cause.
 export const NON_RETRYABLE_CATEGORIES = new Set<string>([
