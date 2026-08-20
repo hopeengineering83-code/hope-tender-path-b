@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-20 19:16 UTC — Codex (exact-model and zero-paid model-level closure)
+
+- **Branch / PR:** `codex/exact-model-zero-paid-20260820`; started from exact owner-specified SHA `680e5e32907838669a86a1e3e4f591ac68062d7f`; PR to be opened after this commit.
+- **Scope:** added one generic `modelOverride` identity from live discovery/resolution through diagnostic preflight, `callProvider`, every free automatic adapter, and the real outbound request. Zero-paid resolution now accepts only app-policy-proven free models and skips before invocation when none exists; a provider listing no longer proves price. Groq's retired runtime model/default/profile was removed, and Groq now requires an explicit currently verified free-policy model.
+- **Files changed:** `lib/ai-provider-registry.ts`, `lib/ai-provider-capability-test.ts`, `lib/ai-preflight.ts`, `lib/ai.ts`, `lib/company-knowledge-ai.ts`, `lib/ai-model-profiles.ts`, `scripts/check-env.mjs`, `scripts/provider-smoke-test.mjs`, `tests/exact-model-zero-paid-regression.test.ts`, and aligned provider registry/health/runtime/environment tests.
+- **Tests actually run:** Prisma generation passed; typecheck passed; lint passed; focused provider/health/security regressions passed, including real intercepted outbound bodies/URL for Gemini, Groq, Mistral, Z.ai, and OpenRouter; release-integrity passed (435 routes, 1,588 files, protected invariants). Full runner reached **9,775 pass / 96 fail / 353 cancelled** with `RUN_DB_INTEGRATION=true`, but every integration failure was environmental because no PostgreSQL server exists at `127.0.0.1:5432`; the only two non-DB failures were stale Groq key-only expectations and were repaired and re-run green. A non-DB full rerun was stopped after 704 passing suites because of the remaining execution window. Build reached Next configuration but correctly refused the credential-less environment; it needs a harmless test key or CI secrets.
+- **Risks / assumptions:** no real provider credentials exist in this container, so the evidence is deterministic adapter-level outbound interception rather than account calls. PostgreSQL migration/drift, authenticated Playwright/golden/cross-user, exact-head screenshot audit, Preview provider capability results, and `/api/health` require exact-head CI/Preview after push.
+- **Next action:** push the exact commit, open a draft PR, require exact-head CI and Preview, then inspect the Preview and capture live provider evidence without merging or Production promotion.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — local PostgreSQL and exact-Preview validation remain outstanding.
+
 ### 2026-08-18 UTC — Claude Code (dependency advisory blocking CI *and* Vercel Preview)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; base `49c0f63a`.

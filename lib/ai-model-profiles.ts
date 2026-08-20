@@ -60,7 +60,6 @@ const FAMILY_RULES: Partial<Record<AiProviderName, readonly FamilyRule[]>> = {
   groq: [
     // Groq's free tier binds on tokens-per-minute long before context does, so
     // the TPM ceiling is carried on the profile and checked alongside context.
-    { pattern: /^llama-3\.3-70b/, contextTokens: 131_072, maxOutputTokens: 32_768, freeTierTpmLimit: 12_000 },
     { pattern: /^llama-3\.1-8b/, contextTokens: 131_072, maxOutputTokens: 8_192, freeTierTpmLimit: 6_000 },
     { pattern: /^llama-3/, contextTokens: 8_192, maxOutputTokens: 8_192, freeTierTpmLimit: 6_000 },
     { pattern: /^openai\/gpt-oss/, contextTokens: 131_072, maxOutputTokens: 32_768, freeTierTpmLimit: 8_000 },

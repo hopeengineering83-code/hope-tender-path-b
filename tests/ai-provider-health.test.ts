@@ -19,6 +19,7 @@ describe("provider health logic", () => {
   beforeEach(() => {
     resetProviderHealth();
     process.env.GROQ_API_KEY = "gsk-test";
+    process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
     process.env.GEMINI_API_KEY = "AIza-test";
   });
 
@@ -54,6 +55,7 @@ describe("cross-instance restore merging", () => {
   it("DB cooldown remains authoritative when memory says provider is available", () => {
     resetProviderHealth();
     process.env.GROQ_API_KEY = "gsk-test";
+    process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
     recordProviderSuccess("groq");
     assert.equal(getProviderRuntimeSnapshot("groq").available, true);
 

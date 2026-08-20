@@ -19,7 +19,7 @@
  */
 
 import { type AiProviderName, type AiUseCase } from "./ai-provider-registry";
-import { resolveActiveModelProfile, type ModelCapabilityProfile } from "./ai-model-profiles";
+import { resolveActiveModelProfile, resolveModelProfile, type ModelCapabilityProfile } from "./ai-model-profiles";
 
 // Rough chars-per-token ratio for English text. Conservative (lower = more
 // tokens estimated = safer skips).
@@ -68,10 +68,12 @@ export type ProviderPreflightResult = {
 export function preflightProvider(
   provider: AiProviderName,
   prompt: string,
-  opts?: { systemPrompt?: string; useCase?: AiUseCase; env?: NodeJS.ProcessEnv },
+  opts?: { systemPrompt?: string; useCase?: AiUseCase; env?: NodeJS.ProcessEnv; modelOverride?: string },
 ): ProviderPreflightResult {
   const useCase = opts?.useCase ?? "proposal";
-  const profile = resolveActiveModelProfile(provider, useCase, opts?.env ?? process.env);
+  const profile = opts?.modelOverride
+    ? resolveModelProfile(provider, opts.modelOverride)
+    : resolveActiveModelProfile(provider, useCase, opts?.env ?? process.env);
   const estimatedTokens = estimateTotalInputTokens(prompt, opts?.systemPrompt);
   const contextLimit = profile.contextTokens;
 

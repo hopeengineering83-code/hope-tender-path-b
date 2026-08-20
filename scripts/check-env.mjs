@@ -101,7 +101,7 @@ const PROVIDER_KEY_META = {
     validate: (_v) => null,
   },
   GROQ_API_KEY: {
-    description: `Groq API key (gsk_...). ${roleOf("GROQ_API_KEY")} Model overridable via GROQ_PROPOSAL_MODEL (default llama-3.3-70b-versatile).`,
+    description: `Groq API key (gsk_...). ${roleOf("GROQ_API_KEY")} Requires an explicitly configured, app-policy-proven free GROQ_PROPOSAL_MODEL.`,
     validate: (_v) => null,
   },
   OPENROUTER_API_KEY: {

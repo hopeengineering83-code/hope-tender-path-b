@@ -40,7 +40,7 @@ const PROVIDERS = [
   { id: "zai", label: "Z.ai GLM", keyEnv: "ZAI_API_KEY", baseEnv: "ZAI_BASE_URL", baseDefault: "https://api.z.ai/api/paas/v4", modelEnv: "ZAI_ANALYSIS_MODEL", modelDefault: "glm-4.7-flash", format: "openai", tokenParam: "max_tokens", cap: 3000, json: true },
   { id: "cerebras", label: "Cerebras", keyEnv: "CEREBRAS_API_KEY", baseEnv: "CEREBRAS_BASE_URL", baseDefault: "https://api.cerebras.ai/v1", modelEnv: "CEREBRAS_ANALYSIS_MODEL", modelDefault: "gpt-oss-120b", format: "openai", tokenParam: "max_completion_tokens", cap: 3000, json: true },
   { id: "mistral", label: "Mistral", keyEnv: "MISTRAL_API_KEY", baseEnv: "MISTRAL_BASE_URL", baseDefault: "https://api.mistral.ai/v1", modelEnv: "MISTRAL_ANALYSIS_MODEL", modelDefault: "mistral-large-latest", format: "openai", tokenParam: "max_tokens", cap: 4000, json: false },
-  { id: "groq", label: "Groq", keyEnv: "GROQ_API_KEY", baseEnv: "GROQ_BASE_URL", baseDefault: "https://api.groq.com/openai/v1", modelEnv: "GROQ_ANALYSIS_MODEL", modelDefault: "llama-3.3-70b-versatile", format: "openai", tokenParam: "max_tokens", cap: 4000, json: false },
+  { id: "groq", label: "Groq", keyEnv: "GROQ_API_KEY", baseEnv: "GROQ_BASE_URL", baseDefault: "https://api.groq.com/openai/v1", modelEnv: "GROQ_ANALYSIS_MODEL", modelDefault: "", format: "openai", tokenParam: "max_tokens", cap: 4000, json: false },
   { id: "openrouter", label: "OpenRouter", keyEnv: "OPENROUTER_API_KEY", baseEnv: "OPENROUTER_BASE_URL", baseDefault: "https://openrouter.ai/api/v1", modelEnv: "OPENROUTER_ANALYSIS_MODEL", modelDefault: "", format: "openai", tokenParam: "max_tokens", cap: 4000, json: false, freeOnly: true },
 ];
 

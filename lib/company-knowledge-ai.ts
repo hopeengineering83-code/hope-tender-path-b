@@ -242,7 +242,7 @@ export async function extractCompanyKnowledgeWithAI(params: {
     try {
       const text = await generateWithFallback(buildExtractionPrompt(chunk), {
         systemPrompt: COMPANY_KNOWLEDGE_SYSTEM_PROMPT,
-        geminiModel: process.env.GEMINI_EXTRACT_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash",
+        modelOverride: process.env.GEMINI_EXTRACTION_MODEL || process.env.GEMINI_MODEL || "gemini-2.0-flash",
       });
       const normalized = normalizeExtraction(parseJsonFromResponse(text));
       if (isExpertChunk) {

@@ -40,6 +40,7 @@ import {
   providerAutomaticEligibility,
   getAutomaticProviderOrder,
   isZeroPaidMode,
+  isModelProvenFree,
   type AiProviderName,
   type AiUseCase,
 } from "./ai-provider-registry";
@@ -148,23 +149,23 @@ export async function listAccountModels(
 }
 
 export type ResolvedModel = {
-  model: string;
+  model: string | null;
   /**
    * true  — the provider's list contains it.
    * false — the provider's list does not contain it (it will 404).
    * null  — the list could not be obtained, so this is unverified.
    */
   confirmedByProvider: boolean | null;
-  source: "configured" | "free-tier-preference" | "provider-listing";
+  source: "configured" | "free-tier-preference" | "no-proven-free-model";
 };
 
 /**
- * Resolve the model to use, preferring what is CONFIGURED, then the free-tier
- * preference hints, then whatever the provider actually offers.
+ * Resolve the model to use, preferring what is CONFIGURED, then the app-owned
+ * free-tier preference policy when the provider confirms that exact model.
  *
  * The preference list is a set of hints checked against the live listing — never
- * an assertion that a name exists. When nothing matches, the provider's own
- * first offering is used rather than a name invented here.
+ * an assertion that a name exists. An arbitrary provider listing is never a
+ * pricing authority and is therefore never selected as a fallback.
  */
 export async function resolveVerifiedModel(
   provider: AiProviderName,
@@ -176,11 +177,15 @@ export async function resolveVerifiedModel(
   const configured = getProviderModel(provider, useCase, env);
   const models = availableModels === undefined ? await listAccountModels(provider, env) : availableModels;
 
+  const zeroPaid = isZeroPaidMode(env);
   if (models === null) {
+    if (zeroPaid && !isModelProvenFree(provider, configured)) {
+      return { model: null, confirmedByProvider: null, source: "no-proven-free-model" };
+    }
     return { model: configured, confirmedByProvider: null, source: "configured" };
   }
   const listed = new Set(models);
-  if (listed.has(configured)) {
+  if (listed.has(configured) && (!zeroPaid || isModelProvenFree(provider, configured))) {
     return { model: configured, confirmedByProvider: true, source: "configured" };
   }
   for (const candidate of entry.freeTierPreference) {
@@ -188,12 +193,7 @@ export async function resolveVerifiedModel(
       return { model: candidate, confirmedByProvider: true, source: "free-tier-preference" };
     }
   }
-  // Last resort: something the provider actually lists, so the request has a
-  // chance of succeeding. Still better than sending the unlisted configured name.
-  const first = models[0];
-  if (first) {
-    return { model: first, confirmedByProvider: true, source: "provider-listing" };
-  }
+  if (zeroPaid) return { model: null, confirmedByProvider: false, source: "no-proven-free-model" };
   return { model: configured, confirmedByProvider: false, source: "configured" };
 }
 
@@ -304,6 +304,14 @@ export async function runCapabilityTest(
   }
 
   const model = opts?.model ?? getProviderModel(provider, spec.useCase, env);
+  if (!model || (isZeroPaidMode(env) && !isModelProvenFree(provider, model))) {
+    return {
+      provider, capability, status: "skipped", model: null,
+      modelConfirmedByProvider: opts?.modelConfirmedByProvider ?? null,
+      durationMs: 0, category: "CONFIGURATION_INVALID",
+      safeMessage: "No app-policy-proven free model is available; provider was not contacted.",
+    };
+  }
   const startedAt = Date.now();
 
   // Imported lazily: lib/ai.ts is a large module and pulling it in at load time
@@ -317,7 +325,7 @@ export async function runCapabilityTest(
     try {
       text = await callProvider(provider, spec.prompt, {
         useCase: spec.useCase,
-        ...(provider === "gemini" ? { geminiModel: model } : {}),
+        modelOverride: model,
       });
     } catch (err) {
       thrown = err;
@@ -422,6 +430,22 @@ export async function testProviderCapabilities(
 
   const availableModels = await listAccountModels(provider, env);
   const resolved = await resolveVerifiedModel(provider, "extraction", availableModels, env);
+
+  if (!resolved.model) {
+    return {
+      ...base,
+      eligible: false,
+      eligibilityReason: "No app-policy-proven free model is available.",
+      results: capabilities.map((capability) => ({
+        provider, capability, status: "skipped" as const, model: null,
+        modelConfirmedByProvider: resolved.confirmedByProvider, durationMs: 0,
+        category: "CONFIGURATION_INVALID" as const,
+        safeMessage: "No app-policy-proven free model is available; provider was not contacted.",
+      })),
+      usableForAiAnalyze: false, usableForGeneration: false,
+      availableModels, resolvedModel: null,
+    };
+  }
 
   const results: CapabilityTestResult[] = [];
   for (const capability of capabilities) {

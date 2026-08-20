@@ -261,7 +261,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     rank: 2,
     access: "free",
     modelsEndpoint: "/models",
-    freeTierPreference: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    freeTierPreference: ["llama-3.1-8b-instant"],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.groq,
       baseUrl: "GROQ_BASE_URL",
@@ -272,9 +272,13 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "openai-compatible",
     defaults: {
       baseUrl: "https://api.groq.com/openai/v1",
-      proposalModel: "llama-3.3-70b-versatile",
-      analysisModel: "llama-3.3-70b-versatile",
-      fastModel: "llama-3.1-8b-instant",
+      // Groq has no runtime default. Its retired 70B default must never be
+      // reached, and discovery alone cannot prove that a replacement is free
+      // for this account. Operators must configure the currently verified
+      // free-tier model explicitly.
+      proposalModel: "",
+      analysisModel: "",
+      fastModel: "",
     },
     outputCaps: STANDARD_CAPS,
     timeoutMs: DEFAULT_TIMEOUT_MS,
@@ -537,7 +541,23 @@ export function isProviderConfigured(
       && resolveZaiConfiguration("extraction", env).valid
       && resolveZaiConfiguration("fast", env).valid;
   }
+  if (provider === "groq") {
+    return Boolean(readProviderKey(provider, env))
+      && (["proposal", "extraction", "fast"] as const).every((useCase) => {
+        const model = getProviderModel(provider, useCase, env);
+        return model.length > 0 && isModelProvenFree(provider, model);
+      });
+  }
   return Boolean(readProviderKey(provider, env));
+}
+
+/** App-owned zero-cost policy. A provider listing proves reachability, not price. */
+export function isModelProvenFree(provider: AiProviderName, model: string): boolean {
+  const normalized = model.trim();
+  if (!normalized) return false;
+  if (provider === "openrouter") return normalized.endsWith(":free") && normalized.toLowerCase() !== "openrouter/auto";
+  const entry = REGISTRY[provider];
+  return entry.access === "free" && entry.freeTierPreference.includes(normalized);
 }
 
 export function getProviderBaseUrl(
@@ -781,7 +801,8 @@ export type ProviderEligibility = {
     | "NOT_CONFIGURED"
     | "PAID_ACCESS_BLOCKED"
     | "NOT_IN_AUTOMATIC_ORDER"
-    | "CONDITIONAL_FREE_UNVERIFIED";
+    | "CONDITIONAL_FREE_UNVERIFIED"
+    | "MODEL_FREE_STATUS_UNPROVEN";
   safeMessage: string;
 };
 
@@ -826,6 +847,19 @@ export function providerAutomaticEligibility(
         eligible: false,
         reason: "CONDITIONAL_FREE_UNVERIFIED",
         safeMessage: validity.message ?? `${entry.displayName} has no verified free model configured.`,
+      };
+    }
+  }
+
+  if (zeroPaid && entry.access === "free") {
+    const everyRuntimeModelIsProvenFree = (["proposal", "extraction", "fast"] as const)
+      .every((useCase) => isModelProvenFree(provider, getProviderModel(provider, useCase, env)));
+    if (!everyRuntimeModelIsProvenFree) {
+      return {
+        provider,
+        eligible: false,
+        reason: "MODEL_FREE_STATUS_UNPROVEN",
+        safeMessage: `${entry.displayName} has no app-policy-proven free model configured for every runtime use case.`,
       };
     }
   }
