@@ -27,6 +27,12 @@ export function redactSecrets(text: string): string {
     .replace(/sk-[a-zA-Z0-9_-]{8,}/g, "[KEY_REDACTED]")
     // Google AIza keys (min 30 chars)
     .replace(/AIza[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
+    // Google's NEW-format Gemini keys (AQ...). This module's own comment says
+    // every caller must use it "so the redaction patterns cannot diverge" — and
+    // they had: lib/ai-provider-health.ts carried this pattern locally while the
+    // shared redactor did not, so a new-format Gemini key was redacted on one
+    // path and printed verbatim on the other.
+    .replace(/\bAQ[a-zA-Z0-9_-]{30,}\b/g, "[KEY_REDACTED]")
     // Bearer tokens
     .replace(/Bearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
     // Anthropic ant- keys
@@ -49,8 +55,11 @@ export function redactSecrets(text: string): string {
     .replace(/vercel_blob_[a-zA-Z0-9_-]{20,}/gi, "[KEY_REDACTED]")
     // Vercel deployment tokens (vcp_*)
     .replace(/vcp_[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
-    // api_key= query params
-    .replace(/(api[_-]?key\s*[:=]\s*)[^\s&,;]+/gi, "$1[KEY_REDACTED]")
+    // api_key= / key= query params. The bare `key=` form matters because that is
+    // how Google's generative-language API takes credentials, so any URL of
+    // theirs that reaches a message or a log carries the key in plain sight.
+    .replace(/(\bapi[_-]?key\s*[:=]\s*)[^\s&,;]+/gi, "$1[KEY_REDACTED]")
+    .replace(/([?&]key=)[^\s&,;"]+/gi, "$1[KEY_REDACTED]")
     // Database connection strings
     .replace(/postgres(?:ql)?:\/\/[^\s"]+/gi, "postgresql://[redacted]")
     .replace(/(mongodb(?:\+srv)?|mysql|redis):\/\/[^\s"]+/gi, "$1://[redacted]");

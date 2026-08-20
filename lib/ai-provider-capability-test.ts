@@ -113,11 +113,16 @@ export async function listAccountModels(
   const timer = setTimeout(() => controller.abort(), MODEL_LIST_TIMEOUT_MS);
   try {
     if (provider === "gemini") {
-      // Google's generative-language API takes the key as a query parameter and
-      // returns `models[].name` as "models/<id>".
+      // Key travels in the x-goog-api-key HEADER, not the `?key=` query
+      // parameter Google also accepts. Both authenticate identically, but a
+      // credential in a URL is a credential in every error string, log line,
+      // proxy access record and browser referrer that URL ever touches — and
+      // fetch failures routinely quote the URL they attempted. The header form
+      // removes the exposure rather than relying on a redactor to catch it.
+      // Response returns `models[].name` as "models/<id>".
       const res = await fetch(
-        `https://generativelanguage.googleapis.com${entry.modelsEndpoint}?key=${encodeURIComponent(key)}&pageSize=200`,
-        { signal: controller.signal },
+        `https://generativelanguage.googleapis.com${entry.modelsEndpoint}?pageSize=200`,
+        { headers: { "x-goog-api-key": key }, signal: controller.signal },
       );
       if (!res.ok) return null;
       const data = (await res.json()) as { models?: Array<{ name?: string }> };

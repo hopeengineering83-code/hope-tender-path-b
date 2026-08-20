@@ -342,3 +342,42 @@ describe("DOC-007: .env.example documents security-critical env vars", () => {
     assert.match(source, /#\s*DEMO_SEED_ALLOWED=/);
   });
 });
+
+// ── The shared redactor must not diverge from its local twins ────────────────
+describe("redactSecrets covers every provider key format in use", () => {
+  it("redacts Google's new-format Gemini keys (AQ...)", async () => {
+    // lib/sanitize-error.ts says every caller must use it "so the redaction
+    // patterns cannot diverge". They had: lib/ai-provider-health.ts carried the
+    // AQ pattern locally while the shared redactor did not, so a new-format
+    // Gemini key was redacted on one path and printed verbatim on the other.
+    const { redactSecrets } = await import("../lib/sanitize-error");
+    const key = "AQ" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
+    const out = redactSecrets(`Request failed with key ${key} attached`);
+    assert.ok(!out.includes(key), "AQ-format Gemini key must be redacted");
+    assert.match(out, /\[KEY_REDACTED\]/);
+  });
+
+  it("redacts a bare key= query parameter, not only api_key=", async () => {
+    // Google's generative-language API authenticates with `?key=`, so any URL
+    // of theirs that reaches a message carries the credential in plain sight.
+    const { redactSecrets } = await import("../lib/sanitize-error");
+    const out = redactSecrets("GET https://generativelanguage.googleapis.com/v1beta/models?key=SUPERSECRETVALUE&pageSize=200 failed");
+    assert.ok(!out.includes("SUPERSECRETVALUE"));
+    assert.match(out, /key=\[KEY_REDACTED\]/);
+  });
+
+  it("still redacts legacy AIza keys and does not mangle ordinary text", async () => {
+    const { redactSecrets } = await import("../lib/sanitize-error");
+    const legacy = "AIza" + "SyD1234567890abcdefghijklmnopqrstu";
+    assert.ok(!redactSecrets(legacy).includes(legacy));
+    assert.equal(redactSecrets("the monkey= sat on the wall"), "the monkey= sat on the wall");
+  });
+});
+
+describe("the capability test never puts a credential in a URL", () => {
+  it("authenticates Gemini's model listing with a header, not ?key=", () => {
+    const source = readFileSync("lib/ai-provider-capability-test.ts", "utf8");
+    assert.match(source, /"x-goog-api-key": key/);
+    assert.doesNotMatch(source, /\?key=\$\{/, "a credential in a URL ends up in every log and error string that URL touches");
+  });
+});

@@ -11,6 +11,7 @@
 import { describe, it, before, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import {
   classifyAiError,
   recordProviderFailure,
@@ -353,41 +354,60 @@ describe(".env.example tier labels reflect the runtime order", () => {
   });
 });
 
-describe("scripts/check-env.mjs tier labels reflect the runtime order", () => {
+describe("scripts/check-env.mjs describes the ACTIVE chain, generated not restated", () => {
   const src = readFileSync("scripts/check-env.mjs", "utf8");
 
-  it("ZAI_API_KEY description says Rank 1 automatic", () => {
-    assert.match(src, /ZAI_API_KEY[\s\S]*?Rank 1 automatic/);
+  it("generates rank and role instead of hardcoding them per provider", () => {
+    // This used to pin ten literal "Rank N automatic provider" strings plus a
+    // hardcoded chain constant — eleven places the order was written down
+    // again. They went stale together, and the build log then confidently told
+    // the operator that Z.ai was rank 1 in a chain that no longer existed.
+    assert.match(src, /function roleOf\(envName\)/);
+    assert.doesNotMatch(src, /Rank \d+ automatic provider in the canonical chain/,
+      "no description may hardcode its own rank");
+    const generated = src.match(/\$\{roleOf\("[A-Z_]+"\)\}/g);
+    assert.ok(generated && generated.length === 10, `all 10 descriptions must generate their role, got ${generated?.length ?? 0}`);
   });
-  it("CEREBRAS_API_KEY description says Rank 2 automatic", () => {
-    assert.match(src, /CEREBRAS_API_KEY[\s\S]*?Rank 2 automatic/);
+
+  it("derives the chain text from the catalog, not a local literal", () => {
+    assert.match(src, /catalog\.automaticProviderOrder\(process\.env\)/);
+    assert.match(src, /catalog\.isZeroPaidMode\(process\.env\)/);
+    assert.doesNotMatch(src, /const CANONICAL_CHAIN = "Z\.ai/);
   });
-  it("GEMINI_API_KEY description says Rank 6 automatic", () => {
-    assert.match(src, /GEMINI_API_KEY[\s\S]*?Rank 6 automatic/);
-  });
-  it("OPENROUTER_API_KEY description says Rank 5 automatic", () => {
-    assert.match(src, /OPENROUTER_API_KEY[\s\S]*?Rank 5 automatic/);
-  });
-  it("OPENAI_API_KEY description says Rank 7 automatic", () => {
-    assert.match(src, /OPENAI_API_KEY[\s\S]*?Rank 7 automatic/);
-  });
-  it("GROQ_API_KEY description says Rank 4 automatic", () => {
-    assert.match(src, /GROQ_API_KEY[\s\S]*?Rank 4 automatic/);
-  });
-  it("DEEPSEEK_API_KEY description says Rank 9 automatic", () => {
-    assert.match(src, /DEEPSEEK_API_KEY[\s\S]*?Rank 9 automatic/);
-  });
-  it("ANTHROPIC_API_KEY description says Rank 10 emergency-only and 'keep Claude last'", () => {
-    assert.match(src, /ANTHROPIC_API_KEY[\s\S]*?Rank 10 emergency-only \(last resort\)/);
-    assert.match(src, /Keep Claude last/);
-  });
-  it("every provider description references the shared canonical chain constant", () => {
-    // Descriptions interpolate the shared CANONICAL_CHAIN constant, so the
-    // literal string is defined once and referenced via ${CANONICAL_CHAIN} in
-    // each of the 10 provider descriptions.
-    assert.match(src, /const CANONICAL_CHAIN = "Z\.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic \(emergency-only last resort\)"/);
-    const refs = src.match(/\$\{CANONICAL_CHAIN\}/g);
-    assert.ok(refs && refs.length >= 10, `Expected >= 10 references to CANONICAL_CHAIN, got ${refs?.length ?? 0}`);
+
+  it("actually prints the current order and marks paid providers as excluded", () => {
+    // Runs the real script rather than reading its source: the point of
+    // generating this text is that its OUTPUT is right, and only executing it
+    // proves that.
+    // Hermetic env: every provider key cleared, then exactly one set. Inheriting
+    // process.env made the assertion depend on whatever an earlier describe in
+    // this file had left behind — with OPENROUTER_API_KEY set, the script stops
+    // warning about it individually and the name survives only in the aggregate
+    // key list, which prints later than the description being asserted on.
+    const hermeticEnv: NodeJS.ProcessEnv = { ...process.env };
+    for (const entry of getCanonicalProviderEntries()) delete hermeticEnv[entry.env.apiKey];
+    delete hermeticEnv.OPENROUTER_PROPOSAL_MODEL;
+    hermeticEnv.GEMINI_API_KEY = "AIzaTestKeyNotUsedAtRuntime12345678901234567890";
+
+    const result = spawnSync(process.execPath, ["scripts/check-env.mjs"], {
+      encoding: "utf8",
+      env: hermeticEnv,
+    });
+    const output = `${result.stdout}${result.stderr}`;
+
+    assert.match(output, /Gemini → Groq → Mistral → Z\.ai GLM → OpenRouter → deterministic draft fallback/);
+    assert.match(output, /GROQ_API_KEY[\s\S]*?Rank 2 free-tier provider/);
+    assert.match(output, /ZAI_API_KEY[\s\S]*?Rank 4 free-tier provider/);
+    // Paid providers must say so, in the place an operator is deciding which
+    // key to go and find.
+    for (const key of ["CEREBRAS_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]) {
+      assert.match(
+        output,
+        new RegExp(`${key}[\\s\\S]*?Requires PAID access`),
+        `${key} must be described as paid-access and excluded`,
+      );
+    }
+    assert.match(output, /OPENROUTER_API_KEY[\s\S]*?free ONLY with a verified ':free' model/);
   });
 });
 

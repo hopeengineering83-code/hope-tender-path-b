@@ -142,7 +142,7 @@ const tenderAnalysisContent = read("lib/engine/tender-analysis-content.ts");
 check("AI vault hash includes content digest", tenderAnalysisContent.includes("[digest:${textDigest}]"), "analysis checkpoints must invalidate when reviewed vault text changes");
 
 // ─── P1: Release/secret governance — reject dangerous files ─────────
-import { execSync } from "node:child_process";
+import { execSync, execFileSync } from "node:child_process";
 
 // 1. .env file must NEVER be committed.
 //
@@ -154,7 +154,11 @@ import { execSync } from "node:child_process";
 // people to ignore it, which is worse than not having it.
 function isTrackedByGit(relativePath) {
   try {
-    execSync(`git ls-files --error-unmatch ${JSON.stringify(relativePath)}`, {
+    // execFileSync, not execSync: no shell is spawned, so the path is an
+    // argument rather than something that has to be quoted correctly. Today the
+    // only call site passes a literal, but a shell-interpolating helper is a
+    // trap for whoever adds the second one.
+    execFileSync("git", ["ls-files", "--error-unmatch", relativePath], {
       cwd: root,
       stdio: ["ignore", "ignore", "ignore"],
     });
