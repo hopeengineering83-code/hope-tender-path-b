@@ -3,7 +3,7 @@ import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
-import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, PAID_ACCESS_PROVIDERS, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, PAID_ACCESS_PROVIDERS, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, isModelProvenFree, isZeroPaidMode, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
@@ -371,10 +371,11 @@ function uniqueModels(primary: string): string[] {
   return Array.from(new Set([primary, ...FALLBACK_GEMINI_MODELS]));
 }
 
-async function generate(prompt: string, modelName = defaultGeminiModel(), maxTokens?: number): Promise<string> {
+async function generate(prompt: string, modelName = defaultGeminiModel(), maxTokens?: number, exactModel = false): Promise<string> {
   const errors: string[] = [];
 
-  for (const candidate of uniqueModels(modelName || defaultGeminiModel())) {
+  const candidates = exactModel ? [modelName] : uniqueModels(modelName || defaultGeminiModel());
+  for (const candidate of candidates) {
     try {
       const text = await withRateLimitRetry(async () => {
         const model = getModel(candidate);
@@ -403,7 +404,7 @@ async function generate(prompt: string, modelName = defaultGeminiModel(), maxTok
     }
   }
 
-  throw new Error(`Gemini model unavailable. Tried: ${uniqueModels(modelName || defaultGeminiModel()).join(", ")}. Errors: ${errors.join(" | ")}`);
+  throw new Error(`Gemini model unavailable. Tried: ${candidates.join(", ")}. Errors: ${errors.join(" | ")}`);
 }
 
 // ─── Provider chain configuration ─────────────────────────────────────────────
@@ -728,8 +729,13 @@ function maxOutputTokensForUseCase(useCase: AiUseCase = "default", provider?: Ai
 export async function callProvider(
   name: AiProviderName,
   prompt: string,
-  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
+  opts?: { systemPrompt?: string; modelOverride?: string; useCase?: AiUseCase },
 ): Promise<string | null> {
+  const useCase = opts?.useCase ?? "proposal";
+  const exactModel = opts?.modelOverride ?? getProviderModel(name, useCase);
+  if (isZeroPaidMode() && (!providerAutomaticEligibility(name).eligible || !isModelProvenFree(name, exactModel))) {
+    return null;
+  }
   const result = await callProviderInner(name, prompt, opts);
   if (result && (opts?.useCase ?? "default") === "extraction") {
     recordProviderAnalysisSuccess(name);
@@ -740,7 +746,7 @@ export async function callProvider(
 async function callProviderInner(
   name: AiProviderName,
   prompt: string,
-  opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
+  opts?: { systemPrompt?: string; modelOverride?: string; useCase?: AiUseCase },
 ): Promise<string | null> {
   const useCase = opts?.useCase ?? "default";
   const maxTokens = maxOutputTokensForUseCase(useCase, name);
@@ -748,7 +754,7 @@ async function callProviderInner(
   const wantJson = useCase === "extraction";
   switch (name) {
     case "zai": {
-      const r = await generateWithZai(prompt, opts?.systemPrompt, maxTokens, useCase, wantJson).catch((err) => {
+      const r = await generateWithZai(prompt, opts?.systemPrompt, maxTokens, useCase, wantJson, opts?.modelOverride).catch((err) => {
         recordProviderFailure("zai", err);
         return null;
       });
@@ -792,7 +798,7 @@ async function callProviderInner(
       }
 
       try {
-        const r = await generate(prompt, opts?.geminiModel, maxTokens);
+        const r = await generate(prompt, opts?.modelOverride, maxTokens, Boolean(opts?.modelOverride));
         recordProviderSuccess("gemini");
         return r;
       } catch (err) {
@@ -816,7 +822,7 @@ async function callProviderInner(
       return null;
     }
     case "mistral": {
-      const r = await generateWithMistral(prompt, opts?.systemPrompt, maxTokens, opts?.useCase).catch((err) => {
+      const r = await generateWithMistral(prompt, opts?.systemPrompt, maxTokens, opts?.useCase, opts?.modelOverride).catch((err) => {
         recordProviderFailure("mistral", err);
         return null;
       });
@@ -839,7 +845,7 @@ async function callProviderInner(
       return null;
     }
     case "groq": {
-      const r = await generateWithGroq(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
+      const r = await generateWithGroq(prompt, opts?.systemPrompt, maxTokens, opts?.modelOverride).catch((err) => {
         recordProviderFailure("groq", err);
         return null;
       });
@@ -855,7 +861,7 @@ async function callProviderInner(
       return null;
     }
     case "openrouter": {
-      const r = await generateWithOpenRouter(prompt, opts?.systemPrompt, maxTokens).catch((err) => {
+      const r = await generateWithOpenRouter(prompt, opts?.systemPrompt, maxTokens, opts?.modelOverride).catch((err) => {
         recordProviderFailure("openrouter", err);
         return null;
       });
@@ -891,7 +897,7 @@ export async function generateWithFallback(
   prompt: string,
   opts?: {
     systemPrompt?: string;
-    geminiModel?: string;
+    modelOverride?: string;
     useCase?: AiUseCase;
     onProviderUsed?: (provider: AiProviderName) => void;
     // OBS-004 — fire-and-forget hook so callers (which know userId/tenderId)
@@ -990,7 +996,7 @@ export async function generateWithFallback(
     // This prevents Groq 413 (TPM limit) and context-window overflow on
     // smaller providers. Skipped WITHOUT consuming an attempt — same as
     // cooldown/unconfigured. The chain moves to the next eligible provider.
-    const preflight = preflightProvider(provider, trustBoundary.protectedPrompt, { systemPrompt: opts?.systemPrompt, useCase });
+    const preflight = preflightProvider(provider, trustBoundary.protectedPrompt, { systemPrompt: opts?.systemPrompt, useCase, modelOverride: opts?.modelOverride });
     if (!preflight.eligible) {
       providerAttempts.push({
         provider, configured: true, tried: false,
@@ -1453,6 +1459,7 @@ async function generateWithMistral(
   systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
   maxTokens = 16000,
   useCase: AiUseCase = "proposal",
+  modelOverride?: string,
 ): Promise<string | null> {
   const key = getMistralApiKey();
   if (!key) return null;
@@ -1461,7 +1468,7 @@ async function generateWithMistral(
     providerName: "mistral",
     endpoint: `${getMistralBaseUrl()}/chat/completions`,
     apiKey: key,
-    model: getMistralModelForUseCase(useCase),
+    model: modelOverride ?? getMistralModelForUseCase(useCase),
     prompt,
     systemPrompt,
     maxTokens,
@@ -1469,7 +1476,7 @@ async function generateWithMistral(
 }
 
 // Fast fallback provider. Also first in the "fast" use-case chain. Null when GROQ_API_KEY unset.
-async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000): Promise<string | null> {
+async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000, modelOverride?: string): Promise<string | null> {
   const key = getGroqApiKey();
   if (!key) return null;
   return generateOpenAICompatible({
@@ -1477,7 +1484,7 @@ async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_P
     providerName: "groq",
     endpoint: `${getGroqBaseUrl()}/chat/completions`,
     apiKey: key,
-    model: getGroqModel(),
+    model: modelOverride ?? getGroqModel(),
     prompt,
     systemPrompt,
     maxTokens,
@@ -1505,14 +1512,14 @@ async function generateWithTogether(
 }
 
 // Aggregator fallback. Aggregates many models; useful when direct providers are exhausted. Null when OPENROUTER_API_KEY unset.
-async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000): Promise<string | null> {
+async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000, modelOverride?: string): Promise<string | null> {
   const key = getOpenRouterApiKey();
   if (!key) return null;
   // getOpenRouterModel() returns null when the configured model is missing,
   // `openrouter/auto`, or any non-`:free` model. In that case we must NOT send
   // a request that could create paid usage — record the configuration problem
   // and skip the provider.
-  const model = getOpenRouterModel();
+  const model = modelOverride ?? getOpenRouterModel();
   if (!model) {
     recordProviderFailure("openrouter", new Error("OpenRouter CONFIGURATION_INVALID: model is not an explicit ':free' model"));
     return null;
@@ -1544,6 +1551,7 @@ async function generateWithZai(
   maxTokens = 8000,
   useCase: AiUseCase = "proposal",
   wantJson = false,
+  modelOverride?: string,
 ): Promise<string | null> {
   const key = getZaiApiKey();
   if (!key) return null;
@@ -1552,7 +1560,7 @@ async function generateWithZai(
     providerName: "zai",
     endpoint: `${getZaiBaseUrl()}/chat/completions`,
     apiKey: key,
-    model: getProviderModel("zai", useCase),
+    model: modelOverride ?? getProviderModel("zai", useCase),
     prompt,
     systemPrompt,
     maxTokens,
@@ -2327,7 +2335,7 @@ ${tenderContent}`;
 
   const text = await generateWithFallback(prompt, {
     systemPrompt: "You are a senior tender analyst. Output ONLY a valid JSON object — no markdown, no code fences, no preamble. The JSON object must match the structure described in the user prompt exactly.",
-    geminiModel: defaultGeminiModel("extraction"),
+    modelOverride: defaultGeminiModel("extraction"),
     useCase: "extraction",
     onProviderUsed,
     onProviderAttempt,
@@ -2740,7 +2748,7 @@ ${text.slice(0, 60_000)}`;
 
   const raw = await generateWithFallback(prompt, {
     systemPrompt: "You are a CV parsing engine. Output ONLY a valid JSON array — no markdown, no code fences, no preamble. Each element must match the schema in the user prompt exactly.",
-    geminiModel: defaultGeminiModel("fast"),
+    modelOverride: defaultGeminiModel("fast"),
     useCase: "extraction",
   });
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
@@ -2785,7 +2793,7 @@ ${text.slice(0, 60_000)}`;
 
   const raw = await generateWithFallback(prompt, {
     systemPrompt: "You are a project portfolio parsing engine. Output ONLY a valid JSON array — no markdown, no code fences, no preamble. Each element must match the schema in the user prompt exactly.",
-    geminiModel: defaultGeminiModel("fast"),
+    modelOverride: defaultGeminiModel("fast"),
     useCase: "extraction",
   });
   const jsonMatch = raw.match(/\[[\s\S]*\]/);

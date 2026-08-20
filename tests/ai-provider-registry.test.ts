@@ -249,7 +249,7 @@ describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
     // default that names a model the free tier does not serve is a provider
     // that fails on its first request, every time, for a reason no error
     // message attributes to configuration.
-    for (const provider of ["gemini", "groq", "mistral", "zai"] as const) {
+    for (const provider of ["gemini", "mistral", "zai"] as const) {
       const entry = getProviderEntry(provider);
       assert.equal(
         entry.defaults.proposalModel,
@@ -259,9 +259,10 @@ describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
       assert.equal(entry.access, "free");
     }
   });
-  it("Groq keeps its endpoint + model", () => {
+  it("Groq keeps its endpoint but has no stale runtime model default", () => {
     assert.equal(getProviderBaseUrl("groq"), "https://api.groq.com/openai/v1");
-    assert.equal(getProviderModel("groq", "proposal"), "llama-3.3-70b-versatile");
+    assert.equal(getProviderModel("groq", "proposal", { NODE_ENV: "test" }), "");
+    assert.deepEqual(getProviderEntry("groq").freeTierPreference, ["llama-3.1-8b-instant"]);
   });
   it("OpenRouter keeps rank 5 among the working providers", () => {
     assert.equal(getProviderEntry("openrouter").rank, 5);

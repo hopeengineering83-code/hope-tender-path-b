@@ -31,11 +31,11 @@ function clearEnv() {
 describe("Groq provider config", () => {
   beforeEach(() => { clearEnv(); resetProviderHealth(); });
 
-  it("detects configuration and model overrides", () => {
+  it("fails closed without an explicitly configured proven-free model", () => {
     assert.equal(isGroqConfigured(), false);
     process.env.GROQ_API_KEY = "gsk-test-1234567890";
-    assert.equal(isGroqConfigured(), true);
-    assert.equal(getGroqModel(), "llama-3.3-70b-versatile");
+    assert.equal(isGroqConfigured(), false);
+    assert.equal(getGroqModel(), "");
     process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
     assert.equal(getGroqModel(), "llama-3.1-8b-instant");
   });

@@ -155,7 +155,7 @@ describe("Environment Variable Reconciliation", () => {
         MISTRAL_API_KEY: "mistral-key",
         MISTRAL_PROPOSAL_MODEL: "mistral-small-latest",
         GROQ_API_KEY: "gsk-test",
-        GROQ_PROPOSAL_MODEL: "llama-3.3-70b-versatile",
+        GROQ_PROPOSAL_MODEL: "llama-3.1-8b-instant",
         TOGETHER_API_KEY: "together-key",
         TOGETHER_PROPOSAL_MODEL: "NousResearch/Nous-Hermes-2-Mixtral-8x7B-DPO",
       };
