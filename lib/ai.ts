@@ -2,8 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
-import { CANONICAL_AI_PROVIDER_ORDER, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, type AiUseCase } from "./ai-provider-registry";
+import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
+import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
@@ -12,16 +12,29 @@ import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_T
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
 // at module load, so configured-state and call-state can never disagree.
-const DEFAULT_GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-pro";
-const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash,gemini-2.0-flash")
+// Gemini model identity comes from the registry, which reads GEMINI_MODEL /
+// GEMINI_ANALYSIS_MODEL / GEMINI_EXTRACTION_MODEL. This file used to keep its
+// own copy — `process.env.GEMINI_MODEL || "gemini-2.5-pro"` — so the registry
+// default (flash, the free tier) and this default (pro, the paid tier)
+// disagreed about the same provider, and which one applied depended on which
+// code path you happened to enter through.
+function defaultGeminiModel(useCase: AiUseCase = "proposal"): string {
+  return getProviderModel("gemini", useCase);
+}
+
+// Additional Gemini models to try if the primary one is unavailable. Operator
+// override only: with no override the registry answer is used alone, so the app
+// never silently falls back to a model nobody chose.
+const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "")
   .split(",")
   .map((m) => m.trim())
   .filter(Boolean);
 
-// Model chain for proposal generation — tried in order until one succeeds.
-const PROPOSAL_MODELS = ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"];
-const REASONING_MODELS = ["o3-mini", "o1-preview", "gpt-4o"];
-const CLAUDE_REASONING_MODELS = ["claude-3-7-sonnet-latest", "claude-3-5-sonnet-latest"];
+// The three hardcoded arrays that used to live here — PROPOSAL_MODELS,
+// REASONING_MODELS and CLAUDE_REASONING_MODELS — are gone. They pinned retired
+// snapshots (gemini-1.5-pro, o1-preview) that no longer resolve, and they were
+// a third authority on model choice alongside the registry and the env vars.
+// Every model decision now goes through getProviderModel().
 
 // Provider chain for proposal generation: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic → deterministic draft fallback (non-AI, never export-eligible)
 // Claude models in preference order when the last-resort Anthropic provider
@@ -48,13 +61,19 @@ function normalizeClaudeModelName(raw: string): string {
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
-const _rawModels = (process.env.ANTHROPIC_PROPOSAL_MODELS || "claude-sonnet-4-5,claude-opus-4-1,claude-3-5-sonnet-latest,claude-3-5-haiku-latest")
+// Operator override first; otherwise the registry's single Anthropic default.
+// The previous code carried two more hardcoded lists here — a four-model
+// default and a two-model emergency fallback — neither of which matched the
+// registry, so three different files disagreed about which Claude model this
+// app uses. (Anthropic is paid-access and therefore unreachable while zero-paid
+// mode is on; this keeps the configuration honest for the non-zero-paid case.)
+const _rawModels = (process.env.ANTHROPIC_PROPOSAL_MODELS || "")
   .split(",")
   .map(normalizeClaudeModelName)
   .filter(Boolean);
 const CLAUDE_PROPOSAL_MODELS = _rawModels.length > 0
   ? _rawModels
-  : ["claude-sonnet-4-5", "claude-3-5-sonnet-latest"];
+  : [getProviderModel("anthropic", "proposal")];
 
 // Maximum output tokens per Claude call. Two distinct constraints apply:
 //   - Anthropic Free Tier caps output at 4K tokens/minute per model.
@@ -81,7 +100,7 @@ function getClient() {
   return new GoogleGenerativeAI(apiKey);
 }
 
-function getModel(modelName = DEFAULT_GEMINI_MODEL) {
+function getModel(modelName = defaultGeminiModel()) {
   return getClient().getGenerativeModel({ model: modelName });
 }
 
@@ -349,10 +368,10 @@ function uniqueModels(primary: string): string[] {
   return Array.from(new Set([primary, ...FALLBACK_GEMINI_MODELS]));
 }
 
-async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL, maxTokens?: number): Promise<string> {
+async function generate(prompt: string, modelName = defaultGeminiModel(), maxTokens?: number): Promise<string> {
   const errors: string[] = [];
 
-  for (const candidate of uniqueModels(modelName || DEFAULT_GEMINI_MODEL)) {
+  for (const candidate of uniqueModels(modelName || defaultGeminiModel())) {
     try {
       const text = await withRateLimitRetry(async () => {
         const model = getModel(candidate);
@@ -381,7 +400,7 @@ async function generate(prompt: string, modelName = DEFAULT_GEMINI_MODEL, maxTok
     }
   }
 
-  throw new Error(`Gemini model unavailable. Tried: ${uniqueModels(modelName || DEFAULT_GEMINI_MODEL).join(", ")}. Errors: ${errors.join(" | ")}`);
+  throw new Error(`Gemini model unavailable. Tried: ${uniqueModels(modelName || defaultGeminiModel()).join(", ")}. Errors: ${errors.join(" | ")}`);
 }
 
 // ─── Provider chain configuration ─────────────────────────────────────────────
@@ -397,8 +416,13 @@ export type { AiUseCase } from "./ai-provider-registry";
 export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_ORDER;
 
 // Every use case derives its fallback sequence from the same canonical order.
+// The automatic chain. In zero-paid mode this is the free order
+// (Gemini → Groq → Mistral → Z.ai → OpenRouter-if-verified-free); the paid
+// providers are not in it at all, so no amount of chain iteration can reach
+// them. Returning the full canonical order here was what made "do not use paid
+// providers" a matter of hoping their keys were unset.
 function providerChainForUseCase(_useCase: AiUseCase): readonly AiProviderName[] {
-  return CANONICAL_AI_PROVIDER_ORDER;
+  return getAutomaticProviderOrder();
 }
 
 // ─── Structured "no AI provider ready" error ─────────────────────────────────
@@ -636,10 +660,8 @@ async function callProvider(
     }
     case "anthropic": {
       if (opts?.useCase === "reasoning") {
-        for (const m of CLAUDE_REASONING_MODELS) {
-          const r = await generateWithClaude(prompt, opts?.systemPrompt, undefined, m).catch(() => null);
-          if (r) { recordProviderSuccess("anthropic"); return r; }
-        }
+        const r = await generateWithClaude(prompt, opts?.systemPrompt, undefined, getProviderModel("anthropic", "reasoning")).catch(() => null);
+        if (r) { recordProviderSuccess("anthropic"); return r; }
         return null;
       }
 
@@ -653,11 +675,15 @@ async function callProvider(
     }
     case "gemini": {
       if (opts?.useCase === "reasoning") {
+        // Resolved from the registry like every other Gemini call. This used to
+        // pin "gemini-2.0-flash-thinking-exp" — an experimental preview alias
+        // that has since been retired, so every reasoning call through Gemini
+        // 404'd on a model name no configuration could change.
         try {
-          const r = await generate(prompt, "gemini-2.0-flash-thinking-exp");
+          const r = await generate(prompt, getProviderModel("gemini", "reasoning"));
           recordProviderSuccess("gemini");
           return r;
-        } catch { return null; }
+        } catch (err) { recordProviderFailure("gemini", err); return null; }
       }
 
       try {
@@ -672,10 +698,8 @@ async function callProvider(
     }
     case "openai": {
       if (opts?.useCase === "reasoning") {
-        for (const m of REASONING_MODELS) {
-          const r = await generateWithOpenAI(prompt, opts?.systemPrompt, 16000, m).catch(() => null);
-          if (r) { recordProviderSuccess("openai"); return r; }
-        }
+        const r = await generateWithOpenAI(prompt, opts?.systemPrompt, 16000, getProviderModel("openai", "reasoning")).catch(() => null);
+        if (r) { recordProviderSuccess("openai"); return r; }
         return null;
       }
 
@@ -832,6 +856,31 @@ export async function generateWithFallback(
   let deadlineHit = false;
 
   for (const provider of chain) {
+    // Money gate, evaluated before anything builds a request body. A provider
+    // that requires paid access, or that has already answered with a demand for
+    // payment, is skipped here — without consuming an attempt, and without the
+    // chain stalling. This is the check that makes "no paid provider can
+    // generate accidental charges" true even if a paid key is left configured.
+    const eligibility = providerAutomaticEligibility(provider);
+    if (!eligibility.eligible && eligibility.reason !== "NOT_CONFIGURED") {
+      const snap = getProviderRuntimeSnapshot(provider);
+      providerAttempts.push({
+        provider, configured: snap.available, tried: false,
+        lastErrorCategory: snap.lastErrorCategory, coolingDown: snap.coolingDown, cooldownUntil: snap.cooldownUntil,
+      });
+      failureDetails.push(`${provider}: ${eligibility.safeMessage}`);
+      continue;
+    }
+    if (isBillingLockedOut(provider)) {
+      const snap = getProviderRuntimeSnapshot(provider);
+      providerAttempts.push({
+        provider, configured: true, tried: false,
+        lastErrorCategory: "BILLING", coolingDown: snap.coolingDown, cooldownUntil: snap.cooldownUntil,
+      });
+      failureDetails.push(`${provider}: requires payment — excluded from automatic use`);
+      continue;
+    }
+
     const configured = isProviderEnabled(provider);
     const coolingDown = isProviderCooledDown(provider);
     // Read the safe runtime snapshot for lastErrorCategory + cooldownUntil.
@@ -1450,10 +1499,13 @@ async function tryTailFallbackProviders(prompt: string, systemPrompt?: string, o
   return null;
 }
 
-// Try PROPOSAL_MODELS in order until one succeeds — gives the best available model for proposal writing.
+// Try the registry-resolved Gemini proposal model, plus any operator-configured
+// fallbacks, until one succeeds. The previous version walked a hardcoded list
+// headed by gemini-2.5-pro and ending in the retired gemini-1.5-pro, so on a
+// free account it spent two failures reaching a model that no longer exists.
 async function generateWithBestModel(prompt: string): Promise<string> {
   let lastError: unknown;
-  for (const modelName of PROPOSAL_MODELS) {
+  for (const modelName of uniqueModels(defaultGeminiModel("proposal"))) {
     try {
       return await withRateLimitRetry(async () => {
         const model = getModel(modelName);
@@ -2161,7 +2213,7 @@ ${tenderContent}`;
 
   const text = await generateWithFallback(prompt, {
     systemPrompt: "You are a senior tender analyst. Output ONLY a valid JSON object — no markdown, no code fences, no preamble. The JSON object must match the structure described in the user prompt exactly.",
-    geminiModel: process.env.GEMINI_ANALYSIS_MODEL || DEFAULT_GEMINI_MODEL,
+    geminiModel: defaultGeminiModel("extraction"),
     useCase: "extraction",
     onProviderUsed,
     onProviderAttempt,
@@ -2574,7 +2626,7 @@ ${text.slice(0, 60_000)}`;
 
   const raw = await generateWithFallback(prompt, {
     systemPrompt: "You are a CV parsing engine. Output ONLY a valid JSON array — no markdown, no code fences, no preamble. Each element must match the schema in the user prompt exactly.",
-    geminiModel: process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash",
+    geminiModel: defaultGeminiModel("fast"),
     useCase: "extraction",
   });
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
@@ -2619,7 +2671,7 @@ ${text.slice(0, 60_000)}`;
 
   const raw = await generateWithFallback(prompt, {
     systemPrompt: "You are a project portfolio parsing engine. Output ONLY a valid JSON array — no markdown, no code fences, no preamble. Each element must match the schema in the user prompt exactly.",
-    geminiModel: process.env.GEMINI_EXTRACTION_MODEL || "gemini-2.5-flash",
+    geminiModel: defaultGeminiModel("fast"),
     useCase: "extraction",
   });
   const jsonMatch = raw.match(/\[[\s\S]*\]/);

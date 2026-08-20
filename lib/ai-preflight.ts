@@ -1,49 +1,33 @@
 /**
- * Provider capability preflight.
+ * Provider capability preflight — MODEL-AWARE.
  *
- * Before sending a large matching/analysis payload to a provider, this module
- * estimates the input-token / payload size and skips providers that cannot
- * handle the request. This prevents:
- *   - Groq 413 (request too large / TPM limit)
- *   - Cerebras context-window overflow
- *   - Mistral timeout on oversized payloads
- *   - wasting attempt budget on known-ineligible providers
+ * Before sending a large payload, this estimates its input-token size and skips
+ * providers whose resolved model cannot handle it, preventing 413s and
+ * context-window overflows without consuming an attempt-budget slot.
  *
- * The preflight is NON-BLOCKING for the fallback chain: a skipped provider
- * does NOT consume an attempt budget slot (same as cooldown/unconfigured).
- * The chain simply moves to the next eligible provider.
+ * The limits come from the EXACT provider + EXACT resolved model, via
+ * lib/ai-model-profiles.ts. The previous version kept one context limit per
+ * PROVIDER, fixed to whichever model was the registry default when the table
+ * was written, so any operator who set a model env var got judged against a
+ * model they were no longer using — and a limit copied from a retired snapshot
+ * kept being applied to its replacement. The model string used here is read
+ * through the same registry accessor the adapter uses, so preflight and the
+ * outbound request always describe the same model.
  *
- * Token estimation uses a conservative 4-chars-per-token heuristic (industry
- * standard is ~4 for English text). This is intentionally conservative —
- * overestimating size leads to safe skips, underestimating leads to 413s.
+ * Token estimation uses a conservative 4-chars-per-token heuristic.
+ * Overestimating size leads to a safe skip; underestimating leads to a 413.
  */
 
-import { getProviderEntry, type AiProviderName, type AiUseCase } from "./ai-provider-registry";
-
-// Conservative per-provider context window limits (input tokens).
-// These are the documented limits for the DEFAULT models in the registry.
-// When a user overrides the model via env, the limit may differ — we use the
-// default-model limit as a safe conservative bound.
-const PROVIDER_CONTEXT_LIMITS: Record<AiProviderName, number> = {
-  zai: 128_000, // glm-4.7-flash: 128K context
-  cerebras: 128_000, // gpt-oss-120b: 128K context
-  mistral: 128_000, // mistral-large-latest: 128K context
-  groq: 32_000, // llama-3.3-70b-versatile: 32K context (Groq free tier is lower)
-  openrouter: 32_000, // varies by :free model; conservative 32K
-  gemini: 1_000_000, // gemini-2.5-pro: 1M context
-  openai: 128_000, // gpt-4o: 128K context
-  together: 128_000, // Llama-3.3-70B: 128K context
-  deepseek: 64_000, // deepseek-chat: 64K context
-  anthropic: 200_000, // claude-sonnet-4-5: 200K context
-};
-
-// Groq free-tier TPM (tokens-per-minute) limit. The free tier is 30K TPM for
-// most models. We use a conservative 28K to leave headroom for the response.
-const GROQ_FREE_TPM_LIMIT = 28_000;
+import { type AiProviderName, type AiUseCase } from "./ai-provider-registry";
+import { resolveActiveModelProfile, type ModelCapabilityProfile } from "./ai-model-profiles";
 
 // Rough chars-per-token ratio for English text. Conservative (lower = more
 // tokens estimated = safer skips).
 const CHARS_PER_TOKEN = 4;
+
+// Fraction of the context window left free for the response. Input is checked
+// against the remainder.
+const INPUT_CONTEXT_FRACTION = 0.8;
 
 /**
  * Estimate the input token count for a prompt. Conservative 4-chars-per-token.
@@ -67,30 +51,32 @@ export type ProviderPreflightResult = {
   reason: "OK" | "CONTEXT_OVERFLOW" | "TPM_LIMIT" | "UNKNOWN_PROVIDER";
   estimatedTokens: number;
   contextLimit: number;
+  /** The exact model the limits were resolved for — never a provider default. */
+  model: string;
+  /** Full resolved profile, so callers can report WHY a provider was skipped. */
+  profile: ModelCapabilityProfile;
   safeMessage: string;
 };
 
 /**
- * Check whether a provider can handle a given prompt payload.
- * Returns eligible=true when the provider's context window can accommodate
- * the estimated input tokens. Returns eligible=false with a safe reason when
- * the payload would overflow.
+ * Check whether a provider's RESOLVED MODEL can handle a given prompt payload.
  *
- * For Groq specifically, also checks the TPM limit — Groq free-tier rejects
- * requests that exceed 30K TPM with HTTP 413.
+ * Eligibility is decided against the model that will actually be sent — read
+ * through the registry accessor the adapter uses — so a model override changes
+ * the preflight verdict along with the request.
  */
 export function preflightProvider(
   provider: AiProviderName,
   prompt: string,
-  opts?: { systemPrompt?: string; useCase?: AiUseCase },
+  opts?: { systemPrompt?: string; useCase?: AiUseCase; env?: NodeJS.ProcessEnv },
 ): ProviderPreflightResult {
-  const entry = getProviderEntry(provider);
+  const useCase = opts?.useCase ?? "proposal";
+  const profile = resolveActiveModelProfile(provider, useCase, opts?.env ?? process.env);
   const estimatedTokens = estimateTotalInputTokens(prompt, opts?.systemPrompt);
-  const contextLimit = PROVIDER_CONTEXT_LIMITS[provider] ?? 32_000;
+  const contextLimit = profile.contextTokens;
 
-  // Context-window check — if the estimated input exceeds the provider's
-  // context window, skip it. Add 20% headroom for the response.
-  const effectiveLimit = Math.floor(contextLimit * 0.8);
+  // Context-window check — leave a fifth of the window free for the response.
+  const effectiveLimit = Math.floor(contextLimit * INPUT_CONTEXT_FRACTION);
   if (estimatedTokens > effectiveLimit) {
     return {
       provider,
@@ -98,20 +84,28 @@ export function preflightProvider(
       reason: "CONTEXT_OVERFLOW",
       estimatedTokens,
       contextLimit,
-      safeMessage: `Prompt exceeds ${provider} context window (${estimatedTokens} > ${effectiveLimit} tokens).`,
+      model: profile.model,
+      profile,
+      safeMessage: `Prompt exceeds the ${profile.model} context window on ${provider} (${estimatedTokens} > ${effectiveLimit} tokens).`,
     };
   }
 
-  // Groq TPM check — Groq free-tier has a 30K TPM limit. If the estimated
-  // input alone exceeds 28K tokens, the request will 413. Skip Groq.
-  if (provider === "groq" && estimatedTokens > GROQ_FREE_TPM_LIMIT) {
+  // Free-tier tokens-per-minute ceiling, where the model's profile carries one.
+  // Groq is the case that matters: its free tier caps throughput far below the
+  // context window, so a prompt that fits the window still returns 413. The
+  // limit now travels with the MODEL, because Groq's per-minute allowance
+  // differs between the 70B and 8B models — a single provider-wide number
+  // skipped the small model on payloads it could have served.
+  if (profile.freeTierTpmLimit !== null && estimatedTokens > profile.freeTierTpmLimit) {
     return {
       provider,
       eligible: false,
       reason: "TPM_LIMIT",
       estimatedTokens,
       contextLimit,
-      safeMessage: `Prompt exceeds Groq free-tier TPM limit (${estimatedTokens} > ${GROQ_FREE_TPM_LIMIT} tokens).`,
+      model: profile.model,
+      profile,
+      safeMessage: `Prompt exceeds the free-tier per-minute token limit for ${profile.model} on ${provider} (${estimatedTokens} > ${profile.freeTierTpmLimit} tokens).`,
     };
   }
 
@@ -121,6 +115,8 @@ export function preflightProvider(
     reason: "OK",
     estimatedTokens,
     contextLimit,
+    model: profile.model,
+    profile,
     safeMessage: "OK",
   };
 }

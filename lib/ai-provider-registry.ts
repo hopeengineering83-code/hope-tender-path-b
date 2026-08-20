@@ -17,6 +17,10 @@
 import {
   CANONICAL_AI_PROVIDER_ORDER as CATALOG_ORDER,
   ALL_CONFIGURED_PROVIDERS as CATALOG_ALL_PROVIDERS,
+  ZERO_PAID_AUTOMATIC_ORDER as CATALOG_ZERO_PAID_ORDER,
+  PAID_ACCESS_PROVIDERS as CATALOG_PAID_PROVIDERS,
+  isZeroPaidMode as catalogIsZeroPaidMode,
+  automaticProviderOrder as catalogAutomaticOrder,
   PROVIDER_API_KEY_ENV,
 } from "./ai-provider-catalog.cjs";
 
@@ -77,10 +81,44 @@ export type ProviderRetryPolicy = {
   retryOnBilling: false;
 };
 
+/**
+ * Whether calling this provider can produce a charge.
+ *
+ *   "free"             — usable on a free account with no payment method.
+ *   "conditional-free" — free ONLY under an explicitly verified condition
+ *                        (OpenRouter with a `:free` model). Treated as paid
+ *                        until that condition is proven.
+ *   "paid"             — requires paid access. Never contacted while zero-paid
+ *                        mode is on, even if a key is present.
+ */
+export type ProviderAccessClass = "free" | "conditional-free" | "paid";
+
 export type ProviderRegistryEntry = {
   provider: AiProviderName;
   displayName: string;
   rank: number;
+  access: ProviderAccessClass;
+  /**
+   * Path (relative to baseUrl) of the provider's own model-listing endpoint,
+   * or null when it has none reachable this way.
+   *
+   * This is how the app answers "which models may this account actually call?"
+   * WITHOUT keeping a local copy of a third party's catalogue. A hardcoded model
+   * list is a second authority on a question only the provider can answer, and
+   * it goes stale the moment they retire a snapshot — which is exactly how a
+   * retired model ends up pinned in a default and every request 404s. The
+   * capability test lists models live and verifies the resolved one really
+   * works before the provider is called usable.
+   */
+  modelsEndpoint: string | null;
+  /**
+   * Ordered PREFERENCE HINTS for zero-paid operation — not assertions that
+   * these models exist. Each candidate is checked against the provider's live
+   * model list, and the first one the account can actually call wins. If none
+   * matches, the resolver falls back to what the provider itself reports rather
+   * than sending a name this codebase invented.
+   */
+  freeTierPreference: readonly string[];
   env: ProviderEnvVars;
   requestFormat: ProviderRequestFormat;
   defaults: {
@@ -131,7 +169,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   zai: {
     provider: "zai",
     displayName: "Z.ai GLM",
-    rank: 1,
+    rank: 4,
+    access: "free",
+    modelsEndpoint: "/models",
+    freeTierPreference: ["glm-4.7-flash", "glm-4-flash"],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.zai,
       baseUrl: "ZAI_BASE_URL",
@@ -159,7 +200,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   cerebras: {
     provider: "cerebras",
     displayName: "Cerebras",
-    rank: 2,
+    rank: 6,
+    access: "paid",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.cerebras,
       baseUrl: "CEREBRAS_BASE_URL",
@@ -186,6 +230,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "mistral",
     displayName: "Mistral",
     rank: 3,
+    access: "free",
+    modelsEndpoint: "/models",
+    freeTierPreference: ["mistral-small-latest", "open-mistral-nemo", "ministral-8b-latest"],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.mistral,
       baseUrl: "MISTRAL_BASE_URL",
@@ -196,8 +243,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "openai-compatible",
     defaults: {
       baseUrl: "https://api.mistral.ai/v1",
-      proposalModel: "mistral-large-latest",
-      analysisModel: "mistral-large-latest",
+      // mistral-large-latest is a paid model. Zero-paid defaults to the
+      // free-tier small model, matching freeTierPreference.
+      proposalModel: "mistral-small-latest",
+      analysisModel: "mistral-small-latest",
       fastModel: "ministral-8b-latest",
     },
     outputCaps: STANDARD_CAPS,
@@ -209,7 +258,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   groq: {
     provider: "groq",
     displayName: "Groq",
-    rank: 4,
+    rank: 2,
+    access: "free",
+    modelsEndpoint: "/models",
+    freeTierPreference: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.groq,
       baseUrl: "GROQ_BASE_URL",
@@ -234,6 +286,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "openrouter",
     displayName: "OpenRouter",
     rank: 5,
+    access: "conditional-free",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openrouter,
       baseUrl: "OPENROUTER_BASE_URL",
@@ -259,7 +314,10 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   gemini: {
     provider: "gemini",
     displayName: "Gemini",
-    rank: 6,
+    rank: 1,
+    access: "free",
+    modelsEndpoint: "/v1beta/models",
+    freeTierPreference: ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.gemini,
       proposalModel: "GEMINI_MODEL",
@@ -269,8 +327,13 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "gemini",
     defaults: {
       baseUrl: null,
-      proposalModel: "gemini-2.5-pro",
-      analysisModel: "gemini-2.5-pro",
+      // Flash, not Pro: gemini-2.5-pro is not served on the free tier, so
+      // defaulting to it made rank-1 Gemini fail on a zero-paid account before
+      // it could answer anything. Each value here is the head of the matching
+      // freeTierPreference list, so the source default and the live-verified
+      // choice can never disagree.
+      proposalModel: "gemini-2.5-flash",
+      analysisModel: "gemini-2.5-flash",
       fastModel: "gemini-2.0-flash",
     },
     outputCaps: STANDARD_CAPS,
@@ -283,6 +346,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "openai",
     displayName: "OpenAI",
     rank: 7,
+    access: "paid",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.openai,
       baseUrl: "OPENAI_BASE_URL",
@@ -307,6 +373,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "together",
     displayName: "Together",
     rank: 8,
+    access: "paid",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.together,
       baseUrl: "TOGETHER_BASE_URL",
@@ -331,6 +400,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "deepseek",
     displayName: "DeepSeek",
     rank: 9,
+    access: "paid",
+    modelsEndpoint: "/models",
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.deepseek,
       apiKeyAliases: ["DEEP_SEEK_API_KEY", "DEEPSEEK_KEY"],
@@ -356,6 +428,9 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     provider: "anthropic",
     displayName: "Anthropic / Claude",
     rank: 10,
+    access: "paid",
+    modelsEndpoint: null,
+    freeTierPreference: [],
     env: {
       apiKey: PROVIDER_API_KEY_ENV.anthropic,
       proposalModel: "ANTHROPIC_PROPOSAL_MODELS",
@@ -658,4 +733,126 @@ export function openRouterModelValidity(env: NodeJS.ProcessEnv = process.env): O
     };
   }
   return { valid: true, model: configured, reason: "OK", message: null };
+}
+
+// ─── Zero-paid policy ────────────────────────────────────────────────────────
+//
+// Requirement: no provider may ever be sent a request that could produce a
+// charge. Two things make that structural rather than a matter of remembering
+// which keys to leave unset:
+//
+//   1. The automatic chain is a SUBSET of the canonical order, not the whole of
+//      it. Paid providers are not merely deprioritised — they are unreachable.
+//   2. The exclusion is enforced at the eligibility check, before a request
+//      body exists, so a paid key left in the environment cannot spend money.
+//
+// Paid providers stay visible in health and diagnostics as BILLING_BLOCKED.
+// Hiding them would be the wrong fix: an operator needs to see that the key is
+// present and deliberately not used, not wonder where the provider went.
+
+export const ZERO_PAID_AUTOMATIC_ORDER: readonly AiProviderName[] = CATALOG_ZERO_PAID_ORDER;
+export const PAID_ACCESS_PROVIDERS: readonly AiProviderName[] = CATALOG_PAID_PROVIDERS;
+
+/** True when strict zero-paid operation is in force. Defaults to true. */
+export function isZeroPaidMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  return catalogIsZeroPaidMode(env);
+}
+
+/** True when the provider requires paid access on this account. */
+export function isPaidAccessProvider(provider: AiProviderName): boolean {
+  return REGISTRY[provider].access === "paid";
+}
+
+/**
+ * The provider order the automatic fallback chain may use right now.
+ * In zero-paid mode this is the free chain; otherwise the full canonical order.
+ */
+export function getAutomaticProviderOrder(
+  env: NodeJS.ProcessEnv = process.env,
+): readonly AiProviderName[] {
+  return catalogAutomaticOrder(env) as readonly AiProviderName[];
+}
+
+export type ProviderEligibility = {
+  provider: AiProviderName;
+  eligible: boolean;
+  reason:
+    | "OK"
+    | "NOT_CONFIGURED"
+    | "PAID_ACCESS_BLOCKED"
+    | "NOT_IN_AUTOMATIC_ORDER"
+    | "CONDITIONAL_FREE_UNVERIFIED";
+  safeMessage: string;
+};
+
+/**
+ * Whether the automatic chain may contact this provider at all, before any
+ * runtime health state is consulted. This is the money gate: it answers "could
+ * calling this cost anything?", not "is it working?".
+ */
+export function providerAutomaticEligibility(
+  provider: AiProviderName,
+  env: NodeJS.ProcessEnv = process.env,
+): ProviderEligibility {
+  const entry = REGISTRY[provider];
+  const zeroPaid = isZeroPaidMode(env);
+
+  if (zeroPaid && entry.access === "paid") {
+    return {
+      provider,
+      eligible: false,
+      reason: "PAID_ACCESS_BLOCKED",
+      safeMessage: `${entry.displayName} requires paid access and is excluded while zero-paid mode is on.`,
+    };
+  }
+
+  if (!getAutomaticProviderOrder(env).includes(provider)) {
+    return {
+      provider,
+      eligible: false,
+      reason: "NOT_IN_AUTOMATIC_ORDER",
+      safeMessage: `${entry.displayName} is not part of the active automatic provider order.`,
+    };
+  }
+
+  // Conditional-free providers must PROVE the condition. OpenRouter without a
+  // verified `:free` model is treated exactly like a paid provider — the point
+  // of the class is that "probably free" is not good enough to risk a charge.
+  if (entry.access === "conditional-free") {
+    const validity = openRouterModelValidity(env);
+    if (!validity.valid) {
+      return {
+        provider,
+        eligible: false,
+        reason: "CONDITIONAL_FREE_UNVERIFIED",
+        safeMessage: validity.message ?? `${entry.displayName} has no verified free model configured.`,
+      };
+    }
+  }
+
+  if (!isProviderConfigured(provider, env)) {
+    return {
+      provider,
+      eligible: false,
+      reason: "NOT_CONFIGURED",
+      safeMessage: `${entry.displayName} is not configured.`,
+    };
+  }
+
+  return { provider, eligible: true, reason: "OK", safeMessage: "OK" };
+}
+
+/** Providers the automatic chain may contact right now, in priority order. */
+export function automaticallyEligibleProviders(
+  env: NodeJS.ProcessEnv = process.env,
+): AiProviderName[] {
+  return getAutomaticProviderOrder(env).filter(
+    (provider) => providerAutomaticEligibility(provider, env).eligible,
+  );
+}
+
+/** Human-readable description of the active automatic chain, incl. the tail. */
+export function automaticChainDisplay(env: NodeJS.ProcessEnv = process.env): string {
+  const names = getAutomaticProviderOrder(env).map((p) => REGISTRY[p].displayName);
+  return `${names.join(" → ")} → deterministic draft fallback`;
 }
