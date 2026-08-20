@@ -36,7 +36,7 @@ import { resetProviderHealth, deriveProviderStatus, isBillingLockedOut } from ".
 import { getAutomaticProviderOrder, PAID_ACCESS_PROVIDERS } from "../lib/ai-provider-registry";
 
 const ALL_KEYS = [
-  "GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ZAI_API_KEY",
+  "GEMINI_API_KEY", "GROQ_API_KEY", "GROQ_PROPOSAL_MODEL", "MISTRAL_API_KEY", "ZAI_API_KEY",
   "OPENROUTER_API_KEY", "OPENROUTER_PROPOSAL_MODEL", "CEREBRAS_API_KEY",
   "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
 ];
@@ -83,6 +83,7 @@ function installScenarioFetch(): { urls: () => string[] } {
 function applyScenario(opts?: { withGemini?: boolean }) {
   if (opts?.withGemini) process.env.GEMINI_API_KEY = "AIzaScenarioKey123456789012345678901";
   process.env.GROQ_API_KEY = "gsk-scenario";
+  process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
   process.env.MISTRAL_API_KEY = "mistral-scenario";
   process.env.ZAI_API_KEY = "zai-scenario";
   process.env.CEREBRAS_API_KEY = "csk-scenario";
@@ -341,6 +342,7 @@ describe("isAIConfigured reflects reachability, not key presence", () => {
     const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
     process.env.OPENAI_API_KEY = "sk-test";
     process.env.GROQ_API_KEY = "gsk-test";
+    process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
     assert.equal(isAIConfigured(), true);
     assert.equal(hasOnlyUnreachableProviderKeys(), false);
   });

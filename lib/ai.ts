@@ -897,7 +897,6 @@ export async function generateWithFallback(
   prompt: string,
   opts?: {
     systemPrompt?: string;
-    modelOverride?: string;
     useCase?: AiUseCase;
     onProviderUsed?: (provider: AiProviderName) => void;
     // OBS-004 — fire-and-forget hook so callers (which know userId/tenderId)
@@ -996,7 +995,7 @@ export async function generateWithFallback(
     // This prevents Groq 413 (TPM limit) and context-window overflow on
     // smaller providers. Skipped WITHOUT consuming an attempt — same as
     // cooldown/unconfigured. The chain moves to the next eligible provider.
-    const preflight = preflightProvider(provider, trustBoundary.protectedPrompt, { systemPrompt: opts?.systemPrompt, useCase, modelOverride: opts?.modelOverride });
+    const preflight = preflightProvider(provider, trustBoundary.protectedPrompt, { systemPrompt: opts?.systemPrompt, useCase });
     if (!preflight.eligible) {
       providerAttempts.push({
         provider, configured: true, tried: false,
@@ -2335,7 +2334,6 @@ ${tenderContent}`;
 
   const text = await generateWithFallback(prompt, {
     systemPrompt: "You are a senior tender analyst. Output ONLY a valid JSON object — no markdown, no code fences, no preamble. The JSON object must match the structure described in the user prompt exactly.",
-    modelOverride: defaultGeminiModel("extraction"),
     useCase: "extraction",
     onProviderUsed,
     onProviderAttempt,
@@ -2748,7 +2746,6 @@ ${text.slice(0, 60_000)}`;
 
   const raw = await generateWithFallback(prompt, {
     systemPrompt: "You are a CV parsing engine. Output ONLY a valid JSON array — no markdown, no code fences, no preamble. Each element must match the schema in the user prompt exactly.",
-    modelOverride: defaultGeminiModel("fast"),
     useCase: "extraction",
   });
   const jsonMatch = raw.match(/\[[\s\S]*\]/);
@@ -2793,7 +2790,6 @@ ${text.slice(0, 60_000)}`;
 
   const raw = await generateWithFallback(prompt, {
     systemPrompt: "You are a project portfolio parsing engine. Output ONLY a valid JSON array — no markdown, no code fences, no preamble. Each element must match the schema in the user prompt exactly.",
-    modelOverride: defaultGeminiModel("fast"),
     useCase: "extraction",
   });
   const jsonMatch = raw.match(/\[[\s\S]*\]/);

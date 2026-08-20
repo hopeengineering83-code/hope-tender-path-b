@@ -74,7 +74,7 @@ describe("isAIConfigured — reachability, not key presence", () => {
 
   afterEach(() => {
     // Restore original env
-    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "ZAI_API_KEY", "CEREBRAS_API_KEY"]) {
+    for (const key of ["ANTHROPIC_API_KEY", "GEMINI_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "GROQ_API_KEY", "GROQ_PROPOSAL_MODEL", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "ZAI_API_KEY", "CEREBRAS_API_KEY"]) {
       if (key in originalEnv) {
         process.env[key] = originalEnv[key as keyof typeof originalEnv] as string;
       } else {
@@ -125,6 +125,7 @@ describe("isAIConfigured — reachability, not key presence", () => {
       delete process.env[key];
     }
     process.env.GROQ_API_KEY = "gsk-test-key";
+    process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
     const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
     assert.equal(isAIConfigured(), true);
     assert.equal(hasOnlyUnreachableProviderKeys(), false);

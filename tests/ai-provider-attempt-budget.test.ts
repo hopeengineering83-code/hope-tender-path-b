@@ -15,7 +15,7 @@ import {
   getProviderHealth,
 } from "../lib/ai-provider-health";
 
-const KEYS = ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY", "OPENROUTER_PROPOSAL_MODEL", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
+const KEYS = ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "GROQ_PROPOSAL_MODEL", "OPENROUTER_API_KEY", "OPENROUTER_PROPOSAL_MODEL", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
 let saved: Record<string, string | undefined> = {};
 let realFetch: typeof globalThis.fetch;
 
@@ -25,6 +25,11 @@ beforeEach(() => {
   realFetch = globalThis.fetch;
   resetProviderHealth();
 });
+
+function configureGroq(): void {
+  process.env.GROQ_API_KEY = "k";
+  process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
+}
 afterEach(() => {
   for (const k of KEYS) {
     if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
@@ -57,7 +62,7 @@ describe("12. provider attempt budget caps actual outbound attempts", () => {
     // deprioritised, they are unreachable, so the assertion had to change with
     // the behaviour it describes.
     process.env.GEMINI_API_KEY = "AIzaTestKey1234567890123456789012345";
-    process.env.GROQ_API_KEY = "k";
+    configureGroq();
     process.env.MISTRAL_API_KEY = "k";
     process.env.ZAI_API_KEY = "k";
 
@@ -97,7 +102,7 @@ describe("11. cooldown providers are skipped without consuming the budget", () =
   it("skips a cooled-down provider and still tries live providers", async () => {
     process.env.OPENROUTER_API_KEY = "k";       // will be put in cooldown
     process.env.OPENROUTER_PROPOSAL_MODEL = "meta-llama/llama-3.3-70b-instruct:free";
-    process.env.GROQ_API_KEY = "k";
+    configureGroq();
     process.env.MISTRAL_API_KEY = "k";
     process.env.ZAI_API_KEY = "k";
 
@@ -124,7 +129,7 @@ describe("11. cooldown providers are skipped without consuming the budget", () =
 
 describe("13. ATTEMPT_BUDGET_EXHAUSTED distinct from all-providers-exhausted", () => {
   it("returns a structured, recoverable error when the free chain is exhausted", async () => {
-    process.env.GROQ_API_KEY = "k";
+    configureGroq();
     process.env.MISTRAL_API_KEY = "k";
     process.env.ZAI_API_KEY = "k";
     mockFetch(() => ({ status: 500, body: { error: { message: "fail" } } }));
@@ -198,7 +203,7 @@ describe("15. invalid JSON from any provider cannot promote requirements", () =>
   it("analyzeOneChunkWithRetry throws on malformed JSON (no requirements returned)", async () => {
     process.env.OPENROUTER_API_KEY = "k";
     process.env.OPENAI_API_KEY = "k";
-    process.env.GROQ_API_KEY = "k";
+    configureGroq();
     // Provider returns prose, not JSON. Validation must reject it — no requirements.
     mockFetch(() => ({ status: 200, body: { choices: [{ message: { content: "Sure! Here is a friendly summary with no JSON at all." } }] } }));
     await assert.rejects(
@@ -210,7 +215,7 @@ describe("15. invalid JSON from any provider cannot promote requirements", () =>
   it("a result lacking valid structured fields cannot be promoted", async () => {
     process.env.OPENROUTER_API_KEY = "k";
     process.env.OPENAI_API_KEY = "k";
-    process.env.GROQ_API_KEY = "k";
+    configureGroq();
     // Returns JSON-looking but structurally invalid (requirements not an array).
     mockFetch(() => ({ status: 200, body: { choices: [{ message: { content: '{"summary": 123, "requirements": "nope"}' } }] } }));
     // Either it throws (malformed) or returns a sanitized empty requirements set —

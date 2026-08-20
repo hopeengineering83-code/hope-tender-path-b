@@ -43,9 +43,9 @@ describe("AI analysis output-token budget", () => {
     // Budget is now computed per-provider via the registry caps.
     assert.match(body, /const maxTokens = maxOutputTokensForUseCase\(useCase, name\)/);
     // Each OpenAI-compatible provider call must pass maxTokens, never undefined.
-    assert.match(body, /generateWithGroq\(prompt, opts\?\.systemPrompt, maxTokens\)/);
-    assert.match(body, /generateWithOpenRouter\(prompt, opts\?\.systemPrompt, maxTokens\)/);
-    assert.match(body, /generateWithMistral\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase\)/);
+    assert.match(body, /generateWithGroq\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.modelOverride\)/);
+    assert.match(body, /generateWithOpenRouter\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.modelOverride\)/);
+    assert.match(body, /generateWithMistral\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase, opts\?\.modelOverride\)/);
     assert.match(body, /generateWithTogether\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase\)/);
     assert.doesNotMatch(body, /generateWith(?:Mistral|Together)\(prompt, opts\?\.systemPrompt, undefined/);
   });

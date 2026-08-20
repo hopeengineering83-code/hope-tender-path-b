@@ -94,10 +94,10 @@ describe("release-acceptance E — provider fallback order", () => {
     const preferred = preferredConfiguredProviderName({} as NodeJS.ProcessEnv);
     assert.equal(preferred, null);
     // When only a mid-chain provider is configured, it becomes preferred.
-    const withGroq = preferredConfiguredProviderName({ GROQ_API_KEY: "test-key" } as unknown as NodeJS.ProcessEnv);
+    const withGroq = preferredConfiguredProviderName({ GROQ_API_KEY: "test-key", GROQ_PROPOSAL_MODEL: "llama-3.1-8b-instant" } as unknown as NodeJS.ProcessEnv);
     assert.equal(withGroq, "groq");
     // A higher-ranked provider outranks a lower one.
-    const withZaiAndGroq = preferredConfiguredProviderName({ ZAI_API_KEY: "k", GROQ_API_KEY: "k" } as unknown as NodeJS.ProcessEnv);
+    const withZaiAndGroq = preferredConfiguredProviderName({ ZAI_API_KEY: "k", GROQ_API_KEY: "k", GROQ_PROPOSAL_MODEL: "llama-3.1-8b-instant" } as unknown as NodeJS.ProcessEnv);
     assert.equal(withZaiAndGroq, "groq", "Groq outranks Z.ai in the zero-paid order");
   });
 });
