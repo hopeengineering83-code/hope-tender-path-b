@@ -1,4 +1,11 @@
 import { logger } from "./observability";
+import {
+  CANONICAL_AI_PROVIDER_ORDER,
+  PAID_ACCESS_PROVIDERS,
+  CONDITIONAL_FREE_PROVIDERS,
+  PROVIDER_API_KEY_ENV,
+  automaticProviderOrder,
+} from "./ai-provider-catalog.cjs";
 /**
  * Startup environment validation.
  * Imported at the top of lib/prisma.ts so it runs on every cold start.
@@ -27,23 +34,23 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
 ];
 
-// ALL 10 AI provider keys in canonical order — mirrors
-// lib/ai-provider-catalog.cjs CANONICAL_AI_PROVIDER_ORDER.
-// Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
-// Together → DeepSeek → Anthropic.
-// All are automatic; Anthropic is emergency-only (last resort).
-const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = [
-  { name: "ZAI_API_KEY", description: "Z.ai GLM API key. Rank 1 automatic provider." },
-  { name: "CEREBRAS_API_KEY", description: "Cerebras API key. Rank 2 automatic provider." },
-  { name: "MISTRAL_API_KEY", description: "Mistral API key. Rank 3 automatic provider." },
-  { name: "GROQ_API_KEY", description: "Groq API key. Rank 4 automatic provider." },
-  { name: "OPENROUTER_API_KEY", description: "OpenRouter API key. Rank 5 automatic aggregator — requires an explicit ':free' model." },
-  { name: "GEMINI_API_KEY", description: "Google Gemini API key. Rank 6 automatic provider." },
-  { name: "OPENAI_API_KEY", description: "OpenAI API key. Rank 7 automatic provider." },
-  { name: "TOGETHER_API_KEY", description: "Together API key. Rank 8 automatic provider." },
-  { name: "DEEPSEEK_API_KEY", description: "DeepSeek API key. Rank 9 automatic provider." },
-  { name: "ANTHROPIC_API_KEY", description: "Anthropic Claude API key. Rank 10 emergency-only (last resort) provider." },
-];
+// The ten known provider keys, in canonical order and with their access class.
+// Order and key names are DERIVED from the catalog — the rank text that used to
+// be written into each description here ("Rank 1 automatic provider", …) was a
+// copy that went stale the moment the order changed.
+const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = CANONICAL_AI_PROVIDER_ORDER.map(
+  (provider, index) => {
+    const envName = PROVIDER_API_KEY_ENV[provider];
+    const paid = PAID_ACCESS_PROVIDERS.includes(provider);
+    const conditional = CONDITIONAL_FREE_PROVIDERS.includes(provider);
+    const role = paid
+      ? "requires PAID access — excluded from automatic use while zero-paid mode is on"
+      : conditional
+        ? "free ONLY with an explicitly configured ':free' model"
+        : "free-tier provider in the automatic chain";
+    return { name: envName, description: `Rank ${index + 1}: ${role}.` };
+  },
+);
 
 const INSECURE_DEFAULTS: Record<string, string> = {
   SESSION_SECRET: "hope-tender-path-built-in-secret-v1",
@@ -173,22 +180,41 @@ export function checkEnv(): void {
 }
 
 export function isAIConfigured(): boolean {
-  // ALL 10 AI providers are part of the automatic fallback chain:
-  // Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI →
-  // Together → DeepSeek → Anthropic.
-  // Any configured provider counts as "AI configured".
-  return Boolean(
-    process.env.ZAI_API_KEY ||
-    process.env.CEREBRAS_API_KEY ||
-    process.env.MISTRAL_API_KEY ||
-    process.env.GROQ_API_KEY ||
-    process.env.OPENROUTER_API_KEY ||
-    process.env.GEMINI_API_KEY ||
-    process.env.OPENAI_API_KEY ||
-    process.env.TOGETHER_API_KEY ||
-    process.env.DEEPSEEK_API_KEY ||
-    process.env.ANTHROPIC_API_KEY,
-  );
+  // "Configured" means a provider the app is ALLOWED TO CONTACT has a key.
+  //
+  // This used to be true if ANY of the ten keys was present. On a zero-paid
+  // deployment holding only OPENAI_API_KEY that answer was actively wrong: the
+  // app would report AI as enabled while the automatic chain had nothing it
+  // could call, so every AI feature failed with a message about providers being
+  // exhausted rather than about none being usable.
+  //
+  // Reads env at call time, never at module load, so a changed environment is
+  // reflected without a rebuild.
+  return AUTOMATIC_PROVIDER_KEY_ENVS().some((name) => {
+    const value = process.env[name];
+    return Boolean(value && value.trim().length > 0);
+  });
+}
+
+/**
+ * Env var names for the providers the automatic chain may currently contact.
+ * A function, not a constant, because the active chain depends on
+ * AI_ZERO_PAID_MODE, which is read from the environment.
+ */
+function AUTOMATIC_PROVIDER_KEY_ENVS(): string[] {
+  return automaticProviderOrder(process.env).map((p) => PROVIDER_API_KEY_ENV[p]);
+}
+
+/**
+ * True when a key is present for a provider that is NOT reachable — the state
+ * where an operator is looking at configured keys and getting no AI at all.
+ */
+export function hasOnlyUnreachableProviderKeys(): boolean {
+  if (isAIConfigured()) return false;
+  return CANONICAL_AI_PROVIDER_ORDER.some((p) => {
+    const value = process.env[PROVIDER_API_KEY_ENV[p]];
+    return Boolean(value && value.trim().length > 0);
+  });
 }
 
 // Alias used in diagnostics and other routes

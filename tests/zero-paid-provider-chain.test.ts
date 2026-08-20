@@ -305,3 +305,75 @@ describe("all failure classifiers agree with the single authority", () => {
     assert.ok(!out.message.includes(groqKey), "a Groq key must not survive into operator-facing text");
   });
 });
+
+// ─── "AI is configured" must mean "we have something we may call" ────────────
+describe("isAIConfigured reflects reachability, not key presence", () => {
+  const ALL = [
+    "GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ZAI_API_KEY",
+    "OPENROUTER_API_KEY", "OPENROUTER_PROPOSAL_MODEL", "CEREBRAS_API_KEY",
+    "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+  ];
+  let restore: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    restore = {};
+    for (const k of ALL) { restore[k] = process.env[k]; delete process.env[k]; }
+  });
+  afterEach(() => {
+    for (const k of ALL) {
+      if (restore[k] === undefined) delete process.env[k]; else process.env[k] = restore[k];
+    }
+  });
+
+  it("is false when only paid-access keys are present", async () => {
+    // The state this closes: the app reported AI as enabled while the automatic
+    // chain had nothing it could call, so every AI feature failed with a message
+    // about providers being exhausted rather than about none being usable.
+    const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+    process.env.DEEPSEEK_API_KEY = "dsk-test";
+    assert.equal(isAIConfigured(), false, "paid keys are not AI configuration on a zero-paid deployment");
+    assert.equal(hasOnlyUnreachableProviderKeys(), true, "…and the operator must be told that is why");
+  });
+
+  it("is true as soon as one free provider is configured", async () => {
+    const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.GROQ_API_KEY = "gsk-test";
+    assert.equal(isAIConfigured(), true);
+    assert.equal(hasOnlyUnreachableProviderKeys(), false);
+  });
+
+  it("distinguishes 'no keys at all' from 'only unreachable keys'", async () => {
+    // They need opposite actions: find a key, versus stop reaching for the key
+    // you already have.
+    const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
+    assert.equal(isAIConfigured(), false);
+    assert.equal(hasOnlyUnreachableProviderKeys(), false, "nothing configured is not the same as the wrong thing configured");
+  });
+
+  it("counts OpenRouter only once its ':free' model is verified", async () => {
+    const { isAIConfigured } = await import("../lib/env-check");
+    process.env.OPENROUTER_API_KEY = "sk-or-test";
+    // env-check works from the catalog's chain membership, and OpenRouter IS in
+    // the zero-paid chain — the model check that makes it genuinely usable lives
+    // in providerAutomaticEligibility, which is what routing consults.
+    const { providerAutomaticEligibility } = await import("../lib/ai-provider-registry");
+    assert.equal(isAIConfigured(), true, "a key for a chain member counts as configuration");
+    assert.equal(
+      providerAutomaticEligibility("openrouter").eligible,
+      false,
+      "…but routing still refuses it until a ':free' model is verified",
+    );
+  });
+});
+
+describe("the admin action item names the right keys", () => {
+  it("never leads a zero-paid operator to OPENAI_API_KEY", () => {
+    const route = readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
+    assert.doesNotMatch(route, /Configure OPENAI_API_KEY, GEMINI_API_KEY/);
+    assert.match(route, /GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY/);
+    assert.match(route, /hasOnlyUnreachableProviderKeys\(\)/);
+  });
+});

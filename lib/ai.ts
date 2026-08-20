@@ -36,7 +36,10 @@ const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "")
 // a third authority on model choice alongside the registry and the env vars.
 // Every model decision now goes through getProviderModel().
 
-// Provider chain for proposal generation: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic → deterministic draft fallback (non-AI, never export-eligible)
+// Provider chain for proposal generation is NOT restated here — it is resolved
+// at call time by getAutomaticProviderOrder(). A comment naming the order is a
+// copy that goes stale, and this one had: it still described the pre-zero-paid
+// chain, leading with providers the app is now forbidden to contact.
 // Claude models in preference order when the last-resort Anthropic provider
 // is reached, keeping Anthropic last so rate limits do not block the app when earlier
 // providers are available.
@@ -1217,7 +1220,9 @@ export function isTogetherEnabled() {
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
-// DeepSeek provider in the canonical chain (Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic → deterministic draft fallback).
+// DeepSeek requires paid access and is excluded from the automatic chain while
+// zero-paid mode is on. The adapter is kept so health and diagnostics can
+// report on it, and so the provider works if zero-paid mode is ever turned off.
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
 // 20s per-provider cap — Vercel Hobby has a 60s function limit so each
@@ -4366,13 +4371,13 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     );
   }
 
-  // Canonical per-section chain: Z.ai → Cerebras → Mistral → Groq/OpenRouter →
-  // Gemini → OpenAI → Together → DeepSeek → Anthropic → deterministic
-  // fallback, matching CANONICAL_AI_PROVIDER_ORDER in
-  // lib/ai-provider-registry.ts. Anthropic stays last so its rate limits
-  // don't block parallel section generation.
+  // Per-section generation goes through the same chain as everything else, which
+  // getAutomaticProviderOrder() resolves at call time. The order is deliberately
+  // not written out here: this comment used to name the pre-zero-paid chain and
+  // had gone stale, describing Z.ai as rank 1 and listing five providers the app
+  // may no longer contact.
 
-  // Z.ai — canonical rank 1
+  // Z.ai
   if (isZaiEnabled() && !isProviderCooledDown("zai")) {
     try {
       const text = await Promise.race([

@@ -40,12 +40,19 @@ export function redactSecrets(text: string): string {
     // OpenAI org-/proj- keys
     .replace(/org-[a-zA-Z0-9]{20,}/g, "[KEY_REDACTED]")
     .replace(/proj-[a-zA-Z0-9_-]{20,}/g, "[KEY_REDACTED]")
-    // Groq gsk_ keys (underscore prefix — not matched by sk- above)
-    .replace(/gsk_[a-zA-Z0-9]{30,}/g, "[KEY_REDACTED]")
-    // Cerebras csk_ keys (underscore prefix — not matched by sk- above)
-    .replace(/csk_[a-zA-Z0-9]{30,}/g, "[KEY_REDACTED]")
-    // DeepSeek dsk- keys (real DeepSeek format — not sk-deepseek-)
-    .replace(/dsk-[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]")
+    // Groq / Cerebras / DeepSeek keys.
+    //
+    // Threshold is 8, not 30. These were written as {30,} to match the length
+    // of a real key, which quietly made this redactor WEAKER than the private
+    // copies it replaced — those used {8,}, so consolidating onto this one
+    // would have started leaking short or truncated keys that were previously
+    // caught. The prefixes are distinctive enough that over-matching is
+    // harmless: redacting something that merely looks like a key costs nothing,
+    // while missing one leaks a credential.
+    .replace(/gsk_[A-Za-z0-9_-]{8,}/g, "[KEY_REDACTED]")
+    .replace(/csk_[A-Za-z0-9_-]{8,}/g, "[KEY_REDACTED]")
+    // DeepSeek accepts either separator.
+    .replace(/dsk[-_][A-Za-z0-9_-]{8,}/g, "[KEY_REDACTED]")
     // GitHub PATs
     .replace(/ghp_[a-zA-Z0-9]{36,}/g, "[KEY_REDACTED]")
     .replace(/github_pat_[a-zA-Z0-9_]{20,}/g, "[KEY_REDACTED]")

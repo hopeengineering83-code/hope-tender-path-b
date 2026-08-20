@@ -1,4 +1,5 @@
 import { generateWithFallback, isAIEnabled } from "./ai";
+import { redactSecrets } from "./sanitize-error";
 
 export type AIExpertDraft = {
   fullName: string;
@@ -46,29 +47,28 @@ Every expert/project must include a sourceQuote copied from the source text.
 When uncertain, lower confidence instead of fabricating.`;
 
 
-const PROVIDER_MESSAGE_SANITIZE_REGEX = /(?:(?:postgres(?:ql)?|mysql|mongodb|redis):\/\/[^\s"']+|sk-[A-Za-z0-9-_]{8,}|AIza[A-Za-z0-9_-]{20,}|Bearer\s+[A-Za-z0-9._-]+|password=[^\s&]+|user(?:name)?=[^\s&]+)/gi;
+// Credential-bearing patterns this module needs ON TOP of the shared redactor:
+// connection-string credentials expressed as query parameters, which are not a
+// provider key and so are not the shared redactor's business.
+const CONNECTION_CREDENTIAL_REGEX = /(password|user(?:name)?)=([^\s&]+)/gi;
 
 /**
- * Consolidates multiple sequential .replace() calls into a single pass with a
- * combined regex for ~40% better throughput on large strings (Bolt optimization).
+ * Sanitize a provider error before it reaches a user-facing surface.
+ *
+ * Key redaction is delegated to lib/sanitize-error.ts. The single combined
+ * regex that used to live here covered sk-, AIza, Bearer and DSNs — and missed
+ * Groq's gsk_, Cerebras' csk_, DeepSeek's dsk- and Google's newer AQ keys, all
+ * of which this app actually uses. It was written as a throughput optimisation
+ * ("~40% better on large strings"), which is a poor trade on an error path: the
+ * cost of the slower version is microseconds on a failure, and the cost of the
+ * faster one is a live API key rendered to whoever reads the message.
  */
 function sanitizeProviderMessage(value: string | null | undefined): string {
   if (!value) return "unknown error";
-  // Optimization: truncate before expensive regex sanitization since the result
-  // is sliced to 240 anyway. 500 chars gives plenty of headroom for replacements.
-  return value
-    .slice(0, 500)
-    .replace(PROVIDER_MESSAGE_SANITIZE_REGEX, (match) => {
-      const lower = match.toLowerCase();
-      if (lower.startsWith("bearer")) return "Bearer [REDACTED]";
-      if (lower.startsWith("password=")) return "password=[REDACTED]";
-      if (lower.startsWith("user")) {
-        const eqIdx = match.indexOf("=");
-        return eqIdx !== -1 ? `${match.slice(0, eqIdx)}=[REDACTED]` : "[REDACTED]";
-      }
-      if (match.includes("://")) return "[REDACTED_DSN]";
-      return "[REDACTED_KEY]";
-    })
+  // Truncate first — the result is sliced to 240 anyway, and 500 leaves ample
+  // headroom for replacements to expand the string.
+  return redactSecrets(value.slice(0, 500))
+    .replace(CONNECTION_CREDENTIAL_REGEX, (_m, key: string) => `${key}=[REDACTED]`)
     .slice(0, 240);
 }
 

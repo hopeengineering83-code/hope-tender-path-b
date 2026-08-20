@@ -1,16 +1,19 @@
 import { NextResponse } from "next/server";
+import { redactSecrets } from "@/lib/sanitize-error";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../lib/prisma";
-import { isAIEnabled, isAIConfigured } from "../../../../lib/env-check";
+import { isAIEnabled, isAIConfigured, hasOnlyUnreachableProviderKeys } from "../../../../lib/env-check";
 import { detailedLivenessPayload } from "../../../../lib/liveness";
 
 function sanitizeDiagnosticMessage(value: string | null | undefined): string | null {
   if (!value) return null;
-  return value
-    .replace(/(?:postgres(?:ql)?|mysql|mongodb|redis):\/\/[^\s"']+/gi, "[REDACTED_DSN]")
-    .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED_KEY]")
-    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[REDACTED_KEY]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
+  // Key and DSN redaction is delegated to the shared redactor. The four
+  // patterns that used to be inlined here covered sk-, AIza, Bearer and DSNs,
+  // missing Groq's gsk_, Cerebras' csk_, DeepSeek's dsk- and Google's newer AQ
+  // format — every one of which this deployment uses. Connection-string
+  // credentials given as query parameters are kept locally, since they are not
+  // provider keys.
+  return redactSecrets(value)
     .replace(/password=([^\s&]+)/gi, "password=[REDACTED]")
     .replace(/user(name)?=([^\s&]+)/gi, "user$1=[REDACTED]")
     .slice(0, 240);
@@ -110,7 +113,26 @@ export async function GET() {
   const actionItems: Array<{ severity: string; message: string }> = [];
 
   if (!dbOk) actionItems.push({ severity: "CRITICAL", message: "Database connection failed. Check DATABASE_URL/Neon connectivity in Vercel; raw database diagnostics are intentionally hidden." });
-  if (!isAIConfigured()) actionItems.push({ severity: "HIGH", message: "No AI provider key set. Configure OPENAI_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY, GROQ_API_KEY, TOGETHER_API_KEY, OPENROUTER_API_KEY, or ANTHROPIC_API_KEY. AI extraction is disabled; all records will be REGEX_DRAFT only and cannot be promoted to trusted status." });
+  if (!isAIConfigured()) {
+    // Two different situations, and they need opposite actions. Telling an
+    // operator who already holds five keys that "no AI provider key is set"
+    // sends them looking for something that is right in front of them — and the
+    // old message led with OPENAI_API_KEY, which on this deployment is the one
+    // key that cannot help.
+    actionItems.push(
+      hasOnlyUnreachableProviderKeys()
+        ? {
+            severity: "HIGH",
+            message:
+              "AI provider keys are set, but only for providers this deployment may not contact (paid-access, or OpenRouter without a verified ':free' model). Configure a free provider — GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY. Until then AI extraction is disabled and all records remain REGEX_DRAFT, which cannot be promoted to trusted status.",
+          }
+        : {
+            severity: "HIGH",
+            message:
+              "No usable AI provider key is set. Configure GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY. AI extraction is disabled; all records will be REGEX_DRAFT only and cannot be promoted to trusted status.",
+          },
+    );
+  }
   if (expertsByTrust.REVIEWED === 0 && experts.length > 0) actionItems.push({ severity: "HIGH", message: `${experts.length} expert(s) imported but none reviewed. Proposals will use unverified draft data.` });
   if (projectsByTrust.REVIEWED === 0 && projects.length > 0) actionItems.push({ severity: "HIGH", message: `${projects.length} project(s) imported but none reviewed. Proposals will use unverified draft data.` });
   if (docsNoText > 0) actionItems.push({ severity: "MEDIUM", message: `${docsNoText} document(s) have no extracted text. Run repair to re-extract.` });

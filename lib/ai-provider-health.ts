@@ -20,6 +20,7 @@ import {
   getAutomaticProviderOrder,
   type AiProviderName,
 } from "./ai-provider-registry";
+import { redactSecrets } from "./sanitize-error";
 import {
   classifyProviderError,
   isBillingBlocked,
@@ -206,17 +207,17 @@ function ensureState(provider: AiProviderName): InternalState {
   return s;
 }
 
+/**
+ * Redact a provider message before it is stored or surfaced.
+ *
+ * Delegates to the shared redactor in lib/sanitize-error.ts. This used to carry
+ * its own pattern list, which is how the two came to disagree: this one knew
+ * about Google's AQ-format keys and the shared one did not, so the same key was
+ * redacted on one code path and printed verbatim on another. The shared list is
+ * a strict superset of what was here.
+ */
 function redactMessage(message: string | null | undefined): string {
-  return (message ?? "")
-    .replace(/sk-ant-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-or-[A-Za-z0-9-_=]{8,}/g, "[REDACTED]")
-    .replace(/sk-[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/gsk_[A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/dsk[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]")
-    .replace(/AIza[A-Za-z0-9_-]{20,}/g, "[REDACTED]")
-    .replace(/\bAQ[A-Za-z0-9_-]{30,}\b/g, "[REDACTED]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [REDACTED]")
-    .replace(/authorization:\s*[A-Za-z0-9._\-+/=]+/gi, "authorization: [REDACTED]")
+  return redactSecrets(message ?? "")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 300);

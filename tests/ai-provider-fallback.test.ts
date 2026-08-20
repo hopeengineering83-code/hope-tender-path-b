@@ -63,7 +63,13 @@ describe("evaluateEnv — 8-provider coverage", () => {
 // ─── isAIEnabled() / isAIConfigured() ────────────────────────────────────────
 // These tests mock process.env directly and restore it after each test.
 
-describe("isAIEnabled — 8-provider awareness", () => {
+// These two used to assert that a DeepSeek-only or OpenAI-only environment
+// counted as "AI configured". Both providers require paid access, so on this
+// deployment neither can be contacted — and reporting AI as configured when the
+// automatic chain has nothing to call is precisely the misreport that made
+// every AI feature fail with "providers exhausted" instead of "none usable".
+// They now assert the corrected meaning: configured means REACHABLE.
+describe("isAIConfigured — reachability, not key presence", () => {
   const originalEnv = { ...process.env };
 
   afterEach(() => {
@@ -77,7 +83,7 @@ describe("isAIEnabled — 8-provider awareness", () => {
     }
   });
 
-  it("returns true when only DEEPSEEK_API_KEY is set", async () => {
+  it("returns FALSE when only DEEPSEEK_API_KEY is set — DeepSeek requires paid access", async () => {
     // "only" has to mean only — clear Z.ai and Cerebras too, or the case the
     // name describes is not the case being exercised.
     delete process.env.ZAI_API_KEY;
@@ -90,13 +96,13 @@ describe("isAIEnabled — 8-provider awareness", () => {
     delete process.env.TOGETHER_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
     process.env.DEEPSEEK_API_KEY = "dsk-test-key";
-    // Import fresh to pick up env changes — but since modules cache,
-    // we test via the env-check module which also exposes isAIConfigured.
-    const { isAIConfigured } = await import("../lib/env-check");
-    assert.equal(isAIConfigured(), true);
+    // isAIConfigured reads env at call time, so a cached module is fine.
+    const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
+    assert.equal(isAIConfigured(), false);
+    assert.equal(hasOnlyUnreachableProviderKeys(), true, "the operator must be told the key is present but unusable");
   });
 
-  it("returns true when only OPENAI_API_KEY is set", async () => {
+  it("returns FALSE when only OPENAI_API_KEY is set — OpenAI requires paid access", async () => {
     delete process.env.ZAI_API_KEY;
     delete process.env.CEREBRAS_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
@@ -107,8 +113,21 @@ describe("isAIEnabled — 8-provider awareness", () => {
     delete process.env.TOGETHER_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
     process.env.OPENAI_API_KEY = "sk-openai-test";
-    const { isAIConfigured } = await import("../lib/env-check");
+    const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
+    assert.equal(isAIConfigured(), false);
+    assert.equal(hasOnlyUnreachableProviderKeys(), true);
+  });
+
+  it("returns TRUE when a free provider is set", async () => {
+    // The positive case, which is what "AI configured" has to mean for the
+    // answer to be useful: a provider the chain may actually contact.
+    for (const key of ["ZAI_API_KEY", "CEREBRAS_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY", "TOGETHER_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY"]) {
+      delete process.env[key];
+    }
+    process.env.GROQ_API_KEY = "gsk-test-key";
+    const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
     assert.equal(isAIConfigured(), true);
+    assert.equal(hasOnlyUnreachableProviderKeys(), false);
   });
 
   it("returns false when no AI provider is set", async () => {
