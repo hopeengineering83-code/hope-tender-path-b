@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isProviderConfigFailureCategory } from "@/lib/ai-analyze/retry-service";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { createAnalysisJob } from "../../../../../lib/ai-jobs/analysis-job-service";
 import { scheduleRequestScopedAnalyzeWorkerWake } from "../../../../../lib/ai-jobs/request-scoped-engine-worker-wake";
@@ -73,11 +74,41 @@ export async function POST(
   } catch (error) {
     const message = error instanceof Error ? error.message : "AI Analyze could not be queued";
     const nonRetryable = message.startsWith("AI_ANALYZE_NON_RETRYABLE:");
+    if (!nonRetryable) {
+      return NextResponse.json(
+        { error: message, code: "AI_ANALYZE_QUEUE_FAILED" },
+        { status: 500 },
+      );
+    }
+
+    // The refusal now carries WHY, and the reply says the same thing the server
+    // decided. The previous fixed string claimed every refusal was "a
+    // non-retryable provider/configuration error" — which was wrong in both
+    // directions at once. It told users whose document had changed to go and
+    // fix their API keys, and it told users whose API key was wrong that the
+    // situation was non-retryable when repairing the key is exactly what makes
+    // it retryable again.
+    //
+    // Format: AI_ANALYZE_NON_RETRYABLE:<category>:<explanation>. The
+    // explanation may itself contain colons, so only the first two are
+    // separators.
+    const withoutPrefix = message.slice("AI_ANALYZE_NON_RETRYABLE:".length);
+    const separator = withoutPrefix.indexOf(":");
+    const category = separator === -1 ? withoutPrefix : withoutPrefix.slice(0, separator);
+    const explanation = separator === -1 ? "" : withoutPrefix.slice(separator + 1).trim();
+
+    // A provider/configuration block is a temporary state of the environment,
+    // not a property of the tender: retrying after fixing configuration is the
+    // documented path, so say so and mark it retryable.
+    const providerFixable =
+      category === "NO_PROVIDER_AVAILABLE" || isProviderConfigFailureCategory(category);
+
     return NextResponse.json({
-      error: nonRetryable
-        ? "The previous analysis failed with a non-retryable provider/configuration error. Correct the provider configuration before retrying."
-        : message,
-      code: nonRetryable ? "AI_ANALYZE_NON_RETRYABLE" : "AI_ANALYZE_QUEUE_FAILED",
-    }, { status: nonRetryable ? 422 : 500 });
+      error: explanation || "This analysis cannot be retried in its current state.",
+      code: "AI_ANALYZE_NON_RETRYABLE",
+      failureCategory: category,
+      retryableAfterProviderFix: providerFixable,
+      nextAction: providerFixable ? "FIX_AI_PROVIDER_CONFIGURATION" : "START_FRESH_ANALYSIS",
+    }, { status: 422 });
   }
 }

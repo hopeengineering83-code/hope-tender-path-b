@@ -1,7 +1,10 @@
 import { prisma, prismaReady } from "./prisma";
 import { isEmailDeliveryConfigured } from "./email";
 import { getStorageReadiness } from "./storage";
+import { checkAiProviderHealth } from "./ai-provider-health-check";
 import {
+  getAutomaticProviderOrder,
+  providerAutomaticEligibility,
   CANONICAL_AI_PROVIDER_ORDER,
   CANONICAL_AI_PROVIDER_DISPLAY_NAMES,
   isProviderConfigured,
@@ -27,13 +30,15 @@ function has(value: string | undefined | null): boolean {
   return Boolean(value && value.trim().length > 0);
 }
 
-// Required provider order — generated from the authoritative registry so it
-// never drifts from the single source of truth.
-export const REQUIRED_PROVIDER_ORDER = CANONICAL_AI_PROVIDER_DISPLAY_NAMES;
+// Required provider order — the chain that is ACTUALLY ACTIVE, generated from
+// the authoritative registry. Printing the full canonical order while zero-paid
+// mode is on would tell an operator to configure five providers the app is
+// forbidden to contact.
+export const REQUIRED_PROVIDER_ORDER = getAutomaticProviderOrder().map((p) => providerDisplayName(p));
 
 function configuredAiProviders(): string[] {
-  return CANONICAL_AI_PROVIDER_ORDER
-    .filter((p) => isProviderConfigured(p))
+  return getAutomaticProviderOrder()
+    .filter((p) => providerAutomaticEligibility(p).eligible)
     .map((p) => providerDisplayName(p));
 }
 
@@ -97,6 +102,7 @@ async function databaseChecks(): Promise<ReadinessCheck[]> {
 export async function getSystemReadiness(): Promise<SystemReadiness> {
   const checks = await databaseChecks();
   const configuredProviders = configuredAiProviders();
+  const aiHealth = checkAiProviderHealth();
   // getStorageReadiness() (lib/storage.ts) is the single canonical policy
   // resolver for storage readiness -- it already accounts for
   // isDatabaseStorageAllowed()'s default-allow-when-unset-and-no-token
@@ -130,11 +136,27 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
     {
       key: "ai_providers",
       title: "AI provider chain",
-      severity: configuredProviders.length > 0 ? "OK" : "CRITICAL",
+      // A configured key is no longer enough to pass this check.
+      //
+      // It used to be: severity was OK the moment any provider had a key, so
+      // production readiness reported green on an environment where every
+      // provider was rejecting every request. The check was green exactly when
+      // it needed to be informative.
+      //
+      // Passing now requires a provider that has completed a REAL AI Analyze
+      // extraction in this process. "Configured but unverified" is a WARNING,
+      // not a pass and not a critical failure — nothing is known to be broken,
+      // but nothing is known to work either, and the operator is told how to
+      // find out.
+      severity: aiHealth.state === "healthy" ? "OK" : aiHealth.state === "degraded" ? "WARNING" : "CRITICAL",
       requiredForProduction: true,
-      detail: configuredProviders.length > 0
-        ? `Configured providers in policy order: ${configuredProviders.join(" → ")}.`
-        : `Configure at least one provider. Policy order: ${REQUIRED_PROVIDER_ORDER.join(" → ")}.`,
+      detail: aiHealth.state === "healthy"
+        ? `Runtime-verified for AI Analyze: ${aiHealth.analysisVerifiedProviders.join(", ")}. Active chain: ${aiHealth.activeChain}.`
+        : aiHealth.state === "degraded"
+          ? `${configuredProviders.join(" → ")} configured, but no provider has completed a real AI Analyze extraction on this instance. Run the provider capability test (/api/ai-providers/diagnostics?live=1) to confirm.`
+          : aiHealth.billingBlockedProviders.length > 0
+            ? `No usable AI provider: ${aiHealth.billingBlockedProviders.join(", ")} require payment and are excluded. Configure a free provider. Active chain: ${aiHealth.activeChain}.`
+            : `Configure at least one free provider. Active chain: ${aiHealth.activeChain}.`,
     },
     {
       key: "email",

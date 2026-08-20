@@ -126,7 +126,16 @@ async function computeLivenessSnapshot() {
   // one — sign-in fails outright — so schema disagreement counts with missing
   // tables, not with the optional subsystems below it.
   const databaseUsable = allCriticalTablesExist && schema.matches;
-  const ok = databaseUsable && aiHealth.healthy && storageHealth.ready;
+  // `aiHealth.healthy` now means "a provider has completed a real AI Analyze
+  // extraction in this process", which a freshly-started serverless instance
+  // cannot have done yet. Gating `ok` on it would make /api/health flap to
+  // ok:false on every cold start of a perfectly working deployment — noise, not
+  // truth. What `ok` needs is that the AI subsystem is not BROKEN, i.e. the
+  // active chain has at least one provider that may be contacted. The stronger
+  // verified-capability claim is carried separately in `aiRuntimeVerified` and
+  // is what production readiness gates on.
+  const aiUsable = aiHealth.state !== "unhealthy";
+  const ok = databaseUsable && aiUsable && storageHealth.ready;
   const status = ok ? "healthy" : databaseUsable ? "degraded" : "unhealthy";
 
   // HTTP 200 when the DB is reachable (even if AI providers or durable
@@ -142,7 +151,7 @@ async function computeLivenessSnapshot() {
   // reason: the deployment cannot serve a login, so a monitor must not see 200.
   const httpStatus = databaseUsable ? 200 : 503;
 
-  return { tables, allCriticalTablesExist, schema, databaseUsable, aiHealth, storageHealth, ok, status, httpStatus };
+  return { tables, allCriticalTablesExist, schema, databaseUsable, aiHealth, aiUsable, storageHealth, ok, status, httpStatus };
 }
 
 /**
@@ -208,6 +217,11 @@ export async function detailedLivenessPayload() {
     tables: snapshot.tables,
     schema: snapshot.schema,
     aiProviders: aiHealth,
+    // The strong claim, kept separate from `ok`: a provider has completed a real
+    // AI Analyze extraction on this instance. Production readiness gates on
+    // this; `ok` only requires that the chain is not broken.
+    aiRuntimeVerified: aiHealth.state === "healthy",
+    aiState: aiHealth.state,
     storage: storageHealth,
     // Effective non-secret runtime configuration, so source, tests and the
     // deployed effective settings can be reconciled by an admin.
@@ -217,7 +231,9 @@ export async function detailedLivenessPayload() {
       adaptiveBatchSizeAvailable: true,
       preFilterLimit: PRE_FILTER_LIMIT,
       engineInvocationSoftDeadlineMs: 40_000,
-      providerOrder: aiHealth.configuredProviders ?? [],
+      providerOrder: aiHealth.eligibleProviders ?? [],
+      zeroPaidMode: aiHealth.zeroPaidMode,
+      activeChain: aiHealth.activeChain,
     },
     timestamp: new Date().toISOString(),
   };

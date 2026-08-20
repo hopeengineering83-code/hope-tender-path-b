@@ -1,4 +1,5 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
+import { decideManualRearm, isAnyProviderEligible, isProviderConfigFailureCategory } from "../ai-analyze/retry-service";
 import { logger } from "../observability";
 import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
 import { prisma } from "../prisma";
@@ -343,11 +344,38 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         return existing;
       }
 
-      // PARTIAL_SUCCESS or FAILED — check nonRetryable before re-arming.
-      // A non-retryable FAILED job must NOT be re-armed here; the user
-      // must be told to re-run with fresh content or contact support.
-      if (existing.status === "FAILED" && existing.retryState?.nonRetryable === true) {
-        throw new Error(`AI_ANALYZE_NON_RETRYABLE:${existing.retryState.failureCategory ?? "UNKNOWN"}`);
+      // PARTIAL_SUCCESS or FAILED — decide whether this MANUAL retry may re-arm.
+      //
+      // This used to read `retryState.nonRetryable` and refuse outright. That
+      // flag records what was true when the run stopped, and it was set for
+      // provider faults as well as source faults — so a run that died because an
+      // API key was wrong marked the tender permanently un-analysable, and
+      // fixing the key changed nothing. The tender stayed dead forever because
+      // of a problem that had already been repaired.
+      //
+      // decideManualRearm() asks whether the reason is still true NOW. Source
+      // and caller faults (byte drift, hash drift, ownership, corrupted
+      // extraction, provenance) remain terminal; provider and configuration
+      // faults re-arm once a provider is available again. Integrity is
+      // re-verified either way, because the SUCCEEDED chunks this resume reuses
+      // are evidence about one specific document.
+      if (existing.status === "FAILED" || existing.status === "PARTIAL_SUCCESS") {
+        const decision = decideManualRearm({
+          failureCategory: existing.retryState?.failureCategory ?? null,
+          nonRetryable: existing.retryState?.nonRetryable ?? false,
+          // The advisory lock above is held on (actor, tender, jobType, current
+          // content hash), and `existing` was matched on analysisInputHash ===
+          // contentHash. Reaching this line therefore already proves the caller
+          // owns the tender and the content hashes identically to the run being
+          // resumed — source-byte and content-hash drift cannot get here.
+          sourceIntegrityIntact: true,
+          providerAvailable: isAnyProviderEligible(),
+        });
+        if (!decision.allowed) {
+          throw new Error(
+            `AI_ANALYZE_NON_RETRYABLE:${decision.category ?? decision.reason}:${decision.message}`,
+          );
+        }
       }
 
       // Re-ARM for resume. claimJobForCaller (/api/ai-jobs/run-next) only claims
@@ -374,6 +402,25 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
         }
         return {} as Record<string, unknown>;
       })();
+      // Clear the stale provider-class block IN THE SAME TRANSACTION that
+      // re-arms the job. Leaving nonRetryable: true set would let the job run
+      // now but keep findJobsDueForRetry() skipping it forever afterwards —
+      // the manual path and the automatic path would disagree about whether the
+      // same job is retryable.
+      if (isProviderConfigFailureCategory(existing.retryState?.failureCategory)) {
+        await tx.aiAnalyzeRetryState.updateMany({
+          where: { jobId: existing.id },
+          data: {
+            nonRetryable: false,
+            retryCount: 0,
+            nextRetryAt: null,
+            retryReason: "Manual retry after provider configuration change — re-armed",
+            lastProviderAvailable: true,
+            lastCheckedAt: new Date(),
+          },
+        });
+      }
+
       return await tx.aiJob.update({
         where: { id: existing.id },
         data: {

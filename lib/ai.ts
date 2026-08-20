@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess, recordProviderFailure, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
+import { recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
@@ -531,6 +531,78 @@ export const ERROR_HANDLING_RESERVE_MS = 5_000;
 // AsyncLocalStorage (not a module-level variable) so concurrent provider calls
 // — e.g. parallel proposal sections — each keep their own budget instead of
 // clamping one another.
+
+// ─── Diagnostic mode ─────────────────────────────────────────────────────────
+//
+// A diagnostic must exercise the REAL adapter — same request shape, same model,
+// same timeout — or it is not testing the thing that runs in production. But it
+// must not write to the health state that governs routing, because a diagnostic
+// that found Groq rate-limited would then impose that cooldown on real analysis
+// work: asking "is this working?" would make it stop working, and an operator
+// investigating a failure would deepen it by investigating.
+//
+// The two requirements meet here. Every record* call inside callProvider goes
+// through the wrappers below, which consult an async-context flag. In diagnostic
+// mode the outcome is captured for the report and the workload state is left
+// untouched; otherwise the call passes straight through. Async context rather
+// than a module flag, so a diagnostic running concurrently with real work
+// cannot silence the real work's failures.
+type DiagnosticCapture = {
+  outcome: "success" | "failure" | null;
+  category: string | null;
+  error: unknown;
+};
+
+const diagnosticCaptureStore = new AsyncLocalStorage<DiagnosticCapture>();
+
+/** True when the current async context is a diagnostic, not real workload. */
+export function isDiagnosticContext(): boolean {
+  return diagnosticCaptureStore.getStore() !== undefined;
+}
+
+/**
+ * Run `fn` as a diagnostic: the real adapter executes, and its outcome is
+ * returned instead of being written to the routing health state.
+ */
+export async function runAsDiagnostic<T>(
+  fn: () => Promise<T>,
+): Promise<{ result: T; capture: DiagnosticCapture }> {
+  const capture: DiagnosticCapture = { outcome: null, category: null, error: null };
+  const result = await diagnosticCaptureStore.run(capture, fn);
+  return { result, capture };
+}
+
+function recordProviderSuccess(provider: AiProviderName): void {
+  const capture = diagnosticCaptureStore.getStore();
+  if (capture) {
+    capture.outcome = "success";
+    capture.category = null;
+    return;
+  }
+  recordProviderSuccessRaw(provider);
+}
+
+function recordProviderAnalysisSuccess(provider: AiProviderName): void {
+  const capture = diagnosticCaptureStore.getStore();
+  if (capture) {
+    capture.outcome = "success";
+    capture.category = null;
+    return;
+  }
+  recordProviderAnalysisSuccessRaw(provider);
+}
+
+function recordProviderFailure(provider: AiProviderName, error: unknown): string {
+  const capture = diagnosticCaptureStore.getStore();
+  if (capture) {
+    capture.outcome = "failure";
+    capture.category = classifyAiError(error);
+    capture.error = error;
+    return capture.category;
+  }
+  return recordProviderFailureRaw(provider, error);
+}
+
 const providerDeadlineStore = new AsyncLocalStorage<number>();
 
 /** Smallest budget worth starting a provider request with. */
@@ -632,7 +704,16 @@ function maxOutputTokensForUseCase(useCase: AiUseCase = "default", provider?: Ai
   return 16000;
 }
 
-async function callProvider(
+/**
+ * Invoke ONE provider through its real adapter.
+ *
+ * Exported so the capability diagnostic can exercise exactly this path rather
+ * than reimplementing the wire calls. The previous diagnostic built its own
+ * fetches with its own model defaults, which is how it could report a provider
+ * healthy on a model AI Analyze never uses — the two had no code in common, so
+ * there was nothing forcing them to agree.
+ */
+export async function callProvider(
   name: AiProviderName,
   prompt: string,
   opts?: { systemPrompt?: string; geminiModel?: string; useCase?: AiUseCase },
@@ -760,54 +841,27 @@ async function callProvider(
   }
 }
 
-// ─── Provider self-test (live diagnostic) ────────────────────────────────────
-// Definitively answers "is this provider actually working right now?" — the
-// question the recovery UI needs when AI Analyze keeps failing. Unconfigured
-// providers return instantly without an outbound call; configured ones make a
-// single tiny "fast" request and report ok / redacted-failure-reason. Never
-// returns or logs key values.
+// ─── Provider self-test ──────────────────────────────────────────────────────
+//
+// The real capability test lives in lib/ai-provider-capability-test.ts, which
+// runs connectivity, AI-Analyze structured output and proposal generation
+// through callProvider() above. This module keeps only the result type and a
+// thin re-export, so nothing depends on the old ping-only implementation.
+//
+// That implementation answered "is this provider working?" by sending
+// "Reply with the single word: OK" and treating any non-empty reply as a pass.
+// A provider can pass that and still be unable to return the structured JSON
+// AI Analyze needs — the ping proves the key and the route, not the capability.
+// It was also recording its findings into the routing health state, so running
+// the diagnostic imposed real cooldowns on real work.
 export type ProviderSelfTestResult = {
   provider: AiProviderName;
   rank: number;
   configured: boolean;
   ok: boolean;
-  // Redacted, human-readable reason on failure / "not configured"; null on success.
   reason: string | null;
   latencyMs: number | null;
 };
-
-const PROVIDER_SELF_TEST_PROMPT = "Reply with the single word: OK";
-
-export async function selfTestProvider(provider: AiProviderName, rank: number): Promise<ProviderSelfTestResult> {
-  if (!registryIsProviderConfigured(provider)) {
-    return { provider, rank, configured: false, ok: false, reason: "Not configured — no API key set", latencyMs: null };
-  }
-  const startedAt = Date.now();
-  let r: string | null = null;
-  try {
-    // callProvider never throws (each branch catches + records the failure),
-    // but guard anyway so one provider can't break the whole diagnostic.
-    r = await callProvider(provider, PROVIDER_SELF_TEST_PROMPT, { useCase: "fast" });
-  } catch {
-    r = null;
-  }
-  const latencyMs = Date.now() - startedAt;
-  if (r && r.trim().length > 0) {
-    return { provider, rank, configured: true, ok: true, reason: null, latencyMs };
-  }
-  // callProvider already recorded the failure with a redacted reason.
-  const snap = getProviderRuntimeSnapshot(provider);
-  const reason = snap.lastSafeErrorMessage ?? snap.lastErrorCategory ?? "No response (provider returned empty)";
-  return { provider, rank, configured: true, ok: false, reason, latencyMs };
-}
-
-export async function selfTestAllProviders(): Promise<ProviderSelfTestResult[]> {
-  // Configured providers are tested live in parallel; unconfigured ones resolve
-  // instantly. Order follows the canonical provider chain.
-  return Promise.all(
-    CANONICAL_AI_PROVIDER_ORDER.map((p, i) => selfTestProvider(p, i + 1)),
-  );
-}
 
 export async function generateWithFallback(
   prompt: string,
