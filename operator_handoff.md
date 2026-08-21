@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-21 17:35 UTC — Codex (immutable zero-paid and two-provider readiness gate)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; continued from exact remote head `2277165016c258fe95b4c503503eb51436a6c946`.
+- **Scope / files changed:** closed two source-level gaps found in the continued audit: a stale `AI_ZERO_PAID_MODE=false` Vercel override could re-enable the full paid chain, and health declared success with only one analysis-capable provider despite the required 429 redundancy. Zero-paid is now immutable, the automatic chain can never include the paid tail, and healthy/runtime-ready requires two analysis-verified free providers. Files: `lib/ai-provider-catalog.cjs`, `lib/ai-provider-registry.ts`, `lib/ai-provider-health-check.ts`, `tests/zero-paid-provider-chain.test.ts`, and this handoff.
+- **Tests actually run:** focused zero-paid/health/reconciliation suite passed **42/42** after the final import correction. Typecheck, lint, release-integrity, and exact-head CI are required on the committed SHA.
+- **Risks / assumptions:** this deliberately removes the unsupported paid-mode escape hatch; paid providers remain diagnostic-only `BILLING_BLOCKED`. It does not fabricate the still-missing live evidence: two real free providers and same-tender Preview completion still require an authorized owner session and project-scoped environment access.
+- **Next action:** push once, require exact-head CI/Preview, then use authorized Preview diagnostics to establish the redundant provider pair and run the retained tender to final package.
+- **Merge status:** **UNSAFE / DO NOT MERGE / DO NOT PROMOTE PRODUCTION** until live provider and same-tender acceptance pass.
+
 ### 2026-08-21 17:30 UTC — Codex (provider-policy recheck and stale-truth repair)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; rechecked from `abc1e32f4f7e72256d2fe419ea1a29624c40ff24` without rebasing or touching Production.

@@ -33,7 +33,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { generateWithFallback, NoAiProviderReadyError } from "../lib/ai";
 import { resetProviderHealth, deriveProviderStatus, isBillingLockedOut } from "../lib/ai-provider-health";
-import { getAutomaticProviderOrder, PAID_ACCESS_PROVIDERS } from "../lib/ai-provider-registry";
+import {
+  getAutomaticProviderOrder,
+  isZeroPaidMode,
+  PAID_ACCESS_PROVIDERS,
+  providerAutomaticEligibility,
+} from "../lib/ai-provider-registry";
 
 const ALL_KEYS = [
   "GEMINI_API_KEY", "GROQ_API_KEY", "GROQ_PROPOSAL_MODEL", "MISTRAL_API_KEY", "ZAI_API_KEY",
@@ -111,6 +116,12 @@ afterEach(() => {
 });
 
 describe("ZERO-PAID scenario — AI Analyze completes on the first usable free provider", () => {
+  it("cannot be disabled by a stale environment override", () => {
+    const env = { NODE_ENV: "test", AI_ZERO_PAID_MODE: "false" } as NodeJS.ProcessEnv;
+    assert.equal(isZeroPaidMode(env), true);
+    assert.deepEqual(getAutomaticProviderOrder(env), ["gemini", "groq", "mistral", "zai", "openrouter"]);
+    assert.equal(providerAutomaticEligibility("openai", env).eligible, false);
+  });
   it("succeeds through Groq when Gemini is unconfigured, and never contacts a paid endpoint", async () => {
     applyScenario();
     const scenario = installScenarioFetch();

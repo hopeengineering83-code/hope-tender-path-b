@@ -774,7 +774,7 @@ export function openRouterModelValidity(env: NodeJS.ProcessEnv = process.env): O
 export const ZERO_PAID_AUTOMATIC_ORDER: readonly AiProviderName[] = CATALOG_ZERO_PAID_ORDER;
 export const PAID_ACCESS_PROVIDERS: readonly AiProviderName[] = CATALOG_PAID_PROVIDERS;
 
-/** True when strict zero-paid operation is in force. Defaults to true. */
+/** True because strict zero-paid operation is an immutable deployment policy. */
 export function isZeroPaidMode(env: NodeJS.ProcessEnv = process.env): boolean {
   return catalogIsZeroPaidMode(env);
 }
@@ -785,8 +785,8 @@ export function isPaidAccessProvider(provider: AiProviderName): boolean {
 }
 
 /**
- * The provider order the automatic fallback chain may use right now.
- * In zero-paid mode this is the free chain; otherwise the full canonical order.
+ * The provider order the automatic fallback chain may use. It is always the
+ * free chain; the full canonical order exists only for enumeration/diagnostics.
  */
 export function getAutomaticProviderOrder(
   env: NodeJS.ProcessEnv = process.env,

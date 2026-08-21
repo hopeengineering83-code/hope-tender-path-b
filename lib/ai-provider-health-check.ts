@@ -12,7 +12,8 @@
  * this process (see lib/ai-provider-capability-test.ts), and it distinguishes
  * three states rather than two:
  *
- *   healthy   — at least one provider has a verified ANALYSIS capability.
+ *   healthy   — at least two providers have verified ANALYSIS capability, so
+ *               one temporary 429 cannot exhaust the application.
  *   degraded  — providers are configured and eligible, but nothing has been
  *               verified yet on this instance. Not a failure: the first real
  *               AI Analyze or an operator diagnostic proves it either way.
@@ -68,7 +69,7 @@ export function checkAiProviderHealth(): AiProviderHealthResult {
 
     const verified = analysisUsableProviders();
 
-    if (verified.length > 0) {
+    if (verified.length >= 2) {
       return {
         healthy: true,
         state: "healthy",
@@ -110,7 +111,9 @@ export function checkAiProviderHealth(): AiProviderHealthResult {
       totalProviders: chain.length,
       zeroPaidMode,
       activeChain,
-      message: `${eligible.length} provider(s) configured but none verified on this instance yet — run the provider capability test or the first AI Analyze to confirm.`,
+      message: verified.length === 1
+        ? `Only ${verified[0]} is verified for AI Analyze. Configure and verify a second free provider so one temporary failure cannot exhaust the chain.`
+        : `${eligible.length} provider(s) configured but none verified on this instance yet — run the provider capability test or the first AI Analyze to confirm.`,
     };
   } catch (e) {
     return {
@@ -128,9 +131,9 @@ export function checkAiProviderHealth(): AiProviderHealthResult {
   }
 }
 
-/** True when at least one provider has a runtime-verified analysis capability. */
+/** True when the required redundant pair has runtime-verified analysis capability. */
 export function hasRuntimeVerifiedAnalysisProvider(): boolean {
-  return analysisUsableProviders().length > 0;
+  return analysisUsableProviders().length >= 2;
 }
 
 export { isProviderAnalysisUsable };
