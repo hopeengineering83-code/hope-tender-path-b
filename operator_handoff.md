@@ -80,10 +80,10 @@ Never claim a fix is complete unless the stated tests passed.
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from `0ac4ab0a32e4df78c69c35f402863a46e897880a`.
 - **Scope:** removed residual zero-paid/free-model policy code and contradictory operator text after the full ten-provider chain was restored. Capability reports no longer calculate or expose an app-owned free-model policy, UI/readiness descriptions no longer claim later providers are forbidden, and all provider capability diagnostics iterate the same canonical automatic chain. Preserved actual billing lockouts, exact configured models, provider fall-through, retry recovery, and all source/tenant/artifact fail-closed controls.
 - **Files changed:** `lib/ai-provider-catalog.cjs`, `lib/ai-provider-registry.ts`, `lib/ai-provider-capability-test.ts`, `lib/ai.ts`, `lib/ai-analyze/retry-service.ts`, provider health/readiness modules, AI health UI, environment scripts, production runbook, affected regression tests, and this handoff.
-- **Tests:** focused provider/readiness/retry suite passed 217/217; Prisma generation, typecheck, lint, and release-integrity passed (435 routes and 1,590 files). Exact-head CI/Preview required after push.
-- **Risks / blockers:** no known source-level provider-policy blocker; new exact-head CI, authenticated Playwright, route/screenshot audit, security audit, and Preview deployment must complete green before declaring final acceptance.
-- **Next action:** push the committed exact head and require all PR checks green; do not merge or promote Production.
-- **Merge status:** DO NOT MERGE pending exact-head evidence and owner review.
+- **Tests:** focused provider/readiness/retry suite passed 217/217; Prisma generation, typecheck, lint, and release-integrity passed (435 routes and 1,590 files). Exact-head CI passed 10,240/10,240 unit and PostgreSQL integration tests plus 185 authenticated/anonymous/golden/cross-user Playwright tests (3 intentionally skipped); build, migrations/idempotency/zero-drift, security audit, and route/screenshot capture passed. Preview `/api/version` and `/api/health` returned HTTP 200 at the exact SHA; deployment `dpl_HjrZJpDa19Jzb3XRv88T3jk9KCP1`.
+- **Risks / blockers:** no known provider-policy, CI, Preview, or route/screenshot blocker remains. PR stays draft for owner review.
+- **Next action:** owner review only; do not merge or promote Production without explicit approval.
+- **Merge status:** SAFE FOR OWNER REVIEW; DO NOT MERGE OR PROMOTE PRODUCTION without owner approval.
 
 ### 2026-08-21 17:42 UTC — Codex (eligible-provider redundancy reaches environment readiness)
 
