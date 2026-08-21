@@ -3,7 +3,9 @@ import {
   CANONICAL_AI_PROVIDER_CHAIN_DISPLAY,
   getProviderRegistry,
   getProviderModel,
+  getAutomaticProviderOrder,
   isProviderConfigured,
+  providerAutomaticEligibility,
   providerDisplayName,
 } from "./ai-provider-registry";
 // Effective timeout values from the centralized timeout module. These are
@@ -181,12 +183,14 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  const anyProviderConfigured = CANONICAL_AI_PROVIDER_ORDER.some((provider) => isProviderConfigured(provider));
-  if (!anyProviderConfigured) {
-    const keyNames = CANONICAL_AI_PROVIDER_ORDER
-      .map((provider) => getProviderRegistry()[provider].env.apiKey)
-      .join(", ");
-    blockers.push(`No AI provider is configured. Set at least one of: ${keyNames}.`);
+  const eligibleProviders = getAutomaticProviderOrder().filter(
+    (provider) => providerAutomaticEligibility(provider).eligible,
+  );
+  if (eligibleProviders.length < 2) {
+    blockers.push(
+      `Only ${eligibleProviders.length} eligible zero-paid AI provider(s) are configured. ` +
+      "Configure at least two free providers and verify their runtime models; paid-provider keys do not satisfy readiness.",
+    );
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");
   if (!present("SESSION_SECRET")) blockers.push("SESSION_SECRET is missing.");

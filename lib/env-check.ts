@@ -6,19 +6,16 @@ import {
   PROVIDER_API_KEY_ENV,
   automaticProviderOrder,
 } from "./ai-provider-catalog.cjs";
+import { providerAutomaticEligibility } from "./ai-provider-registry";
 /**
  * Startup environment validation.
  * Imported at the top of lib/prisma.ts so it runs on every cold start.
  * Fails LOUDLY — throws at module load time so the process crashes with
  * a clear message rather than silently degrading.
  *
- * ARCHITECTURE: at least one automatic AI provider key is required in production:
- *   - GEMINI_API_KEY / OPENROUTER_API_KEY / OPENAI_API_KEY / GROQ_API_KEY /
- *     DEEPSEEK_API_KEY / ANTHROPIC_API_KEY. The canonical automatic chain
- *     (single source of truth: lib/ai-provider-registry.ts) is Gemini →
- *     OpenRouter → OpenAI → Groq → DeepSeek → Anthropic/Claude. Z.ai,
- *     Cerebras, Mistral, and Together are manual diagnostics/adapters only and
- *     must not satisfy automatic runtime readiness.
+ * ARCHITECTURE: at least two eligible zero-paid providers are required in
+ * production. Key presence alone is insufficient: paid providers and free
+ * providers with unproven runtime models do not satisfy readiness.
  *
  * Without an automatic provider key:
  *   - Every imported expert/project is classified as REGEX_DRAFT
@@ -129,12 +126,15 @@ export function evaluateEnv(env: Record<string, string | undefined> = process.en
     }
   }
 
-  // At least one AI provider key (any of the 10 automatic providers).
-  const hasAnyAIKey = AI_PROVIDER_KEYS.some(({ name }) => Boolean(env[name]));
-  if (!hasAnyAIKey) {
+  const processEnv = env as NodeJS.ProcessEnv;
+  const eligibleFreeProviders = automaticProviderOrder(processEnv).filter(
+    (provider) => providerAutomaticEligibility(provider, processEnv).eligible,
+  );
+  if (eligibleFreeProviders.length < 2) {
     const message =
-      `At least one AI provider key is required (${AI_PROVIDER_KEYS.map((k) => k.name).join(", ")}). ` +
-      "Without any AI key, all imported records are REGEX_DRAFT and BLOCKED from final proposal generation.";
+      `At least two eligible zero-paid AI provider keys/models are required; found ${eligibleFreeProviders.length}. ` +
+      "Configure two of Gemini, Groq, Mistral, Z.ai, or OpenRouter with an explicitly verified ':free' model. " +
+      "Paid-provider keys and unknown-cost models never satisfy readiness.";
     if (isProd) errors.push(message);
     else if (isVercelPreview && strictPreview) errors.push(message);
     else warnings.push(message);

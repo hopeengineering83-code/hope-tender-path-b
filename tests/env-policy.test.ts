@@ -2,8 +2,8 @@
 //
 // The runtime env-check (lib/env-check.ts) and the build-time check
 // (scripts/check-env.mjs) must agree:
-//   - production REQUIRES DATABASE_URL, SESSION_SECRET, AND at least one
-//     AI key (ANTHROPIC_API_KEY or GEMINI_API_KEY)
+//   - production requires DATABASE_URL, SESSION_SECRET, and two eligible
+//     zero-paid AI providers
 //   - SESSION_SECRET must be ≥32 chars in production
 //   - DATABASE_URL must start with postgresql:// or postgres://
 //   - preview deployments warn unless STRICT_PREVIEW_ENV_CHECK=true
@@ -22,25 +22,26 @@ function baseEnv(overrides: Record<string, string | undefined> = {}): Record<str
     DATABASE_URL: "postgresql://app:pw@db.example.com/app",
     SESSION_SECRET: STRONG_SECRET,
     GEMINI_API_KEY: "AIzaFakeKey1234567890123456789012345678901",
+    MISTRAL_API_KEY: "mistral-test",
     ...overrides,
   };
 }
 
 describe("evaluateEnv — production policy", () => {
-  it("ok=true with DATABASE_URL + SESSION_SECRET + AI key", () => {
+  it("ok=true with DATABASE_URL + SESSION_SECRET + two free providers", () => {
     const r = evaluateEnv(baseEnv());
     assert.equal(r.ok, true, r.errors.join("; "));
   });
 
-  it("fails when both AI keys are missing", () => {
-    const r = evaluateEnv(baseEnv({ GEMINI_API_KEY: undefined, ANTHROPIC_API_KEY: undefined }));
+  it("fails when free provider redundancy is missing", () => {
+    const r = evaluateEnv(baseEnv({ GEMINI_API_KEY: undefined, MISTRAL_API_KEY: undefined }));
     assert.equal(r.ok, false);
     assert.match(r.errors.join("\n"), /AI provider key/i);
   });
 
-  it("passes when only ANTHROPIC_API_KEY is set", () => {
-    const r = evaluateEnv(baseEnv({ GEMINI_API_KEY: undefined, ANTHROPIC_API_KEY: "sk-ant-test" }));
-    assert.equal(r.ok, true, r.errors.join("; "));
+  it("rejects a paid-only Anthropic configuration", () => {
+    const r = evaluateEnv(baseEnv({ GEMINI_API_KEY: undefined, MISTRAL_API_KEY: undefined, ANTHROPIC_API_KEY: "sk-ant-test" }));
+    assert.equal(r.ok, false);
   });
 
   it("fails when DATABASE_URL is missing", () => {

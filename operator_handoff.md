@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-21 17:42 UTC — Codex (eligible-provider redundancy reaches environment readiness)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; continued from exact remote head `cc6624fbeed87b6fcbe0f864d52882bef4ce2dd7`.
+- **Scope / files changed:** closed the remaining readiness contradiction: startup/environment readiness counted any one of ten keys, so paid-only keys or a single free provider could still report deployment-ready while routing correctly refused them. `evaluateEnv()` and the operator readiness surface now require two provider-policy-eligible zero-paid configurations, including exact runtime-model eligibility. Updated behavioral expectations in `tests/env-policy.test.ts` and `tests/ai-provider-fallback.test.ts`.
+- **Tests actually run:** focused environment/provider/health suite passed **60/60**; typecheck passed; lint passed; release-integrity passed (435 routes, 1,590 files); diff check passed.
+- **Risks / assumptions:** Preview remains relaxed unless `STRICT_PREVIEW_ENV_CHECK=true`, so an operator can deploy diagnostics to repair configuration; Production fails closed. Live capability still cannot be inferred from configuration, so two real structured-analysis successes and same-tender completion remain mandatory.
+- **Next action:** push, require exact-head CI/Preview, then run authenticated provider diagnostics and retained-tender acceptance when the project-scoped session is available.
+- **Merge status:** **UNSAFE / DO NOT MERGE / DO NOT PROMOTE PRODUCTION** pending live provider and workflow proof.
+
 ### 2026-08-21 17:35 UTC — Codex (immutable zero-paid and two-provider readiness gate)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; continued from exact remote head `2277165016c258fe95b4c503503eb51436a6c946`.
