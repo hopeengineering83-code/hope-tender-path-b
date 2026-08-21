@@ -733,7 +733,7 @@ export async function callProvider(
 ): Promise<string | null> {
   const useCase = opts?.useCase ?? "proposal";
   const exactModel = opts?.modelOverride ?? getProviderModel(name, useCase);
-  if (isZeroPaidMode() && (!providerAutomaticEligibility(name).eligible || !isModelProvenFree(name, exactModel))) {
+  if (!providerAutomaticEligibility(name).eligible) {
     return null;
   }
   const result = await callProviderInner(name, prompt, opts);
@@ -1108,15 +1108,6 @@ export async function generateWithFallback(
     // zero-paid order — so the loop above never saw them and `failureDetails`
     // cannot mention them. Their keys have to be read directly, or the operator
     // gets "no AI provider is configured" while looking at five configured keys.
-    const configuredPaid = PAID_ACCESS_PROVIDERS.filter((p) => readProviderKey(p));
-    if (configuredPaid.length > 0) {
-      failureDetails.push(
-        `${configuredPaid.join(", ")} ${configuredPaid.length === 1 ? "is" : "are"} configured but require paid access and are excluded while zero-paid mode is on.`,
-      );
-      failureDetails.push(
-        "No free provider is configured. Set GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY.",
-      );
-    }
   }
   throw new NoAiProviderReadyError({
     useCase,
@@ -1514,13 +1505,11 @@ async function generateWithTogether(
 async function generateWithOpenRouter(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000, modelOverride?: string): Promise<string | null> {
   const key = getOpenRouterApiKey();
   if (!key) return null;
-  // getOpenRouterModel() returns null when the configured model is missing,
-  // `openrouter/auto`, or any non-`:free` model. In that case we must NOT send
-  // a request that could create paid usage — record the configuration problem
-  // and skip the provider.
+  // Use the exact configured OpenRouter model. Missing configuration skips this
+  // provider and allows the canonical chain to continue.
   const model = modelOverride ?? getOpenRouterModel();
   if (!model) {
-    recordProviderFailure("openrouter", new Error("OpenRouter CONFIGURATION_INVALID: model is not an explicit ':free' model"));
+    recordProviderFailure("openrouter", new Error("OpenRouter CONFIGURATION_INVALID: model is not configured"));
     return null;
   }
   return generateOpenAICompatible({

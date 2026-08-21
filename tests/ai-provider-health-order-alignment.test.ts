@@ -28,7 +28,7 @@ import {
 import { CANONICAL_AI_PROVIDER_CHAIN, CANONICAL_AI_PROVIDER_RANK } from "../lib/ai-provider-policy";
 
 const CANONICAL_CHAIN = [
-  "gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic",
+  "gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic",
 ] as const;
 
 before(() => { resetProviderHealth(); });
@@ -248,12 +248,12 @@ describe("AiProviderStatus enum + deriveProviderStatus()", () => {
     assert.equal(deriveProviderStatus("mistral"), "UNKNOWN");
   });
 
-  it("OpenRouter with an invalid (non-:free) model surfaces CONFIGURATION_INVALID", () => {
+  it("OpenRouter accepts exact configured model identifiers", () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     process.env.OPENROUTER_PROPOSAL_MODEL = "openai/gpt-4o-mini";
-    assert.equal(deriveProviderStatus("openrouter"), "CONFIGURATION_INVALID");
+    assert.equal(deriveProviderStatus("openrouter"), "CONFIGURED");
     process.env.OPENROUTER_PROPOSAL_MODEL = "openrouter/auto";
-    assert.equal(deriveProviderStatus("openrouter"), "MODEL_UNAVAILABLE");
+    assert.equal(deriveProviderStatus("openrouter"), "CONFIGURED");
   });
 });
 
@@ -375,7 +375,7 @@ describe("scripts/check-env.mjs describes the ACTIVE chain, generated not restat
     assert.doesNotMatch(src, /const CANONICAL_CHAIN = "Z\.ai/);
   });
 
-  it("actually prints the current order and marks paid providers as excluded", () => {
+  it("actually prints the current full automatic order", () => {
     // Runs the real script rather than reading its source: the point of
     // generating this text is that its OUTPUT is right, and only executing it
     // proves that.
@@ -395,19 +395,10 @@ describe("scripts/check-env.mjs describes the ACTIVE chain, generated not restat
     });
     const output = `${result.stdout}${result.stderr}`;
 
-    assert.match(output, /Gemini → Groq → Mistral → Z\.ai GLM → OpenRouter → deterministic draft fallback/);
-    assert.match(output, /GROQ_API_KEY[\s\S]*?Rank 2 free-tier provider/);
-    assert.match(output, /ZAI_API_KEY[\s\S]*?Rank 4 free-tier provider/);
-    // Paid providers must say so, in the place an operator is deciding which
-    // key to go and find.
-    for (const key of ["CEREBRAS_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]) {
-      assert.match(
-        output,
-        new RegExp(`${key}[\\s\\S]*?Requires PAID access`),
-        `${key} must be described as paid-access and excluded`,
-      );
-    }
-    assert.match(output, /OPENROUTER_API_KEY[\s\S]*?free ONLY with a verified ':free' model/);
+    assert.match(output, /Gemini → Groq → Mistral → Z\.ai GLM → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic \/ Claude → deterministic draft fallback/);
+    assert.match(output, /GROQ_API_KEY[\s\S]*?Rank 2 provider/);
+    assert.match(output, /CEREBRAS_API_KEY[\s\S]*?Rank 5 provider/);
+    assert.match(output, /OPENROUTER_API_KEY[\s\S]*?Rank 6 provider/);
   });
 });
 

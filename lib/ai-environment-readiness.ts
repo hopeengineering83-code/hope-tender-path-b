@@ -87,8 +87,8 @@ function status(
  * status("GROQ_API_KEY", ...)
  * status("MISTRAL_API_KEY", ...)
  * status("ZAI_API_KEY", ...)
- * status("OPENROUTER_API_KEY", ...)
  * status("CEREBRAS_API_KEY", ...)
+ * status("OPENROUTER_API_KEY", ...)
  * status("OPENAI_API_KEY", ...)
  * status("TOGETHER_API_KEY", ...)
  * status("DEEPSEEK_API_KEY", ...)
@@ -133,7 +133,7 @@ function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
         "ai",
         severity,
         provider === "openrouter" && override.name === entry.env.proposalModel
-          ? "OpenRouter proposal model override. It must be an explicit ':free' model; paid and automatic routing values are rejected."
+          ? "OpenRouter proposal model override. The exact configured model is used without silent substitution."
           : hasDefault
           ? `${entry.displayName} ${override.label} override (effective default: ${override.fallback}).`
           : `${entry.displayName} ${override.label} override; no registry default is configured.`,
@@ -186,10 +186,9 @@ export function getAIEnvironmentReadiness(): AIEnvironmentReadiness {
   const eligibleProviders = getAutomaticProviderOrder().filter(
     (provider) => providerAutomaticEligibility(provider).eligible,
   );
-  if (eligibleProviders.length < 2) {
+  if (eligibleProviders.length < 1) {
     blockers.push(
-      `Only ${eligibleProviders.length} eligible zero-paid AI provider(s) are configured. ` +
-      "Configure at least two free providers and verify their runtime models; paid-provider keys do not satisfy readiness.",
+      "No AI provider is normally configured with an effective runtime model.",
     );
   }
   if (!present("DATABASE_URL")) blockers.push("DATABASE_URL is missing.");

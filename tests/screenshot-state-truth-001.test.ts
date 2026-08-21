@@ -29,7 +29,7 @@ const currentnessSrc = readFileSync("lib/engine/tender-currentness.ts", "utf8");
 const aiEnvSrc = readFileSync("lib/ai-environment-readiness.ts", "utf8");
 const systemSrc = readFileSync("lib/system-readiness.ts", "utf8");
 
-const EXPECTED_ORDER = ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"];
+const EXPECTED_ORDER = ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"];
 
 describe("FINDING-SCREENSHOT-STATE-001 — State Truth and AI Runtime", () => {
   describe("dashboard critical-blockers count uses canonical currentness", () => {

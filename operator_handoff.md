@@ -61,7 +61,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 - Tender-controlled scope only. Never invent tender facts or evidence.
 - Company Vault is factual evidence only; no automatic all-Vault fallback.
-- Strict zero-paid provider order: Gemini → Groq → Mistral → Z.ai → OpenRouter (verified `:free` model only) → Cerebras → OpenAI → Together → DeepSeek → Anthropic. Only the first five may enter the automatic chain; the paid-access tail is visible as `BILLING_BLOCKED` and is never contacted. This is the canonical order defined in `lib/ai-provider-catalog.cjs`.
+- Provider order: Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic → deterministic draft fallback. All configured providers participate automatically in this order; exact configured model IDs are used without custom free-model filtering. Defined in `lib/ai-provider-catalog.cjs`.
 - Regex, fallback, partial, legacy, and unpromoted analysis must not unlock generation, export, or Final ZIP.
 - Only promoted `AI_SUCCEEDED` may unlock generation/export after all gates pass.
 - Critical metadata and mandatory requirements need active source file, page, and meaningful quote.
@@ -1777,3 +1777,14 @@ Both reported by Hope from the deployed Preview on commit `1d1d7d0d`, with scree
 - **Merge status:** DO NOT MERGE — draft; no Production deployment performed.
 
 Follow-up exact-head CI exposed legitimate test-suite contention: another real global worker can atomically win the focused job before its injected wake callback. The regression now accepts either claimant only when the same durable job is already `RUNNING`, then completes and verifies the single job; it still fails if no worker claimed it. No production behavior changed.
+
+### 2026-08-21 UTC — Codex
+
+- **Mode:** owner-directed provider routing regression repair and exact-head validation.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting at `96c5ad6d0b9708ea71ad9506bc0a1faa377a025f`.
+- **Scope:** restored the single canonical automatic order Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic, with deterministic draft last; removed the newly introduced zero-paid/free-model and two-provider readiness blockers while retaining exact configured model IDs, normal configuration checks, failure fall-through, provider billing-error handling, retry recovery, secret redaction, and all source/tenant/artifact integrity gates.
+- **Files changed:** provider catalog/registry/runtime/capability/health/readiness modules, provider diagnostics and validation scripts, shared operator documentation, and affected regression expectations.
+- **Tests:** focused provider/readiness/retry suite 307/307 passed; Prisma generation, typecheck, lint, release-integrity, and production build passed. Full local PostgreSQL execution is safely refused because the configured database is a remote Neon host; exact-head CI supplies disposable PostgreSQL and remains required after push.
+- **Risks / blockers:** exact-head CI, automated Preview, and route/screenshot audit must finish green before merge readiness can be assessed. No app restart, merge, or Production promotion performed.
+- **Next action:** commit and push the narrow repair, then require all exact-head CI/Preview checks to complete green; fix only demonstrated root causes.
+- **Merge status:** DO NOT MERGE pending exact-head evidence and owner review.

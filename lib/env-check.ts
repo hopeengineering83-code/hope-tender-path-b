@@ -13,9 +13,9 @@ import { providerAutomaticEligibility } from "./ai-provider-registry";
  * Fails LOUDLY — throws at module load time so the process crashes with
  * a clear message rather than silently degrading.
  *
- * ARCHITECTURE: at least two eligible zero-paid providers are required in
- * production. Key presence alone is insufficient: paid providers and free
- * providers with unproven runtime models do not satisfy readiness.
+ * ARCHITECTURE: at least one normally configured provider is required in
+ * production. Providers participate in the single canonical fallback order;
+ * model identifiers are used exactly as configured.
  *
  * Without an automatic provider key:
  *   - Every imported expert/project is classified as REGEX_DRAFT
@@ -127,14 +127,13 @@ export function evaluateEnv(env: Record<string, string | undefined> = process.en
   }
 
   const processEnv = env as NodeJS.ProcessEnv;
-  const eligibleFreeProviders = automaticProviderOrder(processEnv).filter(
+  const configuredProviders = automaticProviderOrder(processEnv).filter(
     (provider) => providerAutomaticEligibility(provider, processEnv).eligible,
   );
-  if (eligibleFreeProviders.length < 2) {
+  if (configuredProviders.length < 1) {
     const message =
-      `At least two eligible zero-paid AI provider keys/models are required; found ${eligibleFreeProviders.length}. ` +
-      "Configure two of Gemini, Groq, Mistral, Z.ai, or OpenRouter with an explicitly verified ':free' model. " +
-      "Paid-provider keys and unknown-cost models never satisfy readiness.";
+      "At least one normally configured AI provider key/model is required. " +
+      "A provider with a missing effective model does not satisfy readiness.";
     if (isProd) errors.push(message);
     else if (isVercelPreview && strictPreview) errors.push(message);
     else warnings.push(message);

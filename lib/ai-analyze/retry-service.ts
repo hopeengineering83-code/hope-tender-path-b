@@ -193,7 +193,6 @@ export function isAnyProviderEligible(
   return getAutomaticProviderOrder(env).some((provider) => {
     if (!providerAutomaticEligibility(provider, env).eligible) return false;
     const exactModel = getProviderModel(provider, useCase, env);
-    if (!isModelProvenFree(provider, exactModel)) return false;
     if (isBillingLockedOut(provider) || isProviderCooledDown(provider)) return false;
     return true;
   });

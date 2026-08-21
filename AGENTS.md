@@ -19,29 +19,17 @@ This repository is operated by more than one coding tool. Before any work, read:
 - **Main is stable.** All 5 clusters (A-E) from DECISIONS_NEEDED.md are resolved.
 - **Recent merges:** #1029 (action icons), #1028 (screenshot contradictions), #1027 (generation/buildplan/export truth), #1026 (lifecycle truth), #1025 (canonical readiness counts).
 
-## AI provider policy — STRICT ZERO-PAID
+## AI provider policy
 
-Automatic chain (the only providers the app may contact):
-
-```
-Gemini → Groq → Mistral → Z.ai → [OpenRouter, only with a verified ":free" model]
-       → deterministic draft fallback
-```
-
-Paid-access providers — enumerated and reported on, never contacted:
-`Cerebras · OpenAI · Together · DeepSeek · Anthropic`. They show as
-`BILLING_BLOCKED` so an operator can see the key is recognised and deliberately
-unused.
-
-Full canonical enumeration (fixes each provider's rank):
+Canonical automatic chain:
 
 ```
-Gemini → Groq → Mistral → Z.ai → OpenRouter → Cerebras → OpenAI → Together → DeepSeek → Anthropic
+Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic → deterministic draft fallback
 ```
 
-Defined in `lib/ai-provider-catalog.cjs`. `AI_ZERO_PAID_MODE` defaults ON — a
-missing value fails closed to spending nothing. OCR is separate from normal AI
-routing.
+Defined in `lib/ai-provider-catalog.cjs`. Missing or failing providers fall
+through automatically; configured model identifiers are used exactly, and the
+deterministic draft runs only after all AI providers fail. OCR is separate.
 
 ## Frozen / Quarantined PRs
 

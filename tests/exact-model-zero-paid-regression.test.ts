@@ -96,26 +96,25 @@ describe("one exact model identity from diagnostic to outbound request", () => {
   }
 });
 
-describe("zero-paid model selection fails closed", () => {
-  it("never selects arbitrary models[0] or an unknown-cost configured model", async () => {
+describe("effective configured model selection", () => {
+  it("uses the configured model and never substitutes arbitrary models[0]", async () => {
     const resolved = await resolveVerifiedModel("mistral", "extraction", ["unknown-paid-model"], {
       NODE_ENV: "test",
       AI_ZERO_PAID_MODE: "true", MISTRAL_API_KEY: "present",
       MISTRAL_ANALYSIS_MODEL: "unknown-paid-model", MISTRAL_PROPOSAL_MODEL: "unknown-paid-model",
     });
-    assert.equal(resolved.model, null);
-    assert.equal(resolved.source, "no-proven-free-model");
+    assert.equal(resolved.model, "unknown-paid-model");
+    assert.equal(resolved.source, "configured");
   });
 
-  it("skips an unknown-cost model with zero outbound requests", async () => {
+  it("calls the exact configured model without a custom cost policy", async () => {
     outbound.delete("mistral");
     const result = await runCapabilityTest("mistral", "connectivity", {
       model: "unknown-paid-model",
       env: { ...process.env, AI_ZERO_PAID_MODE: "true" },
     });
-    assert.equal(result.status, "skipped");
-    assert.equal(result.durationMs, 0);
-    assert.equal(outbound.has("mistral"), false);
+    assert.equal(result.status, "ok");
+    assert.equal(outbound.has("mistral"), true);
   });
 
   it("contains no retired Groq runtime default", () => {
@@ -124,7 +123,7 @@ describe("zero-paid model selection fails closed", () => {
     assert.equal(getProviderModel("groq", "proposal", { NODE_ENV: "test" }), "");
   });
 
-  it("reports a present key and blocked model policy as separate facts", async () => {
+  it("reports a present key and configured model without policy blocking", async () => {
     const report = await testProviderCapabilities("groq", {
       capabilities: ["analysis"],
       env: {
@@ -138,8 +137,8 @@ describe("zero-paid model selection fails closed", () => {
     assert.equal(report.modelConfigured, true);
     assert.equal(report.modelFreePolicy, false);
     assert.equal(report.modelVisible, null);
-    assert.equal(report.diagnosticState, "MODEL_POLICY_BLOCKED");
-    assert.equal(report.results[0]?.status, "skipped");
+    assert.notEqual(report.diagnosticState, "MODEL_POLICY_BLOCKED");
+    assert.notEqual(report.results[0]?.status, "skipped");
   });
 
   it("resolves each capability against its actual fast/analysis/proposal model", async () => {

@@ -55,18 +55,16 @@ describe("Provider Health Runtime & Status", () => {
     assert.equal(deriveProviderStatus("groq"), "GENERATION_VERIFIED");
   });
 
-  it("a successful paid provider is still BILLING_BLOCKED", () => {
-    // Working is not the question. "Would calling this cost money?" is asked
-    // first, and answers for the whole card.
+  it("a successful configured provider reports its verified capability", () => {
     resetProviderHealth();
     process.env.OPENAI_API_KEY = "oa-key";
     recordProviderSuccess("openai");
-    assert.equal(deriveProviderStatus("openai"), "BILLING_BLOCKED");
+    assert.equal(deriveProviderStatus("openai"), "GENERATION_VERIFIED");
   });
 
   it("Provider order remains exact (canonical registry order)", () => {
     const health = getAllProviderHealth();
     const order = health.map(h => h.provider);
-    assert.deepEqual(order, ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual(order, ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
   });
 });

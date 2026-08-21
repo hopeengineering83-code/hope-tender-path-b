@@ -43,25 +43,24 @@ describe("provider capability test — the real diagnostic", () => {
     });
   });
 
-  it("refuses a paid-access provider without contacting it, even with a key present", async () => {
+  it("includes a normally configured OpenAI provider in automatic diagnostics", async () => {
     // The whole point of zero-paid mode: a key being present must NOT be enough
     // to send a request. A diagnostic that "helpfully" tested OpenAI to see
     // whether it works would be spending money to find out.
     await withNoProviderKeys(async () => {
       process.env.OPENAI_API_KEY = "sk-test-not-used";
       try {
-        const { runCapabilityTest } = await import("../lib/ai-provider-capability-test");
-        const res = await runCapabilityTest("openai", "connectivity");
-        assert.equal(res.status, "skipped");
-        assert.equal(res.category, "BILLING");
-        assert.equal(res.durationMs, 0);
+        const { providerAutomaticEligibility } = await import("../lib/ai-provider-registry");
+        const res = providerAutomaticEligibility("openai");
+        assert.equal(res.eligible, true);
+        assert.equal(res.reason, "OK");
       } finally {
         delete process.env.OPENAI_API_KEY;
       }
     });
   });
 
-  it("tests every provider in the active zero-paid chain, in order", async () => {
+  it("tests every provider in the active canonical chain, in order", async () => {
     await withNoProviderKeys(async () => {
       const { testAutomaticChainCapabilities } = await import("../lib/ai-provider-capability-test");
       const { getAutomaticProviderOrder } = await import("../lib/ai-provider-registry");

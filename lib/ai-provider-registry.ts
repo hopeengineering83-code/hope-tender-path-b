@@ -201,7 +201,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   cerebras: {
     provider: "cerebras",
     displayName: "Cerebras",
-    rank: 6,
+    rank: 5,
     access: "paid",
     modelsEndpoint: "/models",
     freeTierPreference: [],
@@ -290,7 +290,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
   openrouter: {
     provider: "openrouter",
     displayName: "OpenRouter",
-    rank: 5,
+    rank: 6,
     access: "conditional-free",
     modelsEndpoint: "/models",
     freeTierPreference: [],
@@ -530,9 +530,7 @@ export function isProviderConfigured(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   if (provider === "openrouter") {
-    // OpenRouter is only "configured" when it has a key AND a valid explicit
-    // `:free` model — otherwise a request could create paid usage.
-    return Boolean(readProviderKey(provider, env)) && openRouterModelValidity(env).valid;
+    return Boolean(readProviderKey(provider, env)) && getProviderModel(provider, "proposal", env).length > 0;
   }
   if (provider === "zai") {
     // Z.ai requires a valid endpoint/model pairing — Coding Plan keys cannot
@@ -546,7 +544,7 @@ export function isProviderConfigured(
     return Boolean(readProviderKey(provider, env))
       && (["proposal", "extraction", "fast"] as const).every((useCase) => {
         const model = getProviderModel(provider, useCase, env);
-        return model.length > 0 && isModelProvenFree(provider, model);
+        return model.length > 0;
       });
   }
   return Boolean(readProviderKey(provider, env));
@@ -722,11 +720,7 @@ export type OpenRouterModelValidity = {
   message: string | null;
 };
 
-/**
- * OpenRouter must use an explicit free model. `openrouter/auto` is rejected and
- * any model whose identifier does not end in `:free` is rejected so the app can
- * never create paid OpenRouter usage.
- */
+/** OpenRouter uses the exact configured model identifier without rewriting it. */
 export function openRouterModelValidity(env: NodeJS.ProcessEnv = process.env): OpenRouterModelValidity {
   const configured = (env.OPENROUTER_PROPOSAL_MODEL || env.OPENROUTER_ANALYSIS_MODEL || "").trim();
   if (!configured) {
@@ -734,23 +728,7 @@ export function openRouterModelValidity(env: NodeJS.ProcessEnv = process.env): O
       valid: false,
       model: null,
       reason: "CONFIGURATION_INVALID",
-      message: "OPENROUTER_PROPOSAL_MODEL is not set — configure an explicit ':free' model.",
-    };
-  }
-  if (configured.toLowerCase() === "openrouter/auto") {
-    return {
-      valid: false,
-      model: configured,
-      reason: "MODEL_UNAVAILABLE",
-      message: "openrouter/auto is rejected — it can route to paid models. Configure an explicit ':free' model.",
-    };
-  }
-  if (!configured.endsWith(":free")) {
-    return {
-      valid: false,
-      model: configured,
-      reason: "CONFIGURATION_INVALID",
-      message: `OpenRouter model '${configured}' does not end in ':free' — refusing to risk paid usage.`,
+      message: "OPENROUTER_PROPOSAL_MODEL is not set.",
     };
   }
   return { valid: true, model: configured, reason: "OK", message: null };
@@ -817,16 +795,6 @@ export function providerAutomaticEligibility(
   env: NodeJS.ProcessEnv = process.env,
 ): ProviderEligibility {
   const entry = REGISTRY[provider];
-  const zeroPaid = isZeroPaidMode(env);
-
-  if (zeroPaid && entry.access === "paid") {
-    return {
-      provider,
-      eligible: false,
-      reason: "PAID_ACCESS_BLOCKED",
-      safeMessage: `${entry.displayName} requires paid access and is excluded while zero-paid mode is on.`,
-    };
-  }
 
   if (!getAutomaticProviderOrder(env).includes(provider)) {
     return {
@@ -835,34 +803,6 @@ export function providerAutomaticEligibility(
       reason: "NOT_IN_AUTOMATIC_ORDER",
       safeMessage: `${entry.displayName} is not part of the active automatic provider order.`,
     };
-  }
-
-  // Conditional-free providers must PROVE the condition. OpenRouter without a
-  // verified `:free` model is treated exactly like a paid provider — the point
-  // of the class is that "probably free" is not good enough to risk a charge.
-  if (entry.access === "conditional-free") {
-    const validity = openRouterModelValidity(env);
-    if (!validity.valid) {
-      return {
-        provider,
-        eligible: false,
-        reason: "CONDITIONAL_FREE_UNVERIFIED",
-        safeMessage: validity.message ?? `${entry.displayName} has no verified free model configured.`,
-      };
-    }
-  }
-
-  if (zeroPaid && entry.access === "free") {
-    const everyRuntimeModelIsProvenFree = (["proposal", "extraction", "fast"] as const)
-      .every((useCase) => isModelProvenFree(provider, getProviderModel(provider, useCase, env)));
-    if (!everyRuntimeModelIsProvenFree) {
-      return {
-        provider,
-        eligible: false,
-        reason: "MODEL_FREE_STATUS_UNPROVEN",
-        safeMessage: `${entry.displayName} has no app-policy-proven free model configured for every runtime use case.`,
-      };
-    }
   }
 
   if (!isProviderConfigured(provider, env)) {

@@ -75,13 +75,7 @@ function roleOf(envName) {
   );
   if (!provider) return "";
   const rank = catalog.CANONICAL_AI_PROVIDER_ORDER.indexOf(provider) + 1;
-  if (ZERO_PAID && catalog.PAID_ACCESS_PROVIDERS.includes(provider)) {
-    return `Rank ${rank}. Requires PAID access — excluded from automatic use while zero-paid mode is on, and never contacted even if this key is set. Active chain: ${CANONICAL_CHAIN}.`;
-  }
-  if (catalog.CONDITIONAL_FREE_PROVIDERS.includes(provider)) {
-    return `Rank ${rank} aggregator, free ONLY with a verified ':free' model. Active chain: ${CANONICAL_CHAIN}.`;
-  }
-  return `Rank ${rank} free-tier provider in the automatic chain (${CANONICAL_CHAIN}).`;
+  return `Rank ${rank} provider in the automatic chain (${CANONICAL_CHAIN}).`;
 }
 
 // Per-key descriptions + validators, keyed by env name. This map carries NO
@@ -101,11 +95,11 @@ const PROVIDER_KEY_META = {
     validate: (_v) => null,
   },
   GROQ_API_KEY: {
-    description: `Groq API key (gsk_...). ${roleOf("GROQ_API_KEY")} Requires an explicitly configured, app-policy-proven free GROQ_PROPOSAL_MODEL.`,
+    description: `Groq API key (gsk_...). ${roleOf("GROQ_API_KEY")} Requires an explicitly configured GROQ_PROPOSAL_MODEL.`,
     validate: (_v) => null,
   },
   OPENROUTER_API_KEY: {
-    description: `OpenRouter API key (sk-or-...). ${roleOf("OPENROUTER_API_KEY")} OpenAI-compatible endpoint. OPENROUTER_PROPOSAL_MODEL MUST be an explicit ':free' model — 'openrouter/auto' and non-':free' models are rejected to prevent paid usage.`,
+    description: `OpenRouter API key (sk-or-...). ${roleOf("OPENROUTER_API_KEY")} OpenAI-compatible endpoint. Uses the exact configured OPENROUTER_PROPOSAL_MODEL.`,
     validate: (_v) => null,
   },
   GEMINI_API_KEY: {

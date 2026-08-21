@@ -103,66 +103,15 @@ each new session to redo finished work. Keep this section about *how* to pick up
 work; track *what* is open in `operator_handoff.md`, which has a defined update
 ritual and one owner per branch.
 
-## AI provider policy — STRICT ZERO-PAID
+## AI provider policy
 
-This deployment must never send a request that could produce a charge. That is
-enforced structurally, not by remembering which keys to leave unset.
-
-**Automatic fallback chain (the only providers the app may contact):**
+The single canonical automatic chain is:
 
 ```
-Gemini → Groq → Mistral → Z.ai → [OpenRouter, only with a verified ":free" model]
-       → deterministic draft fallback (non-AI, never final-export eligible)
+Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic → deterministic draft fallback
 ```
 
-**Paid-access providers — enumerated, reported on, never contacted:**
-
-```
-Cerebras · OpenAI · Together · DeepSeek · Anthropic
-```
-
-They stay visible in health and diagnostics as `BILLING_BLOCKED`. Hiding them
-would be the wrong fix: an operator needs to see that a key is present and
-deliberately unused, not wonder where the provider went.
-
-**Full canonical enumeration** (fixes each provider's rank; the first five are
-the automatic chain):
-
-```
-Gemini → Groq → Mistral → Z.ai → OpenRouter → Cerebras → OpenAI → Together → DeepSeek → Anthropic
-```
-
-Defined once in `lib/ai-provider-catalog.cjs`. Every fallback sequence, health
-endpoint, admin diagnostic, environment check, doc table and test derives from
-it — never from a second literal. `scripts/reconcile-gap-closure.mjs` audits
-this and fails on drift.
-
-### The three enforcement layers
-
-1. **Automatic order.** Only `ZERO_PAID_AUTOMATIC_ORDER` is reachable by the
-   fallback chain. Paid providers are not deprioritised, they are unreachable.
-2. **Paid-access exclusion.** `providerAutomaticEligibility()` refuses a paid
-   provider before a request body exists, so a key left in the environment
-   cannot spend money.
-3. **Billing lockout.** A provider that answers with a payment/balance/quota
-   -required error leaves the automatic chain for the life of the process.
-   A cooldown would expire and try again; "this account has no money" does not
-   clear on its own. Only an operator clears it.
-
-`AI_ZERO_PAID_MODE` defaults **ON**. A missing or misspelt value fails closed to
-"spend nothing", never open to "spend money".
-
-### Model identity is discovered, not asserted
-
-`listAccountModels()` asks each provider which models the account may actually
-call, and the resolved model is checked against that list. Registry defaults are
-**preference hints**, validated live — never a claim that a name exists. A local
-copy of a third party's catalogue is a second authority on a question only they
-can answer, and it goes stale the moment they retire a snapshot.
-
-Each free provider's registry default equals the head of its
-`freeTierPreference`, so a source default and the live-verified choice can never
-contradict each other.
+`lib/ai-provider-catalog.cjs` owns the order. AI Analyze, extraction, generation, diagnostics, health, readiness, and UI derive from it. Every normally configured provider participates. Missing keys, configuration/model errors, rate limits, timeouts, unusable responses, and provider failures fall through to the next provider. Model identifiers are used exactly as configured and are never silently replaced. The deterministic draft runs only after every AI provider fails and remains non-final-export authority.
 
 ### Verified capability, not key presence
 

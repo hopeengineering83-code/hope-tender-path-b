@@ -19,12 +19,12 @@ import {
 } from "../lib/ai-provider-registry";
 
 const REQUIRED_ORDER = [
-  "gemini", "groq", "mistral", "zai", "openrouter",
-  "cerebras", "openai", "together", "deepseek", "anthropic",
+  "gemini", "groq", "mistral", "zai", "cerebras",
+  "openrouter", "openai", "together", "deepseek", "anthropic",
 ];
 
 // The free chain the app may actually contact.
-const REQUIRED_AUTOMATIC_ORDER = ["gemini", "groq", "mistral", "zai", "openrouter"];
+const REQUIRED_AUTOMATIC_ORDER = REQUIRED_ORDER;
 
 describe("release-acceptance E — provider fallback order", () => {
   it("preserves the exact canonical order Gemini → … → Anthropic", () => {
@@ -48,38 +48,27 @@ describe("release-acceptance E — provider fallback order", () => {
     assert.ok(/deterministic|draft fallback/.test(chain), "chain ends with the deterministic draft fallback");
   });
 
-  it("the ACTIVE automatic chain excludes every paid provider", () => {
-    // Canonical enumeration and automatic reachability are different things.
-    // The first is what health reports on; the second is what the app may
-    // spend money through, and it is the one that is a release invariant here.
+  it("the ACTIVE automatic chain contains every provider in canonical order", () => {
     assert.deepEqual([...getAutomaticProviderOrder()], REQUIRED_AUTOMATIC_ORDER);
-    for (const paid of PAID_ACCESS_PROVIDERS) {
-      assert.ok(
-        !getAutomaticProviderOrder().includes(paid),
-        `${paid} requires paid access and must never be automatically reachable`,
-      );
-    }
     assert.match(automaticChainDisplay(), /deterministic draft fallback$/);
   });
 
-  it("refuses a paid provider even when its key is present", () => {
+  it("admits OpenAI when normally configured", () => {
     const eligibility = providerAutomaticEligibility("openai", { OPENAI_API_KEY: "sk-test" } as unknown as NodeJS.ProcessEnv);
-    assert.equal(eligibility.eligible, false);
-    assert.equal(eligibility.reason, "PAID_ACCESS_BLOCKED");
+    assert.equal(eligibility.eligible, true);
+    assert.equal(eligibility.reason, "OK");
   });
 
-  it("admits OpenRouter only with a verified ':free' model", () => {
-    // "Probably free" is not good enough to risk a charge, so the conditional
-    // -free class is treated exactly like paid until the condition is proven.
+  it("uses OpenRouter's exact configured model without a ':free' policy", () => {
     const unverified = providerAutomaticEligibility("openrouter", { OPENROUTER_API_KEY: "k" } as unknown as NodeJS.ProcessEnv);
     assert.equal(unverified.eligible, false);
-    assert.equal(unverified.reason, "CONDITIONAL_FREE_UNVERIFIED");
+    assert.equal(unverified.reason, "NOT_CONFIGURED");
 
     const paidModel = providerAutomaticEligibility("openrouter", {
       OPENROUTER_API_KEY: "k",
       OPENROUTER_PROPOSAL_MODEL: "openai/gpt-4o",
     } as unknown as NodeJS.ProcessEnv);
-    assert.equal(paidModel.eligible, false, "a non-':free' model must be refused");
+    assert.equal(paidModel.eligible, true);
 
     const verified = providerAutomaticEligibility("openrouter", {
       OPENROUTER_API_KEY: "k",

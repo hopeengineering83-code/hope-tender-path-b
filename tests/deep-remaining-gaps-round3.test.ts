@@ -124,7 +124,7 @@ describe("Bug #7 — No 'metadata' wording", () => {
 describe("Bug #8 — Provider fallback order unchanged", () => {
   it("all 10 providers present in canonical order", () => {
     const src = read("lib/ai-provider-catalog.cjs");
-    for (const p of ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]) {
+    for (const p of ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]) {
       assert.ok(src.includes(p), `must include ${p}`);
     }
   });

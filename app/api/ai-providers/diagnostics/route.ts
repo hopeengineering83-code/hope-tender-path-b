@@ -80,7 +80,7 @@ export async function GET(req: Request) {
       : tested.length === 0 && !anyKeyPresent
         ? `No provider in the active chain is configured. Set a free provider key (GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY) and redeploy.`
         : tested.length === 0
-          ? "Provider keys exist, but no provider has a valid app-policy-proven free model configuration. See each explicit provider state below."
+          ? "Provider keys exist, but no provider has a complete effective model configuration. See each explicit provider state below."
         : `No provider completed a real AI Analyze extraction. Connectivity alone is not sufficient — see the per-provider analysis result below.`,
     perProvider: reports,
   });

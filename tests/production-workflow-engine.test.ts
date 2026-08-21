@@ -267,7 +267,7 @@ describe("source fingerprint staleness", () => {
 
 describe("provider fallback order guard", () => {
   it("fallback order is exact and OCR is not listed as an LLM provider", () => {
-    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
     assert.equal(CANONICAL_AI_PROVIDER_ORDER.includes("ocr" as any), false);
   });
 });

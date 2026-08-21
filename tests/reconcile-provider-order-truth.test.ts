@@ -13,13 +13,13 @@ import { spawnSync } from "node:child_process";
 import { CANONICAL_AI_PROVIDER_ORDER } from "../lib/ai-provider-registry";
 
 const CANONICAL = [
-  "gemini", "groq", "mistral", "zai", "openrouter",
-  "cerebras", "openai", "together", "deepseek", "anthropic",
+  "gemini", "groq", "mistral", "zai", "cerebras",
+  "openrouter", "openai", "together", "deepseek", "anthropic",
 ];
 
 // The free chain the app may actually contact. The remainder of CANONICAL is
 // enumerated for health/diagnostics only.
-const ZERO_PAID_CHAIN = ["gemini", "groq", "mistral", "zai", "openrouter"];
+const AUTOMATIC_CHAIN = CANONICAL;
 
 describe("reconcile-gap-closure — provider-order truth", () => {
   const src = readFileSync("scripts/reconcile-gap-closure.mjs", "utf8");
@@ -28,7 +28,7 @@ describe("reconcile-gap-closure — provider-order truth", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], CANONICAL);
   });
 
-  it("script pins the documented zero-paid-first order", () => {
+  it("script pins the documented owner order", () => {
     const m = src.match(/REQUIRED_ORDER\s*=\s*\[([^\]]+)\]/);
     assert.ok(m, "script must declare REQUIRED_ORDER");
     const scriptOrder = Array.from(m![1].matchAll(/"([^"]+)"/g)).map((x) => x[1]);
@@ -36,18 +36,9 @@ describe("reconcile-gap-closure — provider-order truth", () => {
     assert.ok(src.includes("Gemini → Groq → Mistral → Z.ai"), "display labels must lead with the free chain");
   });
 
-  it("script pins the zero-paid money gate, not just the order", () => {
-    // Order alone is not the guarantee. What stops a charge is that paid
-    // providers are unreachable, that the mode defaults ON, and that the
-    // eligibility check runs before a request body exists — so the audit pins
-    // all three.
-    const m = src.match(/REQUIRED_AUTOMATIC_ORDER\s*=\s*\[([^\]]+)\]/);
-    assert.ok(m, "script must declare REQUIRED_AUTOMATIC_ORDER");
-    const chain = Array.from(m![1].matchAll(/"([^"]+)"/g)).map((x) => x[1]);
-    assert.deepEqual(chain, ZERO_PAID_CHAIN);
-    assert.ok(src.includes("catalog.isZeroPaidMode({}) === true"), "must pin the fail-closed default");
-    assert.match(src, /providerAutomaticEligibility/, "must pin the pre-request money gate");
-    assert.match(src, /isBillingLockedOut/, "must pin the billing lockout");
+  it("script pins the full automatic chain, not a restricted subset", () => {
+    assert.match(src, /REQUIRED_AUTOMATIC_ORDER\s*=\s*REQUIRED_ORDER/);
+    assert.deepEqual(AUTOMATIC_CHAIN, CANONICAL);
   });
 
   it("script verifies the catalog itself, not a parallel hardcoded truth", () => {

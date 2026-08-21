@@ -127,16 +127,16 @@ describe("provider health DB persistence order", () => {
     // ALL_PROVIDERS now derives from CANONICAL_AI_PROVIDER_ORDER (single source).
     assert.match(source, /ALL_PROVIDERS[\s\S]*?=\s*CANONICAL_AI_PROVIDER_ORDER/);
     const { CANONICAL_AI_PROVIDER_ORDER } = await import("../lib/ai-provider-registry");
-    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
   });
 });
 
-describe("zero-paid money gate — a key is not permission to spend", () => {
+describe("billing lockout — actual billing failures remain blocked", () => {
   beforeEach(() => {
     resetProviderHealth();
   });
 
-  it("reports a paid provider as BILLING_BLOCKED even with a valid-looking key", async () => {
+  it("reports a normally configured provider as configured before any billing failure", async () => {
     // The behaviour that replaced "openai" as a neutral example above: under
     // zero-paid mode, holding a paid provider's key does not make it available.
     // It is visible, it is reported, and it is never called.
@@ -144,10 +144,10 @@ describe("zero-paid money gate — a key is not permission to spend", () => {
     const saved = process.env.OPENAI_API_KEY;
     process.env.OPENAI_API_KEY = "sk-test";
     try {
-      assert.equal(deriveProviderStatus("openai"), "BILLING_BLOCKED");
+      assert.equal(deriveProviderStatus("openai"), "CONFIGURED");
       const snap = getProviderRuntimeSnapshot("openai");
-      assert.equal(snap.billingBlocked, true);
-      assert.equal(snap.available, false, "a provider that answers only with a bill is not available");
+      assert.equal(snap.billingBlocked, false);
+      assert.equal(snap.available, true);
     } finally {
       if (saved === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = saved;
     }

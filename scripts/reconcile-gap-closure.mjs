@@ -18,10 +18,9 @@ const catalog = require("../lib/ai-provider-catalog.cjs");
 //
 // The first five are the automatic chain; the rest require paid access and are
 // enumerated only so health and diagnostics can report on them.
-const REQUIRED_ORDER = ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"];
-const REQUIRED_LABELS = "Gemini → Groq → Mistral → Z.ai → OpenRouter → Cerebras → OpenAI → Together → DeepSeek → Anthropic";
-const REQUIRED_AUTOMATIC_ORDER = ["gemini", "groq", "mistral", "zai", "openrouter"];
-const REQUIRED_PAID_PROVIDERS = ["cerebras", "openai", "together", "deepseek", "anthropic"];
+const REQUIRED_ORDER = ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"];
+const REQUIRED_LABELS = "Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic";
+const REQUIRED_AUTOMATIC_ORDER = REQUIRED_ORDER;
 const failures = [];
 
 function read(path) {
@@ -59,28 +58,14 @@ requireRule(
   /providerChainForUseCase[\s\S]{0,600}?return getAutomaticProviderOrder\(\);/.test(ai),
 );
 
-// 2b. The zero-paid money gate. These are the invariants that make "no paid
-// provider can generate an accidental charge" structural rather than a matter
-// of leaving keys unset — so the audit pins them, not just the order.
+// 2b. The owner-required automatic chain contains all configured providers.
 requireRule(
-  "Catalog ZERO_PAID_AUTOMATIC_ORDER drifted from the required free chain",
+  "Catalog automatic order drifted from the required full chain",
   JSON.stringify(catalog.ZERO_PAID_AUTOMATIC_ORDER) === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
 );
 requireRule(
-  "Catalog PAID_ACCESS_PROVIDERS drifted from the required paid-provider list",
-  JSON.stringify(catalog.PAID_ACCESS_PROVIDERS) === JSON.stringify(REQUIRED_PAID_PROVIDERS),
-);
-requireRule(
-  "Zero-paid mode no longer defaults ON (a missing variable must fail closed to spending nothing)",
-  catalog.isZeroPaidMode({}) === true,
-);
-requireRule(
-  "Zero-paid mode no longer restricts the automatic chain to the free providers",
+  "Automatic provider order no longer includes every provider",
   JSON.stringify(catalog.automaticProviderOrder({})) === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
-);
-requireRule(
-  "lib/ai.ts no longer refuses paid providers before building a request",
-  /providerAutomaticEligibility\(provider\)/.test(ai) && /isBillingLockedOut\(provider\)/.test(ai),
 );
 // No per-use-case literal chain may reappear (e.g. `extraction: ["mistral", ...]`).
 for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {

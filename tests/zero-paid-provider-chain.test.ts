@@ -115,12 +115,11 @@ afterEach(() => {
   resetProviderHealth();
 });
 
-describe("ZERO-PAID scenario — AI Analyze completes on the first usable free provider", () => {
-  it("cannot be disabled by a stale environment override", () => {
+describe("canonical provider scenario — AI Analyze completes on the first usable provider", () => {
+  it("uses the owner-required full automatic order regardless of legacy mode hints", () => {
     const env = { NODE_ENV: "test", AI_ZERO_PAID_MODE: "false" } as NodeJS.ProcessEnv;
-    assert.equal(isZeroPaidMode(env), true);
-    assert.deepEqual(getAutomaticProviderOrder(env), ["gemini", "groq", "mistral", "zai", "openrouter"]);
-    assert.equal(providerAutomaticEligibility("openai", env).eligible, false);
+    assert.equal(isZeroPaidMode(env), false);
+    assert.deepEqual(getAutomaticProviderOrder(env), ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
   });
   it("succeeds through Groq when Gemini is unconfigured, and never contacts a paid endpoint", async () => {
     applyScenario();
@@ -207,11 +206,11 @@ describe("ZERO-PAID scenario — AI Analyze completes on the first usable free p
     }
   });
 
-  it("keeps the automatic chain to the free providers, in the required priority order", () => {
+  it("keeps the full automatic chain in the required priority order", () => {
     applyScenario({ withGemini: true });
     assert.deepEqual(
       [...getAutomaticProviderOrder()],
-      ["gemini", "groq", "mistral", "zai", "openrouter"],
+      ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"],
     );
   });
 
@@ -229,7 +228,7 @@ describe("ZERO-PAID scenario — AI Analyze completes on the first usable free p
     assert.ok(!scenario.urls().some((url) => url.includes("api.cerebras.ai")));
   });
 
-  it("says what to do when the only configured keys are for paid providers", async () => {
+  it("attempts normally configured later providers before exhaustion", async () => {
     // The likeliest state for an account migrating off paid providers, and the
     // one where a bare "all providers exhausted" is least useful.
     process.env.OPENAI_API_KEY = "sk-scenario";
@@ -241,8 +240,8 @@ describe("ZERO-PAID scenario — AI Analyze completes on the first usable free p
       (err: unknown) => {
         assert.ok(err instanceof NoAiProviderReadyError);
         const details = (err as NoAiProviderReadyError).failureDetails.join(" ");
-        assert.match(details, /openai, deepseek are configured but require paid access/);
-        assert.match(details, /Set GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY/);
+        assert.match(details, /openai: no response/);
+        assert.match(details, /deepseek: no response/);
         return true;
       },
     );
@@ -337,7 +336,7 @@ describe("isAIConfigured reflects reachability, not key presence", () => {
     }
   });
 
-  it("is false when only paid-access keys are present", async () => {
+  it("is true when later-chain providers are configured", async () => {
     // The state this closes: the app reported AI as enabled while the automatic
     // chain had nothing it could call, so every AI feature failed with a message
     // about providers being exhausted rather than about none being usable.
@@ -345,8 +344,8 @@ describe("isAIConfigured reflects reachability, not key presence", () => {
     process.env.OPENAI_API_KEY = "sk-test";
     process.env.ANTHROPIC_API_KEY = "sk-ant-test";
     process.env.DEEPSEEK_API_KEY = "dsk-test";
-    assert.equal(isAIConfigured(), false, "paid keys are not AI configuration on a zero-paid deployment");
-    assert.equal(hasOnlyUnreachableProviderKeys(), true, "…and the operator must be told that is why");
+    assert.equal(isAIConfigured(), true);
+    assert.equal(hasOnlyUnreachableProviderKeys(), false);
   });
 
   it("is true as soon as one free provider is configured", async () => {

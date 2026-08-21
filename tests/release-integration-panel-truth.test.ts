@@ -131,7 +131,7 @@ describe("Integration — No user-facing metadata wording", () => {
 describe("Integration — Provider fallback order", () => {
   it("all 10 providers are present", () => {
     const src = read("lib/ai-provider-catalog.cjs");
-    for (const provider of ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]) {
+    for (const provider of ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]) {
       assert.ok(src.includes(provider));
     }
   });

@@ -25,15 +25,15 @@ const REQUIRED_ORDER = [
   "groq",
   "mistral",
   "zai",
-  "openrouter",
   "cerebras",
+  "openrouter",
   "openai",
   "together",
   "deepseek",
   "anthropic",
 ] as const;
 
-const REQUIRED_DISPLAY = "Gemini → Groq → Mistral → Z.ai GLM → OpenRouter → Cerebras → OpenAI → Together → DeepSeek → Anthropic / Claude";
+const REQUIRED_DISPLAY = "Gemini → Groq → Mistral → Z.ai GLM → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic / Claude";
 
 describe("AI provider chain policy — canonical order", () => {
   it("registry CANONICAL_AI_PROVIDER_ORDER is exactly the required order", () => {
@@ -126,7 +126,7 @@ describe("AI provider status surfaces stay aligned with canonical chain", () => 
   });
 
   it("keeps configured-provider checks in the required canonical relative order", () => {
-    const order = ["GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ZAI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
+    const order = ["GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ZAI_API_KEY", "CEREBRAS_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
     const positions = order.map((k) => envReadiness.indexOf(`status("${k}"`));
     for (let i = 1; i < positions.length; i++) {
       assert.ok(positions[i] > positions[i - 1], `${order[i]} must appear after ${order[i - 1]} in readiness`);
@@ -145,8 +145,8 @@ describe("browser-safe provider env-name list", () => {
     "GROQ_API_KEY",
     "MISTRAL_API_KEY",
     "ZAI_API_KEY",
-    "OPENROUTER_API_KEY",
     "CEREBRAS_API_KEY",
+    "OPENROUTER_API_KEY",
     "OPENAI_API_KEY",
     "TOGETHER_API_KEY",
     "DEEPSEEK_API_KEY",

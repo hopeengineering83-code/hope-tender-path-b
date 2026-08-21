@@ -133,7 +133,7 @@ describe("isAnyProviderEligible gates both scheduling and re-arming", () => {
     }
   });
 
-  it("returns false when a configured key has only zero-paid-ineligible models", () => {
+  it("accepts the effective configured model without a custom free-model policy", () => {
     assert.equal(isAnyProviderEligible("extraction", {
       NODE_ENV: "test",
       AI_ZERO_PAID_MODE: "true",
@@ -141,7 +141,7 @@ describe("isAnyProviderEligible gates both scheduling and re-arming", () => {
       MISTRAL_PROPOSAL_MODEL: "unknown-cost-model",
       MISTRAL_ANALYSIS_MODEL: "unknown-cost-model",
       MISTRAL_FAST_MODEL: "unknown-cost-model",
-    }), false);
+    }), true);
   });
 
   it("returns true for a genuinely eligible exact free-model configuration", () => {

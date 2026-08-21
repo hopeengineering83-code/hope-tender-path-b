@@ -457,7 +457,6 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
   //   - the provider told us so (billing lockout), or
   //   - zero-paid mode excludes it before it is ever asked.
   if (isBillingLockedOut(provider)) return "BILLING_BLOCKED";
-  if (isZeroPaidMode() && isPaidAccessProvider(provider)) return "BILLING_BLOCKED";
 
   const cooling = isProviderCooledDown(provider);
   if (cooling) {

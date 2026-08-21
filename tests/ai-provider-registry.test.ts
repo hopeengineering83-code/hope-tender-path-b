@@ -51,7 +51,7 @@ afterEach(() => {
 describe("1. canonical provider order", () => {
   it("is exactly gemini → groq → mistral → zai → openrouter → cerebras → openai → together → deepseek → anthropic", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], [
-      "gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic",
+      "gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic",
     ]);
   });
 });
@@ -154,22 +154,21 @@ describe("7. Cerebras endpoint + max_completion_tokens", () => {
 });
 
 // 8 & 9. OpenRouter policy
-describe("8+9. OpenRouter free-model policy", () => {
-  it("rejects openrouter/auto", () => {
+describe("8+9. OpenRouter configured-model policy", () => {
+  it("accepts openrouter/auto when explicitly configured", () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     process.env.OPENROUTER_PROPOSAL_MODEL = "openrouter/auto";
     const v = openRouterModelValidity();
-    assert.equal(v.valid, false);
-    assert.equal(v.reason, "MODEL_UNAVAILABLE");
-    assert.equal(isProviderConfigured("openrouter"), false);
+    assert.equal(v.valid, true);
+    assert.equal(isProviderConfigured("openrouter"), true);
   });
-  it("rejects a model that does not end with :free", () => {
+  it("accepts an explicitly configured model without rewriting its id", () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
     process.env.OPENROUTER_PROPOSAL_MODEL = "meta-llama/llama-3.3-70b-instruct";
     const v = openRouterModelValidity();
-    assert.equal(v.valid, false);
-    assert.equal(v.reason, "CONFIGURATION_INVALID");
-    assert.equal(isProviderConfigured("openrouter"), false);
+    assert.equal(v.valid, true);
+    assert.equal(v.model, "meta-llama/llama-3.3-70b-instruct");
+    assert.equal(isProviderConfigured("openrouter"), true);
   });
   it("accepts an explicit :free model", () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test";
@@ -223,7 +222,7 @@ describe("13. ATTEMPT_BUDGET_EXHAUSTED is distinct", () => {
 // 16. Inactive providers remain supported after OpenRouter
 describe("16. inactive providers remain supported after OpenRouter", () => {
   it("all 10 automatic providers in correct order", () => {
-    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]);
+    assert.deepEqual([...CANONICAL_AI_PROVIDER_ORDER], ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
     for (const p of ["zai", "cerebras", "mistral", "together"] as const) {
       assert.ok(getProviderEntry(p), `${p} must remain in the registry for manual use`);
     }
@@ -264,8 +263,8 @@ describe("17. existing Mistral/Groq/OpenRouter remain intact", () => {
     assert.equal(getProviderModel("groq", "proposal", { NODE_ENV: "test" }), "");
     assert.deepEqual(getProviderEntry("groq").freeTierPreference, ["llama-3.1-8b-instant"]);
   });
-  it("OpenRouter keeps rank 5 among the working providers", () => {
-    assert.equal(getProviderEntry("openrouter").rank, 5);
+  it("OpenRouter has owner-required rank 6 after Cerebras", () => {
+    assert.equal(getProviderEntry("openrouter").rank, 6);
     assert.equal(providerDisplayName("openrouter"), "OpenRouter");
   });
 });

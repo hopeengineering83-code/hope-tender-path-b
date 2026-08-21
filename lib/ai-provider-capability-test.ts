@@ -205,23 +205,13 @@ export async function resolveVerifiedModel(
   const configured = getProviderModel(provider, useCase, env);
   const models = availableModels === undefined ? await listAccountModels(provider, env) : availableModels;
 
-  const zeroPaid = isZeroPaidMode(env);
   if (models === null) {
-    if (zeroPaid && !isModelProvenFree(provider, configured)) {
-      return { model: null, confirmedByProvider: null, source: "no-proven-free-model" };
-    }
     return { model: configured, confirmedByProvider: null, source: "configured" };
   }
   const listed = new Set(models);
-  if (listed.has(configured) && (!zeroPaid || isModelProvenFree(provider, configured))) {
+  if (listed.has(configured)) {
     return { model: configured, confirmedByProvider: true, source: "configured" };
   }
-  for (const candidate of entry.freeTierPreference) {
-    if (listed.has(candidate)) {
-      return { model: candidate, confirmedByProvider: true, source: "free-tier-preference" };
-    }
-  }
-  if (zeroPaid) return { model: null, confirmedByProvider: false, source: "no-proven-free-model" };
   return { model: configured, confirmedByProvider: false, source: "configured" };
 }
 
@@ -332,12 +322,12 @@ export async function runCapabilityTest(
   }
 
   const model = opts?.model ?? getProviderModel(provider, spec.useCase, env);
-  if (!model || (isZeroPaidMode(env) && !isModelProvenFree(provider, model))) {
+  if (!model) {
     return {
       provider, capability, status: "skipped", model: null,
       modelConfirmedByProvider: opts?.modelConfirmedByProvider ?? null,
       durationMs: 0, category: "CONFIGURATION_INVALID",
-      safeMessage: "No app-policy-proven free model is available; provider was not contacted.",
+      safeMessage: "No effective configured model is available; provider was not contacted.",
     };
   }
   const startedAt = Date.now();
@@ -483,17 +473,17 @@ export async function testProviderCapabilities(
     return {
       ...base,
       eligible: false,
-      eligibilityReason: "No app-policy-proven free model is available.",
+      eligibilityReason: "No effective configured model is available.",
       results: capabilities.map((capability) => ({
         provider, capability, status: "skipped" as const, model: null,
         modelConfirmedByProvider: resolved.confirmedByProvider, durationMs: 0,
         category: "CONFIGURATION_INVALID" as const,
-        safeMessage: "No app-policy-proven free model is available; provider was not contacted.",
+        safeMessage: "No effective configured model is available; provider was not contacted.",
       })),
       usableForAiAnalyze: false, usableForGeneration: false,
       availableModels, resolvedModels, resolvedModel: null,
       modelVisible: resolved.confirmedByProvider,
-      diagnosticState: resolved.confirmedByProvider === false ? "MODEL_UNAVAILABLE" : "MODEL_POLICY_BLOCKED",
+      diagnosticState: resolved.confirmedByProvider === false ? "MODEL_UNAVAILABLE" : "CONFIGURATION_INVALID",
     };
   }
 

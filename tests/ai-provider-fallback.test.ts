@@ -23,25 +23,25 @@ function prodEnv(aiOverrides: Record<string, string | undefined> = {}): Record<s
   };
 }
 
-describe("evaluateEnv — strict zero-paid redundancy", () => {
-  it("rejects when only ANTHROPIC_API_KEY is set", () => {
+describe("evaluateEnv — normal provider configuration", () => {
+  it("passes when only ANTHROPIC_API_KEY is set", () => {
     const r = evaluateEnv(prodEnv({ ANTHROPIC_API_KEY: "sk-ant-test" }));
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true, r.errors.join("; "));
   });
 
-  it("rejects when only GEMINI_API_KEY is set", () => {
+  it("passes when only GEMINI_API_KEY is set", () => {
     const r = evaluateEnv(prodEnv({ GEMINI_API_KEY: "AIzaFakeKey1234567890123456789012345678901" }));
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true, r.errors.join("; "));
   });
 
-  it("rejects when only OPENAI_API_KEY is set", () => {
+  it("passes when only OPENAI_API_KEY is set", () => {
     const r = evaluateEnv(prodEnv({ OPENAI_API_KEY: "sk-openai-test" }));
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true, r.errors.join("; "));
   });
 
-  it("rejects when only DEEPSEEK_API_KEY is set", () => {
+  it("passes when only DEEPSEEK_API_KEY is set", () => {
     const r = evaluateEnv(prodEnv({ DEEPSEEK_API_KEY: "dsk-test-key" }));
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true, r.errors.join("; "));
   });
 
   it("passes with Gemini and Mistral", () => {
@@ -55,13 +55,13 @@ describe("evaluateEnv — strict zero-paid redundancy", () => {
     assert.match(r.errors.join("\n"), /AI provider key/i);
   });
 
-  it("rejects multiple keys when all belong to paid providers", () => {
+  it("passes with multiple configured provider keys", () => {
     const r = evaluateEnv(prodEnv({
       ANTHROPIC_API_KEY: "sk-ant-test",
       OPENAI_API_KEY: "sk-openai-test",
       DEEPSEEK_API_KEY: "dsk-test",
     }));
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true, r.errors.join("; "));
   });
 });
 
@@ -88,7 +88,7 @@ describe("isAIConfigured — reachability, not key presence", () => {
     }
   });
 
-  it("returns FALSE when only DEEPSEEK_API_KEY is set — DeepSeek requires paid access", async () => {
+  it("returns TRUE when only DEEPSEEK_API_KEY is set", async () => {
     // "only" has to mean only — clear Z.ai and Cerebras too, or the case the
     // name describes is not the case being exercised.
     delete process.env.ZAI_API_KEY;
@@ -103,11 +103,11 @@ describe("isAIConfigured — reachability, not key presence", () => {
     process.env.DEEPSEEK_API_KEY = "dsk-test-key";
     // isAIConfigured reads env at call time, so a cached module is fine.
     const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
-    assert.equal(isAIConfigured(), false);
-    assert.equal(hasOnlyUnreachableProviderKeys(), true, "the operator must be told the key is present but unusable");
+    assert.equal(isAIConfigured(), true);
+    assert.equal(hasOnlyUnreachableProviderKeys(), false);
   });
 
-  it("returns FALSE when only OPENAI_API_KEY is set — OpenAI requires paid access", async () => {
+  it("returns TRUE when only OPENAI_API_KEY is set", async () => {
     delete process.env.ZAI_API_KEY;
     delete process.env.CEREBRAS_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
@@ -119,8 +119,8 @@ describe("isAIConfigured — reachability, not key presence", () => {
     delete process.env.OPENROUTER_API_KEY;
     process.env.OPENAI_API_KEY = "sk-openai-test";
     const { isAIConfigured, hasOnlyUnreachableProviderKeys } = await import("../lib/env-check");
-    assert.equal(isAIConfigured(), false);
-    assert.equal(hasOnlyUnreachableProviderKeys(), true);
+    assert.equal(isAIConfigured(), true);
+    assert.equal(hasOnlyUnreachableProviderKeys(), false);
   });
 
   it("returns TRUE when a free provider is set", async () => {
@@ -236,7 +236,7 @@ describe("check-env.mjs — 10-provider automatic policy alignment", () => {
   it("includes all provider keys in the env-check descriptions (all 10 providers documented)", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../scripts/check-env.mjs", import.meta.url), "utf8");
-    for (const key of ["GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ZAI_API_KEY", "OPENROUTER_API_KEY", "CEREBRAS_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]) {
+    for (const key of ["GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ZAI_API_KEY", "CEREBRAS_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"]) {
       assert.match(src, new RegExp(key));
     }
   });
@@ -251,8 +251,8 @@ describe("check-env.mjs — 10-provider automatic policy alignment", () => {
     // The catalog has all 10 providers in canonical order.
     const { AI_PROVIDER_API_KEY_ENVS } = await import("../lib/ai-provider-catalog.cjs");
     assert.deepEqual(AI_PROVIDER_API_KEY_ENVS, [
-      "GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ZAI_API_KEY", "OPENROUTER_API_KEY",
-      "CEREBRAS_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+      "GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "ZAI_API_KEY", "CEREBRAS_API_KEY",
+      "OPENROUTER_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
     ]);
   });
 
@@ -288,7 +288,7 @@ describe("getAIEnvironmentReadiness — DeepSeek support", () => {
     assert.ok(result.providerChain.some((p) => p.toLowerCase().includes("deepseek")), "DeepSeek must appear in providerChain");
   });
 
-  it("blocks readiness when only DEEPSEEK_API_KEY is set", async () => {
+  it("is ready when only DEEPSEEK_API_KEY is set", async () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.GEMINI_API_KEY;
     delete process.env.OPENAI_API_KEY;
@@ -297,7 +297,7 @@ describe("getAIEnvironmentReadiness — DeepSeek support", () => {
     process.env.SESSION_SECRET = STRONG_SECRET;
     const { getAIEnvironmentReadiness } = await import("../lib/ai-environment-readiness");
     const result = getAIEnvironmentReadiness();
-    assert.ok(result.blockers.some((b) => b.includes("eligible zero-paid")), `Expected redundancy blocker: ${result.blockers.join("; ")}`);
+    assert.ok(!result.blockers.some((b) => b.includes("AI provider")), `Unexpected AI blocker: ${result.blockers.join("; ")}`);
   });
 
   it("returns DEEPSEEK_API_KEY as a variable entry", async () => {

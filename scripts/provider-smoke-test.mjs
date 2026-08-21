@@ -70,8 +70,8 @@ async function testProvider(p) {
   let model = process.env[p.modelEnv]?.trim() || p.modelDefault;
   if (p.freeOnly) {
     const configured = (process.env.OPENROUTER_PROPOSAL_MODEL || process.env.OPENROUTER_ANALYSIS_MODEL || "").trim();
-    if (!configured || configured.toLowerCase() === "openrouter/auto" || !configured.endsWith(":free")) {
-      return { provider: p.label, status: "SKIPPED", detail: "OpenRouter requires an explicit ':free' model (CONFIGURATION_INVALID)" };
+    if (!configured) {
+      return { provider: p.label, status: "SKIPPED", detail: "OpenRouter requires an explicitly configured model (CONFIGURATION_INVALID)" };
     }
     model = configured;
   }

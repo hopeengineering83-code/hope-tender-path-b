@@ -205,7 +205,7 @@ describe("Spec Test 12 — No 'metadata' wording", () => {
 describe("Spec Test 13 — Provider fallback order", () => {
   it("CANONICAL_AI_PROVIDER_ORDER includes all 10 providers", () => {
     const src = read("lib/ai-provider-catalog.cjs");
-    for (const p of ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]) {
+    for (const p of ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]) {
       assert.ok(src.includes(p), `must include ${p}`);
     }
   });

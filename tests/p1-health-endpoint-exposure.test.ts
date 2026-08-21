@@ -56,7 +56,7 @@ describe("P1: public /api/health exposes only what monitoring needs", () => {
   it("does not leak the AI provider names or canonical order anywhere in the public body", async () => {
     const body = await readPublicHealthBody();
     const serialized = JSON.stringify(body).toLowerCase();
-    for (const provider of ["gemini", "groq", "mistral", "zai", "openrouter", "cerebras", "openai", "together", "deepseek", "anthropic"]) {
+    for (const provider of ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]) {
       assert.ok(
         !serialized.includes(`"${provider}"`),
         `public health must not name the '${provider}' provider`,

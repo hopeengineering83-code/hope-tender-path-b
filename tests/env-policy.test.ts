@@ -39,9 +39,9 @@ describe("evaluateEnv — production policy", () => {
     assert.match(r.errors.join("\n"), /AI provider key/i);
   });
 
-  it("rejects a paid-only Anthropic configuration", () => {
+  it("accepts an Anthropic-only normal configuration", () => {
     const r = evaluateEnv(baseEnv({ GEMINI_API_KEY: undefined, MISTRAL_API_KEY: undefined, ANTHROPIC_API_KEY: "sk-ant-test" }));
-    assert.equal(r.ok, false);
+    assert.equal(r.ok, true, r.errors.join("; "));
   });
 
   it("fails when DATABASE_URL is missing", () => {
