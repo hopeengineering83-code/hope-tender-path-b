@@ -29,6 +29,7 @@ import {
   PROVIDER_CONFIG_FAILURE_CATEGORIES,
   decideManualRearm,
   RETRYABLE_CATEGORIES,
+  reclassifyHistoricalTenderFailure,
 } from "../lib/ai-analyze/retry-service";
 
 // ── Backoff schedule ─────────────────────────────────────────────────────────
@@ -130,6 +131,48 @@ describe("isAnyProviderEligible gates both scheduling and re-arming", () => {
     } finally {
       for (const k of keys) { if (saved[k] !== undefined) process.env[k] = saved[k]; }
     }
+  });
+
+  it("returns false when a configured key has only zero-paid-ineligible models", () => {
+    assert.equal(isAnyProviderEligible("extraction", {
+      NODE_ENV: "test",
+      AI_ZERO_PAID_MODE: "true",
+      MISTRAL_API_KEY: "present",
+      MISTRAL_PROPOSAL_MODEL: "unknown-cost-model",
+      MISTRAL_ANALYSIS_MODEL: "unknown-cost-model",
+      MISTRAL_FAST_MODEL: "unknown-cost-model",
+    }), false);
+  });
+
+  it("returns true for a genuinely eligible exact free-model configuration", () => {
+    assert.equal(isAnyProviderEligible("extraction", {
+      NODE_ENV: "test",
+      AI_ZERO_PAID_MODE: "true",
+      GEMINI_API_KEY: "present",
+      GEMINI_MODEL: "gemini-2.5-flash",
+      GEMINI_ANALYSIS_MODEL: "gemini-2.5-flash",
+      GEMINI_EXTRACTION_MODEL: "gemini-2.0-flash",
+    }), true);
+  });
+
+  it("never reports an empty eligible chain as usable", () => {
+    assert.equal(isAnyProviderEligible("extraction", { NODE_ENV: "test", AI_ZERO_PAID_MODE: "true" }), false);
+  });
+});
+
+describe("historical tender-not-found recovery uses current ownership facts", () => {
+  it("clears stale TENDER_NOT_FOUND after current ownership is proven", () => {
+    assert.equal(reclassifyHistoricalTenderFailure({
+      recordedCategory: "TENDER_NOT_FOUND", errorMessage: "Tender not found",
+      currentOwnershipProven: true, jobStatus: "FAILED",
+    }), "UNKNOWN");
+  });
+
+  it("keeps a genuine current ownership failure terminal", () => {
+    assert.equal(reclassifyHistoricalTenderFailure({
+      recordedCategory: "TENDER_NOT_FOUND", errorMessage: "Tender not found",
+      currentOwnershipProven: false, jobStatus: "FAILED",
+    }), "TENDER_NOT_FOUND");
   });
 });
 

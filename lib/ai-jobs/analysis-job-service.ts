@@ -1,5 +1,5 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
-import { classifyFailure, decideManualRearm, isAnyProviderEligible, isProviderConfigFailureCategory } from "../ai-analyze/retry-service";
+import { decideManualRearm, isAnyProviderEligible, isProviderConfigFailureCategory, reclassifyHistoricalTenderFailure } from "../ai-analyze/retry-service";
 import { logger } from "../observability";
 import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
 import { prisma } from "../prisma";
@@ -393,14 +393,19 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       // are evidence about one specific document.
       if (existing.status === "FAILED" || existing.status === "PARTIAL_SUCCESS") {
         const sourceIntegrityIntact = canSafelyReuseAnalysisSnapshot(existing.input, snapshot);
-        // Repair the historical false-terminal case from before model phrases
-        // were matched ahead of generic "not found". Only the persisted error
-        // text can narrow TENDER_NOT_FOUND to MODEL_UNAVAILABLE; true ownership
-        // failures retain their terminal category.
+        // This authenticated request has already loaded this exact tender with
+        // `where: { id: tenderId, userId }`. Therefore an OLD
+        // TENDER_NOT_FOUND describes stale history, not current ownership. It
+        // must not veto a request whose ownership has just been reproved. A
+        // genuine current missing/foreign tender fails before this transaction.
         const recordedCategory = existing.retryState?.failureCategory ?? null;
-        const effectiveCategory = recordedCategory === "TENDER_NOT_FOUND"
-          ? classifyFailure(existing.errorMessage ?? undefined, undefined, existing.status).category
-          : recordedCategory;
+        const historicalOwnershipRevalidated = recordedCategory === "TENDER_NOT_FOUND";
+        const effectiveCategory = reclassifyHistoricalTenderFailure({
+          recordedCategory,
+          errorMessage: existing.errorMessage ?? undefined,
+          currentOwnershipProven: true,
+          jobStatus: existing.status,
+        });
         const decision = decideManualRearm({
           failureCategory: effectiveCategory,
           nonRetryable: existing.retryState?.nonRetryable ?? false,
@@ -412,12 +417,15 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
           sourceIntegrityIntact,
           providerAvailable: isAnyProviderEligible(),
         });
-        if (effectiveCategory === "MODEL_UNAVAILABLE" && effectiveCategory !== recordedCategory) {
+        if (historicalOwnershipRevalidated) {
           await tx.aiAnalyzeRetryState.updateMany({
             where: { jobId: existing.id },
             data: {
               failureCategory: effectiveCategory,
-              retryReason: "Historical provider model failure reclassified from TENDER_NOT_FOUND",
+              nonRetryable: false,
+              retryReason: effectiveCategory === "MODEL_UNAVAILABLE"
+                ? "Historical provider model failure reclassified after current ownership verification"
+                : "Historical TENDER_NOT_FOUND cleared after current ownership verification",
               lastCheckedAt: new Date(),
             },
           });
@@ -467,10 +475,13 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
           return {} as Record<string, unknown>;
         })();
         // Clear the stale provider-class block in the same transaction.
-        const effectiveFailureCategory = existing.retryState?.failureCategory === "TENDER_NOT_FOUND"
-          ? classifyFailure(existing.errorMessage ?? undefined, undefined, existing.status).category
-          : existing.retryState?.failureCategory;
-        if (isProviderConfigFailureCategory(effectiveFailureCategory)) {
+        const effectiveFailureCategory = reclassifyHistoricalTenderFailure({
+          recordedCategory: existing.retryState?.failureCategory ?? null,
+          errorMessage: existing.errorMessage ?? undefined,
+          currentOwnershipProven: true,
+          jobStatus: existing.status,
+        });
+        if (existing.retryState?.failureCategory === "TENDER_NOT_FOUND" || isProviderConfigFailureCategory(effectiveFailureCategory)) {
           await tx.aiAnalyzeRetryState.updateMany({
             where: { jobId: existing.id },
             data: {

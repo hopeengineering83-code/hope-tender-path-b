@@ -21,8 +21,14 @@
  *   6. Never creates a second active job for the same tender + content hash.
  */
 import { prisma, prismaReady } from "../prisma";
-import { getMinCooldownExpiryMs } from "../ai-provider-health";
-import { isProviderConfigured, CANONICAL_AI_PROVIDER_ORDER } from "../ai-provider-registry";
+import { isBillingLockedOut, isProviderCooledDown } from "../ai-provider-health";
+import {
+  getAutomaticProviderOrder,
+  getProviderModel,
+  isModelProvenFree,
+  providerAutomaticEligibility,
+  type AiUseCase,
+} from "../ai-provider-registry";
 
 // Bounded exponential delay: 30s, 1m, 3m, 10m — then stop.
 export const RETRY_DELAYS_MS = [30_000, 60_000, 180_000, 600_000] as const;
@@ -111,6 +117,19 @@ export const RETRYABLE_CATEGORIES = new Set<string>([
 
 export type FailureClassification = { retryable: boolean; category: string; reason: string };
 
+/** Re-evaluate only the historical ownership category against current proof. */
+export function reclassifyHistoricalTenderFailure(input: {
+  recordedCategory: string | null;
+  errorMessage?: string;
+  currentOwnershipProven: boolean;
+  jobStatus: string;
+}): string {
+  if (input.recordedCategory !== "TENDER_NOT_FOUND") return input.recordedCategory ?? "UNKNOWN";
+  if (!input.currentOwnershipProven) return "TENDER_NOT_FOUND";
+  const classified = classifyFailure(input.errorMessage, undefined, input.jobStatus).category;
+  return classified === "MODEL_UNAVAILABLE" ? "MODEL_UNAVAILABLE" : "UNKNOWN";
+}
+
 /**
  * Decide whether a stopped run may auto-retry. Category wins first; the message
  * is a secondary signal for failures that arrived without a clean category.
@@ -167,10 +186,17 @@ export function classifyFailure(
  * configured AND no provider is cooling down. This is what gates BOTH whether
  * we schedule a retry timer and whether the cron actually re-arms.
  */
-export function isAnyProviderEligible(): boolean {
-  const configured = CANONICAL_AI_PROVIDER_ORDER.filter((p) => isProviderConfigured(p));
-  if (configured.length === 0) return false;
-  return getMinCooldownExpiryMs() === 0;
+export function isAnyProviderEligible(
+  useCase: AiUseCase = "extraction",
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return getAutomaticProviderOrder(env).some((provider) => {
+    if (!providerAutomaticEligibility(provider, env).eligible) return false;
+    const exactModel = getProviderModel(provider, useCase, env);
+    if (!isModelProvenFree(provider, exactModel)) return false;
+    if (isBillingLockedOut(provider) || isProviderCooledDown(provider)) return false;
+    return true;
+  });
 }
 
 /**

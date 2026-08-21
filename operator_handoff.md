@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-21 14:55 UTC — Codex (real-Preview 422 recovery authority repair on PR #1175)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued only from requested exact head `e18912149a6cba76a3ff1929c9266ed5e00b5454`.
+- **Scope:** fixed the remaining manual recovery refusal: once the new authenticated request has loaded the same tender by `(id,userId)`, an old `TENDER_NOT_FOUND` is re-evaluated rather than blindly retained; current missing/foreign tenders still fail before job recovery. Replaced key/config-only retry availability with the runtime automatic-chain authority: active zero-paid order, provider policy, exact use-case model free approval, billing lockout and per-provider cooldown.
+- **Files changed:** `lib/ai-analyze/retry-service.ts`, `lib/ai-jobs/analysis-job-service.ts`, `tests/ai-analyze-retry-scheduler.test.ts`, and this handoff.
+- **Tests actually run:** Prisma generate passed; typecheck passed; lint passed; focused retry, snapshot and exact-model suites passed **50/50**. Exact-head PostgreSQL/CI, build, Playwright, isolation, screenshot and Preview validation remain required after push.
+- **Risks / assumptions:** current ownership proof is not inferred from the historical job; it exists only because `createAnalysisJob` already loaded `Tender` with both current tender ID and authenticated user ID. Live provider/tender acceptance still requires the owner Preview session.
+- **Next action:** push to existing PR #1175, run all exact-head gates, deploy Preview only, and execute the owner-authenticated same-tender flow if credentials are available.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION**.
+
 ### 2026-08-21 14:15 UTC — Codex (second end-to-end gap audit on PR #1175)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from `bf946337a404189a65821c701aafd50ba8ea3724` after all exact-head checks were green.
