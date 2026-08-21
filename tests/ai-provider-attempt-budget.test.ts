@@ -78,9 +78,7 @@ describe("12. provider attempt budget caps actual outbound attempts", () => {
     assert.ok(m.calls() >= 3, `expected every eligible free provider to be tried, got ${m.calls()}`);
   });
 
-  it("never makes an outbound call to a paid provider, even with its key set", async () => {
-    // The money guarantee, stated as behaviour: keys present, chain exhausted,
-    // zero requests to any paid endpoint.
+  it("continues through configured later-chain providers when earlier providers fail", async () => {
     process.env.OPENAI_API_KEY = "k";
     process.env.DEEPSEEK_API_KEY = "k";
     process.env.TOGETHER_API_KEY = "k";
@@ -94,7 +92,11 @@ describe("12. provider attempt budget caps actual outbound attempts", () => {
     });
 
     await assert.rejects(() => generateWithFallback("hi", { useCase: "proposal" }));
-    assert.deepEqual(contacted, [], `no paid provider may be contacted, but got: ${contacted.join(", ")}`);
+    assert.ok(contacted.some((url) => url.includes("cerebras")), "Cerebras must be attempted at rank 5");
+    assert.ok(contacted.some((url) => url.includes("openai.com")), "OpenAI must be attempted after OpenRouter");
+    assert.ok(contacted.some((url) => url.includes("together")), "Together must remain in automatic fallback");
+    assert.ok(contacted.some((url) => url.includes("deepseek")), "DeepSeek must remain in automatic fallback");
+    assert.ok(contacted.some((url) => url.includes("anthropic")), "Anthropic must be the final AI-provider attempt");
   });
 });
 

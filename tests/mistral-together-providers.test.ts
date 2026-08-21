@@ -64,16 +64,10 @@ describe("canonical provider chain", () => {
     assert.ok(chain.includes("together"), "Together must remain a KNOWN provider so health can report on it");
   });
 
-  it("keeps Together and the other paid providers OUT of the automatic chain", () => {
-    // Being in the canonical enumeration and being in the automatic chain are
-    // different things. The first is what health reports on; the second is what
-    // the app may spend money through.
-    const { getAutomaticProviderOrder, PAID_ACCESS_PROVIDERS } = require("../lib/ai-provider-registry");
+  it("keeps every configured provider in the automatic chain", () => {
+    const { getAutomaticProviderOrder } = require("../lib/ai-provider-registry");
     const automatic = [...getAutomaticProviderOrder()];
-    assert.deepEqual(automatic, ["gemini", "groq", "mistral", "zai", "openrouter"]);
-    for (const paid of PAID_ACCESS_PROVIDERS) {
-      assert.ok(!automatic.includes(paid), `${paid} requires paid access and must not be automatic`);
-    }
+    assert.deepEqual(automatic, ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]);
   });
 
   it("retains explicit adapter cases for all providers", () => {

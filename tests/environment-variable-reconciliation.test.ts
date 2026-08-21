@@ -118,7 +118,7 @@ describe("Environment Variable Reconciliation", () => {
       assert.ok(resultWith.ok);
 
       const resultWithout = evaluateEnv(envWithoutKey);
-      assert.ok(resultWithout.warnings.some((w) => w.includes("ZAI")));
+      assert.ok(resultWithout.warnings.some((w) => w.includes("normally configured AI provider")));
     });
 
     it("ANTHROPIC_TIER correctly gates ANTHROPIC_MAX_OUTPUT_TOKENS and timeout defaults", () => {

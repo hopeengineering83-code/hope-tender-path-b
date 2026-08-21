@@ -8,12 +8,12 @@ describe("safe provider status", () => {
     assert.equal(AI_PROVIDER_ORDER.at(-1)?.order, 10);
   });
 
-  it("uses the canonical runtime order (Z.ai first, Anthropic last)", () => {
+  it("uses the canonical runtime order (Gemini first, Anthropic last)", () => {
     // Derived from the registry (lib/ai-provider-registry.ts). Reordering is a
     // breaking change that requires an explicit product decision in the registry.
     assert.deepEqual(
       AI_PROVIDER_ORDER.map((p) => p.provider),
-      ["Gemini", "Groq", "Mistral", "Z.ai GLM", "OpenRouter", "Cerebras", "OpenAI", "Together", "DeepSeek", "Anthropic / Claude"],
+      ["Gemini", "Groq", "Mistral", "Z.ai GLM", "Cerebras", "OpenRouter", "OpenAI", "Together", "DeepSeek", "Anthropic / Claude"],
     );
     assert.deepEqual(
       AI_PROVIDER_ORDER.map((p) => p.order),
