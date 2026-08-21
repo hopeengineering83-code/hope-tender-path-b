@@ -83,14 +83,12 @@ export type ProviderRetryPolicy = {
 };
 
 /**
- * Whether calling this provider can produce a charge.
+ * Informational cost classification for diagnostics only. It never changes
+ * automatic eligibility or the configured model identifier.
  *
  *   "free"             — usable on a free account with no payment method.
- *   "conditional-free" — free ONLY under an explicitly verified condition
- *                        (OpenRouter with a `:free` model). Treated as paid
- *                        until that condition is proven.
- *   "paid"             — requires paid access. Never contacted while zero-paid
- *                        mode is on, even if a key is present.
+ *   "conditional-free" — pricing depends on the configured provider model.
+ *   "paid"             — provider ordinarily requires paid access.
  */
 export type ProviderAccessClass = "free" | "conditional-free" | "paid";
 
@@ -550,15 +548,6 @@ export function isProviderConfigured(
   return Boolean(readProviderKey(provider, env));
 }
 
-/** App-owned zero-cost policy. A provider listing proves reachability, not price. */
-export function isModelProvenFree(provider: AiProviderName, model: string): boolean {
-  const normalized = model.trim();
-  if (!normalized) return false;
-  if (provider === "openrouter") return normalized.endsWith(":free") && normalized.toLowerCase() !== "openrouter/auto";
-  const entry = REGISTRY[provider];
-  return entry.access === "free" && entry.freeTierPreference.includes(normalized);
-}
-
 export function getProviderBaseUrl(
   provider: AiProviderName,
   env: NodeJS.ProcessEnv = process.env,
@@ -734,25 +723,13 @@ export function openRouterModelValidity(env: NodeJS.ProcessEnv = process.env): O
   return { valid: true, model: configured, reason: "OK", message: null };
 }
 
-// ─── Zero-paid policy ────────────────────────────────────────────────────────
-//
-// Requirement: no provider may ever be sent a request that could produce a
-// charge. Two things make that structural rather than a matter of remembering
-// which keys to leave unset:
-//
-//   1. The automatic chain is a SUBSET of the canonical order, not the whole of
-//      it. Paid providers are not merely deprioritised — they are unreachable.
-//   2. The exclusion is enforced at the eligibility check, before a request
-//      body exists, so a paid key left in the environment cannot spend money.
-//
-// Paid providers stay visible in health and diagnostics as BILLING_BLOCKED.
-// Hiding them would be the wrong fix: an operator needs to see that the key is
-// present and deliberately not used, not wonder where the provider went.
+// Deprecated compatibility exports retained for existing diagnostic clients.
+// They do not restrict the owner-directed complete automatic chain.
 
 export const ZERO_PAID_AUTOMATIC_ORDER: readonly AiProviderName[] = CATALOG_ZERO_PAID_ORDER;
 export const PAID_ACCESS_PROVIDERS: readonly AiProviderName[] = CATALOG_PAID_PROVIDERS;
 
-/** True because strict zero-paid operation is an immutable deployment policy. */
+/** Deprecated compatibility helper; always false. */
 export function isZeroPaidMode(env: NodeJS.ProcessEnv = process.env): boolean {
   return catalogIsZeroPaidMode(env);
 }

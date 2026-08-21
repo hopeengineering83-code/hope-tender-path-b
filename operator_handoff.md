@@ -74,6 +74,17 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-21 UTC — Codex (final owner-policy contradiction cleanup)
+
+- **Mode:** exact-head completion audit and narrow provider-policy cleanup.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from `0ac4ab0a32e4df78c69c35f402863a46e897880a`.
+- **Scope:** removed residual zero-paid/free-model policy code and contradictory operator text after the full ten-provider chain was restored. Capability reports no longer calculate or expose an app-owned free-model policy, UI/readiness descriptions no longer claim later providers are forbidden, and all provider capability diagnostics iterate the same canonical automatic chain. Preserved actual billing lockouts, exact configured models, provider fall-through, retry recovery, and all source/tenant/artifact fail-closed controls.
+- **Files changed:** `lib/ai-provider-catalog.cjs`, `lib/ai-provider-registry.ts`, `lib/ai-provider-capability-test.ts`, `lib/ai.ts`, `lib/ai-analyze/retry-service.ts`, provider health/readiness modules, AI health UI, environment scripts, production runbook, affected regression tests, and this handoff.
+- **Tests:** focused provider/readiness/retry suite passed 217/217; Prisma generation, typecheck, lint, and release-integrity passed (435 routes and 1,590 files). Exact-head CI/Preview required after push.
+- **Risks / blockers:** no known source-level provider-policy blocker; new exact-head CI, authenticated Playwright, route/screenshot audit, security audit, and Preview deployment must complete green before declaring final acceptance.
+- **Next action:** push the committed exact head and require all PR checks green; do not merge or promote Production.
+- **Merge status:** DO NOT MERGE pending exact-head evidence and owner review.
+
 ### 2026-08-21 17:42 UTC — Codex (eligible-provider redundancy reaches environment readiness)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; continued from exact remote head `cc6624fbeed87b6fcbe0f864d52882bef4ce2dd7`.

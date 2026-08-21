@@ -64,7 +64,6 @@ const DISPLAY_NAMES = {
   together: "Together", deepseek: "DeepSeek", anthropic: "Anthropic / Claude",
 };
 
-const ZERO_PAID = catalog.isZeroPaidMode(process.env);
 const AUTOMATIC_CHAIN = catalog.automaticProviderOrder(process.env);
 const CANONICAL_CHAIN = `${AUTOMATIC_CHAIN.map((p) => DISPLAY_NAMES[p]).join(" → ")} → deterministic draft fallback`;
 

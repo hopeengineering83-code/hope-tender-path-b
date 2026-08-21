@@ -11,18 +11,11 @@ import {
   isProviderConfigured,
   openRouterModelValidity,
   automaticChainDisplay,
-  isZeroPaidMode,
   getAutomaticProviderOrder,
 } from "../lib/ai-provider-registry";
 import { AIHealthTestButton } from "./ai-health-test-button";
 
-// Describes the chain that is ACTUALLY ACTIVE, generated from the registry.
-// It used to print the full canonical order unconditionally, so in zero-paid
-// mode the panel advertised a fallback path through five providers the app is
-// forbidden to contact.
-const AI_FALLBACK_CHAIN = isZeroPaidMode()
-  ? `Zero-paid mode: ${automaticChainDisplay()}. Paid-access providers (Cerebras, OpenAI, Together, DeepSeek, Anthropic) are excluded from automatic use and can never be charged. The deterministic draft fallback is NOT an AI provider and runs only after every free provider has failed or is unavailable.`
-  : `Canonical: ${automaticChainDisplay()}. The deterministic draft fallback is NOT an AI provider and runs only after every configured AI provider has failed or is unavailable.`;
+const AI_FALLBACK_CHAIN = `Canonical: ${automaticChainDisplay()}. The deterministic draft fallback is NOT an AI provider and runs only after every configured AI provider has failed or is unavailable.`;
 
 type ProviderCardData = {
   key: string;

@@ -30,10 +30,7 @@ function has(value: string | undefined | null): boolean {
   return Boolean(value && value.trim().length > 0);
 }
 
-// Required provider order — the chain that is ACTUALLY ACTIVE, generated from
-// the authoritative registry. Printing the full canonical order while zero-paid
-// mode is on would tell an operator to configure five providers the app is
-// forbidden to contact.
+// Required provider order — generated from the authoritative registry.
 export const REQUIRED_PROVIDER_ORDER = getAutomaticProviderOrder().map((p) => providerDisplayName(p));
 
 function configuredAiProviders(): string[] {

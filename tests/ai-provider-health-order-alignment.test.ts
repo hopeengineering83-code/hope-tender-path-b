@@ -107,10 +107,8 @@ describe("dashboard provider-health UI follows the canonical order", () => {
   const source = readFileSync("components/ai-health-panel.tsx", "utf8");
 
   it("AI_FALLBACK_CHAIN string describes the ACTIVE chain, generated from the registry", () => {
-    // Printing the full canonical order unconditionally advertised a fallback
-    // path through five providers the app is forbidden to contact.
     assert.match(source, /automaticChainDisplay\(\)/);
-    assert.match(source, /isZeroPaidMode\(\)/);
+    assert.doesNotMatch(source, /isZeroPaidMode\(\)/);
     assert.match(source, /deterministic draft fallback/);
     assert.match(source, /NOT an AI provider/);
   });
@@ -371,7 +369,7 @@ describe("scripts/check-env.mjs describes the ACTIVE chain, generated not restat
 
   it("derives the chain text from the catalog, not a local literal", () => {
     assert.match(src, /catalog\.automaticProviderOrder\(process\.env\)/);
-    assert.match(src, /catalog\.isZeroPaidMode\(process\.env\)/);
+    assert.doesNotMatch(src, /catalog\.isZeroPaidMode\(process\.env\)/);
     assert.doesNotMatch(src, /const CANONICAL_CHAIN = "Z\.ai/);
   });
 

@@ -94,10 +94,8 @@ function status(
  * status("DEEPSEEK_API_KEY", ...)
  * status("ANTHROPIC_API_KEY", ...)
  *
- * The first four (plus OpenRouter with a verified ':free' model) are the
- * zero-paid automatic chain. The remainder require paid access and are listed
- * here so an operator can see their keys are recognised and deliberately not
- * used — never contacted while zero-paid mode is on.
+ * All ten providers participate in the canonical automatic chain when normally
+ * configured. Effective model identifiers are never silently replaced.
  *
  * Effective model values are resolved by the central provider registry; the
  * notes emitted below are diagnostic, not an independent model configuration.
@@ -112,7 +110,7 @@ function providerVariableStatuses(): AIEnvironmentVariableStatus[] {
       entry.env.apiKey,
       "ai",
       "critical",
-      `Rank ${entry.rank} ${entry.access === "paid" ? "paid-access (excluded while zero-paid mode is on)" : entry.access === "conditional-free" ? "free only with a verified ':free' model" : "free-tier"} provider. Configure at least one free provider key.`,
+      `Rank ${entry.rank} automatic provider. Configure its key and effective model as required by that provider.`,
       { presentOverride: providerConfigured },
     ));
 

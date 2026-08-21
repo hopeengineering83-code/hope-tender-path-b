@@ -25,7 +25,6 @@ import { isBillingLockedOut, isProviderCooledDown } from "../ai-provider-health"
 import {
   getAutomaticProviderOrder,
   getProviderModel,
-  isModelProvenFree,
   providerAutomaticEligibility,
   type AiUseCase,
 } from "../ai-provider-registry";

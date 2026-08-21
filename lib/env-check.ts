@@ -1,8 +1,6 @@
 import { logger } from "./observability";
 import {
   CANONICAL_AI_PROVIDER_ORDER,
-  PAID_ACCESS_PROVIDERS,
-  CONDITIONAL_FREE_PROVIDERS,
   PROVIDER_API_KEY_ENV,
   automaticProviderOrder,
 } from "./ai-provider-catalog.cjs";
@@ -31,21 +29,14 @@ const REQUIRED_VARS: Array<{ name: string; description: string }> = [
   { name: "SESSION_SECRET", description: "At least 32-character random string for HMAC session signing" },
 ];
 
-// The ten known provider keys, in canonical order and with their access class.
+// The ten known provider keys in canonical automatic order.
 // Order and key names are DERIVED from the catalog — the rank text that used to
 // be written into each description here ("Rank 1 automatic provider", …) was a
 // copy that went stale the moment the order changed.
 const AI_PROVIDER_KEYS: Array<{ name: string; description: string }> = CANONICAL_AI_PROVIDER_ORDER.map(
   (provider, index) => {
     const envName = PROVIDER_API_KEY_ENV[provider];
-    const paid = PAID_ACCESS_PROVIDERS.includes(provider);
-    const conditional = CONDITIONAL_FREE_PROVIDERS.includes(provider);
-    const role = paid
-      ? "requires PAID access — excluded from automatic use while zero-paid mode is on"
-      : conditional
-        ? "free ONLY with an explicitly configured ':free' model"
-        : "free-tier provider in the automatic chain";
-    return { name: envName, description: `Rank ${index + 1}: ${role}.` };
+    return { name: envName, description: `Rank ${index + 1}: automatic provider.` };
   },
 );
 
@@ -179,14 +170,7 @@ export function checkEnv(): void {
 }
 
 export function isAIConfigured(): boolean {
-  // "Configured" means a provider the app is ALLOWED TO CONTACT has a key.
-  //
-  // This used to be true if ANY of the ten keys was present. On a zero-paid
-  // deployment holding only OPENAI_API_KEY that answer was actively wrong: the
-  // app would report AI as enabled while the automatic chain had nothing it
-  // could call, so every AI feature failed with a message about providers being
-  // exhausted rather than about none being usable.
-  //
+  // "Configured" means a provider in the automatic chain has a key.
   // Reads env at call time, never at module load, so a changed environment is
   // reflected without a rebuild.
   return AUTOMATIC_PROVIDER_KEY_ENVS().some((name) => {
@@ -197,8 +181,7 @@ export function isAIConfigured(): boolean {
 
 /**
  * Env var names for the providers the automatic chain may currently contact.
- * A function, not a constant, because the active chain depends on
- * AI_ZERO_PAID_MODE, which is read from the environment.
+ * A function so tests and diagnostics always read current process state.
  */
 function AUTOMATIC_PROVIDER_KEY_ENVS(): string[] {
   return automaticProviderOrder(process.env).map((p) => PROVIDER_API_KEY_ENV[p]);

@@ -3,7 +3,7 @@ import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
-import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, PAID_ACCESS_PROVIDERS, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, isModelProvenFree, isZeroPaidMode, type AiUseCase } from "./ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
@@ -38,8 +38,7 @@ const FALLBACK_GEMINI_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "")
 
 // Provider chain for proposal generation is NOT restated here — it is resolved
 // at call time by getAutomaticProviderOrder(). A comment naming the order is a
-// copy that goes stale, and this one had: it still described the pre-zero-paid
-// chain, leading with providers the app is now forbidden to contact.
+// copy that goes stale.
 // Claude models in preference order when the last-resort Anthropic provider
 // is reached, keeping Anthropic last so rate limits do not block the app when earlier
 // providers are available.
@@ -68,8 +67,7 @@ function normalizeClaudeModelName(raw: string): string {
 // The previous code carried two more hardcoded lists here — a four-model
 // default and a two-model emergency fallback — neither of which matched the
 // registry, so three different files disagreed about which Claude model this
-// app uses. (Anthropic is paid-access and therefore unreachable while zero-paid
-// mode is on; this keeps the configuration honest for the non-zero-paid case.)
+// app uses.
 const _rawModels = (process.env.ANTHROPIC_PROPOSAL_MODELS || "")
   .split(",")
   .map(normalizeClaudeModelName)
@@ -420,11 +418,7 @@ export type { AiUseCase } from "./ai-provider-registry";
 export const CANONICAL_PROVIDER_CHAIN: readonly AiProviderName[] = CANONICAL_AI_PROVIDER_ORDER;
 
 // Every use case derives its fallback sequence from the same canonical order.
-// The automatic chain. In zero-paid mode this is the free order
-// (Gemini → Groq → Mistral → Z.ai → OpenRouter-if-verified-free); the paid
-// providers are not in it at all, so no amount of chain iteration can reach
-// them. Returning the full canonical order here was what made "do not use paid
-// providers" a matter of hoping their keys were unset.
+// The complete owner-directed automatic chain for every use case.
 function providerChainForUseCase(_useCase: AiUseCase): readonly AiProviderName[] {
   return getAutomaticProviderOrder();
 }
@@ -1098,17 +1092,6 @@ export async function generateWithFallback(
       : allConfiguredCooling
         ? "ALL_PROVIDERS_COOLING"
         : "RETRY_AFTER_PROVIDER_FIX";
-  if (configuredCount === 0) {
-    // Distinguish "no keys anywhere" from "keys exist, but every one of them is
-    // for a paid provider this deployment refuses to call". They need opposite
-    // actions from an operator, and the second is the likelier state on an
-    // account migrating off paid providers.
-    //
-    // The paid providers are NOT in `chain` — that is the whole point of the
-    // zero-paid order — so the loop above never saw them and `failureDetails`
-    // cannot mention them. Their keys have to be read directly, or the operator
-    // gets "no AI provider is configured" while looking at five configured keys.
-  }
   throw new NoAiProviderReadyError({
     useCase,
     providerAttempts,
@@ -1216,9 +1199,7 @@ export function isTogetherEnabled() {
 }
 
 // ─── DeepSeek provider ─────────────────────────────────────────────────────────
-// DeepSeek requires paid access and is excluded from the automatic chain while
-// zero-paid mode is on. The adapter is kept so health and diagnostics can
-// report on it, and so the provider works if zero-paid mode is ever turned off.
+// DeepSeek participates at its canonical rank when normally configured.
 // Uses the OpenAI-compatible REST endpoint (no SDK needed).
 // Returns null when DEEPSEEK_API_KEY is not configured.
 // 20s per-provider cap — Vercel Hobby has a 60s function limit so each

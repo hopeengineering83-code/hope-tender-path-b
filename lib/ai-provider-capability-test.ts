@@ -39,8 +39,6 @@ import {
   readProviderKey,
   providerAutomaticEligibility,
   getAutomaticProviderOrder,
-  isZeroPaidMode,
-  isModelProvenFree,
   type AiProviderName,
   type AiUseCase,
 } from "./ai-provider-registry";
@@ -90,10 +88,9 @@ export type ProviderCapabilityReport = {
   keyPresent: boolean;
   configuredModels: Record<EffectiveModelUseCase, string | null>;
   modelConfigured: boolean;
-  modelFreePolicy: boolean;
   modelVisible: boolean | null;
   diagnosticState:
-    | "KEY_MISSING" | "CONFIGURATION_INVALID" | "MODEL_POLICY_BLOCKED"
+    | "KEY_MISSING" | "CONFIGURATION_INVALID"
     | "MODEL_UNAVAILABLE" | "BILLING_BLOCKED" | "RATE_LIMITED"
     | "CONNECTIVITY_VERIFIED" | "ANALYSIS_VERIFIED" | "GENERATION_VERIFIED"
     | "CONFIGURED";
@@ -109,7 +106,6 @@ function configuredModelFacts(provider: AiProviderName, env: NodeJS.ProcessEnv) 
     keyPresent: Boolean(readProviderKey(provider, env)),
     configuredModels,
     modelConfigured: Object.values(configuredModels).every(Boolean),
-    modelFreePolicy: Object.values(configuredModels).every((model) => Boolean(model && isModelProvenFree(provider, model))),
   };
 }
 
@@ -450,9 +446,7 @@ export async function testProviderCapabilities(
         ? "KEY_MISSING" as const
         : eligibility.reason === "PAID_ACCESS_BLOCKED"
           ? "BILLING_BLOCKED" as const
-          : eligibility.reason === "MODEL_FREE_STATUS_UNPROVEN" || eligibility.reason === "CONDITIONAL_FREE_UNVERIFIED"
-            ? "MODEL_POLICY_BLOCKED" as const
-            : "CONFIGURATION_INVALID" as const,
+          : "CONFIGURATION_INVALID" as const,
     };
   }
 
@@ -525,9 +519,7 @@ export async function testProviderCapabilities(
 }
 
 /**
- * Test every provider in the ACTIVE automatic chain. Paid providers are
- * reported as skipped rather than omitted — an operator needs to see that a key
- * is present and deliberately unused, not wonder where the provider went.
+ * Test every provider in the active automatic chain in canonical order.
  */
 export async function testAutomaticChainCapabilities(opts?: {
   capabilities?: readonly CapabilityName[];
@@ -535,13 +527,10 @@ export async function testAutomaticChainCapabilities(opts?: {
   includePaid?: boolean;
 }): Promise<ProviderCapabilityReport[]> {
   const env = opts?.env ?? process.env;
-  const { CANONICAL_AI_PROVIDER_ORDER } = await import("./ai-provider-registry");
-  const providers = opts?.includePaid && !isZeroPaidMode(env)
-    ? CANONICAL_AI_PROVIDER_ORDER
-    : getAutomaticProviderOrder(env);
+  const providers = getAutomaticProviderOrder(env);
 
   const reports: ProviderCapabilityReport[] = [];
-  // Serial, not parallel: these are real requests against free-tier accounts,
+  // Serial, not parallel: these are real provider requests,
   // and firing them concurrently is a good way to trip the very rate limits the
   // test is meant to measure.
   for (const provider of providers) {

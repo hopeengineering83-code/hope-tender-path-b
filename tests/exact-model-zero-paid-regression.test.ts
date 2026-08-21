@@ -135,9 +135,8 @@ describe("effective configured model selection", () => {
     });
     assert.equal(report.keyPresent, true);
     assert.equal(report.modelConfigured, true);
-    assert.equal(report.modelFreePolicy, false);
     assert.equal(report.modelVisible, null);
-    assert.notEqual(report.diagnosticState, "MODEL_POLICY_BLOCKED");
+    assert.notEqual(report.diagnosticState, "CONFIGURATION_INVALID");
     assert.notEqual(report.results[0]?.status, "skipped");
   });
 

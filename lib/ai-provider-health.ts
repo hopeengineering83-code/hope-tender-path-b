@@ -15,7 +15,6 @@ import {
   getProviderModel,
   openRouterModelValidity,
   providerAutomaticEligibility,
-  isZeroPaidMode,
   isPaidAccessProvider,
   getAutomaticProviderOrder,
   type AiProviderName,
@@ -450,12 +449,7 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
   // CONFIGURATION_INVALID below, not NOT_CONFIGURED.)
   if (!readProviderKey(provider)) return "NOT_CONFIGURED";
 
-  // Billing outranks everything a key can prove. Two ways to get here, and both
-  // mean the same thing to an operator — this provider will not answer without
-  // money — so both must render as BILLING_BLOCKED rather than as a stale
-  // success or a generic cooldown:
-  //   - the provider told us so (billing lockout), or
-  //   - zero-paid mode excludes it before it is ever asked.
+  // A real provider billing response outranks stale success or cooldown state.
   if (isBillingLockedOut(provider)) return "BILLING_BLOCKED";
 
   const cooling = isProviderCooledDown(provider);
@@ -544,7 +538,7 @@ export type ProviderRuntimeSnapshot = {
   consecutiveFailures: number;
   coolingDown: boolean;
   rateLimited: boolean;
-  /** The provider demands payment, or is excluded by zero-paid mode. */
+  /** The provider returned a billing/payment refusal. */
   billingBlocked: boolean;
   /** A real call really succeeded — never true from key presence alone. */
   runtimeVerified: boolean;
