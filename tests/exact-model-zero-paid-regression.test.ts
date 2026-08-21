@@ -36,6 +36,13 @@ before(() => {
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const requestUrl = new URL(String(input instanceof Request ? input.url : input));
     if (requestUrl.hostname === "generativelanguage.googleapis.com") {
+      if (requestUrl.pathname === "/v1beta/models") {
+        return new Response(JSON.stringify({ models: [
+          { name: "models/gemini-2.5-flash" },
+          { name: "models/gemini-2.0-flash" },
+          { name: "models/gemini-flash-latest" },
+        ] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
       const match = requestUrl.pathname.match(/\/models\/([^/:]+):generateContent$/);
       assert.ok(match, `Gemini request did not carry a model: ${requestUrl.toString()}`);
       outbound.set("gemini", decodeURIComponent(match[1]));
@@ -133,5 +140,30 @@ describe("zero-paid model selection fails closed", () => {
     assert.equal(report.modelVisible, null);
     assert.equal(report.diagnosticState, "MODEL_POLICY_BLOCKED");
     assert.equal(report.results[0]?.status, "skipped");
+  });
+
+  it("resolves each capability against its actual fast/analysis/proposal model", async () => {
+    outbound.delete("gemini");
+    const report = await testProviderCapabilities("gemini", {
+      capabilities: ["connectivity", "analysis", "generation"],
+      env: {
+        NODE_ENV: "test", AI_ZERO_PAID_MODE: "true",
+        GEMINI_API_KEY: "AIzaTestExactModelKey12345678901234567890",
+        GEMINI_MODEL: "gemini-2.5-flash",
+        GEMINI_ANALYSIS_MODEL: "gemini-2.0-flash",
+        GEMINI_EXTRACTION_MODEL: "gemini-flash-latest",
+      },
+    });
+    assert.deepEqual(report.resolvedModels, {
+      proposal: "gemini-2.5-flash",
+      extraction: "gemini-2.0-flash",
+      fast: "gemini-flash-latest",
+    });
+    assert.deepEqual(report.results.map((result) => result.model), [
+      "gemini-flash-latest",
+      "gemini-2.0-flash",
+      // The analysis mock returns only "OK", so generation is intentionally
+      // not reached after structured-analysis validation fails.
+    ]);
   });
 });

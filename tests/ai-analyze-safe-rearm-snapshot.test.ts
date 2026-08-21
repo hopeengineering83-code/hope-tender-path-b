@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { canSafelyReuseAnalysisSnapshot, type CanonicalAnalysisSnapshot } from "../lib/ai-jobs/analysis-job-service";
+import { readFileSync } from "node:fs";
 
 const current: CanonicalAnalysisSnapshot = {
   canonicalFileIds: ["file-a"],
@@ -35,5 +36,11 @@ describe("manual AI Analyze snapshot reuse", () => {
     for (const old of cases) {
       assert.equal(canSafelyReuseAnalysisSnapshot(JSON.stringify({ snapshot: old }), current), false);
     }
+  });
+
+  it("deletes every checkpoint for an uncertain revision, including legacy unbound chunks", () => {
+    const source = readFileSync("lib/ai-jobs/analysis-job-service.ts", "utf8");
+    assert.match(source, /aiAnalyzeChunk\.deleteMany\(\{\s*where:\s*\{\s*tenderId,\s*userId,\s*contentHash\s*\}/s);
+    assert.doesNotMatch(source, /SOURCE_SNAPSHOT_UNCERTAIN[\s\S]{0,500}deleteMany\(\{\s*where:\s*\{\s*jobId:/);
   });
 });

@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-21 14:15 UTC — Codex (second end-to-end gap audit on PR #1175)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued from `bf946337a404189a65821c701aafd50ba8ea3724` after all exact-head checks were green.
+- **Scope:** second audit found two remaining edge gaps. An uncertain legacy snapshot deleted only chunks carrying the old job ID, but the unique revision key permits legacy null/differently-bound chunks; cleanup now deletes all chunks for the exact tenant+tender+content revision so the fresh job cannot inherit checkpoints. Capability diagnostics also previously resolved the analysis model once and used it for connectivity and generation; they now resolve fast, analysis, and proposal independently against the same live account listing and pass each exact model through the real adapter.
+- **Files changed:** `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-provider-capability-test.ts`, `tests/ai-analyze-safe-rearm-snapshot.test.ts`, `tests/exact-model-zero-paid-regression.test.ts`, and this handoff.
+- **Tests actually run:** focused safe-rearm and exact-model regressions passed **14/14**; typecheck and lint passed before commit. Full exact-head PostgreSQL, build, Playwright, screenshot, Preview and health validation must run on the pushed SHA.
+- **Risks / assumptions:** live account capability and the owner-specific blocked tender still require authenticated Preview access not present in this environment; no claim is made for those runtime acceptance items.
+- **Next action:** push this commit to existing PR #1175, wait for exact-head CI/Preview, then report code closure separately from owner-authenticated runtime acceptance.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION**.
+
 ### 2026-08-21 13:40 UTC — Codex (Preview AI Analyze recovery on PR #1175)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued only from requested exact head `fe804c6b62605aeb6af789fff0af4933a06ddd4f`.

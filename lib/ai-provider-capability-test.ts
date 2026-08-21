@@ -83,6 +83,8 @@ export type ProviderCapabilityReport = {
   usableForAiAnalyze: boolean;
   usableForGeneration: boolean;
   availableModels: string[] | null;
+  /** Exact per-capability resolutions; analysis remains `resolvedModel` for compatibility. */
+  resolvedModels: Record<EffectiveModelUseCase, string | null>;
   resolvedModel: string | null;
   /** Orthogonal configuration facts; none is inferred from another. */
   keyPresent: boolean;
@@ -451,6 +453,7 @@ export async function testProviderCapabilities(
       usableForAiAnalyze: false,
       usableForGeneration: false,
       availableModels: null,
+      resolvedModels: { proposal: null, extraction: null, fast: null },
       resolvedModel: null,
       modelVisible: null,
       diagnosticState: !base.keyPresent
@@ -464,9 +467,19 @@ export async function testProviderCapabilities(
   }
 
   const availableModels = await listAccountModels(provider, env);
-  const resolved = await resolveVerifiedModel(provider, "extraction", availableModels, env);
+  const resolvedByUseCase = {
+    proposal: await resolveVerifiedModel(provider, "proposal", availableModels, env),
+    extraction: await resolveVerifiedModel(provider, "extraction", availableModels, env),
+    fast: await resolveVerifiedModel(provider, "fast", availableModels, env),
+  };
+  const resolved = resolvedByUseCase.extraction;
+  const resolvedModels = {
+    proposal: resolvedByUseCase.proposal.model,
+    extraction: resolvedByUseCase.extraction.model,
+    fast: resolvedByUseCase.fast.model,
+  };
 
-  if (!resolved.model) {
+  if (Object.values(resolvedModels).some((model) => !model)) {
     return {
       ...base,
       eligible: false,
@@ -478,7 +491,7 @@ export async function testProviderCapabilities(
         safeMessage: "No app-policy-proven free model is available; provider was not contacted.",
       })),
       usableForAiAnalyze: false, usableForGeneration: false,
-      availableModels, resolvedModel: null,
+      availableModels, resolvedModels, resolvedModel: null,
       modelVisible: resolved.confirmedByProvider,
       diagnosticState: resolved.confirmedByProvider === false ? "MODEL_UNAVAILABLE" : "MODEL_POLICY_BLOCKED",
     };
@@ -486,9 +499,11 @@ export async function testProviderCapabilities(
 
   const results: CapabilityTestResult[] = [];
   for (const capability of capabilities) {
+    const useCase = CAPABILITY_SPEC[capability].useCase as EffectiveModelUseCase;
+    const capabilityResolution = resolvedByUseCase[useCase];
     const result = await runCapabilityTest(provider, capability, {
-      model: resolved.model,
-      modelConfirmedByProvider: resolved.confirmedByProvider,
+      model: capabilityResolution.model ?? undefined,
+      modelConfirmedByProvider: capabilityResolution.confirmedByProvider,
       env,
     });
     results.push(result);
@@ -507,6 +522,7 @@ export async function testProviderCapabilities(
     usableForAiAnalyze: passed("analysis"),
     usableForGeneration: passed("generation"),
     availableModels,
+    resolvedModels,
     resolvedModel: resolved.model,
     modelVisible: resolved.confirmedByProvider,
     diagnosticState: passed("generation") ? "GENERATION_VERIFIED"

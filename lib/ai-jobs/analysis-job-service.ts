@@ -412,6 +412,16 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
           sourceIntegrityIntact,
           providerAvailable: isAnyProviderEligible(),
         });
+        if (effectiveCategory === "MODEL_UNAVAILABLE" && effectiveCategory !== recordedCategory) {
+          await tx.aiAnalyzeRetryState.updateMany({
+            where: { jobId: existing.id },
+            data: {
+              failureCategory: effectiveCategory,
+              retryReason: "Historical provider model failure reclassified from TENDER_NOT_FOUND",
+              lastCheckedAt: new Date(),
+            },
+          });
+        }
         // An uncertain snapshot must never reuse old chunks. Supersede the old
         // run, delete its revision-keyed checkpoints, then fall through to the
         // fresh-job creation path below. Ownership was already established by
@@ -425,7 +435,13 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
               errorMessage: "SOURCE_SNAPSHOT_UNCERTAIN_FRESH_ANALYSIS_REQUIRED",
             },
           });
-          await tx.aiAnalyzeChunk.deleteMany({ where: { jobId: existing.id } });
+          // The uniqueness key predates job binding, so legacy chunks may have
+          // a null/different jobId while still sharing this source revision.
+          // Delete by the complete revision identity to guarantee the fresh
+          // job cannot inherit any checkpoint through the later upsert.
+          await tx.aiAnalyzeChunk.deleteMany({
+            where: { tenderId, userId, contentHash },
+          });
           reuseExisting = false;
         } else if (!decision.allowed) {
           throw new Error(
