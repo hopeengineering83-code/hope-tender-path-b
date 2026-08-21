@@ -74,6 +74,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-21 17:10 UTC — Codex (final Preview provider pass blocked at authorization boundary)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; exact starting SHA `80169f0cc4fe629e431d56cbc92f189b7c2fdb52` verified before work.
+- **Scope / result:** inspected the exact-head GitHub checks and real Preview public runtime. Preview deployment `dpl_BSN5ooAyk2iSwyRcS8XAMCfKFb8Z` reports HTTP 200 healthy, release `80169f0cc4fe629e431d56cbc92f189b7c2fdb52`, and schema parity. No application or provider-policy source was changed because this runtime blocker requires effective Vercel environment/account evidence, not guessed model names.
+- **Tests actually run:** `GET /api/version` returned HTTP 200 with `gitCommitSha: 80169f0c`; `GET /api/health` returned HTTP 200 healthy with all eight table probes true and the exact full release SHA. GitHub exact-head checks were inspected and are green. The Vercel API credential available to this session identifies the owner user but is explicitly forbidden from the `hopeengineering83-codes-projects` scope, and no authenticated Preview owner session or provider credentials are available. Therefore effective environment values, provider connectivity/model visibility/capability, job polling, and the same-tender workflow could not be truthfully exercised.
+- **Risks / assumptions:** the owner-confirmed runtime before-state remains Z.ai `glm-4.7-flash` HTTP 429 followed by extraction-provider exhaustion; Gemini has no app-policy-proven free model for every runtime use case. Groq, Mistral, and OpenRouter effective model/capability state is unverified, so none is counted as a second usable provider. No key value was read or exposed, no environment was changed, no disallowed provider was contacted, and Production was untouched.
+- **Next action:** supply a Vercel token authorized for `hopeengineering83-codes-projects` plus a stable authorized Preview owner session (or have the owner perform the equivalent scoped environment inspection and authenticated run), then reconcile exact model variables from live provider capability evidence and repeat the same tender through AI Analyze, Run Engine, generation, validation/finalization, and DOCX/PDF/ZIP packaging.
+- **Merge status:** **UNSAFE / DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — two hard acceptance blockers remain: scoped effective-runtime configuration access and authenticated same-tender end-to-end proof.
+
 ### 2026-08-21 14:55 UTC — Codex (real-Preview 422 recovery authority repair on PR #1175)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued only from requested exact head `e18912149a6cba76a3ff1929c9266ed5e00b5454`.
