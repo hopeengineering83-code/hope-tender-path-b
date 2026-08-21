@@ -61,7 +61,7 @@ Never claim a fix is complete unless the stated tests passed.
 
 - Tender-controlled scope only. Never invent tender facts or evidence.
 - Company Vault is factual evidence only; no automatic all-Vault fallback.
-- Provider order: Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic last. (This is the canonical order defined in `lib/ai-provider-catalog.cjs` `CANONICAL_AI_PROVIDER_ORDER` — all docs, gates, and UI must match this.)
+- Strict zero-paid provider order: Gemini → Groq → Mistral → Z.ai → OpenRouter (verified `:free` model only) → Cerebras → OpenAI → Together → DeepSeek → Anthropic. Only the first five may enter the automatic chain; the paid-access tail is visible as `BILLING_BLOCKED` and is never contacted. This is the canonical order defined in `lib/ai-provider-catalog.cjs`.
 - Regex, fallback, partial, legacy, and unpromoted analysis must not unlock generation, export, or Final ZIP.
 - Only promoted `AI_SUCCEEDED` may unlock generation/export after all gates pass.
 - Critical metadata and mandatory requirements need active source file, page, and meaningful quote.
@@ -73,6 +73,15 @@ Never claim a fix is complete unless the stated tests passed.
 ## Session Log
 
 <!-- Add newest entry at the top. -->
+
+### 2026-08-21 17:30 UTC — Codex (provider-policy recheck and stale-truth repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; rechecked from `abc1e32f4f7e72256d2fe419ea1a29624c40ff24` without rebasing or touching Production.
+- **Scope / files changed:** audited every inline review comment and confirmed all seven CodeQL findings had already been repaired by landed commits (`a37a7076` and `279965cb`); corrected the remaining stale provider-order statement in `operator_handoff.md` and stale registry comment in `lib/ai-provider-registry.ts`. No runtime behavior or safeguard changed.
+- **Tests actually run:** Prisma generate passed; focused zero-paid/provider/capability/health/redaction suite passed **255/255**; typecheck passed; lint passed; release-integrity passed (435 routes, 1,590 files); both affected scripts passed Node syntax checks; dependency audit reports 0 vulnerabilities; diff check passed. Exact prior head `abc1e32f` CI passed **10,238/10,238 unit + PostgreSQL tests** and **184 Playwright passed / 4 skipped**, with migrations, idempotency, zero drift, build, authenticated isolation, dependency security, route/screenshot audit and Vercel green. Its Preview `dpl_6d2Z1NaFUikBKSTUhGbHq8uVK191` returned HTTP 200 for version/health with exact SHA, schema parity and eight healthy table probes.
+- **Risks / assumptions:** the authenticated diagnostics endpoint correctly returned 401 without a session. This environment still lacks a project-scoped Vercel token and stable Preview owner session, so effective provider variables, two real provider capability successes, same-tender AI Analyze/Engine/package completion, job-polling 200, and post-analysis Bid Strategy cannot be claimed. The prompt's true end-to-end acceptance is therefore **3/11 areas (27.3%)**, while the static/code provider-policy controls inspected here are green.
+- **Next action:** obtain the authorized Preview owner session and project-scoped configuration access, establish two live free-provider structured-analysis successes, then rerun the retained tender through final ZIP on the resulting exact head.
+- **Merge status:** **UNSAFE / DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — provider-account and authenticated workflow acceptance remain open.
 
 ### 2026-08-21 17:10 UTC — Codex (final Preview provider pass blocked at authorization boundary)
 

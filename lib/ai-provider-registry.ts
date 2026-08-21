@@ -39,9 +39,10 @@ export type AiProviderName =
 // The canonical automatic provider order. The single literal lives in the
 // plain-CJS catalog (lib/ai-provider-catalog.cjs) so build-time scripts
 // (next.config.js, scripts/check-env.mjs) consume the SAME order without any
-// duplication. Currently-working tier first (zai → cerebras → mistral → groq →
-// openrouter), remaining supported providers after OpenRouter in the required
-// order (gemini → openai → together → deepseek → anthropic).
+// duplication. The strict zero-paid automatic tier comes first (gemini → groq
+// → mistral → zai → openrouter), followed by the paid-access providers that
+// remain visible in diagnostics but are unreachable by automatic routing
+// (cerebras → openai → together → deepseek → anthropic).
 export const CANONICAL_AI_PROVIDER_ORDER: readonly AiProviderName[] = CATALOG_ORDER;
 
 export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast" | "reasoning";
