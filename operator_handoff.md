@@ -74,6 +74,16 @@ Never claim a fix is complete unless the stated tests passed.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-21 13:40 UTC — Codex (Preview AI Analyze recovery on PR #1175)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, continued only from requested exact head `fe804c6b62605aeb6af789fff0af4933a06ddd4f`.
+- **Scope:** corrected failure-classification precedence so provider model-not-found phrases cannot become terminal tender-not-found failures; added safe historical-category repair during authenticated manual re-arm; made chunk reuse conditional on exact active-file IDs, non-null source-byte hashes, extracted-text hashes, analysis input hash, and chunk hashes, otherwise superseding the old job and deleting its checkpoints before creating a fresh run. Live provider diagnostics now expose key presence, configured models, model configuration, free-policy proof, model visibility, and explicit diagnostic state independently, and no longer summarize a present-but-policy-blocked key as unconfigured.
+- **Files changed:** `lib/ai-analyze/retry-service.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-provider-capability-test.ts`, `app/api/ai-providers/diagnostics/route.ts`, `tests/ai-analyze-retry-scheduler.test.ts`, `tests/ai-analyze-safe-rearm-snapshot.test.ts`, `tests/exact-model-zero-paid-regression.test.ts`, and this handoff.
+- **Tests actually run:** Prisma generate/validate passed; typecheck passed; lint passed; release-integrity passed (435 routes, 1,589 files); focused non-DB regressions passed. Production build passed with a non-runtime placeholder Gemini key. PostgreSQL execution was attempted but the configured Neon test endpoint was unreachable, while `npm test` correctly refused that production-designated hostname; exact PostgreSQL/Playwright/Preview evidence is therefore delegated to the existing PR CI and Preview after push.
+- **Risks / assumptions:** strict reuse requires non-null persisted source-byte hashes; older/incomplete snapshots intentionally take the fresh-job path and never reuse old chunks. No provider credentials or usable Vercel API credential are available locally, so live account model reconciliation and same-tender acceptance must be verified on the exact Preview rather than claimed from this container.
+- **Next action:** run exact-head #1175 CI and inspect its Preview live diagnostics, health, and same-tender manual AI Analyze transition; do not merge or promote Production.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** until exact Preview acceptance is evidenced.
+
 ### 2026-08-20 19:30 UTC — Codex (exact-model and zero-paid model-level closure on PR #1175)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; applied directly on its exact prior head `680e5e32907838669a86a1e3e4f591ac68062d7f` as explicitly requested by Hope.

@@ -55,6 +55,7 @@ import { classifyProviderError, isBillingBlocked, type AiProviderFailureCategory
 import { redactSecrets } from "./sanitize-error";
 
 export type CapabilityName = "connectivity" | "analysis" | "generation";
+type EffectiveModelUseCase = "proposal" | "extraction" | "fast";
 
 export type CapabilityTestResult = {
   provider: AiProviderName;
@@ -83,7 +84,32 @@ export type ProviderCapabilityReport = {
   usableForGeneration: boolean;
   availableModels: string[] | null;
   resolvedModel: string | null;
+  /** Orthogonal configuration facts; none is inferred from another. */
+  keyPresent: boolean;
+  configuredModels: Record<EffectiveModelUseCase, string | null>;
+  modelConfigured: boolean;
+  modelFreePolicy: boolean;
+  modelVisible: boolean | null;
+  diagnosticState:
+    | "KEY_MISSING" | "CONFIGURATION_INVALID" | "MODEL_POLICY_BLOCKED"
+    | "MODEL_UNAVAILABLE" | "BILLING_BLOCKED" | "RATE_LIMITED"
+    | "CONNECTIVITY_VERIFIED" | "ANALYSIS_VERIFIED" | "GENERATION_VERIFIED"
+    | "CONFIGURED";
 };
+
+function configuredModelFacts(provider: AiProviderName, env: NodeJS.ProcessEnv) {
+  const configuredModels = {
+    proposal: getProviderModel(provider, "proposal", env) || null,
+    extraction: getProviderModel(provider, "extraction", env) || null,
+    fast: getProviderModel(provider, "fast", env) || null,
+  } satisfies Record<EffectiveModelUseCase, string | null>;
+  return {
+    keyPresent: Boolean(readProviderKey(provider, env)),
+    configuredModels,
+    modelConfigured: Object.values(configuredModels).every(Boolean),
+    modelFreePolicy: Object.values(configuredModels).every((model) => Boolean(model && isModelProvenFree(provider, model))),
+  };
+}
 
 function safeMessage(value: unknown): string {
   const raw = value instanceof Error ? value.message : String(value ?? "");
@@ -406,6 +432,7 @@ export async function testProviderCapabilities(
     access: entry.access,
     eligible: eligibility.eligible,
     eligibilityReason: eligibility.safeMessage,
+    ...configuredModelFacts(provider, env),
   };
 
   if (!eligibility.eligible) {
@@ -425,6 +452,14 @@ export async function testProviderCapabilities(
       usableForGeneration: false,
       availableModels: null,
       resolvedModel: null,
+      modelVisible: null,
+      diagnosticState: !base.keyPresent
+        ? "KEY_MISSING" as const
+        : eligibility.reason === "PAID_ACCESS_BLOCKED"
+          ? "BILLING_BLOCKED" as const
+          : eligibility.reason === "MODEL_FREE_STATUS_UNPROVEN" || eligibility.reason === "CONDITIONAL_FREE_UNVERIFIED"
+            ? "MODEL_POLICY_BLOCKED" as const
+            : "CONFIGURATION_INVALID" as const,
     };
   }
 
@@ -444,6 +479,8 @@ export async function testProviderCapabilities(
       })),
       usableForAiAnalyze: false, usableForGeneration: false,
       availableModels, resolvedModel: null,
+      modelVisible: resolved.confirmedByProvider,
+      diagnosticState: resolved.confirmedByProvider === false ? "MODEL_UNAVAILABLE" : "MODEL_POLICY_BLOCKED",
     };
   }
 
@@ -471,6 +508,13 @@ export async function testProviderCapabilities(
     usableForGeneration: passed("generation"),
     availableModels,
     resolvedModel: resolved.model,
+    modelVisible: resolved.confirmedByProvider,
+    diagnosticState: passed("generation") ? "GENERATION_VERIFIED"
+      : passed("analysis") ? "ANALYSIS_VERIFIED"
+        : passed("connectivity") ? "CONNECTIVITY_VERIFIED"
+          : results.some((result) => result.category === "RATE_LIMIT") ? "RATE_LIMITED"
+            : results.some((result) => result.category === "MODEL_UNAVAILABLE") ? "MODEL_UNAVAILABLE"
+              : "CONFIGURED",
   };
 }
 

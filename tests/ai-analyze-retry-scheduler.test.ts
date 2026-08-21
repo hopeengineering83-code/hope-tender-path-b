@@ -83,6 +83,22 @@ describe("classifyFailure — retryable vs non-retryable", () => {
     assert.equal(classifyFailure("Worker returned 401 unauthorized", undefined, "FAILED").retryable, false);
   });
 
+  it("classifies provider model-not-found phrases before generic tender not-found", () => {
+    for (const message of ["model not found", "unknown model", "model_not_found", "no such model"]) {
+      const result = classifyFailure(message, undefined, "FAILED");
+      assert.equal(result.category, "MODEL_UNAVAILABLE", message);
+      assert.equal(result.retryable, false, message);
+    }
+    assert.equal(classifyFailure("Tender not found or access denied", undefined, "FAILED").category, "TENDER_NOT_FOUND");
+  });
+
+  it("repairs a historical false TENDER_NOT_FOUND category from its model error", () => {
+    assert.equal(
+      classifyFailure("Provider response: unknown model", "TENDER_NOT_FOUND", "FAILED").category,
+      "MODEL_UNAVAILABLE",
+    );
+  });
+
   it("treats PARTIAL_SUCCESS as retryable (remaining chunks may complete)", () => {
     const c = classifyFailure(undefined, undefined, "PARTIAL_SUCCESS");
     assert.equal(c.retryable, true);

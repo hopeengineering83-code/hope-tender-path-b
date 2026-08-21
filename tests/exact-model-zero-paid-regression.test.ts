@@ -1,7 +1,7 @@
 import { after, before, describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
-import { resolveVerifiedModel, runCapabilityTest } from "../lib/ai-provider-capability-test";
+import { resolveVerifiedModel, runCapabilityTest, testProviderCapabilities } from "../lib/ai-provider-capability-test";
 import { getProviderModel, type AiProviderName } from "../lib/ai-provider-registry";
 import { preflightProvider } from "../lib/ai-preflight";
 
@@ -115,5 +115,23 @@ describe("zero-paid model selection fails closed", () => {
     const registry = readFileSync("lib/ai-provider-registry.ts", "utf8");
     assert.doesNotMatch(registry, /llama-3\.3-70b-versatile/);
     assert.equal(getProviderModel("groq", "proposal", { NODE_ENV: "test" }), "");
+  });
+
+  it("reports a present key and blocked model policy as separate facts", async () => {
+    const report = await testProviderCapabilities("groq", {
+      capabilities: ["analysis"],
+      env: {
+        NODE_ENV: "test", AI_ZERO_PAID_MODE: "true", GROQ_API_KEY: "present",
+        GROQ_PROPOSAL_MODEL: "unknown-cost-model",
+        GROQ_ANALYSIS_MODEL: "unknown-cost-model",
+        GROQ_FAST_MODEL: "unknown-cost-model",
+      },
+    });
+    assert.equal(report.keyPresent, true);
+    assert.equal(report.modelConfigured, true);
+    assert.equal(report.modelFreePolicy, false);
+    assert.equal(report.modelVisible, null);
+    assert.equal(report.diagnosticState, "MODEL_POLICY_BLOCKED");
+    assert.equal(report.results[0]?.status, "skipped");
   });
 });

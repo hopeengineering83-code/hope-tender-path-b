@@ -1,5 +1,5 @@
 import { toSafeAiFailureCategory } from "../engine/analysis/safe-diagnostics";
-import { decideManualRearm, isAnyProviderEligible, isProviderConfigFailureCategory } from "../ai-analyze/retry-service";
+import { classifyFailure, decideManualRearm, isAnyProviderEligible, isProviderConfigFailureCategory } from "../ai-analyze/retry-service";
 import { logger } from "../observability";
 import { computeAdvisoryLockKey } from "../engine/advisory-lock-key";
 import { prisma } from "../prisma";
@@ -104,6 +104,37 @@ export type CanonicalAnalysisSnapshot = {
   /** Deterministic ordered list of file IDs as joined string (for snapshot integrity check). */
   snapshotVersion: 1;
 };
+
+/**
+ * Manual resume is allowed to reuse completed chunks only when the old frozen
+ * snapshot proves every identity carried by the freshly rebuilt snapshot.
+ * Legacy snapshots with absent/null byte hashes are intentionally uncertain:
+ * they are superseded and their chunks are discarded rather than trusted.
+ */
+export function canSafelyReuseAnalysisSnapshot(
+  persistedInput: string | null,
+  current: CanonicalAnalysisSnapshot,
+): boolean {
+  try {
+    const parsed = JSON.parse(persistedInput ?? "{}");
+    const old = parsed?.snapshot as CanonicalAnalysisSnapshot | undefined;
+    if (!old || old.snapshotVersion !== 1 || !old.fileSourceByteHashes) return false;
+    if (old.analysisInputHash !== current.analysisInputHash || old.totalChunks !== current.totalChunks) return false;
+    if (JSON.stringify(old.canonicalFileIds) !== JSON.stringify(current.canonicalFileIds)) return false;
+    for (const fileId of current.canonicalFileIds) {
+      const oldByteHash = old.fileSourceByteHashes[fileId];
+      const currentByteHash = current.fileSourceByteHashes?.[fileId];
+      if (!oldByteHash || !currentByteHash || oldByteHash !== currentByteHash) return false;
+      if (old.fileContentHashes[fileId] !== current.fileContentHashes[fileId]) return false;
+    }
+    for (let index = 0; index < current.totalChunks; index++) {
+      if (!old.chunkHashes[index] || old.chunkHashes[index] !== current.chunkHashes[index]) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Verify a job's persisted canonical snapshot against the current tender
@@ -336,6 +367,7 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
     });
 
     if (existing) {
+      let reuseExisting = true;
       // If the job is QUEUED or RUNNING, return it as-is — another caller
       // already has an active job for this content hash. This is the
       // idempotent path: double-click or two-tab scenarios return the
@@ -360,87 +392,104 @@ export async function createAnalysisJob(input: AnalysisJobCreateInput) {
       // re-verified either way, because the SUCCEEDED chunks this resume reuses
       // are evidence about one specific document.
       if (existing.status === "FAILED" || existing.status === "PARTIAL_SUCCESS") {
+        const sourceIntegrityIntact = canSafelyReuseAnalysisSnapshot(existing.input, snapshot);
+        // Repair the historical false-terminal case from before model phrases
+        // were matched ahead of generic "not found". Only the persisted error
+        // text can narrow TENDER_NOT_FOUND to MODEL_UNAVAILABLE; true ownership
+        // failures retain their terminal category.
+        const recordedCategory = existing.retryState?.failureCategory ?? null;
+        const effectiveCategory = recordedCategory === "TENDER_NOT_FOUND"
+          ? classifyFailure(existing.errorMessage ?? undefined, undefined, existing.status).category
+          : recordedCategory;
         const decision = decideManualRearm({
-          failureCategory: existing.retryState?.failureCategory ?? null,
+          failureCategory: effectiveCategory,
           nonRetryable: existing.retryState?.nonRetryable ?? false,
           // The advisory lock above is held on (actor, tender, jobType, current
           // content hash), and `existing` was matched on analysisInputHash ===
-          // contentHash. Reaching this line therefore already proves the caller
-          // owns the tender and the content hashes identically to the run being
-          // resumed — source-byte and content-hash drift cannot get here.
-          sourceIntegrityIntact: true,
+          // contentHash. Ownership and the aggregate input hash are necessary
+          // but not sufficient: the strict snapshot comparison above separately
+          // proves file IDs, source bytes, extracted text and chunk boundaries.
+          sourceIntegrityIntact,
           providerAvailable: isAnyProviderEligible(),
         });
-        if (!decision.allowed) {
+        // An uncertain snapshot must never reuse old chunks. Supersede the old
+        // run, delete its revision-keyed checkpoints, then fall through to the
+        // fresh-job creation path below. Ownership was already established by
+        // the tender query and transaction predicate.
+        if (!sourceIntegrityIntact) {
+          await tx.aiJob.update({
+            where: { id: existing.id },
+            data: {
+              status: ANALYSIS_SUPERSEDED_STATUS,
+              finishedAt: new Date(),
+              errorMessage: "SOURCE_SNAPSHOT_UNCERTAIN_FRESH_ANALYSIS_REQUIRED",
+            },
+          });
+          await tx.aiAnalyzeChunk.deleteMany({ where: { jobId: existing.id } });
+          reuseExisting = false;
+        } else if (!decision.allowed) {
           throw new Error(
             `AI_ANALYZE_NON_RETRYABLE:${decision.category ?? decision.reason}:${decision.message}`,
           );
         }
       }
 
-      // Re-ARM for resume. claimJobForCaller (/api/ai-jobs/run-next) only claims
-      // QUEUED rows, so a PARTIAL_SUCCESS/FAILED job would otherwise be
-      // un-runnable and "Run/Resume AI Analyze" would do nothing. We reset it to
-      // QUEUED and clear the terminal stamps; the completed AiAnalyzeChunk rows
-      // (SUCCEEDED) and AiJob.output are preserved, so the next run continues
-      // from the last successful chunk instead of restarting. A RUNNING/QUEUED
-      // job is left untouched (this branch never resets the actively-claimed job
-      // that executeAnalysis re-resolves mid-run).
-      //
-      // FIX 1+2: persist the manual authority AND the canonical snapshot in the
-      // SAME transaction that re-arms the job. The previous design left a race
-      // window between createAnalysisJob() and a separate updateMany that
-      // patched manualRequested into input.
-      const existingInput = (() => {
-        try {
-          const parsed = JSON.parse(existing.input ?? "{}");
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            return parsed as Record<string, unknown>;
+      if (reuseExisting) {
+        // Re-ARM for resume. claimJobForCaller (/api/ai-jobs/run-next) only claims
+        // QUEUED rows, so a PARTIAL_SUCCESS/FAILED job would otherwise be
+        // un-runnable. The completed chunks are preserved only after the strict
+        // snapshot comparison above proves that reuse is safe.
+        const existingInput = (() => {
+          try {
+            const parsed = JSON.parse(existing.input ?? "{}");
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              return parsed as Record<string, unknown>;
+            }
+          } catch {
+            // fallthrough
           }
-        } catch {
-          // fallthrough
+          return {} as Record<string, unknown>;
+        })();
+        // Clear the stale provider-class block in the same transaction.
+        const effectiveFailureCategory = existing.retryState?.failureCategory === "TENDER_NOT_FOUND"
+          ? classifyFailure(existing.errorMessage ?? undefined, undefined, existing.status).category
+          : existing.retryState?.failureCategory;
+        if (isProviderConfigFailureCategory(effectiveFailureCategory)) {
+          await tx.aiAnalyzeRetryState.updateMany({
+            where: { jobId: existing.id },
+            data: {
+              nonRetryable: false,
+              retryCount: 0,
+              nextRetryAt: null,
+              retryReason: "Manual retry after provider configuration change — re-armed",
+              lastProviderAvailable: true,
+              lastCheckedAt: new Date(),
+              failureCategory: effectiveFailureCategory,
+            },
+          });
         }
-        return {} as Record<string, unknown>;
-      })();
-      // Clear the stale provider-class block IN THE SAME TRANSACTION that
-      // re-arms the job. Leaving nonRetryable: true set would let the job run
-      // now but keep findJobsDueForRetry() skipping it forever afterwards —
-      // the manual path and the automatic path would disagree about whether the
-      // same job is retryable.
-      if (isProviderConfigFailureCategory(existing.retryState?.failureCategory)) {
-        await tx.aiAnalyzeRetryState.updateMany({
-          where: { jobId: existing.id },
+
+        return await tx.aiJob.update({
+          where: { id: existing.id },
           data: {
-            nonRetryable: false,
-            retryCount: 0,
-            nextRetryAt: null,
-            retryReason: "Manual retry after provider configuration change — re-armed",
-            lastProviderAvailable: true,
-            lastCheckedAt: new Date(),
+            status: "QUEUED",
+            startedAt: null,
+            finishedAt: null,
+            errorMessage: null,
+            input: JSON.stringify({
+              ...existingInput,
+              tenderId,
+              contentHash,
+              source: "manual-ai-analyze",
+              manualRequested: true,
+              autoContinue: false,
+              actorUserId: manualAuthority.actorUserId,
+              authorizedAt: manualAuthority.authorizedAt,
+              snapshot,
+            }),
           },
         });
       }
-
-      return await tx.aiJob.update({
-        where: { id: existing.id },
-        data: {
-          status: "QUEUED",
-          startedAt: null,
-          finishedAt: null,
-          errorMessage: null,
-          input: JSON.stringify({
-            ...existingInput,
-            tenderId,
-            contentHash,
-            source: "manual-ai-analyze",
-            manualRequested: true,
-            autoContinue: false,
-            actorUserId: manualAuthority.actorUserId,
-            authorizedAt: manualAuthority.authorizedAt,
-            snapshot,
-          }),
-        },
-      });
     }
 
     // Step 3: No existing job found — create a new one. The advisory lock

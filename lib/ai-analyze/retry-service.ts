@@ -125,6 +125,12 @@ export function classifyFailure(
   const cat = failureCategory ?? "UNKNOWN";
   const msg = (errorMessage ?? "").toLowerCase();
 
+  // Provider model errors contain the generic words "not found" too. Match
+  // them before the tender/ownership fallback or a retired/mistyped model will
+  // permanently poison the tender as TENDER_NOT_FOUND.
+  if (/model not found|unknown model|model_not_found|no such model|decommissioned/i.test(msg)) {
+    return { retryable: false, category: "MODEL_UNAVAILABLE", reason: "Configured model is unavailable — fix the model, then retry" };
+  }
   if (NON_RETRYABLE_CATEGORIES.has(cat)) return { retryable: false, category: cat, reason: `Non-retryable: ${cat}` };
   if (/extraction.*corrupt|corrupted.*extraction/i.test(msg)) return { retryable: false, category: "EXTRACTION_CORRUPTED", reason: "Extraction is corrupted — OCR or re-upload required" };
   if (/ocr.*required|requires?\s+ocr/i.test(msg)) return { retryable: false, category: "OCR_REQUIRED", reason: "OCR required before analysis can succeed" };
@@ -144,9 +150,6 @@ export function classifyFailure(
   }
   if (/insufficient.?(balance|quota)|payment required|billing details|credit balance/i.test(msg)) {
     return { retryable: false, category: "BILLING_BLOCKED", reason: "Provider requires payment — configure a free provider, then retry" };
-  }
-  if (/model not found|unknown model|model_not_found|decommissioned|no such model/i.test(msg)) {
-    return { retryable: false, category: "MODEL_UNAVAILABLE", reason: "Configured model is unavailable — fix the model, then retry" };
   }
   if (/\b401\b|\b403\b|unauthorized|forbidden/i.test(msg)) return { retryable: false, category: "OWNERSHIP_REVOKED", reason: "Caller is not authorized for this tender" };
 

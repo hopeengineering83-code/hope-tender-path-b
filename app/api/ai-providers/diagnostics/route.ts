@@ -60,6 +60,7 @@ export async function GET(req: Request) {
   const analysisReady = verifiedAnalysisProviders(reports);
   const billingBlocked = billingBlockedProviders(reports);
   const tested = reports.filter((r) => r.eligible);
+  const anyKeyPresent = reports.some((r) => r.keyPresent);
 
   return NextResponse.json({
     live: true,
@@ -76,8 +77,10 @@ export async function GET(req: Request) {
     testedCount: tested.length,
     summary: analysisReady.length > 0
       ? `${analysisReady.length} of ${tested.length} tested provider(s) completed a real AI Analyze extraction — AI Analyze can run.`
-      : tested.length === 0
+      : tested.length === 0 && !anyKeyPresent
         ? `No provider in the active chain is configured. Set a free provider key (GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY) and redeploy.`
+        : tested.length === 0
+          ? "Provider keys exist, but no provider has a valid app-policy-proven free model configuration. See each explicit provider state below."
         : `No provider completed a real AI Analyze extraction. Connectivity alone is not sufficient — see the per-provider analysis result below.`,
     perProvider: reports,
   });
