@@ -7,7 +7,13 @@
 // content and generation status are not changed.
 //
 // Body: { docIds: string[] }
-// Response: { classified: number, skipped: number, details: [...] }
+// Response: { classified: number, unchanged: number, skipped: number, details: [...] }
+//
+// `classified` counts documents whose stored type or reviewStatus actually
+// changed. Documents already carrying the correct type are counted as
+// `unchanged` and are neither written nor audited — normalizeDocumentType
+// returns the current type for a correctly-typed document, so this is the
+// normal case, and counting it as work made the reported number meaningless.
 //
 // Auth: ADMIN or PROPOSAL_MANAGER.
 
@@ -17,7 +23,7 @@ import { prisma, prismaReady } from "../../../../../../lib/prisma";
 import { logAction } from "../../../../../../lib/audit";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../../lib/rate-limit";
 import { sanitizeError } from "../../../../../../lib/sanitize-error";
-import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../../../../../../lib/engine/document-type-normalizer";
+import { planDocumentReclassification } from "../../../../../../lib/engine/document-type-normalizer";
 import { getCanonicalReadinessSummary } from "../../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +52,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const docIds: string[] = ((body as { docIds: unknown[] }).docIds as string[]).filter((d) => typeof d === "string").slice(0, 200);
 
   if (docIds.length === 0) {
-    return NextResponse.json({ ok: true, classified: 0, skipped: 0, details: [] });
+    return NextResponse.json({ ok: true, classified: 0, unchanged: 0, skipped: 0, details: [] });
   }
 
   // Verify tender belongs to actor
@@ -55,30 +61,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const docs = await prisma.generatedDocument.findMany({
     where: { id: { in: docIds }, tenderId },
-    select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true },
+    select: { id: true, name: true, exactFileName: true, documentType: true, generationStatus: true, reviewStatus: true },
   });
 
   let classified = 0;
+  let unchanged = 0;
   let skipped = 0;
   const details: { id: string; name: string; from: string | null; to: string; reviewStatus?: string }[] = [];
 
   for (const doc of docs) {
     if (doc.generationStatus === "SUPERSEDED") { skipped++; continue; }
 
-    const normalized = normalizeDocumentType(doc.name, doc.exactFileName, doc.documentType);
-    const newType = normalized.toUpperCase();
-    const reviewStatus = requiresOfficialOriginal(normalized)
-      ? "REPLACE_WITH_ORIGINAL"
-      : isControlDocument(normalized)
-        ? "NOT_EXPORTABLE"
-        : undefined;
+    const plan = planDocumentReclassification(doc);
+    // Already correctly typed — do not write, do not report it as work.
+    if (!plan.wouldChange) { unchanged++; continue; }
 
+    const newType = plan.normalizedType.toUpperCase();
     await prisma.generatedDocument.update({
       where: { id: doc.id },
-      data: { documentType: newType, ...(reviewStatus ? { reviewStatus, validationStatus: "PENDING" } : {}) },
+      data: { documentType: newType, ...(plan.reviewStatus ? { reviewStatus: plan.reviewStatus, validationStatus: "PENDING" } : {}) },
     });
 
-    details.push({ id: doc.id, name: doc.name, from: doc.documentType, to: newType, ...(reviewStatus ? { reviewStatus } : {}) });
+    details.push({ id: doc.id, name: doc.name, from: doc.documentType, to: newType, ...(plan.reviewStatus ? { reviewStatus: plan.reviewStatus } : {}) });
     classified++;
   }
 
@@ -89,7 +93,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       entityType: "Tender",
       entityId: tenderId,
       description: `Auto-classified ${classified} outside-plan document(s) for tender "${tender.title}"`,
-      metadata: { classified, skipped, docIds },
+      metadata: { classified, unchanged, skipped, docIds },
     });
   }
 
@@ -97,5 +101,5 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const canonicalReadiness = classified > 0
     ? await getCanonicalReadinessSummary(prisma, actor.id, tenderId)
     : null;
-  return NextResponse.json({ ok: true, classified, skipped, details, canonicalReadiness });
+  return NextResponse.json({ ok: true, classified, unchanged, skipped, details, canonicalReadiness });
 }

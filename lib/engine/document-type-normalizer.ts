@@ -129,3 +129,66 @@ export function requiresOfficialOriginal(normalizedType: NormalizedDocumentType)
 export function isControlDocument(normalizedType: NormalizedDocumentType): boolean {
   return normalizedType === "SUBMISSION_RULES";
 }
+
+// ── Reclassification planning ───────────────────────────────────────────────
+//
+// The Submission Plan panel offered "Reclassify to plan" on every actionable
+// row and the route always wrote and always logged, so a document already
+// typed TECHNICAL_PROPOSAL produced the audit entry and the UI message
+// "Done — reclassified TECHNICAL_PROPOSAL → TECHNICAL_PROPOSAL". That is a
+// no-op reported as work: it adds a meaningless audit row, tells the owner an
+// action succeeded when nothing changed, and hides the fact that the row's
+// real problem is something else.
+//
+// normalizeDocumentType is explicitly designed to return the current type when
+// the document is already correctly typed ("do not silently reclassify
+// legitimate TECHNICAL_PROPOSAL", above), so "the normalised type equals the
+// current type" is the normal case, not an edge case.
+//
+// planDocumentReclassification is the one place that answers "would
+// reclassifying this document actually change anything?". The route uses it to
+// decide whether to write at all; the submission-plan API uses it so the panel
+// can decide whether to offer the action.
+
+export type DocumentReclassificationPlan = {
+  /** The document's stored type, upper-cased ("" when unset). */
+  currentType: string;
+  /** What normalizeDocumentType resolves it to. */
+  normalizedType: NormalizedDocumentType;
+  /** The reviewStatus the reclassification would set, when the type demands one. */
+  reviewStatus: "REPLACE_WITH_ORIGINAL" | "NOT_EXPORTABLE" | null;
+  changesType: boolean;
+  changesReviewStatus: boolean;
+  /** True only when applying the reclassification would alter stored state. */
+  wouldChange: boolean;
+  /** Human-readable result, truthful in both the change and no-change cases. */
+  detail: string;
+};
+
+export function planDocumentReclassification(doc: {
+  name: string;
+  exactFileName?: string | null;
+  documentType?: string | null;
+  reviewStatus?: string | null;
+}): DocumentReclassificationPlan {
+  const currentType = (doc.documentType ?? "").trim().toUpperCase();
+  const normalizedType = normalizeDocumentType(doc.name, doc.exactFileName, doc.documentType);
+  const targetType = normalizedType.toUpperCase();
+
+  const reviewStatus = requiresOfficialOriginal(normalizedType)
+    ? "REPLACE_WITH_ORIGINAL" as const
+    : isControlDocument(normalizedType)
+      ? "NOT_EXPORTABLE" as const
+      : null;
+
+  const changesType = targetType !== currentType;
+  const changesReviewStatus =
+    reviewStatus !== null && reviewStatus !== (doc.reviewStatus ?? "").trim().toUpperCase();
+  const wouldChange = changesType || changesReviewStatus;
+
+  const detail = wouldChange
+    ? `reclassified ${currentType || "OTHER"} → ${targetType}${reviewStatus ? ` (${reviewStatus})` : ""}`
+    : `already classified as ${targetType} — no change made`;
+
+  return { currentType, normalizedType, reviewStatus, changesType, changesReviewStatus, wouldChange, detail };
+}

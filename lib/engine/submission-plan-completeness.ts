@@ -19,6 +19,23 @@ import {
   isValidationPassed,
   type DocumentLike,
 } from "./document-output-state";
+import { planDocumentReclassification } from "./document-type-normalizer";
+
+/**
+ * The document type "Reclassify to plan" would write for this row, or null when
+ * the action would change nothing. One computation, shared by the panel (which
+ * decides whether to offer the action) and the route (which decides whether to
+ * write and audit it).
+ */
+function reclassificationTargetFor(doc: {
+  name: string;
+  exactFileName?: string | null;
+  documentType?: string | null;
+  reviewStatus?: string | null;
+}): string | null {
+  const plan = planDocumentReclassification(doc);
+  return plan.wouldChange ? plan.normalizedType.toUpperCase() : null;
+}
 
 export type SubmissionPlanRowStatus =
   | "GENERATED"
@@ -56,6 +73,18 @@ export type SubmissionPlanRow = {
   hasStoragePath: boolean;
   officialOriginal: boolean;
   recommendedAction: string;
+  /**
+   * The document type a "Reclassify to plan" action would actually write, or
+   * null when reclassifying would change nothing.
+   *
+   * normalizeDocumentType returns the current type for a correctly-typed
+   * document, so most rows reclassify to themselves. The panel used to offer
+   * the action on every actionable row regardless, and the route wrote and
+   * audited it unconditionally, producing
+   * "Done — reclassified TECHNICAL_PROPOSAL → TECHNICAL_PROPOSAL". Surfacing
+   * the target here lets the panel offer the action only when there is one.
+   */
+  reclassifyTo: string | null;
 };
 
 export type SubmissionPlanState =
@@ -281,6 +310,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
       hasStoragePath: Boolean(doc?.storagePath && (doc.storagePath ?? "").length > 0),
       officialOriginal,
       recommendedAction: recommendedActionFor(status, planFile, doc),
+      reclassifyTo: doc ? reclassificationTargetFor(doc) : null,
     });
   }
 
@@ -318,6 +348,7 @@ export function resolveSubmissionPlanCompleteness(input: ResolvePlanCompleteness
       hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
       officialOriginal,
       recommendedAction: recommendedActionFor(effectiveStatus, null, doc),
+      reclassifyTo: reclassificationTargetFor(doc),
     });
   }
 
