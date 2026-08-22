@@ -46,7 +46,11 @@ function scoreBadge(score: "GOOD" | "WARNING" | "BLOCKED") {
 // Plain-language remediation for each issue the machine checks can raise.
 // Non-coder friendly: says exactly what to fix and why.
 const FIX_ADVICE: Record<string, string> = {
-  EMPTY_BODY: "Click Generate to create this document from the tender requirements, or Attach to upload the real file.",
+  // Generation is automatic after Run Engine — instructing a click here would
+  // point at a button that no longer exists, which is what
+  // tests/no-instructions-to-run-removed-actions.test.ts forbids. Describe the
+  // state and name the only action that IS the owner's: supplying an original.
+  EMPTY_BODY: "This document has no content yet. Generation runs automatically; if the tender requires an official original, attach it here.",
   TOO_SHORT: "Regenerate this document — the content is far below the length this document kind needs.",
   MISSING_REQUIRED_SECTION: "Add the missing sections, then regenerate or edit the document.",
   PLACEHOLDER: "Remove all placeholder text before export. These strings will be visible to evaluators.",
