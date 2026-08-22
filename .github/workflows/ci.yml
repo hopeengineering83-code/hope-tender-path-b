@@ -217,6 +217,28 @@ jobs:
           --
           npm test
 
+      # Runs only when the tests failed. The suite emits well over 10,000 TAP
+      # lines, and the log viewer's tail is capped at 5,000 — so on a run with a
+      # single failure the "not ok" line is already off the end by the time the
+      # job finishes, and the only thing visible is "# fail 1". That happened
+      # twice, and both times the failing test could not be named at all: it was
+      # not in the reachable log, and it did not reproduce locally.
+      #
+      # An intermittent failure that cannot be named cannot be fixed, and is
+      # exactly the kind that gets waved through as "flaky". This prints the
+      # failing tests, and only those, at the very end of the job where the tail
+      # will always reach them.
+      - name: Name the failing tests
+        if: failure()
+        run: |
+          LOG=test-results/npm-test.log
+          if [ ! -f "$LOG" ]; then echo "No test log at $LOG — the failure was before the test step."; exit 0; fi
+          echo "──────── failing tests ────────"
+          # The TAP "not ok" line plus the diagnostic block that follows it.
+          grep -n -A 12 '^not ok\|^ *not ok' "$LOG" | head -200 || echo "(no 'not ok' line found — the failure was not a test assertion)"
+          echo "──────── counts ────────"
+          grep -E '^# (tests|pass|fail|skipped|cancelled)' "$LOG" || true
+
       - name: Build
         run: >-
           node scripts/run-evidence-command.mjs
