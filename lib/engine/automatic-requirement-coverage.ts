@@ -16,6 +16,7 @@ import {
   type ReviewRecordState,
 } from "../vault-review-provenance";
 import { isValidationPassed } from "./document-output-state";
+import { isPackagingOrFormatRequirement } from "./packaging-requirement-rule";
 
 /**
  * Persisted automatic requirement-evidence rows carry this prefix in notes.
@@ -27,6 +28,13 @@ export const AUTOMATIC_REQUIREMENT_EVIDENCE_PREFIX =
   "automatic-requirement-evidence:v1:";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+
+/**
+ * The record types that ARE the submission's own output: a generated document
+ * and a confirmed build-plan item. These are the only records that can prove a
+ * packaging/format rule is satisfied.
+ */
+export const ARTIFACT_EVIDENCE_RECORD_TYPES: readonly string[] = ["GENERATED_DOCUMENT", "BUILD_PLAN_ITEM"];
 const MAX_AUTOMATIC_LINKS_PER_REQUIREMENT = 8;
 const MIN_AUTOMATIC_LINK_SCORE = 70;
 
@@ -42,6 +50,10 @@ export type AutomaticEvidenceKind =
   | "METHODOLOGY_NARRATIVE"
   | "COMPANY_PROFILE"
   | "OUTPUT_ARTIFACT"
+  // Submission FORMAT / PACKAGING rules. Satisfied only by the produced
+  // artifact and the final package — never by a company record, an expert, a
+  // project or a tender source file. See lib/engine/packaging-requirement-rule.ts.
+  | "PACKAGE_FORMAT"
   | "GENERAL";
 
 export type AutomaticEvidenceRecordType =
@@ -303,6 +315,18 @@ export function inferAutomaticEvidenceKinds(
     kinds.add("OUTPUT_ARTIFACT");
   }
 
+  // Submission FORMAT / PACKAGING rules resolve to PACKAGE_FORMAT and to
+  // nothing else. "Submission in a Single PDF Technical File" matched no branch
+  // at all and fell through to the GENERAL fallback — and GENERAL is a wildcard
+  // the selector admits every candidate for, which is how an unrelated
+  // `Expert CVs.pdf.txt` became that requirement's evidence at FULL support. A
+  // packaging rule is proven by the artifact and the package, so it must never
+  // reach GENERAL and must never keep an evidence family that would admit a
+  // source or vault record.
+  if (isPackagingOrFormatRequirement(requirement)) {
+    return ["PACKAGE_FORMAT"];
+  }
+
   if (kinds.size === 0) kinds.add("GENERAL");
   return [...kinds];
 }
@@ -332,6 +356,17 @@ function scoreCandidate(
   candidate: AutomaticEvidenceCandidate,
 ): { score: number; reasons: string[] } {
   const reasons: string[] = [];
+
+  // A submission FORMAT / PACKAGING rule is satisfied by the produced artifact
+  // and the final package, so only output artifacts may ever score for one.
+  // Only the artifact candidate builders declare PACKAGE_FORMAT today, which
+  // already makes this true; the guard is here so a future candidate builder
+  // cannot quietly reintroduce "Expert CVs.pdf.txt supports Submission in a
+  // Single PDF Technical File" by adding the kind to a vault or source record.
+  if (requiredKinds.includes("PACKAGE_FORMAT") && !ARTIFACT_EVIDENCE_RECORD_TYPES.includes(candidate.recordType)) {
+    return { score: 0, reasons: [] };
+  }
+
   const sharedKinds = requiredKinds.filter((kind) => candidate.evidenceKinds.includes(kind));
   if (sharedKinds.length === 0 && !requiredKinds.includes("GENERAL")) {
     return { score: 0, reasons: [] };
@@ -980,7 +1015,7 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       recordId: document.id,
       label: document.exactFileName ?? document.name,
       searchableText: `${document.name ?? ""} ${document.exactFileName ?? ""} ${document.documentType ?? ""} ${document.format ?? ""}`,
-      evidenceKinds: ["OUTPUT_ARTIFACT", "METHODOLOGY_NARRATIVE", "DECLARATION", "FORM_TEMPLATE"],
+      evidenceKinds: ["OUTPUT_ARTIFACT", "PACKAGE_FORMAT", "METHODOLOGY_NARRATIVE", "DECLARATION", "FORM_TEMPLATE"],
       evidenceKey: candidateKey("GENERATED_DOCUMENT", document.id, integrity.hash),
       sourceDocumentId: document.id,
       sourceContentHash: integrity.hash,
@@ -1011,7 +1046,7 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
         recordId,
         label: exactFileName,
         searchableText: `${exactFileName} ${String(item.documentType ?? "")} ${String(item.format ?? "")}`,
-        evidenceKinds: ["OUTPUT_ARTIFACT", "METHODOLOGY_NARRATIVE", "DECLARATION", "FORM_TEMPLATE"],
+        evidenceKinds: ["OUTPUT_ARTIFACT", "PACKAGE_FORMAT", "METHODOLOGY_NARRATIVE", "DECLARATION", "FORM_TEMPLATE"],
         evidenceKey: candidateKey("BUILD_PLAN_ITEM", recordId, String(buildPlan.contentHash).toLowerCase()),
         sourceDocumentId: buildPlan.id,
         sourceContentHash: String(buildPlan.contentHash).toLowerCase(),
