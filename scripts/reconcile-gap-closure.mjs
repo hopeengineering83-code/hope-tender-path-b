@@ -138,6 +138,6 @@ if (failures.length > 0) {
     ok: true,
     message: "Protected gap-closure invariants verified without modifying repository files.",
     providerOrder: REQUIRED_LABELS,
-    trackedP1: "Legacy monolithic proposal paths still require migration to the canonical executor; tracked separately and not hidden by this audit.",
+    trackedP1: "The single-call proposal path (PROPOSAL_GENERATION_MODE=single) remains as a non-default escape hatch. Its provider ROUTING is no longer legacy — it walks the canonical order through callProvider, as the default section-parallel path does — but it is still one large call rather than four bounded ones, so it stays unsuitable for short function timeouts. Tracked, not hidden.",
   }, null, 2));
 }

@@ -586,3 +586,74 @@ describe("strict ten-provider fallback", () => {
     );
   });
 });
+
+describe("the chain is written down exactly once", () => {
+  // The defect this guards against was live on the DEFAULT proposal path.
+  //
+  // generateOneSection — reached by every proposal generation, because
+  // PROPOSAL_GENERATION_MODE defaults to "parallel" — hand-rolled its own
+  // sequence: nine `if (isXEnabled() && !isProviderCooledDown(x))` blocks in
+  // the order Z.ai → Cerebras → Mistral → Groq/OpenRouter → Gemini → OpenAI →
+  // Together → DeepSeek → Anthropic. That was canonical once. The owner's order
+  // leads with Gemini and puts Z.ai fourth, so proposals were being generated
+  // against an order nothing else used, and changing the registry could not
+  // have corrected it.
+  //
+  // Two more copies existed in the same file: generateBenchmarkProposalWithAI
+  // (the `single` escape hatch) and tryTailFallbackProviders (Together → Groq →
+  // OpenRouter). Three orders, one of them live.
+  //
+  // What made it survive review is the sharpest detail: the comment above the
+  // per-section chain asserted that the order came from
+  // getAutomaticProviderOrder() and was "deliberately not written out here".
+  // The code immediately below it wrote it out. Reading the comment was enough
+  // to believe the code was correct.
+  //
+  // The prose check below is deliberately blunt: it bans the arrow-chain shape
+  // outright rather than trying to tell a current order from a historical one.
+  // A guard that has to judge intent is a guard that can be argued past, and
+  // this one already caught the explanatory comment written while fixing it.
+  const aiSource = readFileSync("lib/ai.ts", "utf8");
+
+  it("routes every generation path through the canonical order", () => {
+    const resolvers = aiSource.match(/getAutomaticProviderOrder\(\)/g) ?? [];
+    assert.ok(
+      resolvers.length >= 3,
+      `expected the section, proposal and fallback paths to resolve the chain at call time, found ${resolvers.length}`,
+    );
+  });
+
+  it("has no hand-rolled provider sequence left", () => {
+    // The signature of a hand-rolled chain: consecutive per-provider guards.
+    // One or two is a special case (Anthropic's tool-use path is legitimately
+    // singled out); a run of them is a second chain.
+    const guardPattern = /is(?:Zai|Cerebras|Mistral|Groq|OpenRouter|OpenAI|Together|DeepSeek|Claude|Gemini)Enabled\(\)\s*&&\s*!isProviderCooledDown\(/g;
+    const guards = aiSource.match(guardPattern) ?? [];
+    assert.ok(
+      guards.length <= 1,
+      `found ${guards.length} per-provider guards — a run of these is a duplicate chain, which is how the stale order survived`,
+    );
+  });
+
+  it("does not name a provider order in a comment", () => {
+    // A chain copied into prose goes stale silently and, worse, is believed.
+    // The one that stood here named Z.ai as rank 1 long after it had moved.
+    const staleOrderProse = /Z\.ai\s*(?:->|→)\s*Cerebras\s*(?:->|→)\s*Mistral/i;
+    assert.doesNotMatch(
+      aiSource,
+      staleOrderProse,
+      "a provider order written into a comment is a second source of truth",
+    );
+  });
+
+  it("reads the Gemini key at request time, not from a module-load cache", () => {
+    // The per-section Gemini branch gated on a module-scope
+    // `const apiKey = process.env.GEMINI_API_KEY`, so a key set after module
+    // load left Gemini permanently skipped — the exact stale-cache problem the
+    // registry's readProviderKey() exists to prevent.
+    assert.ok(
+      !/if \(apiKey && !isProviderCooledDown\("gemini"\)\)/.test(aiSource),
+      "provider availability must be read at request time",
+    );
+  });
+});

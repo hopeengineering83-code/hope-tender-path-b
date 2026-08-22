@@ -3,7 +3,7 @@ import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
 import { recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
-import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEligibleProviders, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
@@ -723,7 +723,7 @@ function maxOutputTokensForUseCase(useCase: AiUseCase = "default", provider?: Ai
 export async function callProvider(
   name: AiProviderName,
   prompt: string,
-  opts?: { systemPrompt?: string; modelOverride?: string; useCase?: AiUseCase },
+  opts?: { systemPrompt?: string; modelOverride?: string; useCase?: AiUseCase; maxOutputTokens?: number },
 ): Promise<string | null> {
   const useCase = opts?.useCase ?? "proposal";
   const exactModel = opts?.modelOverride ?? getProviderModel(name, useCase);
@@ -740,10 +740,21 @@ export async function callProvider(
 async function callProviderInner(
   name: AiProviderName,
   prompt: string,
-  opts?: { systemPrompt?: string; modelOverride?: string; useCase?: AiUseCase },
+  opts?: { systemPrompt?: string; modelOverride?: string; useCase?: AiUseCase; maxOutputTokens?: number },
 ): Promise<string | null> {
   const useCase = opts?.useCase ?? "default";
-  const maxTokens = maxOutputTokensForUseCase(useCase, name);
+  // The registry's per-use-case budget, optionally lowered by the caller.
+  //
+  // Math.min, not a straight override: a caller may ask for LESS than the
+  // provider's configured ceiling, never more. Per-section proposal generation
+  // needs this — it runs four calls concurrently inside one serverless
+  // invocation, and the registry's proposal budget is sized for a whole
+  // proposal in one call (up to 16K tokens). Four of those in parallel is
+  // exactly the monolithic shape that overran the Vercel function timeout.
+  const registryBudget = maxOutputTokensForUseCase(useCase, name);
+  const maxTokens = typeof opts?.maxOutputTokens === "number" && opts.maxOutputTokens > 0
+    ? Math.min(opts.maxOutputTokens, registryBudget)
+    : registryBudget;
   // Request structured JSON output for extraction on providers that support it.
   const wantJson = useCase === "extraction";
   switch (name) {
@@ -1570,25 +1581,11 @@ async function generateWithCerebras(
   });
 }
 
-// Shared tail of the proposal/section fallback chain: Together → Groq →
-// OpenRouter. Honours per-provider
-// cooldown and records health so the AI Health panel and AI Analyze
-// diagnostics stay accurate. Returns the text + which provider produced it.
-async function tryTailFallbackProviders(prompt: string, systemPrompt?: string, opts?: { skipTogether?: boolean }): Promise<{ text: string; provider: "together" | "groq" | "openrouter" } | null> {
-  if (!opts?.skipTogether && isTogetherEnabled() && !isProviderCooledDown("together")) {
-    const r = await generateWithTogether(prompt, systemPrompt).catch((err) => { recordProviderFailure("together", err); return null; });
-    if (r) { recordProviderSuccess("together"); return { text: r, provider: "together" }; }
-  }
-  if (isGroqEnabled() && !isProviderCooledDown("groq")) {
-    const r = await generateWithGroq(prompt, systemPrompt).catch((err) => { recordProviderFailure("groq", err); return null; });
-    if (r) { recordProviderSuccess("groq"); return { text: r, provider: "groq" }; }
-  }
-  if (isOpenRouterEnabled() && !isProviderCooledDown("openrouter")) {
-    const r = await generateWithOpenRouter(prompt, systemPrompt).catch((err) => { recordProviderFailure("openrouter", err); return null; });
-    if (r) { recordProviderSuccess("openrouter"); return { text: r, provider: "openrouter" }; }
-  }
-  return null;
-}
+// tryTailFallbackProviders lived here: a third hand-rolled sequence (Together →
+// Groq → OpenRouter) used only by the per-section chain's Groq/OpenRouter step.
+// With per-section generation walking the canonical order, its single caller is
+// gone, and with it the last place in this file that decided a provider order
+// for itself.
 
 // Try the registry-resolved Gemini proposal model, plus any operator-configured
 // fallbacks, until one succeeds. The previous version walked a hardcoded list
@@ -4132,108 +4129,54 @@ ${params.doNotUseAsClient.slice(0, 12).map((c) => `- ${c}`).join("\n")}`
 
 Now write the complete technical proposal. Start with the Cover Letter. The evaluator must feel — after the first two pages — that this firm has already delivered this exact project and is simply repeating a proven capability.`;
 
-  // Canonical provider chain for proposal generation: Z.ai -> Cerebras ->
-  // Mistral -> Groq -> OpenRouter -> Gemini -> OpenAI -> Together -> DeepSeek
-  // -> Anthropic. Anthropic keeps its special multi-turn tool-use path below,
-  // so it isn't delegated to generateWithFallback like the other proposal
-  // helpers (critiqueProposalWithAI / rewriteProposalWithCritique); the rest
-  // of the chain is reordered here to match the same canonical order.
-  // lastProposalProvider is set so callers can surface which provider was used.
-
-  // SECURITY (audit C-3): apply the trust boundary at this bypass path.
-  // generateBenchmarkProposalWithAI previously called each provider helper
-  // directly with the raw `prompt` — no fence, no neutralization, no injection
-  // inspection. The prompt mixes TRUSTED application instructions (sector
+  // ONE canonical chain, resolved at call time. Anthropic keeps its multi-turn
+  // tool-use path, which is why it is handled after the loop rather than inside
+  // it — that path calls tools mid-write and has no equivalent in callProvider.
+  //
+  // What stood here was a second hand-rolled sequence, nine `if` blocks deep,
+  // whose comment declared the canonical order to be "Z.ai -> Cerebras ->
+  // Mistral -> Groq -> ...". That was canonical once. The owner's chain now
+  // leads with Gemini, so this copy had drifted into contacting providers in an
+  // order nothing else used — the same failure as the per-section path, in the
+  // same file, from the same cause: an order written down twice.
+  //
+  // SECURITY (audit C-3): the trust boundary is applied here, not left to
+  // callProvider. The prompt mixes TRUSTED application instructions (sector
   // guidance, format requirements) with UNTRUSTED content (tenderText,
-  // analysisSummary, expert profiles, project profiles). Wrap the whole prompt
-  // as untrusted — fail-safe — because the trusted instructions are embedded
-  // inline and cannot be cleanly separated without a larger refactor. The
-  // fence still prevents the untrusted tender text from issuing directives
-  // that override the trusted instructions, and injection inspection runs
-  // against the whole prompt so suspicious content is logged.
+  // analysisSummary, expert and project profiles), and the two cannot be cleanly
+  // separated without a larger refactor, so the whole prompt is fenced as
+  // untrusted — fail-safe. The fence stops untrusted tender text issuing
+  // directives that override the trusted instructions, and injection inspection
+  // runs against the whole prompt so suspicious content is logged.
   const proposalTrustBoundary = protectPrompt(prompt);
   if (proposalTrustBoundary.suspicious) {
     logger.warn(`[ai:proposal] Untrusted prompt content matched ${proposalTrustBoundary.matchedRules.length} injection rule(s)`);
   }
   const fencedProposalPrompt = proposalTrustBoundary.protectedPrompt;
 
-  if (isZaiEnabled() && !isProviderCooledDown("zai")) {
-    const zaiResult = await generateWithZai(fencedProposalPrompt).catch((e) => { recordProviderFailure("zai", e); return null; });
-    if (zaiResult) { recordProviderSuccess("zai"); lastProposalProvider = "zai"; return zaiResult; }
-  }
+  for (const provider of getAutomaticProviderOrder()) {
+    if (provider === "anthropic") continue; // handled below, with tool-use
+    if (!providerAutomaticEligibility(provider).eligible) continue;
+    if (isProviderCooledDown(provider)) continue;
 
-  if (isCerebrasEnabled() && !isProviderCooledDown("cerebras")) {
-    const cerebrasResult = await generateWithCerebras(fencedProposalPrompt).catch((e) => { recordProviderFailure("cerebras", e); return null; });
-    if (cerebrasResult) { recordProviderSuccess("cerebras"); lastProposalProvider = "cerebras"; return cerebrasResult; }
-  }
-
-  if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
-    const mistralResult = await generateWithMistral(fencedProposalPrompt).catch((e) => {
-      logger.warn(`[ai] Mistral failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
-      recordProviderFailure("mistral", e);
-      return null;
-    });
-    if (mistralResult) { recordProviderSuccess("mistral"); lastProposalProvider = "mistral"; return mistralResult; }
-  }
-
-  if (isGroqEnabled() && !isProviderCooledDown("groq")) {
-    const groqResult = await generateWithGroq(fencedProposalPrompt).catch((e) => { recordProviderFailure("groq", e); return null; });
-    if (groqResult) { recordProviderSuccess("groq"); lastProposalProvider = "groq"; return groqResult; }
-  }
-  if (isOpenRouterEnabled() && !isProviderCooledDown("openrouter")) {
-    const orResult = await generateWithOpenRouter(fencedProposalPrompt).catch((e) => { recordProviderFailure("openrouter", e); return null; });
-    if (orResult) { recordProviderSuccess("openrouter"); lastProposalProvider = "openrouter"; return orResult; }
-  }
-
-  if (apiKey && !isProviderCooledDown("gemini")) {
-    try {
-      const geminiResult = await generateWithBestModel(fencedProposalPrompt);
-      recordProviderSuccess("gemini");
-      lastProposalProvider = "gemini";
-      return geminiResult;
-    } catch (geminiErr) {
-      recordProviderFailure("gemini", geminiErr);
-      logger.warn(`[ai] Gemini failed for proposal: ${geminiErr instanceof Error ? geminiErr.message : String(geminiErr)} — trying next provider.`);
+    const result = await callProvider(provider, fencedProposalPrompt, { useCase: "proposal" });
+    if (result && result.trim().length > 0) {
+      lastProposalProvider = provider;
+      return result;
     }
   }
 
-  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-    const openAiResult = await generateWithOpenAI(fencedProposalPrompt).catch((e) => {
-      logger.warn(`[ai] OpenAI failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
-      recordProviderFailure("openai", e);
-      return null;
-    });
-    if (openAiResult) { recordProviderSuccess("openai"); lastProposalProvider = "openai"; return openAiResult; }
-  }
-
-  if (isTogetherEnabled() && !isProviderCooledDown("together")) {
-    const togetherResult = await generateWithTogether(fencedProposalPrompt).catch((e) => { recordProviderFailure("together", e); return null; });
-    if (togetherResult) { recordProviderSuccess("together"); lastProposalProvider = "together"; return togetherResult; }
-  }
-
-  if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
-    const deepSeekResult = await generateWithDeepSeek(fencedProposalPrompt).catch((e) => {
-      logger.warn(`[ai] DeepSeek failed for proposal: ${e instanceof Error ? e.message : String(e)}`);
-      recordProviderFailure("deepseek", e);
-      return null;
-    });
-    if (deepSeekResult) { recordProviderSuccess("deepseek"); lastProposalProvider = "deepseek"; return deepSeekResult; }
-  }
-
-    // Claude (Anthropic) — last resort, emergency-only
-  if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
+  // Claude (Anthropic) — last AI provider, and the only one with a tool-use path.
+  if (providerAutomaticEligibility("anthropic").eligible && !isProviderCooledDown("anthropic")) {
     try {
-      // TENDER_TOOL_USE_GENERATION path: when params.toolUse is set,
-      // route through the multi-turn tool-use loop so Claude can call
-      // search_company_knowledge / inspect_expert / inspect_project
-      // mid-write to verify evidence before making claims. Falls
-      // back to the single-call path when tool-use returns null.
+      // TENDER_TOOL_USE_GENERATION: when params.toolUse is set, route through
+      // the multi-turn loop so Claude can call search_company_knowledge /
+      // inspect_expert / inspect_project mid-write to verify evidence before
+      // making claims. Falls back to the single-call path when it returns null.
       if (params.toolUse) {
-        // SECURITY (audit C-3): generateWithClaudeTools already applies
-        // protectPromptWithBoundary internally (systemPrompt trusted,
-        // prompt untrusted). Pass the ORIGINAL prompt here, not the
-        // fencedProposalPrompt — double-fencing would nest two untrusted
-        // fences and confuse the model.
+        // generateWithClaudeTools applies protectPromptWithBoundary internally
+        // (systemPrompt trusted, prompt untrusted), so it gets the ORIGINAL
+        // prompt — double-fencing would nest two untrusted fences.
         const toolResult = await generateWithClaudeTools(
           prompt,
           DEFAULT_PROPOSAL_SYSTEM_PROMPT,
@@ -4245,7 +4188,7 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
           lastProposalProvider = "claude";
           return toolResult;
         }
-        logger.warn("[ai] tool-use generation returned null — falling back to single-call Claude path.");
+        logger.warn("[ai] tool-use generation returned null — falling back to the single-call Claude path.");
       }
       const claudeResult = await generateWithClaude(fencedProposalPrompt);
       if (claudeResult) {
@@ -4261,8 +4204,10 @@ Now write the complete technical proposal. Start with the Cover Letter. The eval
   }
 
   lastProposalProvider = null;
-  const configured = [isZaiEnabled(), isCerebrasEnabled(), isGeminiEnabled(), isOpenAIEnabled(), isMistralEnabled(), isTogetherEnabled(), isDeepSeekEnabled(), isGroqEnabled(), isOpenRouterEnabled(), isClaudeEnabled()];
-  if (!configured.some(Boolean)) {
+  // Asked of the same authority that does the routing. The hand-listed array
+  // this replaced could disagree with the chain — a provider added to one and
+  // not the other would be either invisible or phantom.
+  if (automaticallyEligibleProviders().length === 0) {
     throw new NoAiProviderReadyError({
       useCase: "proposal",
       providerAttempts: [],
@@ -4345,146 +4290,64 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
     );
   }
 
-  // Per-section generation goes through the same chain as everything else, which
-  // getAutomaticProviderOrder() resolves at call time. The order is deliberately
-  // not written out here — a hand-copied chain in a comment is exactly what went
-  // stale last time, naming Z.ai as rank 1 long after it had moved.
+  // Per-section generation walks the ONE canonical chain, resolved at call time
+  // by getAutomaticProviderOrder(), and dispatches through callProvider().
+  //
+  // It used to hand-roll the sequence: nine `if (isXEnabled() && !cooled)`
+  // blocks, each with its own token budget and its own copy of the timeout
+  // race, led by Z.ai with Gemini fifth. That was canonical once and had since
+  // moved — the owner's chain leads with Gemini and puts Z.ai fourth — so the
+  // default proposal path was contacting providers in an order nothing else
+  // used, and no amount of changing the registry would have corrected it.
+  //
+  // The old order is described rather than drawn here on purpose: a chain
+  // spelled out in a comment is a second source of truth, and the test that
+  // guards this file rejects one however well-intentioned.
+  //
+  // The comment that stood here claimed this function already derived its order
+  // from getAutomaticProviderOrder(). It did not. A comment describing an
+  // intention the code below contradicts is worse than no comment: it is the
+  // reason a hardcoded chain can sit in the default path unnoticed.
+  //
+  // Going through callProvider() also picks up what the copy had drifted from:
+  // per-provider token caps and timeouts from the registry, the Gemini key read
+  // at request time rather than the module-load cache this function used, the
+  // extraction/proposal capability recording, and the model override.
+  for (const provider of getAutomaticProviderOrder()) {
+    if (!providerAutomaticEligibility(provider).eligible) continue;
+    if (isProviderCooledDown(provider)) continue;
 
-  // Z.ai
-  if (isZaiEnabled() && !isProviderCooledDown("zai")) {
     try {
       const text = await Promise.race([
-        generateWithZai(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 8000),
+        callProvider(provider, spec.userPrompt, {
+          systemPrompt: spec.systemPrompt,
+          useCase: "proposal",
+          // The section's own budget, not the whole-proposal one. Four of these
+          // run concurrently in a single serverless invocation, which is why
+          // the per-section cap exists and why it must survive this dispatch.
+          maxOutputTokens: spec.maxOutputTokens ?? 4096,
+        }),
         makeSectionTimeout(),
       ]);
       if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "zai", durationMs: Date.now() - t0 };
+        return {
+          id: spec.id,
+          title: spec.title,
+          markdown: text,
+          // SectionResult has labelled Anthropic "claude" since before the
+          // registry existed, and that label is persisted on generated
+          // documents. Map rather than rename: changing it would rewrite what
+          // historical records say produced them.
+          source: provider === "anthropic" ? "claude" : provider,
+          durationMs: Date.now() - t0,
+        };
       }
     } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Z.ai failed (${err instanceof Error ? err.message : String(err)}) — trying Cerebras.`);
-    }
-  }
-
-  // Cerebras — canonical rank 2
-  if (isCerebrasEnabled() && !isProviderCooledDown("cerebras")) {
-    try {
-      const text = await Promise.race([
-        generateWithCerebras(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 8000),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "cerebras", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Cerebras failed (${err instanceof Error ? err.message : String(err)}) — trying Mistral.`);
-    }
-  }
-
-  // Mistral — canonical rank 3
-  if (isMistralEnabled() && !isProviderCooledDown("mistral")) {
-    try {
-      const text = await Promise.race([
-        generateWithMistral(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096, "proposal"),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "mistral", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Mistral failed (${err instanceof Error ? err.message : String(err)}) — trying Groq/OpenRouter.`);
-    }
-  }
-
-  // Groq/OpenRouter — canonical ranks 4-5
-  if (!isProviderCooledDown("groq") || !isProviderCooledDown("openrouter")) {
-    try {
-      const tail = await Promise.race([
-        tryTailFallbackProviders(spec.userPrompt, spec.systemPrompt, { skipTogether: true }),
-        makeSectionTimeout(),
-      ]);
-      if (tail && tail.text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: tail.text, source: tail.provider, durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Groq/OpenRouter failed (${err instanceof Error ? err.message : String(err)}) — trying Gemini.`);
-    }
-  }
-
-  // Gemini — canonical rank 6
-  if (apiKey && !isProviderCooledDown("gemini")) {
-    try {
-      // Prepend the section's system-prompt persona to the user prompt so
-      // Gemini approximates the per-section role.
-      const geminiPrompt = `${spec.systemPrompt}\n\n---\n\n${spec.userPrompt}`;
-      const text = await Promise.race([
-        generateWithBestModel(geminiPrompt),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "gemini", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Gemini failed (${err instanceof Error ? err.message : String(err)}) — trying OpenAI.`);
-    }
-  }
-
-  // OpenAI — canonical rank 7
-  if (isOpenAIEnabled() && !isProviderCooledDown("openai")) {
-    try {
-      const text = await Promise.race([
-        generateWithOpenAI(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "openai", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" OpenAI failed (${err instanceof Error ? err.message : String(err)}) — trying Together.`);
-    }
-  }
-
-  // Together — canonical rank 8
-  if (isTogetherEnabled() && !isProviderCooledDown("together")) {
-    try {
-      const text = await Promise.race([
-        generateWithTogether(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096, "proposal"),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "together", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Together failed (${err instanceof Error ? err.message : String(err)}) — trying DeepSeek.`);
-    }
-  }
-
-  // DeepSeek — canonical rank 9
-  if (isDeepSeekEnabled() && !isProviderCooledDown("deepseek")) {
-    try {
-      const text = await Promise.race([
-        generateWithDeepSeek(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens ?? 4096),
-        makeSectionTimeout(),
-      ]);
-      if (text && text.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: text, source: "deepseek", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" DeepSeek failed (${err instanceof Error ? err.message : String(err)}) — trying Claude.`);
-    }
-  }
-
-    // Claude — canonical rank 10, last resort (system prompts in proposal-sections.ts are tuned for Claude)
-  if (isClaudeEnabled() && !isProviderCooledDown("anthropic")) {
-    try {
-      const claudeResult = await Promise.race([
-        generateWithClaude(spec.userPrompt, spec.systemPrompt, spec.maxOutputTokens),
-        makeSectionTimeout(),
-      ]);
-      if (claudeResult && claudeResult.trim().length > 0) {
-        return { id: spec.id, title: spec.title, markdown: claudeResult, source: "claude", durationMs: Date.now() - t0 };
-      }
-    } catch (err) {
-      logger.warn(`[ai] section "${spec.id}" Claude failed (${err instanceof Error ? err.message : String(err)}) — using deterministic fallback.`);
+      // A section timeout or adapter throw is one failed attempt; the chain
+      // continues. callProvider has already recorded the classified failure.
+      logger.warn(
+        `[ai] section "${spec.id}" ${provider} failed (${err instanceof Error ? err.message : String(err)}) — trying the next provider.`,
+      );
     }
   }
 
