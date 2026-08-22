@@ -4,6 +4,55 @@ import { buildSubmissionPlan, plannedSubmissionTargetFiles, type SubmissionPlanF
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod, isPortalSubmissionMethod } from "./submission-method-policy";
 import { containsMetadataPlaceholder } from "./metadata-validators";
 import { isValidationPassed } from "./document-output-state";
+import { classifySubmissionPlanItem } from "./submission-plan-classifier";
+
+/**
+ * Plan items a CONFIRMED BuildPlan carries that the current classification
+ * rules say must never have been a file at all.
+ *
+ * A confirmed plan's freshness hash is computed over the STORED items
+ * (computeTenderBuildPlanHash is called with `items`), so a correction to the
+ * classifier does not stale it: a plan confirmed while a requirement was
+ * mis-read as a deliverable keeps demanding that deliverable forever. The live
+ * tender's confirmed plan required "Financial Proposal Omission.docx" — a file
+ * invented from a requirement saying the financial proposal must be OMITTED —
+ * and every downstream gate then blocked on a missing document that must never
+ * be generated.
+ *
+ * Reported as staleness, not repaired in place: the authoritative way to change
+ * a confirmed plan is to rebuild and re-confirm it (Run Engine), which keeps the
+ * source evidence and the BuildPlan revision history intact. Fail closed — the
+ * stale plan authorises nothing until it is rebuilt.
+ */
+export function findNonDeliverablePlanItems(items: BuildPlanItem[]): Array<{ exactFileName: string; rationale: string }> {
+  const phantom: Array<{ exactFileName: string; rationale: string }> = [];
+  for (const item of items) {
+    const exactFileName = String(item.exactFileName ?? "").trim();
+    if (!exactFileName) continue;
+    const classification = classifySubmissionPlanItem({
+      title: item.exactFileName,
+      description: item.notes ?? null,
+      requirementType: item.documentType ?? null,
+      exactFileName: item.exactFileName,
+    });
+    // ONLY categories that positively mean "this is a rule, not a file".
+    //
+    // shouldBePlannedFile is false for four categories, and two of them are not
+    // phantoms: ORIGINAL_EVIDENCE_ATTACHMENT is a real document that is
+    // attached rather than generated, and INTERNAL_COMPLIANCE_CONTROL is the
+    // classifier's CATCH-ALL for text it does not recognise. Treating the
+    // catch-all as a phantom fail-closed any confirmed plan containing a
+    // tersely-named item — a real regression the metadata-evidence DB proof
+    // caught on a plan item named "1.docx".
+    if (
+      classification.category === "COMMERCIAL_SEPARATION_RULE"
+      || classification.category === "SUBMISSION_RULE"
+    ) {
+      phantom.push({ exactFileName, rationale: classification.rationale });
+    }
+  }
+  return phantom;
+}
 
 export type BuildPlanItem = SubmissionPlanFile;
 export type BuildPlanValidation = { ok: boolean; blockers: string[] };
@@ -658,6 +707,19 @@ export async function getCurrentConfirmedBuildPlan(prisma: PrismaClient, tenderI
   } catch {
     return { ok: false as const, blocker: "Source-verified Build Plan items are corrupted and cannot be read. Run Engine to rebuild and verify the plan." };
   }
+  // A confirmed plan that still demands a file the current rules say is a RULE,
+  // not a deliverable, is stale regardless of what its hash says — the hash is
+  // computed over the stored items, so it cannot notice this on its own.
+  const phantomItems = findNonDeliverablePlanItems(items);
+  if (phantomItems.length > 0) {
+    return {
+      ok: false as const,
+      blocker: `Source-verified Build Plan contains ${phantomItems.length} planned file(s) that are submission rules, not deliverables: ${
+        phantomItems.map((p) => `"${p.exactFileName}" (${p.rationale})`).join("; ")
+      }. Run Engine to rebuild and re-confirm the plan.`,
+    };
+  }
+
   // Reduced unit-test prisma mocks don't model the tables that
   // computeTenderBuildPlanHash reads. Detect that EXPLICITLY (missing model
   // delegates) and only then skip hash verification. A real PrismaClient

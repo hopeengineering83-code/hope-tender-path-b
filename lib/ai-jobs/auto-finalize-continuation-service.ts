@@ -51,6 +51,20 @@ export type AutoFinalizeResult = {
    */
   packageReconciliation: { requiredTotal: number; missing: number };
   /**
+   * Planned files the package did not yet contain, produced automatically.
+   *
+   * The workflow UI tells the owner that missing planned documents are handled
+   * automatically after Run Engine. They were not: every stage here repaired,
+   * validated and finalised documents that ALREADY EXISTED, then reconciliation
+   * reported the shortfall as a terminal blocker while the only thing that
+   * could create those files was a button the owner had to find and press.
+   *
+   * `blocked` carries the fail-closed reason when generation could not run at
+   * all (degraded analysis, no source-verified plan, an operation-gate blocker)
+   * — those are real blockers and are surfaced, not swallowed.
+   */
+  missingFileGeneration: { generated: number; planned: number; skipped: number; blocked: string | null };
+  /**
    * Tender-issued forms recovered from the user's own uploads. `stillMissing`
    * is not a blocker on its own — the export gate already refuses a document
    * left as REPLACE_WITH_ORIGINAL, and repeating it here would say the same
@@ -106,7 +120,16 @@ export function evaluateAutoFinalizeConvergence(
     blockers.push(`readiness gate: ${result.pdfValidation.pending} auto-finalized PDF(s) are still unvalidated`);
   }
   if (result.packageReconciliation.missing > 0) {
-    blockers.push(`INTEGRITY: package reconciliation incomplete — ${result.packageReconciliation.missing} of ${result.packageReconciliation.requiredTotal} required file(s) are not in the package`);
+    // Name WHY the package is still short. A shortfall that survives the
+    // automatic generation stage is either a file the app must not invent (an
+    // official original) or a fail-closed gate — reporting the count alone left
+    // the owner with a number and no next step.
+    const reason = result.missingFileGeneration.blocked
+      ? ` — automatic generation could not run: ${result.missingFileGeneration.blocked}`
+      : result.missingFileGeneration.planned > 0
+        ? ` — ${result.missingFileGeneration.planned} awaiting the tender-issued original`
+        : "";
+    blockers.push(`INTEGRITY: package reconciliation incomplete — ${result.packageReconciliation.missing} of ${result.packageReconciliation.requiredTotal} required file(s) are not in the package${reason}`);
   }
   return blockers;
 }
@@ -131,6 +154,7 @@ export async function runAutoFinalizeAfterGeneration(
     pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
     pdfValidation: { validated: 0, failed: 0, pending: 0 },
     packageReconciliation: { requiredTotal: 0, missing: 0 },
+    missingFileGeneration: { generated: 0, planned: 0, skipped: 0, blocked: null },
     formReuse: { reused: 0, stillMissing: 0 },
     blockers: [],
     warning: null,
@@ -157,6 +181,60 @@ export async function runAutoFinalizeAfterGeneration(
     });
   } catch (error) {
     logger.warn("[auto-finalize] tender-issued form reuse failed", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    throw error;
+  }
+
+  // Step 0.5: produce the planned files the package does not yet contain.
+  //
+  // This runs BEFORE the repair, validation and PDF stages so a file created
+  // here is repaired, validated and finalised in the SAME run — otherwise the
+  // chain would create a document and immediately report it unvalidated.
+  //
+  // Runs the same implementation, with the same gates, as
+  // POST /api/tenders/[id]/generate-missing-plan-files. It never invents a file
+  // the app must not produce: a tender-issued form, a priced financial proposal
+  // or an official original is written as a PLANNED row awaiting its original,
+  // and a requirement that states a submission RULE rather than a deliverable
+  // is not in the confirmed plan at all (see
+  // lib/engine/financial-separation-rule.ts).
+  try {
+    await recordStep(jobId, {
+      stepName: "auto-finalize.missing-file-generation",
+      message: "Generating planned files the package does not yet contain",
+      status: "RUNNING",
+    });
+    const { generateMissingPlanFiles } = await import("../engine/missing-plan-file-generation");
+    const generation = await generateMissingPlanFiles({
+      prisma,
+      tenderId,
+      userId,
+      actorLabel: "machine:auto-finalize",
+    });
+    result.missingFileGeneration = {
+      generated: generation.created.length + generation.updated.length + generation.convertedFromPlanned.length,
+      planned: generation.plannedCreated.length,
+      skipped: generation.skipped.length,
+      // NOTHING_MISSING and "nothing could be generated because every target
+      // was skipped for a stated reason" are not blockers of this stage — the
+      // reconciliation step below is the authority on whether the package is
+      // actually short a file, and it names the shortfall once.
+      blocked: generation.ok || generation.code === "NO_PLANNED_FILE_COULD_BE_GENERATED"
+        ? null
+        : `${generation.code}: ${generation.error}`,
+    };
+    await recordStep(jobId, {
+      stepName: "auto-finalize.missing-file-generation.complete",
+      message: result.missingFileGeneration.blocked
+        ? `Missing-file generation blocked: ${result.missingFileGeneration.blocked}`
+        : `Missing planned files: ${result.missingFileGeneration.generated} generated, ${result.missingFileGeneration.planned} awaiting an official original, ${result.missingFileGeneration.skipped} skipped`,
+      status: result.missingFileGeneration.blocked ? "FAILED" : "SUCCEEDED",
+    });
+  } catch (error) {
+    logger.warn("[auto-finalize] missing planned-file generation failed", {
       tenderId,
       jobId,
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",

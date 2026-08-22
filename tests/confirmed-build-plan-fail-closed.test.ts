@@ -243,7 +243,8 @@ describe("confirmed BuildPlan is enforced on the readiness gates (P1-D wiring)",
     const generate = readFileSync("app/api/tenders/[id]/generate/route.ts", "utf8");
     assert.match(generate, /const confirmedPlanForRun = await getCurrentConfirmedBuildPlan\(prisma, id, userId\);/);
     assert.match(generate, /const explicitSubmissionScope = confirmedPlanForRun\.ok;/);
-    const missing = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8");
+    const missing = readFileSync("app/api/tenders/[id]/generate-missing-plan-files/route.ts", "utf8")
+      + readFileSync("lib/engine/missing-plan-file-generation.ts", "utf8");
     // BuildPlan requirement relaxed for draft — confirmed plan no longer required for missing-plan-files;
     assert.match(missing, /confirmedPlan\.items/);
   });

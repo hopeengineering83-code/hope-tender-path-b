@@ -144,12 +144,12 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
 
   describe("generate-missing-plan-files route (NEWLY guarded)", () => {
     it("imports the central gate", () => {
-      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
       expectContains(src, /import\s*\{[^}]*assertTenderReadyForGenerationAndExport[^}]*\}\s*from\s*["'][^"']*generation-readiness-gate["']/);
     });
 
     it("calls the gate before prisma.generatedDocument.create", () => {
-      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
       const gateIdx = src.indexOf("assertTenderReadyForGenerationAndExport(");
       const createIdx = src.indexOf("generatedDocument.create");
       assert.ok(gateIdx > -1 && createIdx > -1 && gateIdx < createIdx,
@@ -163,7 +163,7 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
       // confirmed plan (see getCurrentConfirmedBuildPlan check downstream) and
       // must fail closed on every central-gate blocker, including
       // BUILD_PLAN_MISSING and BUILD_PLAN_NOT_CONFIRMED.
-      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
       expectContains(src, /if\s*\(\s*!centralGate\.ok\s*\)\s*\{/);
       // The old dead carve-out must NOT be present
       if (src.includes('blockerCode !== "SUBMISSION_PLAN_MISSING"') || src.includes("blockerCode !== 'SUBMISSION_PLAN_MISSING'")) {
@@ -172,7 +172,7 @@ describe("Central generation gate — GENERATED-document route coverage", () => 
     });
 
     it("uses a distinct purpose string for audit traceability", () => {
-      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+      const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
       expectContains(src, /purpose:\s*["']generate-missing-plan-files["']/);
     });
   });

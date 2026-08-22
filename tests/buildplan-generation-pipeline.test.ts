@@ -73,14 +73,16 @@ describe("Spec Test 2 — PLANNED docs become GENERATED only after content exist
   });
 
   it("generate-missing-plan-files/route.ts writes generationStatus: GENERATED with real content", () => {
-    const src = readAppFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = readAppFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts")
+      + readLibFile("engine/missing-plan-file-generation.ts");
     assert.ok(src.includes('generationStatus: "GENERATED"'), "route must write generationStatus=GENERATED");
     assert.ok(src.includes("Packer.toBuffer"), "route must produce real DOCX bytes via Packer.toBuffer");
     assert.ok(src.includes("fileContent"), "route must write fileContent with real bytes");
   });
 
   it("generate-missing-plan-files/route.ts converts existing PLANNED rows to GENERATED with content", () => {
-    const src = readAppFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = readAppFile("app/api/tenders/[id]/generate-missing-plan-files/route.ts")
+      + readLibFile("engine/missing-plan-file-generation.ts");
     assert.ok(src.includes("convertedFromPlanned"), "route must have a convertedFromPlanned path");
     assert.ok(
       /convertedFromPlanned[\s\S]*?generationStatus:\s*"GENERATED"/.test(src),

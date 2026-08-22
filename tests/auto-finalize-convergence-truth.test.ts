@@ -39,6 +39,7 @@ const CLEAN = {
   pdfFinalization: { finalized: 1, skipped: 0, failed: 0 },
   pdfValidation: { validated: 1, failed: 0, pending: 0 },
   packageReconciliation: { requiredTotal: 5, missing: 0 },
+  missingFileGeneration: { generated: 2, planned: 0, skipped: 0, blocked: null },
   warning: null,
 };
 
@@ -54,6 +55,7 @@ const ALL_BLOCKED = withStage({
   exportRepair: { repaired: 0, skipped: 0, manualRequired: 1 },
   pdfValidation: { validated: 0, failed: 1, pending: 1 },
   packageReconciliation: { requiredTotal: 4, missing: 1 },
+  missingFileGeneration: { generated: 0, planned: 0, skipped: 0, blocked: null },
 });
 
 describe("a converged run reports no blockers", () => {
@@ -80,6 +82,24 @@ describe("every unfinished state the user named is a blocker", () => {
     ["failed PDF re-validation", { pdfValidation: { validated: 0, failed: 2, pending: 0 } }, /auto-finalized PDF\(s\) failed canonical validation/],
     ["pending PDF re-validation", { pdfValidation: { validated: 0, failed: 0, pending: 2 } }, /auto-finalized PDF\(s\) are still unvalidated/],
     ["an incomplete package", { packageReconciliation: { requiredTotal: 9, missing: 3 } }, /package reconciliation incomplete — 3 of 9/],
+    // The shortfall now names WHY it survived the automatic generation stage,
+    // so the owner gets a next step rather than a bare count.
+    [
+      "an incomplete package whose generation stage was gated",
+      {
+        packageReconciliation: { requiredTotal: 9, missing: 3 },
+        missingFileGeneration: { generated: 0, planned: 0, skipped: 0, blocked: "BUILD_PLAN_NOT_SOURCE_VERIFIED: plan is stale" },
+      },
+      /automatic generation could not run: BUILD_PLAN_NOT_SOURCE_VERIFIED/,
+    ],
+    [
+      "an incomplete package waiting on tender-issued originals",
+      {
+        packageReconciliation: { requiredTotal: 9, missing: 2 },
+        missingFileGeneration: { generated: 0, planned: 2, skipped: 0, blocked: null },
+      },
+      /awaiting the tender-issued original/,
+    ],
   ];
 
   for (const [label, override, pattern] of cases) {
