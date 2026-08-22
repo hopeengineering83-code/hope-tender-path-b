@@ -78,7 +78,7 @@ export const TERMINAL_FAILURE_CATEGORIES = new Set<string>([
  */
 export const PROVIDER_CONFIG_FAILURE_CATEGORIES = new Set<string>([
   "CONFIGURATION_INVALID", "PROVIDER_UNAUTHORIZED", "PROVIDER_AUTH_FAILED",
-  "BILLING_BLOCKED", "MODEL_UNAVAILABLE", "NO_PROVIDER_CONFIGURED",
+  "MODEL_UNAVAILABLE", "NO_PROVIDER_CONFIGURED",
 ]);
 // Deliberately NOT here: AI_PROVIDERS_EXHAUSTED and ALL_PROVIDERS_COOLING.
 // Those describe a moment, not a misconfiguration — every provider happened to
@@ -112,6 +112,14 @@ export const RETRYABLE_CATEGORIES = new Set<string>([
   "AI_PROVIDERS_EXHAUSTED", "ATTEMPT_BUDGET_EXHAUSTED", "PROVIDER_EXHAUSTED",
   "RATE_LIMITED", "PROVIDER_5XX", "PROVIDER_TIMEOUT",
   "PARTIAL_SUCCESS", "NETWORK_ERROR", "UNKNOWN",
+  // BILLING_BLOCKED sat in PROVIDER_CONFIG_FAILURE_CATEGORIES while a payment
+  // refusal removed a provider from the chain for good: waiting really could
+  // not help, so stopping automatic retry was right. It is now an ordinary
+  // ten-minute cooldown on one of ten providers, which makes it the same shape
+  // as the two categories above it — a moment, not a misconfiguration. A later
+  // attempt can clear it with nothing changed, so it keeps its automatic
+  // backoff instead of waiting for an operator who has nothing to fix.
+  "BILLING_BLOCKED",
 ]);
 
 export type FailureClassification = { retryable: boolean; category: string; reason: string };
@@ -167,7 +175,7 @@ export function classifyFailure(
     return { retryable: false, category: "PROVIDER_AUTH_FAILED", reason: "Provider rejected the API key — fix provider configuration, then retry" };
   }
   if (/insufficient.?(balance|quota)|payment required|billing details|credit balance/i.test(msg)) {
-    return { retryable: false, category: "BILLING_BLOCKED", reason: "Provider requires payment — configure a free provider, then retry" };
+    return { retryable: true, category: "BILLING_BLOCKED", reason: "A provider refused payment and is cooling down — the chain has nine others, and this one is retried automatically once the cooldown expires" };
   }
   if (/\b401\b|\b403\b|unauthorized|forbidden/i.test(msg)) return { retryable: false, category: "OWNERSHIP_REVOKED", reason: "Caller is not authorized for this tender" };
 
@@ -440,7 +448,7 @@ export function decideManualRearm(input: ManualRearmInput): ManualRearmDecision 
       reason: "NO_PROVIDER_AVAILABLE",
       category,
       message:
-        "No AI provider is currently usable. Configure or repair a free provider, then retry — this analysis is still eligible.",
+        "No AI provider is currently usable. Check the provider diagnostics for the per-provider reason, repair or configure one, then retry — this analysis is still eligible.",
       clearableByProviderFix: true,
     };
   }

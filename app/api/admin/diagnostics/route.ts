@@ -116,20 +116,18 @@ export async function GET() {
   if (!isAIConfigured()) {
     // Two different situations, and they need opposite actions. Telling an
     // operator who already holds five keys that "no AI provider key is set"
-    // sends them looking for something that is right in front of them — and the
-    // old message led with OPENAI_API_KEY, which on this deployment is the one
-    // key that cannot help.
+    // sends them looking for something that is right in front of them.
     actionItems.push(
       hasOnlyUnreachableProviderKeys()
         ? {
             severity: "HIGH",
             message:
-              "AI provider keys are set, but only for providers this deployment may not contact (paid-access, or OpenRouter without a verified ':free' model). Configure a free provider — GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY. Until then AI extraction is disabled and all records remain REGEX_DRAFT, which cannot be promoted to trusted status.",
+              "AI provider keys are set, but none of them currently resolves to a usable provider — a key may be invalid, or its model may not be configured (OpenRouter and Groq have no model default, so they need one set explicitly). Check the provider diagnostics for the exact per-provider reason. Until one provider is usable, AI extraction is disabled and all records remain REGEX_DRAFT, which cannot be promoted to trusted status.",
           }
         : {
             severity: "HIGH",
             message:
-              "No usable AI provider key is set. Configure GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY. AI extraction is disabled; all records will be REGEX_DRAFT only and cannot be promoted to trusted status.",
+              "No AI provider key is set. Configure at least one of the ten providers in the fallback chain — for example GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY. AI extraction is disabled; all records will be REGEX_DRAFT only and cannot be promoted to trusted status.",
           },
     );
   }

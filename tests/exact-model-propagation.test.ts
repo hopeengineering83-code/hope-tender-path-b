@@ -15,12 +15,11 @@ function setEnv(name: string, value: string) {
 }
 
 before(() => {
-  setEnv("AI_ZERO_PAID_MODE", "true");
   const configurations = [
     ["ZAI", "glm-4.7-flash"],
     ["MISTRAL", "mistral-small-latest"],
     ["GROQ", "llama-3.1-8b-instant"],
-    ["OPENROUTER", "test/account-model:free"],
+    ["OPENROUTER", "test/account-model"],
   ] as const;
   for (const [prefix, model] of configurations) {
     setEnv(`${prefix}_API_KEY`, `test-${prefix.toLowerCase()}-key`);
@@ -100,14 +99,14 @@ describe("effective configured model selection", () => {
   it("uses the configured model and never substitutes arbitrary models[0]", async () => {
     const resolved = await resolveVerifiedModel("mistral", "extraction", ["unknown-paid-model"], {
       NODE_ENV: "test",
-      AI_ZERO_PAID_MODE: "true", MISTRAL_API_KEY: "present",
+      MISTRAL_API_KEY: "present",
       MISTRAL_ANALYSIS_MODEL: "unknown-paid-model", MISTRAL_PROPOSAL_MODEL: "unknown-paid-model",
     });
     assert.equal(resolved.model, "unknown-paid-model");
     assert.equal(resolved.source, "configured");
   });
 
-  it("calls the exact configured model without a custom cost policy", async () => {
+  it("calls the exact configured model, with no policy in between", async () => {
     outbound.delete("mistral");
     const result = await runCapabilityTest("mistral", "connectivity", {
       model: "unknown-paid-model",
@@ -127,7 +126,7 @@ describe("effective configured model selection", () => {
     const report = await testProviderCapabilities("groq", {
       capabilities: ["analysis"],
       env: {
-        NODE_ENV: "test", AI_ZERO_PAID_MODE: "true", GROQ_API_KEY: "present",
+        NODE_ENV: "test", GROQ_API_KEY: "present",
         GROQ_PROPOSAL_MODEL: "unknown-cost-model",
         GROQ_ANALYSIS_MODEL: "unknown-cost-model",
         GROQ_FAST_MODEL: "unknown-cost-model",
@@ -145,8 +144,7 @@ describe("effective configured model selection", () => {
     const report = await testProviderCapabilities("gemini", {
       capabilities: ["connectivity", "analysis", "generation"],
       env: {
-        NODE_ENV: "test", AI_ZERO_PAID_MODE: "true",
-        GEMINI_API_KEY: "AIzaTestExactModelKey12345678901234567890",
+        NODE_ENV: "test", GEMINI_API_KEY: "AIzaTestExactModelKey12345678901234567890",
         GEMINI_MODEL: "gemini-2.5-flash",
         GEMINI_ANALYSIS_MODEL: "gemini-2.0-flash",
         GEMINI_EXTRACTION_MODEL: "gemini-flash-latest",

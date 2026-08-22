@@ -954,7 +954,7 @@ export async function generateWithFallback(
         provider, configured: true, tried: false,
         lastErrorCategory: "BILLING", coolingDown: snap.coolingDown, cooldownUntil: snap.cooldownUntil,
       });
-      failureDetails.push(`${provider}: requires payment — excluded from automatic use`);
+      failureDetails.push(`${provider}: refused payment recently — cooling down, will be retried`);
       continue;
     }
 
@@ -4347,9 +4347,8 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
 
   // Per-section generation goes through the same chain as everything else, which
   // getAutomaticProviderOrder() resolves at call time. The order is deliberately
-  // not written out here: this comment used to name the pre-zero-paid chain and
-  // had gone stale, describing Z.ai as rank 1 and listing five providers the app
-  // may no longer contact.
+  // not written out here — a hand-copied chain in a comment is exactly what went
+  // stale last time, naming Z.ai as rank 1 long after it had moved.
 
   // Z.ai
   if (isZaiEnabled() && !isProviderCooledDown("zai")) {

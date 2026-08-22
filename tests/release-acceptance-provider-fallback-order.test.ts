@@ -15,7 +15,6 @@ import {
   getAutomaticProviderOrder,
   automaticChainDisplay,
   providerAutomaticEligibility,
-  PAID_ACCESS_PROVIDERS,
 } from "../lib/ai-provider-registry";
 
 const REQUIRED_ORDER = [

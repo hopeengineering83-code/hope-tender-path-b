@@ -289,7 +289,7 @@ export async function runCapabilityTest(
   const spec = CAPABILITY_SPEC[capability];
   const eligibility = providerAutomaticEligibility(provider, env);
 
-  // Refuse before any request is built. A paid-access provider is not "failing"
+  // Refuse before any request is built. An ineligible provider is not "failing"
   // — it is deliberately not being asked, and asking it is the thing that could
   // cost money. Testing it would defeat the point of excluding it.
   if (!eligibility.eligible) {
@@ -300,7 +300,7 @@ export async function runCapabilityTest(
       model: null,
       modelConfirmedByProvider: null,
       durationMs: 0,
-      category: eligibility.reason === "PAID_ACCESS_BLOCKED" ? "BILLING" : null,
+      category: null,
       safeMessage: eligibility.safeMessage,
     };
   }
@@ -313,7 +313,7 @@ export async function runCapabilityTest(
       modelConfirmedByProvider: null,
       durationMs: 0,
       category: "BILLING",
-      safeMessage: "Provider requires payment — excluded from automatic use.",
+      safeMessage: "Provider refused payment recently and is cooling down; it will be retried when the cooldown expires.",
     };
   }
 
@@ -433,7 +433,7 @@ export async function testProviderCapabilities(
         model: null,
         modelConfirmedByProvider: null,
         durationMs: 0,
-        category: eligibility.reason === "PAID_ACCESS_BLOCKED" ? ("BILLING" as const) : null,
+        category: null,
         safeMessage: eligibility.safeMessage,
       })),
       usableForAiAnalyze: false,
@@ -444,9 +444,7 @@ export async function testProviderCapabilities(
       modelVisible: null,
       diagnosticState: !base.keyPresent
         ? "KEY_MISSING" as const
-        : eligibility.reason === "PAID_ACCESS_BLOCKED"
-          ? "BILLING_BLOCKED" as const
-          : "CONFIGURATION_INVALID" as const,
+        : "CONFIGURATION_INVALID" as const,
     };
   }
 

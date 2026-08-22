@@ -18,7 +18,6 @@ import {
   type AiProviderName,
   type AiProviderFailureCategory,
   restoreProviderState,
-  restoreBillingLockout,
   getProviderStateSnapshot,
 } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER } from "./ai-provider-registry";
@@ -73,16 +72,6 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
         snap.lastFailureAt && now - snap.lastFailureAt.getTime() > 10 * 60_000 && !cooldownUntilMs,
       );
       if (failureIsStale && !hasVerifiedCapability) continue;
-
-      // A provider that answered with a demand for payment must stay excluded on
-      // THIS instance too, not be rediscovered by spending another attempt.
-      if (snap.lastFailureCategory === "BILLING") {
-        restoreBillingLockout(
-          snap.provider as AiProviderName,
-          snap.lastFailureAt ? snap.lastFailureAt.getTime() : now,
-          snap.lastSafeErrorMessage ?? "Provider requires payment.",
-        );
-      }
 
       restoreProviderState(snap.provider as AiProviderName, {
         lastSuccessAt: snap.lastSuccessAt ? snap.lastSuccessAt.getTime() : null,

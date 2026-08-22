@@ -142,9 +142,17 @@ describe("dashboard provider-health UI follows the canonical order", () => {
   });
 
   it("shows BILLING_BLOCKED as its own state, not a generic 'unavailable'", () => {
-    // Billing is the one cause an operator can act on directly. Collapsing it
-    // into "Unavailable" hid the only actionable thing on the card.
-    assert.match(source, /Billing blocked — excluded from automatic use/);
+    // Billing stays a distinct state on the card: collapsing it into
+    // "Unavailable" hides which provider refused and why. What changed is the
+    // WORDING — the label used to say "excluded from automatic use", which
+    // described the withdrawn cost policy and told an operator the provider was
+    // gone for good. It is now a cooldown, so the label says so.
+    assert.match(source, /Billing refused — cooling down, will be retried/);
+    assert.doesNotMatch(
+      source,
+      /excluded from automatic use/,
+      "no provider is excluded; the label must not imply one is",
+    );
   });
 
   it("does not paint CONNECTIVITY_VERIFIED as healthy", () => {

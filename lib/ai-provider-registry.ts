@@ -17,9 +17,6 @@
 import {
   CANONICAL_AI_PROVIDER_ORDER as CATALOG_ORDER,
   ALL_CONFIGURED_PROVIDERS as CATALOG_ALL_PROVIDERS,
-  ZERO_PAID_AUTOMATIC_ORDER as CATALOG_ZERO_PAID_ORDER,
-  PAID_ACCESS_PROVIDERS as CATALOG_PAID_PROVIDERS,
-  isZeroPaidMode as catalogIsZeroPaidMode,
   automaticProviderOrder as catalogAutomaticOrder,
   PROVIDER_API_KEY_ENV,
 } from "./ai-provider-catalog.cjs";
@@ -39,10 +36,9 @@ export type AiProviderName =
 // The canonical automatic provider order. The single literal lives in the
 // plain-CJS catalog (lib/ai-provider-catalog.cjs) so build-time scripts
 // (next.config.js, scripts/check-env.mjs) consume the SAME order without any
-// duplication. The strict zero-paid automatic tier comes first (gemini → groq
-// → mistral → zai → openrouter), followed by the paid-access providers that
-// remain visible in diagnostics but are unreachable by automatic routing
-// (cerebras → openai → together → deepseek → anthropic).
+// duplication. The order is the owner's directive — gemini → groq → mistral →
+// zai → cerebras → openrouter → openai → together → deepseek → anthropic —
+// and every one of them is reachable by automatic routing. Nothing filters it.
 export const CANONICAL_AI_PROVIDER_ORDER: readonly AiProviderName[] = CATALOG_ORDER;
 
 export type AiUseCase = "default" | "extraction" | "proposal" | "validation" | "fast" | "reasoning";
@@ -111,7 +107,7 @@ export type ProviderRegistryEntry = {
    */
   modelsEndpoint: string | null;
   /**
-   * Ordered PREFERENCE HINTS for zero-paid operation — not assertions that
+   * Ordered PREFERENCE HINTS used when discovering a model — not assertions that
    * these models exist. Each candidate is checked against the provider's live
    * model list, and the first one the account can actually call wins. If none
    * matches, the resolver falls back to what the provider itself reports rather
@@ -302,8 +298,13 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     requestFormat: "openai-compatible",
     defaults: {
       baseUrl: "https://openrouter.ai/api/v1",
-      // No safe default model: OpenRouter requires an explicit `:free` model.
-      // `openrouter/auto` is rejected to avoid creating paid usage.
+      // No model default. OpenRouter is an aggregator: the model identifier
+      // selects both the vendor and the price, so there is no sensible value to
+      // guess on the operator's behalf. Set OPENROUTER_PROPOSAL_MODEL /
+      // OPENROUTER_ANALYSIS_MODEL / OPENROUTER_FAST_MODEL to whichever model
+      // this account should use. Without one the provider is skipped, because a
+      // request cannot be built — not because of any cost policy, which this
+      // deployment no longer has.
       proposalModel: "",
       analysisModel: "",
       fastModel: "",
@@ -331,7 +332,7 @@ const REGISTRY: Readonly<Record<AiProviderName, ProviderRegistryEntry>> = {
     defaults: {
       baseUrl: null,
       // Flash, not Pro: gemini-2.5-pro is not served on the free tier, so
-      // defaulting to it made rank-1 Gemini fail on a zero-paid account before
+      // defaulting to it made rank-1 Gemini fail on a free-tier account before
       // it could answer anything. Each value here is the head of the matching
       // freeTierPreference list, so the source default and the live-verified
       // choice can never disagree.
@@ -723,42 +724,28 @@ export function openRouterModelValidity(env: NodeJS.ProcessEnv = process.env): O
   return { valid: true, model: configured, reason: "OK", message: null };
 }
 
-// Deprecated compatibility exports retained for existing diagnostic clients.
-// They do not restrict the owner-directed complete automatic chain.
-
-export const ZERO_PAID_AUTOMATIC_ORDER: readonly AiProviderName[] = CATALOG_ZERO_PAID_ORDER;
-export const PAID_ACCESS_PROVIDERS: readonly AiProviderName[] = CATALOG_PAID_PROVIDERS;
-
-/** Deprecated compatibility helper; always false. */
-export function isZeroPaidMode(env: NodeJS.ProcessEnv = process.env): boolean {
-  return catalogIsZeroPaidMode(env);
-}
-
-/** True when the provider requires paid access on this account. */
-export function isPaidAccessProvider(provider: AiProviderName): boolean {
-  return REGISTRY[provider].access === "paid";
-}
-
 /**
- * The provider order the automatic fallback chain may use. It is always the
- * free chain; the full canonical order exists only for enumeration/diagnostics.
+ * The provider order the automatic fallback chain uses: the complete canonical
+ * order, every time. There is no mode, flag or cost class that narrows it.
  */
 export function getAutomaticProviderOrder(
-  env: NodeJS.ProcessEnv = process.env,
+  _env: NodeJS.ProcessEnv = process.env,
 ): readonly AiProviderName[] {
-  return catalogAutomaticOrder(env) as readonly AiProviderName[];
+  // The env parameter is retained for call-site compatibility and is
+  // deliberately ignored: the chain is the canonical order for every
+  // environment. Nothing may narrow or reorder it.
+  return catalogAutomaticOrder() as readonly AiProviderName[];
 }
 
 export type ProviderEligibility = {
   provider: AiProviderName;
   eligible: boolean;
-  reason:
-    | "OK"
-    | "NOT_CONFIGURED"
-    | "PAID_ACCESS_BLOCKED"
-    | "NOT_IN_AUTOMATIC_ORDER"
-    | "CONDITIONAL_FREE_UNVERIFIED"
-    | "MODEL_FREE_STATUS_UNPROVEN";
+  // PAID_ACCESS_BLOCKED, CONDITIONAL_FREE_UNVERIFIED and
+  // MODEL_FREE_STATUS_UNPROVEN were removed with the cost-class policy. They
+  // are deliberately absent rather than kept as unreachable members: leaving
+  // them would let dead branches keep compiling in every consumer, which is how
+  // a removed policy goes on quietly shaping behaviour.
+  reason: "OK" | "NOT_CONFIGURED" | "NOT_IN_AUTOMATIC_ORDER";
   safeMessage: string;
 };
 

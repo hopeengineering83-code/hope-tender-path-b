@@ -98,7 +98,7 @@ export function extractHttpStatus(message: string): number | null {
 // mis-sorted three different failures into one bucket.
 
 // Billing: the account cannot pay. Never transient, never worth an automatic
-// retry, and on the zero-paid configuration never worth an attempt at all.
+// retry while it is cooling down.
 const BILLING_PHRASES = [
   "payment required",
   "insufficient balance",
@@ -163,7 +163,7 @@ const RATE_LIMIT_PHRASES = [
   // been ruled out above. At that point a throughput cap is both the likelier
   // reading and by far the safer one: calling it RATE_LIMIT costs a short
   // backoff if we are wrong, while calling it BILLING would permanently lock a
-  // working free provider out of the chain. Gemini's free-tier cap says
+  // working provider out of the chain. Gemini's free-tier cap says
   // literally "Quota exceeded for quota metric '…requests per minute'", so the
   // dangerous direction is the one that treats this phrase as unpayable.
   "quota exceeded",

@@ -77,8 +77,13 @@ export function buildAnalysisFallbackDiagnostics(rawError?: string | null): Anal
       category: "BILLING_BLOCKED",
       risk: "HIGH",
       message: message || "An AI provider requires payment before it will answer.",
-      nextAction: "This provider needs a paid account and is excluded from automatic use. Configure a free provider (GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY) and re-run AI Analyze. Waiting will not clear this.",
-      retryRecommended: false,
+      nextAction: "This provider refused payment and is cooling down; the chain continues through the remaining providers and retries this one when the cooldown expires. If every provider is failing, check the provider diagnostics for the per-provider reason.",
+      // Was false, on the reasoning that waiting cannot make an account solvent.
+      // That held while a payment refusal removed the provider permanently; now
+      // it is a ten-minute cooldown on one of ten providers, so a later attempt
+      // can succeed with nothing changed — the same reason RATE_LIMIT below
+      // recommends a retry.
+      retryRecommended: true,
     };
   }
   if (shared === "RATE_LIMIT") {
@@ -144,7 +149,7 @@ export function buildAnalysisFallbackDiagnostics(rawError?: string | null): Anal
       // 10 providers are automatic" — so an operator following it would reach
       // for whichever key they had, which is exactly how a paid provider gets
       // configured on a deployment that must never spend money.
-      nextAction: "Set a free AI provider key (GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY) in Vercel, redeploy, then run AI Analyze. Cerebras, OpenAI, Together, DeepSeek and Anthropic require paid access and are excluded from automatic use.",
+      nextAction: "Set at least one AI provider key in Vercel, redeploy, then run AI Analyze. Any of the ten providers in the chain will do — Gemini, Groq, Mistral and Z.ai are the usual starting points because they offer free tiers.",
       retryRecommended: false,
     };
   }

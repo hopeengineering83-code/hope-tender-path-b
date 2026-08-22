@@ -101,7 +101,7 @@ const STATUS_PRESENTATION: Record<AiProviderStatus, StatusPresentation> = {
     className: WARN_PILL, healthy: false, neutral: false,
   },
   BILLING_BLOCKED: {
-    label: () => "Billing blocked — excluded from automatic use",
+    label: () => "Billing refused — cooling down, will be retried",
     className: BAD_PILL, healthy: false, neutral: false,
   },
   AUTH_FAILED: {

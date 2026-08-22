@@ -232,7 +232,6 @@ export async function detailedLivenessPayload() {
       preFilterLimit: PRE_FILTER_LIMIT,
       engineInvocationSoftDeadlineMs: 40_000,
       providerOrder: aiHealth.eligibleProviders ?? [],
-      zeroPaidMode: aiHealth.zeroPaidMode,
       activeChain: aiHealth.activeChain,
     },
     timestamp: new Date().toISOString(),

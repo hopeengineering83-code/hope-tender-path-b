@@ -3,7 +3,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "@/lib/auth
 import { logAction } from "@/lib/audit";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "@/lib/rate-limit";
 import { type AiProviderName } from "@/lib/ai-provider-health";
-import { CANONICAL_AI_PROVIDER_ORDER, automaticChainDisplay, isZeroPaidMode } from "@/lib/ai-provider-registry";
+import { CANONICAL_AI_PROVIDER_ORDER, automaticChainDisplay } from "@/lib/ai-provider-registry";
 import {
   testProviderCapabilities,
   testAutomaticChainCapabilities,
@@ -135,7 +135,6 @@ export async function GET(req: Request) {
   return NextResponse.json({
     success: true,
     capability,
-    zeroPaidMode: isZeroPaidMode(),
     activeChain: automaticChainDisplay(),
     analysisVerifiedProviders: verifiedAnalysisProviders(reports),
     results,
@@ -171,7 +170,6 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     success: true,
-    zeroPaidMode: isZeroPaidMode(),
     activeChain: automaticChainDisplay(),
     analysisVerifiedProviders: verifiedAnalysisProviders(reports),
     results,

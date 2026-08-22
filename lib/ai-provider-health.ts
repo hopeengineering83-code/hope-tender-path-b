@@ -15,7 +15,6 @@ import {
   getProviderModel,
   openRouterModelValidity,
   providerAutomaticEligibility,
-  isPaidAccessProvider,
   getAutomaticProviderOrder,
   type AiProviderName,
 } from "./ai-provider-registry";
@@ -262,50 +261,60 @@ export function recordProviderPingSuccess(provider: AiProviderName): void {
   s.lastFailureMessage = null;
 }
 
-// ─── Billing lockout ─────────────────────────────────────────────────────────
+// ─── Billing refusal ─────────────────────────────────────────────────────────
 //
-// A cooldown is the wrong instrument for a billing failure. Cooldowns exist for
-// conditions that clear on their own — a rate limit expires, an overloaded
-// model frees up — so they expire too, and the chain tries again. "This account
-// has no money" does not clear on its own. Under a plain 10-minute cooldown,
-// Cerebras' 402 came back around every ten minutes for as long as the process
-// lived, spending an attempt each time, and on an account with a payment method
-// attached each of those attempts is a chance to be charged.
+// A provider that answers "this account cannot pay" is skipped for a while, not
+// removed. This used to be a permanent, process-wide lockout backed by its own
+// Map, cleared only by an operator and re-armed on every cold start from the
+// persisted BILLING category — so one 402 took a provider out of the chain for
+// good.
 //
-// A provider that demands payment is therefore removed from the automatic chain
-// for the life of the process, not parked. It stays fully visible in health and
-// diagnostics as BILLING_BLOCKED, and an operator who fixes the account clears
-// it deliberately via clearBillingLockout().
-const billingLockout = new Map<AiProviderName, { at: number; message: string }>();
+// That is a cost policy, and the owner's provider directive has none: all ten
+// providers stay in the chain, and a billing refusal is simply one more way an
+// attempt can fail. The chain must fall through to the next provider (it does,
+// immediately) and must be free to try this one again later.
+//
+// So BILLING is now an ordinary failure category with an ordinary cooldown —
+// the longest one, at ten minutes, because it is the least likely to clear
+// quickly. Two properties are preserved from the old design and both matter:
+// during the cooldown the provider is skipped WITHOUT spending an attempt, so a
+// refusing provider cannot stall a request; and it stays fully visible in
+// health and diagnostics as BILLING_BLOCKED rather than quietly vanishing.
+//
+// The predicate below is derived, not stored. There is no second source of
+// truth to persist, restore, or let drift out of step with the cooldown.
 
-/** True when the provider answered with a payment/balance/quota-required error. */
+/**
+ * True while the provider is cooling down FROM a payment/balance/quota-required
+ * refusal. Derived from the same cooldown every other failure category uses, so
+ * it expires on its own and the provider is retried.
+ */
 export function isBillingLockedOut(provider: AiProviderName): boolean {
-  return billingLockout.has(provider);
+  const s = state.get(provider);
+  if (!s || s.lastFailureCategory !== "BILLING") return false;
+  return isProviderCooledDown(provider);
 }
 
 export function getBillingLockout(provider: AiProviderName): { at: string; message: string } | null {
-  const entry = billingLockout.get(provider);
-  return entry ? { at: new Date(entry.at).toISOString(), message: entry.message } : null;
-}
-
-/** Operator action after fixing the account — never automatic. */
-export function clearBillingLockout(provider?: AiProviderName): void {
-  if (provider) billingLockout.delete(provider);
-  else billingLockout.clear();
+  const s = state.get(provider);
+  if (!s || s.lastFailureCategory !== "BILLING" || !s.lastFailureAt) return null;
+  if (!isProviderCooledDown(provider)) return null;
+  return { at: new Date(s.lastFailureAt).toISOString(), message: s.lastFailureMessage ?? "" };
 }
 
 /**
- * Re-arm a lockout learned by a DIFFERENT instance.
- *
- * The lockout above is a module-level Map, and on a serverless platform that
- * means one lambda. Instance A discovering that a provider demands payment did
- * nothing for instance B, which would rediscover it on its own next request —
- * once per cold start, forever. The lockout is reconstructed on restore from
- * the persisted failure category, so it needs no schema change: BILLING is
- * already the recorded category, and it is the only category that means this.
+ * Operator override: end the billing cooldown now, after fixing the account.
+ * Clears the cooldown itself — there is no separate lockout left to clear.
  */
-export function restoreBillingLockout(provider: AiProviderName, at: number, message: string): void {
-  if (!billingLockout.has(provider)) billingLockout.set(provider, { at, message });
+export function clearBillingLockout(provider?: AiProviderName): void {
+  const clearOne = (name: AiProviderName) => {
+    const s = state.get(name);
+    if (!s || s.lastFailureCategory !== "BILLING") return;
+    s.cooldownUntil = null;
+    s.consecutiveFailures = 0;
+  };
+  if (provider) clearOne(provider);
+  else for (const name of ALL_PROVIDER_NAMES) clearOne(name);
 }
 
 export function recordProviderFailure(provider: AiProviderName, error: unknown): AiProviderFailureCategory {
@@ -318,12 +327,6 @@ export function recordProviderFailure(provider: AiProviderName, error: unknown):
   s.lastFailureCategory = category;
   s.lastFailureMessage = message;
   s.consecutiveFailures++;
-
-  // Billing is terminal for automatic use — lock the provider out rather than
-  // scheduling it to be tried again.
-  if (isBillingBlocked(category) && !billingLockout.has(provider)) {
-    billingLockout.set(provider, { at: now, message });
-  }
 
   const baseCooldown = COOLDOWN_PER_CATEGORY_MS[category];
   const backoffFactor = Math.min(Math.pow(2, s.consecutiveFailures - 1), 16);
@@ -373,13 +376,11 @@ export function recordDiagnosticObservation(
   kept.push(entry);
   diagnosticObservations.set(observation.provider, kept);
 
-  // Billing is the one observation that must cross over into routing.
-  if (!entry.ok && isBillingBlocked(entry.category) && !billingLockout.has(entry.provider)) {
-    billingLockout.set(entry.provider, {
-      at: entry.observedAt,
-      message: entry.safeMessage ?? "Provider requires payment.",
-    });
-  }
+  // Nothing crosses over into workload routing. Billing used to be the one
+  // exception, on the grounds that a paying provider had to be locked out
+  // everywhere at once; with no cost policy left, that exception has no reason
+  // to exist, and removing it restores the property this store was built for —
+  // running a diagnostic never changes how real work is routed.
   return entry.category;
 }
 
@@ -477,9 +478,9 @@ export function deriveProviderStatus(provider: AiProviderName): AiProviderStatus
   if (h.lastAnalysisSucceededAt) return "ANALYSIS_VERIFIED";
   if (h.lastPingSucceededAt) return "CONNECTIVITY_VERIFIED";
 
-  // A conditional-free provider whose condition is unmet is a configuration
-  // problem, surfaced distinctly so operators fix the model rather than see a
-  // misleading NOT_CONFIGURED. It never consumes an attempt.
+  // OpenRouter without a usable model is a configuration problem, surfaced
+  // distinctly so operators set the model rather than see a misleading
+  // NOT_CONFIGURED. It never consumes an attempt.
   if (provider === "openrouter") {
     const validity = openRouterModelValidity();
     if (!validity.valid) {
@@ -627,12 +628,10 @@ export function getMinCooldownExpiryMs(): number | null {
 export function resetProviderHealth(provider?: AiProviderName): void {
   if (provider) {
     state.delete(provider);
-    billingLockout.delete(provider);
     diagnosticObservations.delete(provider);
     return;
   }
   state.clear();
-  billingLockout.clear();
   diagnosticObservations.clear();
 }
 

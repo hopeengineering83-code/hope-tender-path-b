@@ -118,7 +118,7 @@ export function evaluateEnv(env: Record<string, string | undefined> = process.en
   }
 
   const processEnv = env as NodeJS.ProcessEnv;
-  const configuredProviders = automaticProviderOrder(processEnv).filter(
+  const configuredProviders = automaticProviderOrder().filter(
     (provider) => providerAutomaticEligibility(provider, processEnv).eligible,
   );
   if (configuredProviders.length < 1) {
@@ -184,7 +184,7 @@ export function isAIConfigured(): boolean {
  * A function so tests and diagnostics always read current process state.
  */
 function AUTOMATIC_PROVIDER_KEY_ENVS(): string[] {
-  return automaticProviderOrder(process.env).map((p) => PROVIDER_API_KEY_ENV[p]);
+  return automaticProviderOrder().map((p) => PROVIDER_API_KEY_ENV[p]);
 }
 
 /**

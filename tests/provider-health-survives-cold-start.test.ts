@@ -25,9 +25,9 @@ import {
   getProviderStateSnapshot,
   deriveProviderStatus,
   isBillingLockedOut,
-  restoreBillingLockout,
   recordProviderPingSuccess,
   recordProviderAnalysisSuccess,
+  recordProviderFailure,
 } from "../lib/ai-provider-health";
 
 const MINUTE = 60_000;
@@ -109,30 +109,71 @@ describe("ping-only state is real state", () => {
   });
 });
 
-describe("a payment demand is not relearned once per instance", () => {
-  it("restores the lockout from the persisted BILLING category", () => {
-    // No schema change is needed for this: BILLING is already the recorded
-    // category, and it is the only category that means "this account cannot
-    // pay". The restore path reconstructs the lockout from it.
+describe("a payment refusal parks a provider, it does not remove one", () => {
+  // This block used to pin the opposite rule: a 402 removed the provider from
+  // the automatic chain for the life of the process, cleared only by an
+  // operator and re-armed on every cold start from the persisted BILLING
+  // category. That was a cost policy, and the owner's provider directive has
+  // none — all ten providers stay in the chain, and a billing refusal is one
+  // more way a single attempt can fail.
+  //
+  // The tests were rewritten rather than deleted because the behaviour they
+  // guarded still needs guarding; it is the RULE that changed. What must remain
+  // true is that a refusing provider never stalls a request (it is skipped
+  // without spending an attempt while cooling down) and never disappears
+  // silently (it still reports BILLING_BLOCKED).
+
+  it("reports BILLING_BLOCKED while the refusal is still cooling down", () => {
     process.env.ZAI_API_KEY = "zai-test";
     assert.equal(isBillingLockedOut("zai"), false);
-    restoreBillingLockout("zai", Date.now() - MINUTE, "Insufficient balance");
+    recordProviderFailure("zai", new Error("HTTP 402: insufficient balance"));
     assert.equal(isBillingLockedOut("zai"), true);
     assert.equal(deriveProviderStatus("zai"), "BILLING_BLOCKED");
   });
 
-  it("the restore path reconstructs it, rather than spending an attempt to rediscover it", () => {
-    const source = require("node:fs").readFileSync("lib/ai-provider-health-db.ts", "utf8");
-    assert.match(source, /snap\.lastFailureCategory === "BILLING"/);
-    assert.match(source, /restoreBillingLockout\(/);
+  it("lets the provider back into the chain once the cooldown expires", () => {
+    // The property the old permanent lockout removed. A provider that refused
+    // payment an hour ago may have been topped up since; refusing to ever ask
+    // again is a decision this application is not entitled to make.
+    process.env.ZAI_API_KEY = "zai-test";
+    recordProviderFailure("zai", new Error("HTTP 402: insufficient balance"));
+    assert.equal(isBillingLockedOut("zai"), true, "still parked immediately after the refusal");
+
+    const snap = getProviderStateSnapshot("zai")!;
+    restoreProviderState("zai", { ...snap, cooldownUntil: Date.now() - MINUTE });
+
+    assert.equal(isBillingLockedOut("zai"), false, "the refusal must expire like any other failure");
+    assert.notEqual(
+      deriveProviderStatus("zai"),
+      "BILLING_BLOCKED",
+      "an expired billing cooldown must not keep reporting the provider as blocked",
+    );
   });
 
-  it("does not overwrite a lockout this instance already has", () => {
-    process.env.ZAI_API_KEY = "zai-test";
-    restoreBillingLockout("zai", 1_000, "first");
-    restoreBillingLockout("zai", 2_000, "second");
-    const { getBillingLockout } = require("../lib/ai-provider-health");
-    assert.equal(getBillingLockout("zai").message, "first", "the earliest observation wins");
+  it("carries the refusal across a cold start through the cooldown, with no second store", () => {
+    // The old design needed its own Map, its own restore call, and its own
+    // persistence reasoning. The cooldown already crosses cold starts, so the
+    // predicate is derived from it and there is nothing separate to keep in
+    // step — one fact, one place.
+    const source = require("node:fs").readFileSync("lib/ai-provider-health-db.ts", "utf8");
+    assert.ok(
+      !source.includes("restoreBillingLockout"),
+      "restoring a billing refusal must not need a mechanism of its own",
+    );
+    assert.match(source, /cooldownUntil/, "the cooldown is what carries it across a cold start");
+  });
+
+  it("keeps a diagnostic billing result out of workload routing", () => {
+    // Billing was the one diagnostic observation allowed to cross into routing,
+    // because a locked-out provider had to be locked out everywhere. With no
+    // lockout, that exception has nothing to justify it, and removing it
+    // restores what this store exists for: running a diagnostic never changes
+    // how real work is routed.
+    const source = require("node:fs").readFileSync("lib/ai-provider-health.ts", "utf8");
+    assert.ok(
+      !/billingLockout/.test(source),
+      "no separate billing lockout store may remain",
+    );
   });
 });
 

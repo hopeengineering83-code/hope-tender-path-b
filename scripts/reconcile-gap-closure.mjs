@@ -60,12 +60,36 @@ requireRule(
 
 // 2b. The owner-required automatic chain contains all configured providers.
 requireRule(
-  "Catalog automatic order drifted from the required full chain",
-  JSON.stringify(catalog.ZERO_PAID_AUTOMATIC_ORDER) === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
-);
-requireRule(
   "Automatic provider order no longer includes every provider",
-  JSON.stringify(catalog.automaticProviderOrder({})) === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
+  JSON.stringify(catalog.automaticProviderOrder()) === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
+);
+
+// 2c. The withdrawn cost policy must stay withdrawn.
+//
+// This used to compare against catalog.ZERO_PAID_AUTOMATIC_ORDER. That export
+// is gone, and checking a name that no longer exists is worse than not checking
+// at all — `undefined === undefined` would have passed silently had the
+// comparison been written the other way round. The rule is inverted instead:
+// the policy's own vocabulary must be absent from the catalog. A reintroduced
+// cost gate has to reintroduce one of these to work.
+for (const symbol of [
+  "ZERO_PAID_AUTOMATIC_ORDER",
+  "PAID_ACCESS_PROVIDERS",
+  "CONDITIONAL_FREE_PROVIDERS",
+  "isZeroPaidMode",
+]) {
+  requireRule(
+    `Withdrawn cost-policy export reappeared in the catalog: ${symbol}`,
+    !(symbol in catalog),
+  );
+}
+
+// The chain accessor must not consult the environment. A per-environment order
+// is how a filter returns without touching the canonical list.
+requireRule(
+  "automaticProviderOrder() must not vary by environment",
+  JSON.stringify(catalog.automaticProviderOrder({ AI_ZERO_PAID_MODE: "true" }))
+    === JSON.stringify(REQUIRED_AUTOMATIC_ORDER),
 );
 // No per-use-case literal chain may reappear (e.g. `extraction: ["mistral", ...]`).
 for (const useCase of ["default", "extraction", "proposal", "validation", "fast", "reasoning"]) {

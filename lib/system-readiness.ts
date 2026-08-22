@@ -152,8 +152,8 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
         : aiHealth.state === "degraded"
           ? `${configuredProviders.join(" → ")} configured, but no provider has completed a real AI Analyze extraction on this instance. Run the provider capability test (/api/ai-providers/diagnostics?live=1) to confirm.`
           : aiHealth.billingBlockedProviders.length > 0
-            ? `No usable AI provider: ${aiHealth.billingBlockedProviders.join(", ")} require payment and are excluded. Configure a free provider. Active chain: ${aiHealth.activeChain}.`
-            : `Configure at least one free provider. Active chain: ${aiHealth.activeChain}.`,
+            ? `No usable AI provider right now: ${aiHealth.billingBlockedProviders.join(", ")} refused payment and are cooling down. They are retried automatically; configure another provider to avoid waiting. Active chain: ${aiHealth.activeChain}.`
+            : `Configure at least one provider from the chain. Active chain: ${aiHealth.activeChain}.`,
     },
     {
       key: "email",

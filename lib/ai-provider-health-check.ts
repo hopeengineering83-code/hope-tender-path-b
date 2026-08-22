@@ -12,8 +12,12 @@
  * this process (see lib/ai-provider-capability-test.ts), and it distinguishes
  * three states rather than two:
  *
- *   healthy   — at least two providers have verified ANALYSIS capability, so
- *               one temporary 429 cannot exhaust the application.
+ *   healthy   — at least one provider has verified ANALYSIS capability.
+ *               A redundancy rule briefly lived here, requiring two; it was a
+ *               cost-policy artefact and the owner's provider directive has no
+ *               such requirement. The chain is ten providers deep and falls
+ *               through on every failure class, which is where resilience
+ *               actually comes from.
  *   degraded  — providers are configured and eligible, but nothing has been
  *               verified yet on this instance. Not a failure: the first real
  *               AI Analyze or an operator diagnostic proves it either way.
@@ -27,7 +31,6 @@ import {
   getAutomaticProviderOrder,
   providerAutomaticEligibility,
   automaticChainDisplay,
-  isZeroPaidMode,
   type AiProviderName,
 } from "./ai-provider-registry";
 import {
@@ -42,11 +45,14 @@ export interface AiProviderHealthResult {
   eligibleProviders: string[];
   /** Passed a real AI Analyze structured-output test in this process. */
   analysisVerifiedProviders: string[];
-  /** Excluded because they require paid access, or demanded payment. */
+  /**
+   * Currently cooling down from a payment/balance refusal. Nothing is excluded
+   * by policy — these are providers that refused at runtime and will be tried
+   * again when their cooldown expires.
+   */
   billingBlockedProviders: string[];
   configuredProviders: string[];
   totalProviders: number;
-  zeroPaidMode: boolean;
   activeChain: string;
   /** "healthy" | "degraded" | "unhealthy" — see the module comment. */
   state: "healthy" | "degraded" | "unhealthy";
@@ -54,7 +60,6 @@ export interface AiProviderHealthResult {
 }
 
 export function checkAiProviderHealth(): AiProviderHealthResult {
-  const zeroPaidMode = isZeroPaidMode();
   const activeChain = automaticChainDisplay();
   try {
     const chain = getAutomaticProviderOrder();
@@ -78,7 +83,6 @@ export function checkAiProviderHealth(): AiProviderHealthResult {
         billingBlockedProviders: billingBlocked,
         configuredProviders: eligible,
         totalProviders: chain.length,
-        zeroPaidMode,
         activeChain,
         message: `${verified.length} provider(s) verified for AI Analyze: ${verified.join(", ")}.`,
       };
@@ -93,10 +97,9 @@ export function checkAiProviderHealth(): AiProviderHealthResult {
         billingBlockedProviders: billingBlocked,
         configuredProviders: [],
         totalProviders: chain.length,
-        zeroPaidMode,
         activeChain,
         message: billingBlocked.length > 0
-          ? `No usable AI provider — ${billingBlocked.length} provider(s) require payment and are excluded. Configure a free provider.`
+          ? `No AI provider is currently usable — ${billingBlocked.length} recently refused payment and are cooling down. They will be retried automatically; configure another provider to avoid waiting.`
           : "No AI providers configured — AI features will be unavailable.",
       };
     }
@@ -109,7 +112,6 @@ export function checkAiProviderHealth(): AiProviderHealthResult {
       billingBlockedProviders: billingBlocked,
       configuredProviders: eligible,
       totalProviders: chain.length,
-      zeroPaidMode,
       activeChain,
       message: `${eligible.length} provider(s) configured but none verified on this instance yet — run the provider capability test or the first AI Analyze to confirm.`,
     };
@@ -122,14 +124,13 @@ export function checkAiProviderHealth(): AiProviderHealthResult {
       billingBlockedProviders: [],
       configuredProviders: [],
       totalProviders: 0,
-      zeroPaidMode,
       activeChain,
       message: `Provider health check failed: ${e instanceof Error ? e.message : "unknown error"}`,
     };
   }
 }
 
-/** True when the required redundant pair has runtime-verified analysis capability. */
+/** True when at least one provider has runtime-verified analysis capability. */
 export function hasRuntimeVerifiedAnalysisProvider(): boolean {
   return analysisUsableProviders().length >= 1;
 }
