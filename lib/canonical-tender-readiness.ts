@@ -128,7 +128,18 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   // readyForFinalExport went true while final-submission-readiness.ts, which
   // filters at line 565 before asking the same question, refused the same
   // tender. Readiness must not promise what the export gate will decline.
-  const missing = findMissingGeneratedDocuments(plan, filterFinalExportCandidateDocuments(tender.generatedDocuments as never));
+  //
+  // Selected ONCE, here, and reused by every count below. The narrowing was
+  // applied only to `missing`, so three sibling call sites went on counting the
+  // raw query result (`generationStatus != SUPERSEDED`, which still admits
+  // QUEUED / STALE / PLANNED / GENERATING / FAILED rows, validationStatus-
+  // SUPERSEDED rows, NOT_EXPORTABLE / REPLACE_WITH_ORIGINAL rows, CONTROL
+  // formats and internal drafts): NO_ACTIVE_GENERATED_DOCUMENTS, hasDocuments
+  // and readyForFinalExport. A tender whose only remaining rows were historical
+  // therefore reported hasDocuments true and satisfied the "documents exist"
+  // half of readyForFinalExport, while the export gate saw zero.
+  const currentDocuments = filterFinalExportCandidateDocuments(tender.generatedDocuments as never) as typeof tender.generatedDocuments;
+  const missing = findMissingGeneratedDocuments(plan, currentDocuments as never);
 
   // Gap 1: detect reused tender-issued forms that are still awaiting manual
   // completion. A reused form carries the machine:tender-issued-form-reuse
@@ -136,6 +147,11 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   // APPROVED/READY_FOR_EXPORT — that's fabricated human state). It must be
   // completed and signed by a person. The blocker is more specific than
   // MISSING_PLANNED_FILES — it tells the reviewer exactly what to do next.
+  //
+  // Deliberately reads the BROAD list, not currentDocuments: a reused
+  // tender-issued form sits at REPLACE_WITH_ORIGINAL, which the canonical
+  // current-document selection excludes — and a form awaiting completion is
+  // exactly what this blocker exists to report.
   const tenderFormsAwaitingCompletion = tender.generatedDocuments.filter((doc) => {
     const summary = (doc.contentSummary ?? "").toLowerCase();
     const isReusedTenderForm = summary.includes("machine:tender-issued-form-reuse");
@@ -163,7 +179,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     requirements: tender.requirements,
     exactFileNaming: tender.exactFileNaming,
     exactFileOrder: tender.exactFileOrder,
-    generatedDocuments: tender.generatedDocuments,
+    generatedDocuments: currentDocuments,
     complianceGaps: tender.complianceGaps,
   });
 
@@ -174,7 +190,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...(projectRequirementExists && tender.projectMatches.length === 0 ? ["NO_TENDER_SPECIFIC_PROJECT_MATCHES"] : []),
     ...(expertRequirementExists && reviewedSelectedExperts === 0 ? ["NO_SELECTED_REVIEWED_EXPERTS"] : []),
     ...(projectRequirementExists && reviewedSelectedProjects === 0 ? ["NO_SELECTED_REVIEWED_PROJECTS"] : []),
-    ...(tender.generatedDocuments.length === 0 ? ["NO_ACTIVE_GENERATED_DOCUMENTS"] : []),
+    ...(currentDocuments.length === 0 ? ["NO_ACTIVE_GENERATED_DOCUMENTS"] : []),
     ...(missing.length > 0 ? ["MISSING_PLANNED_FILES"] : []),
     ...(tenderFormsAwaitingCompletion.length > 0 ? ["MISSING_TENDER_FORM_FIELDS"] : []),
     ...(confirmedPlan.ok ? [] : ["NO_CURRENT_CONFIRMED_BUILD_PLAN"]),
@@ -191,7 +207,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     ...baseState,
     hasAnalysis: Boolean(tender.analysisSummary),
     hasRequirements: tender.requirements.length > 0,
-    hasDocuments: tender.generatedDocuments.length > 0,
+    hasDocuments: currentDocuments.length > 0,
     matchingComplete: matching.state !== "VAULT_AWAITS_ENGINE",
     matchingBlocked: blockers.some((code) => code.includes("MATCH") || code.includes("EXPERT") || code.includes("PROJECT")),
     generationServerReady: readiness.fullProposalReady,
@@ -209,7 +225,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     matchingState: matching.state,
     readyForSupportPackage: readiness.supportPackageReady,
     readyForFullProposal: readiness.fullProposalReady,
-    readyForFinalExport: tender.generatedDocuments.length > 0 && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
+    readyForFinalExport: currentDocuments.length > 0 && missing.length === 0 && tenderFormsAwaitingCompletion.length === 0 && blockers.length === 0 && unresolvedCriticalGaps === 0,
     modules,
     blockers,
     warnings: readiness.warnings.map((w) => w.code),
