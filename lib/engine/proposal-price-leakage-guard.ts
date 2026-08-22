@@ -1,5 +1,6 @@
 import type { EvaluatorMatrixInput } from "./proposal-evaluator-matrix";
 import { buildTenderFormStrategy } from "./tender-form-strategy";
+import { statesFinancialSeparation } from "./financial-separation-rule";
 
 function clean(value?: string | null): string {
   return (value ?? "").replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim();
@@ -13,8 +14,11 @@ function shouldEnforceTechnicalPriceSeparation(input: EvaluatorMatrixInput): boo
     submissionLines: input.complianceLines,
     extraText: input.clientName,
   });
-  return strategy.isTwoEnvelope
-    || /technical\s+(?:proposal|offer)\s+only|no\s+financial|financial\s+(?:proposal|offer)\s+(?:separate|separately)|separate\s+financial|without\s+prices?|price[-\s]?free/i.test(joined);
+  // Same predicate the submission-plan classifier uses to decide the rule is a
+  // rule and not a deliverable. One definition: a phrasing that stops a phantom
+  // file being planned must also arm the guard that enforces the rule, or the
+  // app drops the constraint entirely while believing it handled it.
+  return strategy.isTwoEnvelope || statesFinancialSeparation(joined);
 }
 
 function isAllowedControlLine(line: string): boolean {

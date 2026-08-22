@@ -1,4 +1,5 @@
 import { detectOfficialTemplateRequirement } from "./official-template-detector";
+import { statesFinancialSeparation } from "./financial-separation-rule";
 
 export type SubmissionPlanCategory =
   | "REQUIRED_OUTPUT_FILE"
@@ -70,13 +71,14 @@ export function classifySubmissionPlanItem(input: ClassifierInput): ClassifierRe
   // Build Plan previously invented a required file literally named
   // "No Financial Proposal.docx", making package convergence impossible even
   // though the tender expressly prohibited/omitted that deliverable.
-  if (
-    /financial proposal exclusion|separate envelope|two[-\s]envelope|sealed envelope|technical only|do not include price|do not include financial/.test(value) ||
-    /\bno\s+financial\s+(?:proposal|offer)\b/.test(value) ||
-    /\bfinancial\s+(?:proposal|offer)\s*(?:[:;,.\-–—]\s*)?(?:is\s+)?(?:not\s+required|not\s+requested|not\s+applicable|excluded|omitted)\b/.test(value) ||
-    /\b(?:do\s+not|must\s+not|shall\s+not)\s+(?:generate|submit|include)\s+(?:a\s+)?financial\s+(?:proposal|offer)\b/.test(value) ||
-    /\bwithout\s+(?:a\s+)?financial\s+(?:proposal|offer)\b/.test(value)
-  ) {
+  // The phrasing list lives in lib/engine/financial-separation-rule.ts, shared
+  // with proposal-price-leakage-guard.ts, which ENFORCES the same rule on the
+  // generated narrative. The two used to carry separate lists and disagreed:
+  // "technical proposal only" armed the guard but not this classifier, and
+  // "Financial Proposal Omission" — the live tender's actual wording — armed
+  // neither, so the Build Plan required a file named
+  // "Financial Proposal Omission.docx" invented from a prohibition.
+  if (statesFinancialSeparation(value)) {
     return result("COMMERCIAL_SEPARATION_RULE", "Financial/technical separation or no-financial rule, not a deliverable file.");
   }
 
