@@ -28,6 +28,9 @@ run(node, ["scripts/audit-dependencies.mjs"]);
 if (isVercel && vercelEnvironment !== "production") {
   console.warn(`Skipping database migrations for Vercel ${vercelEnvironment || "non-production"} build.`);
   console.warn("Preview builds are compile-and-test only; they never mutate the shared Production database.");
+  // …which also means nothing in this build would otherwise notice that the
+  // database is unreachable. Non-fatal by design: see the script's header.
+  run(node, ["scripts/probe-database-reachability.mjs"]);
   run(npm, [
     "exec",
     "--",
