@@ -66,6 +66,15 @@ export const AI_TRACE_PATTERNS: RegExp[] = [
   /as an ai/i,
   /\bi am an ai\b/i,
   /\bas a language model\b/i,
+  // Bare "language model" with no "as a"/"AI" prefix. The generators already
+  // strip this exact phrase before rendering — FORBIDDEN_TRACE_PATTERNS in
+  // lib/engine/expert-cv-docx.ts carries /\blanguage model\b/gi and its comment
+  // states that the export quality gate "rejects any CV that still carries it".
+  // The gate only ever matched the prefixed forms, so a stripped-prefix
+  // leftover such as "I am a language model." passed every gate, while the
+  // Document Validator panel's own private copy of these patterns caught it.
+  // Unifying the panel onto this list would have LOST that detection.
+  /\blanguage\s+model\b/i,
   /\bas a large language\b/i,
   /\bi cannot\b/i,
   /\bi'?m sorry,? i\b/i,

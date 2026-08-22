@@ -500,11 +500,21 @@ describe("Spec Test 11 — Final export remains fail-closed", () => {
   });
 
   it("final-submission-readiness.ts extracts DOCX visible text for quality scoring", () => {
+    // The extraction now lives in the canonical current-document-quality
+    // module so the readiness gate and the Document Validator panel cannot
+    // score the same document from different text. Assert the property
+    // (visible text is extracted before the assessor runs, on the path this
+    // file actually uses) rather than the old inline shape.
     const src = readLibFile("engine/final-submission-readiness.ts");
-    assert.ok(src.includes("extractDocxVisibleText"), "must import extractDocxVisibleText");
     assert.ok(
-      /extractDocxVisibleText[\s\S]*?assessGeneratedDocumentQuality/.test(src),
-      "must extract visible text before calling assessGeneratedDocumentQuality",
+      src.includes("assessCurrentDocumentQualityBatch"),
+      "readiness must score documents through the canonical quality helper",
+    );
+    const shared = readLibFile("engine/current-document-quality.ts");
+    assert.ok(shared.includes("extractDocxVisibleText"), "canonical helper must import extractDocxVisibleText");
+    assert.ok(
+      /extractDocxVisibleText[\s\S]*?assessGeneratedDocumentQuality/.test(shared),
+      "canonical helper must extract visible text before calling assessGeneratedDocumentQuality",
     );
   });
 });

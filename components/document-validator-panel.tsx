@@ -1,105 +1,32 @@
 // Document Validator Panel — server component.
 //
-// Per-document quality/blocker panel. Shows for each generated document:
-//   - quality score (from proposal-quality-scorer when markdown content exists)
-//   - placeholder detection (MISSING_SOURCE, Bid-Team, [TBD], etc.)
-//   - AI-trace language detection
-//   - empty/shallow section detection
-//   - envelope mismatch detection
-//   - validation status + recommended fix
+// Per-document machine quality/blocker panel. For each CURRENT generated
+// document it shows the Clean / Review / Blocked verdict, the concrete issues
+// the machine checks found (placeholders, AI traces, pricing leakage into the
+// technical envelope, empty body, missing sections, ...), the stored machine
+// validation status, and the recommended fix.
 //
-// Renders as a table of documents with inline blocker detail.
-// Non-coder friendly: tells users exactly what to fix and why.
+// TRUTH SOURCE — do not reintroduce local checks here.
+// This panel used to (a) select documents with `generationStatus != SUPERSEDED`
+// and (b) run its own inline regex checks. Both differed from the export gate,
+// so the panel could report "Technical Proposal.pdf — CLEAN, Warning 0,
+// Blocked 0" for a tender whose Export Readiness said
+// GENERATED_DOCUMENT_QUALITY_FAILED. Selection and assessment now both come
+// from lib/engine/current-document-quality.ts, the same module
+// lib/engine/final-submission-readiness.ts scores with, so the two surfaces
+// cannot disagree.
+//
+// This panel reports MACHINE validation only. Human/legal/owner approval
+// (reviewStatus) is displayed but never inferred, never granted, and never
+// written here.
 
 import { getSession } from "../lib/auth";
 import { prisma, prismaReady } from "../lib/prisma";
 import { CheckIcon, WarningIcon, CrossIcon } from "./icons";
-// Inline document-level pattern checks (superset of metadata patterns).
-// Kept here rather than importing from validate.ts to avoid pulling in
-// the full DB-coupled validateTender function.
-const PLACEHOLDER_RE = [
-  /\[insert [^\]]+\]/i,
-  /\{[^}]+\}/,
-  /\bTODO\b/,
-  /\bXXX\b/,
-  /\[TBD\]/i,
-  /\[NAME\]/i,
-  /\[DATE\]/i,
-  /\bplaceholder\b/i,
-  /Bid-Team\s+to\s+confirm/i,
-  /Bid-Team\s+Action/i,
-  /Not\s+extracted\s*[—–-]\s*confirm\s+manually/i,
-  /MISSING_SOURCE/,
-  /\[CLIENT(?:\s+TO\s+BE\s+CONFIRMED)?\]/i,
-];
-
-const AI_TRACE_RE = [
-  /as an ai/i,
-  /language model/i,
-  /\bi cannot\b/i,
-  /\bas a large language\b/i,
-  /I don'?t have access/i,
-  /I'?m sorry,? I/i,
-];
-
-const EMPTY_SECTION_RE = /^#+\s+.+\n+(?:\n|$)/m;
-const FINANCIAL_IN_TECHNICAL_RE = /unit price|rate card|price schedule|BOQ|bill of quantities|tax.*rate|vat.*\d/i;
-const TECHNICAL_IN_FINANCIAL_RE = /methodology|work plan|staffing plan|technical approach/i;
-
-function checkDocument(doc: {
-  name: string;
-  exactFileName: string | null;
-  documentType: string | null;
-  fileContent: string | null;
-  storagePath: string | null;
-  validationStatus: string | null;
-  reviewStatus: string | null;
-  generationStatus: string | null;
-}): {
-  hasContent: boolean;
-  placeholders: string[];
-  aiTrace: string[];
-  envelopeMismatch: string | null;
-  isEmpty: boolean;
-  qualityWarnings: string[];
-  score: "GOOD" | "WARNING" | "BLOCKED";
-} {
-  const hasContent = Boolean(
-    (doc.fileContent ?? "").trim().length > 0 || (doc.storagePath ?? "").trim().length > 0,
-  );
-
-  // Can only inspect text content — base64 DOCX/PDF content is opaque
-  // at this layer. If content looks like base64, skip pattern checks.
-  const isBase64Like = /^[A-Za-z0-9+/]{40,}={0,2}$/.test((doc.fileContent ?? "").slice(0, 100));
-  const text = isBase64Like ? "" : (doc.fileContent ?? "");
-
-  const placeholders = hasContent && text
-    ? PLACEHOLDER_RE.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
-    : [];
-
-  const aiTrace = hasContent && text
-    ? AI_TRACE_RE.filter((re) => re.test(text)).map((re) => re.source.replace(/[\\^$.*+?()[\]{}|]/g, "").slice(0, 40))
-    : [];
-
-  const dtype = (doc.documentType ?? "").toUpperCase();
-  let envelopeMismatch: string | null = null;
-  if (text && dtype === "TECHNICAL" && FINANCIAL_IN_TECHNICAL_RE.test(text)) {
-    envelopeMismatch = "Financial pricing content detected in a TECHNICAL document";
-  } else if (text && dtype === "FINANCIAL" && TECHNICAL_IN_FINANCIAL_RE.test(text)) {
-    envelopeMismatch = "Technical methodology content detected in a FINANCIAL document";
-  }
-
-  const isEmpty = !hasContent || (text.length > 0 && text.trim().length < 50);
-  const qualityWarnings: string[] = [];
-  if (text && EMPTY_SECTION_RE.test(text)) qualityWarnings.push("Empty section headings detected");
-  if (text && text.length > 0 && text.length < 200) qualityWarnings.push("Document content is very short — may be incomplete");
-
-  const blocked = placeholders.length > 0 || aiTrace.length > 0 || isEmpty || envelopeMismatch != null;
-  const warned = qualityWarnings.length > 0;
-  const score = blocked ? "BLOCKED" : warned ? "WARNING" : "GOOD";
-
-  return { hasContent, placeholders, aiTrace, envelopeMismatch, isEmpty, qualityWarnings, score };
-}
+import {
+  selectCurrentDocuments,
+  resolveCurrentDocumentVerdicts,
+} from "../lib/engine/current-document-quality";
 
 function validationBadge(status: string | null) {
   const s = (status ?? "").toUpperCase();
@@ -116,6 +43,32 @@ function scoreBadge(score: "GOOD" | "WARNING" | "BLOCKED") {
   return <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700"><CrossIcon /> Blocked</span>;
 }
 
+// Plain-language remediation for each issue the machine checks can raise.
+// Non-coder friendly: says exactly what to fix and why.
+const FIX_ADVICE: Record<string, string> = {
+  EMPTY_BODY: "Click Generate to create this document from the tender requirements, or Attach to upload the real file.",
+  TOO_SHORT: "Regenerate this document — the content is far below the length this document kind needs.",
+  MISSING_REQUIRED_SECTION: "Add the missing sections, then regenerate or edit the document.",
+  PLACEHOLDER: "Remove all placeholder text before export. These strings will be visible to evaluators.",
+  BID_TEAM_TO_CONFIRM: "Confirm the underlying tender facts, then regenerate. Internal placeholders must never be submitted.",
+  AI_TRACE: "Remove AI self-references. Regenerate the affected section with the current provider chain.",
+  PRICING_LEAKAGE: "Move pricing content into the financial envelope. It must not appear in a technical document.",
+  ENVELOPE_MISMATCH: "Move this content into the correct envelope before export.",
+  INTERNAL_TRACEABILITY: "Strip internal traceability text (source ids, evidence ids, match scores) before submission.",
+  GENERIC_FILLER: "Replace generic marketing language with tender-specific content.",
+  UNSUPPORTED_CLAIM_RISK: "Verify the numeric claims against reviewed evidence, or remove them.",
+  DUPLICATED_SECTIONS: "Deduplicate the repeated headings — the document was likely regenerated without dedupe.",
+  MISSING_REQUIREMENT_COVERAGE: "Cover the tender's mandatory requirements explicitly in this document.",
+  MISSING_EVIDENCE_REFERENCE: "Reference the selected experts/projects so the evaluator can trace the evidence.",
+  MISSING_TITLE_OR_COVER: "Add the title/cover block the tender expects.",
+  OFFICIAL_ORIGINAL_PLACEHOLDER_RISK: "This must be the tender-issued original — a generated stand-in cannot be submitted.",
+  QUALITY_WARNING: "Review this document before export.",
+};
+
+function adviceFor(code: string): string | null {
+  return FIX_ADVICE[code] ?? null;
+}
+
 export async function DocumentValidatorPanel({ tenderId }: { tenderId: string }) {
   const userId = await getSession();
   if (!userId) return null;
@@ -127,14 +80,19 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
   const ownsTender = await prisma.tender.findFirst({ where: { id: tenderId, userId }, select: { id: true } }).catch(() => null);
   if (!ownsTender) return null;
 
-  const docs = await prisma.generatedDocument.findMany({
-    where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+  // Load broadly, then narrow with the SAME canonical current-document
+  // selection the export gate uses. Superseded, replaced, stale, queued,
+  // control and internal-draft rows stay auditable in the database but are
+  // never counted as current outputs here.
+  const allDocs = await prisma.generatedDocument.findMany({
+    where: { tenderId },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
     select: {
       id: true,
       name: true,
       exactFileName: true,
       documentType: true,
+      format: true,
       generationStatus: true,
       validationStatus: true,
       reviewStatus: true,
@@ -143,20 +101,25 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
     },
   }).catch(() => [] as Array<{
     id: string; name: string; exactFileName: string | null;
-    documentType: string; generationStatus: string; validationStatus: string;
+    documentType: string; format: string | null; generationStatus: string; validationStatus: string;
     reviewStatus: string; fileContent: string | null; storagePath: string | null;
   }>);
 
+  const docs = selectCurrentDocuments(allDocs);
+  const supersededCount = allDocs.length - docs.length;
+
   if (docs.length === 0) return null;
 
-  const rows = docs.map((doc) => ({
-    doc,
-    check: checkDocument(doc),
-  }));
+  const requirements = await prisma.tenderRequirement.findMany({
+    where: { tenderId },
+    select: { title: true, description: true, priority: true },
+  }).catch(() => [] as Array<{ title: string | null; description: string | null; priority: string | null }>);
 
-  const blockedCount = rows.filter((r) => r.check.score === "BLOCKED").length;
-  const warningCount = rows.filter((r) => r.check.score === "WARNING").length;
-  const goodCount = rows.filter((r) => r.check.score === "GOOD").length;
+  const rows = await resolveCurrentDocumentVerdicts(docs, requirements);
+
+  const blockedCount = rows.filter((r) => r.score === "BLOCKED").length;
+  const warningCount = rows.filter((r) => r.score === "WARNING").length;
+  const goodCount = rows.filter((r) => r.score === "GOOD").length;
 
   return (
     <section className="mb-4 rounded-2xl border bg-white p-5 shadow-sm">
@@ -165,9 +128,15 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Document Validator</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Per-document quality and placeholder check</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Checks each generated document for placeholders, AI-trace language, empty sections, and envelope mismatches.
-            Documents marked BLOCKED must be fixed before export.
+            Runs the same machine quality checks Export Readiness uses, over the same current documents.
+            Documents marked Blocked must be fixed before export. This is machine validation only — owner and
+            legal approval are recorded separately.
           </p>
+          {supersededCount > 0 && (
+            <p className="mt-1 text-xs text-slate-500">
+              {supersededCount} historical/superseded record(s) are kept for audit and are not counted here.
+            </p>
+          )}
         </div>
         <div className="flex gap-3 text-center">
           <div className="rounded-xl border bg-emerald-50 px-4 py-2">
@@ -186,63 +155,52 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
       </div>
 
       <div className="space-y-3">
-        {rows.map(({ doc, check }) => (
+        {rows.map(({ doc, report, reasons, score }) => (
           <div
             key={doc.id}
             className={`rounded-xl border p-4 ${
-              check.score === "BLOCKED" ? "border-red-200 bg-red-50" :
-              check.score === "WARNING" ? "border-amber-200 bg-amber-50" :
+              score === "BLOCKED" ? "border-red-200 bg-red-50" :
+              score === "WARNING" ? "border-amber-200 bg-amber-50" :
               "border-slate-200 bg-slate-50"
             }`}
           >
             <div className="flex flex-wrap items-start gap-2 justify-between">
               <div className="min-w-0">
                 <p className="font-medium text-slate-900 truncate">{doc.exactFileName ?? doc.name}</p>
-                <p className="text-xs text-slate-500">{doc.documentType ?? "—"} · {doc.generationStatus ?? "—"}</p>
+                <p className="text-xs text-slate-500">
+                  {doc.documentType ?? "—"} · {doc.generationStatus ?? "—"} · quality score {report.score}/100
+                </p>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
-                {scoreBadge(check.score)}
+                {scoreBadge(score)}
                 {validationBadge(doc.validationStatus)}
               </div>
             </div>
 
-            {!check.hasContent && (
-              <p className="mt-2 inline-flex items-start gap-1 text-xs text-red-700 font-medium"><WarningIcon className="mt-0.5 shrink-0" /> <span>This document has no content yet. Click &ldquo;Generate&rdquo; to create it from the tender requirements, or &ldquo;Attach&rdquo; to upload an existing file.</span></p>
+            {reasons.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {reasons.map((reason, index) => (
+                  <li key={`${reason.code}-${index}`} className="text-xs">
+                    <span className={reason.severity === "HIGH" ? "font-semibold text-red-700" : "font-semibold text-amber-800"}>
+                      {reason.code.replace(/_/g, " ")}
+                    </span>
+                    <span className={reason.severity === "HIGH" ? " text-red-700" : " text-amber-800"}> — {reason.message}</span>
+                    {adviceFor(reason.code) && (
+                      <span className="block text-slate-600">{adviceFor(reason.code)}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
 
-            {check.placeholders.length > 0 && (
-              <div className="mt-2">
-                <p className="text-xs font-semibold text-red-700">Placeholder text detected</p>
-                <ul className="mt-1 list-disc pl-5 space-y-0.5 text-xs text-red-700">
-                  {check.placeholders.map((p) => <li key={p}>Pattern: <code>{p}</code></li>)}
-                </ul>
-                <p className="mt-1 text-xs text-red-600">Remove all placeholder text before export. These strings will be visible to evaluators.</p>
-              </div>
-            )}
-
-            {check.aiTrace.length > 0 && (
-              <div className="mt-2">
-                <p className="text-xs font-semibold text-red-700">AI-trace language detected</p>
-                <ul className="mt-1 list-disc pl-5 space-y-0.5 text-xs text-red-700">
-                  {check.aiTrace.map((p) => <li key={p}>Pattern: <code>{p}</code></li>)}
-                </ul>
-                <p className="mt-1 text-xs text-red-600">Remove AI self-references. Regenerate the affected section with the current provider chain.</p>
-              </div>
-            )}
-
-            {check.envelopeMismatch && (
-              <div className="mt-2">
-                <p className="text-xs font-semibold text-amber-800">Envelope mismatch</p>
-                <p className="text-xs text-amber-800 mt-0.5">{check.envelopeMismatch}. Move this content to the correct envelope before export.</p>
-              </div>
-            )}
-
-            {check.qualityWarnings.map((w) => (
-              <p key={w} className="mt-1 inline-flex items-start gap-1 text-xs text-amber-800"><WarningIcon className="mt-0.5 shrink-0" /> <span>{w}</span></p>
+            {report.notes.map((note: string) => (
+              <p key={note} className="mt-1 text-xs text-slate-600">{note}</p>
             ))}
 
-            {check.score === "GOOD" && check.hasContent && (
-              <p className="mt-1 text-xs text-emerald-700">No placeholder, AI-trace, or envelope issues detected in inspectable content.</p>
+            {score === "GOOD" && reasons.length === 0 && (
+              <p className="mt-1 text-xs text-emerald-700">
+                Machine validation found no placeholder, AI-trace, envelope or completeness issue in this document.
+              </p>
             )}
           </div>
         ))}
@@ -250,7 +208,9 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
 
       {blockedCount > 0 && (
         <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          <strong>{blockedCount} document(s) have blocking issues.</strong> These must be resolved before the Final Package Manifest will show them as export-ready. Use Regenerate Section or manually edit the document content.
+          <strong>{blockedCount} document(s) have blocking issues.</strong> These are the same documents Export Readiness
+          counts as quality-failed, and they must be resolved before the Final Package Manifest will show them as
+          export-ready. Use Regenerate Section or manually edit the document content.
         </div>
       )}
     </section>

@@ -99,11 +99,20 @@ describe("Dashboard panel consistency — no contradictory statuses", () => {
 describe("Dashboard panel consistency — PLANNED/SUPERSEDED never shown as ready", () => {
 
   it("document-validator-panel distinguishes PLANNED from GENERATED", () => {
+    // PLANNED rows carry no content and are not current outputs. The panel no
+    // longer decides that itself — it defers to the canonical current-document
+    // selection (which excludes PLANNED, QUEUED, GENERATING, FAILED, STALE and
+    // SUPERSEDED), the same selection the export readiness gate uses. Assert
+    // the panel is on that selection rather than re-deriving the rule.
     const src = readFileSync("components/document-validator-panel.tsx", "utf8");
-    // The panel should check hasContent (PLANNED has no content)
     assert.ok(
-      src.includes("hasContent") || src.includes("PLANNED"),
-      "Document validator must distinguish PLANNED (no content) from GENERATED",
+      src.includes("selectCurrentDocuments"),
+      "Document validator must select current documents through the canonical selection",
+    );
+    const selection = readFileSync("lib/engine/document-output-state.ts", "utf8");
+    assert.ok(
+      /NON_CANDIDATE_GENERATION_STATES[\s\S]{0,200}"PLANNED"/.test(selection),
+      "the canonical selection must exclude PLANNED rows",
     );
   });
 

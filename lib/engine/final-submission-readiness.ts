@@ -48,7 +48,7 @@ import {
 } from "./submission-plan";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./build-plan";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
-import { assessGeneratedDocumentQuality } from "./document-quality-gate";
+import { assessCurrentDocumentQualityBatch, countQualityFailed } from "./current-document-quality";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
 import { getTenderFactLedgerSnapshot } from "./tender-facts-ledger-service";
@@ -56,7 +56,6 @@ import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysi
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { isExtractionAcceptableForExport } from "./extraction-quality-gate";
-import { extractDocxVisibleText } from "./export-readiness";
 
 export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -707,35 +706,10 @@ export async function getFinalSubmissionReadiness(
   // otherwise the scorer would run against base64 gibberish and never
   // match placeholder/AI-trace patterns, silently skipping the quality gate
   // for all generated DOCX files.
-  const qualityReports: Array<{ doc: any; report: ReturnType<typeof assessGeneratedDocumentQuality> }> = [];
-  for (const doc of finalCandidates) {
-    let visible: string | null = null;
-    if (typeof doc.fileContent === "string" && doc.fileContent.length < 2_000_000) {
-      const fileName = doc.exactFileName ?? doc.name ?? "";
-      if (fileName.toLowerCase().endsWith(".docx")) {
-        // Extract visible text from base64 DOCX for accurate quality scoring.
-        visible = await extractDocxVisibleText(doc.fileContent, fileName);
-      }
-      // For non-DOCX files (PDF, etc.), visible stays null — the quality
-      // scorer will skip visible-text checks but the file-signature check
-      // and output-state machine still enforce format correctness.
-      if (!visible && !fileName.toLowerCase().endsWith(".docx")) {
-        // Plain-text content (legacy or markdown) — use as-is.
-        visible = doc.fileContent;
-      }
-    }
-    qualityReports.push({
-      doc,
-      report: assessGeneratedDocumentQuality({
-        doc,
-        visibleText: visible,
-        rawFileContent: doc.fileContent,
-        hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
-        requirements: tender.requirements,
-      }),
-    });
-  }
-  const qualityFailed = qualityReports.filter(({ report }) => report.recommendedStatus === "QUALITY_FAILED").length;
+  // Scored through lib/engine/current-document-quality.ts so the Document
+  // Validator panel and this gate cannot score the same document differently.
+  const qualityReports = await assessCurrentDocumentQualityBatch(finalCandidates as any[], tender.requirements);
+  const qualityFailed = countQualityFailed(qualityReports);
 
   // ── Metadata completeness gate (Part 5) ──────────────────────────────────
   const metadata = assessTenderMetadataCompleteness({
