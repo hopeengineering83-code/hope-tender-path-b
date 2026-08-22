@@ -1,25 +1,34 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "../lib/prisma";
 import {
-  resolveBootstrapAdminPolicy,
+  resolveRuntimeBootstrapAdminPolicy,
   BOOTSTRAP_ADMIN_EMAIL,
 } from "../lib/bootstrap-admin-policy";
 
 /**
  * Dev/CI seed for the bootstrap admin user.
  *
- * Production guard: when NODE_ENV=production the seed refuses to set the
- * built-in "Admin123!" default. The shared bootstrap-admin policy resolves
- * the safe password and exits cleanly if production has not opted in via
- * BOOTSTRAP_ADMIN_ENABLED=true + a secure BOOTSTRAP_ADMIN_PASSWORD.
+ * Requires explicit opt-in in EVERY environment: BOOTSTRAP_ADMIN_ENABLED=true
+ * and a BOOTSTRAP_ADMIN_PASSWORD that is neither a banned default nor shorter
+ * than the minimum. Without both, the seed exits cleanly and reports the
+ * policy's own reason rather than guessing at one.
+ *
+ * This previously called the LOGIN-repair policy, which is permanently
+ * disabled, so the seed could not provision an admin under any configuration —
+ * it always skipped, and always blamed production opt-in even when running
+ * locally with everything set correctly.
+ *
+ * An existing admin is never touched: the account is created only when absent,
+ * so BOOTSTRAP_ADMIN_ENABLED can be turned off again once provisioning is done
+ * and sign-in keeps working.
  *
  * Never logs the actual password.
  */
 async function main() {
-  const policy = resolveBootstrapAdminPolicy();
+  const policy = resolveRuntimeBootstrapAdminPolicy();
   if (!policy.allowRepair) {
     console.warn(
-      "[seed] Skipping bootstrap admin seed because the policy refused to allow it (production without BOOTSTRAP_ADMIN_ENABLED=true, or insecure BOOTSTRAP_ADMIN_PASSWORD).",
+      `[seed] Skipping bootstrap admin seed: ${policy.reason ?? "the policy refused to allow it"}`,
     );
     return;
   }

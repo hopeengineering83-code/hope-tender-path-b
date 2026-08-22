@@ -1469,7 +1469,7 @@ export async function bootstrap(client: PrismaClient): Promise<void> {
   // environment. Runtime seeding requires explicit BOOTSTRAP_ADMIN_ENABLED
   // plus a strong, non-default BOOTSTRAP_ADMIN_PASSWORD (validated by the
   // policy module) — including development and test. Login-time credential
-  // repair is permanently disabled (resolveBootstrapAdminPolicy).
+  // repair is permanently disabled (resolveLoginRepairBootstrapPolicy).
   const policy = resolveRuntimeBootstrapAdminPolicy();
   if (!policy.allowRepair) {
     if (process.env.NODE_ENV === "production") {

@@ -32,8 +32,20 @@ export function _resetBootstrapAdminWarning(): void {
   // Retained for test compatibility. The login path no longer emits warnings or repairs credentials.
 }
 
-/** Login-time bootstrap repair is permanently disabled. */
-export function resolveBootstrapAdminPolicy(): BootstrapAdminPolicy {
+/**
+ * Login-time bootstrap repair — permanently disabled, in every environment.
+ *
+ * Named for the path it governs. It used to be `resolveBootstrapAdminPolicy`,
+ * which read like the general policy and was called by prisma/seed.ts, whose
+ * own comment described the OTHER function's behaviour. The seed therefore
+ * refused every time it ran, in every environment, while reporting the refusal
+ * as a production opt-in problem. A name that does not say which path it
+ * belongs to is what made that possible, so the name now says it.
+ *
+ * Provisioning goes through resolveRuntimeBootstrapAdminPolicy(): explicit
+ * opt-in, strong password. Signing in never creates or resets an account.
+ */
+export function resolveLoginRepairBootstrapPolicy(): BootstrapAdminPolicy {
   return {
     allowRepair: false,
     password: "",

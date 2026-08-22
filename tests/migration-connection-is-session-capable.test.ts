@@ -33,7 +33,7 @@ describe("the migration connection can hold a session lock", () => {
     const result = resolveMigrationDatabaseUrl({
       DATABASE_URL:
         "postgresql://user:secret@ep-lucky-tooth-axuc6d8h-pooler.c-4.us-east-2.aws.neon.tech:5432/neondb?sslmode=require",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
 
     const url = new URL(result.url);
     assert.equal(url.hostname, "ep-lucky-tooth-axuc6d8h.c-4.us-east-2.aws.neon.tech");
@@ -45,7 +45,7 @@ describe("the migration connection can hold a session lock", () => {
     // Only the hostname may differ from what the operator configured.
     const configured =
       "postgresql://user:secret@ep-a-pooler.c-4.us-east-2.aws.neon.tech:5432/neondb?sslmode=require&connect_timeout=15&application_name=migrate";
-    const result = resolveMigrationDatabaseUrl({ DATABASE_URL: configured } as NodeJS.ProcessEnv);
+    const result = resolveMigrationDatabaseUrl({ DATABASE_URL: configured } as unknown as NodeJS.ProcessEnv);
 
     const before = new URL(configured);
     const after = new URL(result.url);
@@ -62,7 +62,7 @@ describe("the migration connection can hold a session lock", () => {
     const result = resolveMigrationDatabaseUrl({
       DATABASE_URL: "postgresql://u:p@ep-a-pooler.neon.tech/db",
       DIRECT_URL: "postgresql://u:p@custom-direct.example.com:5432/db",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
     assert.equal(new URL(result.url).hostname, "custom-direct.example.com");
     assert.match(result.source, /DIRECT_URL/);
   });
@@ -71,7 +71,7 @@ describe("the migration connection can hold a session lock", () => {
     // Local development and CI must be untouched: there is no pooler there, and
     // rewriting a host that has no marker would break both.
     const configured = "postgresql://hope_ci@127.0.0.1:5432/hope_tender_ci?schema=public";
-    const result = resolveMigrationDatabaseUrl({ DATABASE_URL: configured } as NodeJS.ProcessEnv);
+    const result = resolveMigrationDatabaseUrl({ DATABASE_URL: configured } as unknown as NodeJS.ProcessEnv);
     assert.equal(result.url, configured);
   });
 
@@ -80,13 +80,13 @@ describe("the migration connection can hold a session lock", () => {
     // different machine, and rewriting it would point migrations somewhere real
     // but wrong, which is worse than failing.
     const configured = "postgresql://u:p@pooler-db.example.com:5432/db";
-    const result = resolveMigrationDatabaseUrl({ DATABASE_URL: configured } as NodeJS.ProcessEnv);
+    const result = resolveMigrationDatabaseUrl({ DATABASE_URL: configured } as unknown as NodeJS.ProcessEnv);
     assert.equal(result.url, configured);
   });
 
   it("uses a malformed connection string as given rather than guessing", () => {
     const configured = "not-a-url";
-    const result = resolveMigrationDatabaseUrl({ DATABASE_URL: configured } as NodeJS.ProcessEnv);
+    const result = resolveMigrationDatabaseUrl({ DATABASE_URL: configured } as unknown as NodeJS.ProcessEnv);
     assert.equal(result.url, configured);
   });
 });
