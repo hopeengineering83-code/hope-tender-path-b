@@ -216,7 +216,19 @@ export async function getTenderReleaseSnapshot(
       },
       generatedDocuments: {
         where: { generationStatus: { not: "SUPERSEDED" } },
-        select: { id: true, generationStatus: true },
+        // documentType/format/validation/review are needed to decide submission
+        // RULES (financial separation, single-file consolidation, file format)
+        // by observing the package. Bytes are deliberately NOT selected.
+        select: {
+          id: true,
+          name: true,
+          exactFileName: true,
+          documentType: true,
+          format: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+        },
       },
       expertMatches: {
         where: { isSelected: true },
@@ -479,6 +491,10 @@ export async function getTenderReleaseSnapshot(
       extractedText: file.extractedText,
       totalPages: file.totalPages,
     })),
+    // Same package facts, same verdict: the release snapshot cannot report a
+    // submission rule as missing evidence while the coverage panel reports it
+    // as enforced by the package.
+    { documents: tender.generatedDocuments },
   );
   // The mandatory POPULATION and every mandatory COUNT must come from the same
   // predicate. `status.mandatory` is `isMandatoryRequirement` (MANDATORY OR

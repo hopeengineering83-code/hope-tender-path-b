@@ -19,6 +19,11 @@ import {
   type GroundingActiveFile,
 } from "./evidence-grounding";
 import { canUseVaultRecord, canUseVaultRecordField, partialVerificationSummary, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../vault-review-provenance";
+import {
+  evaluatePackageConformance,
+  type PackageConformanceFacts,
+  type PackageConformanceVerdict,
+} from "./package-conformance";
 
 export type FinalPackageBlocker = {
   area: "requirements" | "evidence" | "documents" | "export";
@@ -45,6 +50,13 @@ export type RequirementEvidenceStatus = {
   hasReviewedProject: boolean;
   displayStatus: "FULLY_MET" | "PARTIALLY_MET" | "NOT_MET" | "NEEDS_TRACE";
   blockerReason: string | null;
+  /**
+   * Set when the requirement is a submission RULE the package obeys or breaks
+   * — financial separation, single-file consolidation, file format, file
+   * naming — rather than a document the owner supplies. Null for every
+   * ordinary evidence requirement.
+   */
+  packageRule: { family: string; status: string; reason: string } | null;
 };
 
 export type PlannedPackageDocument = {
@@ -449,6 +461,10 @@ export function mapRequirementsToEvidence(
   expertMatches: MatchLike[] = [],
   projectMatches: MatchLike[] = [],
   activeFiles: ReadonlyArray<GroundingActiveFile> = [],
+  // Optional: when the caller knows the current package, submission RULES are
+  // reported as rules rather than as missing evidence. Omitting it preserves
+  // the previous wording exactly.
+  packageFacts?: PackageConformanceFacts,
 ): RequirementEvidenceStatus[] {
   const hasReviewedExpert = selectedReviewedExperts(expertMatches) > 0;
   const hasReviewedProject = selectedReviewedProjects(projectMatches) > 0;
@@ -468,13 +484,29 @@ export function mapRequirementsToEvidence(
         : hasTrustedTrace && strongestEvidenceLevel === "PARTIAL"
           ? "PARTIALLY_MET"
           : "NOT_MET";
+    const conformance: PackageConformanceVerdict | null = packageFacts
+      ? evaluatePackageConformance(
+          {
+            title: requirement.title,
+            requirementType: (requirement as { requirementType?: string | null }).requirementType ?? null,
+          },
+          packageFacts,
+        )
+      : null;
+    const isPackageRule = Boolean(conformance?.applicable);
     const blockerReason = displayStatus === "FULLY_MET"
       ? null
-      : links.length === 0
-        ? "No selected or linked evidence is traced to this requirement."
-        : !hasTrustedTrace
-          ? "Requirement lacks active source-file, page, and exact-quote containment, so linked evidence is not trusted."
-          : "Linked evidence is only PARTIAL; FULL or SUBSTANTIAL support is required.";
+      // A submission rule is never short of evidence — it is obeyed, broken, or
+      // not yet observable. Telling the owner that "no evidence is traced to
+      // this requirement" for "Financial Proposal Omission" asks for a document
+      // that must never exist.
+      : isPackageRule
+        ? conformance!.reason
+        : links.length === 0
+          ? "No selected or linked evidence is traced to this requirement."
+          : !hasTrustedTrace
+            ? "Requirement lacks active source-file, page, and exact-quote containment, so linked evidence is not trusted."
+            : "Linked evidence is only PARTIAL; FULL or SUBSTANTIAL support is required.";
 
     return {
       requirementId: requirement.id,
@@ -488,6 +520,9 @@ export function mapRequirementsToEvidence(
       hasReviewedProject,
       displayStatus,
       blockerReason,
+      packageRule: conformance?.applicable
+        ? { family: String(conformance.family), status: conformance.status, reason: conformance.reason }
+        : null,
     };
   });
 }
@@ -770,14 +805,33 @@ function buildRequirementBlockers(
 ): FinalPackageBlocker[] {
   return statuses
     .filter((status) => status.mandatory && status.displayStatus !== "FULLY_MET")
-    .map((status) => ({
-      area: "requirements" as const,
-      code: "MANDATORY_REQUIREMENT_EVIDENCE_NOT_TRUSTED",
-      title: status.title,
-      requirementId: status.requirementId,
-      reason: status.blockerReason ?? "Mandatory requirement lacks trusted traced evidence.",
-      nextAction: `Add trusted traced evidence for mandatory requirement: ${status.title}`,
-    }));
+    .map((status) => {
+      // A submission rule still blocks release when it is broken or not yet
+      // observable — fail-closed is unchanged — but the next action is to
+      // correct the PACKAGE, never to upload evidence that cannot exist.
+      if (status.packageRule) {
+        return {
+          area: "requirements" as const,
+          code: status.packageRule.status === "VIOLATED"
+            ? "SUBMISSION_RULE_BROKEN_BY_PACKAGE"
+            : "SUBMISSION_RULE_AWAITING_PACKAGE",
+          title: status.title,
+          requirementId: status.requirementId,
+          reason: status.packageRule.reason,
+          nextAction: status.packageRule.status === "VIOLATED"
+            ? `Correct the package so it obeys the submission rule: ${status.title}`
+            : `No owner action: ${status.title} is verified automatically once the package is produced.`,
+        };
+      }
+      return {
+        area: "requirements" as const,
+        code: "MANDATORY_REQUIREMENT_EVIDENCE_NOT_TRUSTED",
+        title: status.title,
+        requirementId: status.requirementId,
+        reason: status.blockerReason ?? "Mandatory requirement lacks trusted traced evidence.",
+        nextAction: `Add trusted traced evidence for mandatory requirement: ${status.title}`,
+      };
+    });
 }
 
 function deriveSummaryStatus(args: {
@@ -863,6 +917,11 @@ export async function getFinalPackageReadinessModel(
     tender.expertMatches,
     tender.projectMatches,
     tender.files,
+    {
+      documents: tender.generatedDocuments,
+      plannedFileNames: buildPlanAuthority.items.map((item) => item.exactFileName),
+      planConfirmed: buildPlanAuthority.confirmed,
+    },
   );
   const planned = buildPlanAuthority.confirmed
     ? derivePlannedPackageDocumentsFromFiles(

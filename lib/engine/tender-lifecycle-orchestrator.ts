@@ -580,6 +580,10 @@ export async function computeTenderLifecycle(
       extractedText: file.extractedText,
       totalPages: file.totalPages,
     })),
+    // Submission RULES are decided by observing the package, so the lifecycle
+    // reports them as rules rather than as missing evidence — the same verdict
+    // the Final Package Readiness model and the coverage panel show.
+    { documents: generatedDocs },
   );
   const canonicalStatusByRequirementId = new Map(
     requirementEvidenceStatuses.map((status) => [status.requirementId, status]),
