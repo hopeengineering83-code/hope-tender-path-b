@@ -19,6 +19,7 @@ import { computeBidStrategy } from "../../../../../lib/engine/bid-strategy";
 import { countTraceable } from "../../../../../lib/engine/requirement-source-traceability";
 import { computeWinProbability } from "../../../../../lib/engine/win-probability";
 import { getTenderReleaseSnapshot } from "../../../../../lib/engine/tender-release-snapshot";
+import { mapRequirementsToEvidence } from "../../../../../lib/engine/final-package-readiness-model";
 import { isExtractionAcceptableForGeneration } from "../../../../../lib/engine/extraction-quality-gate";
 import {
   VAULT_REVIEW_CONSUMER_SELECT,
@@ -56,23 +57,36 @@ function hasExtractionUnsafeStatus(status: string | null | undefined, analysisEx
   return /EXTRACTION_CORRUPTED|OCR_REQUIRED|EXTRACTION_WEAK_REVIEW_REQUIRED|REGEX_FALLBACK_FROM_WEAK_EXTRACTION/.test(combined);
 }
 
-function computeMandatoryEvidenceCoverage(requirements: Array<{
-  priority: string;
-  complianceMatrixRows?: Array<{ supportLevel: string | null }> | null;
-}>): { releaseRatio: number; progressRatio: number; partial: number } {
-  const mandatory = requirements.filter((r) => String(r.priority ?? "").toUpperCase() === "MANDATORY");
-  if (mandatory.length === 0) return { releaseRatio: 0, progressRatio: 0, partial: 0 };
-  const covered = mandatory.filter((r) =>
-    (r.complianceMatrixRows ?? []).some((row) => {
-      const level = String(row.supportLevel ?? "").toUpperCase();
-      return level === "FULL" || level === "SUBSTANTIAL";
-    }),
-  ).length;
-  const partial = mandatory.filter((r) =>
-    (r.complianceMatrixRows ?? []).some((row) => String(row.supportLevel ?? "").toUpperCase() === "PARTIAL")
-      && !(r.complianceMatrixRows ?? []).some((row) => ["FULL", "SUBSTANTIAL"].includes(String(row.supportLevel ?? "").toUpperCase())),
-  ).length;
-  return { releaseRatio: covered / mandatory.length, progressRatio: (covered + partial * 0.5) / mandatory.length, partial };
+/**
+ * Mandatory evidence coverage — the SAME verdict every other surface uses.
+ *
+ * This function used to be a private eighth copy of "which requirements are
+ * covered": it read supportLevel straight off the compliance rows, ignored
+ * source trace entirely, and counted only priority === "MANDATORY" while every
+ * other surface counts MANDATORY OR CRITICAL. So Bid Strategy could report a
+ * requirement as covered that Export Readiness reported as untrusted, and
+ * could omit a CRITICAL requirement from its denominator altogether.
+ *
+ * mapRequirementsToEvidence is the canonical resolver. Passing the package
+ * facts also means a submission RULE that the package obeys counts as
+ * release-qualified here, instead of being reported as "partial evidence" the
+ * owner is told to strengthen.
+ */
+function computeMandatoryEvidenceCoverage(
+  requirements: Parameters<typeof mapRequirementsToEvidence>[0],
+  activeFiles: Parameters<typeof mapRequirementsToEvidence>[3],
+  packageFacts: Parameters<typeof mapRequirementsToEvidence>[4],
+): { releaseRatio: number; progressRatio: number; partial: number } {
+  const statuses = mapRequirementsToEvidence(requirements, [], [], activeFiles, packageFacts)
+    .filter((status) => status.mandatory);
+  if (statuses.length === 0) return { releaseRatio: 0, progressRatio: 0, partial: 0 };
+  const covered = statuses.filter((status) => status.displayStatus === "FULLY_MET").length;
+  const partial = statuses.filter((status) => status.displayStatus === "PARTIALLY_MET").length;
+  return {
+    releaseRatio: covered / statuses.length,
+    progressRatio: (covered + partial * 0.5) / statuses.length,
+    partial,
+  };
 }
 
 export async function GET(
@@ -97,6 +111,7 @@ export async function GET(
       include: {
         requirements: {
           select: {
+            id: true,
             title: true,
             description: true,
             requirementType: true,
@@ -112,7 +127,26 @@ export async function GET(
           },
         },
         files: {
-          select: { id: true, totalPages: true, extractionScore: true, extractedPages: true, failedPages: true, ocrPages: true },
+          // extractedText is required by the canonical evidence resolver to
+          // verify quote containment; without it a grounded requirement would
+          // be reported here as untraced.
+          select: { id: true, extractedText: true, totalPages: true, extractionScore: true, extractedPages: true, failedPages: true, ocrPages: true },
+        },
+        // Submission RULES (financial separation, single-file consolidation,
+        // file format) are decided by observing the package, so the same
+        // documents the export gate reads are loaded here. Bytes are never
+        // selected.
+        generatedDocuments: {
+          select: {
+            id: true,
+            name: true,
+            exactFileName: true,
+            documentType: true,
+            format: true,
+            generationStatus: true,
+            validationStatus: true,
+            reviewStatus: true,
+          },
         },
         complianceGaps: { select: { severity: true, isResolved: true, title: true } },
         expertMatches: {
@@ -210,7 +244,11 @@ export async function GET(
     }, { status: 200 });
   }
 
-  const evidenceCoverage = computeMandatoryEvidenceCoverage(tender.requirements);
+  const evidenceCoverage = computeMandatoryEvidenceCoverage(
+    tender.requirements,
+    tender.files.map((file) => ({ id: file.id, extractedText: file.extractedText, totalPages: file.totalPages })),
+    { documents: tender.generatedDocuments },
+  );
   const evidenceCoverageRatio = evidenceCoverage.releaseRatio;
   const totalPages = extractedPageTotal(tender.files);
   const mandatoryCount = tender.requirements.filter((req) => String(req.priority ?? "").toUpperCase() === "MANDATORY").length;
