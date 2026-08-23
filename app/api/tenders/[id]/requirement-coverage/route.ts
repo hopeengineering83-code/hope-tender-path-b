@@ -193,6 +193,7 @@ export async function GET(
         select: {
           id: true,
           title: true,
+          description: true,
           requirementType: true,
           priority: true,
           sectionReference: true,
@@ -314,6 +315,7 @@ export async function GET(
       const conformance = evaluatePackageConformance(
         {
           title: requirement.title,
+          description: requirement.description,
           requirementType: requirement.requirementType,
         },
         packageFacts,

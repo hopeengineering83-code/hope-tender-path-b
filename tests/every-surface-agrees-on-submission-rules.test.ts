@@ -146,3 +146,42 @@ describe("every surface passes the package facts to the one resolver", () => {
     assert.match(source, /\.filter\(\(status\) => status\.mandatory && status\.displayStatus !== "FULLY_MET"\)/);
   });
 });
+
+describe("classification reads the same requirement text on every surface", () => {
+  it("classifies from the description when the title alone does not state the rule", () => {
+    // A tender that states the envelope rule in the body and gives the row a
+    // bland title must classify identically wherever it is read. Passing only
+    // the title on one surface and title + description on another is how the
+    // same row lands in two different buckets.
+    const requirement = {
+      id: "req-env",
+      title: "Submission arrangements",
+      description: "Bidders shall submit two separate sealed envelopes; no financial proposal may accompany the technical offer.",
+      priority: "CRITICAL",
+      requirementType: "SUBMISSION",
+      sourceTenderFileId: FILE_ID,
+      sourcePageNumber: 5,
+      sourceExactQuote: QUOTE,
+      complianceMatrixRows: [] as Array<{ supportLevel?: string | null }>,
+    };
+    const [status] = mapRequirementsToEvidence([requirement], [], [], ACTIVE_FILES, {
+      documents: [TECHNICAL_PDF],
+    });
+    assert.ok(status.packageRule, "the rule stated in the description must still be recognised");
+    assert.equal(status.packageRule!.family, "FINANCIAL_SEPARATION");
+    // CRITICAL counts as mandatory, unlike the private copy Bid Strategy used.
+    assert.equal(status.mandatory, true);
+  });
+
+  it("every surface selects the requirement text the classifier reads", () => {
+    for (const path of [
+      "lib/engine/tender-release-snapshot.ts",
+      "lib/engine/tender-lifecycle-orchestrator.ts",
+      "app/api/tenders/[id]/bid-strategy/route.ts",
+      "app/api/tenders/[id]/requirement-coverage/route.ts",
+    ]) {
+      const source = readFileSync(path, "utf8");
+      assert.match(source, /description: true/, `${path} must select the requirement description`);
+    }
+  });
+});

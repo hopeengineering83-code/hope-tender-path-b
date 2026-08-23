@@ -208,6 +208,7 @@ export async function getTenderReleaseSnapshot(
           title: true,
           priority: true,
           requirementType: true,
+          description: true,
           sourceTenderFileId: true,
           sourcePageNumber: true,
           sourceExactQuote: true,

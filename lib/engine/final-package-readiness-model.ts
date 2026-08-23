@@ -192,6 +192,12 @@ export type FinalPackageReadinessModel = {
 type RequirementLike = {
   id: string;
   title: string;
+  // description and restrictions matter to package-rule classification: a
+  // tender that states "two separate sealed envelopes" in the description and
+  // nothing in the title must classify the same here as it does in the
+  // coverage reconciler, or the two surfaces disagree about the same row.
+  description?: string | null;
+  restrictions?: string | null;
   priority?: string | null;
   requirementType?: string | null;
   sourceTenderFileId?: string | null;
@@ -488,7 +494,9 @@ export function mapRequirementsToEvidence(
       ? evaluatePackageConformance(
           {
             title: requirement.title,
-            requirementType: (requirement as { requirementType?: string | null }).requirementType ?? null,
+            description: requirement.description ?? null,
+            restrictions: requirement.restrictions ?? null,
+            requirementType: requirement.requirementType ?? null,
           },
           packageFacts,
         )
