@@ -63,7 +63,12 @@ function collectExactFilenames(tender: TenderLike): string[] {
   return Array.from(out);
 }
 
-function formatFromExtension(filename: string): RequiredExportFormat | null {
+/**
+ * Exported so lib/engine/artifact-identity.ts can read the extension label
+ * from the one place that defines it, instead of adding a fourth private copy
+ * of the extension→format mapping.
+ */
+export function formatFromExtension(filename: string): RequiredExportFormat | null {
   const lower = filename.toLowerCase().trim();
   if (lower.endsWith(".pdf")) return "pdf";
   if (lower.endsWith(".docx") || lower.endsWith(".doc")) return "docx";

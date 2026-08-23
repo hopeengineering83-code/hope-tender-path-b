@@ -115,11 +115,19 @@ test("financial-omission rule is SATISFIED when no financial-envelope document i
 });
 
 test("financial-omission rule is VIOLATED when a priced document is still in the package", () => {
-  for (const name of ["Financial Proposal.pdf", "Bill of Quantities.xlsx", "Price Schedule.pdf"]) {
+  // The declared format must match the extension, or the artifact-identity
+  // authority correctly excludes the row as mislabelled before the packaging
+  // rule ever sees it — "Bill of Quantities.xlsx" declared PDF is not a real
+  // document, it is a defect of its own.
+  for (const [name, format] of [
+    ["Financial Proposal.pdf", "PDF"],
+    ["Bill of Quantities.xlsx", "XLSX"],
+    ["Price Schedule.pdf", "PDF"],
+  ] as const) {
     const result = evaluatePackageConformance(FIN_OMISSION, {
       documents: [
         doc({ id: "d1", exactFileName: "Technical Proposal.pdf" }),
-        doc({ id: "d2", exactFileName: name, documentType: "FINANCIAL" }),
+        doc({ id: "d2", exactFileName: name, format, documentType: "FINANCIAL" }),
       ],
     });
     assert.equal(result.status, "VIOLATED", name);

@@ -1,4 +1,5 @@
 import { hasRestoredInlineFileContent, hasVisibleStoredFile } from "../restored-record-visibility";
+import { resolveArtifactIdentity } from "./artifact-identity";
 
 export type DocumentOutputState =
   | "CONTROL_RECORD_ONLY"
@@ -9,6 +10,7 @@ export type DocumentOutputState =
   | "SUPERSEDED"
   | "NEEDS_REVALIDATION"
   | "VALIDATED"
+  | "ARTIFACT_IDENTITY_MISMATCH"
   | "READY_FOR_EXPORT";
 
 export type DocumentLike = {
@@ -28,9 +30,19 @@ export type DocumentLike = {
   generationStatus?: string | null;
   validationStatus?: string | null;
   reviewStatus?: string | null;
+  /**
+   * Persisted byte-identity metadata. Present on every release-path selection.
+   * A row whose recorded byte format contradicts its name or declared format —
+   * "Technical Proposal.pdf" declared DOCX holding DOCX bytes — must never be
+   * an export candidate, however its statuses read.
+   */
+  contentMimeType?: string | null;
+  detectedFormat?: string | null;
+  integrityStatus?: string | null;
 };
 
 export const EXPORT_BLOCKING_STATES: readonly DocumentOutputState[] = [
+  "ARTIFACT_IDENTITY_MISMATCH",
   "CONTROL_RECORD_ONLY",
   "ORIGINAL_REQUIRED",
   "PDF_CONVERSION_REQUIRED",
@@ -98,8 +110,29 @@ const NON_CANDIDATE_GENERATION_STATES: readonly string[] = [
   "STALE",
 ];
 
+/**
+ * Does this row's identity hold up on its persisted metadata alone?
+ *
+ * Byte-level inspection happens on the export path; this is the metadata-only
+ * guard, so a row a previous inspection already recorded as mismatched cannot
+ * slip through a surface that never loads bytes.
+ */
+export function hasConsistentArtifactIdentity(doc: DocumentLike): boolean {
+  return resolveArtifactIdentity({
+    fileName: doc.exactFileName ?? doc.name ?? null,
+    format: doc.format ?? null,
+    contentMimeType: doc.contentMimeType ?? null,
+    detectedFormat: doc.detectedFormat ?? null,
+    integrityStatus: doc.integrityStatus ?? null,
+  }).agrees;
+}
+
 export function isFinalExportCandidateDocument(doc: DocumentLike): boolean {
   if (NON_CANDIDATE_GENERATION_STATES.includes(normalizeStatus(doc.generationStatus))) return false;
+  // A file that is not what it claims cannot be submitted: a .pdf that will not
+  // open is a failed bid. Checked before any status, because statuses are
+  // exactly what a mislabelled artifact used to pass on.
+  if (!hasConsistentArtifactIdentity(doc)) return false;
   if (normalizeStatus(doc.validationStatus) === "SUPERSEDED") return false;
   const rev = normalizeStatus(doc.reviewStatus);
   if (rev === "NOT_EXPORTABLE" || rev === "REPLACE_WITH_ORIGINAL") return false;
@@ -189,6 +222,11 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   const want = requestedFormat(doc);
 
   if (gen === "SUPERSEDED" || val === "SUPERSEDED") return "SUPERSEDED";
+  // A file that is not what it claims outranks every other state. Without this
+  // the derived state said READY_FOR_EXPORT while isFinalExportCandidateDocument
+  // said false — two surfaces disagreeing about the same row, which is how a
+  // mislabelled artifact stayed plausible everywhere it was displayed.
+  if (!hasConsistentArtifactIdentity(doc)) return "ARTIFACT_IDENTITY_MISMATCH";
   // REPLACE_WITH_ORIGINAL takes priority over NEEDS_REVALIDATION — a doc that
   // must use the tender-issuer's original file is ORIGINAL_REQUIRED regardless
   // of whether a reconcile also flagged it for revalidation.
@@ -246,6 +284,8 @@ export function exportBlockReason(state: DocumentOutputState): string | null {
   switch (state) {
     case "READY_FOR_EXPORT":
       return null;
+    case "ARTIFACT_IDENTITY_MISMATCH":
+      return "File name, declared format and actual bytes disagree. A .pdf that does not contain PDF bytes will not open for the evaluator, so it can never be exported.";
     case "CONTROL_RECORD_ONLY":
       return "Document is a control, placeholder, or text-only row. Generate or attach the real final file.";
     case "ORIGINAL_REQUIRED":

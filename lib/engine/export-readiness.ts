@@ -977,9 +977,22 @@ export async function checkFullExportReadiness(opts: { tenderId: string; docs: E
   // This does not weaken the package: the ZIP path now requests the content
   // (so this check runs on real bytes), and assembly independently re-reads and
   // verifies every file before writing the archive.
-  const byteFailures = opts.requireFileContent
-    ? await checkExportFileByteReadiness(opts.docs)
-    : [];
+  // Run the byte/identity check ALWAYS, telling it whether missing bytes are
+  // themselves a failure.
+  //
+  // This used to be skipped entirely unless requireFileContent was true, which
+  // conflated "must bytes be present" with "were bytes loaded".
+  // auto-finalize's runCanonicalValidation SELECTS fileContent and passes
+  // false, so the single pass that decides validationStatus never inspected
+  // the bytes it was holding — and a "Technical Proposal.pdf" declared DOCX,
+  // containing DOCX bytes, was marked VALIDATED and became export-ready.
+  //
+  // Metadata-only callers are unaffected: with requireBytes false, a row with
+  // no bytes is not reported as missing, only its labels are cross-checked.
+  const byteFailures = await checkExportFileByteReadiness(
+    opts.docs,
+    opts.requireFileContent === true,
+  );
   const failures = mergeFailures(perDoc.failures, docxHygieneFailures, byteFailures);
   const tenderReadiness = await checkTenderLevelExportBlockers(opts.tenderId, opts.docs);
   return { ok: failures.length === 0 && tenderReadiness.blockers.length === 0, failures, tenderLevelBlockers: tenderReadiness.blockers, advisoryWarnings: tenderReadiness.advisoryWarnings };
