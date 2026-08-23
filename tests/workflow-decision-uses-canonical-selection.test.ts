@@ -41,7 +41,7 @@ describe("The workflow decision counts what the export gate accepts", () => {
   });
 
   it("every row the gate refuses is refused for a stated reason", () => {
-    const kept = filterFinalExportCandidateDocuments(ROWS as never).map((d: { id: string }) => d.id);
+    const kept = (filterFinalExportCandidateDocuments(ROWS as never) as Array<{ id: string }>).map((d) => d.id);
     assert.deepEqual(kept, ["real"]);
   });
 
