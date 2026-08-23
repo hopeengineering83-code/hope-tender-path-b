@@ -500,6 +500,7 @@ export function buildCanonicalWorkflowDecision(input: {
 import type { PrismaClient } from "@prisma/client";
 import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
 import { computeEngineSourceRevision } from "./engine-source-revision";
+import { filterFinalExportCandidateDocuments, isValidationPassed } from "./document-output-state";
 
 export async function getCanonicalTenderWorkflowDecision(
   prisma: PrismaClient,
@@ -601,20 +602,39 @@ export async function getCanonicalTenderWorkflowDecision(
 
   // ─── Generated Documents ────────────────────────────────────────────────
   // Fetch generated docs (non-SUPERSEDED) with validation + review status.
-  const generatedDocs = await prisma.generatedDocument.findMany({
+  const generatedDocRows = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     select: {
       id: true,
+      name: true,
       generationStatus: true,
       validationStatus: true,
       reviewStatus: true,
       exactFileName: true,
+      // Required by the canonical selection below — without them a CONTROL
+      // row or a SUBMISSION_CONTROL row cannot be recognised and is counted
+      // as a current export-ready output.
+      format: true,
+      documentType: true,
     },
-  }).catch(() => [] as { id: string; generationStatus: string; validationStatus: string | null; reviewStatus: string | null; exactFileName: string | null }[]);
+  }).catch(() => [] as Array<{ id: string; name: string; generationStatus: string; validationStatus: string | null; reviewStatus: string | null; exactFileName: string | null; format: string | null; documentType: string | null }>);
 
-  const generatedDocumentsTotal = generatedDocs.filter(
-    (d) => d.generationStatus === "GENERATED",
-  ).length;
+  // CANONICAL current-document selection — the same predicate the export gate,
+  // the Final Package Manifest, the Document Validator and readiness use.
+  //
+  // This was `d.generationStatus === "GENERATED"`, a private sixth copy of the
+  // rule, and it disagreed with the gate in the dangerous direction: on a set
+  // of seven rows it reported SIX export-ready documents where the export gate
+  // accepts ONE. It counted a row the owner had explicitly marked
+  // NOT_EXPORTABLE, a row still awaiting its tender-issued original
+  // (REPLACE_WITH_ORIGINAL), a CONTROL-format row, a SUBMISSION_CONTROL row and
+  // an internal quick draft — every one of which the final package refuses.
+  // exportReadyDocumentsTotal is surfaced by /api/tenders/[id]/workflow-status,
+  // so the workflow told the owner the package was ready while the gate
+  // declined it.
+  const generatedDocs = filterFinalExportCandidateDocuments(generatedDocRows);
+
+  const generatedDocumentsTotal = generatedDocs.length;
 
   // Required documents total: derive from the build plan items (count where required).
   // Fall back to generatedDocs.length when no plan exists yet.
@@ -639,9 +659,7 @@ export async function getCanonicalTenderWorkflowDecision(
   // Documents validated: every generated doc has validationStatus PASSED/VALIDATED.
   const documentsValidated =
     generatedDocumentsTotal > 0 &&
-    generatedDocs
-      .filter((d) => d.generationStatus === "GENERATED")
-      .every((d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED");
+    generatedDocs.every((d) => isValidationPassed(d.validationStatus));
 
   // Routine machine eligibility is established by successful validation.
   // Human reviewStatus remains available for genuine legal/signature/owner
@@ -650,9 +668,7 @@ export async function getCanonicalTenderWorkflowDecision(
 
   // Machine-export-eligible count: generated + validated.
   const exportReadyDocumentsTotal = generatedDocs.filter(
-    (d) =>
-      d.generationStatus === "GENERATED" &&
-      (d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED"),
+    (d) => isValidationPassed(d.validationStatus),
   ).length;
 
   // ─── PDF required but unavailable ───────────────────────────────────────
