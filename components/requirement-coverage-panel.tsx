@@ -294,12 +294,22 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
       )}
 
 
-      <div className="grid grid-cols-2 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs sm:grid-cols-4">
+      {/*
+        One tile per automationState, with the two unresolved states sharing a
+        tile that is named after both. Every row on screen is counted in exactly
+        one tile: FULLY_VERIFIED, PARTIALLY_VERIFIED, AUTO_RESOLVING,
+        ENFORCED_BY_PACKAGE, and the TRUE_EVIDENCE_GAP + STALE_OR_INVALIDATED +
+        PACKAGE_RULE_VIOLATION union. Adding a row state without a tile is how
+        the tiles previously summed to fewer than the rows on screen.
+      */}
+      <div className="grid grid-cols-2 gap-px border-b border-gray-100 bg-gray-100 text-center text-xs sm:grid-cols-5">
         {[
           { label: "Release-qualified", value: data.fullyCovered, color: "text-green-700" },
           { label: "Partial", value: data.partiallyCovered, color: "text-amber-800" },
           { label: "Automatic verification", value: data.sourceProcessing, color: "text-orange-700" },
-          // Counts BOTH unresolved states, matching the filter chip below.
+          // Submission rules the package answers by itself. Never an owner ask.
+          { label: "Enforced by the package", value: data.packageEnforcedRules ?? 0, color: "text-sky-700" },
+          // Counts ALL unresolved states, matching the filter chip below.
           // Naming this tile "Genuine gaps" while the chip counted genuine gaps
           // plus stale evidence meant the same words carried two numbers, and
           // the four tiles summed to fewer than the rows on screen.

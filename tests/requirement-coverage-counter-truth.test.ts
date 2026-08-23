@@ -24,13 +24,23 @@ import { humanizeEnumValue } from "../lib/ui/human-labels";
 const PANEL = readFileSync("components/requirement-coverage-panel.tsx", "utf8");
 const ROUTE = readFileSync("app/api/tenders/[id]/requirement-coverage/route.ts", "utf8");
 
-/** The five states a row can be in, per the server's automationState union. */
+/**
+ * Every state a row can be in, per the server's automationState union.
+ *
+ * ENFORCED_BY_PACKAGE and PACKAGE_RULE_VIOLATION were added when submission
+ * RULES (financial separation, single-file consolidation, file format, file
+ * naming) stopped being scored as evidence requirements. They are rows on
+ * screen like any other, so they need a tile like any other — which is exactly
+ * what this suite exists to enforce.
+ */
 const ROW_STATES = [
   "FULLY_VERIFIED",
   "PARTIALLY_VERIFIED",
   "AUTO_RESOLVING",
   "TRUE_EVIDENCE_GAP",
   "STALE_OR_INVALIDATED",
+  "ENFORCED_BY_PACKAGE",
+  "PACKAGE_RULE_VIOLATION",
 ] as const;
 
 describe("Requirement coverage tiles account for every row", () => {
@@ -44,13 +54,15 @@ describe("Requirement coverage tiles account for every row", () => {
     assert.match(ROUTE, /if \(input\.coverageStatus === "PARTIALLY_MET"\) return "PARTIALLY_VERIFIED";/);
   });
 
-  it("counts every one of the five row states in some tile", () => {
-    // Full + Partial + Automatic verification + Gaps/unresolved, where the last
-    // is the union of the two unresolved states.
+  it("counts every one of the row states in some tile", () => {
+    // Release-qualified + Partial + Automatic verification + Enforced by the
+    // package + Gaps/unresolved, where the last is the union of the three
+    // unresolved states.
     const tileSources = [
       "data.fullyCovered",
       "data.partiallyCovered",
       "data.sourceProcessing",
+      "data.packageEnforcedRules",
       "unresolvedCount",
     ];
     for (const source of tileSources) {
@@ -58,20 +70,31 @@ describe("Requirement coverage tiles account for every row", () => {
     }
     assert.match(
       PANEL,
-      /const unresolvedCount = data\.trueEvidenceGaps \+ data\.staleOrInvalidated;/,
-      "the unresolved tile must include stale evidence, which previously had no tile",
+      /const unresolvedCount = data\.trueEvidenceGaps \+ data\.staleOrInvalidated \+ \(data\.packageRuleViolations \?\? 0\);/,
+      "the unresolved tile must include stale evidence and broken package rules",
     );
-    assert.equal(ROW_STATES.length, 5);
+    // Five tiles cover seven states: the three unresolved states share one.
+    assert.equal(ROW_STATES.length, 7);
+    assert.equal(tileSources.length, 5);
   });
 
   it("uses one shared value for the tile, the chip count, and nothing else", () => {
     // Exactly three references: the definition, the tile, the chip.
     const references = PANEL.match(/unresolvedCount/g) ?? [];
     assert.equal(references.length, 4, "definition + tile value + tile colour + chip count");
-    // The old inline duplicate must not come back.
+    // Every automationState the server can return must be reachable from a
+    // tile. A new state with no tile is the original defect returning.
+    for (const state of ROW_STATES) {
+      assert.ok(ROUTE.includes(`"${state}"`), `${state} must be produced by the route`);
+      assert.ok(PANEL.includes(`"${state}"`), `${state} must be handled by the panel`);
+    }
+    // The old inline duplicate must not come back. Checked against the panel
+    // with the single canonical definition line removed, so the definition
+    // itself — which legitimately sums three fields — cannot satisfy the guard.
+    const withoutDefinition = PANEL.replace(/^\s*const unresolvedCount = .*$/m, "");
     assert.doesNotMatch(
-      PANEL,
-      /data\.trueEvidenceGaps \+ data\.staleOrInvalidated[\s\S]{0,40}\?/,
+      withoutDefinition,
+      /data\.trueEvidenceGaps \+ data\.staleOrInvalidated/,
       "the unresolved sum must not be recomputed inline anywhere",
     );
   });
@@ -88,9 +111,11 @@ describe("Requirement coverage tiles account for every row", () => {
   });
 
   it("keeps the unresolved chip count and its filter predicate on the same states", () => {
+    // The chip's number is unresolvedCount (gaps + stale + broken package
+    // rules); the predicate must select exactly those three states.
     assert.match(
       PANEL,
-      /filter === "UNRESOLVED"\) return row\.automationState === "TRUE_EVIDENCE_GAP" \|\| row\.automationState === "STALE_OR_INVALIDATED"/,
+      /filter === "UNRESOLVED"\) \{\s*return row\.automationState === "TRUE_EVIDENCE_GAP"\s*\|\| row\.automationState === "STALE_OR_INVALIDATED"\s*\|\| row\.automationState === "PACKAGE_RULE_VIOLATION";/,
     );
   });
 });
