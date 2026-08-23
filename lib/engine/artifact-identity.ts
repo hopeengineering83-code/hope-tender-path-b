@@ -93,6 +93,10 @@ const AGREES: ArtifactIdentityVerdict = {
 export function normaliseFormatLabel(value: string | null | undefined): string | null {
   const raw = String(value ?? "").trim().toUpperCase();
   if (!raw) return null;
+  // "OTHER"/"UNKNOWN" assert nothing about the bytes, so they are not a claim
+  // that can disagree with one. Treating them as a concrete label made every
+  // legitimately-unclassified entry look mismatched.
+  if (raw === "OTHER" || raw === "UNKNOWN" || raw === "NONE") return null;
   if (raw === "DOC") return "DOCX";
   if (raw === "XLS") return "XLSX";
   if (raw === "TXT") return "TEXT";

@@ -167,3 +167,59 @@ test("the byte check runs whenever bytes exist, not only when the caller demande
   assert.doesNotMatch(readiness, /opts\.requireFileContent\s*\n?\s*\?\s*await checkExportFileByteReadiness/);
   assert.match(readiness, /await checkExportFileByteReadiness\(\s*opts\.docs,\s*opts\.requireFileContent === true,\s*\)/);
 });
+
+// ── The last mile: the ZIP itself ─────────────────────────────────────────
+//
+// assembleFinalSubmissionZip validated every LABEL — safe names, no duplicate
+// names/ids/orders, a legal envelope, a legal format string, non-empty bytes,
+// a size cap, and a reopen check that entry names, order and sha256 round-trip.
+// It never compared a label to the content. Probed before this fix, it wrote
+// "Technical-Proposal.pdf" holding PK.. DOCX bytes and recorded it in the
+// manifest as format PDF — an archive shipping a .pdf that will not open.
+//
+// export-readiness carried a comment claiming assembly "independently re-reads
+// and verifies every file before writing the archive". It re-reads and
+// verifies the HASH round-trip, which cannot notice a mislabelled file.
+
+import { assembleFinalSubmissionZip } from "../lib/engine/final-zip-assembly";
+
+const zipEntry = (over: Record<string, unknown> = {}) => ({
+  name: "Technical-Proposal.pdf", source: "GENERATED_DOC", generatedDocId: "doc-1",
+  order: 1, envelope: "TECHNICAL", format: "PDF", ...over,
+});
+
+test("the final ZIP refuses an entry whose bytes are not what it claims", async () => {
+  const bytes = await docxBytes();
+  await assert.rejects(
+    () => assembleFinalSubmissionZip([zipEntry()] as never, [{ generatedDocId: "doc-1", bytes }]),
+    /is not what it claims to be .* FILE_SIGNATURE_MISMATCH/,
+  );
+});
+
+test("the final ZIP assembles genuine artifacts and writes real bytes", async () => {
+  const result = await assembleFinalSubmissionZip(
+    [
+      zipEntry(),
+      zipEntry({ name: "Technical-Proposal.docx", generatedDocId: "doc-2", order: 2, format: "DOCX" }),
+    ] as never,
+    [
+      { generatedDocId: "doc-1", bytes: pdfBytes() },
+      { generatedDocId: "doc-2", bytes: await docxBytes() },
+    ],
+  );
+  assert.deepEqual(result.fileList, ["Technical-Proposal.pdf", "Technical-Proposal.docx"]);
+
+  // Reopen the real archive and confirm the PDF entry genuinely starts %PDF-.
+  const reopened = await JSZip.loadAsync(result.buffer);
+  const written = await reopened.file("Technical-Proposal.pdf")!.async("nodebuffer");
+  assert.equal(written.subarray(0, 5).toString("ascii"), "%PDF-");
+});
+
+test("an entry whose format asserts nothing is not treated as a contradiction", async () => {
+  // "OTHER" makes no claim about the bytes, so it must not read as a mismatch.
+  const result = await assembleFinalSubmissionZip(
+    [zipEntry({ name: "Annex-C.pdf", format: "OTHER" })] as never,
+    [{ generatedDocId: "doc-1", bytes: pdfBytes() }],
+  );
+  assert.deepEqual(result.fileList, ["Annex-C.pdf"]);
+});

@@ -1,5 +1,6 @@
 import JSZip from "jszip";
 import { createHash } from "node:crypto";
+import { resolveArtifactIdentity } from "./artifact-identity";
 import type { ZipEntry } from "./final-zip-scope";
 import type { SubmissionEnvelope, SubmissionPlanFormat } from "./submission-plan";
 
@@ -111,6 +112,29 @@ export async function assembleFinalSubmissionZip(
     const bytes = contentById.get(entry.generatedDocId);
     if (!bytes || bytes.byteLength === 0) {
       throw new Error(`Final ZIP entry ${safeName} has no document bytes.`);
+    }
+
+    // LAST MILE: the bytes must actually be what the entry says they are.
+    //
+    // Everything above validates the entry's LABELS — that `format` is one of
+    // the allowed strings, that names and orders do not collide. Nothing
+    // compared the label to the content, so assembly would happily write
+    // "Technical-Proposal.pdf" holding PK.. DOCX bytes and record it in the
+    // manifest as format PDF. The archive would then ship a .pdf the procuring
+    // entity cannot open, which is a failed bid.
+    //
+    // export-readiness carried a comment claiming assembly "independently
+    // re-reads and verifies every file"; it re-reads and verifies the HASH
+    // round-trip, which cannot notice a mislabelled file. This is that missing
+    // verification, using the same authority the readiness and validation
+    // paths use.
+    const identity = resolveArtifactIdentity({
+      fileName: safeName,
+      format: entry.format,
+      bytes,
+    });
+    if (!identity.agrees) {
+      throw new Error(`Final ZIP entry ${safeName} is not what it claims to be — ${identity.code}: ${identity.reason}`);
     }
 
     // PERF-003: cap the total uncompressed input size before building the
