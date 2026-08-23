@@ -34,6 +34,8 @@ type EvidenceLink = {
   sourceContentHash: string | null;
   sourceByteLength: number | null;
   matchedFacets: string[];
+  /** Tender-stated constraints the linked record does not carry. */
+  missingFacets: string[];
 };
 
 type RequirementCoverageRow = {
@@ -279,7 +281,13 @@ export default function RequirementCoveragePanel({ tenderId }: { tenderId: strin
             ? data.sourceProcessing > 0
               ? "Partially verified. Durable automatic resolution is running; release stays fail-closed until every required provenance check passes."
               : data.partiallyCovered > 0 && data.trueEvidenceGaps === 0 && data.staleOrInvalidated === 0
-                ? `Partial evidence exists for ${data.partiallyCovered} requirement(s), but it is not release-qualified. Strengthen it with eligible source-backed evidence; release remains blocked.`
+                // "Strengthen it with eligible source-backed evidence" named
+                // neither the record nor the shortfall. A vault link only
+                // settles at PARTIAL when a constraint the tender states is
+                // absent from the record, and each row's next action now names
+                // exactly which one, so the banner points at the rows instead
+                // of repeating an instruction nobody can act on.
+                ? `${data.partiallyCovered} requirement(s) are linked to a Company Vault record that does not carry every detail this tender asks for. Each row below names the missing detail; release stays blocked until it is present.`
                 : "Partially verified. Genuine evidence gaps or stale evidence remain; release stays fail-closed until they are resolved."
             : data.sourceProcessing > 0
               ? "Durable automatic resolution is running."

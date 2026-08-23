@@ -39,6 +39,8 @@ type EvidenceLink = {
   sourceContentHash: string | null;
   sourceByteLength: number | null;
   matchedFacets: string[];
+  /** Tender-stated constraints this record does not carry. */
+  missingFacets: string[];
 };
 
 type RequirementCoverageRow = {
@@ -106,6 +108,29 @@ function automaticStateFor(input: {
   return "TRUE_EVIDENCE_GAP";
 }
 
+/** Facet keys are internal identifiers; the owner reads plain words. */
+const FACET_LABELS: Record<string, string> = {
+  minimumExperience: "the minimum years of experience",
+  qualification: "a qualification or degree",
+  certification: "a certification, licence or registration",
+  disciplineOrRole: "the discipline or role",
+  discipline: "any discipline",
+  client: "the client",
+  sector: "the sector",
+  scope: "the service areas or scope",
+  location: "the location",
+  dates: "the project dates",
+  value: "the contract value",
+  similarity: "comparable or similar scope",
+  verifiedBytes: "verified source bytes",
+  exactFileName: "the tender's exact file name",
+};
+
+function humanizeFacet(facet: string): string {
+  return FACET_LABELS[facet]
+    ?? facet.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").toLowerCase();
+}
+
 function nextAutomaticAction(input: {
   title: string;
   requirementType: string;
@@ -123,6 +148,20 @@ function nextAutomaticAction(input: {
     return "Automatically covered with current tender-source trace and eligible evidence.";
   }
   if (input.automationState === "PARTIALLY_VERIFIED") {
+    // A vault link only settles at PARTIAL when a structured constraint the
+    // tender states is genuinely absent from the record — complete facets at
+    // the linking threshold are already FULL. The engine knows which
+    // constraint; saying "strengthen it with eligible source-backed evidence"
+    // hid that and left the owner with nothing to act on.
+    const missing = [...new Set(input.evidenceLinks.flatMap((link) => link.missingFacets))];
+    if (missing.length > 0) {
+      const records = input.evidenceLinks
+        .filter((link) => link.missingFacets.length > 0)
+        .map((link) => link.evidenceReference)
+        .filter((name): name is string => Boolean(name));
+      const named = records.length > 0 ? ` ${records.join(", ")}` : " The linked record";
+      return `Automatically linked.${named} does not state ${missing.map(humanizeFacet).join(", ")}, which this tender requires. Add that detail to the Company Vault record and the link upgrades automatically — nothing needs re-uploading.`;
+    }
     return "Automatically linked. The Engine will strengthen this requirement when more specific eligible evidence or validated output bytes become available.";
   }
   if (input.automationState === "AUTO_RESOLVING") {
@@ -305,6 +344,7 @@ export async function GET(
           sourceContentHash: automatic?.sourceContentHash ?? null,
           sourceByteLength: automatic?.sourceByteLength ?? null,
           matchedFacets: automatic?.matchedFacets ?? [],
+          missingFacets: automatic?.missingFacets ?? [],
         }];
       });
       const supportLevel = deriveSupportLevel(evidenceLinks);

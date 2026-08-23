@@ -108,6 +108,19 @@ export type AutomaticRequirementEvidenceMetadata = {
   sourceSection?: string | null;
   sourceQuote?: string | null;
   matchedFacets?: string[];
+  /**
+   * The structured constraints the tender states that this record does NOT
+   * carry — "minimumExperience", "certification", "value", ... .
+   *
+   * A vault link only settles at PARTIAL when a facet is genuinely missing:
+   * MIN_AUTOMATIC_LINK_SCORE is 70, and complete facets at 70+ are already
+   * FULL. So PARTIAL is always a real, specific shortfall in the record — and
+   * the panel was reporting it as "strengthen it with eligible source-backed
+   * evidence", which names neither the record's shortfall nor what would fix
+   * it. The engine knows exactly which constraint is unmet; it just was not
+   * saying so.
+   */
+  missingFacets?: string[];
   sourceRevision?: string;
   evidenceRevision?: string;
   linkageScore: number;
@@ -658,6 +671,7 @@ function metadataFor(
     sourceSection: selected.candidate.sourceSection ?? null,
     sourceQuote: selected.candidate.sourceQuote ?? null,
     matchedFacets: evaluateCandidateFacets(requirement, selected.candidate).matched,
+    missingFacets: evaluateCandidateFacets(requirement, selected.candidate).missing,
     sourceRevision: sha256(`${requirement.sourceTenderFileId}:${requirement.sourceExactQuote!.replace(/\s+/g, " ").trim()}`),
     evidenceRevision: selected.candidate.evidenceRevision ?? selected.candidate.sourceContentHash,
     linkageScore: selected.score,
@@ -707,6 +721,7 @@ function packageConformanceRow(
     sourceSection: conformance.family,
     sourceQuote: conformance.reason.slice(0, 320),
     matchedFacets: conformance.observedFacts.slice(0, 20),
+    missingFacets: [],
     sourceRevision: sha256(`${requirement.sourceTenderFileId}:${requirement.sourceExactQuote!.replace(/\s+/g, " ").trim()}`),
     evidenceRevision: conformance.factDigest,
     linkageScore: 100,
