@@ -17,6 +17,11 @@ import {
 } from "../vault-review-provenance";
 import { isValidationPassed } from "./document-output-state";
 import { isPackagingOrFormatRequirement } from "./packaging-requirement-rule";
+import {
+  evaluatePackageConformance,
+  type PackageConformanceFacts,
+  type PackageConformanceVerdict,
+} from "./package-conformance";
 
 /**
  * Persisted automatic requirement-evidence rows carry this prefix in notes.
@@ -64,7 +69,8 @@ export type AutomaticEvidenceRecordType =
   | "COMPLIANCE"
   | "COMPANY_DOCUMENT"
   | "GENERATED_DOCUMENT"
-  | "BUILD_PLAN_ITEM";
+  | "BUILD_PLAN_ITEM"
+  | "PACKAGE_CONFORMANCE";
 
 export type AutomaticEvidenceCandidate = {
   recordType: AutomaticEvidenceRecordType;
@@ -122,6 +128,10 @@ export type AutomaticRequirementCoverageResult = {
   unchanged: number;
   remainingUngrounded: Array<{ id: string; title: string }>;
   remainingWithoutEligibleEvidence: Array<{ id: string; title: string }>;
+  /** Package rules the current package demonstrably BREAKS. Real blockers. */
+  packageRuleViolations: Array<{ id: string; title: string; reason: string }>;
+  /** Package rules not yet decidable because the package does not exist yet. */
+  packageRulesAwaitingPackage: Array<{ id: string; title: string; reason: string }>;
 };
 
 type RequirementInput = {
@@ -173,6 +183,10 @@ type LoadedCoverageContext = {
   activeFiles: GroundingActiveFile[];
   requirements: RequirementInput[];
   candidates: AutomaticEvidenceCandidate[];
+  // Facts about the CURRENT submission package. Package rules — financial
+  // separation, single-file consolidation, file format, file naming — are
+  // verified by observing these, never by text-matching a company record.
+  packageFacts: PackageConformanceFacts;
 };
 
 function sha256(value: string): string {
@@ -655,8 +669,60 @@ function metadataFor(
 function automaticEvidenceSource(recordType: AutomaticEvidenceRecordType): string {
   if (recordType === "GENERATED_DOCUMENT") return "AUTO_GENERATED_ARTIFACT";
   if (recordType === "BUILD_PLAN_ITEM") return "AUTO_PLANNED_ARTIFACT";
+  if (recordType === "PACKAGE_CONFORMANCE") return "AUTO_PACKAGE_CONFORMANCE";
   if (recordType === "COMPANY_DOCUMENT") return "AUTO_BYTE_VERIFIED_VAULT_DOCUMENT";
   return "AUTO_SOURCE_VERIFIED_VAULT_RECORD";
+}
+
+/**
+ * Build the evidence row for a package rule the current package demonstrably
+ * obeys. The "evidence" is the observed package state itself: its digest is
+ * the content hash, so the row is stable while the package is unchanged and is
+ * re-derived the moment a document is added, removed or reformatted.
+ *
+ * Support level is FULL because the proposition is decided, not estimated —
+ * there is no stronger proof of "this submission is one PDF" than the
+ * submission being one PDF.
+ */
+function packageConformanceRow(
+  context: LoadedCoverageContext,
+  requirement: RequirementInput,
+  conformance: PackageConformanceVerdict,
+): DesiredComplianceRow {
+  const evidenceKey = `PACKAGE_CONFORMANCE:${conformance.family}:${conformance.factDigest}`;
+  const factsJson = JSON.stringify(conformance.observedFacts);
+  const metadata: AutomaticRequirementEvidenceMetadata = {
+    version: 1,
+    evidenceKey,
+    recordType: "PACKAGE_CONFORMANCE",
+    recordId: `${context.tender.id}:${conformance.family}`,
+    label: `Current submission package (${conformance.family})`,
+    requirementId: requirement.id,
+    requirementSourceFileId: requirement.sourceTenderFileId!,
+    requirementSourceQuoteHash: sha256(requirement.sourceExactQuote!.replace(/\s+/g, " ").trim()),
+    sourceDocumentId: null,
+    sourceContentHash: conformance.factDigest,
+    sourceByteLength: Math.max(1, Buffer.byteLength(factsJson, "utf8")),
+    sourceFileName: "Current submission package",
+    sourceSection: conformance.family,
+    sourceQuote: conformance.reason.slice(0, 320),
+    matchedFacets: conformance.observedFacts.slice(0, 20),
+    sourceRevision: sha256(`${requirement.sourceTenderFileId}:${requirement.sourceExactQuote!.replace(/\s+/g, " ").trim()}`),
+    evidenceRevision: conformance.factDigest,
+    linkageScore: 100,
+    linkageReasons: [`package-conformance:${conformance.family}`, conformance.reason],
+    state: "ACTIVE",
+  };
+  return {
+    key: `${requirement.id}:${evidenceKey}`,
+    tenderId: context.tender.id,
+    requirementId: requirement.id,
+    evidenceType: "PACKAGE_CONFORMANCE",
+    evidenceSource: automaticEvidenceSource("PACKAGE_CONFORMANCE"),
+    evidenceReference: "Current submission package",
+    supportLevel: "FULL",
+    notes: serializeAutomaticRequirementEvidence(metadata),
+  };
 }
 
 function desiredRowsForContext(context: LoadedCoverageContext): {
@@ -664,10 +730,14 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
   groundedRequirements: number;
   remainingUngrounded: Array<{ id: string; title: string }>;
   remainingWithoutEligibleEvidence: Array<{ id: string; title: string }>;
+  packageRuleViolations: Array<{ id: string; title: string; reason: string }>;
+  packageRulesAwaitingPackage: Array<{ id: string; title: string; reason: string }>;
 } {
   const rows: DesiredComplianceRow[] = [];
   const remainingUngrounded: Array<{ id: string; title: string }> = [];
   const remainingWithoutEligibleEvidence: Array<{ id: string; title: string }> = [];
+  const packageRuleViolations: Array<{ id: string; title: string; reason: string }> = [];
+  const packageRulesAwaitingPackage: Array<{ id: string; title: string; reason: string }> = [];
   let groundedRequirements = 0;
 
   for (const requirement of context.requirements) {
@@ -682,6 +752,27 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
       continue;
     }
     groundedRequirements += 1;
+
+    // A package RULE is verified by observing the package, never by scoring a
+    // record's name against the rule's name. Text similarity between "Submission
+    // in a Single PDF Technical File" and any real document is always weak, so
+    // similarity scoring parked these requirements at PARTIAL for ever and asked
+    // the owner to supply evidence that cannot exist. Decide them here instead,
+    // and skip similarity selection entirely for them in every outcome.
+    const conformance = evaluatePackageConformance(requirement, context.packageFacts);
+    if (conformance.applicable) {
+      if (conformance.status === "SATISFIED") {
+        rows.push(packageConformanceRow(context, requirement, conformance));
+      } else if (conformance.status === "VIOLATED") {
+        // Fail-closed: no evidence row is written, so the requirement stays
+        // unmet and release stays blocked — but the blocker names the actual
+        // package defect instead of demanding evidence.
+        packageRuleViolations.push({ id: requirement.id, title: requirement.title, reason: conformance.reason });
+      } else {
+        packageRulesAwaitingPackage.push({ id: requirement.id, title: requirement.title, reason: conformance.reason });
+      }
+      continue;
+    }
 
     const selected = selectAutomaticEvidenceForRequirement(requirement, context.candidates);
     if (selected.length === 0) {
@@ -704,7 +795,14 @@ function desiredRowsForContext(context: LoadedCoverageContext): {
     }
   }
 
-  return { rows, groundedRequirements, remainingUngrounded, remainingWithoutEligibleEvidence };
+  return {
+    rows,
+    groundedRequirements,
+    remainingUngrounded,
+    remainingWithoutEligibleEvidence,
+    packageRuleViolations,
+    packageRulesAwaitingPackage,
+  };
 }
 
 function vaultRecordCandidate(
@@ -825,6 +923,9 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       activeFiles: tender.files,
       requirements: tender.requirements,
       candidates: [],
+      // Package rules do not depend on the company vault: the submission
+      // package exists whether or not a company profile does.
+      packageFacts: { documents: tender.generatedDocuments ?? [], planConfirmed: false },
     };
   }
 
@@ -1031,15 +1132,19 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
     });
   }
 
-  if (
+  const planConfirmed = Boolean(
     buildPlan
     && buildPlan.confirmedRevision === buildPlan.revision
     && buildPlan.confirmedContentHash === buildPlan.contentHash
-    && SHA256_PATTERN.test(String(buildPlan.contentHash ?? "").toLowerCase())
-  ) {
+    && SHA256_PATTERN.test(String(buildPlan.contentHash ?? "").toLowerCase()),
+  );
+  const plannedFileNames: string[] = [];
+
+  if (planConfirmed) {
     for (const [index, item] of parseBuildPlanItems(buildPlan.itemsJson).entries()) {
       const exactFileName = String(item.exactFileName ?? item.fileName ?? "").trim();
       if (!exactFileName) continue;
+      plannedFileNames.push(exactFileName);
       const recordId = `${buildPlan.id}:${index}:${exactFileName}`;
       candidates.push({
         recordType: "BUILD_PLAN_ITEM",
@@ -1072,6 +1177,11 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
     activeFiles: tender.files,
     requirements: tender.requirements,
     candidates,
+    packageFacts: {
+      documents: tender.generatedDocuments ?? [],
+      plannedFileNames,
+      planConfirmed,
+    },
   };
 }
 
@@ -1081,7 +1191,20 @@ export async function loadValidAutomaticEvidenceKeys(
   userId: string,
 ): Promise<Set<string>> {
   const context = await loadCoverageContext(db, tenderId, userId);
-  return new Set((context?.candidates ?? []).map((candidate) => candidate.evidenceKey));
+  const keys = new Set((context?.candidates ?? []).map((candidate) => candidate.evidenceKey));
+  // Package-conformance rows are not built from a candidate record — their
+  // evidence IS the observed package. Deriving the valid-key set from
+  // candidates alone would let filterCurrentAutomaticEvidenceRows strip every
+  // conformance row the reconciler had just written, which is the same
+  // "one rule, two disagreeing copies" defect this engine keeps being bitten
+  // by. Take the keys from the SAME function that decides the desired rows.
+  if (context) {
+    for (const row of desiredRowsForContext(context).rows) {
+      const metadata = parseAutomaticRequirementEvidence(row.notes);
+      if (metadata?.recordType === "PACKAGE_CONFORMANCE") keys.add(metadata.evidenceKey);
+    }
+  }
+  return keys;
 }
 
 export function filterCurrentAutomaticEvidenceRows<T extends RequirementInput>(
@@ -1135,6 +1258,8 @@ export async function reconcileAutomaticRequirementCoverage(
       unchanged: 0,
       remainingUngrounded: [],
       remainingWithoutEligibleEvidence: [],
+      packageRuleViolations: [],
+      packageRulesAwaitingPackage: [],
     };
   }
 
@@ -1225,5 +1350,7 @@ export async function reconcileAutomaticRequirementCoverage(
     unchanged,
     remainingUngrounded: desired.remainingUngrounded,
     remainingWithoutEligibleEvidence: desired.remainingWithoutEligibleEvidence,
+    packageRuleViolations: desired.packageRuleViolations,
+    packageRulesAwaitingPackage: desired.packageRulesAwaitingPackage,
   };
 }

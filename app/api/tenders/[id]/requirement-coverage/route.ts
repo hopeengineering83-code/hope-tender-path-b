@@ -13,6 +13,11 @@ import { extractRequestId } from "../../../../../lib/request-id";
 import {
   parseAutomaticRequirementEvidence,
 } from "../../../../../lib/engine/automatic-requirement-coverage";
+import {
+  evaluatePackageConformance,
+  type PackageConformanceFacts,
+  type PackageConformanceVerdict,
+} from "../../../../../lib/engine/package-conformance";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 10;
@@ -51,7 +56,14 @@ type RequirementCoverageRow = {
   supportLevel: SupportLevel;
   coverageStatus: CoverageStatus;
   isFullyCovered: boolean;
-  automationState: "FULLY_VERIFIED" | "PARTIALLY_VERIFIED" | "AUTO_RESOLVING" | "TRUE_EVIDENCE_GAP" | "STALE_OR_INVALIDATED";
+  automationState:
+    | "FULLY_VERIFIED"
+    | "PARTIALLY_VERIFIED"
+    | "AUTO_RESOLVING"
+    | "TRUE_EVIDENCE_GAP"
+    | "STALE_OR_INVALIDATED"
+    | "ENFORCED_BY_PACKAGE"
+    | "PACKAGE_RULE_VIOLATION";
   nextAction: string;
 };
 
@@ -70,8 +82,18 @@ function automaticStateFor(input: {
   hasSourceRef: boolean;
   evidenceLinks: EvidenceLink[];
   resolverRunning: boolean;
+  conformance: PackageConformanceVerdict;
 }): RequirementCoverageRow["automationState"] {
   if (input.coverageStatus === "FULLY_MET") return "FULLY_VERIFIED";
+  // A package RULE is obeyed or broken by the submission itself. It is never
+  // an evidence gap, so it must never be reported as one: no company record,
+  // CV, licence or tender source file can prove that our submission is a
+  // single PDF or that it carries no financial proposal.
+  if (input.conformance.applicable) {
+    return input.conformance.status === "VIOLATED"
+      ? "PACKAGE_RULE_VIOLATION"
+      : "ENFORCED_BY_PACKAGE";
+  }
   if (input.coverageStatus === "PARTIALLY_MET") return "PARTIALLY_VERIFIED";
   // AUTO_RESOLVING is bound to the exact requirement: only requirements
   // whose own source trace is missing or stale (and therefore actually
@@ -89,7 +111,14 @@ function nextAutomaticAction(input: {
   requirementType: string;
   automationState: RequirementCoverageRow["automationState"];
   evidenceLinks: EvidenceLink[];
+  conformance: PackageConformanceVerdict;
 }): string {
+  if (
+    input.automationState === "ENFORCED_BY_PACKAGE"
+    || input.automationState === "PACKAGE_RULE_VIOLATION"
+  ) {
+    return input.conformance.reason;
+  }
   if (input.automationState === "FULLY_VERIFIED") {
     return "Automatically covered with current tender-source trace and eligible evidence.";
   }
@@ -156,7 +185,7 @@ export async function GET(
       );
     }
 
-    const [finalPackageModel, requirements, activeResolverJob] = await Promise.all([
+    const [finalPackageModel, requirements, activeResolverJob, packageDocuments, confirmedPlan] = await Promise.all([
       getFinalPackageReadinessModel(prisma, id, actor.id),
       prisma.tenderRequirement.findMany({
         where: { tenderId: id, priority: { in: ["MANDATORY", "CRITICAL"] } },
@@ -193,7 +222,56 @@ export async function GET(
         },
         select: { id: true },
       }),
+      // Package rules are decided by observing the package. Load it broadly;
+      // evaluatePackageConformance narrows with the canonical current-document
+      // selection the export gate uses, so this panel cannot disagree with it.
+      prisma.generatedDocument.findMany({
+        where: { tenderId: id },
+        select: {
+          id: true,
+          name: true,
+          exactFileName: true,
+          documentType: true,
+          format: true,
+          generationStatus: true,
+          validationStatus: true,
+          reviewStatus: true,
+        },
+      }),
+      prisma.buildPlan.findFirst({
+        where: { tenderId: id, status: "CONFIRMED" },
+        orderBy: [{ revision: "desc" }, { updatedAt: "desc" }],
+        select: { revision: true, contentHash: true, confirmedRevision: true, confirmedContentHash: true, itemsJson: true },
+      }),
     ]);
+
+    const planConfirmed = Boolean(
+      confirmedPlan
+      && confirmedPlan.confirmedRevision === confirmedPlan.revision
+      && confirmedPlan.confirmedContentHash === confirmedPlan.contentHash,
+    );
+    const plannedFileNames: string[] = [];
+    if (planConfirmed && typeof confirmedPlan?.itemsJson === "string") {
+      try {
+        const parsed = JSON.parse(confirmedPlan.itemsJson) as unknown;
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (!item || typeof item !== "object") continue;
+            const record = item as Record<string, unknown>;
+            const name = String(record.exactFileName ?? record.fileName ?? "").trim();
+            if (name) plannedFileNames.push(name);
+          }
+        }
+      } catch {
+        // A malformed plan simply yields no planned names; the naming rule then
+        // reports PENDING_PACKAGE instead of claiming compliance.
+      }
+    }
+    const packageFacts: PackageConformanceFacts = {
+      documents: packageDocuments,
+      plannedFileNames,
+      planConfirmed,
+    };
 
     const canonicalStatuses = new Map(
       finalPackageModel.requirementEvidenceStatuses.map((status) => [
@@ -233,11 +311,19 @@ export async function GET(
       const coverageStatus: CoverageStatus = canonicalStatus?.displayStatus ?? "NOT_MET";
       const hasSourceRef = canonicalStatus?.hasSourceTrace ?? false;
       const isFullyCovered = coverageStatus === "FULLY_MET";
+      const conformance = evaluatePackageConformance(
+        {
+          title: requirement.title,
+          requirementType: requirement.requirementType,
+        },
+        packageFacts,
+      );
       const automationState = automaticStateFor({
         coverageStatus,
         hasSourceRef,
         evidenceLinks,
         resolverRunning: Boolean(activeResolverJob),
+        conformance,
       });
 
       return {
@@ -261,6 +347,7 @@ export async function GET(
           requirementType: requirement.requirementType,
           automationState,
           evidenceLinks,
+          conformance,
         }),
       };
     });
@@ -276,6 +363,10 @@ export async function GET(
       0,
     );
     const trueEvidenceGaps = rows.filter((row) => row.automationState === "TRUE_EVIDENCE_GAP").length;
+    // Package rules are reported apart from evidence gaps: a violation is a
+    // packaging defect the app must fix in the package, never an owner upload.
+    const packageRuleViolations = rows.filter((row) => row.automationState === "PACKAGE_RULE_VIOLATION").length;
+    const packageEnforcedRules = rows.filter((row) => row.automationState === "ENFORCED_BY_PACKAGE").length;
     const sourceProcessing = rows.filter((row) => row.automationState === "AUTO_RESOLVING").length;
     const staleOrInvalidated = rows.filter((row) => row.automationState === "STALE_OR_INVALIDATED").length;
     // Primary coverage is deliberately unweighted: only canonically FULL
@@ -299,6 +390,8 @@ export async function GET(
       missingSourceRef,
       automaticallyLinked,
       trueEvidenceGaps,
+      packageRuleViolations,
+      packageEnforcedRules,
       sourceProcessing,
       staleOrInvalidated,
       coverageRatio,
