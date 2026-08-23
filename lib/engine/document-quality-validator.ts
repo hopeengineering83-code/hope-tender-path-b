@@ -4,6 +4,7 @@
  * Server-side implementation of the document quality validation logic.
  * Derived from DocumentValidatorPanel to ensure consistency between UI and server.
  */
+import { looksLikeEncodedBytes } from "./encoded-content";
 import { PLACEHOLDER_PATTERNS, AI_TRACE_PATTERNS, GENERIC_BOILERPLATE_PATTERNS } from "./detection-patterns";
 import { containsPricingLeakage } from "./pricing-hygiene";
 
@@ -55,7 +56,11 @@ export function validateDocumentQuality(doc: {
     (doc.fileContent ?? "").trim().length > 0 || (doc.storagePath ?? "").trim().length > 0,
   );
 
-  const isBase64Like = /^[A-Za-z0-9+/]{40,}={0,2}$/.test((doc.fileContent ?? "").slice(0, 500));
+  // One predicate, shared with export-readiness. This test used to live here
+  // alone; the two hygiene paths in export-readiness had no equivalent and so
+  // scanned encoded bytes, which randomly rejected clean documents. See
+  // lib/engine/encoded-content.ts.
+  const isBase64Like = looksLikeEncodedBytes(doc.fileContent);
   // If the caller pre-extracted visible text, use it. Otherwise fall back
   // to fileContent only when it is NOT base64 (base64 content would cause
   // false negatives — the regex checks would run against base64 gibberish

@@ -30,11 +30,30 @@ import { prisma } from "../prisma";
 import { logger } from "../observability";
 import { recordStep } from "../ai-jobs";
 
+/**
+ * Canonical validation outcome.
+ *
+ * `rejected` names the documents the validator actually refused and why.
+ *
+ * The counts alone produced a blocker the owner could not act on — "1
+ * auto-finalized PDF(s) failed canonical validation" identifies neither the
+ * document nor the defect — and the same opacity made an intermittent CI
+ * failure in tests/owner-workflow-complete-postgres.test.ts impossible to
+ * diagnose from the failure message. A blocker that cannot be acted on is not
+ * a blocker, it is a dead end.
+ */
+export type CanonicalValidationOutcome = {
+  validated: number;
+  failed: number;
+  pending: number;
+  rejected: Array<{ documentId: string; fileName: string; reasons: string[] }>;
+};
+
 export type AutoFinalizeResult = {
   ok: boolean;
   sourceRepair: { checked: number; repaired: number; remaining: number };
   exportRepair: { repaired: number; skipped: number; manualRequired: number };
-  validation: { validated: number; failed: number; pending: number };
+  validation: CanonicalValidationOutcome;
   pdfFinalization: { finalized: number; skipped: number; failed: number };
   /**
    * Second validation pass over the PDFs the finalization stage just created.
@@ -43,7 +62,7 @@ export type AutoFinalizeResult = {
    * stayed unvalidated forever — and an unvalidated document is exactly what
    * the export gate refuses.
    */
-  pdfValidation: { validated: number; failed: number; pending: number };
+  pdfValidation: CanonicalValidationOutcome;
   /**
    * Does the package actually contain every required file? The stages above
    * can each succeed while the plan is still short a document, so the run is
@@ -102,7 +121,9 @@ export function evaluateAutoFinalizeConvergence(
     blockers.push(`source grounding incomplete: ${result.sourceRepair.remaining} requirement(s) still have no current source trace`);
   }
   if (result.validation.failed > 0) {
-    blockers.push(`readiness gate: ${result.validation.failed} document(s) failed canonical validation`);
+    blockers.push(`readiness gate: ${result.validation.failed} document(s) failed canonical validation` + (result.validation.rejected.length > 0
+      ? `: ${result.validation.rejected.map((row) => `${row.fileName} (${row.reasons.join("; ")})`).join(", ")}`
+      : ""));
   }
   if (result.validation.pending > 0) {
     blockers.push(`readiness gate: ${result.validation.pending} document(s) are still unvalidated`);
@@ -114,7 +135,9 @@ export function evaluateAutoFinalizeConvergence(
     blockers.push(`AUTHORITY: ${result.exportRepair.manualRequired} document(s) need manual attention and cannot be repaired automatically`);
   }
   if (result.pdfValidation.failed > 0) {
-    blockers.push(`readiness gate: ${result.pdfValidation.failed} auto-finalized PDF(s) failed canonical validation`);
+    blockers.push(`readiness gate: ${result.pdfValidation.failed} auto-finalized PDF(s) failed canonical validation` + (result.pdfValidation.rejected.length > 0
+      ? `: ${result.pdfValidation.rejected.map((row) => `${row.fileName} (${row.reasons.join("; ")})`).join(", ")}`
+      : ""));
   }
   if (result.pdfValidation.pending > 0) {
     blockers.push(`readiness gate: ${result.pdfValidation.pending} auto-finalized PDF(s) are still unvalidated`);
@@ -150,9 +173,9 @@ export async function runAutoFinalizeAfterGeneration(
     ok: true,
     sourceRepair: { checked: 0, repaired: 0, remaining: 0 },
     exportRepair: { repaired: 0, skipped: 0, manualRequired: 0 },
-    validation: { validated: 0, failed: 0, pending: 0 },
+    validation: { validated: 0, failed: 0, pending: 0, rejected: [] },
     pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
-    pdfValidation: { validated: 0, failed: 0, pending: 0 },
+    pdfValidation: { validated: 0, failed: 0, pending: 0, rejected: [] },
     packageReconciliation: { requiredTotal: 0, missing: 0 },
     missingFileGeneration: { generated: 0, planned: 0, skipped: 0, blocked: null },
     formReuse: { reused: 0, stillMissing: 0 },
@@ -516,7 +539,7 @@ async function runSafeExportRepairs(
 async function runCanonicalValidation(
   tenderId: string,
   userId: string,
-): Promise<{ validated: number; failed: number; pending: number }> {
+): Promise<CanonicalValidationOutcome> {
   const { checkFullExportReadiness } = await import("../engine/export-readiness");
 
   // Gap B: verify tenant ownership before reading/writing documents.
@@ -527,7 +550,7 @@ async function runCanonicalValidation(
     select: { id: true },
   });
   if (!tender) {
-    return { validated: 0, failed: 0, pending: 0 };
+    return { validated: 0, failed: 0, pending: 0, rejected: [] };
   }
 
   // Load all non-superseded documents with their content for validation.
@@ -598,6 +621,22 @@ async function runCanonicalValidation(
   let validated = 0;
   let failed = 0;
   let pending = 0;
+  // Name every document counted as failed, with the validator's own reasons,
+  // so the blocker says what to fix instead of only how many.
+  const rejectionReasons = new Map<string, string[]>();
+  for (const failure of readiness.failures) {
+    if (!failure.documentId) continue;
+    const actionable = (failure.reasons ?? []).filter((reason) => !isReviewWorkflowReason(reason));
+    if (actionable.length > 0) rejectionReasons.set(failure.documentId, actionable);
+  }
+  const rejected: CanonicalValidationOutcome["rejected"] = [];
+  const recordRejection = (doc: { id: string; exactFileName: string | null; name: string | null }) => {
+    rejected.push({
+      documentId: doc.id,
+      fileName: doc.exactFileName ?? doc.name ?? doc.id,
+      reasons: rejectionReasons.get(doc.id) ?? ["validationStatus was already FAILED from an earlier pass"],
+    });
+  };
 
   for (const doc of docs) {
     // Only auto-validate documents that are currently PENDING (i.e. the
@@ -605,7 +644,7 @@ async function runCanonicalValidation(
     // are already VALIDATED, FAILED, or in a human-review state.
     if (doc.validationStatus !== "PENDING") {
       if (doc.validationStatus === "VALIDATED" || doc.validationStatus === "PASSED") validated++;
-      else if (doc.validationStatus === "FAILED") failed++;
+      else if (doc.validationStatus === "FAILED") { failed++; recordRejection(doc); }
       else pending++;
       continue;
     }
@@ -619,10 +658,10 @@ async function runCanonicalValidation(
       },
     });
     if (passes) validated++;
-    else failed++;
+    else { failed++; recordRejection(doc); }
   }
 
-  return { validated, failed, pending };
+  return { validated, failed, pending, rejected };
 }
 
 /**
