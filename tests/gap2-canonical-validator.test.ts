@@ -80,6 +80,21 @@ describe("Gap 2 — canonical Document Validator is the single VALIDATED authori
   });
 
   it("returns validation counts (validated, failed, pending)", () => {
-    assert.match(service, /validation: \{ validated: number; failed: number; pending: number \}/);
+    // The inline shape became the named CanonicalValidationOutcome when the
+    // outcome gained the rejected documents — "1 auto-finalized PDF(s) failed
+    // canonical validation" named neither the file nor the defect. The three
+    // counts are still the contract, so assert them on the type rather than on
+    // one literal spelling of it.
+    assert.match(service, /validation: CanonicalValidationOutcome;/);
+    assert.match(service, /pdfValidation: CanonicalValidationOutcome;/);
+    assert.match(
+      service,
+      /export type CanonicalValidationOutcome = \{\s*validated: number;\s*failed: number;\s*pending: number;/,
+    );
+  });
+
+  it("names the documents it rejected, so the blocker can be acted on", () => {
+    assert.match(service, /rejected: Array<\{ documentId: string; fileName: string; reasons: string\[\] \}>;/);
+    assert.match(service, /function namedRejections\(/);
   });
 });
