@@ -113,6 +113,22 @@ export type AutoFinalizeResult = {
  * NON_RETRYABLE — these are states a retry cannot change, so the job must fail
  * terminally with the reason persisted rather than burn its retry budget.
  */
+/**
+ * Render "…: Technical-Proposal.pdf (Placeholder or unresolved drafting
+ * instruction is present)" when the outcome names its rejections, and nothing
+ * when it does not.
+ *
+ * This is a summariser: it must degrade rather than throw when handed an
+ * outcome without the field. Reading `.rejected.length` directly crashed on
+ * every partial fixture, which is exactly the shape a caller building a
+ * summary is entitled to pass.
+ */
+function namedRejections(outcome: Partial<CanonicalValidationOutcome> | undefined): string {
+  const rejected = outcome?.rejected ?? [];
+  if (rejected.length === 0) return "";
+  return `: ${rejected.map((row) => `${row.fileName} (${row.reasons.join("; ")})`).join(", ")}`;
+}
+
 export function evaluateAutoFinalizeConvergence(
   result: Omit<AutoFinalizeResult, "ok" | "blockers">,
 ): string[] {
@@ -121,9 +137,7 @@ export function evaluateAutoFinalizeConvergence(
     blockers.push(`source grounding incomplete: ${result.sourceRepair.remaining} requirement(s) still have no current source trace`);
   }
   if (result.validation.failed > 0) {
-    blockers.push(`readiness gate: ${result.validation.failed} document(s) failed canonical validation` + (result.validation.rejected.length > 0
-      ? `: ${result.validation.rejected.map((row) => `${row.fileName} (${row.reasons.join("; ")})`).join(", ")}`
-      : ""));
+    blockers.push(`readiness gate: ${result.validation.failed} document(s) failed canonical validation` + namedRejections(result.validation));
   }
   if (result.validation.pending > 0) {
     blockers.push(`readiness gate: ${result.validation.pending} document(s) are still unvalidated`);
@@ -135,9 +149,7 @@ export function evaluateAutoFinalizeConvergence(
     blockers.push(`AUTHORITY: ${result.exportRepair.manualRequired} document(s) need manual attention and cannot be repaired automatically`);
   }
   if (result.pdfValidation.failed > 0) {
-    blockers.push(`readiness gate: ${result.pdfValidation.failed} auto-finalized PDF(s) failed canonical validation` + (result.pdfValidation.rejected.length > 0
-      ? `: ${result.pdfValidation.rejected.map((row) => `${row.fileName} (${row.reasons.join("; ")})`).join(", ")}`
-      : ""));
+    blockers.push(`readiness gate: ${result.pdfValidation.failed} auto-finalized PDF(s) failed canonical validation` + namedRejections(result.pdfValidation));
   }
   if (result.pdfValidation.pending > 0) {
     blockers.push(`readiness gate: ${result.pdfValidation.pending} auto-finalized PDF(s) are still unvalidated`);

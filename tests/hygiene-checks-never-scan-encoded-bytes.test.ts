@@ -129,3 +129,71 @@ test("every consumer reads the one predicate rather than its own copy", () => {
     );
   }
 });
+
+// ── The blocker names the document, and never crashes doing it ─────────────
+//
+// "1 auto-finalized PDF(s) failed canonical validation" identifies neither the
+// file nor the defect, which is why this survived so long unnamed. The
+// convergence summary now carries the rejected documents — but it is a
+// summariser, and a caller building a partial result is entitled to omit them,
+// so it must degrade to the bare count rather than throw. Reading
+// `.rejected.length` directly did throw, on every existing fixture.
+
+import { evaluateAutoFinalizeConvergence } from "../lib/ai-jobs/auto-finalize-continuation-service";
+
+const CONVERGED = {
+  sourceRepair: { checked: 3, repaired: 3, remaining: 0 },
+  exportRepair: { repaired: 0, skipped: 0, manualRequired: 0 },
+  validation: { validated: 2, failed: 0, pending: 0, rejected: [] },
+  pdfFinalization: { finalized: 1, skipped: 0, failed: 0 },
+  pdfValidation: { validated: 1, failed: 0, pending: 0, rejected: [] },
+  packageReconciliation: { requiredTotal: 2, missing: 0 },
+  missingFileGeneration: { generated: 0, planned: 0, skipped: 0, blocked: null },
+  formReuse: { reused: 0, stillMissing: 0 },
+  warning: null,
+};
+
+test("a rejected document is named in the blocker, with the validator's reason", () => {
+  const blockers = evaluateAutoFinalizeConvergence({
+    ...CONVERGED,
+    pdfValidation: {
+      validated: 0,
+      failed: 1,
+      pending: 0,
+      rejected: [{
+        documentId: "doc-1",
+        fileName: "Technical-Proposal.pdf",
+        reasons: ["Placeholder or unresolved drafting instruction is present"],
+      }],
+    },
+  } as never);
+  assert.equal(blockers.length, 1);
+  assert.match(blockers[0]!, /Technical-Proposal\.pdf/);
+  assert.match(blockers[0]!, /Placeholder or unresolved drafting instruction is present/);
+  // The "readiness gate" prefix must survive: stage-retry-policy matches on it
+  // to classify the failure NON_RETRYABLE.
+  assert.match(blockers[0]!, /^readiness gate: /);
+});
+
+test("an outcome with no rejected list degrades to the count instead of throwing", () => {
+  const blockers = evaluateAutoFinalizeConvergence({
+    ...CONVERGED,
+    pdfValidation: { validated: 0, failed: 2, pending: 0 },
+  } as never);
+  assert.equal(blockers.length, 1);
+  assert.match(blockers[0]!, /2 auto-finalized PDF\(s\) failed canonical validation$/);
+});
+
+test("the first validation pass names its rejections too", () => {
+  const blockers = evaluateAutoFinalizeConvergence({
+    ...CONVERGED,
+    validation: {
+      validated: 0,
+      failed: 1,
+      pending: 0,
+      rejected: [{ documentId: "d", fileName: "Methodology.docx", reasons: ["fileContent is missing"] }],
+    },
+  } as never);
+  assert.equal(blockers.length, 1);
+  assert.match(blockers[0]!, /Methodology\.docx \(fileContent is missing\)/);
+});
