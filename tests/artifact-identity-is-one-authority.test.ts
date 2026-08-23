@@ -223,3 +223,22 @@ test("an entry whose format asserts nothing is not treated as a contradiction", 
   );
   assert.deepEqual(result.fileList, ["Annex-C.pdf"]);
 });
+
+// ── Validate must not stay silent about a broken artifact ─────────────────
+//
+// filterFinalExportCandidateDocuments now also excludes rows whose name,
+// declared format and bytes disagree. Everything else it excludes — control
+// rows, planned rows, superseded rows, non-exportable records — is a workflow
+// state the owner sees elsewhere. A mislabelled artifact is a DEFECT, and
+// dropping it from validation without a word meant Validate could report a
+// clean tender while the export gate refused the very same document.
+
+test("validate raises a blocking issue for a mislabelled artifact rather than skipping it", () => {
+  const source = readFileSync("lib/engine/validate.ts", "utf8");
+  assert.match(source, /hasConsistentArtifactIdentity/);
+  assert.match(source, /code: "ARTIFACT_IDENTITY_MISMATCH"/);
+  assert.match(source, /severity: "BLOCK"/);
+  // It must inspect the UNFILTERED rows — the filtered set has already dropped
+  // exactly the documents this check exists to report.
+  assert.match(source, /const identityBroken = \(tender\.generatedDocuments as any\[\]\)\.filter\(/);
+});

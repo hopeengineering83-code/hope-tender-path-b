@@ -3,7 +3,7 @@ import { prisma } from "../prisma";
 import { exactSelectionLimit } from "./scope-policy";
 import { buildDeterministicComprehension } from "./deterministic-prohibition-extractor";
 import { validateConstraints } from "./constraint-validator";
-import { filterFinalExportCandidateDocuments } from "./document-output-state";
+import { filterFinalExportCandidateDocuments, hasConsistentArtifactIdentity } from "./document-output-state";
 import { documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
 import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
 
@@ -135,6 +135,30 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     const aiDraft = projects.filter((p) => p.trustLevel === "AI_DRAFT");
     if (regexDraft.length > 0) issues.push({ code: "REGEX_DRAFT_PROJECT_SELECTED", severity: "BLOCK", message: `${regexDraft.length} selected project(s) are REGEX_DRAFT — pattern-extracted records with low reliability. Re-run AI extraction, then review and mark REVIEWED. Affected: ${regexDraft.map((p) => p.name).join(", ")}.` });
     if (aiDraft.length > 0) issues.push({ code: "AI_DRAFT_PROJECT_NOT_REVIEWED", severity: "BLOCK", message: `${aiDraft.length} selected project(s) are AI_DRAFT but not yet reviewed. Verify each project against source documents and mark REVIEWED before final validation. Affected: ${aiDraft.map((p) => p.name).join(", ")}.` });
+  }
+
+  // A mislabelled artifact is a DEFECT, not a workflow state, and must not be
+  // silently skipped.
+  //
+  // filterFinalExportCandidateDocuments excludes control rows, planned rows,
+  // superseded rows and non-exportable records — all legitimate states the
+  // owner sees elsewhere. It also excludes rows whose file name, declared
+  // format and bytes disagree. Those are broken outputs, and leaving them out
+  // of validation without a word meant Validate could report a clean tender
+  // while the export gate refused the very same document: the owner is told
+  // nothing is wrong, then cannot export. Name them here.
+  const identityBroken = (tender.generatedDocuments as any[]).filter(
+    (doc) => String(doc.generationStatus ?? "").toUpperCase() === "GENERATED"
+      && String(doc.validationStatus ?? "").toUpperCase() !== "SUPERSEDED"
+      && !hasConsistentArtifactIdentity(doc),
+  );
+  for (const doc of identityBroken) {
+    const label = doc.exactFileName ?? doc.name ?? doc.id;
+    issues.push({
+      code: "ARTIFACT_IDENTITY_MISMATCH",
+      severity: "BLOCK",
+      message: `"${label}" is not the kind of file it claims to be — its name, declared format and actual bytes disagree. A file that will not open cannot be submitted; regenerate or re-attach it.`,
+    });
   }
 
   // Validate only final-export candidates. Internal control rows, original-replacement placeholders,

@@ -966,28 +966,33 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
 export async function checkFullExportReadiness(opts: { tenderId: string; docs: ExportReadyDocument[]; requireFileContent?: boolean }): Promise<ExportReadinessResult> {
   const perDoc = checkExportReadiness(opts.docs, { requireFileContent: opts.requireFileContent });
   const docxHygieneFailures = await checkDocxHygieneReadiness(opts.docs);
-  // Byte readiness can only be judged when the caller actually loaded the
-  // bytes. Callers passing requireFileContent=false select document METADATA
-  // ONLY (see getFinalSubmissionReadiness), so fileContent is undefined on
-  // every row — and running the check anyway reported MISSING_FILE_BYTES for
-  // every document, including ones holding several KB of verified content. The
-  // ZIP download takes exactly that path, so the final package was refused on
-  // evidence that was never fetched.
+  // Run the byte/identity check ALWAYS. requireFileContent only decides whether
+  // ABSENT bytes are themselves a failure.
   //
-  // This does not weaken the package: the ZIP path now requests the content
-  // (so this check runs on real bytes), and assembly independently re-reads and
-  // verifies every file before writing the archive.
-  // Run the byte/identity check ALWAYS, telling it whether missing bytes are
-  // themselves a failure.
+  // Two separate defects met here. The first: callers passing
+  // requireFileContent=false select document METADATA ONLY (see
+  // getFinalSubmissionReadiness), so running the byte check reported
+  // MISSING_FILE_BYTES for every row, including ones holding several KB of
+  // verified content — the ZIP download takes exactly that path, so the package
+  // was refused on evidence never fetched. The fix at the time was to skip the
+  // whole check on that flag.
   //
-  // This used to be skipped entirely unless requireFileContent was true, which
-  // conflated "must bytes be present" with "were bytes loaded".
-  // auto-finalize's runCanonicalValidation SELECTS fileContent and passes
-  // false, so the single pass that decides validationStatus never inspected
-  // the bytes it was holding — and a "Technical Proposal.pdf" declared DOCX,
-  // containing DOCX bytes, was marked VALIDATED and became export-ready.
+  // That created the second: the flag conflates "must bytes be present" with
+  // "were bytes loaded". auto-finalize's runCanonicalValidation SELECTS
+  // fileContent and passes false, so the single pass that decides
+  // validationStatus never inspected the bytes it was holding, and a
+  // "Technical Proposal.pdf" declared DOCX containing DOCX bytes was marked
+  // VALIDATED and became export-ready.
   //
-  // Metadata-only callers are unaffected: with requireBytes false, a row with
+  // Skipping was also justified by "assembly independently re-reads and
+  // verifies every file before writing the archive". Assembly re-read and
+  // verified the HASH round-trip, which by construction cannot notice a
+  // mislabelled file — so that justification was load-bearing and false. It is
+  // true now (final-zip-assembly resolves artifact identity per entry), but the
+  // check belongs here regardless: a mislabelled artifact must fail validation,
+  // not merely fail to be packaged.
+  //
+  // Metadata-only callers stay unaffected: with requireBytes false a row with
   // no bytes is not reported as missing, only its labels are cross-checked.
   const byteFailures = await checkExportFileByteReadiness(
     opts.docs,
