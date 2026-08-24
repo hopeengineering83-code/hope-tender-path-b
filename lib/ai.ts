@@ -1274,7 +1274,15 @@ async function generateWithDeepSeek(
     };
 
     if (data.error?.message) {
-      const sanitized = data.error.message.replace(/sk-[^\s"']{8,}/g, "[REDACTED]").slice(0, 200);
+      // Four sites in this file each carried their own redaction regex, and
+      // every one of them knew a strict subset of lib/sanitize-error.ts —
+      // none matched `Bearer <token>`, which is the form a provider echoes
+      // back when it quotes the Authorization header of a rejected request.
+      // A canary key sent to a 401 that echoed the header was printed in full
+      // by this path while the same failure was correctly redacted in the
+      // operator diagnostic, because that surface applies the shared redactor
+      // a second time. One redactor, so the patterns cannot diverge again.
+      const sanitized = redactSecrets(data.error.message).slice(0, 200);
       logger.warn(`[ai] DeepSeek API error: ${sanitized}`);
       return null;
     }
@@ -1292,7 +1300,7 @@ async function generateWithDeepSeek(
       logger.warn(`[ai] DeepSeek fetch timed out after ${DEEPSEEK_DEFAULT_TIMEOUT_MS}ms — falling through.`);
       return null;
     }
-    const sanitized = msg.replace(/sk-[^\s"']{8,}/g, "[REDACTED]").slice(0, 200);
+    const sanitized = redactSecrets(msg).slice(0, 200);
     if (/api\s+key\s+invalid|invalid\s+api\s+key|incorrect\s+api\s+key|authentication|unauthorized/i.test(msg)) {
       const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
       if (strictAuth) throw err;
@@ -1385,7 +1393,7 @@ async function generateOpenAICompatible(params: {
 
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      const sanitized = body.replace(/(sk|gsk)[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]").slice(0, 200);
+      const sanitized = redactSecrets(body).slice(0, 200);
       if (res.status === 401 || res.status === 403) {
         const strictAuth = ["1", "true", "yes"].includes((process.env.AI_PROVIDER_STRICT_AUTH || "").trim().toLowerCase());
         if (strictAuth) throw new Error(`${providerLabel} API key invalid (${res.status}): ${sanitized}`);
@@ -1405,7 +1413,7 @@ async function generateOpenAICompatible(params: {
 
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
     if (data.error?.message) {
-      const sanitized = data.error.message.replace(/(sk|gsk)[-_][A-Za-z0-9-_]{8,}/g, "[REDACTED]").slice(0, 200);
+      const sanitized = redactSecrets(data.error.message).slice(0, 200);
       logger.warn(`[ai] ${providerLabel} API error: ${sanitized}`);
       note(`API error: ${sanitized}`);
       return null;
