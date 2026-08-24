@@ -7,6 +7,7 @@ import { assessMatchingQuality } from "../../../../../lib/matching-quality";
 import { ensureCompanyForUser } from "../../../../../lib/company-workspace";
 import { getCompanyIngestionReadiness } from "../../../../../lib/company-ingestion-readiness";
 import { detectAnalysisSourceWithApproval, type AnalysisSource } from "../../../../../lib/engine/analysis-source";
+import { resolveTenderAnalysisState } from "../../../../../lib/engine/analysis-state-resolver";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../../../../../lib/vault-review-provenance";
 import { randomUUID } from "node:crypto";
 
@@ -100,6 +101,9 @@ export async function GET(
     const { extractedTextLength, totalPageCount } = fileMetricsRows[0] ?? { extractedTextLength: 0, totalPageCount: 0 };
 
     const resolvedAnalysisSource = await detectAnalysisSourceWithApproval(prisma, id, tender).catch(() => "UNKNOWN" as const);
+    // Canonical state for the WORDING only — this panel must not tell an owner
+    // that generation will proceed on an analysis the gate has already refused.
+    const analysisStateDetail = await resolveTenderAnalysisState(prisma, id, userId).catch(() => null);
 
     const quality = assessTenderAnalysisQuality({
       requirements: tender.requirements,
@@ -127,6 +131,7 @@ export async function GET(
       selectedReviewedExperts: tender.expertMatches.filter((m) => m.isSelected && canUseVaultRecord(m.expert as ReviewRecordState, "GENERATION")).length,
       selectedReviewedProjects: tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length,
       analysisSource: resolvedAnalysisSource,
+      analysisState: analysisStateDetail?.state ?? null,
     });
 
     const analysisSource = analysisSourceFromResolved(resolvedAnalysisSource, tender.notes);
