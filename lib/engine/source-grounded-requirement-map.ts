@@ -1,4 +1,11 @@
-import { extractRequirementSources, type RequirementSource } from "./requirement-source-extractor";
+import { extractRequirementSources, truncateQuoteVerbatim, type RequirementSource } from "./requirement-source-extractor";
+
+/**
+ * Quote budget for the lexical fallback. Kept distinct from the extractor's
+ * own maxQuoteChars (420) because this path has always used a shorter quote;
+ * naming it makes that a deliberate choice rather than a bare literal.
+ */
+const LEXICAL_FALLBACK_MAX_QUOTE_CHARS = 380;
 
 export type TenderSourceDocument = {
   id: string;
@@ -132,7 +139,10 @@ function lexicalFallback(input: {
     sourceTenderFileName: input.source.name ?? null,
     sourcePageNumber: best.pageNumber,
     sourceSectionHeading: best.sectionHeading,
-    sourceExactQuote: best.paragraph.length > 380 ? `${best.paragraph.slice(0, 379).trim()}…` : best.paragraph,
+    // Same verbatim-substring contract as the extractor: this quote is proved
+    // by containment against the file's extracted text, so it must never carry
+    // a character the tender does not contain.
+    sourceExactQuote: truncateQuoteVerbatim(best.paragraph, LEXICAL_FALLBACK_MAX_QUOTE_CHARS),
     sourceConfidence: Math.min(0.85, Math.max(0.2, best.score)),
   };
 }
