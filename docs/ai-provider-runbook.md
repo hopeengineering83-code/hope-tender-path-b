@@ -1,56 +1,68 @@
 # AI Provider Operator Runbook
 
 Operational guide for the AI provider architecture. The single source of truth
-for provider identity, order, and configuration is the authoritative registry
-`lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`).
+for provider identity, order, and configuration is `lib/ai-provider-catalog.cjs`
+(`CANONICAL_AI_PROVIDER_ORDER`), re-exported by `lib/ai-provider-registry.ts`.
+The order printed below is checked against that catalog by
+`tests/ai-provider-doc-drift.test.ts`.
 
 ## Canonical order
 
 ```
-Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude → deterministic draft fallback
+Gemini → Groq → Mistral → Z.ai GLM → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic/Claude → deterministic draft fallback
 ```
 
-The first five are the currently-working providers. Anthropic/Claude is the
-last-resort, emergency-only provider. The deterministic draft fallback is NOT
-an AI provider and its output can never pass final proposal export gates.
+Every configured provider participates automatically in this order — there is no
+free-only routing mode, no minimum number of free providers, and no exclusion of
+paid providers. Configured model identifiers are used exactly as given.
+Anthropic/Claude is the last-resort, emergency-only provider. The deterministic
+draft fallback is NOT an AI provider and its output can never pass final
+proposal export gates.
 
 ## Environment variables (set in Vercel → Settings → Environment Variables)
 
 | Provider | API key | Base URL (optional) | Models (optional) |
 | --- | --- | --- | --- |
+| Gemini | `GEMINI_API_KEY` | — | `GEMINI_MODEL` / `GEMINI_ANALYSIS_MODEL` (default `gemini-2.5-flash`) / `GEMINI_EXTRACTION_MODEL` (fast default `gemini-2.0-flash`) |
+| Groq | `GROQ_API_KEY` | `GROQ_BASE_URL` | `GROQ_PROPOSAL_MODEL` (no default — must be set) |
+| Mistral | `MISTRAL_API_KEY` | `MISTRAL_BASE_URL` | `MISTRAL_PROPOSAL_MODEL` / `MISTRAL_ANALYSIS_MODEL` / `MISTRAL_FAST_MODEL` |
 | Z.ai GLM | `ZAI_API_KEY` | `ZAI_BASE_URL` (default `https://api.z.ai/api/paas/v4`) | `ZAI_PROPOSAL_MODEL` / `ZAI_ANALYSIS_MODEL` / `ZAI_FAST_MODEL` (default `glm-4.7-flash`) |
 | Cerebras | `CEREBRAS_API_KEY` | `CEREBRAS_BASE_URL` (default `https://api.cerebras.ai/v1`) | `CEREBRAS_PROPOSAL_MODEL` / `CEREBRAS_ANALYSIS_MODEL` / `CEREBRAS_FAST_MODEL` (default `gpt-oss-120b`) |
-| Mistral | `MISTRAL_API_KEY` | `MISTRAL_BASE_URL` | `MISTRAL_PROPOSAL_MODEL` / `MISTRAL_ANALYSIS_MODEL` / `MISTRAL_FAST_MODEL` |
-| Groq | `GROQ_API_KEY` | `GROQ_BASE_URL` | `GROQ_PROPOSAL_MODEL` |
-| OpenRouter | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL` | `OPENROUTER_PROPOSAL_MODEL` — **must end in `:free`** |
-| Gemini | `GEMINI_API_KEY` | — | `GEMINI_MODEL` / `GEMINI_ANALYSIS_MODEL` |
+| OpenRouter | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL` | `OPENROUTER_PROPOSAL_MODEL` — no default; set it explicitly. No `:free` requirement |
 | OpenAI | `OPENAI_API_KEY` | `OPENAI_BASE_URL` | `OPENAI_PROPOSAL_MODEL` |
 | Together | `TOGETHER_API_KEY` | `TOGETHER_BASE_URL` | `TOGETHER_PROPOSAL_MODEL` / `TOGETHER_ANALYSIS_MODEL` / `TOGETHER_FAST_MODEL` |
 | DeepSeek | `DEEPSEEK_API_KEY` | `DEEPSEEK_BASE_URL` | `DEEPSEEK_PROPOSAL_MODEL` |
 | Anthropic | `ANTHROPIC_API_KEY` | — | `ANTHROPIC_PROPOSAL_MODELS` |
 
-Optional: `AI_MAX_PROVIDER_ATTEMPTS` (default `3`) caps actual outbound attempts
-per request/chunk.
+Optional: `AI_MAX_PROVIDER_ATTEMPTS` (default `10`, i.e. the whole canonical
+chain) caps actual outbound attempts per request/chunk. Lowering it means a
+request can report exhaustion with eligible providers still untried.
 
 Never paste real keys into git. Set them only in the Vercel dashboard.
 
-## Vercel Hobby attempt budget
+## Outbound attempt budget
 
-- Max **3 actual outbound provider attempts** per request or AI Analyze chunk.
-- Skipped providers (unconfigured, cooling down, invalid OpenRouter model) do
-  not consume an attempt.
+- Up to **10 actual outbound provider attempts** per request or AI Analyze
+  chunk — the full canonical chain, so that "everything failed" is reported as
+  a genuine outage (`ALL_PROVIDERS_EXHAUSTED`) rather than as a self-imposed
+  budget limit that left eligible providers untried.
+- Skipped providers (unconfigured, cooling down) do not consume an attempt.
 - One shared deadline per route/chunk; at least 5s is reserved for error
-  handling and DB state updates. Fallback providers never run in parallel.
+  handling and DB state updates, and every adapter aborts at `min(its static
+  timeout, time left before the deadline)`. Fallback providers never run in
+  parallel.
 - Invalid API keys and billing-blocked providers are never retried; rate-limit
   and transient network failures fail over to the next eligible provider.
-- Budget exhausted before success → error code `ATTEMPT_BUDGET_EXHAUSTED`
-  (distinct from `ALL_PROVIDERS_EXHAUSTED`).
+- `ATTEMPT_BUDGET_EXHAUSTED` is raised only when the shared deadline hits
+  mid-chain, not in the normal exhaustion case.
 
-## OpenRouter free-model policy
+## OpenRouter model policy
 
-OpenRouter must use an explicit `:free` model. `openrouter/auto` and any
-non-`:free` model are rejected (`CONFIGURATION_INVALID` / `MODEL_UNAVAILABLE`)
-and the provider is skipped so no paid usage is ever created.
+OpenRouter has no default model and the app never guesses one — set
+`OPENROUTER_PROPOSAL_MODEL` / `OPENROUTER_ANALYSIS_MODEL` /
+`OPENROUTER_FAST_MODEL` explicitly. There is **no `:free` suffix requirement**;
+the configured model is the model that is sent, so choose one the account is
+entitled to. A key with no configured model is treated as not configured.
 
 ## Health & diagnostics
 
@@ -90,8 +102,9 @@ prints secrets.
 
 - **A provider is rate-limited:** it cools down automatically; requests skip it
   until the window expires. No action needed unless persistent.
-- **OpenRouter shows CONFIGURATION_INVALID:** set `OPENROUTER_PROPOSAL_MODEL` to
-  an explicit `:free` model.
+- **OpenRouter shows CONFIGURATION_INVALID:** no model is configured. Set
+  `OPENROUTER_PROPOSAL_MODEL` (and the analysis/fast variants) to an explicit
+  model the account can call.
 - **A provider shows UNAUTHORIZED:** the key is invalid — rotate it in Vercel.
 - **Reset cooldowns after fixing a key:** `POST /api/admin/ai-provider-health`
   with `{ "reset": true }` (ADMIN only).

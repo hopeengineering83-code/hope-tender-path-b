@@ -99,7 +99,7 @@ describe("Provider order — exact automatic fallback chain", () => {
     assert.equal(catalog.CANONICAL_AI_PROVIDER_ORDER.length, 10);
   });
 
-  it("automatic order is Z.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic", () => {
+  it("automatic order is Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic", () => {
     assert.deepEqual(
       [...catalog.CANONICAL_AI_PROVIDER_ORDER],
       ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"],

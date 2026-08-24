@@ -42,12 +42,29 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Active Workboard
 
+Reconciled against GitHub on 2026-08-24. **PR #1175 is the only open pull request in
+the repository.** Every other row this board carried had been merged since
+2026-07-10 and was holding file locks against work that no longer existed.
+
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Claude Code (Fable 5) | `claude/pdf-finalization-safety-fos70j` (PR #1034) | Required-PDF finalization safety: pdf-finalizer rewrite, ZIP required-format hard gate, finalize-pdf route | lib/engine/workflow/pdf-finalizer.ts, download route (zip gate + type=pdf), app/api/tenders/[id]/finalize-pdf/ | Open, CI running | Await Hope's review |
-| GLM (Super Z) | `fix/buildplan-document-generation-pipeline` (PR #1030) | Backend pipeline: bulk-review gates, validate fail-closed, DOCX visible-text extraction, OUTSIDE_PLAN_DOCUMENTS blocker | bulk-review, validate, export-readiness.ts, document-quality-validator.ts, final-submission-readiness.ts, download route | Open, CI green | Await Hope's review |
-| Codex | `codex/add-route-driven-verification-tests` (PR #1031) | Normalize panel readiness payloads with shared public envelope | lib/engine/public-readiness-envelope.ts, lifecycle/readiness-score/generation-readiness/export-readiness/workflow-status routes | Open | Await Hope's review |
-| GLM (Super Z) | `fix/main-app-gaps-dead-code-contradictions` (this PR) | Real bugs: orchestrator metadata branch, dead code, format-policy fallback, document-output-state regex, stale docs | tender-lifecycle-orchestrator.ts, download route, export-format-policy.ts, document-output-state.ts, runtime-readiness-facts.ts, generation-readiness-gate.ts, CLAUDE.md, AGENTS.md | Open | Await Hope's review |
+| Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated recovery: artifact identity as one authority, ZIP last-mile identity, verbatim source-quote truncation, provider-diagnostic request deadline, failed-analysis UI truth, provider doc/policy drift | lib/engine/artifact-identity.ts, lib/engine/document-output-state.ts, lib/engine/final-zip-assembly.ts, lib/engine/validate.ts, lib/engine/requirement-source-extractor.ts, lib/ai-provider-capability-test.ts, lib/analysis-quality.ts, admin + ai-providers diagnostic routes, `.env.example`, README.md, docs/ai-provider-*.md | Open (draft), CI green on the pushed head | Await Hope's review. Do not merge; do not promote Production. |
+
+### Released locks
+
+These rows were marked "Open / Await Hope's review" and are all merged. Their file
+locks are released — a lock held on merged work blocks the next agent for no
+reason, which is the failure this section exists to prevent.
+
+| PR | Branch | Merged |
+|---|---|---|
+| [#1030](https://github.com/hopeengineering83-code/hope-tender-path-b/pull/1030) | `fix/buildplan-document-generation-pipeline` | 2026-07-10 |
+| [#1031](https://github.com/hopeengineering83-code/hope-tender-path-b/pull/1031) | `codex/add-route-driven-verification-tests` | 2026-07-10 |
+| [#1032](https://github.com/hopeengineering83-code/hope-tender-path-b/pull/1032) | `fix/main-app-gaps-dead-code-contradictions` | 2026-07-10 |
+| [#1034](https://github.com/hopeengineering83-code/hope-tender-path-b/pull/1034) | `claude/pdf-finalization-safety-fos70j` | 2026-07-10 |
+
+Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTINED**
+— never touch, merge, revive, rebase, or reuse either.
 
 ### Lock rules
 

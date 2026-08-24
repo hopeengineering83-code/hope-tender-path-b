@@ -3,10 +3,17 @@
 // These tests prove that every operator-facing surface (canonical order,
 // /api/ai/health, dashboard provider-health panel, provider status enum,
 // NoAiProviderReadyError, /api/health separation) accurately reflects the
-// current canonical runtime order, which is owned by the authoritative
-// registry lib/ai-provider-registry.ts (CANONICAL_AI_PROVIDER_ORDER):
-//   Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/Claude
+// current canonical runtime order, owned by lib/ai-provider-catalog.cjs
+// (CANONICAL_AI_PROVIDER_ORDER) and re-exported by lib/ai-provider-registry.ts:
+//   Gemini → Groq → Mistral → Z.ai GLM → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic/Claude
 // followed by the deterministic draft fallback as the final non-AI fallback.
+//
+// The documentation assertions at the bottom of this file used to pin the docs
+// to Z.ai-first and to an OpenRouter ':free' requirement. The catalog had led
+// with Gemini and had no ':free' rule for some time, so docs and test agreed
+// with each other and disagreed with the code they described — the test was
+// holding the drift in place instead of catching it. They now derive their
+// expectations from CANONICAL_CHAIN.
 
 import { describe, it, before, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -58,7 +65,7 @@ describe("lib/ai-provider-policy.ts mirrors the runtime chain", () => {
     assert.deepEqual([...CANONICAL_AI_PROVIDER_CHAIN], [...CANONICAL_CHAIN]);
   });
 
-  it("CANONICAL_AI_PROVIDER_RANK assigns zai=1 ... anthropic=10", () => {
+  it("CANONICAL_AI_PROVIDER_RANK assigns gemini=1 ... anthropic=10", () => {
     CANONICAL_CHAIN.forEach((p, i) => {
       assert.equal(CANONICAL_AI_PROVIDER_RANK[p], i + 1, `${p} rank should be ${i + 1}`);
     });
@@ -316,9 +323,19 @@ describe("/api/health app/database health remains separate from AI provider heal
 describe("docs/ai-provider-order.md reflects the runtime order", () => {
   const doc = readFileSync("docs/ai-provider-order.md", "utf8");
 
-  it("lists Z.ai GLM as #1 and Cerebras as #2", () => {
-    assert.match(doc, /^1\. Z\.ai GLM/m);
-    assert.match(doc, /^2\. Cerebras/m);
+  it("lists every provider at its canonical rank", () => {
+    const DISPLAY: Record<string, string> = {
+      gemini: "Gemini", groq: "Groq", mistral: "Mistral", zai: "Z.ai GLM",
+      cerebras: "Cerebras", openrouter: "OpenRouter", openai: "OpenAI",
+      together: "Together", deepseek: "DeepSeek", anthropic: "Anthropic / Claude",
+    };
+    CANONICAL_CHAIN.forEach((provider, index) => {
+      assert.match(
+        doc,
+        new RegExp(`^${index + 1}\\. ${DISPLAY[provider].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"),
+        `docs/ai-provider-order.md should list ${provider} at rank ${index + 1}`,
+      );
+    });
   });
 
   it("lists Anthropic / Claude as the tenth (last AI) provider", () => {
@@ -330,9 +347,9 @@ describe("docs/ai-provider-order.md reflects the runtime order", () => {
     assert.match(doc, /NOT an AI provider/i);
   });
 
-  it("documents the attempt budget and OpenRouter :free policy", () => {
+  it("documents the attempt budget and states that OpenRouter has no ':free' requirement", () => {
     assert.match(doc, /ATTEMPT_BUDGET_EXHAUSTED/);
-    assert.match(doc, /:free/);
+    assert.match(doc, /no `?:free`? suffix requirement/i);
   });
 });
 
@@ -341,8 +358,8 @@ describe("docs/ai-provider-order.md reflects the runtime order", () => {
 describe(".env.example tier labels reflect the runtime order", () => {
   const env = readFileSync(".env.example", "utf8");
 
-  it("header comment lists the canonical automatic order (Z.ai first)", () => {
-    assert.match(env, /Z\.ai → Cerebras → Mistral → Groq → OpenRouter → Gemini → OpenAI → Together → DeepSeek → Anthropic/);
+  it("header comment lists the canonical automatic order (Gemini first)", () => {
+    assert.match(env, /Gemini → Groq → Mistral → Z\.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic/);
   });
 
   it("documents that all 10 providers are automatic", () => {
@@ -355,8 +372,8 @@ describe(".env.example tier labels reflect the runtime order", () => {
     assert.match(env, /max_completion_tokens/);
   });
 
-  it("documents the OpenRouter :free requirement", () => {
-    assert.match(env, /:free/);
+  it("states that OpenRouter has no ':free' requirement", () => {
+    assert.match(env, /does not require a ':free' suffix/);
   });
 });
 

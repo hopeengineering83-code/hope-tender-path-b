@@ -13,11 +13,13 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const catalog = require("../lib/ai-provider-catalog.cjs");
 
-// The documented canonical order (CLAUDE.md), zero-paid first:
-// Gemini → Groq → Mistral → Z.ai → OpenRouter → Cerebras → OpenAI → Together → DeepSeek → Anthropic
+// The documented canonical order:
+// Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic
 //
-// The first five are the automatic chain; the rest require paid access and are
-// enumerated only so health and diagnostics can report on them.
+// All ten are the automatic chain. Access tier does not gate participation:
+// every configured provider is contacted in this order. REQUIRED_ORDER below is
+// deliberately hand-written — it is the PIN this audit checks the catalog
+// against, so deriving it from the catalog would make the check vacuous.
 const REQUIRED_ORDER = ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"];
 const REQUIRED_LABELS = "Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter → OpenAI → Together → DeepSeek → Anthropic";
 const REQUIRED_AUTOMATIC_ORDER = REQUIRED_ORDER;
