@@ -157,9 +157,16 @@ export function AIAnalyzePanel({
     };
   }, [loadEngineState, loadReadiness, tenderId]);
 
+  // Self-limiting by construction: `engineRunning` is derived from an ACTIVE
+  // job, so this interval clears itself when the job ends. It only needed the
+  // hidden-tab guard the other two pollers on this page already use — a
+  // background tab does no work, and the first tick after it is shown again
+  // picks up the result.
   useEffect(() => {
     if (!engineState?.engineRunning || deletedRef.current) return;
-    const timer = window.setInterval(() => void loadEngineState(), POLL_INTERVAL_MS);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadEngineState();
+    }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [engineState?.engineRunning, loadEngineState]);
 

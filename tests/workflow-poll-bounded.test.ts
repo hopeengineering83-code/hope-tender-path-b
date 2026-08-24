@@ -92,6 +92,33 @@ describe("the terminal-state poll does not run at in-flight speed forever", () =
   });
 });
 
+describe("no client poller anywhere hits the network from a hidden tab", () => {
+  // One rule, applied everywhere, so a background tab cannot quietly generate
+  // database load. Enumerated from source rather than listed by hand, so a new
+  // unguarded poller added later fails this test instead of shipping.
+  it("every setInterval that polls holds a document.hidden guard", () => {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    const files = execSync(
+      "grep -rl 'setInterval' --include=*.tsx components app || true",
+      { encoding: "utf8" },
+    ).split("\n").filter(Boolean);
+    assert.ok(files.length > 0, "expected to find client intervals to audit");
+
+    const unguarded: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(file, "utf8");
+      for (const chunk of source.split("setInterval(").slice(1)) {
+        const head = chunk.slice(0, 260);
+        // A self-clearing, bounded retry loop is not a poller — it stops on its
+        // own and never outlives the interaction that started it.
+        if (head.includes("clearInterval(timer)")) continue;
+        if (!head.includes("document.hidden")) unguarded.push(file);
+      }
+    }
+    assert.deepEqual([...new Set(unguarded)], [], "these files poll without a visibility guard");
+  });
+});
+
 describe("every workflow poll on this page obeys the same hidden-tab rule", () => {
   it("the page-level sentinel pauses when the tab is hidden", () => {
     assert.match(read(BANNER), /if \(!document\.hidden\) void loadCanonicalWorkflow\(\);/);
@@ -103,6 +130,10 @@ describe("every workflow poll on this page obeys the same hidden-tab rule", () =
 
   it("the panel's downstream poll pauses when the tab is hidden", () => {
     assert.match(read(PANEL), /if \(!document\.hidden\) void loadDownstreamWorkflow\(\);/);
+  });
+
+  it("the AI Analyze panel's engine poll pauses when the tab is hidden", () => {
+    assert.match(read("components/ai-analyze-panel.tsx"), /if \(!document\.hidden\) void loadEngineState\(\);/);
   });
 
   it("leaves no unguarded interval polling a tender endpoint in this panel", () => {
