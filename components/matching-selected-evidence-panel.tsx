@@ -54,7 +54,14 @@ type Props = {
 };
 
 const ELIGIBLE_EVIDENCE_TRUST_LEVELS = new Set(["SOURCE_VERIFIED", "REVIEWED"]);
+/** Cadence while something is genuinely in flight and the answer changes fast. */
 const POLL_INTERVAL_MS = 3_000;
+/**
+ * Cadence when nothing is in flight. Matches the page-level sentinel in
+ * requirement-truth-banner.tsx so the same page does not poll the same endpoint
+ * on two different clocks.
+ */
+const IDLE_POLL_INTERVAL_MS = 8_000;
 
 /**
  * How long a QUEUED Engine job may wait before the wait itself is the story.
@@ -226,17 +233,41 @@ export function MatchingSelectedEvidencePanel({
     };
   }, [loadDownstreamWorkflow, loadReadiness, tenderId]);
 
+  // `engineRunning` is transient — it is true only while a job is actually in
+  // flight — so polling on it stops by itself when the job ends. The hidden-tab
+  // guard matches the page-level sentinel in requirement-truth-banner.tsx: a
+  // background tab does no work, and the first tick after it is shown again
+  // picks the result up.
   useEffect(() => {
     if (!readiness?.engineRunning || deletedRef.current) return;
-    const timer = window.setInterval(() => void loadReadiness(), POLL_INTERVAL_MS);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadReadiness();
+    }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
   }, [loadReadiness, readiness?.engineRunning]);
 
+  // `engineComplete` is NOT transient. The route computes it as
+  // `latestJob.status === "SUCCEEDED" && !engineRunning`, so once the Engine has
+  // succeeded it stays true for the life of the tender. Polling on that condition
+  // alone therefore never stopped: any tender whose Engine had ever succeeded
+  // re-hit the canonical workflow endpoint every 3s for as long as the tab was
+  // open, in the foreground or the background, whether or not anything was
+  // happening. A single idle tab was observed making 156 requests to that
+  // endpoint in 18 minutes — against a DB-backed canonical snapshot on a pooled
+  // connection that has already shown reachability failures under load.
+  //
+  // The condition stays as it was, because liveness must not regress: a
+  // downstream job can be started elsewhere and still has to be discovered here.
+  // What changes is the cost of waiting — fast only while something is actually
+  // in flight, idle cadence otherwise, and nothing at all in a hidden tab.
   useEffect(() => {
     if (!readiness?.engineComplete || deletedRef.current) return;
-    const timer = window.setInterval(() => void loadDownstreamWorkflow(), POLL_INTERVAL_MS);
+    const intervalMs = downstream?.activeJob ? POLL_INTERVAL_MS : IDLE_POLL_INTERVAL_MS;
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void loadDownstreamWorkflow();
+    }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [loadDownstreamWorkflow, readiness?.engineComplete]);
+  }, [loadDownstreamWorkflow, readiness?.engineComplete, downstream?.activeJob]);
 
   const analysisCurrent = readiness?.analysisCurrent === true;
   const engineRunning = readiness?.engineRunning === true;
