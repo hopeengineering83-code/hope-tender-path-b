@@ -64,8 +64,11 @@ describe("provider capability test — the real diagnostic", () => {
     await withNoProviderKeys(async () => {
       const { testAutomaticChainCapabilities } = await import("../lib/ai-provider-capability-test");
       const { getAutomaticProviderOrder } = await import("../lib/ai-provider-registry");
-      const reports = await testAutomaticChainCapabilities({ capabilities: ["connectivity"] });
+      const { reports, notTested, deadlineExceeded } = await testAutomaticChainCapabilities({ capabilities: ["connectivity"] });
       assert.deepEqual(reports.map((r) => r.provider), [...getAutomaticProviderOrder()]);
+      // No deadline armed: the run is complete and nothing is left untested.
+      assert.equal(deadlineExceeded, false);
+      assert.deepEqual(notTested, []);
       // With no keys, nothing is eligible and nothing claims to be usable.
       assert.ok(reports.every((r) => r.eligible === false));
       assert.ok(reports.every((r) => r.usableForAiAnalyze === false));

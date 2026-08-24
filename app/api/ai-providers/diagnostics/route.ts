@@ -5,6 +5,7 @@ import {
   testAutomaticChainCapabilities,
   verifiedAnalysisProviders,
   billingBlockedProviders,
+  diagnosticDeadlineFrom,
   type CapabilityName,
 } from "../../../../lib/ai-provider-capability-test";
 import { automaticChainDisplay } from "../../../../lib/ai-provider-registry";
@@ -54,15 +55,27 @@ export async function GET(req: Request) {
       ? [requested]
       : (["connectivity", "analysis", "generation"] as const);
 
-  const reports = await testAutomaticChainCapabilities({ capabilities });
+  // Up to three real capability tests against each of ten providers, serially,
+  // inside a 60s route. One request-level deadline bounds the whole thing, so
+  // the route returns what it measured instead of being killed with no body.
+  const run = await testAutomaticChainCapabilities({
+    capabilities,
+    deadlineAt: diagnosticDeadlineFrom(maxDuration),
+  });
+  const reports = run.reports;
   const analysisReady = verifiedAnalysisProviders(reports);
   const billingBlocked = billingBlockedProviders(reports);
-  const tested = reports.filter((r) => r.eligible);
+  const tested = reports.filter((r) => r.eligible && r.diagnosticState !== "NOT_TESTED");
   const anyKeyPresent = reports.some((r) => r.keyPresent);
 
   return NextResponse.json({
     live: true,
     activeChain: automaticChainDisplay(),
+    // A partial run must never read as a complete one. `aiAnalyzeReady: false`
+    // with providers left untested means "not proven yet", not "proven broken".
+    partial: run.deadlineExceeded,
+    notTested: run.notTested,
+    chainLength: run.chainLength,
     // The headline is ANALYSIS readiness, not "something answered". A chain
     // where every provider returns a cheerful "OK" to a ping and none can
     // produce structured output is not a working chain, and reporting it as
@@ -74,6 +87,8 @@ export async function GET(req: Request) {
     testedCount: tested.length,
     summary: analysisReady.length > 0
       ? `${analysisReady.length} of ${tested.length} tested provider(s) completed a real AI Analyze extraction — AI Analyze can run.`
+      : run.deadlineExceeded
+        ? `The diagnostic reached its time limit after testing ${tested.length} of ${run.chainLength} provider(s); ${run.notTested.length} were not tested. No provider tested so far completed a real AI Analyze extraction — re-test the remaining providers individually before concluding the chain is broken.`
       : tested.length === 0 && !anyKeyPresent
         ? `No provider in the active chain is configured. Set at least one provider key (for example GEMINI_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY or ZAI_API_KEY) and redeploy.`
         : tested.length === 0

@@ -8,8 +8,10 @@ import {
   testProviderCapabilities,
   testAutomaticChainCapabilities,
   verifiedAnalysisProviders,
+  diagnosticDeadlineFrom,
   type CapabilityName,
   type ProviderCapabilityReport,
+  type UntestedProvider,
 } from "@/lib/ai-provider-capability-test";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +43,7 @@ function normalizeCapability(raw: string | null | undefined): CapabilityName {
 
 export type ProviderTestResult = {
   provider: string;
-  status: "ok" | "failed" | "skipped_cooldown" | "not_configured";
+  status: "ok" | "failed" | "skipped_cooldown" | "not_configured" | "not_tested";
   capability: CapabilityName;
   model: string;
   durationMs: number;
@@ -57,6 +59,12 @@ export type ProviderTestSummary = {
   failed: number;
   skipped: number;
   notConfigured: number;
+  /** Providers the request never got to. Non-zero means the answer is partial. */
+  notTested: number;
+  /** Providers in the active chain, so `tested` is readable as N of M. */
+  chainLength: number;
+  /** True when the run stopped early at its own deadline. */
+  partial: boolean;
 };
 
 /** Flatten a capability report into the row shape the operator grid renders. */
@@ -67,6 +75,11 @@ function toRows(report: ProviderCapabilityReport): ProviderTestResult[] {
     status:
       result.status === "ok"
         ? "ok"
+        // Not a verdict on the provider: the request ran out of time before it
+        // was contacted. Folding this into "failed" or "not configured" would
+        // invent a result the diagnostic never measured.
+        : result.status === "not_tested"
+        ? "not_tested"
         : result.status === "skipped"
           // A provider excluded for requiring payment is NOT "not configured" —
           // the key may well be present. Reporting it as unconfigured would send
@@ -81,24 +94,59 @@ function toRows(report: ProviderCapabilityReport): ProviderTestResult[] {
   }));
 }
 
-function summarizeResults(results: ProviderTestResult[]): ProviderTestSummary {
+function summarizeResults(
+  results: ProviderTestResult[],
+  untested: readonly UntestedProvider[],
+  chainLength: number,
+): ProviderTestSummary {
   return {
     tested: results.length,
     ok: results.filter((r) => r.status === "ok").length,
     failed: results.filter((r) => r.status === "failed").length,
     skipped: results.filter((r) => r.status === "skipped_cooldown").length,
     notConfigured: results.filter((r) => r.status === "not_configured").length,
+    notTested: results.filter((r) => r.status === "not_tested").length + untested.length,
+    chainLength,
+    partial: untested.length > 0 || results.some((r) => r.status === "not_tested"),
   };
 }
 
 async function runTests(
   provider: AiProviderName | null,
   capability: CapabilityName,
-): Promise<{ reports: ProviderCapabilityReport[]; results: ProviderTestResult[] }> {
-  const reports = provider
-    ? [await testProviderCapabilities(provider, { capabilities: [capability] })]
-    : await testAutomaticChainCapabilities({ capabilities: [capability] });
-  return { reports, results: reports.flatMap(toRows) };
+): Promise<{
+  reports: ProviderCapabilityReport[];
+  results: ProviderTestResult[];
+  notTested: UntestedProvider[];
+  deadlineExceeded: boolean;
+  chainLength: number;
+}> {
+  // One deadline for the whole request, derived from this route's own
+  // maxDuration so the two can never drift. A full chain is up to ten real
+  // provider round-trips; without this the loop simply ran until the platform
+  // killed the worker, returning a bodiless 504 that discarded every provider
+  // result already measured.
+  const deadlineAt = diagnosticDeadlineFrom(maxDuration);
+
+  if (provider) {
+    const report = await testProviderCapabilities(provider, { capabilities: [capability], deadlineAt });
+    return {
+      reports: [report],
+      results: toRows(report),
+      notTested: [],
+      deadlineExceeded: report.diagnosticState === "NOT_TESTED",
+      chainLength: 1,
+    };
+  }
+
+  const run = await testAutomaticChainCapabilities({ capabilities: [capability], deadlineAt });
+  return {
+    reports: run.reports,
+    results: run.reports.flatMap(toRows),
+    notTested: run.notTested,
+    deadlineExceeded: run.deadlineExceeded,
+    chainLength: run.chainLength,
+  };
 }
 
 function isKnownProvider(value: string): value is AiProviderName {
@@ -122,14 +170,15 @@ export async function GET(req: Request) {
   const provider = requestedProvider && isKnownProvider(requestedProvider) ? requestedProvider : null;
   const capability = normalizeCapability(url.searchParams.get("capability"));
 
-  const { reports, results } = await runTests(provider, capability);
+  const { reports, results, notTested, deadlineExceeded, chainLength } = await runTests(provider, capability);
 
   await logAction({
     userId: actor.id,
     action: "CREATE",
     entityType: "AiProviderHealth",
     entityId: provider ?? "batch",
-    description: `Operator ran batch ${capability} test for ${provider ?? "the active provider chain"}`,
+    description: `Operator ran batch ${capability} test for ${provider ?? "the active provider chain"}`
+      + (deadlineExceeded ? ` (partial: ${notTested.length} provider(s) not tested before the request deadline)` : ""),
   });
 
   return NextResponse.json({
@@ -138,6 +187,9 @@ export async function GET(req: Request) {
     activeChain: automaticChainDisplay(),
     analysisVerifiedProviders: verifiedAnalysisProviders(reports),
     results,
+    summary: summarizeResults(results, notTested, chainLength),
+    notTested,
+    partial: deadlineExceeded,
   });
 }
 
@@ -157,15 +209,16 @@ export async function POST(req: Request) {
   const provider = requestedProvider && isKnownProvider(requestedProvider) ? requestedProvider : null;
   const capability = normalizeCapability(typeof body.capability === "string" ? body.capability : null);
 
-  const { reports, results } = await runTests(provider, capability);
-  const summary = summarizeResults(results);
+  const { reports, results, notTested, deadlineExceeded, chainLength } = await runTests(provider, capability);
+  const summary = summarizeResults(results, notTested, chainLength);
 
   await logAction({
     userId: actor.id,
     action: provider ? "AI_PROVIDER_FAILOVER" : "CREATE",
     entityType: "AiProviderHealth",
     entityId: provider ?? "chain",
-    description: `Operator ran ${capability} test for ${provider ?? "the active provider chain"}: ${summary.ok}/${summary.tested} ok`,
+    description: `Operator ran ${capability} test for ${provider ?? "the active provider chain"}: ${summary.ok}/${summary.tested} ok`
+      + (deadlineExceeded ? `, ${summary.notTested} not tested (request deadline)` : ""),
   });
 
   return NextResponse.json({
@@ -174,5 +227,7 @@ export async function POST(req: Request) {
     analysisVerifiedProviders: verifiedAnalysisProviders(reports),
     results,
     summary,
+    notTested,
+    partial: deadlineExceeded,
   });
 }

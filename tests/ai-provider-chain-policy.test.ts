@@ -99,7 +99,10 @@ describe("admin provider-chain ping budget", () => {
   });
 
   it("tests only the requested provider when one is named", () => {
-    assert.match(route, /testProviderCapabilities\(provider, \{ capabilities: \[capability\] \}\)/);
+    // Matched as a prefix, not as the whole argument object: the call also
+    // carries the request deadline now, and pinning the exact literal made this
+    // assert the punctuation rather than the behaviour it is named for.
+    assert.match(route, /testProviderCapabilities\(provider, \{ capabilities: \[capability\][,\s}]/);
   });
 
   it("tests the ACTIVE chain when none is named — not every provider that has a key", () => {
