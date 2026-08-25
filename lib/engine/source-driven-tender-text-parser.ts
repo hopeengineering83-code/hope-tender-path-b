@@ -540,6 +540,9 @@ function tryParseDateToIso(display: string): string | null {
 // One rule, used by every consumer below, so the negation logic cannot diverge
 // between the bid-security reader and the required-documents extractor.
 
+/** The one bid-security pattern, shared by both readers below. */
+const BID_SECURITY_PATTERN = /bid\s+bond|bid\s+security/i;
+
 /** True when this clause names something in order to say it is NOT needed. */
 function clauseDeniesRequirement(clause: string): boolean {
   const text = clause.trim();
@@ -552,10 +555,20 @@ function clauseDeniesRequirement(clause: string): boolean {
   );
 }
 
-/** Clause-sized units. Obligation and denial live at sentence/line scale. */
+/**
+ * Clause-sized units. Obligation and denial live at sentence/line scale — and
+ * also on either side of a contrast.
+ *
+ * "Bid security is not required at EOI stage, but shortlisted firms shall
+ * provide bid security with the RFP submission" is ONE sentence carrying a
+ * scoped denial AND a real obligation. Judging it as a single unit let the
+ * denial cancel the obligation, so a shortlisted firm would have submitted with
+ * no bid security. Splitting on the contrast keeps each half answerable on its
+ * own terms.
+ */
 function clausesOf(text: string): string[] {
   return text
-    .split(/(?<=[.;!?])\s+|[\n\r]+/)
+    .split(/(?<=[.;!?])\s+|[\n\r]+|,?\s+(?:but|however|although|though|whereas|except\s+that)\s+/i)
     .map((part) => part.trim())
     .filter(Boolean);
 }
@@ -837,15 +850,22 @@ export function parseTenderDocumentIntelligence(
   // many consultancy RFPs say exactly that — so this turned an explicit absence
   // into a phantom commercial obligation on an ordinary class of tender.
   // Presence and absence must both survive parsing.
+  //
+  // Scanned over the SAME clause units the required-documents extractor uses.
+  // Reading only the first regex match in the document made the two disagree:
+  // a source that denied bid security in one sentence and required it in the
+  // next produced bidBond=null alongside a required "Bid Bond" document. One
+  // clause set, one denial rule, so the two readers cannot diverge.
   let bidBond: string | null = null;
-  const bidBondMatch = text.match(/([^\n\r]{0,60}?)(?:bid\s+bond|bid\s+security)\b:?\s*([^\n\r]{0,100})/i);
-  if (bidBondMatch) {
-    const before = (bidBondMatch[1] ?? "").trim();
-    const after = (bidBondMatch[2] ?? "").trim();
-    // Same shared rule the required-documents extractor uses, so a denial can
-    // never be read as an obligation on one path and not the other.
-    const denied = clauseDeniesRequirement(`${before} bid security ${after}`);
-    if (!denied && after.length >= 3) bidBond = after;
+  for (const clause of clausesOf(text)) {
+    if (!BID_SECURITY_PATTERN.test(clause)) continue;
+    if (clauseDeniesRequirement(clause)) continue;
+    const detail = clause.match(/(?:bid\s+bond|bid\s+security)\b:?\s*(.{0,100})/i);
+    const after = (detail?.[1] ?? "").trim();
+    if (after.length >= 3) {
+      bidBond = after;
+      break;
+    }
   }
 
   // Mandatory site visit

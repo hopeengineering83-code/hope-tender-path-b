@@ -226,3 +226,88 @@ describe("Case D — a real obligation is recognised without MUST or SHALL", () 
     }
   });
 });
+
+// ─── Denial scoping — a contrast must not cancel a real obligation ───────────
+//
+// Reading "mention != obligation" is only half the rule. The other half is that
+// a denial is SCOPED: it rules out what its own clause rules out, and nothing
+// further. Two failures live here, and both were real:
+//
+//   * a denial and an obligation inside ONE sentence, joined by "but", let the
+//     denial cancel the obligation — a shortlisted firm would have submitted
+//     with no bid security at all;
+//   * the bid-security reader inspected only the first regex match in the
+//     document while the required-documents extractor scanned every clause, so
+//     the two disagreed on the same source.
+//
+// Both readers now share one clause set and one denial rule, so agreement is
+// structural rather than coincidental.
+
+function bidSecurityView(body: string) {
+  const intel = parseTenderDocumentIntelligence(`TENDER\n${body}\nSubmit by email.`);
+  const doc = intel.requiredDocuments.find((d) => /bid\s*(bond|security)/i.test(d.name));
+  return { bidBond: intel.bidBond, documentRequired: doc?.required === true };
+}
+
+describe("a denial rules out only what its own clause rules out", () => {
+  it("denial only — no obligation is created", () => {
+    const view = bidSecurityView("No bid security is required.");
+    assert.equal(view.bidBond, null);
+    assert.equal(view.documentRequired, false);
+  });
+
+  it("affirmative only — the genuine obligation is read", () => {
+    const view = bidSecurityView("Bid Security: 2% of the tender sum, valid for 120 days.");
+    assert.ok(view.bidBond);
+    assert.equal(view.documentRequired, true);
+  });
+
+  it("denial in one sentence, obligation in the next — the obligation survives", () => {
+    const view = bidSecurityView(
+      "Bid security is not required at this stage.\nShortlisted firms shall provide a bid security of 2% with their proposal.",
+    );
+    assert.ok(view.bidBond, "a later affirmative clause must still be read");
+    assert.equal(view.documentRequired, true);
+  });
+
+  it("obligation first, scoped exemption later — the obligation stands", () => {
+    const view = bidSecurityView(
+      "Bid Security: 2% of the tender sum is required.\nBid security is not required for firms on the framework panel.",
+    );
+    assert.ok(view.bidBond);
+    assert.equal(view.documentRequired, true);
+  });
+
+  it("denial and obligation in ONE sentence joined by 'but' — the obligation survives", () => {
+    // The case that matters most: the tender says bid security is not needed
+    // now AND that it will be needed later. Cancelling on the denial alone
+    // would send a shortlisted firm to submission without it.
+    const view = bidSecurityView(
+      "Bid security is not required at EOI stage, but shortlisted firms shall provide bid security with the RFP submission.",
+    );
+    assert.ok(view.bidBond, "a contrast must not cancel the obligation it introduces");
+    assert.equal(view.documentRequired, true);
+  });
+
+  it("the two readers never disagree about the same source", () => {
+    // Structural, not incidental: both consume the same clause units and the
+    // same denial rule, so one cannot say 'required' while the other says null.
+    const bodies = [
+      "No bid security is required.",
+      "Bid Security: 2% of the tender sum, valid for 120 days.",
+      "Bid security is not required at this stage.\nShortlisted firms shall provide a bid security of 2%.",
+      "Bid Security: 2% is required.\nBid security is not required for framework firms.",
+      "Bid security is not required at EOI stage, but shortlisted firms shall provide bid security later.",
+      "Bid security: none",
+      "The bid security shall be an unconditional bank guarantee of USD 50,000.",
+    ];
+    for (const body of bodies) {
+      const view = bidSecurityView(body);
+      assert.equal(
+        view.bidBond !== null,
+        view.documentRequired,
+        `readers disagree on: ${body.replace(/\n/g, " / ")}`,
+      );
+    }
+  });
+});
