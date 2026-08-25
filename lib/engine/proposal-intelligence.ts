@@ -767,12 +767,30 @@ function detectExactSubjectLine(tenderText: string): string | null {
 
 // ─── Differentiators ──────────────────────────────────────────────────────────
 
+/**
+ * Differentiators are derived from SOURCE-DERIVED THEMES and the company's own
+ * evidence — never from the identity of the client.
+ *
+ * This function used to take the raw tender text, and used it for exactly one
+ * thing: `if (/pharo/i.test(tenderText))`, which pushed a claim about "private
+ * -sector investor expectations" into the proposal whenever a particular
+ * client's name appeared anywhere in the document. That is unfounded (a client
+ * name implies nothing about their expectations), unearned (no evidence backs
+ * the claim), and structurally wrong (every neighbouring branch keys on a
+ * theme code, not a customer). It also could not generalise: no other client
+ * could ever receive the behaviour, and any unrelated tender containing that
+ * token received a differentiator it had not earned.
+ *
+ * The parameter is removed along with the branch, deliberately. Dropping only
+ * the regex would leave the capability in place for the next such shortcut;
+ * without the raw text this function cannot key on a client identity at all.
+ * A claim of this kind must come from a theme code derived from the source.
+ */
 function makeDifferentiators(
   company: CompanyLite,
   projects: ProjectLite[],
   experts: ExpertLite[],
   themes: ProposalTheme[],
-  tenderText: string,
 ): string[] {
   const allProjectText = projects.map((p) => textOf(p.name, p.summary, p.sector, p.clientName, ...safeParseArr(p.serviceAreas))).join("\n");
   const allExpertText = experts.map((e) => textOf(e.fullName, e.title, e.profile, ...safeParseArr(e.disciplines), ...safeParseArr(e.certifications))).join("\n");
@@ -883,11 +901,6 @@ function makeDifferentiators(
       items.push("Broadband and mobile network delivery track record: prior LTE/5G base-station or fibre-backhaul projects provide RF-planning and commissioning-protocol continuity.");
     }
     items.push("End-to-end network design capability: coverage simulation, backhaul design, base-station siting, and site-acceptance test (SAT) protocol managed under one technical team.");
-  }
-
-  // Pharo-specific — claim, not instruction.
-  if (/pharo/i.test(tenderText)) {
-    items.push("Engagement model tuned to private-sector investor expectations: schedule certainty, audit-ready documentation, and institutional delivery discipline alongside technical depth.");
   }
 
   return Array.from(new Set(items)).slice(0, 8);
@@ -1313,7 +1326,7 @@ export function buildProposalIntelligence(params: {
     evaluationWeights: detectEvaluationWeights(tenderText),
     commercialTerms: detectCommercialTerms(tenderText),
     submissionRules: detectSubmissionRules(tender, tenderText),
-    differentiators: makeDifferentiators(company, topProjects, topExperts, themes, tenderText),
+    differentiators: makeDifferentiators(company, topProjects, topExperts, themes),
     themes,
     topProjects,
     topExperts,
