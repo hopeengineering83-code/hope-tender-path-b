@@ -427,7 +427,12 @@ export async function getEffectiveTenderFacts(
 
   // Financial proposal — per Pillar 6, default is UNKNOWN (null) instead of
   // true. Only set to true/false when the source explicitly states it.
-  const financialProposalRequired: boolean | null = intelligence ? intelligence.financialProposalRequired : null;
+  // The three-state source answer, not the collapsed boolean. `null` here means
+  // the source did not say — which the fact below now reports as "Unknown"
+  // instead of asserting a "Yes" no clause supports.
+  const financialProposalRequired: boolean | null = intelligence
+    ? intelligence.financialProposalRequiredState
+    : null;
   const financialProposalInstruction = financialProposalRequired === false ? "Not required at this stage. Do not generate a financial proposal." : null;
   facts.push({ key: "financialProposalRequired", label: "Financial Proposal Required", value: financialProposalRequired === null ? "Unknown" : financialProposalRequired ? "Yes" : "No", status: intelligence ? "resolved_from_source_text" : "missing", requiredFor: "optional", source: intelligence ? "parser" : "none" });
 

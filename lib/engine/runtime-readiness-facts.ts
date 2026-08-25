@@ -226,7 +226,10 @@ function buildMetadataFacts(effective: EffectiveTenderFactsResult | null): Runti
       projectTitle: missingFact("projectTitle"),
       referenceNumber: missingFact("referenceNumber"),
       country: missingFact("country"),
-      financialProposalRequired: makeFact("financialProposalRequired", true, false, "none", "missing", "missing", false),
+      // Was hard-coded `true` — the one field in this branch that asserted an
+      // answer while every other reported "no effective facts available". With
+      // no facts there is nothing to establish a financial obligation from.
+      financialProposalRequired: missingFact("financialProposalRequired"),
     };
   }
 

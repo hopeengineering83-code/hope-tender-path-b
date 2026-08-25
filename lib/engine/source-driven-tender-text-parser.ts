@@ -88,6 +88,12 @@ export type RequiredTenderDocument = {
   required: boolean;
   envelope: "technical" | "financial" | "common" | "unknown";
   note?: string | null;
+  /**
+   * Verbatim clause the obligation was read from. Present for documents the
+   * source named itself (which have no catalogue entry to describe them), so
+   * an unrecognised requirement still carries its own evidence.
+   */
+  sourceQuote?: string | null;
 };
 
 export type TenderCriterion = {
@@ -161,6 +167,13 @@ export type TenderDocumentIntelligence = {
   formsAndAnnexes: TenderFormOrAnnex[];
   generationPlan: TenderGenerationPlan;
   financialProposalRequired: boolean;
+  /**
+   * Three-state source answer: true / false / null (source silent).
+   * `financialProposalRequired` above is `state === true`, kept so existing
+   * consumers are unchanged; anything that must distinguish "the source said
+   * no" from "the source said nothing" reads this.
+   */
+  financialProposalRequiredState: boolean | null;
   proposalValidity: string | null;
   budget: string | null;
   bidBond: string | null;
@@ -549,9 +562,14 @@ function clauseDeniesRequirement(clause: string): boolean {
   return (
     /\b(?:not|no longer|neither)\s+(?:be\s+)?(?:required|applicable|requested|needed|necessary|expected|submitted)\b/i.test(text) ||
     /\b(?:no|without)\s+(?:[a-z-]+\s+){0,3}(?:bond|security|proposal|letter|certificate|document|form|annex|schedule|submission)\b/i.test(text) ||
-    /:\s*(?:none|nil|n\/a|not\s+applicable|not\s+required)\b/i.test(text) ||
+    /:\s*(?:none|nil|no|n\/a|not\s+applicable|not\s+required)\b/i.test(text) ||
     /\bexempt(?:ed)?\s+from\b/i.test(text) ||
     /\bwaived\b/i.test(text) ||
+    // Prohibition stated as an instruction rather than a description:
+    // "Do not generate a financial proposal", "Bidders shall not submit a bid
+    // security". The obligation verbs are the same ones the open-ended document
+    // reader keys on, negated.
+    /\b(?:do|does|shall|must|should|will|may)\s+not\s+(?:be\s+)?(?:generate|include|submit|provide|furnish|attach|enclose|send|prepare|produce|supply|present)\b/i.test(text) ||
     // Addenda and revisions cancel obligations rather than negating them. An
     // addendum says a requirement is "withdrawn", "deleted" or "shall not
     // apply" — it does not say "not required". Without these, an addendum that
@@ -617,6 +635,185 @@ const DOCUMENT_PATTERNS: Array<{ name: string; patterns: RegExp[]; envelope: "te
   { name: "Quotation", patterns: [/\bquotation\b|price\s+quote/i], envelope: "financial" },
 ];
 
+/**
+ * Is a financial submission required? — the single source-driven answer.
+ *
+ * Three states, because a tender has three things it can do: require one, rule
+ * one out, or say nothing. The last is not the first. Two readers used to
+ * decide this independently — this one and detectFinancialProposalRequired() in
+ * tender-document-context.ts — with different denial vocabularies and a shared
+ * habit of returning true when in doubt. They disagreed on real wording in both
+ * directions ("Technical proposal only." → this said required, that said not;
+ * "Financial Proposal: No" → the reverse), and on silence both invented an
+ * obligation the source never stated.
+ *
+ * Evidence decides it in both directions now, and UNKNOWN (null) is a real
+ * answer that callers must handle rather than a synonym for yes.
+ */
+const FINANCIAL_CONCEPT =
+  /financial\s+proposal|financial\s+offer|financial\s+bid|financial\s+submission|financial\s+envelope|fee\s+proposal|fee\s+schedule|fee\s+breakdown|price\s+schedule|priced\s+schedule|schedule\s+of\s+(?:prices|rates)|price\s+proposal|price\s+breakdown|price\s+quote|commercial\s+proposal|commercial\s+offer|commercial\s+submission|\bquotation\b|bill\s+of\s+quantities|cost\s+breakdown|cost\s+proposal|lump\s+sum\s+(?:price|fee)|remuneration/i;
+
+const TECHNICAL_ONLY = /technical\s+(?:proposal|submission|offer)\s+only|only\s+a\s+technical\s+(?:proposal|submission)/i;
+
+const TWO_ENVELOPE = /two[-\s]envelopes?|separate\s+envelopes?|second\s+envelope|envelope\s+(?:1|2|i|ii|one|two)\b/i;
+
+/**
+ * true  — the source requires a financial submission.
+ * false — the source rules one out.
+ * null  — the source is silent. NOT an obligation, and not a denial either.
+ */
+export function readFinancialProposalRequirement(text: string): boolean | null {
+  if (!text || !text.trim()) return null;
+
+  // An explicit scope statement settles it even when no financial noun appears.
+  if (TECHNICAL_ONLY.test(text)) return false;
+
+  const clauses = clausesOf(text);
+  const mentioning = clauses.filter((clause) => FINANCIAL_CONCEPT.test(clause));
+
+  if (mentioning.length === 0) {
+    // A two-envelope structure implies a financial envelope even when the
+    // source never names one, but only structure says so — not a default.
+    if (TWO_ENVELOPE.test(text)) return true;
+    return null;
+  }
+
+  // Same rule as every other obligation: a mention is not an obligation, and a
+  // denial rules out only its own clause.
+  if (mentioning.some((clause) => !clauseDeniesRequirement(clause))) return true;
+  return false;
+}
+
+/**
+ * Documents the SOURCE names, which no catalogue can enumerate in advance.
+ *
+ * DOCUMENT_PATTERNS above recognises eighteen common types. That is useful for
+ * normalising them into canonical categories, and useless for the thing tenders
+ * actually do: name their own instruments. "Power of Attorney", "Declaration of
+ * Independent Bid Determination", "Manufacturer's Authorization", "Beneficial
+ * Ownership Form" and any client-invented schedule are all explicitly required
+ * by their tenders and all absent from the list. Growing the list to thirty or
+ * a hundred names does not fix that — the next tender writes a name that is not
+ * on it either.
+ *
+ * So this reads the OBLIGATION rather than the noun: a submission verb governing
+ * a document-like object. The name is whatever the source called it. The
+ * envelope is "unknown" because guessing it would be inventing a fact the
+ * source did not state, and the clause is kept verbatim as its evidence.
+ *
+ * Denial is decided by the same shared predicate every other reader uses, so
+ * "a Power of Attorney is not required" cannot become an obligation here while
+ * meaning the opposite three lines away.
+ */
+
+// Adjectives a tender puts in front of an instrument's name. They qualify the
+// document; they are not part of what it is called.
+const DOCUMENT_QUALIFIERS =
+  /^(?:(?:a|an|the|its|their|his|her|one|two|three|duly|completed|signed|notarized|notarised|certified|original|valid|current|sealed|stamped|attested|legalized|legalised|authenticated|scanned|recent|separate|complete|full)\s+|copies?\s+of\s+(?:the\s+)?)+/i;
+
+// Nouns that make a phrase a document rather than an action or an abstraction.
+const DOCUMENT_NOUN =
+  /\b(?:form|forms|declaration|declarations|certificate|certificates|letter|letters|statement|statements|agreement|agreements|authoriz(?:ation|ations)|authoris(?:ation|ations)|undertaking|undertakings|attorney|affidavit|affidavits|guarantee|guarantees|bond|bonds|licen[cs]e|licen[cs]es|profile|profiles|schedule|schedules|annex|annexe|annexes|appendix|appendices|questionnaire|questionnaires|matrix|register|registration|mandate|deed|deeds|resolution|resolutions|charter|policy|proposal|proposals|report|reports|plan|plans|list|lists|statement\s+of\s+\w+|power\s+of\s+attorney)\b/i;
+
+// Where a document's name stops and the sentence's explanation begins.
+const NAME_TERMINATORS =
+  // Verb forms only. Matching the stem "authoriz" would also truncate a real
+  // name — "Manufacturer's Authorization Letter" — down to "Manufacturer's",
+  // which then fails to read as a document and is dropped entirely.
+  /\s+(?:authoris(?:ing|ed|es)|authoriz(?:ing|ed|es)|confirming|stating|certifying|declaring|issued|signed\s+by|which|who|that\s+|to\s+the\s+effect|in\s+the\s+form|as\s+per|in\s+accordance|together\s+with|along\s+with|and\s+a\b|and\s+an\b|and\s+the\b|from\s+the\b|for\s+the\b|of\s+not\s+less|valid\s+for|dated\b|no\s+later|before\b|by\s+the\s+closing).*/i;
+
+const OBLIGATION_ACTIVE =
+  /\b(?:shall|must|should|will|is\s+required\s+to|are\s+required\s+to|is\s+expected\s+to|are\s+expected\s+to|is\s+requested\s+to|are\s+requested\s+to)\s+(?:also\s+)?(?:submit|provide|furnish|include|attach|enclose|present|produce|supply)\s+(.{3,160})/i;
+
+const OBLIGATION_PASSIVE =
+  /\b(.{3,120}?)\s+(?:shall|must|is|are)\s+(?:also\s+)?be\s+(?:submitted|provided|furnished|attached|enclosed|included|presented)\b/i;
+
+/** Normalise a name for duplicate detection only — never for display. */
+function documentNameKey(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+/** Turn a captured object phrase into the document name the source used. */
+function documentNameFrom(phrase: string): string | null {
+  let name = phrase.trim()
+    .replace(/^[\s"\u2018\u2019\u201c\u201d(\[-]+/, "")
+    .replace(NAME_TERMINATORS, "")
+    .replace(DOCUMENT_QUALIFIERS, "")
+    .replace(/[)\].,;:"\u2018\u2019\u201c\u201d\s]+$/, "")
+    .trim();
+
+  // A trailing conjunction means we captured into the next item; cut it.
+  name = name.replace(/\s+(?:and|or)$/i, "").trim();
+
+  if (name.length < 3 || name.length > 90) return null;
+  if (/^(?:the|a|an|it|them|this|these|those|all|any|such|following)$/i.test(name)) return null;
+
+  // It must read as a document: either it carries a document noun, or the
+  // source Title-Cased it, which is how tenders name their bespoke instruments.
+  const titleCased = /^(?:[A-Z][\w'&./-]*)(?:\s+(?:of|for|and|the|to|in|on|de|du)?\s*[A-Z][\w'&./-]*)+$/.test(name);
+  if (!DOCUMENT_NOUN.test(name) && !titleCased) return null;
+
+  return name;
+}
+
+/**
+ * Read every document obligation the source states in its own words. Catalogue
+ * hits are excluded by the caller so a recognised type is reported once, under
+ * its canonical name.
+ */
+function extractSourceNamedDocuments(text: string, alreadyNamed: Set<string>): RequiredTenderDocument[] {
+  const found: RequiredTenderDocument[] = [];
+  const seen = new Set<string>(alreadyNamed);
+
+  for (const clause of clausesOf(text)) {
+    // The shared denial predicate. A clause that rules a document out must not
+    // produce one here either.
+    if (clauseDeniesRequirement(clause)) continue;
+
+    const candidates: string[] = [];
+    const active = clause.match(OBLIGATION_ACTIVE);
+    if (active?.[1]) candidates.push(active[1]);
+    const passive = clause.match(OBLIGATION_PASSIVE);
+    if (passive?.[1]) candidates.push(passive[1]);
+
+    for (const candidate of candidates) {
+      // One clause can list several instruments: "... a Power of Attorney and a
+      // Declaration of Undertaking". Split on list separators and read each.
+      for (const part of candidate.split(/\s*(?:,|;|\band\b|\bas\s+well\s+as\b|\btogether\s+with\b|\balong\s+with\b)\s*/i)) {
+        const name = documentNameFrom(part);
+        if (!name) continue;
+        const key = documentNameKey(name);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        found.push({
+          name,
+          required: true,
+          // Not stated by the source. Guessing it would invent a fact.
+          envelope: "unknown",
+          sourceQuote: clause.trim().slice(0, 300),
+        });
+      }
+    }
+  }
+
+  return found;
+}
+
+/**
+ * Does this text state a document obligation?
+ *
+ * Exported for consumers that hold canonical requirement rows rather than raw
+ * tender text and need to know which of them are required-document
+ * requirements. Reading the obligation beats keyword-matching the name: a
+ * filter for /document|annex|attachment|form/ drops "Power of Attorney" and
+ * "Declaration of Independent Bid Determination", which are exactly the kind of
+ * instrument a tender names itself.
+ */
+export function statesDocumentObligation(text: string): boolean {
+  if (!text || !text.trim()) return false;
+  return extractSourceNamedDocuments(text, new Set<string>()).length > 0;
+}
+
 function extractRequiredDocuments(text: string, financialProposalRequired: boolean): RequiredTenderDocument[] {
   const docs: RequiredTenderDocument[] = [];
   const seen = new Set<string>();
@@ -644,6 +841,13 @@ function extractRequiredDocuments(text: string, financialProposalRequired: boole
       docs.push({ name, required: true, envelope });
     }
   }
+
+  // The catalogue has now said everything it can. Whatever the source required
+  // under a name the catalogue does not know is read next, so an obligation is
+  // not lost merely because nobody anticipated its name.
+  const canonicalKeys = new Set(docs.map((d) => documentNameKey(d.name)));
+  docs.push(...extractSourceNamedDocuments(text, canonicalKeys));
+
   return docs;
 }
 
@@ -757,7 +961,8 @@ export function parseTenderDocumentIntelligence(
       requiredFinancialDocuments: [],
       formsAndAnnexes: [],
       generationPlan: { generate: [], exclude: [], notes: ["Empty source text"] },
-      financialProposalRequired: true,
+      financialProposalRequired: false,
+      financialProposalRequiredState: null,
       proposalValidity: null,
       budget: null,
       bidBond: null,
@@ -804,11 +1009,18 @@ export function parseTenderDocumentIntelligence(
     sourceExcerpts.clientOrProcuringEntity = clientMatch[0];
   }
 
-  // Financial proposal required?
-  const financialNotRequired = /financial\s+proposal\s+not\s+required|do\s+not\s+generate\s+a\s+financial\s+proposal|technical\s+proposal\s+only\s+at\s+this\s+stage|financial\s+proposal\s*:\s*no/i.test(text);
-  const financialProposalRequired = !financialNotRequired;
-  if (!financialProposalRequired) {
+  // Financial proposal required? One reader, three states. Silence is UNKNOWN
+  // and must not become an obligation — see readFinancialProposalRequirement().
+  const financialProposalRequiredState = readFinancialProposalRequirement(text);
+  const financialProposalRequired = financialProposalRequiredState === true;
+  if (financialProposalRequiredState === false) {
     sourceExcerpts.financialProposalRequired = "Financial proposal not required at this stage";
+  } else if (financialProposalRequiredState === null) {
+    // Surfaced, not silently resolved. A reviewer needs to know the source did
+    // not answer this rather than be shown a confident "no".
+    warnings.push(
+      "Source does not state whether a financial proposal is required — treated as UNKNOWN. No financial document is generated on an unstated obligation; confirm before final submission.",
+    );
   }
 
   // Submission instructions
@@ -996,6 +1208,7 @@ export function parseTenderDocumentIntelligence(
     formsAndAnnexes,
     generationPlan,
     financialProposalRequired,
+    financialProposalRequiredState,
     proposalValidity,
     budget,
     bidBond,
