@@ -311,3 +311,85 @@ describe("a denial rules out only what its own clause rules out", () => {
     }
   });
 });
+
+// ─── CASE N — an addendum that WITHDRAWS an obligation ───────────────────────
+//
+// Addenda and revisions are ordinary in every procurement regime, and the thing
+// they most often do is cancel or replace a requirement stated in the original
+// RFP. They do not phrase that as "not required" — they say the requirement is
+// "withdrawn", "deleted", "rescinded", or "shall not apply".
+//
+// Before this case was covered, the addendum below produced bidBond =
+// "is hereby withdrawn and shall not apply." and Bid Bond required:true. Both
+// readers agreed, and both were wrong in the dangerous direction: a bidder
+// would have been sent to procure a bid security the client had just withdrawn,
+// with a fragment of the withdrawal clause rendered as its terms.
+
+const ADDENDUM_WITHDRAWING_BID_SECURITY = `
+ADDENDUM NO. 2
+Consultancy Services for Feasibility Study
+
+This Addendum amends the Request for Proposals as follows.
+1. The submission deadline is extended to 30 June.
+2. The requirement for a bid security is hereby withdrawn and shall not apply.
+All other terms of the Request for Proposals remain unchanged.
+`;
+
+describe("Case N — an addendum that withdraws an obligation cancels it", () => {
+  it("does not read the withdrawal clause as the obligation's terms", () => {
+    const intel = parseTenderDocumentIntelligence(ADDENDUM_WITHDRAWING_BID_SECURITY);
+    assert.equal(intel.bidBond, null);
+  });
+
+  it("does not mark the withdrawn document as required", () => {
+    const intel = parseTenderDocumentIntelligence(ADDENDUM_WITHDRAWING_BID_SECURITY);
+    const doc = intel.requiredDocuments.find((d) => /bid\s*(bond|security)/i.test(d.name));
+    assert.equal(doc?.required, false);
+  });
+
+  it("recognises the other cancellation verbs an addendum uses", () => {
+    // Same obligation, five drafting styles. All of them cancel it.
+    const cancellations = [
+      "Clause 14 (Bid Security) is hereby deleted.",
+      "The bid security requirement is rescinded.",
+      "The requirement for a bid bond is revoked.",
+      "Clause 14 requiring a bid security is cancelled.",
+      "The bid security provision shall not apply to this procurement.",
+      "The bid security requirement no longer applies.",
+    ];
+    for (const body of cancellations) {
+      const view = bidSecurityView(body);
+      assert.equal(view.bidBond, null, `read an obligation out of: ${body}`);
+      assert.equal(view.documentRequired, false, `left document required for: ${body}`);
+    }
+  });
+
+  it("a withdrawal in one clause does not cancel an obligation stated in another", () => {
+    // The scoping guarantee. "Bids may be withdrawn" is about bids, not about
+    // the bid security, and must not silence the real obligation next to it.
+    const view = bidSecurityView(
+      "Bids may be withdrawn by the bidder before the closing time.\n" +
+        "Bidders shall furnish a bid security of 2% of the bid sum.",
+    );
+    assert.ok(view.bidBond !== null, "a genuine obligation was cancelled by an unrelated withdrawal clause");
+    assert.equal(view.documentRequired, true);
+  });
+
+  it("the two readers still agree across every addendum phrasing", () => {
+    const bodies = [
+      "The requirement for a bid security is hereby withdrawn and shall not apply.",
+      "Clause 14 (Bid Security) is hereby deleted.",
+      "The bid security requirement no longer applies.",
+      "Bids may be withdrawn before closing. Bidders shall furnish a bid security of 2%.",
+      "Bid Security: 2% of the tender sum.",
+    ];
+    for (const body of bodies) {
+      const view = bidSecurityView(body);
+      assert.equal(
+        view.bidBond !== null,
+        view.documentRequired,
+        `readers disagree on: ${body.replace(/\n/g, " / ")}`,
+      );
+    }
+  });
+});

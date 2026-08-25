@@ -551,7 +551,18 @@ function clauseDeniesRequirement(clause: string): boolean {
     /\b(?:no|without)\s+(?:[a-z-]+\s+){0,3}(?:bond|security|proposal|letter|certificate|document|form|annex|schedule|submission)\b/i.test(text) ||
     /:\s*(?:none|nil|n\/a|not\s+applicable|not\s+required)\b/i.test(text) ||
     /\bexempt(?:ed)?\s+from\b/i.test(text) ||
-    /\bwaived\b/i.test(text)
+    /\bwaived\b/i.test(text) ||
+    // Addenda and revisions cancel obligations rather than negating them. An
+    // addendum says a requirement is "withdrawn", "deleted" or "shall not
+    // apply" — it does not say "not required". Without these, an addendum that
+    // removed an obligation read as one that imposed it, which is the worse of
+    // the two errors: the bidder is sent to buy a bid security the client
+    // already withdrew. Scoping keeps this safe — a clause like "bids may be
+    // withdrawn before the deadline" denies only itself, and any genuine
+    // obligation stated in another clause still wins.
+    /\b(?:withdrawn|withdraws|rescinded|revoked|cancell?ed|deleted|struck\s+out)\b/i.test(text) ||
+    /\b(?:shall|will|does|do|is|are)\s+not\s+apply\b/i.test(text) ||
+    /\bno\s+longer\s+(?:applies|apply)\b/i.test(text)
   );
 }
 
