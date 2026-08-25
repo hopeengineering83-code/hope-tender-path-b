@@ -146,9 +146,14 @@ export function getTogetherBaseUrl(): string { return getProviderBaseUrl("togeth
 export function getOpenRouterApiKey(): string | undefined { return readProviderKey("openrouter"); }
 export function isOpenRouterConfigured(): boolean { return registryIsProviderConfigured("openrouter"); }
 /**
- * Returns the configured OpenRouter model ONLY when it is a valid explicit
- * `:free` model. Returns null when invalid (openrouter/auto or non-free), so
- * callers never send a request that could create paid usage.
+ * Returns the configured OpenRouter model, used exactly as configured, or null
+ * when none is set — in which case the caller skips OpenRouter and the
+ * canonical chain continues.
+ *
+ * This previously described a `:free`-only rule ("returns null when
+ * openrouter/auto or non-free"). openRouterModelValidity() has not done that
+ * since the cost-class policy was withdrawn; it accepts any configured model
+ * identifier without rewriting it. Paid models are allowed.
  */
 export function getOpenRouterModel(): string | null {
   const validity = openRouterModelValidity();

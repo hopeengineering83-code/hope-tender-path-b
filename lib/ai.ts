@@ -673,9 +673,15 @@ export class NoAiProviderReadyError extends Error {
 }
 
 function isProviderEnabled(name: AiProviderName): boolean {
-  // Single configured check via the registry. For OpenRouter this also enforces
-  // the explicit `:free` model policy, so an invalid OpenRouter configuration
-  // is treated as "not configured" and skipped WITHOUT consuming an attempt.
+  // Single configured check via the registry. A provider whose configuration is
+  // invalid (missing key, or no configured model) is treated as "not
+  // configured" and skipped WITHOUT consuming an attempt.
+  //
+  // This said OpenRouter "also enforces the explicit `:free` model policy". It
+  // does not, and must not: that policy was withdrawn, and isProviderConfigured
+  // gates OpenRouter on key + configured model like every other provider. The
+  // comment outlived the rule it described, which is how a withdrawn
+  // requirement gets "restored" by a later reader who trusts it.
   return registryIsProviderConfigured(name);
 }
 
