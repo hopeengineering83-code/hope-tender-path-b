@@ -110,7 +110,7 @@ describe("differentiators never depend on who the client is", () => {
   });
 });
 
-describe("no production logic keys on a specific client identity", () => {
+describe("the mechanism, not a name list, is what prevents client-keyed logic", () => {
   it("makeDifferentiators no longer accepts raw tender text", () => {
     const source = readFileSync("lib/engine/proposal-intelligence.ts", "utf8");
     const start = source.indexOf("function makeDifferentiators(");
@@ -123,9 +123,21 @@ describe("no production logic keys on a specific client identity", () => {
     );
   });
 
-  it("no executable branch anywhere in lib/, app/ or components/ tests a client name", () => {
-    // Derived, not listed: a new hardcoded client shortcut fails this test
-    // rather than shipping. Comments are excluded — the fix documents itself.
+  // ─── Sentinel, NOT a proof ────────────────────────────────────────────────
+  //
+  // This scans for the client names we have actually seen hard-coded in this
+  // repository. It CANNOT prove the absence of a shortcut keyed on a client we
+  // have never encountered — enumerating names could never do that, and growing
+  // the list into a directory of every possible customer would be brittle and
+  // still incomplete.
+  //
+  // The real guarantee is the test above: makeDifferentiators cannot receive
+  // raw tender text, so it has no client identity to branch on, and the
+  // behavioural tests at the top of this file assert the invariant directly.
+  // This check is a cheap regression detector for the specific names that have
+  // already caused incidents here, and it is worth exactly that much.
+  it("does not reintroduce a branch on a client name already hard-coded once", () => {
+    const KNOWN_HARDCODED_CLIENT_TOKENS = ["pharo", "tikur", "adama"];
     const files = execSync(
       "grep -rlE '\\.test\\(' --include=*.ts --include=*.tsx lib app components || true",
       { encoding: "utf8" },
@@ -136,11 +148,17 @@ describe("no production logic keys on a specific client identity", () => {
       for (const raw of readFileSync(file, "utf8").split("\n")) {
         const line = raw.trim();
         if (line.startsWith("//") || line.startsWith("*") || line.startsWith("/*")) continue;
-        if (/\/[^/\n]*\b(pharo|tikur|adama)\b[^/\n]*\/i?\s*\.test\(/i.test(line)) {
-          offenders.push(`${file}: ${line.slice(0, 120)}`);
-        }
+        const pattern = new RegExp(
+          `/[^/\\n]*\\b(${KNOWN_HARDCODED_CLIENT_TOKENS.join("|")})\\b[^/\\n]*/i?\\s*\\.test\\(`,
+          "i",
+        );
+        if (pattern.test(line)) offenders.push(`${file}: ${line.slice(0, 120)}`);
       }
     }
-    assert.deepEqual(offenders, [], "production logic must not branch on a specific client's identity");
+    assert.deepEqual(
+      offenders,
+      [],
+      "a previously hard-coded client name is being branched on again in production logic",
+    );
   });
 });

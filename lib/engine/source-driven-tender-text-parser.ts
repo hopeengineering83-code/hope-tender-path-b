@@ -528,6 +528,48 @@ function tryParseDateToIso(display: string): string | null {
   return d.toISOString();
 }
 
+// ─── Denial detection ────────────────────────────────────────────────────────
+//
+// A tender that MENTIONS a document is not necessarily a tender that REQUIRES
+// it. "No bid security is required", "a cover letter is not required at this
+// stage", "financial proposal: not applicable" all name the thing in order to
+// rule it out. Reading the mention as an obligation invents work the client
+// never asked for, and on the export side it becomes a blocker for a document
+// the tender explicitly said to omit.
+//
+// One rule, used by every consumer below, so the negation logic cannot diverge
+// between the bid-security reader and the required-documents extractor.
+
+/** True when this clause names something in order to say it is NOT needed. */
+function clauseDeniesRequirement(clause: string): boolean {
+  const text = clause.trim();
+  return (
+    /\b(?:not|no longer|neither)\s+(?:be\s+)?(?:required|applicable|requested|needed|necessary|expected|submitted)\b/i.test(text) ||
+    /\b(?:no|without)\s+(?:[a-z-]+\s+){0,3}(?:bond|security|proposal|letter|certificate|document|form|annex|schedule|submission)\b/i.test(text) ||
+    /:\s*(?:none|nil|n\/a|not\s+applicable|not\s+required)\b/i.test(text) ||
+    /\bexempt(?:ed)?\s+from\b/i.test(text) ||
+    /\bwaived\b/i.test(text)
+  );
+}
+
+/** Clause-sized units. Obligation and denial live at sentence/line scale. */
+function clausesOf(text: string): string[] {
+  return text
+    .split(/(?<=[.;!?])\s+|[\n\r]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/**
+ * True when at least one occurrence of `pattern` sits in a clause that is NOT a
+ * denial. A document mentioned only inside denials is mentioned, not required.
+ */
+function hasAffirmativeMention(text: string, pattern: RegExp): boolean {
+  const matching = clausesOf(text).filter((clause) => pattern.test(clause));
+  if (matching.length === 0) return pattern.test(text) ? !clauseDeniesRequirement(text) : false;
+  return matching.some((clause) => !clauseDeniesRequirement(clause));
+}
+
 // ─── Required-documents extractor ────────────────────────────────────────────
 
 const DOCUMENT_PATTERNS: Array<{ name: string; patterns: RegExp[]; envelope: "technical" | "financial" | "common" }> = [
@@ -556,16 +598,26 @@ function extractRequiredDocuments(text: string, financialProposalRequired: boole
   const seen = new Set<string>();
   for (const { name, patterns, envelope } of DOCUMENT_PATTERNS) {
     if (seen.has(name)) continue;
-    if (patterns.some((p) => p.test(text))) {
-      seen.add(name);
-      // Skip Financial Proposal if not required
-      if (name === "Financial Proposal" && !financialProposalRequired) {
-        docs.push({ name, required: false, envelope, note: "Not required at this stage" });
-      } else if (name === "Quotation" && !financialProposalRequired) {
-        docs.push({ name, required: false, envelope, note: "Not required at this stage" });
-      } else {
-        docs.push({ name, required: true, envelope });
-      }
+    if (!patterns.some((p) => p.test(text))) continue;
+    seen.add(name);
+
+    // Mentioned only to be ruled out. Previously ANY mention became
+    // `required: true`, so "No bid security is required" produced a required
+    // Bid Bond. The two hard-coded exceptions below show the authors already
+    // knew a mention is not an obligation — this applies that same truth to
+    // every document type instead of two named ones.
+    if (!patterns.some((p) => hasAffirmativeMention(text, p))) {
+      docs.push({ name, required: false, envelope, note: "Source states this is not required" });
+      continue;
+    }
+
+    // Skip Financial Proposal if not required
+    if (name === "Financial Proposal" && !financialProposalRequired) {
+      docs.push({ name, required: false, envelope, note: "Not required at this stage" });
+    } else if (name === "Quotation" && !financialProposalRequired) {
+      docs.push({ name, required: false, envelope, note: "Not required at this stage" });
+    } else {
+      docs.push({ name, required: true, envelope });
     }
   }
   return docs;
@@ -772,9 +824,29 @@ export function parseTenderDocumentIntelligence(
   if (budgetMatch) budget = budgetMatch[1].trim();
 
   // Bid bond
+  //
+  // A DENIAL is not an obligation. The previous pattern matched the phrase
+  // anywhere and captured the rest of the line with no awareness of what came
+  // before it, so a tender that explicitly ruled bid security out was recorded
+  // as requiring one, with the negation stripped off:
+  //
+  //   "No bid security is required at this stage."  ->  "is required at this stage."
+  //   "No bid bond shall be required."              ->  "shall be required."
+  //
+  // Tenders that state no bid security is needed are common — most EOIs and
+  // many consultancy RFPs say exactly that — so this turned an explicit absence
+  // into a phantom commercial obligation on an ordinary class of tender.
+  // Presence and absence must both survive parsing.
   let bidBond: string | null = null;
-  const bidBondMatch = text.match(/(?:bid\s+bond|bid\s+security):?\s*([^\n\r]{3,100})/i);
-  if (bidBondMatch) bidBond = bidBondMatch[1].trim();
+  const bidBondMatch = text.match(/([^\n\r]{0,60}?)(?:bid\s+bond|bid\s+security)\b:?\s*([^\n\r]{0,100})/i);
+  if (bidBondMatch) {
+    const before = (bidBondMatch[1] ?? "").trim();
+    const after = (bidBondMatch[2] ?? "").trim();
+    // Same shared rule the required-documents extractor uses, so a denial can
+    // never be read as an obligation on one path and not the other.
+    const denied = clauseDeniesRequirement(`${before} bid security ${after}`);
+    if (!denied && after.length >= 3) bidBond = after;
+  }
 
   // Mandatory site visit
   const mandatorySiteVisit = /mandatory\s+site\s+visit|site\s+visit\s+(?:is\s+)?mandatory|pre-bid\s+site\s+visit\s+(?:is\s+)?mandatory/i.test(text);
