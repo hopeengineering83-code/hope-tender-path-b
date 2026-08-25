@@ -539,7 +539,21 @@ export async function getCanonicalTenderWorkflowDecision(
   // ─── Tender Details authority ─────────────────────────────────────────
   // Pre-generation workflow stages use the canonical DRAFT authority signal.
   // Final-only source/audit authority is deliberately not applied here; it is
-  // already enforced by snapshot.finalZipEligible at the export boundary.
+  // enforced at the export boundary by assertTenderReadyForGenerationAndExport,
+  // which resolves criticalMetadataOk from fieldStates.hasExportBlocker for
+  // purpose "export"/"final-zip" and fails TENDER_FACTS_INVALID.
+  //
+  // Named precisely on purpose. This comment used to credit
+  // `snapshot.finalZipEligible`, which is computed in
+  // release-snapshot-eligibility.ts and consumed by the snapshot, the release
+  // state and the UI sync — but is referenced in NO route under app/. It is a
+  // reporting flag, not the export gate. A reader who trusted the old wording
+  // could delete the real check here believing a gate covered it that the
+  // request never consults; that is exactly how the Tender Facts gate was
+  // removed once before (see the PR #1002 note in generation-readiness-gate.ts).
+  // The real enforcer is pinned by tests/screenshot-export-gates-003-server.ts
+  // and four other suites that assert the download route calls it with
+  // purpose "final-zip".
   const criticalTenderDetailsValid = !snapshot.metadata.hasGenerationBlocker;
 
   // ─── Requirements ───────────────────────────────────────────────────────
