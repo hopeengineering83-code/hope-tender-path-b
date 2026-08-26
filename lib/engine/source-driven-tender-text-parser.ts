@@ -1035,11 +1035,22 @@ export function parseTenderDocumentIntelligence(
   // equating "criteria present" with "numeric weights present". Qualitative
   // award/selection criteria remain canonical even when no weights are stated.
   let evaluationMethodology: TenderEvaluationMethodology | null = null;
-  // Match "Technical weight: 70%" or "Technical 70%" or "Technical weightage 70%"
-  const techWeightMatch = text.match(/technical\s+(?:weight(?:age)?\s*:?)?\s*(\d{1,3})\s*%/i)
-    || text.match(/technical\s+(\d{1,3})\s*%/i);
-  const finWeightMatch = text.match(/financial\s+(?:weight(?:age)?\s*:?)?\s*(\d{1,3})\s*%/i)
-    || text.match(/financial\s+(\d{1,3})\s*%/i);
+  // Match "Technical weight: 70%", "Technical 70%", "Technical weightage 70%",
+  // and the two forms those missed:
+  //
+  //   - the word instead of the sign — "the technical evaluation weight is
+  //     70 percent". Only /%/ was accepted, so a tender that spells the unit
+  //     out reported no weights at all. Spelling it out is ordinary drafting in
+  //     donor and government procurement, not an edge case.
+  //   - words between the label and the number — the old pattern allowed only
+  //     an optional "weight"/"weightage", so "technical evaluation weight is 70"
+  //     did not match even with a % sign.
+  //
+  // The filler run is bounded to three words so the number stays attached to
+  // its own label and cannot be picked up from a distant sentence.
+  const PERCENT = "(?:%|per\\s?cent(?:age)?|percent)";
+  const techWeightMatch = text.match(new RegExp(`technical\\s*:?\\s*(?:[a-z]+\\s*:?\\s*){0,3}(\\d{1,3})\\s*${PERCENT}`, "i"));
+  const finWeightMatch = text.match(new RegExp(`financial\\s*:?\\s*(?:[a-z]+\\s*:?\\s*){0,3}(\\d{1,3})\\s*${PERCENT}`, "i"));
   const extractedEvaluation = extractEvaluationMethodologyFromSource({
     files: [{ fileName: null, extractedText: text }],
   });
