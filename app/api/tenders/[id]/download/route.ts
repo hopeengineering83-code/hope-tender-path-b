@@ -132,6 +132,65 @@ async function internalReport(userId: string, tender: any, type: string) {
 }
 
 /**
+ * The <w:t> text runs of a WordprocessingML part.
+ *
+ * Scanned with indexOf rather than matched with a regular expression. The
+ * natural pattern here is /<w:t[^>]*>[\s\S]*?<\/w:t>/g, but this input is a
+ * document body an uploader controls, and that shape backtracks quadratically
+ * on a long run of characters that never closes the tag — CodeQL flags it as a
+ * polynomial ReDoS, correctly. Every step below advances a cursor and never
+ * rescans, so the cost is linear in the length of the part no matter what it
+ * contains.
+ */
+function wordTextRuns(xml: string): string[] {
+  const runs: string[] = [];
+  let cursor = 0;
+  while (cursor < xml.length) {
+    const open = xml.indexOf("<w:t", cursor);
+    if (open === -1) break;
+    const openEnd = xml.indexOf(">", open + 4);
+    if (openEnd === -1) break;
+    // <w:t/> is self-closing and carries no text; <w:tab/>, <w:tbl> and other
+    // tags that merely start with "<w:t" are skipped the same way.
+    const nameEnd = open + 4;
+    const nextChar = xml[nameEnd];
+    if (xml[openEnd - 1] === "/" || (nextChar !== ">" && nextChar !== " ")) {
+      cursor = openEnd + 1;
+      continue;
+    }
+    const close = xml.indexOf("</w:t>", openEnd + 1);
+    if (close === -1) break;
+    runs.push(xml.slice(openEnd + 1, close));
+    cursor = close + 6;
+  }
+  return runs;
+}
+
+/** Collapse runs of whitespace to single spaces, without backtracking. */
+function collapseWhitespace(value: string): string {
+  let out = "";
+  let inWhitespace = false;
+  for (const ch of value) {
+    const isSpace = ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f" || ch === "\v";
+    if (isSpace) { inWhitespace = true; continue; }
+    if (inWhitespace && out.length > 0) out += " ";
+    inWhitespace = false;
+    out += ch;
+  }
+  return out;
+}
+
+/** The five predefined XML entities. Literal replacements, no quantifiers. */
+function decodeXmlEntities(value: string): string {
+  return value
+    .split("&lt;").join("<")
+    .split("&gt;").join(">")
+    .split("&quot;").join('"')
+    .split("&apos;").join("'")
+    .split("&amp;").join("&");
+}
+
+/**
  * The visible text of a generated DOCX, read from its stored bytes.
  *
  * Authority Review asks whether the file the client receives carries a
@@ -153,13 +212,10 @@ async function generatedDocumentVisibleText(doc: any): Promise<string | null> {
     for (const part of parts) {
       const entry = zip.file(part);
       if (!entry) continue;
-      const xml = await entry.async("string");
-      // <w:t> runs carry the visible text; paragraph breaks become spaces.
-      const runs = xml.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/g) ?? [];
-      for (const run of runs) chunks.push(run.replace(/<[^>]+>/g, ""));
+      chunks.push(...wordTextRuns(await entry.async("string")));
     }
     if (chunks.length === 0) return null;
-    return chunks.join(" ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/\s+/g, " ").trim();
+    return decodeXmlEntities(collapseWhitespace(chunks.join(" ")));
   } catch {
     return null;
   }

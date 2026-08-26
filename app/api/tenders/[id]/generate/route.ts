@@ -91,6 +91,18 @@ async function makeSupportDocx(tenderTitle: string, title: string, sections: Arr
   return buffer.toString("base64");
 }
 
+/** Drop a trailing ".ext" without a regular expression. */
+function stripFileExtension(fileName: string): string {
+  const dot = fileName.lastIndexOf(".");
+  if (dot <= 0 || dot === fileName.length - 1) return fileName;
+  const ext = fileName.slice(dot + 1);
+  for (const ch of ext) {
+    const isAlphanumeric = (ch >= "a" && ch <= "z") || (ch >= "A" && ch <= "Z") || (ch >= "0" && ch <= "9");
+    if (!isAlphanumeric) return fileName;
+  }
+  return fileName.slice(0, dot);
+}
+
 function classifySupportDoc(docName: string): SupportDocKind {
   // Separators are normalised to spaces before matching.
   //
@@ -1137,7 +1149,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           await prisma.generatedDocument.create({
             data: {
               tenderId: id,
-              name: missing.exactFileName.replace(/\.[a-z0-9]+$/i, ""),
+              // lastIndexOf, not /\.[a-z0-9]+$/i: this name comes from the
+              // analysed tender, and an anchored + quantifier over uncontrolled
+              // input is the polynomial-ReDoS shape CodeQL flags.
+              name: stripFileExtension(missing.exactFileName),
               documentType: missing.documentType ?? "SUPPORTING_DOCUMENT",
               format: missing.format ?? "DOCX",
               exactFileName: missing.exactFileName,
