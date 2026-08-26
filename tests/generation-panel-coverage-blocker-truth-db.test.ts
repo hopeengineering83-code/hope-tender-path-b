@@ -356,20 +356,44 @@ dbDescribe("Generation panel — coverage blocker reaches the release status", (
     assert.equal(releaseStatus, "GENUINE_SOURCE_BLOCKED");
   });
 
-  it("the panel's own readiness sources never carry the coverage code", async () => {
-    // This is the mechanism of the defect, asserted directly: the four
-    // sources the panel used to read cannot produce the coverage blocker, so
-    // the fix has to come from the canonical workflow decision.
+  it("the strict generation sources still cannot produce the coverage code", async () => {
+    // The original mechanism of the defect, still asserted: the strict
+    // generation-readiness blockers know nothing about mandatory evidence
+    // coverage, which is why the panel could not learn about it from them.
     const readiness = await getTenderGenerationReadinessStrict(prisma, user.id, tender.id);
-    const canonicalReadiness = await getCanonicalTenderReadiness(prisma, user.id, tender.id);
-    const panelSourceCodes = [
+    const strictSourceCodes = [
       ...(readiness?.blockers ?? []).map((blocker) => blocker.code),
       ...(readiness?.fullProposalBlockers ?? []).map((blocker) => blocker.code),
-      ...(canonicalReadiness?.blockers ?? []),
     ];
     assert.ok(
-      !panelSourceCodes.includes("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"),
-      `readiness sources unexpectedly carry the coverage code: ${panelSourceCodes.join(", ")}`,
+      !strictSourceCodes.includes("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"),
+      `strict generation sources unexpectedly carry the coverage code: ${strictSourceCodes.join(", ")}`,
+    );
+  });
+
+  it("the canonical readiness summary DOES carry the coverage code", async () => {
+    // This assertion is inverted from the one it replaces, deliberately.
+    //
+    // It used to read "the panel's own readiness sources never carry the
+    // coverage code", grouping getCanonicalTenderReadiness() with the strict
+    // sources and pinning the fact that none of them could see the blocker.
+    // That was an accurate description of a limitation, not a property worth
+    // protecting: because the summary could not see the release blocker, it
+    // reported readyForFinalExport true on tenders /export-readiness was
+    // refusing, and the Export screen enabled a download the API then declined.
+    //
+    // The summary now folds in the canonical release decision's blockers, so
+    // it can no longer be more permissive than the gate. Asserting the old
+    // limitation would forbid that fix.
+    const canonicalReadiness = await getCanonicalTenderReadiness(prisma, user.id, tender.id);
+    assert.ok(
+      (canonicalReadiness?.blockers ?? []).includes("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"),
+      "the readiness summary that gates the download control cannot see the coverage blocker",
+    );
+    assert.equal(
+      canonicalReadiness?.readyForFinalExport,
+      false,
+      "summary promised final export while mandatory coverage was blocked",
     );
   });
 

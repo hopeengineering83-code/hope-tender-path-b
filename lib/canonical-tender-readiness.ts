@@ -9,6 +9,7 @@ import { computeTenderReadinessState } from "./tender-readiness-state";
 import { buildCanonicalModulePayload, computeCanonicalModuleStates, type CanonicalModuleStatePayload } from "./engine/canonical-readiness-state";
 import { detectAnalysisSourceWithApproval } from "./engine/analysis-source";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
+import { getCanonicalTenderWorkflowDecision } from "./engine/canonical-workflow-decision";
 
 export type CanonicalTenderReadiness = {
   readyForAnalysis: boolean;
@@ -183,8 +184,31 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
     complianceGaps: tender.complianceGaps,
   });
 
+  // The canonical release decision's own blockers. Without them this summary
+  // answered a narrower question than its name promises: it looked only at
+  // documents and matching, so readyForFinalExport went true while
+  // /export-readiness reported BLOCKED on the same tender at the same moment —
+  // reproduced on a live pipeline drive at 6/12 mandatory FULL/SUBSTANTIAL
+  // coverage, where repair-export-gaps returned
+  // {readyForFinalExport: true, blockers: []} and the canonical surface
+  // returned {ok: false, status: "BLOCKED"}.
+  //
+  // That divergence is what puts an enabled "Download Final ZIP" button on a
+  // screen that is simultaneously printing the coverage blocker. The rule this
+  // file already states twenty lines above — readiness must not promise what
+  // the export gate will decline — now holds against the release decision too,
+  // not just against the document gate.
+  //
+  // Folding the codes in here rather than adding another detector keeps one
+  // authority: readyForFinalExport already requires blockers.length === 0, so
+  // a canonical release blocker turns it false by construction and the reason
+  // travels with it.
+  const canonicalDecision = await getCanonicalTenderWorkflowDecision(client as never, userId, tenderId);
+  const canonicalReleaseBlockers = canonicalDecision?.blockerCodes ?? [];
+
   const blockers = [
     ...readiness.fullProposalBlockers.map((b) => b.code),
+    ...canonicalReleaseBlockers,
     ...(matching.state === "VAULT_AWAITS_ENGINE" ? ["ENGINE_NOT_COMPLETED"] : []),
     ...(expertRequirementExists && tender.expertMatches.length === 0 ? ["NO_TENDER_SPECIFIC_EXPERT_MATCHES"] : []),
     ...(projectRequirementExists && tender.projectMatches.length === 0 ? ["NO_TENDER_SPECIFIC_PROJECT_MATCHES"] : []),
