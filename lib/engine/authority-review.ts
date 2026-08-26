@@ -38,6 +38,7 @@
  * and the export would silently stop inspecting anything a client will read.
  */
 
+import { containsPricingLeakage } from "./pricing-hygiene";
 import { AI_TRACE_PATTERNS, PLACEHOLDER_PATTERNS } from "./detection-patterns";
 
 export type AuthorityBlockerCode =
@@ -94,6 +95,23 @@ export interface DocumentInput {
   contentSummary?: string | null;
   reviewNotes?: string | null;
   exactFileName?: string | null;
+  /**
+   * The document's own visible text, extracted from the stored bytes.
+   *
+   * The content checks below decide whether the FILE THE CLIENT RECEIVES
+   * carries a placeholder, an internal note or an AI trace. That question can
+   * only be answered from the document itself. When this is supplied it is the
+   * text those checks read.
+   *
+   * Callers that cannot supply it fall back to the metadata fields, which is
+   * the historical behaviour, but that fallback answers a different question
+   * and is why it must not be the primary source: `contentSummary` is an
+   * audit string the generator writes ABOUT the run, so a run that reports
+   * "missing critical sections were auto-injected ... to be confirmed" blocked
+   * export as though the proposal itself said it, while a real placeholder
+   * sitting in the DOCX body was never looked at.
+   */
+  documentText?: string | null;
 }
 
 export interface ManifestEntry {
@@ -127,8 +145,20 @@ const INTERNAL_NOTE_RE =
 const TODO_FIXME_RE =
   /\bTODO\b|\bFIXME\b|\bHACK\b|\bNOTE:\s/;
 
-const PRICING_IN_TECHNICAL_RE =
-  /\$\s*[\d,]+|\bprice\b|\bunit cost\b|\bbid price\b|\bfinancial offer\b/i;
+// Pricing leakage is NOT decided here. lib/engine/pricing-hygiene.ts is the
+// canonical decision, and document-quality-validator.ts already defers to it;
+// this module keeping a second, cruder rule meant the same document could pass
+// one gate and be refused by the other.
+//
+// The rule that stood here was
+//   /\$\s*[\d,]+|\bprice\b|\bunit cost\b|\bbid price\b|\bfinancial offer\b/i
+// whose bare `\bprice\b` alternative fires on any use of the word. A technical
+// proposal that names price volatility as a project RISK -- which a good one
+// does -- was therefore refused at download for carrying a financial offer it
+// does not contain. pricing-hygiene reads sentences and requires an actual
+// commercial amount or commitment, and exempts safe no-price wording and
+// historical reference values, so it answers the question this check is
+// actually asking.
 
 const METHODOLOGY_IN_FINANCIAL_RE =
   /technical approach|work methodology|implementation methodology|technical methodology/i;
@@ -167,7 +197,11 @@ function analyseDocument(
 ): { blockers: AuthorityBlocker[]; warnings: string[] } {
   const blockers: AuthorityBlocker[] = [];
   const warnings: string[] = [];
-  const text = [doc.contentSummary ?? "", doc.reviewNotes ?? ""].join(" ");
+  // Judge the document by its own text when the caller supplies it. The
+  // metadata join remains only for callers that have no bytes to read.
+  const text = typeof doc.documentText === "string"
+    ? doc.documentText
+    : [doc.contentSummary ?? "", doc.reviewNotes ?? ""].join(" ");
   const dtype = (doc.documentType ?? "").toUpperCase();
 
   // AI trace — uses shared AI_TRACE_PATTERNS for comprehensive coverage
@@ -222,14 +256,13 @@ function analyseDocument(
   }
 
   // Pricing in technical envelope
-  if ((dtype === "TECHNICAL" || dtype === "TECHNICAL_PROPOSAL") && PRICING_IN_TECHNICAL_RE.test(text)) {
-    const match = text.match(PRICING_IN_TECHNICAL_RE);
+  if (containsPricingLeakage(text, { name: doc.name, exactFileName: doc.exactFileName ?? null, documentType: doc.documentType, format: null } as never)) {
     blockers.push({
       code: "PRICING_IN_TECHNICAL",
       severity: "CRITICAL",
       documentId: doc.id,
       documentName: doc.name,
-      detail: `Pricing content found in TECHNICAL document: "${match?.[0] ?? "pattern match"}"`,
+      detail: "Financial pricing content detected in a TECHNICAL document.",
       recoveryAction: "Move all pricing, unit costs, and financial offers to the FINANCIAL document.",
     });
   }

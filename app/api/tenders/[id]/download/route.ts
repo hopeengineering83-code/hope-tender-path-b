@@ -1,6 +1,7 @@
 import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { Document, Packer, Paragraph, TextRun } from "docx";
+import JSZip from "jszip";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
@@ -130,6 +131,40 @@ async function internalReport(userId: string, tender: any, type: string) {
   return new NextResponse(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Content-Disposition": `attachment; filename="${name}"` } });
 }
 
+/**
+ * The visible text of a generated DOCX, read from its stored bytes.
+ *
+ * Authority Review asks whether the file the client receives carries a
+ * placeholder or an internal note. Only the document can answer that, so the
+ * bytes are unzipped and the WordprocessingML text runs are read. Returns null
+ * when there are no bytes or the container cannot be read, which leaves the
+ * review on its metadata fallback rather than silently reporting a clean
+ * document it never opened.
+ */
+async function generatedDocumentVisibleText(doc: any): Promise<string | null> {
+  const base64 = typeof doc?.fileContent === "string" ? doc.fileContent : null;
+  if (!base64) return null;
+  try {
+    const buffer = Buffer.from(base64, "base64");
+    if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) return null;
+    const zip = await JSZip.loadAsync(buffer);
+    const parts = ["word/document.xml", "word/header1.xml", "word/footer1.xml", "word/footnotes.xml", "word/endnotes.xml"];
+    const chunks: string[] = [];
+    for (const part of parts) {
+      const entry = zip.file(part);
+      if (!entry) continue;
+      const xml = await entry.async("string");
+      // <w:t> runs carry the visible text; paragraph breaks become spaces.
+      const runs = xml.match(/<w:t[^>]*>[\s\S]*?<\/w:t>/g) ?? [];
+      for (const run of runs) chunks.push(run.replace(/<[^>]+>/g, ""));
+    }
+    if (chunks.length === 0) return null;
+    return chunks.join(" ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/\s+/g, " ").trim();
+  } catch {
+    return null;
+  }
+}
+
 async function singleDocument(userId: string, tender: any, docId: string) {
   const raw = tender.generatedDocuments.find((d: any) => d.id === docId);
   if (!raw || raw.generationStatus !== "GENERATED") return err("Document not found or not yet generated.", 404, { code: "DOCUMENT_NOT_FOUND" });
@@ -151,6 +186,7 @@ async function singleDocument(userId: string, tender: any, docId: string) {
       contentSummary: raw.contentSummary ?? null,
       reviewNotes: raw.reviewNotes ?? null,
       exactFileName: raw.exactFileName ?? null,
+      documentText: await generatedDocumentVisibleText(raw),
     }],
     [],
     [],
@@ -282,16 +318,17 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   }
 
   {
-    const authorityDocs = tender.generatedDocuments
-      .filter((doc: any) => isFinalExportCandidateDocument(doc) && doc.generationStatus === "GENERATED")
-      .map((doc: any) => ({
-        id: String(doc.id),
-        name: String(doc.name ?? doc.exactFileName ?? doc.id),
-        documentType: String(doc.documentType ?? ""),
-        contentSummary: doc.contentSummary ?? null,
-        reviewNotes: doc.reviewNotes ?? null,
-        exactFileName: doc.exactFileName ?? null,
-      }));
+    const authorityCandidates = tender.generatedDocuments
+      .filter((doc: any) => isFinalExportCandidateDocument(doc) && doc.generationStatus === "GENERATED");
+    const authorityDocs = await Promise.all(authorityCandidates.map(async (doc: any) => ({
+      id: String(doc.id),
+      name: String(doc.name ?? doc.exactFileName ?? doc.id),
+      documentType: String(doc.documentType ?? ""),
+      contentSummary: doc.contentSummary ?? null,
+      reviewNotes: doc.reviewNotes ?? null,
+      exactFileName: doc.exactFileName ?? null,
+      documentText: await generatedDocumentVisibleText(doc),
+    })));
 
     const manifestEntries: Array<{ exactFileName: string; documentType: string }> = [];
     for (const req of (tender.requirements ?? [])) {

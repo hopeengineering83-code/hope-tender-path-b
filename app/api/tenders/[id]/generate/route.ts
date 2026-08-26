@@ -92,7 +92,18 @@ async function makeSupportDocx(tenderTitle: string, title: string, sections: Arr
 }
 
 function classifySupportDoc(docName: string): SupportDocKind {
-  const name = docName.toLowerCase();
+  // Separators are normalised to spaces before matching.
+  //
+  // Every pattern below is written with literal spaces ("company profile",
+  // "work plan", "project reference", "key staff"), but a tender names its
+  // required files with hyphens or underscores -- "02-Company-Profile.docx" is
+  // the form tenders actually mandate. Matching the raw name meant that file
+  // matched nothing, fell through to GENERIC, and GENERIC is not a
+  // company-produced kind: the confirmed plan's Company Profile was written as
+  // a zero-byte "attach the tender-issued original" placeholder, failed
+  // canonical validation, and blocked the final ZIP. The company profile is a
+  // document the firm writes, not a form the client issues.
+  const name = docName.toLowerCase().replace(/[-_.]+/g, " ").replace(/\s+/g, " ").trim();
   if (/\bexpert|\bcv\b|personnel|key staff/.test(name)) return "EXPERT_CV";
   if (/(experience|portfolio).*?(project|reference)|project reference|past performance/.test(name)) return "PROJECT_REFERENCES";
   if (/methodology|work plan|technical approach/.test(name)) return "METHODOLOGY";
@@ -1097,10 +1108,56 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   advanceJob(job.id, "FETCH");
 
   try {
-    const plannedRecordCount = 0;
-    // Full Generate Docs is not allowed to mutate the submission plan. Missing
-    // plan rows are blocked above so repeated generation cannot create duplicate
-    // active document records or silently expand the final-export scope.
+    // Materialise a row for every CONFIRMED plan file that has none.
+    //
+    // Full Generate Docs must not invent scope, and it does not: the only
+    // files created here are the ones the owner already confirmed, and
+    // findMissingGeneratedDocuments -- the same reconciliation the response
+    // reports with -- decides which are absent. Creating nothing was the bug.
+    // fillPlannedSupportDocuments below only ever UPDATES existing rows, so a
+    // confirmed slot with no row was never written: on a two-file plan the
+    // proposal was generated, the second file was silently skipped, generate
+    // still returned success, and the final ZIP then refused the package for
+    // CONFIRMED_PLAN_DOCUMENTS_INCOMPLETE. The only code path that created the
+    // missing row was POST /generate-missing-plan-files, a separate manual
+    // click -- so the normal path could not reach a downloadable ZIP at all,
+    // and the owner automation contract forbids requiring that click.
+    let plannedRecordCount = 0;
+    if (explicitSubmissionScope) {
+      const existingForPlan = await prisma.generatedDocument.findMany({
+        where: { tenderId: id, generationStatus: { not: "SUPERSEDED" } },
+        select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true },
+      });
+      for (const missing of findMissingGeneratedDocuments(submissionPlan, existingForPlan)) {
+        const alreadyPresent = existingForPlan.some(
+          (doc) => (doc.exactFileName ?? doc.name ?? "").trim().toLowerCase() === missing.exactFileName.trim().toLowerCase(),
+        );
+        if (alreadyPresent) continue;
+        try {
+          await prisma.generatedDocument.create({
+            data: {
+              tenderId: id,
+              name: missing.exactFileName.replace(/\.[a-z0-9]+$/i, ""),
+              documentType: missing.documentType ?? "SUPPORTING_DOCUMENT",
+              format: missing.format ?? "DOCX",
+              exactFileName: missing.exactFileName,
+              exactOrder: missing.exactOrder ?? null,
+              generationStatus: "PLANNED",
+              validationStatus: "PENDING",
+              reviewStatus: "PENDING",
+              contentSummary: `Planned submission file ${missing.exactFileName} from the confirmed build plan.`,
+            },
+          });
+          plannedRecordCount += 1;
+        } catch (createErr) {
+          // P2002 = the partial unique index caught a concurrent creator for
+          // the same plan file. Converge: the row now exists, which is the
+          // outcome this loop wanted.
+          if ((createErr as { code?: string })?.code !== "P2002") throw createErr;
+        }
+      }
+      if (plannedRecordCount > 0) warnings.push(`${plannedRecordCount} confirmed plan file(s) had no document record and were created for generation.`);
+    }
     advanceJob(job.id, "AI_GENERATE");
     await time("generate.tender_documents", () => generateTenderDocuments(id, userId), { tenderId: id });
     advanceJob(job.id, "SAVE");
