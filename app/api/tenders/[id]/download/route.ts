@@ -1,7 +1,7 @@
 import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { Document, Packer, Paragraph, TextRun } from "docx";
-import JSZip from "jszip";
+import { generatedDocumentVisibleText } from "../../../../../lib/engine/generated-document-text";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
@@ -129,95 +129,6 @@ async function internalReport(userId: string, tender: any, type: string) {
   const name = `${safeFileBaseName(tender.title)}-${type}-internal.docx`;
   await logAction({ userId, action: "EXPORT_PACKAGE_DOWNLOAD", entityType: "Tender", entityId: tender.id, description: `Downloaded internal ${type} report for "${tender.title}"` });
   return new NextResponse(new Uint8Array(buffer), { headers: { "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Content-Disposition": `attachment; filename="${name}"` } });
-}
-
-const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
-
-/**
- * The <w:t> text runs of a WordprocessingML part.
- *
- * Scanned with indexOf, not matched with a regular expression. The natural
- * pattern is /<w:t[^>]*>[\s\S]*?<\/w:t>/g, but this input is a document body an
- * uploader controls and that shape backtracks quadratically on a long run that
- * never closes the tag. Every step here advances a cursor and never rescans, so
- * the cost is linear whatever the part contains.
- */
-function wordTextRuns(xml: string): string[] {
-  const runs: string[] = [];
-  let cursor = 0;
-  while (cursor < xml.length) {
-    const open = xml.indexOf("<w:t", cursor);
-    if (open === -1) break;
-    const openEnd = xml.indexOf(">", open + 4);
-    if (openEnd === -1) break;
-    // <w:t/> is self-closing and carries no text; <w:tab/>, <w:tbl> and other
-    // tags that merely start with "<w:t" are skipped the same way.
-    const nextChar = xml[open + 4];
-    if (xml[openEnd - 1] === "/" || (nextChar !== ">" && nextChar !== " ")) {
-      cursor = openEnd + 1;
-      continue;
-    }
-    const close = xml.indexOf("</w:t>", openEnd + 1);
-    if (close === -1) break;
-    runs.push(xml.slice(openEnd + 1, close));
-    cursor = close + 6;
-  }
-  return runs;
-}
-
-/** Collapse whitespace runs to single spaces without backtracking. */
-function collapseWhitespace(value: string): string {
-  let out = "";
-  let inWhitespace = false;
-  for (const ch of value) {
-    const isSpace = ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f" || ch === "\v";
-    if (isSpace) { inWhitespace = true; continue; }
-    if (inWhitespace && out.length > 0) out += " ";
-    inWhitespace = false;
-    out += ch;
-  }
-  return out;
-}
-
-/**
- * Decode the five predefined XML entities in ONE pass.
- *
- * A chain of replaces decodes its own output: resolving &amp; before &apos;
- * turns a literal "&amp;apos;" — the correct encoding of the text "&apos;" —
- * into an apostrophe, and Authority Review would then scan a string the
- * document does not say. One pass cannot re-read what it just wrote.
- */
-function decodeXmlEntities(value: string): string {
-  return value.replace(/&(amp|lt|gt|quot|apos);/g, (_match, name: string) => XML_ENTITIES[name]);
-}
-
-/**
- * The visible text of a generated DOCX, read from its stored bytes.
- *
- * Authority Review asks whether the file the client receives carries a
- * placeholder or an internal note. Only the document answers that. Returns null
- * when there are no bytes or the container cannot be read, which leaves the
- * review on its metadata fallback rather than reporting a clean document it
- * never opened.
- */
-async function generatedDocumentVisibleText(doc: any): Promise<string | null> {
-  const base64 = typeof doc?.fileContent === "string" ? doc.fileContent : null;
-  if (!base64) return null;
-  try {
-    const buffer = Buffer.from(base64, "base64");
-    if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) return null;
-    const zip = await JSZip.loadAsync(buffer);
-    const chunks: string[] = [];
-    for (const part of ["word/document.xml", "word/header1.xml", "word/footer1.xml", "word/footnotes.xml", "word/endnotes.xml"]) {
-      const entry = zip.file(part);
-      if (!entry) continue;
-      chunks.push(...wordTextRuns(await entry.async("string")));
-    }
-    if (chunks.length === 0) return null;
-    return decodeXmlEntities(collapseWhitespace(chunks.join(" ")));
-  } catch {
-    return null;
-  }
 }
 
 async function singleDocument(userId: string, tender: any, docId: string) {

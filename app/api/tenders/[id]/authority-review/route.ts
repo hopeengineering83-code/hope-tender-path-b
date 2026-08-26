@@ -1,3 +1,4 @@
+import { generatedDocumentVisibleText } from "../../../../../lib/engine/generated-document-text";
 import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -41,6 +42,11 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             reviewNotes: true,
             exactFileName: true,
             generationStatus: true,
+            // The panel must judge what the document says, not what the
+            // generator wrote about the run. Without the bytes, analyseDocument
+            // falls back to contentSummary/reviewNotes and reports blockers the
+            // document does not contain.
+            fileContent: true,
           },
         },
       },
@@ -58,16 +64,19 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           : "TECHNICAL_PROPOSAL",
     }));
 
-    const documents: DocumentInput[] = tender.generatedDocuments
-      .filter((document) => document.generationStatus === "GENERATED")
-      .map((document) => ({
-        id: document.id,
-        name: document.name,
-        documentType: document.documentType,
-        contentSummary: document.contentSummary ?? null,
-        reviewNotes: document.reviewNotes ?? null,
-        exactFileName: document.exactFileName ?? null,
-      }));
+    const documents: DocumentInput[] = await Promise.all(
+      tender.generatedDocuments
+        .filter((document) => document.generationStatus === "GENERATED")
+        .map(async (document) => ({
+          id: document.id,
+          name: document.name,
+          documentType: document.documentType,
+          contentSummary: document.contentSummary ?? null,
+          reviewNotes: document.reviewNotes ?? null,
+          exactFileName: document.exactFileName ?? null,
+          documentText: await generatedDocumentVisibleText(document),
+        })),
+    );
 
     const canonicalBlockers = [
       ...finalPackage.requirements.blockers,

@@ -1,3 +1,4 @@
+import { generatedDocumentVisibleText } from "../../../../../lib/engine/generated-document-text";
 import { NextResponse } from "next/server";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
@@ -220,14 +221,22 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       } catch { /* invalid legacy JSON is ignored; canonical gates remain fail-closed */ }
     }
 
-    const authorityDocuments: DocumentInput[] = generatedDocuments.map((document) => ({
-      id: document.id,
-      name: document.name ?? "",
-      documentType: document.documentType ?? "TENDER_REQUIRED_FILE",
-      contentSummary: document.contentSummary ?? undefined,
-      reviewNotes: (document as Record<string, unknown>).reviewNotes as string | undefined,
-      exactFileName: document.exactFileName ?? undefined,
-    }));
+    // Judge the documents by their own bytes. Passing only contentSummary and
+    // reviewNotes made this gate read the generator's audit prose instead of
+    // the deliverable, so a run that reported auto-injecting sections blocked
+    // export as though the proposal said it. One shared reader is used by the
+    // download, export and authority-review paths so they cannot disagree.
+    const authorityDocuments: DocumentInput[] = await Promise.all(
+      generatedDocuments.map(async (document) => ({
+        id: document.id,
+        name: document.name ?? "",
+        documentType: document.documentType ?? "TENDER_REQUIRED_FILE",
+        contentSummary: document.contentSummary ?? undefined,
+        reviewNotes: (document as Record<string, unknown>).reviewNotes as string | undefined,
+        exactFileName: document.exactFileName ?? undefined,
+        documentText: await generatedDocumentVisibleText(document as { fileContent?: string | null }),
+      })),
+    );
     // Required sections are the tender's exactly-named submission files, NOT
     // the tender title. runAuthorityReview asks whether some generated
     // document's name or documentType CONTAINS each section string, and no file
