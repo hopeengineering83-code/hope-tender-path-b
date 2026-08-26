@@ -325,6 +325,22 @@ export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfCo
     const line = raw.trimEnd();
     const trimmed = line.trim();
 
+    // HTML comments are the engine's own sentinels — "<!-- cover-page:markdown -->",
+    // "<!-- signature-block:injected -->" and the like. They mark content as
+    // already injected so a second pass does not duplicate it; they are not
+    // prose and must never reach the reader.
+    //
+    // Nothing stripped them, so they rendered as ordinary paragraphs: a real
+    // generated technical proposal carried the literal text
+    // "<!-- cover-page:markdown -->" in the middle of its cover page and
+    // "<!-- signature-block:injected -->" above the signature block. Markdown
+    // renderers drop comments; this one printed them, and every document the
+    // app produces goes through this function.
+    //
+    // Dropping them here rather than at each injector keeps the guarantee in
+    // one place, so a sentinel added later cannot leak by being forgotten.
+    if (/^<!--.*-->$/.test(trimmed)) continue;
+
     // Replace the static markdown TOC with a native updating Word field. The
     // title deliberately is not a Heading 1–3 paragraph, so it cannot include
     // itself in the generated entries.
