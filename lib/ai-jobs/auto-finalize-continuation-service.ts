@@ -64,6 +64,20 @@ export type AutoFinalizeResult = {
    */
   pdfValidation: CanonicalValidationOutcome;
   /**
+   * Requirement coverage refreshed against the artifacts that now exist.
+   *
+   * Coverage is first computed during Run Engine, when the deliverables are
+   * still promises: a requirement answered by the proposal's own document has
+   * only a PARTIAL build-plan row, because `artifactBytesVerified` is false
+   * until the bytes exist. Nothing recomputed it afterwards on this path, so
+   * the export gate judged engine-time evidence and refused a package whose
+   * documents were generated, validated and byte-verified.
+   *
+   * `refreshed: false` means the sync could not run; stored coverage is then
+   * judged as-is, which fails closed.
+   */
+  coverageReconciliation: { refreshed: boolean; requirementsChecked: number };
+  /**
    * Does the package actually contain every required file? The stages above
    * can each succeed while the plan is still short a document, so the run is
    * not converged until the manifest reconciles against the confirmed plan.
@@ -188,6 +202,7 @@ export async function runAutoFinalizeAfterGeneration(
     validation: { validated: 0, failed: 0, pending: 0, rejected: [] },
     pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
     pdfValidation: { validated: 0, failed: 0, pending: 0, rejected: [] },
+    coverageReconciliation: { refreshed: false, requirementsChecked: 0 },
     packageReconciliation: { requiredTotal: 0, missing: 0 },
     missingFileGeneration: { generated: 0, planned: 0, skipped: 0, blocked: null },
     formReuse: { reused: 0, stillMissing: 0 },
@@ -355,6 +370,58 @@ export async function runAutoFinalizeAfterGeneration(
       errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
     });
     throw error;
+  }
+
+  // Step 3b: refresh requirement coverage against the artifacts that now exist.
+  //
+  // lib/engine/validate.ts already does this, and its comment says doing it
+  // there "covers every path that reaches a verdict, since both POST /validate
+  // and POST /export come through this function". That is not true of this
+  // path: runCanonicalValidation below imports checkFullExportReadiness from
+  // export-readiness and validates documents directly, so the automatic
+  // pipeline — the one the owner automation contract says must need no clicks —
+  // reached the export gate having never refreshed coverage.
+  //
+  // The effect was a tender that cannot be finished. Coverage is computed at
+  // Run Engine time, when a requirement answered by the proposal's own
+  // deliverable has only a PARTIAL build-plan row. Generation then produces the
+  // document, validation passes it, its bytes verify — and the export gate
+  // still reads the engine-time PARTIAL and refuses the ZIP for
+  // MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE. The only way past it was to know to
+  // POST /api/tenders/{id}/requirement-coverage/auto-sync by hand.
+  //
+  // This calls the SAME canonical service, not another coverage rule: it is an
+  // idempotent desired-state sync, so running it on an already-current tender
+  // is a no-op. It cannot manufacture coverage either — a build-plan row only
+  // reaches SUBSTANTIAL when artifactBytesVerified is true, and a generated
+  // document only reaches FULL when it passed validation.
+  try {
+    await recordStep(jobId, {
+      stepName: "auto-finalize.coverage-reconcile",
+      message: "Refreshing requirement coverage against generated artifacts",
+      status: "RUNNING",
+    });
+    const { reconcileAutomaticRequirementCoverage } = await import("../engine/reconcile-automatic-requirement-coverage");
+    const coverage = await reconcileAutomaticRequirementCoverage(prisma, tenderId, userId);
+    result.coverageReconciliation = {
+      refreshed: coverage.ok === true,
+      requirementsChecked: coverage.requirementsChecked ?? 0,
+    };
+    await recordStep(jobId, {
+      stepName: "auto-finalize.coverage-reconcile.complete",
+      message: `Requirement coverage refreshed: ${result.coverageReconciliation.requirementsChecked} requirement(s) checked`,
+      status: "SUCCEEDED",
+    });
+  } catch (error) {
+    // Never fail the run for this. Coverage that could not be refreshed is
+    // simply not refreshed, and the gates below judge what is stored — which
+    // blocks rather than releases, so the failure mode stays closed.
+    logger.warn("[auto-finalize] requirement-coverage reconcile failed; judging stored coverage", {
+      tenderId,
+      jobId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    result.coverageReconciliation = { refreshed: false, requirementsChecked: 0 };
   }
 
   // Step 4 (Gap 4+5): auto-finalize eligible PDFs from VALIDATED source
