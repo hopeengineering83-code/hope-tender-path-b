@@ -444,15 +444,15 @@ describe("Spec Test 10 — No AI traces or internal IDs in generated documents",
     assert.ok(issues.some((i) => /AI/i.test(i)), "must surface AI trace issue");
   });
 
-  it("checkDocumentQualityGate is async and extracts DOCX visible text", () => {
+  it("checkDocumentQualityGate is async and opens generated narrative bytes through the canonical reader", () => {
     const src = readLibFile("engine/export-readiness.ts");
     assert.ok(
       /export async function checkDocumentQualityGate/.test(src),
       "checkDocumentQualityGate must be async",
     );
     assert.ok(
-      src.includes("extractDocxVisibleText"),
-      "checkDocumentQualityGate must call extractDocxVisibleText for base64 DOCX",
+      src.includes("generatedDocumentVisibleText"),
+      "checkDocumentQualityGate must call the canonical DOCX/PDF visible-text reader",
     );
   });
 });
@@ -501,7 +501,7 @@ describe("Spec Test 11 — Final export remains fail-closed", () => {
     assert.ok(src.includes("extraPlan.length > 0"), "must check extraPlan.length before pushing blocker");
   });
 
-  it("final-submission-readiness.ts extracts DOCX visible text for quality scoring", () => {
+  it("final-submission-readiness.ts opens DOCX/PDF visible text for quality scoring", () => {
     // The extraction now lives in the canonical current-document-quality
     // module so the readiness gate and the Document Validator panel cannot
     // score the same document from different text. Assert the property
@@ -513,10 +513,10 @@ describe("Spec Test 11 — Final export remains fail-closed", () => {
       "readiness must score documents through the canonical quality helper",
     );
     const shared = readLibFile("engine/current-document-quality.ts");
-    assert.ok(shared.includes("extractDocxVisibleText"), "canonical helper must import extractDocxVisibleText");
+    assert.ok(shared.includes("generatedDocumentVisibleText"), "canonical helper must import generatedDocumentVisibleText");
     assert.ok(
-      /extractDocxVisibleText[\s\S]*?assessGeneratedDocumentQuality/.test(shared),
-      "canonical helper must extract visible text before calling assessGeneratedDocumentQuality",
+      /generatedDocumentVisibleText[\s\S]*?assessGeneratedDocumentQuality/.test(shared),
+      "canonical helper must open DOCX/PDF visible text before calling assessGeneratedDocumentQuality",
     );
   });
 });

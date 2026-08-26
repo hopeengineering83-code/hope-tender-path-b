@@ -91,6 +91,15 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-26 UTC — Codex (exact-head CI assertion repair)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; fetched first and continued from exact remote head `4f259eb1` without creating another branch or PR.
+- **Reproducer / root cause:** both exact-head CI runs completed 10,707/10,708 assertions and failed only `buildplan-generation-pipeline.test.ts`, whose source-shape assertion still required the retired DOCX-only `extractDocxVisibleText` consumer. Production intentionally moved to `generatedDocumentVisibleText` so DOCX and required PDF bytes share one reader; the stale assertion contradicted the new invariant and was the sole CI blocker. Exact-head dependency security and screenshot capture passed, and GitHub reported zero unresolved review threads.
+- **Files changed:** `tests/buildplan-generation-pipeline.test.ts` and this handoff only. The regression now asserts that both Export Readiness and current-document quality consume the canonical DOCX/PDF reader before quality scoring; no production gate was weakened.
+- **Checks:** the CI-failing suite plus real-PDF finalization and quality-enforcement suites passed 94/94 with `CI=true RUN_DB_INTEGRATION=true`; targeted ESLint, typecheck and diff check passed.
+- **Remaining acceptance:** code and automated regression closure is now 100% for every reproducible repository defect in the original prompt. Whole live acceptance is still 70% until an owner-authenticated retained-Pharo Preview run supplies its actual four evidence rows and downloadable PDF/ZIP; this environment cannot truthfully manufacture that evidence.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** pending the new exact-head CI and authenticated retained-Pharo verification.
+
 ### 2026-08-26 UTC — Codex (finalized-PDF visible-content validation)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; fetched first and continued from exact remote head `1e42bf63` without creating a branch or PR.
