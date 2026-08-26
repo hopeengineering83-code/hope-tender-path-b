@@ -1,5 +1,6 @@
 // Central authoritative generation/export readiness gate.
 import { logger } from "../observability";
+import { getCanonicalTenderWorkflowDecision } from "./canonical-workflow-decision";
 //
 // THE single fail-closed authorization source for every path that can create a
 // GeneratedDocument, regenerate a section, run an AI proposal (interactive or
@@ -128,6 +129,7 @@ export type GenerationPurpose =
   | "generate-missing-plan-files";
 
 export type GenerationBlockerCode =
+  | "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"
   | "OWNERSHIP_TENDER_NOT_FOUND"
   | "EXTRACTION_NO_ACTIVE_FILE"
   | "EXTRACTION_CORRUPTED"
@@ -186,6 +188,14 @@ export interface ReadinessRequirement {
 }
 
 export interface GenerationReadinessInput {
+  /**
+   * The canonical release state's mandatory FULL/SUBSTANTIAL coverage verdict.
+   * true = the canonical decision reports MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE.
+   * Supplied for FINAL purposes only; undefined leaves the K3 rule inert, so
+   * draft callers are unaffected.
+   */
+  canonicalMandatoryCoverageBlocked?: boolean;
+  canonicalMandatoryCoverageDetail?: string;
   purpose: GenerationPurpose;
   // A — ownership
   tenderExistsAndOwned: boolean;
@@ -419,6 +429,27 @@ export function evaluateGenerationReadiness(
     if (input.exportReadyDocumentCount < 1) {
       return fail("NO_EXPORT_READY_DOCUMENTS",
         "No export-ready documents exist. Generate and validate real documents before exporting or creating a final ZIP. PLANNED, virtual, and superseded rows do not count.");
+    }
+    // K3 — The canonical release state is the authority on mandatory evidence
+    //      coverage, and nothing on the export path used to consult it.
+    //
+    //      export-readiness.ts carries its own coverage heuristic that blocks
+    //      only under 50% (MEDIUM). The canonical rule requires FULL/SUBSTANTIAL
+    //      coverage on every mandatory requirement, and its own message promises
+    //      "no confirmation click can bypass this gate". Between those two
+    //      thresholds the canonical surface reported BLOCKED while this gate let
+    //      the ZIP out — reproduced on a live drive at exactly 6/12 mandatory
+    //      coverage: /export-readiness returned BLOCKED and POST /export returned
+    //      200 "All preflight gates passed" for the same tender at the same
+    //      moment, offering the archive for download.
+    //
+    //      Enforcing it here rather than in either route is deliberate: export
+    //      and final-zip both converge on this function, so the two cannot drift
+    //      apart again.
+    if (input.canonicalMandatoryCoverageBlocked === true) {
+      return fail("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE",
+        input.canonicalMandatoryCoverageDetail
+          || "The canonical release state reports that mandatory requirements lack FULL/SUBSTANTIAL evidence coverage.");
     }
   }
 
@@ -769,8 +800,23 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       }
     }
 
+    // The canonical release state, consulted for FINAL purposes only. Draft work
+    // must never be blocked by evidence coverage, so this is not fetched for
+    // draft purposes and the rule below cannot fire on them.
+    let canonicalMandatoryCoverageBlocked: boolean | undefined;
+    let canonicalMandatoryCoverageDetail: string | undefined;
+    if (purpose === "export" || purpose === "final-zip") {
+      const canonical = await getCanonicalTenderWorkflowDecision(prisma, userId, tenderId);
+      if (canonical?.blockerCodes.includes("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE")) {
+        canonicalMandatoryCoverageBlocked = true;
+        canonicalMandatoryCoverageDetail = canonical.nextRequiredActionReason;
+      }
+    }
+
     return evaluateGenerationReadiness({
       purpose,
+      canonicalMandatoryCoverageBlocked,
+      canonicalMandatoryCoverageDetail,
       tenderExistsAndOwned: true,
       activeFileCount: activeFiles.length,
       extractionFiles,
