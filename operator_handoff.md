@@ -91,6 +91,16 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-26 UTC — Codex (evaluation-criteria source truth follow-up)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; continued from exact remote head `b039c607` without creating a branch or PR.
+- **Reproduction / root cause:** Final Submission Readiness accepted `evaluationMethodology` or structured `evaluationCriteriaSourceJson`, while Export Readiness inspected only `evaluationMethodology`; both ignored preserved criteria in active source text. The release consumers could therefore emit `EVALUATION_CRITERIA_ADVISORY` even when the source contained qualitative criteria without numerical weights.
+- **Scope / files changed:** added the shared source-criteria presence resolver `lib/engine/evaluation-criteria-presence.ts`; migrated `lib/engine/export-readiness.ts` and `lib/engine/final-submission-readiness.ts`; added structurally different no-weight, structured-source, and explicit-absence behavioral cases in `tests/evaluation-criteria-presence.test.ts`.
+- **Tests actually run:** 70/70 focused assertions passed across criteria presence, canonical mandatory population, Build Plan release safety, PDF byte/finalization/ZIP behavior, and pricing hygiene. Prisma generate, typecheck, targeted ESLint, and `git diff --check` passed.
+- **Environment limitation / risks:** the clean real Pharo benchmark was invoked with the real tender DOCX and Plan-B Vault JSON, but the configured Neon PostgreSQL hostname was unreachable before fixture creation. No real artifact or authenticated Preview rerun is claimed. The resolver requires a criteria heading/lead-in plus substantive factors and rejects explicit source statements that criteria were not provided.
+- **Next action:** require exact-head CI/security/screenshot/Preview, then rerun the authenticated Pharo workflow and inspect the real DOCX, required PDF, and ZIP; retain any genuine mandatory-evidence blocker below 4/4.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — owner-controlled live verification remains required.
+
 ### 2026-08-21 UTC — Codex (final owner-policy contradiction cleanup)
 
 - **Mode:** exact-head completion audit and narrow provider-policy cleanup.

@@ -13,6 +13,7 @@ import {
   type DocumentOutputState,
 } from "./document-output-state";
 import { containsPricingLeakage } from "./pricing-hygiene";
+import { hasSourceEvaluationCriteria } from "./evaluation-criteria-presence";
 import { checkExportFileByteReadiness } from "./export-byte-readiness";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessExtractionQualityPerPage } from "../extraction-quality";
@@ -840,7 +841,7 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   // Per Pillar 6: EVALUATION_CRITERIA_MISSING and EVALUATION_CRITERIA_NOT_EXTRACTED
   // are merged into one non-blocking advisory. Only block if the tender
   // explicitly contains an unreadable scoring section.
-  if (!tender.evaluationMethodology) {
+  if (!hasSourceEvaluationCriteria(tender)) {
     advisoryWarnings.push({
       category: "EVALUATION_CRITERIA_ADVISORY",
       severity: "LOW" as const,

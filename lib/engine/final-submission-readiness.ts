@@ -56,6 +56,7 @@ import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysi
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { isExtractionAcceptableForExport } from "./extraction-quality-gate";
+import { hasSourceEvaluationCriteria } from "./evaluation-criteria-presence";
 
 export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -1092,10 +1093,7 @@ export async function getFinalSubmissionReadiness(
   // Per Pillar 6: merged with EVALUATION_CRITERIA_MISSING into one non-blocking
   // advisory. This is no longer a hard blocker — some tenders genuinely have
   // no scoring section. Only surface as advisory, not as a tenderLevelBlocker.
-  const hasEvalCriteria = Boolean(
-    (tender.evaluationMethodology ?? "").trim().length > 20 ||
-    tender.evaluationCriteriaSourceJson,
-  );
+  const hasEvalCriteria = hasSourceEvaluationCriteria(tender);
   if (!hasEvalCriteria) {
     // Advisory only — do NOT push to tenderLevelBlockers
     advisoryWarnings.push({
