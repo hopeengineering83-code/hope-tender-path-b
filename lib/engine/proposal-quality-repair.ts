@@ -31,16 +31,20 @@ function statusForRequirement(requirement: string, support: string): "FULLY MET"
 
 function sectionE(input: EvaluatorMatrixInput): string {
   const blueprint = buildTenderResponseBlueprint(input).slice(0, 12);
+  // The "Final action" column carried finalAction(), which is guidance to our
+  // own writer — "Write confidently with source-backed claim", "Flag for final
+  // evidence review" — and it was being printed to the client. A compliance
+  // matrix is legitimate client content; instructions to the bid team are not.
   const rows = [
-    "| Tender requirement | Compliance status | Evidence / response location | Final action |",
+    "| Tender requirement | Compliance status | Where addressed | Supporting evidence |",
     "|---|---|---|---|",
   ];
   for (const item of blueprint) {
-    rows.push(`| ${clean(item.requirement)} | ${statusForRequirement(item.requirement, item.evidenceSupport)} | ${item.responseSection}; ${clean(item.evidenceLine)} | ${item.finalAction} |`);
+    rows.push(`| ${clean(item.requirement)} | ${statusForRequirement(item.requirement, item.evidenceSupport)} | ${item.responseSection} | ${clean(item.evidenceLine)} |`);
   }
   return [
     "## Section E: Compliance Matrix",
-    "This matrix converts the tender's mandatory and scored requirements into a traceable response register. Items marked PARTIALLY MET or NOT MET require bid-team review before final submission.",
+    "This matrix maps each requirement of the tender to the section of this proposal that answers it and the evidence supporting that answer.",
     rows.join("\n"),
   ].join("\n\n");
 }
@@ -115,8 +119,15 @@ export function applyProposalQualityRepairAddenda(markdown: string, input: Evalu
   if (!hasHeading(output, /(^|\n)\s*#{1,4}\s*(?:section\s*[G:.\-\s]*)?\s*(?:win\s+themes?|themes?\s+(?:and|&)\s+discriminators?)/i)) repairs.push(sectionG(input));
   if (!hasHeading(output, /(^|\n)\s*#{1,4}\s*(?:section\s*[H:.\-\s]*)?\s*(?:proposal\s+)?self.score/i)) repairs.push(sectionH(input));
   if (repairs.length === 0) return output;
-  output += "\n\n## Deterministic Proposal Quality Repair Addenda";
-  output += "\nThe following sections were inserted by the proposal engine because evaluator-critical quality controls were missing or not detectable in the generated draft.";
+  // No engine self-narration in the deliverable. This block used to open with
+  // "Deterministic Proposal Quality Repair Addenda" followed by "The following
+  // sections were inserted by the proposal engine because evaluator-critical
+  // quality controls were missing or not detectable in the generated draft" —
+  // shipped verbatim to the procuring entity. The sections themselves are
+  // genuine client content (compliance matrix, evaluation mirror, win themes,
+  // self-assessment); only the commentary about why the engine added them was
+  // internal. That the engine repaired the draft belongs in the job record, not
+  // in the proposal.
   output += "\n\n" + repairs.join("\n\n");
   return output;
 }

@@ -906,8 +906,45 @@ async function runPdfFinalization(
             ...pdfIntegrity,
           },
         });
+
+        // The DOCX this PDF was rendered from is an intermediate, not a second
+        // deliverable. Left GENERATED it becomes a file the tender never named:
+        // findExtraGeneratedDocuments counts every GENERATED row outside the
+        // confirmed plan, export readiness reports EXTRA_FILES, and the final
+        // ZIP refuses the package. SUPERSEDED is the status this codebase
+        // already uses for "preserved history, not a current deliverable", and
+        // that same function already excludes it, so the source stays auditable
+        // without being shipped. Only a source that actually produced the
+        // required PDF is superseded; a DOCX the tender itself asked for is
+        // never a PDF source here, so it is untouched.
+        await prisma.generatedDocument.update({
+          where: { id: sourceDoc.id },
+          data: {
+            generationStatus: "SUPERSEDED",
+            reviewNotes: `machine:auto-finalize-pdf — superseded by ${requiredName}, which was rendered from this source.`,
+            updatedAt: new Date(),
+          },
+        }).catch((error: unknown) => {
+          logger.warn("[auto-finalize] could not supersede PDF source document", {
+            tenderId,
+            requiredName,
+            errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+          });
+        });
         finalized++;
       } else {
+        // Say WHY. The blocker code and its safe public message were dropped
+        // here, so a required PDF that could not be rendered surfaced only as
+        // the generic "could not be finalized from a validated source" and the
+        // actual cause — an unreadable source, an unsupported format, an empty
+        // extraction — was invisible in logs and in the job's own steps.
+        logger.warn("[auto-finalize] required PDF was not finalized", {
+          tenderId,
+          requiredName,
+          sourceDocumentId: sourceDoc.id,
+          blockerCode: result.code,
+          publicMessage: result.publicMessage,
+        });
         failed++;
       }
     } catch (error) {

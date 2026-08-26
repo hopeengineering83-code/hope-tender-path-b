@@ -1,3 +1,4 @@
+import { clientSafeComplianceNote } from "./automatic-requirement-coverage";
 import { filterCleanLines } from "./pattern-filter";
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
 
@@ -50,13 +51,20 @@ function tokenize(value: string): string[] {
 }
 
 function evidencePool(input: BlueprintEvidenceInput): string[] {
+  // Sanitise once, here, rather than at each consumer. Compliance and evidence
+  // lines are built from ComplianceMatrix.notes, which carries the engine's
+  // serialized automatic-evidence record; every blueprint reader — the
+  // compliance matrix addendum, the deep-reasoning table — would otherwise
+  // print that internal key, UUID and all, into a client deliverable.
   return [
     ...take(input.projectLines, 14, 340),
     ...take(input.expertLines, 14, 300),
     ...take(input.companyEvidenceLines, 14, 340),
     ...take(input.projectEvidenceLines, 12, 340),
     ...take(input.complianceLines, 10, 280),
-  ];
+  ]
+    .map((line) => clientSafeComplianceNote(line))
+    .filter((line) => line.length > 0);
 }
 
 function scoreEvidence(requirement: string, line: string): number {

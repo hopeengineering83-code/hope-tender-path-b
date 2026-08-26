@@ -1,3 +1,4 @@
+import { formatFromExtension } from "./export-format-policy";
 import { logger } from "../observability";
 import { verifiedIntegrityDataFromBase64, verifyPersistedFileBytes } from "./persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "./transactional-generation-gate";
@@ -3567,7 +3568,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
     // preserved history back to GENERATED — and collide with the partial
     // unique index when an active row with the same name already exists.
-    const proposalFileName = planProposalFileName ?? "Technical-Proposal.docx";
+    // The generated proposal is DOCX. If the tender's required file is a PDF,
+    // the DOCX must NOT take that name.
+    //
+    // It used to: the row was written format "DOCX" with exactFileName
+    // "Technical Proposal.pdf". That artifact fails canonical validation for
+    // ARTIFACT_IDENTITY_MISMATCH — correctly, since a .pdf holding DOCX bytes
+    // does not open for an evaluator — and the failure was terminal, because
+    // PDF finalization only converts a source whose validationStatus is
+    // VALIDATED and whose base name matches the required PDF. The one document
+    // that could have become the PDF was disqualified by carrying the PDF's
+    // name, so every tender that mandates a .pdf deliverable was unexportable
+    // by construction.
+    //
+    // Naming the source by the format it actually is lets the canonical
+    // finalizer produce the required .pdf from it. formatFromExtension is the
+    // same parser detectTenderFormatPolicy uses, so generation and
+    // finalization agree on what the tender asked for.
+    const proposalFileName = (() => {
+      const planned = planProposalFileName ?? "Technical-Proposal.docx";
+      return formatFromExtension(planned) === "pdf"
+        ? `${planned.replace(/\.pdf$/i, "")}.docx`
+        : planned;
+    })();
     await prisma.$transaction(async (tx) =>
       withTransactionalGenerationGate({
         prisma,

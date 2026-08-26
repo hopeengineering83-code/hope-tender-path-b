@@ -618,6 +618,26 @@ export function serializeAutomaticRequirementEvidence(
   return `${AUTOMATIC_REQUIREMENT_EVIDENCE_PREFIX}${JSON.stringify(metadata)}`;
 }
 
+/**
+ * A compliance note with the engine's own evidence bookkeeping removed.
+ *
+ * ComplianceMatrix.notes may carry a serialized
+ * `automatic-requirement-evidence:v1:{...}` record — an internal evidence key
+ * with a document UUID and content hash. That string is for reconciliation, not
+ * for a reader: it reached the client's proposal through the quality-repair
+ * compliance matrix, where it read as a truncated JSON blob mid-sentence and
+ * tripped the document quality gate for exposing an internal record identifier,
+ * which then blocked the required PDF and the whole export.
+ *
+ * Stripping it belongs here because this module owns the marker; any consumer
+ * that renders a note to a human should read it through this function.
+ */
+export function clientSafeComplianceNote(notes: string | null | undefined): string {
+  if (!notes) return "";
+  const at = notes.indexOf(AUTOMATIC_REQUIREMENT_EVIDENCE_PREFIX);
+  return (at === -1 ? notes : notes.slice(0, at)).replace(/\s*[—-]\s*$/, "").trim();
+}
+
 export function parseAutomaticRequirementEvidence(
   notes: string | null | undefined,
 ): AutomaticRequirementEvidenceMetadata | null {
