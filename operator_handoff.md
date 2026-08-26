@@ -91,6 +91,14 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-26 UTC — Codex (exact-head green acceptance checkpoint)
+
+- **Branch / PR:** restored the checkout's missing `origin` metadata, fetched, and attached it to existing `release/consolidated-recovery-20260717` / draft #1175 at exact head `4d279897`; no new remote branch or PR.
+- **Exact-head evidence:** both full CI jobs passed, both high/critical dependency-security jobs passed, screenshot capture passed, the primary `hope-tender-path-b` Vercel deployment is Ready, and GitHub reports zero unresolved review threads. Public Preview `/api/health` returned HTTP 200 healthy with release `4d2798977ce54f60d7130d0e348ab1eb0aa62e89`, deployment `dpl_5DZBnft19T9gLYHZeARXyWMfhT2F`, every critical table present, and `schemaMatchesDeployedCode: true`.
+- **Scope / files:** verification and this handoff only; no production code changed because no new repository defect was reproduced after the CI-guard repair.
+- **Remaining acceptance:** reproducible code and automated checks are 100% closed. The retained Pharo tenant's authenticated four-requirement evidence table, exact quality score, and downloadable final PDF/ZIP remain unverified because this environment has no owner session or retained tenant Vault bytes. Those facts cannot be inferred from public health or fabricated.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** pending owner-authenticated retained-Pharo acceptance.
+
 ### 2026-08-26 UTC — Codex (exact-head CI assertion repair)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; fetched first and continued from exact remote head `4f259eb1` without creating another branch or PR.
