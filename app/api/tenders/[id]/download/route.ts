@@ -180,14 +180,19 @@ function collapseWhitespace(value: string): string {
   return out;
 }
 
-/** The five predefined XML entities. Literal replacements, no quantifiers. */
+const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
+/**
+ * Decode the five predefined XML entities in ONE pass.
+ *
+ * A chain of replaces decodes its own output: resolving &amp; before &apos;
+ * turns a literal "&amp;apos;" -- the correct encoding of the text "&apos;" --
+ * into an apostrophe. Authority Review then scans a string the document does
+ * not say. One pass cannot re-read what it just wrote, so ordering stops
+ * mattering.
+ */
 function decodeXmlEntities(value: string): string {
-  return value
-    .split("&lt;").join("<")
-    .split("&gt;").join(">")
-    .split("&quot;").join('"')
-    .split("&apos;").join("'")
-    .split("&amp;").join("&");
+  return value.replace(/&(amp|lt|gt|quot|apos);/g, (_match, name: string) => XML_ENTITIES[name]);
 }
 
 /**

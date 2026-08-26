@@ -247,10 +247,20 @@ let zipEntries: Array<{ name: string; size: number; text: string }> = [];
 let planItemCount = 0;
 let generatedDocNames: string[] = [];
 
+const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+
 async function docxVisibleText(buffer: Buffer): Promise<string> {
   const zip = await JSZip.loadAsync(buffer);
   const xml = await zip.file("word/document.xml")!.async("string");
-  return xml.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&apos;/g, "'").replace(/\s+/g, " ").trim();
+  // One decoding pass, not a chain of replaces. Decoding &amp; before &apos;
+  // turns a literal "&amp;apos;" -- the correct encoding of the text "&apos;"
+  // -- into an apostrophe, so a document that genuinely contains that string
+  // would be scanned as something it does not say.
+  return xml
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&(amp|lt|gt|quot|apos);/g, (_match, name: string) => XML_ENTITIES[name])
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 before(async () => {
