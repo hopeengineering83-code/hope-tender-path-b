@@ -77,7 +77,11 @@ function canonicalEvaluationMethodology(aiResult: AIAnalysisResult): string | nu
     .map((item) => {
       const criterion = item?.criterion?.trim();
       if (!criterion) return null;
-      const weight = typeof item.weight === "number" ? ` — ${item.weight}%` : " — weight not stated";
+      // Weight is source text (for example "40 points", "25%", or
+      // "pass/fail"), not necessarily a percentage. Preserve it verbatim;
+      // coercing every value to `%` silently changes the tender's scoring rule.
+      const statedWeight = typeof item.weight === "string" ? item.weight.trim() : "";
+      const weight = statedWeight ? ` — ${statedWeight}` : " — weight not stated";
       return `${criterion}${weight}`;
     })
     .filter((line): line is string => Boolean(line));

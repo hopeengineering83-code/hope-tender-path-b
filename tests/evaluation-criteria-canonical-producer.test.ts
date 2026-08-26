@@ -36,9 +36,21 @@ test("canonical AI promotion derives methodology from sourced criteria when narr
     evaluationMethodology: "",
     evaluationCriteriaSource: [
       { criterion: "Relevant project experience", weight: null, sourcePage: 5, sourceQuote: "Relevant project experience" },
-      { criterion: "Technical methodology", weight: 40, sourcePage: 5, sourceQuote: "Technical methodology — 40%" },
+      { criterion: "Technical methodology", weight: "40 points", sourcePage: 5, sourceQuote: "Technical methodology — 40 points" },
     ],
     requirements: [], exactFileNaming: [], exactFileOrder: [], submissionNotes: "",
   } as never, {});
-  assert.equal(result.data.evaluationMethodology, "Relevant project experience — weight not stated\nTechnical methodology — 40%");
+  assert.equal(result.data.evaluationMethodology, "Relevant project experience — weight not stated\nTechnical methodology — 40 points");
+});
+
+test("canonical AI promotion preserves percentage text without reinterpreting the unit", () => {
+  const result = buildCanonicalAnalysisTenderUpdate({
+    summary: "Source-grounded analysis summary",
+    evaluationMethodology: "",
+    evaluationCriteriaSource: [
+      { criterion: "Technical proposal", weight: "75%", sourcePage: 8, sourceQuote: "Technical proposal: 75%" },
+    ],
+    requirements: [], exactFileNaming: [], exactFileOrder: [], submissionNotes: "",
+  } as never, {});
+  assert.equal(result.data.evaluationMethodology, "Technical proposal — 75%");
 });

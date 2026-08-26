@@ -91,6 +91,15 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-26 UTC — Codex (evaluation-weight unit fidelity follow-up)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; exact remote head `257a6571`, no new branch or PR.
+- **Defect found and fixed:** review of the prior canonical criteria repair found that `AIAnalysisResult.evaluationCriteriaSource[].weight` is source text, not a number. The implementation tested for `number`, so every real stated weight was discarded as “weight not stated”; had a number reached it, the code would also have mislabeled points/marks as a percent. Canonical promotion now preserves the exact source unit/text (`40 points`, `75%`, `pass/fail`) and never invents `%`.
+- **Files changed:** `lib/engine/canonical-analysis-update.ts`, `tests/evaluation-criteria-canonical-producer.test.ts`, and this handoff.
+- **Checks:** seven focused canonical criteria tests, typecheck and targeted ESLint passed. Existing exact-head `257a6571` dependency security, screenshot audit and Vercel Preview were green; both duplicate CI runs had passed migrations, integrity, typecheck, lint, 10k+ tests and build and remained in the authenticated Playwright step when checked.
+- **Remaining acceptance:** no project-scoped owner Preview credential or accessible real Pharo Vault bytes exist in this environment. Therefore retained-tenant 4/4 coverage and its actual Technical Proposal PDF/ZIP still cannot be claimed; the truthful completion remains 70% of the ten original live acceptance phases.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** pending exact-head CI completion and owner-authenticated retained-Pharo verification.
+
 ### 2026-08-26 UTC — Codex (canonical criteria producer and validation-quality convergence)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; continued from exact head `74cd6c3c` without creating another branch or PR.
