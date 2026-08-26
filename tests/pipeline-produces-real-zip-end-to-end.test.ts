@@ -246,6 +246,7 @@ let zipBytes: Buffer | null = null;
 let zipEntries: Array<{ name: string; size: number; text: string }> = [];
 let planItemCount = 0;
 let generatedDocNames: string[] = [];
+let finalDocumentQuality: Array<{ name: string; score: string; numericScore: number; validationStatus: string }> = [];
 
 const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
@@ -427,6 +428,21 @@ before(async () => {
     assert.ok(attempt < 2, `AUTO_FINALIZE never converged: ${JSON.stringify(result.blockers)}`);
   }
 
+  const { resolveCurrentDocumentVerdict } = require("../lib/engine/current-document-quality");
+  const [currentDocs, currentRequirements, selectedExperts, selectedProjects] = await Promise.all([
+    prisma.generatedDocument.findMany({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } } }),
+    prisma.tenderRequirement.findMany({ where: { tenderId } }),
+    prisma.tenderExpertMatch.findMany({ where: { tenderId, isSelected: true }, include: { expert: { select: { fullName: true } } } }),
+    prisma.tenderProjectMatch.findMany({ where: { tenderId, isSelected: true }, include: { project: { select: { name: true } } } }),
+  ]);
+  for (const doc of currentDocs) {
+    const verdict = await resolveCurrentDocumentVerdict(doc, currentRequirements, {
+      selectedExpertNames: selectedExperts.map((match: any) => match.expert.fullName),
+      selectedProjectNames: selectedProjects.map((match: any) => match.project.name),
+    });
+    finalDocumentQuality.push({ name: doc.exactFileName ?? doc.name, score: verdict.score, numericScore: verdict.report.score, validationStatus: doc.validationStatus });
+  }
+
   // ── The archive ──────────────────────────────────────────────────────────
   const downloadRoute = require("../app/api/tenders/[id]/download/route");
   let response = await downloadRoute.GET(new Request(`http://localhost/api/tenders/${tenderId}/download?type=zip`), { params: Promise.resolve({ id: tenderId }) });
@@ -547,6 +563,15 @@ dbDescribe("the pipeline produces a real, downloadable ZIP", () => {
       for (const pattern of forbidden) {
         assert.ok(!pattern.test(entry.text), `${entry.name} ships forbidden content matching ${pattern}`);
       }
+    }
+  });
+
+  it("validates only documents that pass the same canonical quality rubric shown by readiness", () => {
+    assert.ok(finalDocumentQuality.length > 0);
+    for (const doc of finalDocumentQuality) {
+      assert.equal(doc.validationStatus, "VALIDATED", `${doc.name} did not complete canonical validation`);
+      assert.equal(doc.score, "GOOD", `${doc.name} was marked validated with canonical quality ${doc.score} (${doc.numericScore}/100)`);
+      assert.ok(doc.numericScore >= 80, `${doc.name} passed below the unchanged 80/100 quality threshold`);
     }
   });
 

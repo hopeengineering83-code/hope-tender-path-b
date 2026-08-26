@@ -203,6 +203,10 @@ async function main() {
     prisma.companyDocument.count({ where: { companyId: user.company.id } }),
   ]);
   say(`    experts=${counts[0]} projects=${counts[1]} companyDocuments=${counts[2]}`);
+  if (counts.every((count) => count === 0)) {
+    say("    GENUINE_SOURCE_BLOCKED: the supplied Vault export contains no importable source-backed experts, projects, or documents; refusing to fabricate benchmark evidence.");
+    return { prisma, userId };
+  }
 
   // ── 2. Upload the real tender ────────────────────────────────────────────
   const uploadFirst = require("../app/api/tenders/upload-first/route");
@@ -282,9 +286,13 @@ async function main() {
 
   const { runAutoFinalizeAfterGeneration } = require("../lib/ai-jobs/auto-finalize-continuation-service");
   const afJob = await prisma.aiJob.findFirst({ where: { tenderId, jobType: "AUTO_FINALIZE" }, select: { id: true } });
+  if (!afJob) {
+    say("\n[8] AUTO_FINALIZE not queued because an upstream canonical blocker remains; stopping without manufacturing a job identity.");
+    return { prisma, tenderId, userId };
+  }
   let af: any = null;
   for (let a = 0; a < 3; a++) {
-    af = await runAutoFinalizeAfterGeneration(tenderId, userId, afJob?.id ?? "bench");
+    af = await runAutoFinalizeAfterGeneration(tenderId, userId, afJob.id);
     say(`\n[8.${a + 1}] AUTO_FINALIZE ok=${af?.ok}`);
     say(`      exportRepair=${JSON.stringify(af?.exportRepair)}`);
     say(`      validation=${JSON.stringify(af?.validation?.validated)}/${JSON.stringify(af?.validation?.failed)} pdfFinalization=${JSON.stringify(af?.pdfFinalization)} pdfValidation=${JSON.stringify(af?.pdfValidation?.validated)}/${JSON.stringify(af?.pdfValidation?.failed)}`);

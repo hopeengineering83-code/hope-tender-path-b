@@ -29,6 +29,8 @@
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+import { extractEvaluationMethodologyFromSource } from "./evaluation-methodology-source-extractor";
+
 export type TenderType =
   | "Expression of Interest"
   | "Request for Proposal"
@@ -1029,19 +1031,28 @@ export function parseTenderDocumentIntelligence(
   // Required documents
   const requiredDocuments = extractRequiredDocuments(text, financialProposalRequired);
 
-  // Evaluation methodology
+  // Evaluation methodology. Reuse the source-grounded extractor rather than
+  // equating "criteria present" with "numeric weights present". Qualitative
+  // award/selection criteria remain canonical even when no weights are stated.
   let evaluationMethodology: TenderEvaluationMethodology | null = null;
   // Match "Technical weight: 70%" or "Technical 70%" or "Technical weightage 70%"
   const techWeightMatch = text.match(/technical\s+(?:weight(?:age)?\s*:?)?\s*(\d{1,3})\s*%/i)
     || text.match(/technical\s+(\d{1,3})\s*%/i);
   const finWeightMatch = text.match(/financial\s+(?:weight(?:age)?\s*:?)?\s*(\d{1,3})\s*%/i)
     || text.match(/financial\s+(\d{1,3})\s*%/i);
-  if (techWeightMatch || finWeightMatch || /evaluation\s+methodology/i.test(text)) {
+  const extractedEvaluation = extractEvaluationMethodologyFromSource({
+    files: [{ fileName: null, extractedText: text }],
+  });
+  if (techWeightMatch || finWeightMatch || extractedEvaluation.found) {
     evaluationMethodology = {
       technicalWeight: techWeightMatch ? parseInt(techWeightMatch[1], 10) : null,
       financialWeight: finWeightMatch ? parseInt(finWeightMatch[1], 10) : null,
-      methodology: "Detected evaluation methodology section",
-      passFail: /pass\/fail|pass-fail|compliance\s+only/i.test(text),
+      methodology: extractedEvaluation.found
+        ? extractedEvaluation.methodologyText
+        : "Detected weighted evaluation methodology section",
+      passFail: extractedEvaluation.found
+        ? extractedEvaluation.items.some((item) => item.isPassFail)
+        : /pass\/fail|pass-fail|compliance\s+only/i.test(text),
     };
   }
 

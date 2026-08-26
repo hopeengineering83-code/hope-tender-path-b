@@ -52,6 +52,8 @@ const SECTION_WINDOW = 1800;
 const SECTION_HEADER_PATTERNS: Array<{ rx: RegExp; baseConfidence: "HIGH" | "MEDIUM" | "LOW" }> = [
   { rx: /\bEvaluation\s+(?:Methodology|Method|Procedure|Approach|Framework)\b/i, baseConfidence: "HIGH" },
   { rx: /\bEvaluation\s+(?:Criteria|Criterion)\b/i, baseConfidence: "HIGH" },
+  { rx: /\bSelection\s+(?:Criteria|Factors|Framework)\b/i, baseConfidence: "HIGH" },
+  { rx: /\bAward\s+(?:Criteria|Factors)\b/i, baseConfidence: "HIGH" },
   { rx: /\bTechnical\s+and\s+Financial\s+Evaluation\b/i, baseConfidence: "HIGH" },
   { rx: /\bScoring\s+(?:Criteria|Methodology|Approach|System)\b/i, baseConfidence: "MEDIUM" },
   { rx: /\bAssessment\s+(?:Criteria|Methodology|Framework)\b/i, baseConfidence: "MEDIUM" },
@@ -71,6 +73,8 @@ const CRITERION_LABEL_PATTERNS: Array<{ rx: RegExp; label: string }> = [
   { rx: /\bKey\s+(?:Personnel|Staff|Experts)\b/i, label: "Key Personnel" },
   { rx: /\bPast\s+Performance\b/i, label: "Past Performance" },
   { rx: /\bSimilar\s+(?:Projects|Experience|Assignments)\b/i, label: "Similar Experience" },
+  { rx: /\bComparable\s+(?:Projects?|Experience|Assignments?)\b/i, label: "Comparable Experience" },
+  { rx: /\bQuality\s+(?:of\s+)?(?:the\s+)?(?:Proposed\s+)?Methodology\b/i, label: "Methodology Quality" },
   { rx: /\bCompany\s+(?:Profile|Experience|Background)\b/i, label: "Company Experience" },
   { rx: /\bQualifications?(?:\s+of\s+the\s+(?:Firm|Bidder))?\b/i, label: "Qualifications" },
   { rx: /\bUnderstanding\s+of\s+(?:the\s+)?(?:Assignment|Scope|ToR)\b/i, label: "Understanding of Assignment" },

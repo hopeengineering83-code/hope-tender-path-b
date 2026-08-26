@@ -68,6 +68,22 @@ export type CanonicalAnalysisUpdate = {
   metadataContaminated: boolean;
 };
 
+function canonicalEvaluationMethodology(aiResult: AIAnalysisResult): string | null {
+  const methodology = aiResult.evaluationMethodology?.trim();
+  if (methodology) return methodology;
+  const criteria = aiResult.evaluationCriteriaSource;
+  if (!Array.isArray(criteria) || criteria.length === 0) return null;
+  const lines = criteria
+    .map((item) => {
+      const criterion = item?.criterion?.trim();
+      if (!criterion) return null;
+      const weight = typeof item.weight === "number" ? ` — ${item.weight}%` : " — weight not stated";
+      return `${criterion}${weight}`;
+    })
+    .filter((line): line is string => Boolean(line));
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
 // The single note line every AI promotion appends, after stripping any prior
 // analysis-source / fallback-diagnostics lines.
 const AI_ANALYSIS_NOTE = "Analysis source: AI (re-run via AI Analyze button).";
@@ -201,7 +217,7 @@ export function buildCanonicalAnalysisTenderUpdate(
     ...(aiResult.deadlineSourcePage !== undefined ? { deadlineSourcePage: aiResult.deadlineSourcePage } : {}),
     ...(aiResult.deadlineSourceQuote !== undefined ? { deadlineSourceQuote: aiResult.deadlineSourceQuote } : {}),
     ...(existing.deadlineSourceFileId !== undefined ? { deadlineSourceFileId: existing.deadlineSourceFileId } : {}),
-    evaluationMethodology: aiResult.evaluationMethodology || null,
+    evaluationMethodology: canonicalEvaluationMethodology(aiResult),
     exactFileNaming: JSON.stringify(aiResult.exactFileNaming),
     exactFileOrder: JSON.stringify(aiResult.exactFileOrder),
     ...(aiResult.tenderCategory ? { category: aiResult.tenderCategory } : {}),

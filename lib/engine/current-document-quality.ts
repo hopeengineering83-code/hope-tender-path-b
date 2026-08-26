@@ -218,6 +218,7 @@ function validationReasons(validation: DocumentValidationResult): VerdictReason[
 export async function resolveCurrentDocumentVerdict<T extends QualityAssessableDocument>(
   doc: T,
   requirements: QualityRequirementInput = [],
+  evidence: { selectedExpertNames?: string[]; selectedProjectNames?: string[] } = {},
 ): Promise<CurrentDocumentVerdict<T>> {
   const visibleText = await resolveDocumentVisibleText(doc);
   const report = assessGeneratedDocumentQuality({
@@ -226,6 +227,8 @@ export async function resolveCurrentDocumentVerdict<T extends QualityAssessableD
     rawFileContent: doc.fileContent ?? null,
     hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
     requirements,
+    selectedExpertNames: evidence.selectedExpertNames,
+    selectedProjectNames: evidence.selectedProjectNames,
   });
   const validation = validateDocumentQuality({
     name: doc.name ?? "",

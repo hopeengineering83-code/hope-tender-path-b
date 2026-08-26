@@ -631,7 +631,7 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
 
   // ── Title / cover signal. ───────────────────────────────────────────────
   if (text && wordCount >= 200) {
-    const looksTitleHeavy = /^(?:title|cover|subject|date)\b/im.test(text.slice(0, 600));
+    const looksTitleHeavy = /^(?:title|cover|subject|date|technical\s+proposal|expression\s+of\s+interest|company\s+profile)\b/im.test(text.slice(0, 600));
     if (!looksTitleHeavy && /technical\s+proposal|methodology|cover\s+letter/i.test(label)) {
       issues.push({ code: "MISSING_TITLE_OR_COVER", severity: "LOW", message: "Document does not begin with a clear title / subject line." });
     }

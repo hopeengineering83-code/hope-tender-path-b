@@ -6,6 +6,7 @@ import { validateConstraints } from "./constraint-validator";
 import { filterFinalExportCandidateDocuments, hasConsistentArtifactIdentity } from "./document-output-state";
 import { documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
 import { isDurablyReviewed, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
+import { resolveCurrentDocumentVerdict } from "./current-document-quality";
 
 export interface ValidationIssue {
   code: string;
@@ -93,8 +94,8 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
       requirements: true,
       complianceGaps: true,
       generatedDocuments: true,
-      expertMatches: { where: { isSelected: true } },
-      projectMatches: { where: { isSelected: true } },
+      expertMatches: { where: { isSelected: true }, include: { expert: { select: { fullName: true } } } },
+      projectMatches: { where: { isSelected: true }, include: { project: { select: { name: true } } } },
       complianceMatrix: { select: { requirementId: true, supportLevel: true } },
     },
   });
@@ -244,6 +245,21 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     });
     for (const hygieneIssue of hygieneIssues) {
       issues.push({ code: "DOCUMENT_HYGIENE_FAILURE", severity: "BLOCK", message: `Document "${doc.name}": ${hygieneIssue}` });
+    }
+
+    // Validation and readiness use the same narrative-quality authority. A
+    // document that still needs rewriting must not be stamped VALIDATED merely
+    // because its container bytes and placeholder scan are clean.
+    const verdict = await resolveCurrentDocumentVerdict(doc, tender.requirements, {
+      selectedExpertNames: tender.expertMatches.map((match) => match.expert.fullName),
+      selectedProjectNames: tender.projectMatches.map((match) => match.project.name),
+    });
+    if (verdict.score !== "GOOD") {
+      issues.push({
+        code: "GENERATED_DOCUMENT_QUALITY_FAILED",
+        severity: "BLOCK",
+        message: `Document "${doc.name}" has not passed the canonical narrative-quality rubric (${verdict.report.score}/100): ${verdict.reasons.slice(0, 4).map((reason) => reason.message).join("; ")}`,
+      });
     }
   }
 
