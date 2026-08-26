@@ -438,8 +438,38 @@ before(async () => {
 
 after(async () => {
   if (!RUN_DB) return;
-  try { if (tenderId) await prisma?.tender?.delete({ where: { id: tenderId } }); } catch { /* best effort */ }
-  try { if (userId) await prisma?.user?.delete({ where: { id: userId } }); } catch { /* best effort */ }
+  // Delete through the app's own helper, not prisma.tender.delete.
+  //
+  // A raw delete cascades into TenderRequirement, and
+  // guard_canonical_requirement_set_delete() refuses to drop a tender's final
+  // canonical requirement set unless an AiJob is still QUEUED/RUNNING or the
+  // deletion transaction has set the app.tender_deletion_context GUC. By
+  // cleanup time every job here has SUCCEEDED, so the guard fired, the tender
+  // delete failed, the user delete then failed on Tender_userId_fkey, and both
+  // were swallowed by the catch — leaving a User and a Tender behind in the
+  // shared CI database for whatever ran next. executeTenderDeletion is the
+  // same path the DELETE route uses and sets that GUC after ownership checks.
+  if (tenderId) {
+    try {
+      const { executeTenderDeletion } = require("../lib/tender/delete-tender");
+      await prisma.$transaction(async (tx: any) => {
+        await executeTenderDeletion(tx, tenderId, `pipeline-zip-test-${Date.now()}`, userId);
+      });
+    } catch (error) {
+      // Never leave the row behind silently: a failed cleanup is a real
+      // problem for the next test, so say so rather than swallowing it.
+      console.error(`[pipeline-zip-test] tender cleanup failed for ${tenderId}:`, error);
+    }
+  }
+  if (userId) {
+    await prisma?.session?.deleteMany({ where: { userId } }).catch(() => {});
+    await prisma?.company?.deleteMany({ where: { userId } }).catch(() => {});
+    try {
+      await prisma.user.delete({ where: { id: userId } });
+    } catch (error) {
+      console.error(`[pipeline-zip-test] user cleanup failed for ${userId}:`, error);
+    }
+  }
   await prisma?.$disconnect?.().catch(() => {});
   await new Promise<void>((resolve) => { modelServer ? modelServer.close(() => resolve()) : resolve(); });
 });
