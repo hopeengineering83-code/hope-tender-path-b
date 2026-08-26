@@ -91,6 +91,15 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-26 UTC — Codex (finalized-PDF visible-content validation)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; fetched first and continued from exact remote head `1e42bf63` without creating a branch or PR.
+- **Live contradiction root cause closed:** generated-artifact visible-text truth only opened DOCX/OPC bytes. A finalized required PDF was therefore byte/type checked but its client-visible pages could be skipped by both the current-document quality resolver and Export Readiness. The shared reader now opens DOCX and PDF bytes, consumers use that reader, and an unreadable narrative proposal fails closed instead of silently bypassing the quality gate. Large binary narrative artifacts use one bounded 32 MiB decoded-byte policy rather than the panel's prior 2 MB base64-only shortcut.
+- **Files changed:** `lib/engine/{generated-document-text,current-document-quality,export-readiness}.ts`, `tests/{pdf-finalization-safety,generated-document-quality-final-enforcement}.test.ts`, and this handoff.
+- **Checks run:** 71/71 focused PDF finalization, real-PDF visible-text, canonical quality and validator assertions passed. The full local-PostgreSQL suite reported 10,702 passing assertions, zero ordinary assertion failures, and the same backup/restore rehearsal parent failure plus three cancellations caused by the deliberately non-ephemeral local database/user lacking `CREATE DATABASE`; the production-service artifact pipeline within that suite passed. Prisma validate/generate, typecheck, full lint, production build, release-integrity/security audits and diff check passed. With local PostgreSQL, the real DOCX→PDF artifact-identity integration and the production-service generation/validation/ZIP pipeline passed; the latter opened real artifacts and used the same generation services with a materially different water/supervision two-envelope fixture.
+- **Risk / next action:** push this commit and require exact-head CI/security/screenshot/Preview. Retained authenticated Pharo Vault bytes remain unavailable locally, so owner-Preview 4/4 evidence and its exact PDF/ZIP cannot truthfully be claimed here.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** pending exact-head automated checks and owner-authenticated retained-Pharo verification.
+
 ### 2026-08-26 UTC — Codex (evaluation-weight unit fidelity follow-up)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; exact remote head `257a6571`, no new branch or PR.

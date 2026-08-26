@@ -1,5 +1,5 @@
 /**
- * The visible text of a generated DOCX, read from its stored bytes.
+ * The visible text of a generated DOCX or PDF, read from its stored bytes.
  *
  * ONE implementation, used by every caller that has to judge what a document
  * actually says. Authority Review asks whether the file the client receives
@@ -15,6 +15,7 @@
  */
 
 import JSZip from "jszip";
+import { extractTextFromBuffer } from "../extract-text";
 
 const XML_ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
 
@@ -26,6 +27,11 @@ const TEXT_PARTS = [
   "word/footnotes.xml",
   "word/endnotes.xml",
 ] as const;
+
+// 32 MiB of decoded artifact bytes (base64 expands by roughly 4/3). This is a
+// validation-path memory guard, not a silent approval path: callers receive
+// null and must fail closed for narrative artifacts they cannot inspect.
+const MAX_GENERATED_ARTIFACT_BASE64_CHARS = 45_000_000;
 
 /**
  * The <w:t> text runs of a WordprocessingML part.
@@ -94,12 +100,29 @@ export function decodeXmlEntities(value: string): string {
  * document nothing ever opened.
  */
 export async function generatedDocumentVisibleText(
-  document: { fileContent?: string | null } | null | undefined,
+  document: {
+    fileContent?: string | null;
+    exactFileName?: string | null;
+    name?: string | null;
+    contentMimeType?: string | null;
+  } | null | undefined,
 ): Promise<string | null> {
   const base64 = typeof document?.fileContent === "string" ? document.fileContent : null;
-  if (!base64) return null;
+  if (!base64 || base64.length > MAX_GENERATED_ARTIFACT_BASE64_CHARS) return null;
   try {
     const buffer = Buffer.from(base64, "base64");
+    // PDF bytes must be opened and inspected too. Previously every finalized
+    // PDF bypassed visible-content validation because this reader only knew
+    // about OPC/DOCX containers. That allowed a converted PDF to become the
+    // Build Plan artifact even when its actual pages still contained a
+    // placeholder, AI trace, or current-bid pricing.
+    if (buffer.length >= 5 && buffer.subarray(0, 5).toString("ascii") === "%PDF-") {
+      const fileName = document?.exactFileName ?? document?.name ?? "generated-document.pdf";
+      const text = await extractTextFromBuffer(buffer, document?.contentMimeType ?? "application/pdf", fileName);
+      if (!text.trim() || text.startsWith("[Extraction failed for ")) return null;
+      return collapseWhitespace(text);
+    }
+
     // PK\x03\x04 — anything else is not an OPC container.
     if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) return null;
     const zip = await JSZip.loadAsync(buffer);

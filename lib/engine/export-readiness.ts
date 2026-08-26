@@ -21,6 +21,7 @@ import { resolveCanonicalAnalysisSource } from "./analysis-source";
 import { isEmailSubmissionMethod, isPhysicalSubmissionMethod } from "./submission-method-policy";
 import { validateGeneratedDocumentQuality } from "../document-generation/generated-document-quality-validator";
 import { buildTenderDocumentContext, type TenderDocumentGenerationContext } from "../document-generation/tender-document-context";
+import { generatedDocumentVisibleText } from "./generated-document-text";
 
 export type ExportReadyDocument = {
   id: string;
@@ -1033,9 +1034,9 @@ export async function checkDocumentQualityGate(
 ): Promise<ExportReadinessFailure[]> {
   const failures: ExportReadinessFailure[] = [];
   for (const doc of docs) {
-    // Determine the visible text to validate. For base64 DOCX content we
-    // must extract the visible text from the DOCX zip — otherwise the
-    // quality gate would silently skip all generated DOCX files (their
+    // Determine the visible text to validate. For base64 DOCX/PDF content we
+    // must extract the visible text from the actual container — otherwise the
+    // quality gate would silently skip generated artifacts (their
     // fileContent is base64, not plain text, so looksLikePlainText returns
     // false and the `continue` below would skip the quality check entirely).
     // Per spec rule 6: validation must not approve empty content, placeholder
@@ -1051,13 +1052,23 @@ export async function checkDocumentQualityGate(
     // instruction is present". Encoded bytes must go through DOCX extraction
     // or not be scanned at all.
     if (text && (looksLikeEncodedBytes(text) || !looksLikePlainText(text))) {
-      // Try to extract visible text from base64 DOCX. If extraction fails
-      // (corrupt zip, not a DOCX, etc.), fall back to null — the quality
-      // gate will skip the doc but the DOCX hygiene check
-      // (checkDocxHygieneReadiness) will still run and catch issues.
-      const extracted = await extractDocxVisibleText(text, fileName);
+      const extracted = await generatedDocumentVisibleText({ ...doc, exactFileName: fileName });
       if (extracted) text = extracted;
-      else continue; // Not a DOCX or extraction failed — skip quality gate
+      else {
+        // A client-visible narrative artifact that cannot be opened cannot be
+        // called validated. Binary forms and spreadsheets have their own byte
+        // and package conformance checks; this fail-closed rule is limited to
+        // narrative proposal outputs.
+        if (/\.(docx|pdf)$/i.test(fileName) && /proposal|technical|methodology|expression of interest|\beoi\b/i.test(`${doc.documentType ?? ""} ${doc.name}`)) {
+          failures.push({
+            documentId: doc.id,
+            name: doc.name,
+            fileName,
+            reasons: ["[QUALITY GATE] Generated narrative document bytes could not be opened for visible-text validation."],
+          });
+        }
+        continue;
+      }
     }
     if (!text || looksLikeEncodedBytes(text) || !looksLikePlainText(text)) continue;
 

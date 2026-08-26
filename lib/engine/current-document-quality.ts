@@ -36,7 +36,7 @@ import { validateDocumentQuality } from "./document-quality-validator";
 import type { DocumentValidationResult } from "./document-quality-validator";
 import { filterFinalExportCandidateDocuments } from "./document-output-state";
 import type { DocumentLike } from "./document-output-state";
-import { extractDocxVisibleText } from "./export-readiness";
+import { generatedDocumentVisibleText } from "./generated-document-text";
 
 /**
  * Upper bound on inline content we will attempt to parse, mirroring the limit
@@ -71,20 +71,21 @@ export function selectCurrentDocuments<T extends DocumentLike>(docs: T[]): T[] {
 /**
  * Resolve the text the quality gate should actually score.
  *
- * Generated DOCX files are stored base64-encoded; scoring the base64 string
- * would never match a placeholder or AI-trace pattern, so the gate would
- * silently pass every DOCX. Non-DOCX inline content is plain text/markdown and
- * is scored as-is.
+ * Generated DOCX and PDF files are stored base64-encoded; scoring the base64
+ * string would never match a placeholder or AI-trace pattern. Open either
+ * supported container through the shared byte reader. Non-container inline
+ * content is plain text/markdown and is scored as-is.
  */
 export async function resolveDocumentVisibleText(doc: QualityAssessableDocument): Promise<string | null> {
   const content = doc.fileContent;
-  if (typeof content !== "string" || content.length === 0 || content.length >= MAX_INLINE_CONTENT_BYTES) {
+  if (typeof content !== "string" || content.length === 0) {
     return null;
   }
   const fileName = doc.exactFileName ?? doc.name ?? "";
-  if (fileName.toLowerCase().endsWith(".docx")) {
-    return await extractDocxVisibleText(content, fileName);
+  if (/\.(docx|pdf)$/i.test(fileName) || doc.contentMimeType === "application/pdf") {
+    return await generatedDocumentVisibleText(doc);
   }
+  if (content.length >= MAX_INLINE_CONTENT_BYTES) return null;
   return content;
 }
 
