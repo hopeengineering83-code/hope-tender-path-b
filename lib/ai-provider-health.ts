@@ -54,6 +54,7 @@ export type AiProviderStatus =
   | "MALFORMED_RESPONSE"
   | "COOLING_DOWN"
   | "CONFIGURATION_INVALID"
+  | "REQUEST_TOO_LARGE"
   | "UNKNOWN";
 
 // Canonical provider list, derived from the registry. The ONLY ordering source.
@@ -182,6 +183,9 @@ export const COOLDOWN_PER_CATEGORY_MS: Record<AiProviderFailureCategory, number>
   NETWORK: 30_000,
   MALFORMED_RESPONSE: 60_000,
   CONFIGURATION_INVALID: 10 * 60_000,
+  // Our request did not fit. Cooling the provider would turn an application
+  // budgeting defect into false provider-health evidence.
+  REQUEST_TOO_LARGE: 0,
   // A provider-side outage usually clears on its own, so back off like a
   // timeout rather than quarantining for minutes as a config fault would.
   PROVIDER_ERROR: 30_000,

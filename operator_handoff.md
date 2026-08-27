@@ -91,6 +91,16 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-27 UTC — Codex (live AI Analyze request-budget repair)
+
+- **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only, starting from fetched exact remote head `42ef2bedb8a8d78b2a46517e272aaf318eda3be8`; no branch or PR was created and nothing was merged or promoted.
+- **Reproducer / root cause:** owner-supplied exact-Preview diagnostics proved `AI_MAX_PROVIDER_ATTEMPTS=3` was overriding the source default of ten, so the runtime stopped after Mistral while later configured providers remained. The same run proved preflight counted input alone while adapters additionally reserved output, producing Groq 413/8K-TPM and OpenRouter/Together context failures. HTTP 413 was then recorded as provider-health failure rather than request-shape evidence.
+- **General repair:** automatic routing now guarantees one bounded first attempt per canonical AI provider despite stale lower overrides; preflight budgets system + user input, model/provider output, TPM/context capacity, and a safety margin, and passes the safe output allowance to the exact adapter/model. Extraction chunks are 8K characters with 1K overlap and a 200-chunk explicit cap; the chunk coverage diagnostic now measures the actual covered end instead of falsely warning on every multi-chunk source. HTTP 413/context-too-large is `REQUEST_TOO_LARGE` with zero cooldown, and the normal workflow UI summarizes provider failures while authenticated diagnostics retain sanitized detail.
+- **Files changed:** `lib/ai.ts`, `lib/ai-preflight.ts`, `lib/ai-provider-classification.ts`, `lib/ai-provider-health.ts`, `components/ai-analyze-panel.tsx`, `components/ai-health-panel.tsx`, `tests/provider-request-budget-regression.test.ts`, and this handoff.
+- **Checks:** Prisma-backed typecheck and ESLint passed; focused provider/request/source-fidelity regressions passed; production build passed with a non-secret placeholder provider key. Full local `npm test` was correctly refused by the fail-closed database guard because the configured URL is Neon; disposable-PostgreSQL exact-head CI is required after push.
+- **Remaining acceptance / risk:** wait for exact-head CI, dependency/security, screenshot/route audit, and fresh Preview. Then the owner-authenticated current tender must rerun AI Analyze and the complete Engine → BuildPlan → artifacts pipeline. No claim is made yet that the live provider chain or proposal artifacts pass.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION**; stop at the owner's controlled integration decision.
+
 ### 2026-08-27 UTC — Codex (fresh Preview environment refresh)
 
 - **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only; fetched exact remote head `2ebefd370186259c2a2a538ebaec823c07d0b978`. No branch or PR was created, and nothing was merged or promoted.

@@ -472,7 +472,7 @@ export type NoAiProviderReadyErrorKind =
   | "ALL_PROVIDERS_COOLING"
   | "ALL_PROVIDERS_EXHAUSTED"
   // Distinct from ALL_PROVIDERS_EXHAUSTED: the per-request/chunk attempt budget
-  // (max 3 actual outbound provider requests on Vercel Hobby) was consumed
+  // (one bounded first attempt per canonical provider) was consumed
   // while eligible providers still remained untried. NOT the same as
   // "all configured providers exhausted".
   | "ATTEMPT_BUDGET_EXHAUSTED";
@@ -501,7 +501,11 @@ export type NoAiProviderReadyErrorKind =
 // rather than blocking.
 export const MAX_PROVIDER_ATTEMPTS_PER_REQUEST = (() => {
   const raw = Number(process.env.AI_MAX_PROVIDER_ATTEMPTS);
-  if (Number.isFinite(raw) && raw >= 1 && raw <= 10) return Math.floor(raw);
+  // One first attempt for every canonical AI provider is the minimum automatic
+  // chain contract. A stale environment value of 3 previously terminated a
+  // healthy ten-provider chain after Mistral. Keep execution bounded at ten,
+  // but never let an environment override strand later eligible providers.
+  if (Number.isFinite(raw) && raw >= 10) return 10;
   return 10;
 })();
 
@@ -939,7 +943,7 @@ export async function generateWithFallback(
   // same redacted snapshot used by providerAttempts.
   const failureDetails: string[] = [];
 
-  // Vercel Hobby attempt budget: count ONLY actual outbound provider requests.
+  // Bounded chain budget: count ONLY actual outbound provider requests.
   // Skipped providers (unconfigured, cooling, invalid OpenRouter config) do not
   // consume an attempt. Once the budget is exhausted we stop with a distinct
   // ATTEMPT_BUDGET_EXHAUSTED error rather than marching through the whole chain.
@@ -1047,7 +1051,11 @@ export async function generateWithFallback(
     // and return a structured error.
     const result = await withProviderDeadline(
       typeof opts?.deadlineAt === "number" ? opts.deadlineAt - ERROR_HANDLING_RESERVE_MS : undefined,
-      () => callProvider(provider, trustBoundary.protectedPrompt, { ...opts, useCase }),
+      () => callProvider(provider, trustBoundary.protectedPrompt, {
+        ...opts,
+        useCase,
+        maxOutputTokens: preflight.maxOutputTokens,
+      }),
     );
     const attemptLatencyMs = Date.now() - attemptStartedAt;
     if (result) {
@@ -1909,25 +1917,27 @@ export type AIBidWriterInput = {
 // the legacy single-call path runs (faster, cheaper). 60K leaves
 // headroom under Claude's effective per-call context budget for the
 // detailed system prompt + user prompt boilerplate.
-const ANALYSIS_CHUNK_SOFT_LIMIT = 60_000;
+const ANALYSIS_CHUNK_SOFT_LIMIT = 8_000;
 // Each chunk size — kept under 80K so the prompt + chunk fits comfortably
 // in one call. Overlap preserves context across boundaries (a requirement
 // straddling the boundary is captured in both chunks; merge dedupes).
-export const ANALYSIS_CHUNK_SIZE = 50_000;
-export const ANALYSIS_CHUNK_OVERLAP = 5_000;
+export const ANALYSIS_CHUNK_SIZE = 8_000;
+export const ANALYSIS_CHUNK_OVERLAP = 1_000;
 // Per Pillar 3: increased from 6 to 20 chunks to analyze all persisted content
 // instead of silently dropping anything past 300K chars. 20 × 50K = 1M chars
 // covers even the largest multi-file tender packages. The AI provider's token
 // budget is the real limit; these chunks are sent sequentially with overlap.
-const ANALYSIS_MAX_CHUNKS = 20;
+const ANALYSIS_MAX_CHUNKS = 200;
 
 export function chunkTenderContent(content: string): string[] {
   if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) return [content];
   const chunks: string[] = [];
   let start = 0;
+  let coveredEnd = 0;
   while (start < content.length && chunks.length < ANALYSIS_MAX_CHUNKS) {
     const end = Math.min(start + ANALYSIS_CHUNK_SIZE, content.length);
     chunks.push(content.slice(start, end));
+    coveredEnd = end;
     if (end === content.length) break;
     start = end - ANALYSIS_CHUNK_OVERLAP;
   }
@@ -1935,12 +1945,12 @@ export function chunkTenderContent(content: string): string[] {
   // before reaching the end), log a warning so downstream gates can detect
   // incomplete processing. The chunk count is capped to prevent runaway cost,
   // but this must never silently report complete analysis.
-  if (start < content.length) {
+  if (coveredEnd < content.length) {
     logger.warn("[ai] tender content was not fully chunked — ANALYSIS_MAX_CHUNKS limit reached", {
       contentLength: content.length,
       chunksCreated: chunks.length,
       maxChunks: ANALYSIS_MAX_CHUNKS,
-      unprocessedChars: content.length - start,
+      unprocessedChars: content.length - coveredEnd,
     });
   }
   return chunks;

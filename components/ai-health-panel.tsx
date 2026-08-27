@@ -116,6 +116,10 @@ const STATUS_PRESENTATION: Record<AiProviderStatus, StatusPresentation> = {
     label: () => "Configuration invalid",
     className: BAD_PILL, healthy: false, neutral: false,
   },
+  REQUEST_TOO_LARGE: {
+    label: () => "Request exceeded model capacity — provider remains healthy",
+    className: WARN_PILL, healthy: false, neutral: true,
+  },
   NOT_CONFIGURED: {
     label: () => "Not configured",
     className: NEUTRAL_PILL, healthy: false, neutral: true,

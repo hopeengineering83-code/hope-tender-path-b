@@ -38,6 +38,10 @@ export type AiProviderFailureCategory =
   | "NETWORK"
   | "MALFORMED_RESPONSE"
   | "CONFIGURATION_INVALID"
+  // The provider is healthy, but the request we constructed cannot fit its
+  // model/context/throughput envelope. This is request-shape evidence, not a
+  // provider-health failure, and therefore must never impose a cooldown.
+  | "REQUEST_TOO_LARGE"
   // The provider is up and authenticated but temporarily has no capacity —
   // Anthropic 529 "overloaded_error", Gemini "The model is overloaded",
   // OpenAI "server is overloaded". Distinct from RATE_LIMIT (our usage is the
@@ -208,6 +212,19 @@ const MODEL_UNAVAILABLE_PHRASES = [
   "unsupported model",
 ];
 
+const REQUEST_TOO_LARGE_PHRASES = [
+  "request too large",
+  "payload too large",
+  "context length exceeded",
+  "context window exceeded",
+  "maximum context length",
+  "prompt is too long",
+  "prompt too long",
+  "too many tokens",
+  "reduce the length",
+  "input tokens exceed",
+];
+
 const TIMEOUT_PHRASES = ["timed out", "timeout", "etimedout", "aborted", "abort", "deadline exceeded"];
 
 const NETWORK_PHRASES = [
@@ -308,7 +325,13 @@ export function classifyProviderError(error: unknown): AiProviderFailureCategory
   if (containsAny(text, MODEL_UNAVAILABLE_PHRASES)) return "MODEL_UNAVAILABLE";
   if (status === 404) return "MODEL_UNAVAILABLE";
 
-  // 6. TIMEOUT and 7. NETWORK — kept separate: a timeout means they were
+  // 6. REQUEST_TOO_LARGE — HTTP 413 and explicit context-capacity failures
+  // describe our request shape. Keep this before RATE/NETWORK-style generic
+  // fallbacks and, critically, outside provider cooldown categories.
+  if (containsAny(text, REQUEST_TOO_LARGE_PHRASES)) return "REQUEST_TOO_LARGE";
+  if (status === 413) return "REQUEST_TOO_LARGE";
+
+  // 7. TIMEOUT and 8. NETWORK — kept separate: a timeout means they were
   //    reached and were too slow, a network error means they were never reached.
   if (containsAny(text, TIMEOUT_PHRASES)) return "TIMEOUT";
   if (containsAny(text, NETWORK_PHRASES)) return "NETWORK";

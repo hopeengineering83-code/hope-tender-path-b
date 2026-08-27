@@ -18,7 +18,7 @@
  * Overestimating size leads to a safe skip; underestimating leads to a 413.
  */
 
-import { type AiProviderName, type AiUseCase } from "./ai-provider-registry";
+import { getProviderOutputCap, type AiProviderName, type AiUseCase } from "./ai-provider-registry";
 import { resolveActiveModelProfile, resolveModelProfile, type ModelCapabilityProfile } from "./ai-model-profiles";
 
 // Rough chars-per-token ratio for English text. Conservative (lower = more
@@ -27,7 +27,8 @@ const CHARS_PER_TOKEN = 4;
 
 // Fraction of the context window left free for the response. Input is checked
 // against the remainder.
-const INPUT_CONTEXT_FRACTION = 0.8;
+const SAFETY_MARGIN_FRACTION = 0.05;
+const MIN_USEFUL_OUTPUT_TOKENS = 512;
 
 /**
  * Estimate the input token count for a prompt. Conservative 4-chars-per-token.
@@ -56,6 +57,8 @@ export type ProviderPreflightResult = {
   /** Full resolved profile, so callers can report WHY a provider was skipped. */
   profile: ModelCapabilityProfile;
   safeMessage: string;
+  /** Output allowance that keeps input + output + margin inside all limits. */
+  maxOutputTokens: number;
 };
 
 /**
@@ -76,38 +79,31 @@ export function preflightProvider(
     : resolveActiveModelProfile(provider, useCase, opts?.env ?? process.env);
   const estimatedTokens = estimateTotalInputTokens(prompt, opts?.systemPrompt);
   const contextLimit = profile.contextTokens;
+  const requestedOutputTokens = Math.min(profile.maxOutputTokens, getProviderOutputCap(provider, useCase));
+  const requestLimit = profile.freeTierTpmLimit === null
+    ? contextLimit
+    : Math.min(contextLimit, profile.freeTierTpmLimit);
+  const safetyMargin = Math.max(128, Math.ceil(requestLimit * SAFETY_MARGIN_FRACTION));
+  const availableOutputTokens = requestLimit - estimatedTokens - safetyMargin;
 
-  // Context-window check — leave a fifth of the window free for the response.
-  const effectiveLimit = Math.floor(contextLimit * INPUT_CONTEXT_FRACTION);
-  if (estimatedTokens > effectiveLimit) {
+  // A request is viable only if the complete input, a useful response, and a
+  // safety margin fit. Previously preflight checked input alone, while the
+  // adapter additionally reserved 3–4K output tokens; Groq therefore received
+  // known-over-limit requests despite a green preflight.
+  if (availableOutputTokens < MIN_USEFUL_OUTPUT_TOKENS) {
+    const reason = profile.freeTierTpmLimit !== null && requestLimit === profile.freeTierTpmLimit
+      ? "TPM_LIMIT" as const
+      : "CONTEXT_OVERFLOW" as const;
     return {
       provider,
       eligible: false,
-      reason: "CONTEXT_OVERFLOW",
+      reason,
       estimatedTokens,
       contextLimit,
       model: profile.model,
       profile,
-      safeMessage: `Prompt exceeds the ${profile.model} context window on ${provider} (${estimatedTokens} > ${effectiveLimit} tokens).`,
-    };
-  }
-
-  // Free-tier tokens-per-minute ceiling, where the model's profile carries one.
-  // Groq is the case that matters: its free tier caps throughput far below the
-  // context window, so a prompt that fits the window still returns 413. The
-  // limit now travels with the MODEL, because Groq's per-minute allowance
-  // differs between the 70B and 8B models — a single provider-wide number
-  // skipped the small model on payloads it could have served.
-  if (profile.freeTierTpmLimit !== null && estimatedTokens > profile.freeTierTpmLimit) {
-    return {
-      provider,
-      eligible: false,
-      reason: "TPM_LIMIT",
-      estimatedTokens,
-      contextLimit,
-      model: profile.model,
-      profile,
-      safeMessage: `Prompt exceeds the free-tier per-minute token limit for ${profile.model} on ${provider} (${estimatedTokens} > ${profile.freeTierTpmLimit} tokens).`,
+      safeMessage: `Request cannot fit ${profile.model} on ${provider}: input ${estimatedTokens} + minimum output ${MIN_USEFUL_OUTPUT_TOKENS} + safety ${safetyMargin} exceeds ${requestLimit} tokens.`,
+      maxOutputTokens: 0,
     };
   }
 
@@ -120,6 +116,7 @@ export function preflightProvider(
     model: profile.model,
     profile,
     safeMessage: "OK",
+    maxOutputTokens: Math.max(MIN_USEFUL_OUTPUT_TOKENS, Math.min(requestedOutputTokens, availableOutputTokens)),
   };
 }
 

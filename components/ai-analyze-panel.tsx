@@ -48,6 +48,23 @@ type ProviderDiag = {
 const POLL_INTERVAL_MS = 3_000;
 const TERMINAL: JobStatus[] = ["SUCCEEDED", "PARTIAL_SUCCESS", "FAILED", "CANCELED"];
 
+/** Keep provider payloads in authenticated diagnostics, not the workflow UI. */
+export function summarizeAIAnalyzeFailure(message: string | null | undefined): string {
+  const text = String(message ?? "");
+  if (!/provider|429|402|413|rate.?limit|billing|context|timeout|attempt_budget/i.test(text)) {
+    return text || "AI Analyze failed. Correct the source or provider issue, then retry.";
+  }
+  const unavailable = (text.match(/(?:429|503|rate.?limit|timeout|timed out|overload)/gi) ?? []).length;
+  const capacity = (text.match(/(?:413|context (?:window|length)|request too large|prompt exceeds)/gi) ?? []).length;
+  const configuration = (text.match(/(?:402|billing|payment required|insufficient balance|401|403)/gi) ?? []).length;
+  const parts = [
+    unavailable > 0 ? `${unavailable} provider issue${unavailable === 1 ? " was" : "s were"} rate-limited or unavailable` : "",
+    capacity > 0 ? `${capacity} model${capacity === 1 ? " could" : "s could"} not accept the request size` : "",
+    configuration > 0 ? `${configuration} provider${configuration === 1 ? " has" : "s have"} a billing or configuration problem` : "",
+  ].filter(Boolean);
+  return `AI Analyze could not complete after the configured provider chain.${parts.length ? ` ${parts.join("; ")}.` : ""} Retry AI Analyze or open Provider diagnostics.`;
+}
+
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
@@ -201,7 +218,7 @@ export function AIAnalyzePanel({
                 } else if (job.status === "PARTIAL_SUCCESS") {
                   setError("AI Analyze completed only partially. Run Engine remains blocked until complete grounded analysis succeeds.");
                 } else {
-                  setError(job.errorMessage || "AI Analyze failed. Correct the source or provider issue, then retry.");
+                  setError(summarizeAIAnalyzeFailure(job.errorMessage));
                 }
                 return;
               }
