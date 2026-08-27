@@ -91,6 +91,14 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-27 UTC — Codex (fresh Preview environment refresh)
+
+- **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only; fetched exact remote head `2ebefd370186259c2a2a538ebaec823c07d0b978`. No branch or PR was created, and nothing was merged or promoted.
+- **Scope:** documentation-only checkpoint used to trigger one fresh exact-head Vercel Preview after the owner replaced the Preview database environment. Historical immutable Preview failures are not treated as code regressions. No application, schema, migration, database, provider, gate, or Production configuration changed.
+- **Verified starting state:** Production deployment `dpl_2gL1XHLbpxcJ93VeG5sDD9ZLHo55` reports HTTP 200, all eight critical tables healthy, and deployed-schema parity. The owner designated the current Production database and newly uploaded Company/Vault/tender data as authoritative; old-database recovery is out of scope.
+- **Required acceptance:** the resulting Preview release must equal this commit, return HTTP 200 with all eight table probes true and schema parity, and then pass owner-authenticated current-data workflow/artifact acceptance. No live-data or proposal-quality claim is made before that evidence exists.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION**; stop at the owner's controlled integration decision.
+
 ### 2026-08-26 UTC — Codex (exact-head green acceptance checkpoint)
 
 - **Branch / PR:** restored the checkout's missing `origin` metadata, fetched, and attached it to existing `release/consolidated-recovery-20260717` / draft #1175 at exact head `4d279897`; no new remote branch or PR.
