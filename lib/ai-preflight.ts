@@ -80,32 +80,52 @@ export function preflightProvider(
   const estimatedTokens = estimateTotalInputTokens(prompt, opts?.systemPrompt);
   const contextLimit = profile.contextTokens;
   const requestedOutputTokens = Math.min(profile.maxOutputTokens, getProviderOutputCap(provider, useCase));
-  const requestLimit = profile.freeTierTpmLimit === null
-    ? contextLimit
-    : Math.min(contextLimit, profile.freeTierTpmLimit);
-  const safetyMargin = Math.max(128, Math.ceil(requestLimit * SAFETY_MARGIN_FRACTION));
-  const availableOutputTokens = requestLimit - estimatedTokens - safetyMargin;
+  const contextSafetyMargin = Math.max(128, Math.ceil(contextLimit * SAFETY_MARGIN_FRACTION));
 
   // A request is viable only if the complete input, a useful response, and a
   // safety margin fit. Previously preflight checked input alone, while the
   // adapter additionally reserved 3–4K output tokens; Groq therefore received
   // known-over-limit requests despite a green preflight.
-  if (availableOutputTokens < MIN_USEFUL_OUTPUT_TOKENS) {
-    const reason = profile.freeTierTpmLimit !== null && requestLimit === profile.freeTierTpmLimit
-      ? "TPM_LIMIT" as const
-      : "CONTEXT_OVERFLOW" as const;
+  if (estimatedTokens + MIN_USEFUL_OUTPUT_TOKENS + contextSafetyMargin > contextLimit) {
     return {
       provider,
       eligible: false,
-      reason,
+      reason: "CONTEXT_OVERFLOW",
       estimatedTokens,
       contextLimit,
       model: profile.model,
       profile,
-      safeMessage: `Request cannot fit ${profile.model} on ${provider}: input ${estimatedTokens} + minimum output ${MIN_USEFUL_OUTPUT_TOKENS} + safety ${safetyMargin} exceeds ${requestLimit} tokens.`,
+      safeMessage: `Prompt exceeds the configured model context budget (${estimatedTokens} input tokens).`,
       maxOutputTokens: 0,
     };
   }
+
+  // Preserve a separate throughput verdict: a model can have ample context
+  // while its provider plan rejects input + reserved output in one TPM window.
+  if (
+    profile.freeTierTpmLimit !== null && estimatedTokens > profile.freeTierTpmLimit
+    || profile.freeTierTpmLimit !== null
+      && estimatedTokens + MIN_USEFUL_OUTPUT_TOKENS
+        + Math.max(128, Math.ceil(profile.freeTierTpmLimit * SAFETY_MARGIN_FRACTION)) > profile.freeTierTpmLimit
+  ) {
+    return {
+      provider,
+      eligible: false,
+      reason: "TPM_LIMIT",
+      estimatedTokens,
+      contextLimit,
+      model: profile.model,
+      profile,
+      safeMessage: `Prompt exceeds the configured provider throughput budget (${estimatedTokens} input tokens).`,
+      maxOutputTokens: 0,
+    };
+  }
+
+  const requestLimit = profile.freeTierTpmLimit === null
+    ? contextLimit
+    : Math.min(contextLimit, profile.freeTierTpmLimit);
+  const safetyMargin = Math.max(128, Math.ceil(requestLimit * SAFETY_MARGIN_FRACTION));
+  const availableOutputTokens = requestLimit - estimatedTokens - safetyMargin;
 
   return {
     provider,

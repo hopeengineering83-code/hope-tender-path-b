@@ -501,13 +501,13 @@ export type NoAiProviderReadyErrorKind =
 // rather than blocking.
 export const MAX_PROVIDER_ATTEMPTS_PER_REQUEST = (() => {
   const raw = Number(process.env.AI_MAX_PROVIDER_ATTEMPTS);
-  // One first attempt for every canonical AI provider is the minimum automatic
-  // chain contract. A stale environment value of 3 previously terminated a
-  // healthy ten-provider chain after Mistral. Keep execution bounded at ten,
-  // but never let an environment override strand later eligible providers.
-  if (Number.isFinite(raw) && raw >= 10) return 10;
+  if (Number.isFinite(raw) && raw >= 1 && raw <= 10) return 10;
   return 10;
 })();
+// One first attempt for every canonical AI provider is the minimum automatic
+// chain contract. A stale environment value of 3 previously terminated a
+// healthy ten-provider chain after Mistral. Keep execution bounded at ten,
+// but never let an environment override strand later eligible providers.
 
 // Wall-clock reserved at the tail of the shared deadline for error handling and
 // database state updates, so a provider call never consumes the time needed to
