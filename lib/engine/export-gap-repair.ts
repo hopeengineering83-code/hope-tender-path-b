@@ -63,12 +63,16 @@ function decodeXmlText(value: string): string {
   // literal "&lt;" and got a tag delimiter instead. Every other entity is
   // decoded before the ampersand, so no replacement can produce input for
   // another.
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, "&");
+  const entities: Record<string, string> = {
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+    amp: "&",
+  };
+  // One callback replacement means decoded output is never fed back through
+  // another decoder. For example, `&amp;lt;` remains the literal `&lt;`.
+  return value.replace(/&(lt|gt|quot|apos|amp);/g, (_match, name: string) => entities[name]);
 }
 
 function encodeXmlText(value: string): string {

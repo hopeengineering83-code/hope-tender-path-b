@@ -91,6 +91,15 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-27 UTC — Codex (PR #1175 CodeQL inline closure)
+
+- **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only, fetched at exact remote head `87703940ae1a821828039df02f376d4a6434dd09`; no branch or PR was created and nothing was merged or promoted.
+- **Scope / reproduced findings:** addressed all seven outstanding inline CodeQL comments: incomplete URL-scheme rejection, chained XML entity decoding, two incomplete tag-sanitization findings, regular-expression injection, and two clear-text environment-derived logging sinks. The local provider had already converged to one static UUID/file-name capture at the fetched head; the new security contract locks that repair in.
+- **General repair:** link auditing now uses a positive protocol allowlist; XML entities decode through one callback pass; DOCX visible text remains bounded capture-only; form insert markers are precompiled static expressions; accumulated/fatal pre-deploy output is redacted at the final console sink. No readiness, provider-order, artifact, database, or Production configuration changed.
+- **Files changed:** `e2e/pr1175-independent-release-audit.spec.ts`, `lib/engine/export-gap-repair.ts`, `lib/engine/tender-form-completion-gate.ts`, `scripts/verify-pre-deploy-safe.mjs`, `tests/codeql-inline-closure.test.ts`, and this handoff.
+- **Checks before commit:** focused CodeQL/form/DOCX regressions passed 34/34; typecheck, full ESLint, and diff check passed. Exact-head disposable-PostgreSQL CI, dependency security, route/screenshot capture, build, authenticated Playwright, and fresh Preview health remain required after push.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION**; stop at the owner's controlled integration decision.
+
 ### 2026-08-27 UTC — Codex (live AI Analyze request-budget repair)
 
 - **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only, starting from fetched exact remote head `42ef2bedb8a8d78b2a46517e272aaf318eda3be8`; no branch or PR was created and nothing was merged or promoted.
