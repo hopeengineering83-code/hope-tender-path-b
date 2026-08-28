@@ -44,5 +44,11 @@ export const PER_PROVIDER_TIMEOUT_MS = readTimeoutMs("PER_PROVIDER_TIMEOUT_MS", 
 export const ANTHROPIC_TIMEOUT_MS = readTimeoutMs("ANTHROPIC_TIMEOUT_MS", 10_000, 5_000, 60_000);
 export const DEEPSEEK_DEFAULT_TIMEOUT_MS = readTimeoutMs("DEEPSEEK_TIMEOUT_MS", 20_000, 5_000, 120_000);
 export const OPENAI_COMPAT_DEFAULT_TIMEOUT_MS = readTimeoutMs("OPENAI_COMPAT_TIMEOUT_MS", 20_000, 5_000, 120_000);
+// Structured extraction is materially slower than the basic connectivity
+// probe. Keep Mistral's normal OpenAI-compatible budget unchanged, but give the
+// durable extraction worker a small, bounded allowance before it falls through
+// to the remaining providers. The worker's absolute deadline still clamps this
+// value via resolveEffectiveTimeoutMs.
+export const MISTRAL_EXTRACTION_TIMEOUT_MS = readTimeoutMs("MISTRAL_EXTRACTION_TIMEOUT_MS", 35_000, 20_000, 60_000);
 export const O1_O3_TIMEOUT_MS = readTimeoutMs("O1_O3_TIMEOUT_MS", 90_000, 30_000, 300_000);
 export const GEMINI_TIMEOUT_MS = readTimeoutMs("GEMINI_TIMEOUT_MS", 28_000, 5_000, 120_000);

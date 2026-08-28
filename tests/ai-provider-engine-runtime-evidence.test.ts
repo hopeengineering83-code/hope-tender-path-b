@@ -195,6 +195,13 @@ describe("Fix 6 — Mistral timeout falls through safely", () => {
     // The failureDetails array is built per-provider; the loop continues.
     assert.match(src, /failureDetails\.push/);
   });
+
+  it("gives structured extraction a bounded use-case timeout without changing normal calls", () => {
+    const src = read("lib/ai.ts");
+    const timeoutConfig = read("lib/timeout-config.ts");
+    assert.match(src, /timeoutMs: useCase === "extraction" \? MISTRAL_EXTRACTION_TIMEOUT_MS : undefined/);
+    assert.match(timeoutConfig, /MISTRAL_EXTRACTION_TIMEOUT_MS[^\n]+35_000, 20_000, 60_000/);
+  });
 });
 
 // ─── 7. Cerebras 429 falls through safely ─────────────────────────────────────

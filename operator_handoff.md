@@ -1931,3 +1931,14 @@ Follow-up exact-head CI exposed legitimate test-suite contention: another real g
 - **Risks / blockers:** the old job's discarded provider trace is unrecoverable from its persisted chunk row. A fresh authenticated exact-head run is required to classify Groq's skip without guessing and to exercise downstream workflow/artifacts. External provider account failures remain owner actions, not code defects.
 - **Next action:** commit/push only to #1175, require exact-head checks/Preview, then rerun the retained tender and read the newly persisted safe provider trace.
 - **Merge status:** DO NOT MERGE; no Production promotion performed.
+
+### 2026-08-28 UTC — Codex (PR #1175 extraction-timeout continuation)
+
+- **Mode:** remaining AI Analyze blocker repair only; no merge or Production promotion.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting at `ef6be02592e31deadc43e3abae9d0240b105ce21` after fetching the remote branch.
+- **Scope:** confirmed Mistral's real structured extraction inherited the generic 20-second OpenAI-compatible probe timeout. Added a 35-second extraction-only, operator-configurable, 60-second-bounded allowance; normal Mistral calls remain at 20 seconds and the shared absolute provider deadline continues to clamp extraction calls so later providers remain reachable. Gemini's differing diagnostic/extraction model IDs remain intentional per-use-case registry authority, and Groq's exact skip still requires the freshly persisted real-run trace rather than inference.
+- **Files changed:** `lib/timeout-config.ts`, `lib/ai.ts`, `tests/ai-provider-engine-runtime-evidence.test.ts`, `operator_handoff.md`.
+- **Tests:** focused provider runtime regression, typecheck, lint, and build required before push; exact-head CI/Preview and authenticated retained-tender rerun remain required after push.
+- **Risks / blockers:** this environment has no owner-authenticated Preview session, so it cannot initiate the retained tender or approve its fallback. External provider billing/key/rate-limit failures remain owner actions.
+- **Next action:** push only to #1175, require exact-head checks and fresh Preview, then rerun the retained tender to capture Gemini, Groq, and fallback evidence.
+- **Merge status:** DO NOT MERGE; no Production promotion performed.
