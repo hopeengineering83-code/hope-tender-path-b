@@ -9,6 +9,8 @@ import {
   type CapabilityName,
 } from "../../../../lib/ai-provider-capability-test";
 import { automaticChainDisplay } from "../../../../lib/ai-provider-registry";
+import { getProviderModel, type AiProviderName } from "../../../../lib/ai-provider-registry";
+import { prisma, prismaReady } from "../../../../lib/prisma";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -31,8 +33,9 @@ export const maxDuration = 60;
  * Requires ADMIN or PROPOSAL_MANAGER.
  */
 export async function GET(req: Request) {
+  let actor;
   try {
-    await requireRole("ADMIN", "PROPOSAL_MANAGER");
+    actor = await requireRole("ADMIN", "PROPOSAL_MANAGER");
   } catch (e) {
     return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse();
   }
@@ -42,10 +45,59 @@ export async function GET(req: Request) {
 
   if (!live) {
     const snapshot = buildProviderDiagnosticsSnapshot();
+    // AiUsageRecord is the durable, tenant-scoped record of actual workload
+    // attempts. Merge its latest extraction/proposal rows into the process
+    // snapshot so a cold start cannot make "latest real result" disappear or
+    // let a proposal failure overwrite extraction truth (and vice versa).
+    await prismaReady;
+    const usage = await prisma.aiUsageRecord.findMany({
+      where: {
+        userId: actor.id,
+        useCase: { in: ["extraction", "proposal"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        provider: true,
+        useCase: true,
+        model: true,
+        success: true,
+        failureCategory: true,
+        latencyMs: true,
+        createdAt: true,
+      },
+      take: 200,
+    });
+    const latest = new Map<string, (typeof usage)[number]>();
+    for (const row of usage) {
+      const key = `${row.provider}:${row.useCase}`;
+      if (!latest.has(key)) latest.set(key, row);
+    }
+    const perProvider = snapshot.perProvider.map((row) => {
+      const extraction = latest.get(`${row.provider}:extraction`);
+      const proposal = latest.get(`${row.provider}:proposal`);
+      const durableResult = (record: (typeof usage)[number] | undefined, capability: "extraction" | "proposal") => record
+        ? {
+            observedAt: record.createdAt.getTime(),
+            outcome: record.success ? "SUCCEEDED" as const : "FAILED" as const,
+            model: record.model ?? getProviderModel(row.provider as AiProviderName, capability),
+            category: record.success ? null : record.failureCategory,
+            // AiUsageRecord intentionally stores category/model/timing, never a
+            // raw provider response. Detailed safe messages remain instance
+            // health only rather than being fabricated after a cold start.
+            safeMessage: null,
+            latencyMs: record.latencyMs,
+          }
+        : null;
+      return {
+        ...row,
+        latestRealExtractionResult: durableResult(extraction, "extraction") ?? row.latestRealExtractionResult,
+        latestRealProposalResult: durableResult(proposal, "proposal") ?? row.latestRealProposalResult,
+      };
+    });
     return NextResponse.json({
       live: false,
       activeChain: automaticChainDisplay(),
-      perProvider: snapshot.perProvider,
+      perProvider,
     });
   }
 

@@ -54,15 +54,23 @@ export function summarizeAIAnalyzeFailure(message: string | null | undefined): s
   if (!/provider|429|402|413|rate.?limit|billing|context|timeout|attempt_budget/i.test(text)) {
     return text || "AI Analyze failed. Correct the source or provider issue, then retry.";
   }
-  const unavailable = (text.match(/(?:429|503|rate.?limit|timeout|timed out|overload)/gi) ?? []).length;
-  const capacity = (text.match(/(?:413|context (?:window|length)|request too large|prompt exceeds)/gi) ?? []).length;
-  const configuration = (text.match(/(?:402|billing|payment required|insufficient balance|401|403)/gi) ?? []).length;
-  const parts = [
-    unavailable > 0 ? `${unavailable} provider issue${unavailable === 1 ? " was" : "s were"} rate-limited or unavailable` : "",
-    capacity > 0 ? `${capacity} model${capacity === 1 ? " could" : "s could"} not accept the request size` : "",
-    configuration > 0 ? `${configuration} provider${configuration === 1 ? " has" : "s have"} a billing or configuration problem` : "",
+  // Do not count regex occurrences as providers. One provider error can name
+  // its status, retry and nested cause several times; the old implementation
+  // turned those events into impossible summaries such as "11 provider
+  // issues" for a ten-provider chain. The authenticated diagnostic owns exact
+  // per-provider counts. This compact workflow message names only categories
+  // actually evidenced in the safe error and never collapses billing/auth/
+  // timeout/malformed output into "rate-limited or unavailable".
+  const categories = [
+    /(?:402|billing|payment required|insufficient (?:balance|credit|quota))/i.test(text) ? "BILLING" : "",
+    /(?:401|403|invalid api key|unauthori[sz]ed)/i.test(text) ? "AUTH_OR_CONFIGURATION_INVALID" : "",
+    /(?:429|rate.?limit)/i.test(text) ? "RATE_LIMITED" : "",
+    /(?:503|overload|temporarily unavailable)/i.test(text) ? "TEMPORARILY_UNAVAILABLE" : "",
+    /(?:timeout|timed out|deadline)/i.test(text) ? "TIMEOUT" : "",
+    /(?:malformed|empty|unusable structured)/i.test(text) ? "MALFORMED_RESPONSE" : "",
+    /(?:413|context (?:window|length)|request too large|prompt exceeds)/i.test(text) ? "REQUEST_TOO_LARGE" : "",
   ].filter(Boolean);
-  return `AI Analyze could not complete after the configured provider chain.${parts.length ? ` ${parts.join("; ")}.` : ""} Retry AI Analyze or open Provider diagnostics.`;
+  return `AI Analyze could not complete after the configured provider chain.${categories.length ? ` Observed categories: ${categories.join(", ")}.` : ""} Open Provider diagnostics for unique-provider results, then retry AI Analyze.`;
 }
 
 function sleep(ms: number) {

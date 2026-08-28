@@ -273,6 +273,8 @@ export async function loadProviderHealthIntoMemory(
         lastFailureMessage: snap.lastSafeErrorMessage ?? null,
         consecutiveFailures: snap.consecutiveFailures,
         cooldownUntil: cooldownUntilMs,
+        latestAnalysisResult: null,
+        latestGenerationResult: null,
       });
 
       // If caller passed an explicit map (for testing), also write into it

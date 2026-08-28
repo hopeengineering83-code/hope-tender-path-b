@@ -219,6 +219,8 @@ function getAIHealth(): AIHealthResponse {
         analysisUsable: false,
         available: true,
         status: "UNKNOWN",
+        latestRealExtractionResult: null,
+        latestRealProposalResult: null,
       },
       status: "UNKNOWN",
       isAi: false,
@@ -299,6 +301,17 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
   // to fire for every status except GENERATION_VERIFIED, so a provider whose
   // ANALYSIS capability had just been verified was told it had failed.
   const failing = p.configured && !presentation.healthy && !presentation.neutral;
+  const resultLine = (
+    label: string,
+    model: string,
+    result: ProviderRuntimeSnapshot["latestRealExtractionResult"],
+  ) => (
+    <p className="mt-1 text-xs text-slate-600">
+      <span className="font-medium">{label}:</span> {model} — {result
+        ? `${result.outcome}${result.category ? ` (${result.category})` : ""} at ${new Date(result.observedAt).toLocaleString()}`
+        : "no real workload result recorded on this instance"}
+    </p>
+  );
   return (
     <div className="rounded-xl bg-white p-3 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
@@ -307,7 +320,16 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
       </div>
       <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Fallback rank {p.rank}</p>
       {!p.configured && <p className="mt-1 text-xs text-slate-600">Not configured — set {p.envVar} in Vercel Production environment.</p>}
-      {p.configured && <p className="mt-1 text-xs text-slate-600">Model: {p.model ?? "provider default"}</p>}
+      {p.configured && resultLine(
+        "Extraction model / latest real extraction",
+        getProviderModel(p.key as Parameters<typeof getProviderModel>[0], "extraction"),
+        p.runtime.latestRealExtractionResult,
+      )}
+      {p.configured && resultLine(
+        "Proposal model / latest real proposal",
+        getProviderModel(p.key as Parameters<typeof getProviderModel>[0], "proposal"),
+        p.runtime.latestRealProposalResult,
+      )}
       {p.configured && p.detail && <p className="mt-1 text-xs text-slate-500">{p.detail}</p>}
       {p.configured && failing && !p.runtime.coolingDown && (
         <p className="mt-1 text-xs text-amber-800">

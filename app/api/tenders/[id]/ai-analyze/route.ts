@@ -41,6 +41,7 @@ import {
   stagePartialResult,
 } from "../../../../../lib/ai-analyze-promotion";
 import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
+import { getProviderModel } from "../../../../../lib/ai-provider-registry";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { syncPersistedTenderFactsToLedger } from "../../../../../lib/engine/tender-facts-ledger-service";
 
@@ -790,6 +791,7 @@ async function handleStreamingAnalyze(
                       tenderId: id,
                       provider,
                       useCase: "extraction",
+                      model: getProviderModel(provider, "extraction"),
                       latencyMs,
                       success,
                       failureCategory: failureCategory ?? null,
@@ -1772,6 +1774,7 @@ async function unreachableLegacySynchronousPath(
                   tenderId: id,
                   provider,
                   useCase: "extraction",
+                  model: getProviderModel(provider, "extraction"),
                   latencyMs,
                   success,
                   failureCategory: failureCategory ?? null,

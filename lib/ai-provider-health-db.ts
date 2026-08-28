@@ -83,6 +83,12 @@ export async function restoreHealthFromDb(): Promise<ProviderHealthRestoreResult
         lastFailureMessage: failureIsStale ? null : (snap.lastSafeErrorMessage ?? null),
         consecutiveFailures: failureIsStale ? 0 : snap.consecutiveFailures,
         cooldownUntil: cooldownUntilMs,
+        // Capability-result detail was introduced without a schema migration:
+        // cold starts retain the existing durable success timestamps, while a
+        // result's model/category detail is truthfully "not observed on this
+        // instance" until the next real workload. Never synthesize it.
+        latestAnalysisResult: null,
+        latestGenerationResult: null,
       });
     }
     restoredAt = now;

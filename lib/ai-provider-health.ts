@@ -84,6 +84,16 @@ export type InternalState = {
   lastFailureMessage: string | null;
   consecutiveFailures: number;
   cooldownUntil: number | null;
+  latestAnalysisResult?: ProviderCapabilityResult | null;
+  latestGenerationResult?: ProviderCapabilityResult | null;
+};
+
+export type ProviderCapabilityResult = {
+  observedAt: number;
+  outcome: "SUCCEEDED" | "FAILED";
+  model: string;
+  category: AiProviderFailureCategory | null;
+  safeMessage: string | null;
 };
 
 const state = new Map<AiProviderName, InternalState>();
@@ -208,10 +218,34 @@ function ensureState(provider: AiProviderName): InternalState {
       lastFailureMessage: null,
       consecutiveFailures: 0,
       cooldownUntil: null,
+      latestAnalysisResult: null,
+      latestGenerationResult: null,
     };
     state.set(provider, s);
   }
   return s;
+}
+
+/**
+ * Record the outcome of a real workload, separately for extraction and
+ * proposal generation. This is deliberately not the routing failure state:
+ * an extraction failure may impose a shared provider cooldown, but it must not
+ * overwrite the operator's answer to "what happened on the latest proposal?"
+ * (or vice versa).
+ */
+export function recordProviderCapabilityResult(
+  provider: AiProviderName,
+  capability: "analysis" | "generation",
+  result: Omit<ProviderCapabilityResult, "observedAt"> & { observedAt?: number },
+): void {
+  const s = ensureState(provider);
+  const value: ProviderCapabilityResult = {
+    ...result,
+    observedAt: result.observedAt ?? Date.now(),
+    safeMessage: result.safeMessage ? redactMessage(result.safeMessage) : null,
+  };
+  if (capability === "analysis") s.latestAnalysisResult = value;
+  else s.latestGenerationResult = value;
 }
 
 /**
@@ -556,6 +590,8 @@ export type ProviderRuntimeSnapshot = {
   analysisUsable: boolean;
   available: boolean;
   status: AiProviderStatus;
+  latestRealExtractionResult: ProviderCapabilityResult | null;
+  latestRealProposalResult: ProviderCapabilityResult | null;
 };
 
 export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRuntimeSnapshot {
@@ -580,7 +616,19 @@ export function getProviderRuntimeSnapshot(provider: AiProviderName): ProviderRu
     // with a bill.
     available: h.configured && !coolingDown && status !== "BILLING_BLOCKED",
     status,
+    latestRealExtractionResult: hStateResult(h.provider, "analysis"),
+    latestRealProposalResult: hStateResult(h.provider, "generation"),
   };
+}
+
+function hStateResult(
+  provider: AiProviderName,
+  capability: "analysis" | "generation",
+): ProviderCapabilityResult | null {
+  const value = capability === "analysis"
+    ? state.get(provider)?.latestAnalysisResult
+    : state.get(provider)?.latestGenerationResult;
+  return value ? { ...value } : null;
 }
 
 export type ProviderAttemptDiagnostic = {
@@ -589,6 +637,10 @@ export type ProviderAttemptDiagnostic = {
   coolingDown: boolean;
   lastErrorCategory: AiProviderFailureCategory | null;
   cooldownUntil: string | null;
+  extractionModel: string;
+  proposalModel: string;
+  latestRealExtractionResult: ProviderCapabilityResult | null;
+  latestRealProposalResult: ProviderCapabilityResult | null;
 };
 
 export function buildProviderDiagnosticsSnapshot(): {
@@ -605,6 +657,10 @@ export function buildProviderDiagnosticsSnapshot(): {
       coolingDown: isProviderCooledDown(provider),
       lastErrorCategory: h.lastFailureCategory,
       cooldownUntil: h.cooldownUntil,
+      extractionModel: getProviderModel(provider, "extraction"),
+      proposalModel: getProviderModel(provider, "proposal"),
+      latestRealExtractionResult: hStateResult(provider, "analysis"),
+      latestRealProposalResult: hStateResult(provider, "generation"),
     };
   });
   return {

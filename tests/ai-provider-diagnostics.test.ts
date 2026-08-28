@@ -97,6 +97,13 @@ describe("diagnostics endpoint", () => {
     assert.match(route, /buildProviderDiagnosticsSnapshot\(\)/);
   });
 
+  it("keeps latest real extraction and proposal results tenant-scoped and separate", () => {
+    assert.match(route, /userId: actor\.id/);
+    assert.match(route, /useCase: \{ in: \["extraction", "proposal"\] \}/);
+    assert.match(route, /latestRealExtractionResult/);
+    assert.match(route, /latestRealProposalResult/);
+  });
+
   it("headlines ANALYSIS readiness, not 'something answered'", () => {
     // The previous route reported `anyWorking` from a ping. A chain where every
     // provider cheerfully answers a ping and none can produce structured output
