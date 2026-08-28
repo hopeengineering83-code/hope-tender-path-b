@@ -1071,7 +1071,7 @@ export async function generateWithFallback(
           lastErrorCategory: post.lastErrorCategory ?? "MALFORMED_RESPONSE",
           coolingDown: post.coolingDown, cooldownUntil: post.cooldownUntil,
         });
-        failureDetails.push(`${provider}: malformed or empty structured response`);
+        failureDetails.push(`${provider}: malformed JSON or empty structured response`);
         opts?.onProviderAttempt?.(provider, false, attemptLatencyMs, "MALFORMED_RESPONSE");
         continue;
       }

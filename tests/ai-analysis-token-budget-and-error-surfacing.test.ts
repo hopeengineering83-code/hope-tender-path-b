@@ -49,7 +49,7 @@ describe("AI analysis output-token budget", () => {
       "a caller-supplied cap must be clamped to the registry budget, never able to raise it",
     );
     // Each OpenAI-compatible provider call must pass maxTokens, never undefined.
-    assert.match(body, /generateWithGroq\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.modelOverride\)/);
+    assert.match(body, /generateWithGroq\(prompt, opts\?\.systemPrompt, maxTokens, useCase, opts\?\.modelOverride\)/);
     assert.match(body, /generateWithOpenRouter\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.modelOverride\)/);
     assert.match(body, /generateWithMistral\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase, opts\?\.modelOverride\)/);
     assert.match(body, /generateWithTogether\(prompt, opts\?\.systemPrompt, maxTokens, opts\?\.useCase\)/);
