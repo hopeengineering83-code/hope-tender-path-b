@@ -124,6 +124,20 @@ export const RETRYABLE_CATEGORIES = new Set<string>([
 
 export type FailureClassification = { retryable: boolean; category: string; reason: string };
 
+function stagedFallbackState(
+  stagedMergedResult: string | null | undefined,
+  promotedAt?: Date | null,
+): "UNAPPROVED" | "APPROVED" | null {
+  if (!stagedMergedResult) return null;
+  try {
+    const parsed = JSON.parse(stagedMergedResult) as { analysisSource?: unknown };
+    if (parsed.analysisSource !== "FALLBACK_DRAFT") return null;
+    return promotedAt ? "APPROVED" : "UNAPPROVED";
+  } catch {
+    return null;
+  }
+}
+
 /** Re-evaluate only the historical ownership category against current proof. */
 export function reclassifyHistoricalTenderFailure(input: {
   recordedCategory: string | null;
@@ -255,10 +269,37 @@ export async function recordRetryStateForJob(
     where: { id: jobId },
     select: {
       id: true, tenderId: true, userId: true, analysisInputHash: true, errorMessage: true,
+      stagedMergedResult: true, promotedAt: true,
       analyzeChunks: { where: { status: "FAILED" }, select: { failureCategory: true }, take: 1 },
     },
   });
   if (!job || !job.tenderId) return null;
+  const fallbackState = stagedFallbackState(job.stagedMergedResult, job.promotedAt);
+  if (fallbackState) {
+    const now = new Date();
+    const category = fallbackState === "APPROVED"
+      ? "HUMAN_APPROVED_FALLBACK"
+      : "FALLBACK_REVIEW_REQUIRED";
+    const reason = fallbackState === "APPROVED"
+      ? "Human-approved fallback is immutable; a later AI attempt requires a new explicit analysis authority"
+      : "Deterministic fallback is staged for review; automatic retry cannot overwrite the review draft";
+    const existing = await prisma.aiAnalyzeRetryState.findUnique({ where: { jobId } });
+    const retryCount = existing?.retryCount ?? 0;
+    await prisma.aiAnalyzeRetryState.upsert({
+      where: { jobId },
+      create: {
+        jobId, tenderId: job.tenderId, userId: job.userId,
+        contentHash: job.analysisInputHash ?? "", retryCount, nextRetryAt: null,
+        retryReason: reason, failureCategory: category, nonRetryable: true,
+        lastProviderAvailable: isAnyProviderEligible(), lastCheckedAt: now,
+      },
+      update: {
+        nextRetryAt: null, retryReason: reason, failureCategory: category,
+        nonRetryable: true, lastProviderAvailable: isAnyProviderEligible(), lastCheckedAt: now,
+      },
+    });
+    return { retryable: false, nextRetryAt: null, retryCount, category };
+  }
   const failureCategory = job.analyzeChunks[0]?.failureCategory ?? undefined;
   return recordRetryState(
     job.id, job.tenderId, job.userId, job.analysisInputHash ?? "",
@@ -313,10 +354,20 @@ export async function rearmJobForRetry(jobId: string): Promise<boolean> {
 
   const job = await prisma.aiJob.findUnique({
     where: { id: jobId },
-    select: { id: true, tenderId: true, userId: true, status: true, analysisInputHash: true },
+    select: {
+      id: true, tenderId: true, userId: true, status: true, analysisInputHash: true,
+      stagedMergedResult: true, promotedAt: true,
+    },
   });
   if (!job || !job.tenderId) return false;
   if (job.status !== "PARTIAL_SUCCESS" && job.status !== "FAILED") return false;
+  // A staged deterministic draft is a human-review artifact, not a disposable
+  // retry checkpoint. Automatic recovery must never make that artifact vanish
+  // or turn an approved fallback back into an ambiguous QUEUED job.
+  if (stagedFallbackState(job.stagedMergedResult, job.promotedAt)) {
+    await recordRetryStateForJob(jobId, job.status);
+    return false;
+  }
 
   // Verify the tender content still hashes to the same value the job ran on.
   const { computeAnalysisContentHash, buildTenderAnalysisContent } = await import("../engine/tender-analysis-content");

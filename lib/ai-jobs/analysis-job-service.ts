@@ -7,6 +7,7 @@ import type { Prisma } from "@prisma/client";
 import { buildTenderAnalysisContent, computeAnalysisContentHash, computePersistedTenderAnalysisHash } from "../engine/tender-analysis-content";
 import {
   analyzeOneChunkWithRetry,
+  analysisChunkPreflight,
   chunkTenderContent as aiChunkTenderContent,
   mergeAnalysisResults,
   NoAiProviderReadyError,
@@ -890,9 +891,34 @@ export async function runNextChunk(jobId: string, userId: string) {
       }
 
       let providerUsed: string | undefined;
+      const providerSkipReasons: Record<string, string> = {};
+      const currentGroq = analysisChunkPreflight("groq", chunkText, chunk.chunkIndex, allChunks.length);
+      if (currentGroq.profile.freeTierTpmLimit) {
+        const windowStartedAt = Date.now() - 60_000;
+        const recentGroqChunks = await prisma.aiAnalyzeChunk.findMany({
+          where: {
+            jobId,
+            status: "SUCCEEDED",
+            provider: "groq",
+            chunkIndex: { not: chunk.chunkIndex },
+            finishedAt: { gte: new Date(windowStartedAt) },
+          },
+          select: { chunkIndex: true },
+        });
+        const priorReservedTokens = recentGroqChunks.reduce((sum: number, prior: any) => {
+          const priorText = allChunks[prior.chunkIndex];
+          if (!priorText) return sum;
+          const budget = analysisChunkPreflight("groq", priorText, prior.chunkIndex, allChunks.length);
+          return sum + budget.estimatedTokens + Math.max(512, budget.maxOutputTokens);
+        }, 0);
+        const currentReservedTokens = currentGroq.estimatedTokens + Math.max(512, currentGroq.maxOutputTokens);
+        if (priorReservedTokens + currentReservedTokens > currentGroq.profile.freeTierTpmLimit) {
+          providerSkipReasons.groq = `same-job TPM window reserved ${priorReservedTokens} tokens; this chunk requires ${currentReservedTokens} more against limit ${currentGroq.profile.freeTierTpmLimit}`;
+        }
+      }
       const res = await analyzeOneChunkWithRetry(chunkText, chunk.chunkIndex, allChunks.length, (p: any) => {
           providerUsed = p;
-      });
+      }, undefined, undefined, providerSkipReasons);
 
       await prisma.aiAnalyzeChunk.update({
           where: { id: chunk.id },

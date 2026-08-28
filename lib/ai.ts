@@ -462,6 +462,17 @@ export type AiProviderAttempt = {
   provider: AiProviderName;
   configured: boolean;
   tried: boolean;
+  /** Exact extraction/proposal model resolved for this request. */
+  model?: string;
+  preflightEligible?: boolean | null;
+  preflightReason?: "OK" | "CONTEXT_OVERFLOW" | "TPM_LIMIT" | "UNKNOWN_PROVIDER" | null;
+  estimatedInputTokens?: number | null;
+  contextLimit?: number | null;
+  tpmLimit?: number | null;
+  maxOutputTokens?: number | null;
+  skipReason?: "NOT_CONFIGURED" | "AUTOMATICALLY_INELIGIBLE" | "BILLING_LOCKOUT" | "COOLDOWN" | "PREFLIGHT" | "THROUGHPUT_WINDOW" | "ATTEMPT_BUDGET" | "DEADLINE" | null;
+  /** True iff an outbound network attempt consumed one of the ten slots. */
+  attemptBudgetConsumed?: boolean;
   lastErrorCategory: string | null;
   coolingDown: boolean;
   cooldownUntil: string | null;
@@ -953,6 +964,8 @@ export async function generateWithFallback(
     /** Reject unusable provider output before declaring success, so the same
      * canonical chain can continue instead of retrying the whole chain. */
     validateResponse?: (response: string) => boolean;
+    /** Durable same-job throughput guard. These skips do not consume attempts. */
+    providerSkipReasons?: Partial<Record<AiProviderName, string>>;
   },
 ): Promise<string> {
   const useCase = opts?.useCase ?? "default";
@@ -981,6 +994,19 @@ export async function generateWithFallback(
   let deadlineHit = false;
 
   for (const provider of chain) {
+    const pacedSkipReason = opts?.providerSkipReasons?.[provider];
+    if (pacedSkipReason) {
+      const configured = isProviderEnabled(provider);
+      const snap = getProviderRuntimeSnapshot(provider);
+      providerAttempts.push({
+        provider, configured, tried: false, model: getProviderModel(provider, useCase),
+        preflightEligible: null, preflightReason: null, skipReason: "THROUGHPUT_WINDOW",
+        attemptBudgetConsumed: false, lastErrorCategory: snap.lastErrorCategory,
+        coolingDown: snap.coolingDown, cooldownUntil: snap.cooldownUntil,
+      });
+      failureDetails.push(`${provider}: ${redactSecrets(pacedSkipReason).slice(0, 200)}`);
+      continue;
+    }
     // Money gate, evaluated before anything builds a request body. A provider
     // that requires paid access, or that has already answered with a demand for
     // payment, is skipped here — without consuming an attempt, and without the
@@ -991,6 +1017,8 @@ export async function generateWithFallback(
       const snap = getProviderRuntimeSnapshot(provider);
       providerAttempts.push({
         provider, configured: snap.available, tried: false,
+        model: getProviderModel(provider, useCase), preflightEligible: null, preflightReason: null,
+        skipReason: "AUTOMATICALLY_INELIGIBLE", attemptBudgetConsumed: false,
         lastErrorCategory: snap.lastErrorCategory, coolingDown: snap.coolingDown, cooldownUntil: snap.cooldownUntil,
       });
       failureDetails.push(`${provider}: ${eligibility.safeMessage}`);
@@ -1000,6 +1028,8 @@ export async function generateWithFallback(
       const snap = getProviderRuntimeSnapshot(provider);
       providerAttempts.push({
         provider, configured: true, tried: false,
+        model: getProviderModel(provider, useCase), preflightEligible: null, preflightReason: null,
+        skipReason: "BILLING_LOCKOUT", attemptBudgetConsumed: false,
         lastErrorCategory: "BILLING", coolingDown: snap.coolingDown, cooldownUntil: snap.cooldownUntil,
       });
       failureDetails.push(`${provider}: refused payment recently — cooling down, will be retried`);
@@ -1019,6 +1049,8 @@ export async function generateWithFallback(
       // Skipped WITHOUT consuming an attempt.
       providerAttempts.push({
         provider, configured: false, tried: false,
+        model: getProviderModel(provider, useCase), preflightEligible: null, preflightReason: null,
+        skipReason: "NOT_CONFIGURED", attemptBudgetConsumed: false,
         lastErrorCategory: pre.lastErrorCategory, coolingDown: pre.coolingDown, cooldownUntil: pre.cooldownUntil,
       });
       continue;
@@ -1027,6 +1059,8 @@ export async function generateWithFallback(
       // Skipped WITHOUT consuming an attempt.
       providerAttempts.push({
         provider, configured: true, tried: false,
+        model: getProviderModel(provider, useCase), preflightEligible: null, preflightReason: null,
+        skipReason: "COOLDOWN", attemptBudgetConsumed: false,
         lastErrorCategory: pre.lastErrorCategory, coolingDown: true, cooldownUntil: pre.cooldownUntil,
       });
       failureDetails.push(`${provider}: in cooldown`);
@@ -1041,6 +1075,15 @@ export async function generateWithFallback(
     if (!preflight.eligible) {
       providerAttempts.push({
         provider, configured: true, tried: false,
+        model: preflight.model,
+        preflightEligible: false,
+        preflightReason: preflight.reason,
+        estimatedInputTokens: preflight.estimatedTokens,
+        contextLimit: preflight.contextLimit,
+        tpmLimit: preflight.profile.freeTierTpmLimit,
+        maxOutputTokens: preflight.maxOutputTokens,
+        skipReason: "PREFLIGHT",
+        attemptBudgetConsumed: false,
         lastErrorCategory: pre.lastErrorCategory, coolingDown: false, cooldownUntil: pre.cooldownUntil,
       });
       failureDetails.push(`${provider}: ${preflight.safeMessage}`);
@@ -1052,6 +1095,10 @@ export async function generateWithFallback(
       budgetExhausted = true;
       providerAttempts.push({
         provider, configured: true, tried: false,
+        model: preflight.model, preflightEligible: true, preflightReason: "OK",
+        estimatedInputTokens: preflight.estimatedTokens, contextLimit: preflight.contextLimit,
+        tpmLimit: preflight.profile.freeTierTpmLimit, maxOutputTokens: preflight.maxOutputTokens,
+        skipReason: "ATTEMPT_BUDGET", attemptBudgetConsumed: false,
         lastErrorCategory: pre.lastErrorCategory, coolingDown: false, cooldownUntil: pre.cooldownUntil,
       });
       continue;
@@ -1062,6 +1109,10 @@ export async function generateWithFallback(
       deadlineHit = true;
       providerAttempts.push({
         provider, configured: true, tried: false,
+        model: preflight.model, preflightEligible: true, preflightReason: "OK",
+        estimatedInputTokens: preflight.estimatedTokens, contextLimit: preflight.contextLimit,
+        tpmLimit: preflight.profile.freeTierTpmLimit, maxOutputTokens: preflight.maxOutputTokens,
+        skipReason: "DEADLINE", attemptBudgetConsumed: false,
         lastErrorCategory: pre.lastErrorCategory, coolingDown: false, cooldownUntil: pre.cooldownUntil,
       });
       failureDetails.push(`${provider}: skipped — shared deadline reached`);
@@ -1092,6 +1143,10 @@ export async function generateWithFallback(
         const post = getProviderRuntimeSnapshot(provider);
         providerAttempts.push({
           provider, configured: true, tried: true,
+          model: preflight.model, preflightEligible: true, preflightReason: "OK",
+          estimatedInputTokens: preflight.estimatedTokens, contextLimit: preflight.contextLimit,
+          tpmLimit: preflight.profile.freeTierTpmLimit, maxOutputTokens: preflight.maxOutputTokens,
+          skipReason: null, attemptBudgetConsumed: true,
           lastErrorCategory: post.lastErrorCategory ?? "MALFORMED_RESPONSE",
           coolingDown: post.coolingDown, cooldownUntil: post.cooldownUntil,
         });
@@ -1117,6 +1172,10 @@ export async function generateWithFallback(
     const post = getProviderRuntimeSnapshot(provider);
     providerAttempts.push({
       provider, configured: true, tried: true,
+      model: preflight.model, preflightEligible: true, preflightReason: "OK",
+      estimatedInputTokens: preflight.estimatedTokens, contextLimit: preflight.contextLimit,
+      tpmLimit: preflight.profile.freeTierTpmLimit, maxOutputTokens: preflight.maxOutputTokens,
+      skipReason: null, attemptBudgetConsumed: true,
       lastErrorCategory: post.lastErrorCategory, coolingDown: post.coolingDown, cooldownUntil: post.cooldownUntil,
     });
     // OBS-004 — record failed usage (fire-and-forget). Use the redacted
@@ -1993,18 +2052,130 @@ export function analysisFitsOneConfiguredProvider(content: string): boolean {
   );
 }
 
-export function chunkTenderContent(content: string): string[] {
-  if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT || analysisFitsOneConfiguredProvider(content)) return [content];
+export type AnalysisChunkPlan = {
+  chunks: string[];
+  reason: "SOFT_LIMIT" | "EARLY_CHAIN_DIVERSITY" | "LARGE_SOURCE" | "SINGLE_REQUEST";
+  configuredProviders: AiProviderName[];
+  fullRequestEligibleProviders: AiProviderName[];
+  chunkEligibleProviders: AiProviderName[];
+};
+
+function splitAnalysisContent(content: string, chunkSize: number): string[] {
   const chunks: string[] = [];
   let start = 0;
-  let coveredEnd = 0;
   while (start < content.length && chunks.length < ANALYSIS_MAX_CHUNKS) {
-    const end = Math.min(start + ANALYSIS_CHUNK_SIZE, content.length);
+    const end = Math.min(start + chunkSize, content.length);
     chunks.push(content.slice(start, end));
-    coveredEnd = end;
     if (end === content.length) break;
     start = end - ANALYSIS_CHUNK_OVERLAP;
   }
+  return chunks;
+}
+
+function providersEligibleForEveryChunk(
+  chunks: string[],
+  providers: readonly AiProviderName[],
+  env: NodeJS.ProcessEnv,
+): AiProviderName[] {
+  return providers.filter((provider) => chunks.every((chunk, index) =>
+    preflightProvider(provider, buildAnalysisPrompt(chunk, index, chunks.length), {
+      systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+      useCase: "extraction",
+      env,
+    }).eligible
+  ));
+}
+
+export function analysisChunkPreflight(
+  provider: AiProviderName,
+  content: string,
+  index: number,
+  total: number,
+  env: NodeJS.ProcessEnv = process.env,
+) {
+  return preflightProvider(provider, buildAnalysisPrompt(content, index, total), {
+    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+    useCase: "extraction",
+    env,
+  });
+}
+
+/**
+ * Choose an immutable request shape from source + configured model contract.
+ * Runtime cooldown/billing observations are deliberately excluded: they route
+ * this run, but must never change chunk hashes for the same source/config.
+ */
+export function planAnalysisChunks(
+  content: string,
+  env: NodeJS.ProcessEnv = process.env,
+): AnalysisChunkPlan {
+  const configuredProviders = CANONICAL_AI_PROVIDER_ORDER.filter((provider) =>
+    registryIsProviderConfigured(provider, env)
+  );
+  const fullChunks = [content];
+  const fullRequestEligibleProviders = providersEligibleForEveryChunk(fullChunks, configuredProviders, env);
+
+  if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) {
+    return {
+      chunks: fullChunks,
+      reason: "SOFT_LIMIT",
+      configuredProviders,
+      fullRequestEligibleProviders,
+      chunkEligibleProviders: fullRequestEligibleProviders,
+    };
+  }
+
+  const earlyConfigured = configuredProviders.slice(0, 3);
+  const earlyEligible = new Set(fullRequestEligibleProviders);
+  const fullPreservesEarlyDiversity = earlyConfigured.every((provider) => earlyEligible.has(provider));
+  if (content.length <= ANALYSIS_MAX_SINGLE_REQUEST_SOURCE_CHARS && fullPreservesEarlyDiversity) {
+    return {
+      chunks: fullChunks,
+      reason: "SINGLE_REQUEST",
+      configuredProviders,
+      fullRequestEligibleProviders,
+      chunkEligibleProviders: fullRequestEligibleProviders,
+    };
+  }
+
+  const chunks = splitAnalysisContent(content, ANALYSIS_CHUNK_SIZE);
+  const chunkEligibleProviders = providersEligibleForEveryChunk(chunks, configuredProviders, env);
+  const chunkEligible = new Set(chunkEligibleProviders);
+  const restoresEarlyProvider = earlyConfigured.some(
+    (provider) => !earlyEligible.has(provider) && chunkEligible.has(provider),
+  );
+
+  // A source below the hard single-request ceiling is split only when doing so
+  // restores an early canonical fallback. A later huge-context provider alone
+  // can no longer force a monolith that excludes Groq or another early model.
+  if (content.length <= ANALYSIS_MAX_SINGLE_REQUEST_SOURCE_CHARS && !restoresEarlyProvider) {
+    return {
+      chunks: fullChunks,
+      reason: "SINGLE_REQUEST",
+      configuredProviders,
+      fullRequestEligibleProviders,
+      chunkEligibleProviders: fullRequestEligibleProviders,
+    };
+  }
+
+  return {
+    chunks,
+    reason: content.length > ANALYSIS_MAX_SINGLE_REQUEST_SOURCE_CHARS
+      ? "LARGE_SOURCE"
+      : "EARLY_CHAIN_DIVERSITY",
+    configuredProviders,
+    fullRequestEligibleProviders,
+    chunkEligibleProviders,
+  };
+}
+
+export function chunkTenderContent(content: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const chunks = planAnalysisChunks(content, env).chunks;
+  let coveredEnd = 0;
+  if (chunks.length > 0) coveredEnd = chunks.reduce(
+    (covered, chunk, index) => covered + chunk.length - (index === 0 ? 0 : ANALYSIS_CHUNK_OVERLAP),
+    0,
+  );
   // Per Pillar 3: if content was not fully chunked (hit ANALYSIS_MAX_CHUNKS
   // before reaching the end), log a warning so downstream gates can detect
   // incomplete processing. The chunk count is capped to prevent runaway cost,
@@ -2407,6 +2578,7 @@ async function analyzeOneChunk(
   // cannot finish within budget, returning a clean structured error instead of
   // being hard-killed mid-flight by the route's outer withTimeout race.
   deadlineAt?: number,
+  providerSkipReasons?: Partial<Record<AiProviderName, string>>,
 ): Promise<AIAnalysisResult> {
   const chunkLabel = totalChunks > 1 ? ` (chunk ${chunkIndex + 1} of ${totalChunks})` : "";
   const prompt = buildAnalysisPrompt(tenderContent, chunkIndex, totalChunks);
@@ -2418,6 +2590,7 @@ async function analyzeOneChunk(
     onProviderUsed,
     onProviderAttempt,
     deadlineAt,
+    providerSkipReasons,
   });
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
@@ -2604,6 +2777,7 @@ export async function analyzeOneChunkWithRetry(
   onProviderUsed?: (provider: AiProviderName) => void,
   onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void,
   deadlineAt?: number,
+  providerSkipReasons?: Partial<Record<AiProviderName, string>>,
 ): Promise<AIAnalysisResult> {
   // Fail fast if the shared deadline has already been reached — don't start
   // a chunk attempt that can't finish within budget.
@@ -2611,7 +2785,7 @@ export async function analyzeOneChunkWithRetry(
     throw new Error("AI_ANALYSIS_DEADLINE_REACHED_BEFORE_CHUNK_ATTEMPT");
   }
   try {
-    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt);
+    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt, providerSkipReasons);
   } catch (err) {
     if (!isTransientChunkError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
@@ -2629,7 +2803,7 @@ export async function analyzeOneChunkWithRetry(
     }
     logger.warn(`[ai] chunk ${index + 1}/${total} hit transient error — retrying once after ${CHUNK_RETRY_BACKOFF_MS}ms. Error: ${msg.slice(0, 200)}`);
     await new Promise((r) => setTimeout(r, CHUNK_RETRY_BACKOFF_MS));
-    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt);
+    return await analyzeOneChunk(content, index, total, onProviderUsed, onProviderAttempt, deadlineAt, providerSkipReasons);
   }
 }
 

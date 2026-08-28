@@ -158,34 +158,46 @@ describe("AI provider exhaustion recovers automatically — real PostgreSQL", ()
     assert.ok(staged?.requirements?.length > 0, "fallback must retain source-derived requirements for review");
   });
 
-  it("records the failure as retryable with a bounded backoff", async () => {
+  it("freezes automatic retry once the fallback review artifact is staged", async () => {
     const recorded = await recordRetryStateForJob(jobId, "FAILED");
     assert.ok(recorded, "retry state must be recorded for a FAILED analysis");
-    assert.equal(recorded.retryable, true, "provider exhaustion is transient and must stay retryable");
-    assert.ok(recorded.nextRetryAt, "a retryable failure must carry a next-attempt time, not retry immediately");
+    // The old expectation scheduled provider exhaustion even after finalizeJob
+    // had staged FALLBACK_DRAFT. That allowed cron to mutate the same review
+    // artifact back to QUEUED. Provider exhaustion is normally transient, but
+    // the staged human-review state is now the stronger state-machine fact.
+    assert.equal(recorded.retryable, false);
+    assert.equal(recorded.nextRetryAt, null);
+    assert.equal(recorded.category, "FALLBACK_REVIEW_REQUIRED");
   });
 
-  it("is picked up by the scheduler once its backoff elapses", async () => {
+  it("is not picked up by the scheduler while fallback review is pending", async () => {
     await prisma.aiAnalyzeRetryState.update({
       where: { jobId },
-      data: { nextRetryAt: new Date(Date.now() - 1_000) },
+      data: { nextRetryAt: new Date(Date.now() - 1_000), nonRetryable: false },
     });
+    await recordRetryStateForJob(jobId, "FAILED");
     const due = await findJobsDueForRetry(25);
-    assert.ok(due.some((row) => row.jobId === jobId), "a due, retryable, FAILED analysis must be selected");
+    assert.equal(due.some((row) => row.jobId === jobId), false);
   });
 
-  it("returns the job to QUEUED so the worker resumes it", async () => {
+  it("refuses to return the fallback-review job to QUEUED", async () => {
     const rearmed = await rearmJobForRetry(jobId);
-    assert.equal(rearmed, true, "re-arm must succeed when the content hash is unchanged");
+    assert.equal(rearmed, false, "automatic re-arm must not overwrite a staged fallback");
 
-    const job = await prisma.aiJob.findUnique({ where: { id: jobId }, select: { status: true, errorMessage: true } });
-    assert.equal(job?.status, "QUEUED", "the job must be claimable again");
-    assert.equal(job?.errorMessage, null, "the stale failure message must be cleared on re-arm");
+    const job = await prisma.aiJob.findUnique({ where: { id: jobId }, select: { status: true, stagedMergedResult: true } });
+    assert.equal(job?.status, "FAILED");
+    assert.equal(JSON.parse(job?.stagedMergedResult ?? "null")?.analysisSource, "FALLBACK_DRAFT");
   });
 
   it("refuses to re-arm once the tender content has changed", async () => {
     // The guarantee that keeps this from resuming against a document the
     // completed chunks no longer describe.
+    // This is a separate legacy/no-fallback checkpoint scenario; the tests
+    // above already prove a staged fallback is refused before hash evaluation.
+    await prisma.aiJob.update({
+      where: { id: jobId },
+      data: { stagedMergedResult: null, promotedAt: null },
+    });
     await prisma.tenderFile.updateMany({
       where: { tenderId },
       data: { extractedText: "A COMPLETELY DIFFERENT TENDER DOCUMENT." },
