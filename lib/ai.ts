@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "./observability";
 import { isAIConfigured } from "./env-check";
 const { GoogleGenerativeAI } = require("@google/generative-ai") as typeof import("@google/generative-ai");
-import { recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqModel, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
+import { recordProviderSuccess as recordProviderSuccessRaw, recordProviderFailure as recordProviderFailureRaw, recordProviderAnalysisSuccess as recordProviderAnalysisSuccessRaw, classifyAiError, isProviderCooledDown, isBillingLockedOut, getProviderRuntimeSnapshot, getProviderStateSnapshot, getDeepSeekApiKey, isDeepSeekConfigured, getDeepSeekModel, getMistralApiKey, isMistralConfigured, getMistralProposalModel, getMistralAnalysisModel, getMistralFastModel, getMistralBaseUrl, getGroqApiKey, isGroqConfigured, getGroqBaseUrl, getTogetherApiKey, isTogetherConfigured, getTogetherProposalModel, getTogetherAnalysisModel, getTogetherFastModel, getTogetherBaseUrl, getOpenRouterApiKey, isOpenRouterConfigured, getOpenRouterModel, getOpenRouterBaseUrl, getOpenRouterSiteUrl, getOpenRouterAppName, getZaiApiKey, getZaiBaseUrl, getCerebrasApiKey, getCerebrasBaseUrl, getAnthropicApiKey, type AiProviderName } from "./ai-provider-health";
 import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEligibleProviders, readProviderKey, getProviderModel, getProviderOutputCap, getProviderTimeoutMs, isProviderConfigured as registryIsProviderConfigured, providerAutomaticEligibility, automaticChainDisplay, type AiUseCase } from "./ai-provider-registry";
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
@@ -860,7 +860,7 @@ async function callProviderInner(
       return null;
     }
     case "groq": {
-      const r = await generateWithGroq(prompt, opts?.systemPrompt, maxTokens, opts?.modelOverride).catch((err) => {
+      const r = await generateWithGroq(prompt, opts?.systemPrompt, maxTokens, useCase, opts?.modelOverride).catch((err) => {
         recordProviderFailure("groq", err);
         return null;
       });
@@ -926,6 +926,9 @@ export async function generateWithFallback(
       failureCategory?: string,
     ) => void;
     deadlineAt?: number;
+    /** Reject unusable provider output before declaring success, so the same
+     * canonical chain can continue instead of retrying the whole chain. */
+    validateResponse?: (response: string) => boolean;
   },
 ): Promise<string> {
   const useCase = opts?.useCase ?? "default";
@@ -1059,6 +1062,19 @@ export async function generateWithFallback(
     );
     const attemptLatencyMs = Date.now() - attemptStartedAt;
     if (result) {
+      if (opts?.validateResponse && !opts.validateResponse(result)) {
+        const malformed = new Error("MALFORMED_RESPONSE: provider returned unusable structured output");
+        recordProviderFailure(provider, malformed);
+        const post = getProviderRuntimeSnapshot(provider);
+        providerAttempts.push({
+          provider, configured: true, tried: true,
+          lastErrorCategory: post.lastErrorCategory ?? "MALFORMED_RESPONSE",
+          coolingDown: post.coolingDown, cooldownUntil: post.cooldownUntil,
+        });
+        failureDetails.push(`${provider}: malformed or empty structured response`);
+        opts?.onProviderAttempt?.(provider, false, attemptLatencyMs, "MALFORMED_RESPONSE");
+        continue;
+      }
       opts?.onProviderUsed?.(provider);
       // OBS-004 — record successful usage (fire-and-forget).
       opts?.onProviderAttempt?.(provider, true, attemptLatencyMs);
@@ -1480,7 +1496,13 @@ async function generateWithMistral(
 }
 
 // Fast fallback provider. Also first in the "fast" use-case chain. Null when GROQ_API_KEY unset.
-async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT, maxTokens = 16000, modelOverride?: string): Promise<string | null> {
+async function generateWithGroq(
+  prompt: string,
+  systemPrompt: string = DEFAULT_PROPOSAL_SYSTEM_PROMPT,
+  maxTokens = 16000,
+  useCase: AiUseCase = "proposal",
+  modelOverride?: string,
+): Promise<string | null> {
   const key = getGroqApiKey();
   if (!key) return null;
   return generateOpenAICompatible({
@@ -1488,7 +1510,7 @@ async function generateWithGroq(prompt: string, systemPrompt: string = DEFAULT_P
     providerName: "groq",
     endpoint: `${getGroqBaseUrl()}/chat/completions`,
     apiKey: key,
-    model: modelOverride ?? getGroqModel(),
+    model: modelOverride ?? getProviderModel("groq", useCase),
     prompt,
     systemPrompt,
     maxTokens,
@@ -1918,6 +1940,11 @@ export type AIBidWriterInput = {
 // headroom under Claude's effective per-call context budget for the
 // detailed system prompt + user prompt boilerplate.
 const ANALYSIS_CHUNK_SOFT_LIMIT = 8_000;
+// A single extraction call remains preferable while its exact prompt safely
+// fits at least one currently configured provider/model. Keep an upper bound
+// for extraction quality: a huge source may fit a context window but not a
+// bounded structured response without losing requirements.
+export const ANALYSIS_MAX_SINGLE_REQUEST_SOURCE_CHARS = 50_000;
 // Each chunk size — kept under 80K so the prompt + chunk fits comfortably
 // in one call. Overlap preserves context across boundaries (a requirement
 // straddling the boundary is captured in both chunks; merge dedupes).
@@ -1929,8 +1956,20 @@ export const ANALYSIS_CHUNK_OVERLAP = 1_000;
 // budget is the real limit; these chunks are sent sequentially with overlap.
 const ANALYSIS_MAX_CHUNKS = 200;
 
+export function analysisFitsOneConfiguredProvider(content: string): boolean {
+  if (content.length > ANALYSIS_MAX_SINGLE_REQUEST_SOURCE_CHARS) return false;
+  const prompt = buildAnalysisPrompt(content, 0, 1);
+  return CANONICAL_AI_PROVIDER_ORDER.some((provider) =>
+    isProviderEnabled(provider)
+    && preflightProvider(provider, prompt, {
+      systemPrompt: ANALYSIS_SYSTEM_PROMPT,
+      useCase: "extraction",
+    }).eligible
+  );
+}
+
 export function chunkTenderContent(content: string): string[] {
-  if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT) return [content];
+  if (content.length <= ANALYSIS_CHUNK_SOFT_LIMIT || analysisFitsOneConfiguredProvider(content)) return [content];
   const chunks: string[] = [];
   let start = 0;
   let coveredEnd = 0;
@@ -2173,20 +2212,11 @@ export function mergeAnalysisResults(parts: AIAnalysisResult[]): AIAnalysisResul
   };
 }
 
-async function analyzeOneChunk(
-  tenderContent: string,
-  chunkIndex: number,
-  totalChunks: number,
-  onProviderUsed?: (provider: AiProviderName) => void,
-  onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void,
-  // Shared wall-clock deadline (epoch ms). Threaded into generateWithFallback so
-  // its deadline guard is live: the provider chain will not START an attempt it
-  // cannot finish within budget, returning a clean structured error instead of
-  // being hard-killed mid-flight by the route's outer withTimeout race.
-  deadlineAt?: number,
-): Promise<AIAnalysisResult> {
+const ANALYSIS_SYSTEM_PROMPT = "You are a senior tender analyst. Output ONLY a valid JSON object — no markdown, no code fences, no preamble. The JSON object must match the structure described in the user prompt exactly.";
+
+function buildAnalysisPrompt(tenderContent: string, chunkIndex: number, totalChunks: number): string {
   const chunkLabel = totalChunks > 1 ? ` (chunk ${chunkIndex + 1} of ${totalChunks})` : "";
-  const prompt = `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer. You have evaluated thousands of tenders for World Bank, UNDP, government, and private-sector clients.${chunkLabel ? `\n\nNOTE${chunkLabel}: This is one chunk of a larger tender document. Extract everything visible IN THIS CHUNK. Do not invent content from missing chunks; downstream merge will combine chunk results.` : ""}
+  return `You are a 100-person senior tender board compressed into one analysis engine: lead bid manager, procurement lawyer, technical director, evaluator, document-control lead, and proposal writer. You have evaluated thousands of tenders for World Bank, UNDP, government, and private-sector clients.${chunkLabel ? `\n\nNOTE${chunkLabel}: This is one chunk of a larger tender document. Extract everything visible IN THIS CHUNK. Do not invent content from missing chunks; downstream merge will combine chunk results.` : ""}
 
 Analyze the tender and return ONLY a valid JSON object — no explanation, no markdown fences, no code blocks.
 
@@ -2322,10 +2352,44 @@ JSON structure required:
 
 TENDER DOCUMENT${chunkLabel} (${tenderContent.length.toLocaleString()} chars):
 ${tenderContent}`;
+}
+
+function hasUsableAnalysisResponse(text: string): boolean {
+  const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) return false;
+  for (const candidate of [match[0], match[0].replace(/,(\s*[}\]])/g, "$1")]) {
+    try {
+      const parsed = JSON.parse(candidate) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      if (typeof parsed.summary === "string" && parsed.summary.trim()) return true;
+      if (Array.isArray(parsed.requirements) && parsed.requirements.length > 0) return true;
+      if (typeof parsed.tenderTitle === "string" && parsed.tenderTitle.trim()) return true;
+      if (typeof parsed.evaluationMethodology === "string" && parsed.evaluationMethodology.trim()) return true;
+    } catch { /* try the bounded trailing-comma repair */ }
+  }
+  return false;
+}
+
+async function analyzeOneChunk(
+  tenderContent: string,
+  chunkIndex: number,
+  totalChunks: number,
+  onProviderUsed?: (provider: AiProviderName) => void,
+  onProviderAttempt?: (provider: AiProviderName, success: boolean, latencyMs: number, failureCategory?: string) => void,
+  // Shared wall-clock deadline (epoch ms). Threaded into generateWithFallback so
+  // its deadline guard is live: the provider chain will not START an attempt it
+  // cannot finish within budget, returning a clean structured error instead of
+  // being hard-killed mid-flight by the route's outer withTimeout race.
+  deadlineAt?: number,
+): Promise<AIAnalysisResult> {
+  const chunkLabel = totalChunks > 1 ? ` (chunk ${chunkIndex + 1} of ${totalChunks})` : "";
+  const prompt = buildAnalysisPrompt(tenderContent, chunkIndex, totalChunks);
 
   const text = await generateWithFallback(prompt, {
-    systemPrompt: "You are a senior tender analyst. Output ONLY a valid JSON object — no markdown, no code fences, no preamble. The JSON object must match the structure described in the user prompt exactly.",
+    systemPrompt: ANALYSIS_SYSTEM_PROMPT,
     useCase: "extraction",
+    validateResponse: hasUsableAnalysisResponse,
     onProviderUsed,
     onProviderAttempt,
     deadlineAt,
@@ -2527,8 +2591,8 @@ export async function analyzeOneChunkWithRetry(
     if (!isTransientChunkError(err)) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     // Don't retry if all providers are exhausted/cooled down — waiting 1.5s won't help
-    if (isProviderExhaustedError(err)) {
-      logger.warn(`[ai] chunk ${index + 1}/${total} hit provider exhaustion error (all in cooldown) — not retrying. Error: ${msg.slice(0, 200)}`);
+    if (isProviderExhaustedError(err) || /malformed|empty\s+response|no json/i.test(msg)) {
+      logger.warn(`[ai] chunk ${index + 1}/${total} will not immediately replay the provider chain — not retrying. Error: ${msg.slice(0, 200)}`);
       throw err;
     }
     // Don't burn the retry backoff + a fresh attempt if the shared deadline
@@ -2604,7 +2668,7 @@ export async function analyzeWithAI(
     }
   }
 
-  logger.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} concurrent analysis calls (limit=3).`);
+  logger.info(`[ai] tender content is ${tenderContent.length.toLocaleString()} chars — chunking into ${chunks.length} sequential analysis calls (same-job provider concurrency=1).`);
   const previousChunkResults = (opts?.previousChunkResults ?? [])
     .filter((entry): entry is AnalysisChunkCacheEntry => {
       return Number.isInteger(entry?.index)
@@ -2635,9 +2699,10 @@ export async function analyzeWithAI(
     .map((content, index) => ({ content, index }))
     .filter((c) => !previousIndexes.has(c.index) && c.index >= startIndex);
 
-  // Limited concurrency: process up to 3 chunks in parallel.
-  // This balances speed with provider rate-limit safety.
-  const CONCURRENCY_LIMIT = 3;
+  // One chunk at a time per analysis job. Provider quotas are account-scoped,
+  // so individually safe sibling requests can still self-induce TPM/RPM 429s
+  // when launched together. Durable checkpoints preserve throughput/resume.
+  const CONCURRENCY_LIMIT = 1;
 
   const worker = async () => {
     while (queue.length > 0) {

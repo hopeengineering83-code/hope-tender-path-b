@@ -91,6 +91,16 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-28 UTC — Codex (AI Analyze adaptive chunk/concurrency repair)
+
+- **Branch / PR:** continued only on existing `release/consolidated-recovery-20260717` / draft PR #1175 from verified exact remote head `ba201cb0a1fcba8cec1877252436f7cf2737aaa6`; no branch or PR was created, and nothing was merged, promoted, or deployed to Production.
+- **Proven regression / scope:** the 8,000-character soft threshold split the owner-reproduced 12,122-character extraction into two calls, while `analyzeWithAI` explicitly launched three sibling chunk workers. Those workers shared provider TPM/RPM/cooldown state and could self-induce the observed Groq/Gemini contention. The Groq adapter also selected the proposal model while preflight/diagnostics selected the extraction model, and structured-but-empty output was accepted as routing success before parsing.
+- **General repair:** exact extraction prompt/model preflight now keeps sources up to the bounded 50,000-character quality ceiling in one request whenever a configured provider can safely accept them; genuinely oversized sources retain lossless 8K/1K-overlap chunking but execute sequentially per job. Groq now sends the exact extraction model used by registry/preflight. Extraction response validation happens inside the canonical provider iterator, so malformed/empty output falls through to the next provider without replaying the whole chain. Existing durable per-chunk checkpoints, missing-index resume, ten-provider order, deadline clamps, secret redaction, and fail-closed fallback/export authority remain unchanged.
+- **Files changed:** `lib/ai.ts`, `tests/ai-analysis-capacity-concurrency-regression.test.ts`, and this handoff.
+- **Checks:** targeted AI runtime/durable-resume/diagnostic/fallback suites passed; Prisma validate/generate, typecheck, ESLint, and production build with non-secret placeholder configuration passed. Full local `npm test` was correctly refused by the fail-closed database guard because the inherited URL is Neon; exact-head CI's disposable PostgreSQL service remains required after push.
+- **Known external blockers:** owner-supplied Preview evidence still shows provider-account failures (Cerebras/OpenRouter/DeepSeek/Anthropic billing or credits, Together invalid key, OpenAI/Z.ai throttling). Code does not conceal or bypass them. Authenticated re-run of the retained tender and downstream artifacts requires owner access after fresh exact-head Preview.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** pending exact-head CI/Preview and owner-authenticated runtime acceptance.
+
 ### 2026-08-27 UTC — Codex (PR #1175 CodeQL inline closure)
 
 - **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only, fetched at exact remote head `87703940ae1a821828039df02f376d4a6434dd09`; no branch or PR was created and nothing was merged or promoted.
