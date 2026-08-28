@@ -9,6 +9,7 @@ import {
   analyzeOneChunkWithRetry,
   chunkTenderContent as aiChunkTenderContent,
   mergeAnalysisResults,
+  NoAiProviderReadyError,
   type AIAnalysisResult,
   type AIRequirement
 } from "../ai";
@@ -21,6 +22,7 @@ import {
   canPromoteToCanonical,
   findSupersedingJobId,
   promoteAnalysisToCanonical,
+  stageFallbackDraft,
   stagePartialResult,
   ANALYSIS_SUPERSEDED_STATUS,
   STALE_JOB_SUPERSEDED_SENTINEL
@@ -29,6 +31,24 @@ import { restoreHealthFromDb, persistAllHealthToDb } from "../ai-provider-health
 import { syncPersistedTenderFactsToLedger } from "../engine/tender-facts-ledger-service";
 import { normalizeForContainment } from "../engine/evidence-grounding";
 import { normalizeRequirementTypeOrDefault } from "../engine/requirement-type-vocabulary";
+import { analyzeTender } from "../engine/analysis";
+import { redactSecrets } from "../sanitize-error";
+
+function durableProviderFailureMessage(error: unknown, category: string): string {
+  if (!(error instanceof NoAiProviderReadyError)) return `AI provider error: ${category}`;
+
+  // Keep the canonical iterator's safe trace with the durable chunk. This is
+  // operator evidence, not raw provider output: no prompts, keys, or response
+  // bodies are persisted. Previously the worker collapsed the whole trace to
+  // PROVIDER_EXHAUSTED, making a skipped provider impossible to distinguish
+  // from an unconfigured, cooling, or preflight-ineligible provider.
+  return redactSecrets(JSON.stringify({
+    code: error.code,
+    errorKind: error.errorKind,
+    providerAttempts: error.providerAttempts,
+    failureDetails: error.failureDetails,
+  }));
+}
 
 export type AnalysisJobCreateInput = {
   tenderId: string;
@@ -892,7 +912,7 @@ export async function runNextChunk(jobId: string, userId: string) {
       });
   } catch (err) {
       const category = toSafeAiFailureCategory(err);
-      const safeError = `AI provider error: ${category}`;
+      const safeError = durableProviderFailureMessage(err, category);
 
       await prisma.aiAnalyzeChunk.update({
           where: { id: chunk.id },
@@ -1039,24 +1059,56 @@ export async function finalizeJob(jobId: string, userId: string) {
     if (succeeded.length === 0) {
         const isProviderExhaustion = failed.length > 0 && failed.every((c: any) => c.failureCategory === "PROVIDER_EXHAUSTED");
 
+        if (isProviderExhaustion) {
+            // Provider #11 is the deterministic, source-grounded draft. The
+            // durable worker previously stopped after provider exhaustion and
+            // only changed a Tender status string; unlike the synchronous
+            // route, it never staged the fallback payload. The resolver then
+            // quite correctly reported FAILED because there was no fallback to
+            // review. Build the draft from the same current tenant-owned source
+            // files and stage it on this exact authorized job/hash.
+            const fallbackTender = await prisma.tender.findFirst({
+                where: { id: job.tenderId!, userId },
+                include: {
+                    files: {
+                        where: { deletionStatus: "ACTIVE" },
+                        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+                    },
+                },
+            });
+            if (!fallbackTender) throw new Error("Fallback source tender not found");
+
+            const fallback = analyzeTender(fallbackTender as never);
+            await prisma.$transaction(async (tx) => {
+                await stageFallbackDraft(jobId, {
+                    requirements: fallback.requirements,
+                    summary: fallback.summary,
+                    contentHash: job.analysisInputHash || "",
+                    isPartial: false,
+                    completedChunks: 0,
+                    totalChunks: allChunks.length,
+                }, tx);
+                await tx.aiJob.update({
+                    where: { id: jobId },
+                    data: {
+                        status: "FAILED",
+                        finishedAt: new Date(),
+                        errorMessage: "AI providers exhausted; deterministic fallback staged for human review",
+                    },
+                });
+                await tx.tender.update({
+                    where: { id: job.tenderId! },
+                    data: { analysisExtractionStatus: "REGEX_FALLBACK_UNAPPROVED" },
+                });
+            });
+            return { status: "FAILED", code: "HUMAN_APPROVAL_REQUIRED_FALLBACK" };
+        }
+
         await prisma.aiJob.update({
             where: { id: jobId },
-            data: {
-                status: "FAILED",
-                finishedAt: new Date(),
-                errorMessage: isProviderExhaustion ? "AI providers exhausted" : "All chunks failed"
-            }
+            data: { status: "FAILED", finishedAt: new Date(), errorMessage: "All chunks failed" },
         });
-
-        if (isProviderExhaustion) {
-            await prisma.tender.update({
-                where: { id: job.tenderId! },
-                data: {
-                    analysisExtractionStatus: "REGEX_FALLBACK_UNAPPROVED"
-                }
-            });
-        }
-        return { status: "FAILED", code: isProviderExhaustion ? "AI_PROVIDERS_EXHAUSTED" : "AI_CHUNKS_FAILED" };
+        return { status: "FAILED", code: "AI_CHUNKS_FAILED" };
     }
 
     const parts = succeeded

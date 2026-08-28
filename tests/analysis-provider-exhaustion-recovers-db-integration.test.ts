@@ -32,6 +32,7 @@ import {
   rearmJobForRetry,
 } from "../lib/ai-analyze/retry-service";
 import { computeAnalysisContentHash, buildTenderAnalysisContent } from "../lib/engine/tender-analysis-content";
+import { finalizeJob } from "../lib/ai-jobs/analysis-job-service";
 
 if (process.env.RUN_DB_INTEGRATION !== "true") {
   console.error("FATAL: RUN_DB_INTEGRATION=true is required for this test suite.");
@@ -96,23 +97,33 @@ describe("AI provider exhaustion recovers automatically — real PostgreSQL", ()
       },
     });
 
-    // Exactly the row provider exhaustion leaves behind.
+    // Exactly the job and chunk rows provider exhaustion leaves behind before
+    // the durable worker finalizes the result.
+    const analysisInputHash = await currentAnalysisHash();
     const job = await prisma.aiJob.create({
       data: {
         userId,
         tenderId,
         jobType: "AI_ANALYZE",
-        status: "FAILED",
+        status: "RUNNING",
         input: "{}",
-        errorMessage: "AI providers exhausted",
-        analysisInputHash: await currentAnalysisHash(),
-        finishedAt: new Date(),
+        analysisInputHash,
       },
     });
     jobId = job.id;
-    await prisma.tender.update({
-      where: { id: tenderId },
-      data: { analysisExtractionStatus: "REGEX_FALLBACK_UNAPPROVED" },
+    await prisma.aiAnalyzeChunk.create({
+      data: {
+        jobId,
+        tenderId,
+        userId,
+        contentHash: analysisInputHash,
+        chunkIndex: 0,
+        totalChunks: 1,
+        status: "FAILED",
+        failureCategory: "PROVIDER_EXHAUSTED",
+        errorMessage: "sanitized provider trace",
+        finishedAt: new Date(),
+      },
     });
   });
 
@@ -129,6 +140,22 @@ describe("AI provider exhaustion recovers automatically — real PostgreSQL", ()
     // scheduler query and the re-arm, so without it the rest would pass
     // vacuously by never being reached.
     assert.equal(isAnyProviderEligible(), true, "a provider key must be configured for this suite");
+  });
+
+  it("stages deterministic fallback #11 after every AI provider is exhausted", async () => {
+    const result = await finalizeJob(jobId, userId);
+    assert.deepEqual(result, { status: "FAILED", code: "HUMAN_APPROVAL_REQUIRED_FALLBACK" });
+
+    const [job, tender] = await Promise.all([
+      prisma.aiJob.findUnique({ where: { id: jobId } }),
+      prisma.tender.findUnique({ where: { id: tenderId } }),
+    ]);
+    assert.equal(job?.status, "FAILED", "fallback must never claim AI success");
+    assert.equal(tender?.analysisExtractionStatus, "REGEX_FALLBACK_UNAPPROVED");
+    const staged = JSON.parse(job?.stagedMergedResult ?? "null");
+    assert.equal(staged?.analysisSource, "FALLBACK_DRAFT");
+    assert.equal(staged?.contentHash, await currentAnalysisHash(), "fallback must retain the exact source hash");
+    assert.ok(staged?.requirements?.length > 0, "fallback must retain source-derived requirements for review");
   });
 
   it("records the failure as retryable with a bounded backoff", async () => {

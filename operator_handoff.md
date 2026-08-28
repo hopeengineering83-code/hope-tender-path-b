@@ -1920,3 +1920,14 @@ Follow-up exact-head CI exposed legitimate test-suite contention: another real g
 - **Risks / blockers:** exact-head CI, automated Preview, and route/screenshot audit must finish green before merge readiness can be assessed. No app restart, merge, or Production promotion performed.
 - **Next action:** commit and push the narrow repair, then require all exact-head CI/Preview checks to complete green; fix only demonstrated root causes.
 - **Merge status:** DO NOT MERGE pending exact-head evidence and owner review.
+
+### 2026-08-28 UTC — Codex (PR #1175 provider-exhaustion continuation)
+
+- **Mode:** exact-head live-blocker repair only; no deployment, merge, environment, or database configuration changes.
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175, starting at `3d88fce0722c22f76415da915a04bbbcb2ee0d39` after fetching the remote branch.
+- **Scope:** traced the durable one-chunk AI Analyze terminal path. It marked provider exhaustion but never staged deterministic fallback #11, so the canonical resolver truthfully returned `FAILED`. The worker now stages the source-derived fallback on the exact authorized job/source hash, keeps the job non-successful, requires human review, and retains fail-closed downstream gates. It also durably retains the canonical iterator's sanitized per-provider attempted/skipped trace; the prior worker discarded that evidence, so the historical job cannot prove why Groq was omitted.
+- **Files changed:** `lib/ai-jobs/analysis-job-service.ts`, `tests/durable-ai-analyze-workflow.test.ts`, `tests/analysis-provider-exhaustion-recovers-db-integration.test.ts`, `operator_handoff.md`.
+- **Tests:** focused durable/fallback tests, TypeScript, ESLint, and the disposable-PostgreSQL provider-exhaustion test are required before push; exact-head CI/Preview and authenticated retained-tender rerun remain required after push.
+- **Risks / blockers:** the old job's discarded provider trace is unrecoverable from its persisted chunk row. A fresh authenticated exact-head run is required to classify Groq's skip without guessing and to exercise downstream workflow/artifacts. External provider account failures remain owner actions, not code defects.
+- **Next action:** commit/push only to #1175, require exact-head checks/Preview, then rerun the retained tender and read the newly persisted safe provider trace.
+- **Merge status:** DO NOT MERGE; no Production promotion performed.

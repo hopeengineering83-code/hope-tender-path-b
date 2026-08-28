@@ -132,6 +132,10 @@ describe("durable resume and fail-closed downstream gates", () => {
     const service = read("lib/ai-jobs/analysis-job-service.ts");
     const gate = read("lib/engine/generation-readiness-gate.ts");
     assert.match(service, /analysisExtractionStatus:\s*"REGEX_FALLBACK_UNAPPROVED"/);
+    assert.match(service, /stageFallbackDraft\(jobId/);
+    assert.match(service, /code:\s*"HUMAN_APPROVAL_REQUIRED_FALLBACK"/);
+    assert.match(service, /providerAttempts:\s*error\.providerAttempts/);
+    assert.match(service, /failureDetails:\s*error\.failureDetails/);
     assert.match(service, /PROMOTION_BLOCKED_WEAK_GROUNDING/);
     assert.match(gate, /REGEX_FALLBACK_UNAPPROVED/);
   });
