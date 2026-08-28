@@ -90,6 +90,10 @@ describe("DeepSeek runtime snapshot", () => {
       "lastFailureReason",
       "lastSafeErrorMessage",
       "lastSuccessAt",
+      // Latest real workload outcomes are capability-specific. A proposal
+      // failure must not erase the latest extraction result (or vice versa).
+      "latestRealExtractionResult",
+      "latestRealProposalResult",
       "rateLimited",
       "runtimeVerified",
       // Whether the provider will answer only with a bill — either it said so,
