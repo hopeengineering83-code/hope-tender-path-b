@@ -123,6 +123,58 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-08-29 UTC — Claude Code (runtime amendment provenance; release checkpoint)
+
+- **TOOL:** Claude Code · **HEAD:** `63385c92` · **PR:** #1175 (draft, unmerged)
+
+- **SHIPPED `63385c92` — the amended deadline now names the document that
+  amended it.** The runtime path already resolved an extension correctly, but
+  could not say which file supplied it: `getEffectiveTenderFacts` concatenates
+  every ACTIVE file before the reader runs, so the winning value arrived
+  attached to nothing. `EffectiveTenderFactEntry` already declared `sourceQuote`
+  and had never populated it for the deadline. Attribution is recovered where
+  the files are already in hand — by locating the winning clause — rather than
+  threading file identity through the reader, which would put source authority
+  in a second place. One field (`originalFileName`) had to be added to the
+  `files` select or the attribution was always null; caught by running it.
+
+- **PROVEN AT RUNTIME (real DB, two source files, `tests/amended-deadline-runtime-provenance-db.test.ts`, 5/5):**
+  original notice alone → 2027-03-10 · addendum added → **2027-03-24** ·
+  provenance `sourceFileName=02-addendum-1.txt` + amending quote ·
+  original file still ACTIVE with its own date · submission email, method and
+  subject **unchanged** (a partial amendment does not replace tender context).
+
+- **EXACT-HEAD ACCEPTANCE — all green on `63385c92`:**
+  GitHub CI **6/6** (incl. route/screenshot capture) · dependency security PASS ·
+  Preview `dpl_557pnYcPctmXADifZmNZLyUYEVtt` READY · `/api/health` 200,
+  release == HEAD, 8/8 tables, `schemaMatchesDeployedCode=true` ·
+  full CI-equivalent suite **10876/10876** · prisma validate · typecheck · lint ·
+  build (build needs a provider key present — `next.config.js` `assertProductionEnv`
+  refuses to build with none configured; CI supplies a placeholder).
+
+- **SECURITY (verified, not assumed):** the previously transmitted Mistral
+  credential is absent from every tracked file and from all git history. Four
+  redaction suites (`redact-secrets`, `provider-diagnostic-secret-safety`,
+  `provider-health-redaction`, `error-response-redaction`) pass. Remaining
+  `AIza…` strings in the tree are deliberate fakes used to test redaction.
+  **OWNER SECURITY ACTION: rotate that Mistral credential if not already done.**
+
+- **STILL NOT MEASURED — App proposal quality.** No provider is reachable *and*
+  credentialed from this execution environment. Claude Code's own egress proxy
+  denies `api.mistral.ai`, `api.groq.com`, `api.openai.com`, `api.cerebras.ai`
+  and `openrouter.ai` before vendor authentication;
+  `generativelanguage.googleapis.com` is reachable but unauthenticated. This is
+  a property of the Claude sandbox, **not of Vercel** — the deployed Preview's
+  CSP already permits all ten provider hosts, so a key configured in Vercel may
+  well work there. Reference proposal stands at 92/100; no App score invented.
+
+- **NEXT SAFE ACTION:** one of — (a) configure `GEMINI_API_KEY` in an execution
+  environment this session can drive, or (b) with a provider key present in
+  Vercel, the owner clicks "Run AI Analyze" once on the exact-head Preview for
+  the retained benchmark tender and reports the tender id, after which the
+  persisted job and artifacts can be inspected.
+- **UNCOMMITTED WORK:** NONE. **MERGE STATUS:** DO NOT MERGE.
+
 ### 2026-08-29 UTC — Claude Code (addendum / deadline-amendment authority)
 
 - **TOOL:** Claude Code · **START SHA:** `47fe74db` · **END SHA:** `f86d4343`+
