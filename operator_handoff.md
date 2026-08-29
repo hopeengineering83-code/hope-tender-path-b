@@ -42,15 +42,39 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Active Workboard
 
-Reconciled against GitHub on **2026-08-29**. The previous note on this board —
-"PR #1175 is the only open pull request in the repository" — was true when it was
-written on 2026-08-24 and became false on 2026-08-26. **Two pull requests are
-open: #1175 and #1303.** Both are listed below; neither may be merged.
+Reconciled against GitHub on **2026-08-29**. **PR #1175 is now the ONLY open pull
+request, and the only active implementation/release lane.** PR #1303 was closed
+as superseded on the owner's explicit instruction — closed, never merged, never
+cherry-picked. Do not reopen it and do not create a replacement PR: all future
+application fixes belong on #1175 alone.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex → Claude Code (takeover 2026-08-29) | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Exact-head CI 6/6 green on `b247a139`; Preview READY and release-matched | **OWNER ACTION REQUIRED** — one authenticated "Run AI Analyze" on the exact-head Preview. Do not merge; do not promote Production. |
-| Claude Code (sibling session) | `claude/tender-zip-end-to-end-1lm9sz` (PR #1303, draft, base `main`) | Real-ZIP end-to-end: Authority Review reads document bytes, pricing deferred to `pricing-hygiene`, confirmed-plan rows materialised, ZIP e2e test | `lib/engine/authority-review.ts`, `app/api/tenders/[id]/download/route.ts`, `app/api/tenders/[id]/generate/route.ts`, `tests/pipeline-produces-real-zip-end-to-end.test.ts` | Open (draft). **Fully superseded by #1175** | Close as superseded. Evidence: `docs/pr1303-reconciliation.md`. No behavior is lost by closing it. |
+| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Exact-head CI green; Preview READY and release-matched | **OWNER ACTION REQUIRED** — one authenticated "Run AI Analyze" on the exact-head Preview. Do not merge; do not promote Production. |
+
+### Closed as superseded
+
+| PR | Branch | Head | Outcome |
+|---|---|---|---|
+| #1303 "Make the pipeline produce a real ZIP, and test that it does" | `claude/tender-zip-end-to-end-1lm9sz` | `c9ff3208` | **CLOSED 2026-08-29, NOT MERGED.** 7 PRESENT_EQUIVALENT / 3 SUPERSEDED_BETTER / 0 MISSING_REQUIRED / 0 OBSOLETE_OR_UNSAFE. Evidence: `docs/pr1303-reconciliation.md`. Nothing was lost by closing it. |
+
+#### Known debt inherited from the #1303 review (NOT reopened — release freeze)
+
+Two items its author flagged are real, are **not** reproduced defects, and are
+deliberately left alone under the release freeze. Record only; do not refactor
+without a newly reproduced CRITICAL/HIGH blocker:
+
+- `reconcile-generated-docs.ts` carries its own `COMPANY_PROFILE` classifier
+  separate from `classifySupportDoc` in the generate route — the same
+  one-rule-in-two-places shape that produced the pricing-detector bug.
+- `AUTO_FINALIZE` reports a repaired document as failed on its first pass and
+  converges on a later attempt; the durable worker's retry masks it.
+
+Its third open question — whether the technical-envelope download path should
+gate on `MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE` — is already **answered** on
+#1175 by `fecc6e1f` and `bbb6f94c`, which make the export path obey the
+canonical mandatory-coverage gate and stop the readiness summary promising an
+export the gate declines.
 
 ### Released locks
 
