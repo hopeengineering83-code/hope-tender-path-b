@@ -8,7 +8,7 @@
  * Stops at the FIRST step that cannot continue and prints the actual response.
  * This is a development/diagnostic harness, not production code.
  */
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 
 const BASE = process.env.DRIVE_BASE ?? "http://127.0.0.1:3100";
 const COOKIE = process.env.DRIVE_COOKIE;
@@ -22,12 +22,29 @@ const FIXTURE = process.env.DRIVE_FIXTURE ?? "a";
 const fixture = FIXTURE === "b"
   ? await import("./pipeline-drive-fixture-b.mjs")
   : await import("./pipeline-drive-fixture.mjs");
-const TENDER_TEXT = fixture.TENDER_TEXT_B ?? fixture.TENDER_TEXT;
-const TENDER_REFERENCE = fixture.REFERENCE_B ?? "MOWE/CS/RWS/2026/0117";
-const TENDER_FILE_NAME = FIXTURE === "b" ? "AWWDSE-EOI-2026-0042.txt" : "MOWE-RFP-2026-0117.txt";
-const TENDER_TITLE = FIXTURE === "b"
-  ? "Expression of Interest for Design Review and Technical Audit of Rural Water Supply Schemes"
-  : "Consultancy Services for Rural Water Supply Schemes, Amhara Region";
+// DRIVE_TENDER_FILE drives a tender the repository does not carry: point it at
+// a UTF-8 text file and that becomes the source, overriding the built-ins.
+//
+// Benchmark tenders are real procurement notices naming real client staff and
+// their email addresses. Committing one to satisfy the harness would publish
+// third-party contact details in a public repository, so the material stays on
+// disk and only the path is configured. DRIVE_TENDER_TITLE and
+// DRIVE_TENDER_FILENAME label it; both fall back to the file's own basename.
+const TENDER_PATH = process.env.DRIVE_TENDER_FILE;
+const TENDER_TEXT = TENDER_PATH
+  ? readFileSync(TENDER_PATH, "utf8")
+  : (fixture.TENDER_TEXT_B ?? fixture.TENDER_TEXT);
+const TENDER_REFERENCE = TENDER_PATH
+  ? (process.env.DRIVE_TENDER_REFERENCE ?? "")
+  : (fixture.REFERENCE_B ?? "MOWE/CS/RWS/2026/0117");
+const TENDER_FILE_NAME = TENDER_PATH
+  ? (process.env.DRIVE_TENDER_FILENAME ?? TENDER_PATH.split("/").pop())
+  : (FIXTURE === "b" ? "AWWDSE-EOI-2026-0042.txt" : "MOWE-RFP-2026-0117.txt");
+const TENDER_TITLE = TENDER_PATH
+  ? (process.env.DRIVE_TENDER_TITLE ?? TENDER_FILE_NAME.replace(/\.[a-z0-9]+$/i, ""))
+  : (FIXTURE === "b"
+    ? "Expression of Interest for Design Review and Technical Audit of Rural Water Supply Schemes"
+    : "Consultancy Services for Rural Water Supply Schemes, Amhara Region");
 
 let step = 0;
 function log(name, status, detail) {

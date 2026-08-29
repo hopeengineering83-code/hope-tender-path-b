@@ -10,6 +10,7 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { createHash, createHmac, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 const prisma = new PrismaClient();
 const SECRET = process.env.SESSION_SECRET;
@@ -128,6 +129,63 @@ risk register and mitigation actions.`,
   },
 ];
 
+/**
+ * Seed the vault from a real company knowledge record instead of the summaries
+ * above.
+ *
+ * The built-in VAULT_DOCS are a few hand-written paragraphs. They are enough to
+ * prove the pipeline runs, and useless for judging whether the pipeline picks
+ * the RIGHT project or the RIGHT expert — with six documents there is nothing
+ * to choose between. Point DRIVE_VAULT_JSON at an authority export and the
+ * vault carries the firm's actual portfolio, so evidence selection is measured
+ * against real competition.
+ *
+ * Kept out of the repository deliberately: an authority export is the firm's
+ * commercial record, including client names and contract values. Only the path
+ * is configured.
+ *
+ * The export nests each record's evidence under `rawText`, which is what the
+ * extractors read, so entries are emitted verbatim rather than reformatted —
+ * paraphrasing here would silently become the "original source evidence" the
+ * grounding hierarchy trusts above everything else.
+ */
+function vaultDocsFromAuthority(path) {
+  const j = JSON.parse(readFileSync(path, "utf8"));
+  const docs = [];
+  const push = (originalFileName, category, extractedText) => {
+    if (extractedText && extractedText.trim()) docs.push({ originalFileName, category, extractedText });
+  };
+  const block = (rows, label) => rows
+    .map((r, i) => `${label} ${i + 1}: ${r.name ?? r.fullName ?? r.title ?? ""}\n${(r.rawText ?? "").trim()}`)
+    .join("\n\n---\n\n");
+
+  if (j.companyProfile) {
+    push("Company-Profile.txt", "COMPANY_PROFILE",
+      typeof j.companyProfile === "string" ? j.companyProfile : JSON.stringify(j.companyProfile, null, 2));
+  }
+  // Chunked because a single 100+ project document exceeds the per-file
+  // extraction ceiling, and a truncated vault file silently drops the tail of
+  // the portfolio — the projects most likely to be the relevant ones.
+  const projects = Array.isArray(j.projects) ? j.projects : [];
+  for (let i = 0; i < projects.length; i += 25) {
+    push(`Project-References-${Math.floor(i / 25) + 1}.txt`, "PROJECT", block(projects.slice(i, i + 25), "PROJECT"));
+  }
+  const experts = Array.isArray(j.experts) ? j.experts : [];
+  for (let i = 0; i < experts.length; i += 10) {
+    push(`Key-Experts-${Math.floor(i / 10) + 1}.txt`, "EXPERT", block(experts.slice(i, i + 10), "EXPERT"));
+  }
+  for (const [key, cat] of [["legalRecords", "LEGAL"], ["financialRecords", "OTHER"], ["complianceRecords", "OTHER"]]) {
+    if (Array.isArray(j[key]) && j[key].length) {
+      push(`${key}.txt`, cat, block(j[key], key.replace(/Records$/, "").toUpperCase()));
+    }
+  }
+  return docs;
+}
+
+const VAULT = process.env.DRIVE_VAULT_JSON
+  ? vaultDocsFromAuthority(process.env.DRIVE_VAULT_JSON)
+  : VAULT_DOCS;
+
 
 async function main() {
   // A fresh account per run. Reusing one address and deleting it first fails:
@@ -168,7 +226,7 @@ async function main() {
   });
 
   const companyId = user.company.id;
-  for (const doc of VAULT_DOCS) {
+  for (const doc of VAULT) {
     const bytes = Buffer.from(doc.extractedText, "utf8");
     // Byte integrity must be recorded exactly as a real upload records it.
     // sourceByteIntegrityIsVerified() requires integrityStatus VERIFIED plus a
@@ -203,7 +261,7 @@ async function main() {
   console.log(JSON.stringify({
     userId: user.id,
     companyId,
-    vaultDocs: VAULT_DOCS.length,
+    vaultDocs: VAULT.length,
     cookie: token,
   }));
 }
