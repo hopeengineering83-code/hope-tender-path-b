@@ -166,6 +166,43 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   score on the same 8 axes as the reference (92/100).
 - **UNCOMMITTED WORK:** NONE. **MERGE STATUS:** DO NOT MERGE.
 
+#### Addendum — third repair and cross-tender proof
+
+3. `a897b325` — a generic clock phrase erased the whole deadline.
+   "…at 14:00 local time." names no offset; the reader strips the zone names it
+   knows, `Date` could not parse the leftover phrase, and it rejected the entire
+   string, so the date and time went with it. **Both** of this repository's own
+   drive fixtures are written that way and were silently carrying no deadline.
+   The benchmark never showed it because it names a real zone.
+
+**Cross-tender verification** (the reason that third defect was found at all —
+the benchmark alone could not expose it). The reader was run over two materially
+different tenders, `scripts/pipeline-drive-fixture.mjs` (two-envelope water RFP)
+and `-fixture-b.mjs` (EOI, email attachments):
+
+| | Fixture A | Fixture B | Benchmark |
+| --- | --- | --- | --- |
+| client | Ministry of Water and Energy | Awash Water Works Design and Supervision Enterprise | Pharo Ventures |
+| tenderType | Request for Proposal | Expression of Interest | Request for Technical Proposal |
+| deadline | 2026-11-30T14:00Z | 2026-10-15T10:00Z | 2026-08-25T17:00+03:00 |
+| serviceStreams | engineering design, supervision, consultancy, water | supervision, water | architectural design, consultancy, building |
+
+No healthcare or benchmark leakage into the other two. All three deadlines were
+wrong or absent before this session.
+
+**Consumed-surface audit.** `TenderDocumentIntelligence` exposes many fields but
+only six are read anywhere (`effective-tender-facts.ts` and the intake panel):
+`tenderType`, `projectTitle`, `clientOrProcuringEntity`,
+`financialProposalRequiredState`, `serviceStreams`, `submissionInstructions`.
+Against the real benchmark tender all eleven checkable values now pass —
+including the explicit financial-proposal denial read as `false`, both
+submission emails and the exact subject line.
+
+`bidBond` still returns the fragment `"/ Bid Security: Not mentioned."`, the same
+label-splitting family as the client defect. It is **deliberately not fixed**:
+the field has no consumer, so repairing it would add dead code. Recorded so it
+is neither chased nor mistaken for an oversight.
+
 ### 2026-08-29 UTC — Claude Code (proposal-quality benchmark intake)
 
 - **TOOL:** Claude Code · **START SHA:** `3cbceb25` · **END SHA:** this commit
