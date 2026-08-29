@@ -123,6 +123,53 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-08-29 UTC — Claude Code (live runtime evidence; AI Analyze not found in retention)
+
+- **TOOL:** Claude Code · **HEAD:** `f906e877` (unchanged, tree clean) · **PR:** #1175
+- **NO CODE CHANGES.** The one live blocker found in runtime evidence was already
+  fixed; re-fixing it would have been the regression cycle this lane exists to end.
+
+- **LIVE BLOCKER FOUND AND CONFIRMED CLOSED.** Vercel runtime errors show the real
+  pipeline ran and produced a real `Technical Proposal.docx`, then failed:
+  `AUTO_FINALIZE_NOT_CONVERGED — readiness gate: 1 document(s) failed canonical
+  validation: Technical Proposal.docx (Possible financial/pricing language appears
+  in a technical document inside DOCX visible text)` at **15:02:51Z and 15:03:02Z**.
+  Path: `export-readiness.ts:444 checkDocxHygieneReadiness` →
+  `documentHygieneIssues` → `containsPricingLeakage`.
+  **Timeline settles it:** the `visibleXmlText` block-boundary repair landed
+  2026-08-19 (`5cee0cfc`), and GLM's `containsPricingLeakage` fragment-joining
+  repair landed **17:46:44Z** (`3cbceb25`) — **2h45m AFTER** those failures. They
+  are the defect that fix repaired, not a current one. **Zero runtime errors of
+  any kind since 17:50Z.** Do not reopen pricing hygiene on the strength of those
+  two log lines.
+
+- **AI ANALYZE — NOT FOUND IN THE RETAINED WINDOW.** Runtime log retention on this
+  plan is ~24h. Across the whole project in that window there is **no
+  `manual-ai-analyze` request and no engine POST**. Authenticated owner activity on
+  tender `a56569bc-7643-4f21-89b6-b2828781b8c6` *is* visible and healthy —
+  workflow-center ×11 (that endpoint is **polled** by
+  `components/requirement-truth-banner.tsx`, so the count is one open page, not
+  repeated clicking), plus submission-plan, authority-review, reconcile-docs,
+  export-readiness, evaluator-objections, pricing, controls and dashboard pages,
+  all 200. Status totals: 36×200, 7×401 (the 401s are this session's own probes).
+  So either the click predates retention, or it did not reach the server.
+
+- **NOT MEASURABLE FROM HERE:** the persisted job and analysis content. The app's
+  auth gate correctly returns 401 to this session, so AI content fidelity, project
+  and expert matching, the proposal score and the artifacts remain unmeasured. No
+  score was invented.
+
+- **RULED OUT:** the Analyze button being disabled for want of a provider.
+  `aiEnabled` ← `isAIEnabled()` ← `isAIConfigured()`, and `next.config.js`
+  `assertProductionEnv` refuses to build with no provider configured — the Preview
+  built and is healthy, so a provider key **is** configured in Vercel.
+
+- **NEXT SAFE ACTION:** owner clicks **Run AI Analyze** once on the exact-head
+  Preview *now*, so the request lands inside the ~24h log-retention window. The
+  provider chain can then be read from Vercel runtime logs without an app session,
+  which is the one live evidence path available to a coding session.
+- **UNCOMMITTED WORK:** NONE. **MERGE STATUS:** DO NOT MERGE.
+
 ### 2026-08-29 UTC — Claude Code (runtime amendment provenance; release checkpoint)
 
 - **TOOL:** Claude Code · **HEAD:** `63385c92` · **PR:** #1175 (draft, unmerged)
