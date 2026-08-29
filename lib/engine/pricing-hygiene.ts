@@ -227,6 +227,40 @@ export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocum
   // good outcome) silently deleted the client name that the value cell in the
   // same row relied on to be recognised as historical, and the past project's
   // value was then read as this bid's price.
+  //
+  // The survivors are joined with a NEWLINE, never a space. The proximity
+  // patterns below pair a number with a priced term through `.{0,90}` /
+  // `.{0,40}` windows, and in JavaScript `.` does not match a line
+  // terminator — so those windows are fragment-local by construction.
+  // Joining with a space let a fragment ENDING in a number pair with a priced
+  // term at the START of the next fragment, producing a "price" that exists
+  // in no sentence of the document:
+  //
+  //   "The assignment will be delivered over 18 months."   (clean alone)
+  //   "Consultancy fee terms are governed by the sealed
+  //    companion envelope required by this tender."        (clean alone)
+  //
+  // Every fragment was individually clean, so the paragraph-level repair in
+  // export-gap-repair.ts — which judges each sentence on its own — found
+  // nothing it could remove, cleanDocxHygieneIssues left the bytes unchanged,
+  // and export-gap-repair recorded the document as blockedByHygiene on every
+  // AUTO_FINALIZE attempt. The blocker is classified NON_RETRYABLE, so the
+  // tender died in a terminal AUTO_FINALIZE_NOT_CONVERGED loop while the
+  // document contained no price anywhere. Reproduced against the real
+  // extractor + detector + repair chain; see
+  // tests/pricing-hygiene-fragment-boundary.test.ts.
+  //
+  // This is the same false-positive family the newline-aware
+  // visibleXmlText() comment already documents (cells fused into one
+  // "sentence"): a table is not a sentence, and neither are two adjacent
+  // paragraphs. Fragment independence is the canonical rule; the join must
+  // not quietly undo it.
+  //
+  // Currency pairing is NOT weakened: the currency patterns glue a number to
+  // its code with `\s*`, and `\s` matches newlines, so "12,400,000" in one
+  // fragment and "ETB" at the head of the next still reads as one amount.
+  // Within-fragment detection is byte-for-byte unchanged, which keeps every
+  // existing single-sentence leak test passing.
   const scanText = textSentences
     .filter((s, index) => {
       if (isSafeNoPriceSentence(s)) return false;
@@ -236,7 +270,7 @@ export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocum
         .join(" ");
       return !isHistoricalReferenceValueContinuation(s, priorContext);
     })
-    .join(" ");
+    .join("\n");
   if (!scanText) return false;
 
   const currencyAmount = /(?:\b(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\b|\b[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?\s*(?:EUR|USD|ETB|GBP|Birr|dollar|euro)\b|[$€£]\s*[0-9][0-9,]*(?:\.\d+)?(?:[KkMmBb](?:illion)?)?)/i;

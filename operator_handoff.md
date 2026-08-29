@@ -58,17 +58,25 @@ application fixes belong on #1175 alone.
 |---|---|---|---|
 | #1303 "Make the pipeline produce a real ZIP, and test that it does" | `claude/tender-zip-end-to-end-1lm9sz` | `c9ff3208` | **CLOSED 2026-08-29, NOT MERGED.** 7 PRESENT_EQUIVALENT / 3 SUPERSEDED_BETTER / 0 MISSING_REQUIRED / 0 OBSOLETE_OR_UNSAFE. Evidence: `docs/pr1303-reconciliation.md`. Nothing was lost by closing it. |
 
-#### Known debt inherited from the #1303 review (NOT reopened — release freeze)
+#### Known debt inherited from the #1303 review
 
-Two items its author flagged are real, are **not** reproduced defects, and are
-deliberately left alone under the release freeze. Record only; do not refactor
-without a newly reproduced CRITICAL/HIGH blocker:
+~~Two items its author flagged are real...~~ **Both items below were reproduced
+and closed by the 2026-08-29 GLM release-closure session** (see the newest
+Session Log entry for root causes, evidence and regression tests):
 
-- `reconcile-generated-docs.ts` carries its own `COMPANY_PROFILE` classifier
-  separate from `classifySupportDoc` in the generate route — the same
-  one-rule-in-two-places shape that produced the pricing-detector bug.
-- `AUTO_FINALIZE` reports a repaired document as failed on its first pass and
-  converges on a later attempt; the durable worker's retry masks it.
+- ~~`reconcile-generated-docs.ts` carries its own `COMPANY_PROFILE` classifier
+  separate from `classifySupportDoc` in the generate route~~ — **CLOSED:**
+  differential-tested, found disagreeing, centralised into
+  `isCompanyProfileDocName` / `COMPANY_PROFILE_DOC_NAME_RX` in
+  `lib/engine/document-type-normalizer.ts`, pinned by
+  `tests/company-profile-classifier-differential.test.ts`.
+- ~~`AUTO_FINALIZE` reports a repaired document as failed on its first pass and
+  converges on a later attempt; the durable worker's retry masks it~~ —
+  **CLOSED:** root cause was the durable repair's stub fallback for
+  storage-backed rows (reproduced: real bytes replaced by the makeSafeDocx stub
+  with storagePath left dangling). Fixed by `readRepairSourceContent` +
+  single-authority update, pinned by
+  `tests/export-repair-storage-source.test.ts`; convergence now holds on pass 1.
 
 Its third open question — whether the technical-envelope download path should
 gate on `MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE` — is already **answered** on
@@ -114,6 +122,93 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-08-29 UTC — GLM (release-closure: pricing false positive, storage-backed repair, classifier centralisation)
+
+- **TOOL:** GLM (Super Z)
+- **UTC TIME:** 2026-08-29
+- **START SHA:** `8789c9244e8afbefca2d7f37e2a7f63a4c561550`
+- **END SHA:** this commit (parent `8789c924`)
+- **BRANCH:** `release/consolidated-recovery-20260717`
+- **PR:** #1175 (draft, the only lane)
+
+- **TASK:** Close the three verified release blockers: the reproduced
+  Technical Proposal pricing false positive behind AUTO_FINALIZE_NOT_CONVERGED,
+  the AUTO_FINALIZE first-pass repair convergence defect, and the COMPANY_PROFILE
+  classifier duplication debt.
+
+- **ROOT CAUSE 1 (pricing, classification D — text-extraction/context-loss false
+  positive):** `containsPricingLeakage` joined the surviving sentence/cell/paragraph
+  fragments with a SPACE, so the `.{0,90}` proximity windows paired a fragment
+  ENDING in a number with a priced term at the START of the next fragment — a
+  "price" that exists in no sentence of the document. Every fragment was
+  individually clean, so the paragraph-level repair found nothing to remove,
+  `blockedByHygiene` persisted, and the NON_RETRYABLE blocker looped the tender in
+  a terminal AUTO_FINALIZE_NOT_CONVERGED. Reproduced against the real
+  extractor→detector→repair chain before any code change (probe evidence recorded
+  in the session); the same false-positive family is already documented on
+  `visibleXmlText()`. Fixed by joining with `\n` (JS `.` cannot cross a line
+  terminator, so the windows are fragment-local); currency pairing is unaffected
+  because the currency patterns glue with `\s*`, which matches newlines.
+  Genuine current-bid pricing (currency amounts, percentages, fee schedules,
+  rate cards, BoQ, quotations, lump sums) still fails closed — pinned by the
+  required SAFE/UNSAFE regression pair in
+  `tests/pricing-hygiene-fragment-boundary.test.ts`, including a
+  repairability invariant (a full-text trip must be visible per-fragment, or the
+  repair can never act).
+- **ROOT CAUSE 2 (AUTO_FINALIZE convergence, storage-backed rows):**
+  `runExportGapRepair` selected the bytes to clean with
+  `generatedDocumentHasContent(doc) && doc.fileContent`, which is falsy for
+  storage-backed rows (Vercel Blob in production: fileContent=null). The repair
+  silently fell through to the `makeSafeDocx` stub: a ~58-word placeholder was
+  written into fileContent, the integrity record was rebound to the STUB, and
+  storagePath still pointed at the real generated document — validation blessed
+  the stub while the ZIP/download served real bytes whose hash no longer matched,
+  and the repair's own machine marker prevented re-repair. Reproduced against the
+  real continuation service: 16,662 real bytes in, an 8,759-byte stub out; after
+  the fix the same probe preserves the real bytes byte-for-byte and converges on
+  pass 1. Fixed by `readRepairSourceContent` (storage adapter read for
+  storage-backed rows — the same bytes storage-first readers serve) plus
+  `storagePath: null` on the repair update (single byte authority, the contract
+  the /auto-finalize route's rebuild already follows). Pinned by
+  `tests/export-repair-storage-source.test.ts`.
+- **ROOT CAUSE 3 (classifier debt, differential-tested first):** the reconciler's
+  COMPANY_PROFILE regex (space-only) and the generate route's
+  separator-normalised substring test disagreed on real names
+  ("02-Company-Profile.docx" matched only the route; "Firm Profile" only the
+  reconciler; "Capability Statement" only the route). Centralised into ONE
+  predicate — `COMPANY_PROFILE_DOC_NAME_RX` / `isCompanyProfileDocName` in
+  `lib/engine/document-type-normalizer.ts` — used by both paths, pinned by
+  `tests/company-profile-classifier-differential.test.ts`.
+
+- **FILES CHANGED:** `lib/engine/pricing-hygiene.ts`,
+  `lib/engine/export-gap-repair.ts`, `lib/engine/document-type-normalizer.ts`,
+  `lib/engine/reconcile-generated-docs.ts`,
+  `app/api/tenders/[id]/generate/route.ts`, `operator_handoff.md`, plus the three
+  new test files above.
+- **DELIBERATELY NOT CHANGED:** provider chain order and budgets (`npm run
+  audit:release-integrity` re-confirms Gemini → … → Anthropic → deterministic
+  fallback last); AI fallback staging; every auth/RLS/tenant gate; the
+  seven-pass/authority-review gates; the HTTP /auto-finalize route; freeze-mode
+  and release control; no test was weakened or deleted.
+- **VERIFICATION (on this exact tree):** full CI-equivalent combined suite with
+  RUN_DB_INTEGRATION=true against a real PostgreSQL 16:
+  **10,821 / 10,821 pass, 0 fail, 0 skipped** (includes 80 new regression tests);
+  real-ZIP end-to-end against real PostgreSQL 14/14; prisma validate + migrate
+  deploy clean; typecheck 0 errors; lint clean; production build PASS;
+  release-integrity audits OK (444 routes, 1,636 files); dependency audit 0
+  vulnerabilities; workflow-state consistency OK.
+- **KNOWN RISKS:** the pricing fix relies on fragment-local proximity windows;
+  a genuine leak SPLIT across fragments with no currency anywhere and no
+  individually-tripping fragment would no longer be caught by THIS detector —
+  it remains covered by the currency patterns (`\s*` crosses the join),
+  per-fragment detection, the proposal-price-leakage guard, the
+  financial-separation rule and the document-quality validator. The regression
+  pair documents this trade explicitly.
+- **NEXT ACTION:** exact-head CI on the pushed SHA, then the owner's one
+  authenticated "Run AI Analyze" on the Preview. Do not merge; do not promote
+  Production.
+- **MERGE STATUS:** not merged (draft PR; release freeze in force).
 
 ### 2026-08-29 UTC — Claude Code (cross-tool takeover from Codex)
 

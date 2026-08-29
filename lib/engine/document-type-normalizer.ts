@@ -192,3 +192,32 @@ export function planDocumentReclassification(doc: {
 
   return { currentType, normalizedType, reviewStatus, changesType, changesReviewStatus, wouldChange, detail };
 }
+
+// ─── Company Profile document-name classification — the ONE authority ───────
+//
+// Two classification paths used to carry separately-written COMPANY_PROFILE
+// rules, and they disagreed on real Build Plan names:
+//
+//   reconcile-generated-docs.ts   /\b(company\s+profile|firm\s+profile|
+//                                  organisational\s+profile|about\s+us)\b/i
+//     — defeated by the hyphen/underscore separators tenders actually use,
+//       so "02-Company-Profile.docx" matched nothing.
+//
+//   generate/route.ts             /company profile|capability statement/
+//     — normalised separators but did not know "firm profile",
+//       "organisational profile" or "about us".
+//
+// The result was the one-rule-in-two-places shape that produced the
+// pricing-detector bug: a confirmed plan's Company Profile row could
+// reconcile one way and generate another. Both paths now share this
+// predicate, which accepts every separator variant ("-_. or space), either
+// spelling of organisational/organizational, and the capability-statement
+// alias. Classification only decides WHICH producer writes the document
+// (company evidence vs placeholder) — no gate, envelope or integrity rule
+// depends on it, so converging the two rules cannot weaken any of them.
+export const COMPANY_PROFILE_DOC_NAME_RX =
+  /(?:^|[^a-z0-9])(?:company|firm|organi[sz]ational)[\s._-]*profile\b|(?:^|[^a-z0-9])about[\s._-]*us\b|(?:^|[^a-z0-9])capability[\s._-]*statement\b/i;
+
+export function isCompanyProfileDocName(name: string | null | undefined): boolean {
+  return COMPANY_PROFILE_DOC_NAME_RX.test(name ?? "");
+}

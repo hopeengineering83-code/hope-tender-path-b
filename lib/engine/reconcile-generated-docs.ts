@@ -37,6 +37,7 @@
 // logic exhaustively. A thin applier maps actions to prisma writes.
 
 import type { SubmissionPlan, SubmissionPlanFile, GeneratedDocumentLike } from "./submission-plan";
+import { COMPANY_PROFILE_DOC_NAME_RX } from "./document-type-normalizer";
 
 export type ReconcileAction =
   | "KEEP_AS_PLANNED"
@@ -97,7 +98,7 @@ const SEMANTIC_CATEGORIES: Array<{ id: string; test: RegExp }> = [
   { id: "TENDER_FORMS",          test: /\b(tender\s+forms?|forms?\s+and\s+templates|bid\s+form|price\s+schedule|schedule\s+of\s+(prices?|rates)|annexure|attachment\s+\d)\b/i },
   { id: "TECHNICAL_PROPOSAL",    test: /\b(technical\s+proposal|methodology|work\s+plan|approach\s+and\s+methodology|implementation\s+plan)\b/i },
   { id: "FINANCIAL_PROPOSAL",    test: /\b(financial\s+proposal|price\s+proposal|commercial\s+proposal|priced\s+offer)\b/i },
-  { id: "COMPANY_PROFILE",       test: /\b(company\s+profile|firm\s+profile|organisational\s+profile|about\s+us)\b/i },
+  { id: "COMPANY_PROFILE",       test: COMPANY_PROFILE_DOC_NAME_RX },
   { id: "EXPERT_CV",             test: /\b(expert\s+cvs?|cv\s+package|curriculum\s+vitae|key\s+experts?)\b/i },
   { id: "PROJECT_EXPERIENCE",    test: /\b(project\s+experience|relevant\s+experience|past\s+performance|reference\s+projects)\b/i },
   { id: "COVER_LETTER",          test: /\b(cover\s+letter|covering\s+letter|letter\s+of\s+transmittal)\b/i },
@@ -105,7 +106,12 @@ const SEMANTIC_CATEGORIES: Array<{ id: string; test: RegExp }> = [
   { id: "COMPLIANCE_DECLARATION",test: /\b(declaration|undertaking|integrity\s+pact|self[-\s]declaration|power\s+of\s+attorney)\b/i },
 ];
 
-function semanticCategory(text: string): string | null {
+/**
+ * Exported for the differential classifier test: the ONE semantic bucket
+ * both the reconciler and the generate route must agree on through
+ * COMPANY_PROFILE_DOC_NAME_RX (lib/engine/document-type-normalizer.ts).
+ */
+export function semanticCategory(text: string): string | null {
   for (const cat of SEMANTIC_CATEGORIES) {
     if (cat.test.test(text)) return cat.id;
   }

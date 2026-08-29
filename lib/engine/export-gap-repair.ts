@@ -25,6 +25,7 @@
 
 import { Document, Packer, Paragraph, TextRun } from "docx";
 import { prisma } from "../prisma";
+import { getStorageAdapter } from "../storage";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "./apply-active-letterhead";
 import { normalizeStatus } from "./document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "./export-readiness";
@@ -198,6 +199,47 @@ export type RepairDoc = {
   storagePath?: string | null;
 };
 
+/**
+ * The bytes a repair will actually clean.
+ *
+ * A storage-backed row (Vercel Blob in production) has fileContent=null and
+ * its real bytes in external storage, so it MUST be read through the storage
+ * adapter — the same bytes every storage-first reader (final ZIP, download)
+ * serves. The previous selection was `generatedDocumentHasContent(doc) &&
+ * doc.fileContent`, which is falsy for exactly those rows, so the repair
+ * silently fell through to the makeSafeDocx stub: a ~58-word placeholder was
+ * written into fileContent, the integrity record was rebound to the STUB,
+ * and storagePath still pointed at the real generated document. Validation
+ * then blessed the stub (it reads the inline copy) while storage-first
+ * readers served the real bytes, whose hash no longer matched the persisted
+ * digest — a document that could never export, and one the repair's own
+ * machine marker prevented from ever being repaired again. AUTO_FINALIZE
+ * reported the tender failed while the repair was the thing that had
+ * damaged it. Reproduced against the real continuation service with a
+ * storage-backed row: 16,662 real bytes in, an 8,759-byte stub out.
+ *
+ * Returns null only when the row is genuinely empty (no storage, no inline
+ * content), which is the legitimate makeSafeDocx case. A storage read that
+ * throws propagates so the caller can leave the row untouched and let the
+ * one canonical validator record the genuine failure.
+ */
+export async function readRepairSourceContent(
+  doc: Pick<RepairDoc, "fileContent" | "storagePath">,
+  fileName: string,
+): Promise<string | null> {
+  if (doc.storagePath && doc.storagePath.trim().length > 0) {
+    const storage = getStorageAdapter();
+    const buffer = await storage.getFile({
+      storagePath: doc.storagePath,
+      fileContent: doc.fileContent ?? null,
+      fileName,
+    });
+    return buffer.toString("base64");
+  }
+  if (doc.fileContent && doc.fileContent.trim().length > 0) return doc.fileContent;
+  return null;
+}
+
 function clean(value?: string | null): string {
   return (value ?? "")
     .replace(/[\u0000-\u001F\u007F]/g, " ")
@@ -344,7 +386,29 @@ export async function runExportGapRepair(
 
       const title = clean(doc.exactFileName || doc.name || "Generated document");
       const documentType = safeTypeFor(title, doc.documentType);
-      let content = generatedDocumentHasContent(doc) && doc.fileContent ? doc.fileContent : await makeSafeDocx(title, tender.title);
+
+      // Resolve the bytes this repair will actually clean — through the
+      // storage adapter for storage-backed rows, so the repair judges (and
+      // rewrites) the SAME bytes every storage-first reader serves. See
+      // readRepairSourceContent for why the stub fallback is only for rows
+      // that are genuinely empty. The update below clears storagePath so the
+      // repaired inline copy is the one authority — the same single-authority
+      // contract the /auto-finalize route's rebuild already follows.
+      let content: string | null;
+      try {
+        content = await readRepairSourceContent(doc, name);
+      } catch (err) {
+        logger.warn("[export-gap-repair] storage-backed document could not be read; leaving the row for canonical validation to fail honestly", {
+          tenderId,
+          documentId: doc.id,
+          fileName: name,
+          errorClass: err instanceof Error ? err.constructor.name : "UnknownError",
+        });
+        continue;
+      }
+      if (!content) {
+        content = await makeSafeDocx(title, tender.title);
+      }
       const visibleText = await extractDocxVisibleText(content, name);
       let hygieneIssues = documentHygieneIssues(visibleText ?? content, { name: doc.name, exactFileName: doc.exactFileName, documentType: doc.documentType ?? undefined, format: doc.format ?? undefined });
       if (hygieneIssues.length > 0) {
@@ -395,6 +459,14 @@ export async function runExportGapRepair(
           format: "DOCX",
           exactFileName: name,
           fileContent: content,
+          // The repaired bytes now live inline, so they must be the ONE
+          // authority. Leaving storagePath set keeps a second, stale copy
+          // that storage-first readers (final ZIP, download) would serve in
+          // place of the bytes that were just cleaned and integrity-bound —
+          // the exact two-authorities split that made a storage-backed
+          // repair unsalvageable. The /auto-finalize route's rebuild already
+          // clears storagePath for the same reason.
+          storagePath: null,
           ...integrity,
           generationStatus: "GENERATED",
           // Any byte mutation invalidates the old validation result. Returning

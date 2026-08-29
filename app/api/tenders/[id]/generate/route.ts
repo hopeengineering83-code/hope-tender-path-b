@@ -1,4 +1,5 @@
 import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
+import { isCompanyProfileDocName } from "../../../../../lib/engine/document-type-normalizer";
 import { NextResponse } from "next/server";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -118,7 +119,12 @@ function classifySupportDoc(docName: string): SupportDocKind {
   if (/\bexpert|\bcv\b|personnel|key staff/.test(name)) return "EXPERT_CV";
   if (/(experience|portfolio).*?(project|reference)|project reference|past performance/.test(name)) return "PROJECT_REFERENCES";
   if (/methodology|work plan|technical approach/.test(name)) return "METHODOLOGY";
-  if (/company profile|capability statement/.test(name)) return "COMPANY_PROFILE";
+  // The ONE company-profile rule, shared with the reconciler via
+  // lib/engine/document-type-normalizer.ts. Two separately-written patterns
+  // disagreed on the names tenders actually mandate ("02-Company-Profile.docx"
+  // matched here but not there; "Firm Profile" the reverse), which is the
+  // one-rule-in-two-places shape that produced the pricing-detector bug.
+  if (isCompanyProfileDocName(docName)) return "COMPANY_PROFILE";
   if (/financial|audited|turnover|bank/.test(name)) return "FINANCIAL_PLACEHOLDER";
   if (/legal|registration|licensing|tax/.test(name)) return "LEGAL_PLACEHOLDER";
   if (/declaration|certificate|compliance evidence/.test(name)) return "DECLARATION_PLACEHOLDER";
