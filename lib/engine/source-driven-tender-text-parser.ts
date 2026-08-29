@@ -1003,12 +1003,36 @@ export function parseTenderDocumentIntelligence(
   // Client / procuring entity
   let clientOrProcuringEntity: string | null = options.tenderClientName ?? null;
   // Try specific patterns first (avoid bare "for" which matches "Request for...")
-  const clientMatch = text.match(/(?:client|procuring\s+entity)\s*:?\s*([^\n\r]{3,100})/i)
+  //
+  // The label is frequently COMPOUND — "Procuring Entity / Client Name" is the
+  // ordinary way a tender data sheet writes this row. Matching only the first
+  // word of it and then accepting an optional colon captured the REST OF THE
+  // LABEL as the value: the row above yielded the client name "/ Client Name",
+  // and its colon form yielded "/ Client Name: Northern Roads Authority".
+  // Client identity is a critical field — it prints on the cover letter's "To:"
+  // line and gates final export — so this produced either a hard block or a
+  // bid-disqualifying cover letter on any tender using that ordinary label.
+  //
+  // So the optional tail is consumed as part of the LABEL, and a separator is
+  // now required. The tail must end in "name" rather than being free text,
+  // because a permissive tail crosses into the NEXT field: "Client Contact
+  // Email:" would otherwise return an email address as the client's name.
+  const CLIENT_LABEL = String.raw`(?:procuring\s+entity|contracting\s+authority|employer|client)(?:\s*[/&|,-]\s*[A-Za-z ]{0,30}?name)?`;
+  const clientMatch = text.match(new RegExp(`${CLIENT_LABEL}\\s*:\\s*([^\\n\\r]{3,100})`, "i"))
+    // Data sheets also lay the value out as the next row of a two-column table,
+    // with no colon anywhere.
+    || text.match(new RegExp(`${CLIENT_LABEL}\\s*\\r?\\n\\s*([^\\n\\r]{3,100})`, "i"))
     || text.match(/Technical\s+Proposal\s+for\s+([A-Z][^\n\r]{3,100})/i)
     || text.match(/Proposal\s+for\s+([A-Z][^\n\r]{3,100})/i);
   if (clientMatch) {
-    clientOrProcuringEntity = clientMatch[1].trim();
-    sourceExcerpts.clientOrProcuringEntity = clientMatch[0];
+    const candidate = clientMatch[1].trim();
+    // A value that opens on a separator is a label fragment the patterns above
+    // failed to consume, and an address is a different field: neither is a name.
+    const looksLikeLabelTail = /^[/&|,:;-]/.test(candidate) || candidate.includes("@");
+    if (!looksLikeLabelTail) {
+      clientOrProcuringEntity = candidate;
+      sourceExcerpts.clientOrProcuringEntity = clientMatch[0];
+    }
   }
 
   // Financial proposal required? One reader, three states. Silence is UNKNOWN
