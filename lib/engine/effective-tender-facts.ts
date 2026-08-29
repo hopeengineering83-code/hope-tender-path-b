@@ -256,6 +256,19 @@ export type EffectiveTenderFactEntry = {
   source: EffectiveTenderFactSource;
   sourcePage?: number | null;
   sourceQuote?: string | null;
+  /**
+   * The active source file the resolved value was read from.
+   *
+   * Populated for facts a later addendum can amend. Asking "which document
+   * extended this deadline?" is an ordinary audit question, and the answer was
+   * unavailable: the files are concatenated into one string before the reader
+   * runs, so the winning value arrived with no document attached to it. The
+   * quote survives that flattening, and the quote is enough to find the file
+   * again — so attribution is recovered here by locating the clause, rather
+   * than by threading file identity through the reader and giving the codebase
+   * a second place where source authority is decided.
+   */
+  sourceFileName?: string | null;
   blockerReason?: string | null;
 };
 
@@ -321,7 +334,9 @@ export async function getEffectiveTenderFacts(
       submissionEmailSubject: true, country: true, evaluationMethodology: true, description: true,
       intakeSummary: true, analysisSummary: true, category: true, metadataContaminated: true,
       analysisExtractionStatus: true, technicalWeight: true, financialWeight: true,
-      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true } },
+      // originalFileName is selected so an amended fact can name the document
+      // that amended it; without it the attribution below is always null.
+      files: { where: { deletionStatus: "ACTIVE" }, select: { id: true, extractedText: true, originalFileName: true } },
       metadataOverrides: { select: { field: true, fieldState: true, overrideValue: true } },
     },
   });
@@ -404,7 +419,13 @@ export async function getEffectiveTenderFacts(
   // Deadline
   const parserDeadlineDisplay = intelligence?.submissionInstructions.deadlineDisplay ?? null;
   const parserDeadlineIso = intelligence?.submissionInstructions.deadlineIso ?? null;
-  const deadlineResult = resolveDeadline(parserDeadlineDisplay, parserDeadlineIso, tender.deadline, ledgerSnapshot?.facts, manualOverrideValue("deadline"), facts);
+  // Which active file states the deadline that won. When an addendum extended
+  // it, this names the addendum rather than the original notice.
+  const deadlineSourceFile = parserDeadlineDisplay
+    ? ((tender.files ?? []).find((f: any) => typeof f?.extractedText === "string" && f.extractedText.includes(parserDeadlineDisplay))
+        ?.originalFileName ?? null)
+    : null;
+  const deadlineResult = resolveDeadline(parserDeadlineDisplay, parserDeadlineIso, tender.deadline, ledgerSnapshot?.facts, manualOverrideValue("deadline"), facts, deadlineSourceFile);
 
   // Submission method
   const parserMethod = intelligence?.submissionInstructions.method && intelligence.submissionInstructions.method !== "Unknown" ? intelligence.submissionInstructions.method : null;
@@ -513,6 +534,7 @@ function resolveDeadline(
   ledgerFacts: ReadonlyArray<any> | undefined,
   overrideValue: string | null,
   facts: EffectiveTenderFactEntry[],
+  parserSourceFileName: string | null = null,
 ): { display: string | null; iso: string | null } {
   const key = "deadline"; const label = "Submission Deadline";
   const ledgerFact = ledgerFacts?.find((f) => f.semanticKey === key);
@@ -534,7 +556,14 @@ function resolveDeadline(
     return { display, iso };
   }
   if (parserDisplay) {
-    facts.push({ key, label, value: parserDisplay, status: "resolved_from_source_text", requiredFor: "final_submission", source: "parser" });
+    facts.push({
+      key, label, value: parserDisplay, status: "resolved_from_source_text",
+      requiredFor: "final_submission", source: "parser",
+      // The clause itself, and the document it was read from, so an amended
+      // deadline can be traced back to the addendum that amended it.
+      sourceQuote: parserDisplay,
+      sourceFileName: parserSourceFileName,
+    });
     return { display: parserDisplay, iso: parserIso };
   }
   if (isCleanDeadline(scalarDeadline)) {
