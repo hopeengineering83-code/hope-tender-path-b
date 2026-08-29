@@ -123,6 +123,44 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-08-29 UTC — Claude Code (proposal-quality benchmark intake)
+
+- **TOOL:** Claude Code · **START SHA:** `3cbceb25` · **END SHA:** this commit
+- **BRANCH / PR:** `release/consolidated-recovery-20260717` / #1175 (draft)
+- **TASK:** Score the App's generated proposal against the owner-supplied
+  Claude/ChatGPT benchmark and fix verified quality gaps at the general root cause.
+- **OUTCOME:** Reference scored **92/100**. **App score NOT MEASURED** — no AI
+  provider is reachable, so no App proposal exists to score and none was invented.
+- **FILES CHANGED:** `docs/proposal-quality-benchmark.md` (new), `operator_handoff.md`.
+  **No application code changed** — no verified defect was reproducible without the run.
+- **BEHAVIOR PRESERVED / CHANGED:** all / none.
+- **KEY FINDINGS:**
+  - The benchmark tender forbids a financial proposal, gives 5 criteria with **no
+    weights**, and sets the deadline **August 25, 2026**.
+  - The reference proposal misstates that deadline as **March 25, 2026** and
+    contradicts itself on 107 vs 116 certified projects. Neither may be copied.
+  - Its hospital claims (7,000 m² / ETB 550,074,678 and 2,800 m² / ETB 125,000,000)
+    **are** verified against the company authority record.
+  - **Trap for any future grounding rule:** `projects[]`=114 and `experts[]`=28 are
+    the *extracted subset*; `companyProfile` separately states "more than 350
+    completed projects, with 116 certified" and "29 key experts". Comparing a
+    narrative claim to array length alone yields false fabrication findings.
+  - **Benchmark hard-coding audit: clean.** `pharo-acceptance-fixture.ts` is
+    test-only; HEALTHCARE is 1 of 20+ taxonomy domains; domain instructions span
+    building/road/water/geotechnical/sanitation/irrigation/supervision.
+- **BLOCKER:** `.env` points Cerebras at `http://127.0.0.1:4599` — the local stub in
+  `scripts/local-ai-provider.mjs`, whose canned `sourceQuote` values belong to the
+  harness's own RFP fixture and appear nowhere in the benchmark tender. Verbatim
+  quote containment therefore refuses them, so AI Analyze cannot reach
+  `AI_SUCCEEDED` on this tender. Preview routes return 401 to this session.
+- **OWNER ACTION REQUIRED:** set a real provider key — `GEMINI_API_KEY` (first in
+  canonical order, free tier), or `GROQ_API_KEY` / `MISTRAL_API_KEY`. Name only;
+  never paste the value into chat or commit it.
+- **NEXT SAFE ACTION:** with that key set, run the tracked harness
+  (`scripts/pipeline-drive*.mjs`) over the benchmark tender + company vault, open
+  the produced DOCX/PDF, and score it on the same 8-axis rubric as the reference.
+- **UNCOMMITTED WORK:** NONE. **MERGE STATUS:** DO NOT MERGE.
+
 ### 2026-08-29 UTC — GLM (release-closure: pricing false positive, storage-backed repair, classifier centralisation)
 
 - **TOOL:** GLM (Super Z)
