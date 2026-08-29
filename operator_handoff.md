@@ -42,13 +42,15 @@ Never claim a fix is complete unless the stated tests passed.
 
 ## Active Workboard
 
-Reconciled against GitHub on 2026-08-24. **PR #1175 is the only open pull request in
-the repository.** Every other row this board carried had been merged since
-2026-07-10 and was holding file locks against work that no longer existed.
+Reconciled against GitHub on **2026-08-29**. The previous note on this board —
+"PR #1175 is the only open pull request in the repository" — was true when it was
+written on 2026-08-24 and became false on 2026-08-26. **Two pull requests are
+open: #1175 and #1303.** Both are listed below; neither may be merged.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated recovery: artifact identity as one authority, ZIP last-mile identity, verbatim source-quote truncation, provider-diagnostic request deadline, failed-analysis UI truth, provider doc/policy drift | lib/engine/artifact-identity.ts, lib/engine/document-output-state.ts, lib/engine/final-zip-assembly.ts, lib/engine/validate.ts, lib/engine/requirement-source-extractor.ts, lib/ai-provider-capability-test.ts, lib/analysis-quality.ts, admin + ai-providers diagnostic routes, `.env.example`, README.md, docs/ai-provider-*.md | Open (draft), CI green on the pushed head | Await Hope's review. Do not merge; do not promote Production. |
+| Codex → Claude Code (takeover 2026-08-29) | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Exact-head CI 6/6 green on `b247a139`; Preview READY and release-matched | **OWNER ACTION REQUIRED** — one authenticated "Run AI Analyze" on the exact-head Preview. Do not merge; do not promote Production. |
+| Claude Code (sibling session) | `claude/tender-zip-end-to-end-1lm9sz` (PR #1303, draft, base `main`) | Real-ZIP end-to-end: Authority Review reads document bytes, pricing deferred to `pricing-hygiene`, confirmed-plan rows materialised, ZIP e2e test | `lib/engine/authority-review.ts`, `app/api/tenders/[id]/download/route.ts`, `app/api/tenders/[id]/generate/route.ts`, `tests/pipeline-produces-real-zip-end-to-end.test.ts` | Open (draft). **Fully superseded by #1175** | Close as superseded. Evidence: `docs/pr1303-reconciliation.md`. No behavior is lost by closing it. |
 
 ### Released locks
 
@@ -88,6 +90,92 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-08-29 UTC — Claude Code (cross-tool takeover from Codex)
+
+- **TOOL:** Claude Code
+- **UTC TIME:** 2026-08-29
+- **START SHA:** `b247a1394a540855f62b12911e28d92ba465e379`
+- **END SHA:** this commit (parent `b247a139`)
+- **BRANCH:** `release/consolidated-recovery-20260717`
+- **PR:** #1175 (draft)
+
+- **TASK:** Take over the release-finalization effort from Codex without regressing
+  proven work. Establish real remote/CI/Preview state, correct the stale shared
+  handoff, and reconcile the second open PR before adding any code.
+- **ROOT CAUSE (of the coordination failure this entry fixes):** the Active Workboard
+  asserted #1175 was the only open PR. #1303 opened two days later and was invisible
+  to any tool reading this file, which is exactly the cross-agent blind spot the
+  board exists to prevent.
+
+- **FILES CHANGED:** `docs/pr1303-reconciliation.md` (new), `operator_handoff.md`.
+  **No application code was modified this session.**
+
+- **BEHAVIOR PRESERVED:**
+  - Canonical provider order Gemini → Groq → Mistral → Z.ai → Cerebras → OpenRouter
+    → OpenAI → Together → DeepSeek → Anthropic → deterministic fallback last.
+  - 10-provider attempt budget; no free-only policy; no OpenRouter `:free` rule.
+  - Provider-diversity chunk planning and the durable sanitized provider trace.
+  - `FALLBACK_DRAFT` staging that never claims `AI_SUCCEEDED` and is not
+    destructively auto-rearmed.
+  - `analysisInputHash` rebinding to the persisted post-promotion tender.
+  - BuildPlan authority, tenant isolation, evidence/provenance/export gates.
+  - Exactly two routine manual owner actions (AI Analyze, Run Engine).
+- **BEHAVIOR CHANGED:** none.
+
+- **FROZEN LEDGER TESTS RUN:**
+  - focused provider/chunk/fallback cone (9 files) — **126/126 pass, 0 fail**
+  - isolated-PostgreSQL transition cone (5 files) — **22/22 pass, 0 fail**,
+    including a real downloadable ZIP
+- **FULL TESTS RUN:** `CI=true RUN_DB_INTEGRATION=true npm test` under a
+  CI-equivalent environment — **10743/10743 pass, 0 fail, 0 cancelled**.
+  A first local run showed 96 failures / 368 cancelled; that was traced to a
+  local environment missing the workflow's `E2E_*`,
+  `REQUIRE_MIGRATION_HISTORY` and database settings, **not** to code. Re-running
+  with the ci.yml env block green-lit every one of them. Recorded here so the
+  next tool does not re-investigate it as a regression.
+- **DB INTEGRATION:** disposable local PostgreSQL 16 (`hope_tender_ci`, role
+  `hope_ci`), all migrations deployed. Never Production; never Neon.
+- **STATIC:** `npx prisma generate` OK · `npm run typecheck` clean ·
+  `npm run lint` clean · `npm run build` PASS.
+  (A stale `.next/` left by the wrong branch produced phantom `TS2307` errors in
+  `.next/types/validator.ts`; removing `.next` cleared them. Not a code defect.)
+- **CI:** exact-head `b247a139` — **6/6 success**.
+- **PREVIEW:** deployment `dpl_CLgC33SyKH8sNAu2J9vmL433zdoG` · release
+  `b247a139…` · `/api/health` HTTP 200, all 8 table probes true,
+  `schemaMatchesDeployedCode=true`. GitHub head == Preview commit == health release.
+- **REAL RUNTIME TEST:** the end-to-end pipeline test drove manual AI Analyze →
+  Run Engine → generation → validation → ZIP against real PostgreSQL and produced
+  a real archive. **This used the in-repo stub model server, not the live provider
+  chain**, so it is not the live acceptance Phase 8 requires.
+
+- **PR #1303 RECONCILIATION:** complete. 7 PRESENT_EQUIVALENT, 3 SUPERSEDED_BETTER,
+  **0 MISSING_REQUIRED**, 0 OBSOLETE_OR_UNSAFE. `PR_1303_RECONCILED = YES`,
+  `SAFE_TO_CLOSE_AS_SUPERSEDED = YES`. Full table: `docs/pr1303-reconciliation.md`.
+  A second reconciliation in that file covers unpushed sibling-session work found
+  in the takeover container (4 changes, 0 MISSING_REQUIRED).
+
+- **KNOWN BLOCKERS:** The provider-diversity code at `b247a139` has **not** received
+  a fresh authenticated manual AI Analyze run. Groq's live preflight/skip verdict is
+  therefore still unproven, and the AI issue must not be reported as fixed.
+- **EXTERNAL PROVIDER ISSUES:** last observed (historical, must be re-checked live):
+  Gemini 503, Z.ai 429, Cerebras 402, OpenRouter credit limit, OpenAI 429,
+  Together 401, DeepSeek 402, Anthropic insufficient credits. These are owner
+  account matters, not code defects, and must never be worked around in code.
+- **OWNER ACTIONS REQUIRED:** click "Run AI Analyze" once on the exact-head Preview
+  for the retained tender, then report the durable provider trace.
+- **UNCOMMITTED WORK:** NONE.
+
+- **NEXT SAFE ACTION:** obtain one owner-authenticated AI Analyze run on
+  `b247a139` Preview and read the persisted per-provider trace (attempted vs
+  `PREFLIGHT_SKIPPED`, exact model, token budgets) to close or re-open the Groq
+  question from evidence.
+- **DO_NOT_REOPEN:** provider order and attempt budget; the withdrawn free-only /
+  OpenRouter `:free` policies; `analysisInputHash` rebinding; the one-reader
+  document-text module; `pricing-hygiene` as the single pricing authority;
+  confirmed-plan row materialisation in `POST /generate`.
+- **MERGE STATUS:** DO NOT MERGE. Draft. No Production promotion, alias change,
+  schema change, or database mutation was performed.
 
 <!-- Add newest entry at the top. -->
 
