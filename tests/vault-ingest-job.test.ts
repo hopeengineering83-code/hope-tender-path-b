@@ -289,8 +289,35 @@ describe("VAULT_INGEST job — real execution against real PostgreSQL", () => {
 
   it("run-next's single-job-per-tick list includes VAULT_INGEST (heavy AI-capable job, not chained with lighter types)", () => {
     const src = require("fs").readFileSync(require("path").join(process.cwd(), "app/api/ai-jobs/run-next/route.ts"), "utf8");
-    const match = src.match(/if \(\[([^\]]+)\]\.includes\(claimed\.jobType\)\) break;/);
-    assert.ok(match, "run-next must have the single-job-per-tick break list");
+    const match = src.match(/if \(\[([^\]]+)\]\.includes\(claimed\.jobType\)\) \{/);
+    assert.ok(match, "run-next must still end the tick on a heavy job type");
     assert.match(match![1], /"VAULT_INGEST"/);
+
+    // The tick used to end unconditionally here. It now has one exit: the
+    // stage this same job enqueued, entered only while the loop's budget floor
+    // still allows a claim. That exception exists because the HTTP hand-off it
+    // replaces is a self-call the platform refuses once the chain is deep
+    // enough — Vercel 508 INFINITE_LOOP_DETECTED — which left AUTO_FINALIZE
+    // QUEUED with no claimant and the owner one stage short of a ZIP. See
+    // tests/worker-continues-without-a-self-call.test.ts.
+    //
+    // The property this test is named for is unchanged: a heavy job is never
+    // chained with an unrelated lighter one. Only PROPOSAL_GENERATION and
+    // AUTO_FINALIZE may be continued into, and only when the job just run
+    // enqueued that exact successor — so VAULT_INGEST still ends its own tick,
+    // and nothing can follow it in the same invocation.
+    const tickEnd = src.slice(src.indexOf(match![0]) + match![0].length);
+    const advance = tickEnd
+      .slice(0, tickEnd.indexOf("break;"))
+      // Strip comments so the prose above, which names the job types it is
+      // explaining, is never itself the thing that passes or fails this.
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^[ \t]*\/\/.*$/gm, "");
+    assert.match(advance, /continuation === "PROPOSAL_GENERATION" \|\| continuation === "AUTO_FINALIZE"/);
+    assert.doesNotMatch(
+      advance,
+      /"VAULT_INGEST"|"EXTRACT_TEXT"|"EVALUATOR_SIM"|"AI_ANALYZE"|"ENGINE_RUN"/,
+      "no other job type may be chained onto a heavy job's tick",
+    );
   });
 });

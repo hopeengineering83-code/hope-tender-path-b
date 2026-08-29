@@ -138,6 +138,11 @@ export async function POST(req: Request) {
   const PERSISTENCE_RESERVE_MS = 5_000;
   const absoluteDeadline = startTime + maxRunMs;
 
+  // The stage this invocation is currently draining. It starts as the caller's
+  // filter and may advance to a continuation this worker itself enqueued — see
+  // the hand-off note at the end of the claim loop.
+  let activeJobType = parsedJobType.value;
+
   while (Date.now() - startTime < maxRunMs) {
     // DIRECTIVE 5: Don't start a new job when insufficient budget remains.
     const remainingMs = absoluteDeadline - Date.now();
@@ -147,7 +152,7 @@ export async function POST(req: Request) {
     }
 
     const claimed = await claimJobForCaller({
-      jobType: parsedJobType.value,
+      jobType: activeJobType,
       tenderId,
       userId: userId ?? undefined,
       global: isAutomatedCaller,
@@ -479,7 +484,48 @@ export async function POST(req: Request) {
       });
     }
 
-    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE", "VAULT_INGEST", "AUTO_FINALIZE"].includes(claimed.jobType)) break;
+    if (["ENGINE_RUN", "PROPOSAL_GENERATION", "EVALUATOR_SIM", "EXTRACT_TEXT", "AI_ANALYZE", "VAULT_INGEST", "AUTO_FINALIZE"].includes(claimed.jobType)) {
+      // Carry a continuation forward inside THIS invocation while the budget
+      // allows it, rather than depending on the HTTP hand-off below.
+      //
+      // That hand-off is a self-call: this worker POSTs its own deployment's
+      // /api/ai-jobs/dispatch, which POSTs its own /api/ai-jobs/run-next. Every
+      // stage therefore adds two hops to a single request chain, and the
+      // platform refuses a chain that keeps re-entering the same deployment —
+      // Vercel answers 508 INFINITE_LOOP_DETECTED. Observed end to end on the
+      // exact head: Run Engine → ENGINE_RUN → PROPOSAL_GENERATION all
+      // succeeded, then the AUTO_FINALIZE nudge came back 508, the job stayed
+      // QUEUED, and nothing was left to claim it. Generation had finished 46
+      // seconds into a 300-second budget, so the invocation that gave up still
+      // had roughly four minutes it never used.
+      //
+      // Nothing else would have run that job. No cron drains the durable queue
+      // on this plan, no UI control nudges the worker, and the tender page
+      // polls read-only endpoints. Since the owner contract requires every
+      // stage after Run Engine to continue with no click and no browser open,
+      // a hand-off whose success depends on a chain depth the platform may
+      // refuse is not a continuation at all.
+      //
+      // Authority is unchanged. Only a job this worker already enqueued can be
+      // claimed; the two manual gates are not continuation types and cannot be
+      // reached from here; the transactional claim remains the
+      // duplicate-execution guard; and the loop's existing budget floor still
+      // decides whether there is room, so no stage starts without time to
+      // finish or checkpoint.
+      const justProcessed = processedJobs[processedJobs.length - 1];
+      const continuation = justProcessed?.jobId === claimed.id ? justProcessed.nextJobType : undefined;
+      const roomForContinuation = absoluteDeadline - Date.now() >= MINIMUM_REMAINING_BUDGET_MS;
+      if ((continuation === "PROPOSAL_GENERATION" || continuation === "AUTO_FINALIZE") && roomForContinuation) {
+        logger.info("[run-next] Continuing to the stage this invocation enqueued", {
+          fromJobType: claimed.jobType,
+          continuation,
+          remainingMs: absoluteDeadline - Date.now(),
+        });
+        activeJobType = continuation;
+        continue;
+      }
+      break;
+    }
   }
 
   if (processedJobs.length === 0) {
@@ -507,27 +553,37 @@ export async function POST(req: Request) {
     return priority > worstPriority ? job : worstSoFar;
   });
 
-  // Hand the pipeline on to itself.
+  // Hand the pipeline on to itself when this invocation could not.
   //
-  // The claim loop above is pinned to one jobType for its whole run — the wake
-  // that started it set `jobType=ENGINE_RUN`, so a PROPOSAL_GENERATION job this
-  // invocation just enqueued can never be claimed by this invocation. Nothing
-  // else was waking it either: the request-scoped wakes cover EXTRACT_TEXT,
-  // VAULT_INGEST and ENGINE_RUN only, and the drain cron fires from the default
-  // branch, so on a Preview deployment there is no driver at all.
+  // The claim loop used to be pinned to one jobType for its whole run — the
+  // wake that started it set `jobType=ENGINE_RUN`, so a PROPOSAL_GENERATION job
+  // this invocation just enqueued could never be claimed by this invocation.
+  // Nothing else was waking it either: the request-scoped wakes cover
+  // EXTRACT_TEXT, VAULT_INGEST and ENGINE_RUN only, and the drain cron fires
+  // from the default branch, so on a Preview deployment there was no driver at
+  // all.
   //
   // The visible result was a workflow that reported "Processing automatically —
   // the workflow is running" while sitting on "No documents have been generated
   // yet" indefinitely, because Run Engine genuinely succeeded and the stage
   // after it was never claimed by anyone.
   //
+  // The loop now advances to that stage itself while budget remains, so this
+  // wake is the remaining case: the invocation ran out of time and a real
+  // hand-off to a fresh one is needed. A stage this invocation already ran is
+  // excluded — nudging it would find nothing to claim, and when the platform
+  // refuses the self-call the rejection is logged as though a finished stage
+  // were still queued, which is exactly the false alarm that made a genuinely
+  // stuck pipeline hard to see.
+  //
   // This carries the owner's original authority forward rather than creating
   // any: only a continuation the worker already enqueued can be claimed, and
   // the chain terminates on its own when a stage produces no successor.
+  const stagesRunHere = new Set(processedJobs.map((job) => job.jobType));
   const continuationJobType = processedJobs
     .map((job) => job.nextJobType)
     .find((type): type is "PROPOSAL_GENERATION" | "AUTO_FINALIZE" =>
-      type === "PROPOSAL_GENERATION" || type === "AUTO_FINALIZE");
+      (type === "PROPOSAL_GENERATION" || type === "AUTO_FINALIZE") && !stagesRunHere.has(type));
   if (continuationJobType) {
     scheduleRequestScopedWorkerWake(req, continuationJobType);
   }
