@@ -389,9 +389,14 @@ function classifyServiceStreams(text: string): ServiceStream[] {
 function extractSubmissionInstructions(
   text: string,
   fallbacks: ParseTenderDocumentIntelligenceOptions,
+  // The caller's array, not a local one. This function used to collect warnings
+  // into a private list and return only the instruction set, so every warning it
+  // raised was discarded at the return — including "submission deadline not
+  // detected". A missing deadline is a missing CRITICAL field, and it was
+  // reported to nobody.
+  warnings: string[] = [],
 ): SubmissionInstructionSet {
   const lower = text.toLowerCase();
-  const warnings: string[] = [];
 
   // Method
   let method: SubmissionMethod = "Unknown";
@@ -421,16 +426,30 @@ function extractSubmissionInstructions(
   // Deadline
   let deadlineDisplay: string | null = null;
   let deadlineIso: string | null = null;
-  const deadlineMatch = text.match(/(?:submission\s+)?deadline:?\s*([^\n\r]{5,80})/i)
-    || text.match(/submit(?:ted)?\s+(?:by|before)\s*([^\n\r]{5,80})/i)
-    || text.match(/\b(?:by|before)\s+((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{4}[^\n\r]{0,40})/i);
-  if (deadlineMatch) {
-    deadlineDisplay = deadlineMatch[1].trim();
-    deadlineIso = tryParseDateToIso(deadlineDisplay);
-    // If the regex matched but the parsed date is invalid (e.g. "deadline in text"
-    // captured non-date words), clear the display and fall through to the fallback.
-    if (!deadlineIso) {
-      deadlineDisplay = null;
+  // EVERY candidate is considered, not just the first.
+  //
+  // A tender states its deadline more than once: a summary row near the front
+  // and the full instruction later. Those two are not always equally complete —
+  // the summary row is exactly where a day goes missing. Taking the first match
+  // and giving up when it failed to parse meant a document whose later text
+  // spelled the deadline out in full still ended up with no deadline, or with
+  // one invented from the incomplete row. The first candidate that yields a
+  // real date wins; the rest are evidence that a date exists, not that this one
+  // is it.
+  const deadlinePatterns = [
+    /(?:submission\s+)?deadline:?\s*([^\n\r]{5,80})/gi,
+    /submit(?:ted)?\s+(?:by|before)\s*([^\n\r]{5,80})/gi,
+    new RegExp(String.raw`\b(?:by|before)\s+(${MONTH_NAME}\s+\d{1,2},?\s*\d{4}[^\n\r]{0,40})`, "gi"),
+  ];
+  outer: for (const pattern of deadlinePatterns) {
+    for (const match of text.matchAll(pattern)) {
+      const candidate = match[1].trim();
+      const iso = tryParseDateToIso(candidate);
+      if (iso) {
+        deadlineDisplay = candidate;
+        deadlineIso = iso;
+        break outer;
+      }
     }
   }
   if (!deadlineDisplay && fallbacks.tenderDeadline) {
@@ -511,10 +530,42 @@ function extractSubmissionInstructions(
   };
 }
 
+const MONTH_NAME = String.raw`(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*`;
+
+/**
+ * Does this text actually state a day of the month?
+ *
+ * `new Date("August, 2026, 5:00 PM")` is not an error — it silently returns
+ * August 1st. A tender whose summary row omits the day therefore acquired a
+ * deadline that no sentence of it contains, and the benchmark's real deadline
+ * of the 25th became the 1st: twenty-four days early, which reads as an expired
+ * or nearly expired tender.
+ *
+ * The day must be adjacent to a month name, or the date must be in a numeric
+ * form. A bare `\d{1,2}` anywhere is not enough — the "5" of "5:00 PM" would
+ * satisfy it, and the dayless string would pass as though it named a day.
+ */
+function statesDayOfMonth(display: string): boolean {
+  if (new RegExp(`${MONTH_NAME}\\.?,?\\s+\\d{1,2}(?:st|nd|rd|th)?\\b`, "i").test(display)) return true;
+  if (new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH_NAME}`, "i").test(display)) return true;
+  if (/\b\d{4}-\d{1,2}-\d{1,2}\b/.test(display)) return true;
+  if (/\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b/.test(display)) return true;
+  return false;
+}
+
 function tryParseDateToIso(display: string): string | null {
   // Try parsing common date formats. Returns ISO string with timezone if possible.
   // Handles: "August 25, 2026, 5:00 PM Addis Ababa Time"
   const cleaned = display.replace(/\s+/g, " ").trim();
+  // A month and a year without a day is not a date this reader may complete.
+  // Refusing it here lets the caller keep looking for a complete one.
+  if (new RegExp(MONTH_NAME, "i").test(cleaned) && !statesDayOfMonth(cleaned)) return null;
+  // 05/11/2027 is the 5th of November to most of the world and the 11th of May
+  // to the rest, and Date silently picks the second. Only a reading the source
+  // settles is used: a component above 12 can only be the day, so those parse
+  // normally, and a genuinely ambiguous pair is refused rather than guessed.
+  const numeric = cleaned.match(/\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\b/);
+  if (numeric && Number(numeric[1]) <= 12 && Number(numeric[2]) <= 12) return null;
   // Map common timezone names to offsets
   const tzMap: Record<string, string> = {
     "addis ababa time": "+03:00",
@@ -531,7 +582,25 @@ function tryParseDateToIso(display: string): string | null {
     }
   }
   // Strip the timezone name for Date parsing
-  const stripped = cleaned.replace(/addis\s+ababa\s+time|eastafrica\s+time|\beat\b|\butc\b|\bgmt\b/i, "").trim();
+  const stripped = cleaned
+    .replace(/addis\s+ababa\s+time|eastafrica\s+time|\beat\b|\butc\b|\bgmt\b/i, "")
+    // "18 November 2027 at 14:00" is how most of the world writes a deadline,
+    // and the connector alone made it unparseable — the date and the time each
+    // parse, the word between them does not, so such a tender previously
+    // carried NO deadline at all. Dropping the connector keeps both halves.
+    .replace(/\s+at\s+(?=\d)/i, " ")
+    // Sentence-form deadlines ("...must be submitted by 18 November 2027.")
+    // end in punctuation that Date rejects.
+    .replace(/[.,;]+\s*$/, "")
+    .trim()
+    // Day-first numeric dates are the ordinary form outside the United States,
+    // and Date rejects them outright — "18/11/2027" is not month 18, it is
+    // simply unparseable, so such a tender carried no deadline at all. Where
+    // the first component is above 12 the reading is settled by the source
+    // itself, so it is reordered rather than guessed; the genuinely ambiguous
+    // pair was already refused above.
+    .replace(/\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\b/, (whole, a: string, b: string, y: string) =>
+      Number(a) > 12 && Number(b) <= 12 ? `${b}/${a}/${y}` : whole);
   const d = new Date(stripped);
   if (isNaN(d.getTime())) return null;
   // Apply timezone offset if we have one
@@ -1050,7 +1119,7 @@ export function parseTenderDocumentIntelligence(
   }
 
   // Submission instructions
-  const submissionInstructions = extractSubmissionInstructions(text, options);
+  const submissionInstructions = extractSubmissionInstructions(text, options, warnings);
 
   // Required documents
   const requiredDocuments = extractRequiredDocuments(text, financialProposalRequired);
