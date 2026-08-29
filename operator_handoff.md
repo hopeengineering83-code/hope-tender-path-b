@@ -123,6 +123,49 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-08-29 UTC — Claude Code (deterministic tender-comprehension repairs)
+
+- **TOOL:** Claude Code · **START SHA:** `3cbceb25` · **END SHA:** `db988b74`+
+- **BRANCH / PR:** `release/consolidated-recovery-20260717` / #1175 (draft)
+- **TASK:** Score the App against the owner-supplied benchmark and fix verified gaps.
+- **FIXED (both live, both consumed, both general — no fixture wording asserted):**
+  1. `556d4795` — the client name was read as the label asking for it.
+     "Procuring Entity / Client Name" yielded `"/ Client Name"`. Critical field:
+     prints on the cover letter and gates export.
+  2. `db988b74` — the deadline was invented. A dayless summary row became
+     August **1st** where the tender twice says the **25th**; the reader then
+     never looked further down the file. Also closed: `" at "` connector,
+     trailing punctuation, day-first numeric dates, ambiguous numerics now
+     refused, and a warnings array that was discarded at the return so
+     "deadline not detected" reached nobody.
+- **CORRECTION — do not chase this:** an earlier note in this session called
+  "scope 1 of 6" and "criteria 0 of 5" defects. They are **not**.
+  `scopeOfServices`, `technicalCriteria`, `eligibilityCriteria` and
+  `financialCriteria` on `TenderDocumentIntelligence` have **no consumer** in
+  lib/, app/ or components/; the criteria arrays are hard-coded `[]` at the
+  return. The parser is consumed only for FACTS. Real scope comes from
+  `requirements` via `tender-document-context.ts`; real criteria come from
+  `extractDeepTenderComprehension` (an AI call). Populating those arrays would
+  build dead code.
+- **CONSEQUENCE:** methodology depth and evaluation responsiveness — 35 of the
+  100 rubric points — are gated on the AI path, not the deterministic reader.
+- **TESTS:** full CI-equivalent suite **10850/10850**, 0 fail, 0 cancelled.
+  Focused cone 359/359. typecheck, lint, build clean. Each new regression test
+  was confirmed to FAIL against the previous reader (8/11 and 9/12 groups).
+- **HARNESS:** `41df7886` added `DRIVE_TENDER_FILE` / `DRIVE_VAULT_JSON` so real
+  benchmark material drives the harness without committing third-party PII.
+  Verified: 12 vault documents persist carrying 114 projects and 28 experts.
+- **BLOCKER:** no AI provider reachable. `.env` points Cerebras at the local stub
+  (127.0.0.1:4599) whose canned quotes belong to another fixture and appear
+  nowhere in the benchmark tender, so AI Analyze cannot reach AI_SUCCEEDED.
+- **OWNER ACTION REQUIRED:** set `GROQ_API_KEY` (owner's choice of provider) in
+  the session environment. Name only; never paste the value into chat.
+- **NEXT SAFE ACTION:** with the key set, run
+  `DRIVE_VAULT_JSON=… node scripts/pipeline-drive-seed.mjs` then
+  `DRIVE_TENDER_FILE=… node scripts/pipeline-drive.mjs`, open the DOCX/PDF and
+  score on the same 8 axes as the reference (92/100).
+- **UNCOMMITTED WORK:** NONE. **MERGE STATUS:** DO NOT MERGE.
+
 ### 2026-08-29 UTC — Claude Code (proposal-quality benchmark intake)
 
 - **TOOL:** Claude Code · **START SHA:** `3cbceb25` · **END SHA:** this commit

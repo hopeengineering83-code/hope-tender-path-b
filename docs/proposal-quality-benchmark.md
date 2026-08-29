@@ -97,3 +97,63 @@ to the environment running the pipeline — `GEMINI_API_KEY` is first in the
 canonical order and has a free tier (`GROQ_API_KEY` or `MISTRAL_API_KEY` are
 equivalent alternatives). The variable name is what matters here; the value must
 never be pasted into chat or committed.
+
+## Deterministic findings from the real tender — two fixed, and a correction
+
+Running the real reader over the real tender measured **tender comprehension**
+without any provider. Two live defects were found and fixed on this branch.
+
+### Fixed: the client name was the label that asks for it
+
+`Procuring Entity / Client Name` is the ordinary data-sheet row. The reader
+matched only `procuring entity`, left the colon optional, and captured the rest
+of the LABEL: the benchmark yielded the client `"/ Client Name"`, and the colon
+form yielded `"/ Client Name: <real name>"`. Client identity prints on the cover
+letter's "To:" line and gates final export, so this either hard-blocked a
+correctly extracted tender or addressed the proposal to a fragment of its own
+form. Fixed by consuming the compound tail as part of the label and requiring a
+separator, with the tail bounded to labels ending in "name" so it cannot walk
+into `Client Contact Email:` and return an address as the client.
+
+### Fixed: the deadline was invented, and then not looked for again
+
+`new Date("August, 2026, 5:00 PM")` returns **August 1st**. The benchmark's
+summary row omits the day, so the tender acquired a deadline appearing in none
+of its sentences — the 1st, where the document twice says the 25th. The reader
+also stopped at its first candidate, so the complete date further down the file
+was never reached. Dayless dates are now refused, every candidate is considered,
+and three further gaps that left a tender with *no* deadline were closed:
+the `" at "` connector, trailing sentence punctuation, and day-first numeric
+dates. Genuinely ambiguous numeric dates (`05/11/2027`) are refused rather than
+guessed. `extractSubmissionInstructions` was also collecting warnings into a
+local array and returning only the instruction set, so "submission deadline not
+detected" reached nobody.
+
+### Correction: scope and criteria on this parser are NOT the quality lever
+
+An earlier reading of the same parse reported "scope: 1 of 6 items" and
+"evaluation criteria: 0 of 5" as defects starving the methodology and
+evaluation-responsiveness axes. That framing was wrong and is corrected here so
+it is not chased.
+
+`TenderDocumentIntelligence.scopeOfServices`, `.technicalCriteria`,
+`.eligibilityCriteria` and `.financialCriteria` have **no consumer anywhere** in
+`lib/`, `app/` or `components/`. The criteria arrays are hard-coded `[]` at the
+return and always have been. The parser is consumed — by
+`effective-tender-facts.ts`, the fact-parity route and the intake detail panel —
+but only for FACTS: title, client, deadline, submission method, emails, address,
+financial-proposal requirement. Those are exactly the fields the two fixes above
+touch.
+
+The scope that actually reaches a generated document is built in
+`tender-document-context.ts` from `requirements`, and requirements come from AI
+Analyze. Evaluation criteria reach generation through
+`extractDeepTenderComprehension` in `evaluation-criteria-extractor.ts`, which is
+an AI call consumed by `generate-elite.ts` and the evaluator-simulation route.
+
+So methodology depth and evaluation responsiveness — the two largest rubric axes,
+35 points together — are gated on the AI path, not on this deterministic reader.
+Populating those dead arrays would have been building an unused system, which is
+the opposite of what the architecture needs. The provider key remains the
+blocker for those axes.
+
