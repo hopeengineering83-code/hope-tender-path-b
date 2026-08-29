@@ -85,6 +85,17 @@ test("the ordinary ways a deadline is written all parse", async (t) => {
     );
   });
 
+  await t.test("a generic clock phrase does not defeat the whole date", () => {
+    // "local time" names no offset — it says only that the deadline is in the
+    // client's own clock, which is already assumed. Date cannot parse the
+    // phrase and rejected the entire string, so a deadline written this
+    // ordinary way produced none at all.
+    assert.equal(
+      iso("Submission Deadline: 30 November 2026 at 14:00 local time."),
+      "2026-11-30T14:00:00.000Z",
+    );
+  });
+
   await t.test("a named timezone is honoured rather than dropped", () => {
     assert.equal(
       iso("Submission Deadline: August 25, 2026, 5:00 PM Addis Ababa Time"),

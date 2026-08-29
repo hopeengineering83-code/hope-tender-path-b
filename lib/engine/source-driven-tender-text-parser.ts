@@ -584,6 +584,12 @@ function tryParseDateToIso(display: string): string | null {
   // Strip the timezone name for Date parsing
   const stripped = cleaned
     .replace(/addis\s+ababa\s+time|eastafrica\s+time|\beat\b|\butc\b|\bgmt\b/i, "")
+    // "…at 14:00 local time." names no offset — it only says the deadline is
+    // stated in the client's own clock, which is already the assumption. Date
+    // cannot parse the phrase and rejected the whole string, so a deadline
+    // written this ordinary way produced no deadline at all. Two of this
+    // repository's own tender fixtures are written exactly like that.
+    .replace(/\b(?:local|standard|official)\s+time\b/i, "")
     // "18 November 2027 at 14:00" is how most of the world writes a deadline,
     // and the connector alone made it unparseable — the date and the time each
     // parse, the word between them does not, so such a tender previously
