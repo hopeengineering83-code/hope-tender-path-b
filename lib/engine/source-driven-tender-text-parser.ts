@@ -386,6 +386,82 @@ function classifyServiceStreams(text: string): ServiceStream[] {
 
 // ─── Submission-instruction extractor ────────────────────────────────────────
 
+/**
+ * The submission deadline as amended by the source's own addenda.
+ *
+ * Precedence is taken from what the documents SAY, never from the order their
+ * files happen to sit in. A file appended later is not procurement authority —
+ * a clarification uploaded after a corrigendum does not outrank it, and an
+ * original re-uploaded last does not undo an extension. Two signals are used,
+ * both of them statements of the issuer:
+ *
+ *   1. explicit amending language — "extended to", "revised to", "postponed to";
+ *   2. an addendum number, where more than one amendment exists.
+ *
+ * When several amendments exist and their numbers cannot order them, nothing is
+ * chosen. A guessed deadline is worse than a missing one: it is acted on.
+ */
+type AmendedDeadline =
+  | { status: "NONE" }
+  | { status: "AMENDED"; iso: string; display: string }
+  | { status: "UNRESOLVED_CONFLICT" }
+  | { status: "UNPARSEABLE_AMENDMENT" };
+
+// The clause must be about the SUBMISSION deadline. A tender amends many dates
+// and only this one is the closing date — see NOT_THE_SUBMISSION_DEADLINE.
+const DEADLINE_AMENDMENT =
+  /[^\n\r]{0,140}?\b(?:deadline|closing\s+date|closing\s+time)\b[^\n\r]{0,80}?\b(?:extended|revised|amended|changed|postponed|deferred|moved|rescheduled|shifted)\b\s*(?:to|until|till)\s*([^\n\r]{4,90})/gi;
+
+// Other things a tender postpones. None of them is the closing date, and each
+// carries its own date, so a clause naming one is not an amendment of this fact.
+const NOT_THE_SUBMISSION_DEADLINE =
+  /\b(?:clarification|question|quer(?:y|ies)|pre[-\s]?bid|site\s+visit|validity|bid\s+security|bid\s+bond|contract\s+(?:start|commencement|signature)|interview|opening|award|evaluation|inception|mobilis|mobiliz)\w*/i;
+
+const ADDENDUM_ORDINAL = /\b(?:addendum|addenda|amendment|corrigendum)\s*(?:no\.?|number|#)?\s*(\d{1,3})\b/gi;
+
+/** The number of the last numbered addendum heading before this position. */
+function addendumOrdinalBefore(text: string, index: number): number | null {
+  let ordinal: number | null = null;
+  const scan = new RegExp(ADDENDUM_ORDINAL.source, "gi");
+  for (const m of text.slice(0, index).matchAll(scan)) ordinal = Number(m[1]);
+  return ordinal;
+}
+
+function resolveAmendedDeadline(text: string): AmendedDeadline {
+  const found: Array<{ iso: string; display: string; ordinal: number | null }> = [];
+  let sawUnparseable = false;
+
+  for (const match of text.matchAll(DEADLINE_AMENDMENT)) {
+    const clause = match[0];
+    if (NOT_THE_SUBMISSION_DEADLINE.test(clause)) continue;
+    const display = match[1].trim();
+    const iso = tryParseDateToIso(display);
+    if (!iso) {
+      // The issuer amended the deadline but did not state a complete date.
+      // Completing it would invent one; discarding the known deadline would
+      // lose one. Report it and keep what the source already established.
+      sawUnparseable = true;
+      continue;
+    }
+    found.push({ iso, display, ordinal: addendumOrdinalBefore(text, match.index ?? 0) });
+  }
+
+  if (found.length === 0) return sawUnparseable ? { status: "UNPARSEABLE_AMENDMENT" } : { status: "NONE" };
+  if (found.length === 1) return { status: "AMENDED", iso: found[0].iso, display: found[0].display };
+
+  // Several amendments. Distinct addendum numbers order them; the highest is
+  // the operative one. Identical dates need no ordering — they agree.
+  const distinctIso = new Set(found.map((f) => f.iso));
+  if (distinctIso.size === 1) return { status: "AMENDED", iso: found[0].iso, display: found[0].display };
+
+  const ordinals = found.map((f) => f.ordinal);
+  if (ordinals.some((o) => o === null) || new Set(ordinals).size !== ordinals.length) {
+    return { status: "UNRESOLVED_CONFLICT" };
+  }
+  const latest = found.reduce((a, b) => ((b.ordinal ?? 0) > (a.ordinal ?? 0) ? b : a));
+  return { status: "AMENDED", iso: latest.iso, display: latest.display };
+}
+
 function extractSubmissionInstructions(
   text: string,
   fallbacks: ParseTenderDocumentIntelligenceOptions,
@@ -452,6 +528,31 @@ function extractSubmissionInstructions(
       }
     }
   }
+  // A later authoritative addendum supersedes the deadline it explicitly
+  // changes. Everything above reads the ORIGINAL notice: the source text is a
+  // flat concatenation of every active file, and the first complete date in it
+  // belongs to the tender as first issued. A tender extended by three weeks was
+  // therefore still worked to its superseded date, and one already past its
+  // original deadline still read as expired after being extended.
+  const amendment = resolveAmendedDeadline(text);
+  if (amendment.status === "AMENDED") {
+    deadlineDisplay = amendment.display;
+    deadlineIso = amendment.iso;
+  } else if (amendment.status === "UNRESOLVED_CONFLICT") {
+    // Two amendments and nothing in the source to order them. Upload order is
+    // not procurement authority, so no date is chosen: a confidently wrong
+    // deadline is worse than a reported absence.
+    deadlineDisplay = null;
+    deadlineIso = null;
+    warnings.push(
+      "Conflicting submission-deadline amendments were found and their order could not be established from the source. Confirm the current deadline before generating or exporting.",
+    );
+  } else if (amendment.status === "UNPARSEABLE_AMENDMENT") {
+    warnings.push(
+      "A submission-deadline amendment was found but states no complete date. The previous deadline is retained; confirm the current deadline before generating or exporting.",
+    );
+  }
+
   if (!deadlineDisplay && fallbacks.tenderDeadline) {
     const d = typeof fallbacks.tenderDeadline === "string"
       ? new Date(fallbacks.tenderDeadline)
