@@ -123,6 +123,64 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-08-29 UTC — Claude Code (addendum / deadline-amendment authority)
+
+- **TOOL:** Claude Code · **START SHA:** `47fe74db` · **END SHA:** `f86d4343`+
+- **BRANCH / PR:** `release/consolidated-recovery-20260717` / #1175 (draft)
+
+- **FIXED — `f86d4343`: a later addendum now supersedes the deadline it changes.**
+  `effective-tender-facts.ts:355` joins every active file's text into one string
+  before the reader runs, so the first complete date in it — the ORIGINAL —
+  was reported however many addenda followed. A tender extended by three weeks
+  was worked to its superseded date; one past its original date still read as
+  expired after being extended.
+  Precedence is taken from the documents, **never from upload order**: explicit
+  amending language plus an addendum number where several amendments exist.
+  Clauses about other postponed events (clarification questions, pre-bid, bid
+  validity, bid security, contract start) are excluded — each is a different
+  fact. Unorderable conflicts and dayless amendments are refused and reported.
+
+- **ACCEPTANCE MATRIX (`tests/deadline-amendment-authority.test.ts`), 20/20:**
+  1 original-only · 2 one extension · 3 latest of several · 4 quoting the old
+  date is not an amendment · 5 explicit revision wins · 6 unorderable conflict
+  fails closed + warns · 7 extension past an expired original honoured ·
+  8 formats (month-first + named TZ, day-first + "local time", unambiguous
+  numeric, dayless refused) · 9 other dated events not confused · 10 an addendum
+  changes only what it states (email/method/client untouched).
+  **8 of the 10 failed before the change.**
+
+- **VERIFIED AS ALREADY CORRECT — preserved, not rebuilt:**
+  - *Stale-state invalidation.* Adding an addendum changes the canonical
+    analysis content hash (proved directly), so the existing
+    `ANALYSIS_HASH_MISMATCH` gates in `generation-readiness-gate.ts` and
+    `build-plan.ts` fail closed. No new mechanism was added.
+  - *Human-confirmed extension.* `TenderMetadataOverride` already carries
+    `authorityClass = HUMAN_CONFIRMED_OPERATIONAL`, `confirmationBasis`
+    (required for export on submission-critical fields), `reason`,
+    `previousValue`, `overriddenBy`, `confirmedAt`; `deadline` is overridable
+    (`effective-tender-facts.ts:407`). No new edit path was invented.
+  - *Addendum as independent active source* (`canonical-source-files.ts:89`)
+    and the original deadline remaining readable in source text.
+
+- **TESTS:** full CI-equivalent suite **10871/10871**, 0 fail, 0 cancelled.
+  prisma validate, typecheck, lint, build clean. Benchmark tender unaffected
+  (11/11 consumed fields); water RFP and EOI fixtures unaffected.
+
+- **STILL BLOCKED — Gap A (real proposal quality).** Provider availability was
+  re-tested this session, not assumed: the only configured provider is still
+  `CEREBRAS_BASE_URL=http://127.0.0.1:4599` with a 15-character key — the local
+  stub in `scripts/local-ai-provider.mjs`. No App proposal exists to score and
+  none was invented. Reference proposal stands at 92/100.
+
+- **OWNER ACTION REQUIRED:** set a real provider key (`GROQ_API_KEY`, or any of
+  the canonical ten) in this environment's configuration. Name only — never
+  pasted into chat or committed.
+- **NEXT SAFE ACTION:** with a key present, run
+  `DRIVE_VAULT_JSON=… node scripts/pipeline-drive-seed.mjs`, then
+  `DRIVE_COOKIE=… DRIVE_TENDER_FILE=… node scripts/pipeline-drive.mjs`, open the
+  produced DOCX/PDF/ZIP and score on the 8-axis rubric.
+- **UNCOMMITTED WORK:** NONE. **MERGE STATUS:** DO NOT MERGE.
+
 ### 2026-08-29 UTC — Claude Code (deterministic tender-comprehension repairs)
 
 - **TOOL:** Claude Code · **START SHA:** `3cbceb25` · **END SHA:** `db988b74`+
