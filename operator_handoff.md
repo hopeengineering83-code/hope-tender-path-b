@@ -177,6 +177,45 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - **MERGE STATUS:** DO NOT MERGE. Draft. No Production promotion, alias change,
   schema change, or database mutation was performed.
 
+#### Addendum — final-SHA acceptance re-run (same session)
+
+The matrix above was executed on `b247a139`. It was re-executed in full on the
+final SHA **`23c3a5bf`** (docs-only delta; no application file differs):
+
+| Check | Result on `23c3a5bf` |
+| --- | --- |
+| `prisma generate` / `prisma validate` | OK / schema valid |
+| `npm run typecheck` / `npm run lint` | exit 0 / exit 0 |
+| Frozen focused provider/chunk/fallback cone | **126/126** |
+| Frozen isolated-PostgreSQL cone | **22/22**, real ZIP produced |
+| Full CI-equivalent suite | **10743/10743**, 0 fail, 0 cancelled |
+| `npm run build` | PASS |
+| Exact-head GitHub CI | **6/6 success** |
+| Preview `dpl_pFnvNkTR31fgobPtigTbLTMUWm8Z` | READY, release == head, health 200, schema match |
+
+**Environment trap worth knowing — cost part of a session, do not rediscover it.**
+A local run of the PostgreSQL cone failed with
+`Engine route and worker share canonical current-analysis authority: expected 202, actual 401`,
+plus 8 cancelled tests cascading into the ZIP suite. It was **not** a code
+defect and **not** database pollution — it reproduced on a freshly created
+database. The cause was the `SESSION_SECRET` used for the run:
+`lib/auth.ts:14` throws when the secret is shorter than 32 characters, so
+session signing fails and every authenticated route answers 401. The value in
+use was 31 characters. Re-running with a >=32-character secret restored
+**22/22** immediately.
+
+Two consequences for the next tool:
+1. When a batch of DB tests fails on 401 while GitHub CI on the same SHA is
+   green, check `SESSION_SECRET` length **before** reading application code.
+2. That fail-closed behaviour is correct and must not be relaxed to make a
+   local run pass.
+
+Also confirmed this session: the app's own auth gate is intact end-to-end —
+Vercel's deployment-level access does **not** confer an application session.
+`GET /api/tenders/<retained-id>/release-snapshot` on the exact-head Preview
+returns `401 {"error":"Unauthorized"}`. The retained tender therefore could not
+be re-confirmed from here, and AI Analyze genuinely requires the owner.
+
 <!-- Add newest entry at the top. -->
 
 ### 2026-08-29 UTC — Codex (exact retained-source request-shape preservation)
