@@ -123,6 +123,55 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-08-29 UTC — Claude Code (post-click runtime search; inconclusive by evidence)
+
+- **TOOL:** Claude Code · **HEAD:** `0e9b807f` (unchanged, tree clean) · **PR:** #1175
+- **NO CODE CHANGES.** No defect was reproduced on the current head.
+
+- **SEARCHED FOR THE OWNER'S AI ANALYZE JOB — NOT FOUND, BUT THE ABSENCE IS NOT
+  CONCLUSIVE.** Four independent queries against Vercel runtime evidence:
+  - `requestPath` grouping, 24h, whole project: 20 distinct paths, **no
+    `manual-ai-analyze`**. Owner activity on tender
+    `a56569bc-7643-4f21-89b6-b2828781b8c6` is present and healthy
+    (workflow-center ×11 — that endpoint is **polled** by
+    `components/requirement-truth-banner.tsx`, so it is one open page, not
+    repeated clicking — plus submission-plan, authority-review, reconcile-docs,
+    export-readiness, evaluator-objections, pricing, controls). 36×200, 7×401
+    (the 401s are this session's own probes), no 5xx.
+  - `requestPath` grouping, 2h: only this session's probes and the CI screenshot
+    job's ten dashboard hits (all inside two seconds).
+  - **Production, 24h: zero requests.** The click did not land there either.
+  - Text queries for `manual-ai-analyze` and `run-next`, 24h: no lines.
+
+  **Why this is not proof.** The last query is the tell: `run-next` demonstrably
+  executed at 15:02:51Z — it produced the AUTO_FINALIZE errors recorded in the
+  error table — yet `run-next` appears in neither the path grouping nor a text
+  search over the same window. Some server activity is therefore missing from
+  these views (the error table is a separate pre-aggregated store with different
+  retention). An analyze request could be absent from the logs for the same
+  reason. **Do not conclude from this that the owner did not click.**
+
+- **RULED OUT as the cause of a disabled button:** `aiEnabled` ←
+  `isAIEnabled()` ← `isAIConfigured()`, and `next.config.js` `assertProductionEnv`
+  refuses to build with no provider configured. The Preview builds and is
+  healthy, so a provider key **is** configured in Vercel. Remaining client-side
+  gates are `canMutate`, `canonicalAnalysisReady`, `readinessLoading/Error` — all
+  unreadable from here because the auth gate correctly 401s this session.
+
+- **CONTEXT WORTH KEEPING:** this tender has already been through the full
+  pipeline at least once — the 15:02 AUTO_FINALIZE failures name a real
+  `Technical Proposal.docx`, and the owner's visible traffic is on late-stage
+  panels (authority-review, export-readiness, reconcile-docs, pricing). So the
+  state is likely post-analysis, not pre-analysis.
+
+- **NEXT SAFE ACTION:** owner opens the tender's AI Analyze panel and reports the
+  single status line it renders under the button (`statusLabel` /
+  `disabledReason` in `components/ai-analyze-panel.tsx`). That one line
+  distinguishes "the button is disabled and why" from "the click fired and the
+  request is simply not in these logs", which no amount of log querying from here
+  can separate.
+- **UNCOMMITTED WORK:** NONE. **MERGE STATUS:** DO NOT MERGE.
+
 ### 2026-08-29 UTC — Claude Code (live runtime evidence; AI Analyze not found in retention)
 
 - **TOOL:** Claude Code · **HEAD:** `f906e877` (unchanged, tree clean) · **PR:** #1175
