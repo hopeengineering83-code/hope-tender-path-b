@@ -157,3 +157,37 @@ Populating those dead arrays would have been building an unused system, which is
 the opposite of what the architecture needs. The provider key remains the
 blocker for those axes.
 
+## The real blocker is egress policy, not a missing key
+
+Earlier notes in this file said the App could not be scored because no provider
+key was configured. That was true but incomplete, and acting on it wastes a key.
+Tested directly from this session:
+
+| Provider host | Result |
+| --- | --- |
+| `api.mistral.ai` | **403 CONNECT denied by the egress proxy** |
+| `api.groq.com` | **403 CONNECT denied** |
+| `api.openai.com` | **403 CONNECT denied** |
+| `api.cerebras.ai` | **403 CONNECT denied** |
+| `openrouter.ai` | **403 CONNECT denied** |
+| `generativelanguage.googleapis.com` | **reachable** — 403 *from Google* asking for an API key |
+
+The five denials are recorded by the proxy itself as
+`connect_rejected — gateway answered 403 to CONNECT (policy denial)`. The agent
+proxy README is explicit that a 403 means the destination is not permitted by
+the session's egress policy and must be reported rather than retried or routed
+around. **A valid key for any of those five would still fail here.**
+
+Gemini is the exception, and it is also first in the canonical provider order.
+Its host answered from Google's own API — `PERMISSION_DENIED … Please use API
+Key` — with no proxy denial recorded, which is an authentication response, not a
+network block.
+
+**So the one action that unblocks the benchmark in this environment is a
+`GEMINI_API_KEY`** (Google AI Studio; a free tier exists). Any other provider
+additionally requires its host to be added to the environment's egress policy.
+
+A Mistral key supplied for this purpose could not be used and should be treated
+as compromised and rotated: it was never written to a tracked file and never
+entered git history, but it was transmitted in conversation.
+

@@ -172,9 +172,15 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   stub in `scripts/local-ai-provider.mjs`. No App proposal exists to score and
   none was invented. Reference proposal stands at 92/100.
 
-- **OWNER ACTION REQUIRED:** set a real provider key (`GROQ_API_KEY`, or any of
-  the canonical ten) in this environment's configuration. Name only — never
-  pasted into chat or committed.
+- **OWNER ACTION REQUIRED — corrected:** the blocker is **egress policy**, not a
+  missing key. Probed directly: `api.mistral.ai`, `api.groq.com`,
+  `api.openai.com`, `api.cerebras.ai` and `openrouter.ai` are all **403
+  CONNECT-denied** by the session proxy (recorded as `connect_rejected`), so a
+  valid key for any of them still cannot run here.
+  `generativelanguage.googleapis.com` **is reachable** — it answered from
+  Google's own API asking for a key, with no proxy denial — and Gemini is first
+  in the canonical order. **Supply `GEMINI_API_KEY`**, or have the environment's
+  egress policy extended to the host of whichever provider is preferred.
 - **NEXT SAFE ACTION:** with a key present, run
   `DRIVE_VAULT_JSON=… node scripts/pipeline-drive-seed.mjs`, then
   `DRIVE_COOKIE=… DRIVE_TENDER_FILE=… node scripts/pipeline-drive.mjs`, open the
