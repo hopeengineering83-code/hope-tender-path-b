@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 
 import {
   ANALYSIS_CHUNK_OVERLAP,
-  analysisFitsOneConfiguredProvider,
   chunkTenderContent,
   generateWithFallback,
   planAnalysisChunks,
@@ -36,13 +35,24 @@ afterEach(() => {
 
 describe("adaptive AI Analyze request shape", () => {
   it("CASE A: keeps one request when all configured early extraction models can accept it", () => {
-    process.env.GEMINI_API_KEY = "test-key";
-    process.env.GEMINI_ANALYSIS_MODEL = "gemini-3.5-flash";
+    const env = {
+      ...process.env,
+      GEMINI_API_KEY: "test-key",
+      GEMINI_ANALYSIS_MODEL: "gemini-3.5-flash",
+      GROQ_API_KEY: "test-key",
+      GROQ_PROPOSAL_MODEL: "openai/gpt-oss-120b",
+      GROQ_ANALYSIS_MODEL: "openai/gpt-oss-120b",
+      MISTRAL_API_KEY: "test-key",
+      MISTRAL_ANALYSIS_MODEL: "mistral-small-latest",
+    };
     const source = "consultancy supervision requirement. ".repeat(400).slice(0, 12_122).padEnd(12_122, "x");
+    const plan = planAnalysisChunks(source, env);
 
     assert.equal(source.length, 12_122);
-    assert.equal(analysisFitsOneConfiguredProvider(source), true);
-    assert.deepEqual(chunkTenderContent(source), [source]);
+    assert.equal(plan.reason, "SINGLE_REQUEST");
+    assert.deepEqual(plan.configuredProviders.slice(0, 3), ["gemini", "groq", "mistral"]);
+    assert.deepEqual(plan.fullRequestEligibleProviders.slice(0, 3), ["gemini", "groq", "mistral"]);
+    assert.deepEqual(plan.chunks, [source]);
   });
 
   it("CASE B: restores Groq through sequential chunks when a monolith exceeds its exact TPM profile", () => {

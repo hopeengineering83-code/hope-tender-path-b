@@ -91,6 +91,16 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 <!-- Add newest entry at the top. -->
 
+### 2026-08-29 UTC — Codex (exact retained-source request-shape preservation)
+
+- **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only. The refreshed container initially lacked a remote and exposed a synthetic `work` branch; after adding the canonical repository remote, its worktree was proven byte-identical to exact remote `04b93e0a004bfc672cda1a9516be45484b3e5c58`, then safely reattached to the existing consolidation branch. No branch or PR was created, merged, or promoted.
+- **Scope:** strengthened the adaptive-chunking behavioral evidence for the retained 12,122-character source shape. The prior CASE A configured Gemini alone, so it did not explicitly freeze the owner requirement that a source of that exact size retain Groq when Gemini, Groq, and Mistral are all model/preflight eligible. The test now pins all three exact extraction models, their canonical order, Groq inclusion, and the expected single lossless request. No runtime, provider, timeout, database, schema, environment, or release-gate behavior changed.
+- **Files changed:** `tests/ai-analysis-capacity-concurrency-regression.test.ts` and this handoff.
+- **Tests:** focused provider/chunk matrix passed 126/126; Prisma generation, typecheck, full ESLint, dependency audit (0 vulnerabilities), and production build passed. Local `npm test` correctly failed closed before executing because the inherited `DATABASE_URL` is a Neon host; the guard was not bypassed and exact-head CI must supply its disposable PostgreSQL service.
+- **Known risk / next action:** owner-authenticated Preview access remains unavailable; the retained tender must still run exactly once at the resulting exact head to read durable provider attempts, prove the Groq state, compare adaptive Mistral behavior, and continue the downstream artifacts path.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** pending exact-head CI/Preview and live authenticated acceptance.
+
+
 ### 2026-08-28 UTC — Codex (capability-specific real-workload diagnostics)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; started from exact remote `52e20b6e` after fetching first.
