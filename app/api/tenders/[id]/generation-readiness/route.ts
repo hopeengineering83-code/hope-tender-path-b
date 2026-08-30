@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "../../../../../lib/auth";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { getTenderGenerationReadinessStrict } from "../../../../../lib/tender-generation-readiness-strict";
-import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
+import { resolveCanonicalAnalysisSource } from "../../../../../lib/engine/analysis-source";
 import { getFinalPackageReadinessModel } from "../../../../../lib/engine/final-package-readiness-model";
 import { randomUUID } from "node:crypto";
 import { buildPublicReadinessEnvelope } from "../../../../../lib/engine/public-readiness-envelope";
@@ -44,10 +44,25 @@ export async function GET(
     const generatedDocumentsTotal = finalPackage.documents.generated.length;
     const exportReadyDocumentsTotal = finalPackage.documents.exportReady.length;
 
-    // Use the canonical helper which checks both tender.notes AND the
-    // ANALYSIS_APPROVAL:REGEX_FALLBACK ComplianceGap so a human-approved
-    // fallback is not treated the same as an unapproved one.
-    const analysisSource = await detectAnalysisSourceWithApproval(prisma, tenderId, tender);
+    // Resolver-first, matching lib/engine/export-readiness.ts and the
+    // lifecycle orchestrator.
+    //
+    // detectAnalysisSourceWithApproval checks tender.notes and the
+    // ANALYSIS_APPROVAL:REGEX_FALLBACK ComplianceGap, so it distinguishes an
+    // approved fallback from an unapproved one — but it cannot see an AI
+    // Analyze proven only by AiJob and AiAnalyzeChunk rows. Such a tender
+    // resolved to UNKNOWN and this route answered
+    //
+    //   FULL_PROPOSAL_NOT_ANALYZED — "this tender has not been analyzed.
+    //   Run AI Analyze first."
+    //
+    // for a tender whose analysis had succeeded and whose ZIP downloads.
+    //
+    // resolveCanonicalAnalysisSource keeps that approval distinction — it
+    // delegates to the same detector for every state the resolver does not
+    // establish, and maps only AI_SUCCEEDED to "AI" — so the fallback gates
+    // below are unchanged.
+    const analysisSource = await resolveCanonicalAnalysisSource(prisma, tenderId, tender);
     const isUnapprovedFallback = analysisSource === "REGEX_FALLBACK_AI_ERROR" || analysisSource === "UNKNOWN";
     const isApprovedFallback = analysisSource === "HUMAN_APPROVED_REGEX_FALLBACK";
 
