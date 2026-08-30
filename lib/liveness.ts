@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { databaseFingerprint } from "./database-fingerprint";
 import { prisma, prismaReady } from "./prisma";
 import { checkAiProviderHealth } from "./ai-provider-health-check";
 import { getStorageReadiness } from "./storage";
@@ -189,6 +190,14 @@ export async function livenessResponse() {
       // is false the database is behind the deployed code and the fix is to run
       // the pending migrations, not to wait and retry.
       schemaMatchesDeployedCode: snapshot.schema.matches,
+      // Which database this deployment is bound to, as a one-way fingerprint
+      // of host and database name — never the URL, the user or the password.
+      // A deployment keeps the DATABASE_URL it was built with, so after the
+      // setting changes two deployments of the same commit can sit on
+      // different databases and answer this endpoint identically. Without a
+      // fingerprint the only way to tell them apart was to read the connection
+      // string, which must never be printed.
+      databaseFingerprint: databaseFingerprint(),
       timestamp: new Date().toISOString(),
     },
     { status: snapshot.httpStatus, headers: { "Cache-Control": "no-store" } },
@@ -216,6 +225,7 @@ export async function detailedLivenessPayload() {
     deploymentUrl: process.env.VERCEL_URL || "unknown",
     tables: snapshot.tables,
     schema: snapshot.schema,
+    databaseFingerprint: databaseFingerprint(),
     aiProviders: aiHealth,
     // The strong claim, kept separate from `ok`: a provider has completed a real
     // AI Analyze extraction on this instance. Production readiness gates on
