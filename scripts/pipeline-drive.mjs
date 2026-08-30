@@ -54,9 +54,19 @@ function log(name, status, detail) {
 }
 
 async function call(method, path, opts = {}) {
+  // Origin/Referer are sent because the app enforces same-origin on every
+  // state-changing /api/ request (lib/security/csrf.ts). Without them this
+  // harness stops at the first POST with "Invalid request origin." against any
+  // server running with CSRF enforcement on — which is every production-mode
+  // server, i.e. exactly the ones worth driving.
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: { cookie: `hope_session=${COOKIE}`, ...(opts.headers ?? {}) },
+    headers: {
+      cookie: `hope_session=${COOKIE}`,
+      origin: BASE,
+      referer: `${BASE}/dashboard`,
+      ...(opts.headers ?? {}),
+    },
     body: opts.body,
   });
   const ct = res.headers.get("content-type") ?? "";

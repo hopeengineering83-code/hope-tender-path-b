@@ -1,5 +1,5 @@
 import { PDFDocument, rgb, type PDFPage } from "pdf-lib";
-import { createPdfFontSetFor, type PdfFontSet, type PdfFontStyle } from "./pdf-unicode-fonts";
+import { createPdfFontSetFor, sanitizePdfText, type PdfFontSet, type PdfFontStyle } from "./pdf-unicode-fonts";
 
 const PAGE_MARGIN = 56; // points (approx 20mm)
 const PAGE_WIDTH = 595.28; // A4
@@ -61,12 +61,13 @@ function drawHeaderFooter(ctx: RenderContext): void {
   const page = currentPage(ctx);
   // Branded header — right-aligned small text
   if (ctx.headerText) {
-    const hw = ctx.fonts.widthOf(ctx.headerText, FONT_SIZE_SMALL);
-    page.drawText(ctx.headerText, {
+    const headerText = sanitizePdfText(ctx.headerText);
+    const hw = ctx.fonts.widthOf(headerText, FONT_SIZE_SMALL);
+    page.drawText(headerText, {
       x: PAGE_WIDTH - PAGE_MARGIN - hw,
       y: PAGE_HEIGHT - 30,
       size: FONT_SIZE_SMALL,
-      font: ctx.fonts.fontFor(ctx.headerText),
+      font: ctx.fonts.fontFor(headerText),
       color: rgb(...BRAND_COLOR),
     });
     page.drawLine({
@@ -78,7 +79,7 @@ function drawHeaderFooter(ctx: RenderContext): void {
   }
   // Contact strip footer — left-aligned
   if (ctx.footerContact) {
-    const fc = ctx.footerContact.slice(0, 110);
+    const fc = sanitizePdfText(ctx.footerContact).slice(0, 110);
     page.drawText(fc, {
       x: PAGE_MARGIN,
       y: 28,
@@ -112,7 +113,18 @@ function ensureSpace(ctx: RenderContext, needed: number): void {
 }
 
 function wrapText(text: string, fonts: PdfFontSet, style: PdfFontStyle, fontSize: number, maxWidth: number): string[] {
-  const words = text.split(" ");
+  // Split on any whitespace run, not on the space character alone.
+  //
+  // A newline used to stay inside a "word" and reach the font as a glyph:
+  // pdf-lib answered `WinAnsi cannot encode "\n" (0x000a)` and the export
+  // died. Titles carry newlines routinely — a tender title extracted from a
+  // document that wraps across two source lines keeps the break — so an
+  // ordinary Latin tender could not produce its required PDFs. Breaking on
+  // whitespace is also simply what wrapping means.
+  //
+  // Sanitised first so no control character can reach a font from here or
+  // from any caller that measures with these lines.
+  const words = sanitizePdfText(text).split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
@@ -195,6 +207,11 @@ function drawInlineParagraph(
       }
     }
   }
+
+  // Body text reaches the font one word at a time, so it is sanitised here
+  // rather than at each draw call. A control character anywhere in a paragraph
+  // is the same hard export failure as one in the cover.
+  for (const word of words) word.text = sanitizePdfText(word.text);
 
   const styleFor = (w: Word): PdfFontStyle => {
     if (w.bold) return "bold";
@@ -444,7 +461,12 @@ async function buildCoverPage(
   // Sub-line block — match DOCX cover block parity (reference, client, date,
   // company name, contact, email subject).
   let sy = PAGE_HEIGHT - 155;
-  const drawCentered = (text: string, style: PdfFontStyle, size: number, color: [number, number, number]) => {
+  // Every sub-line here is external tender or company text — client name,
+  // reference, submission subject — so it is sanitised once and then measured
+  // and drawn as the same string. A newline in any of them used to end the
+  // export at the font layer.
+  const drawCentered = (raw: string, style: PdfFontStyle, size: number, color: [number, number, number]) => {
+    const text = sanitizePdfText(raw);
     const w = ctx.fonts.widthOf(text, size, style);
     page.drawText(text, { x: cx - w / 2, y: sy, size, font: ctx.fonts.fontFor(text, style), color: rgb(...color) });
     sy -= size + 6;

@@ -68,10 +68,58 @@ const WIN_ANSI_EXTRA = new Set([
   0x2013, 0x2014, 0x02dc, 0x2122, 0x0161, 0x203a, 0x0153, 0x017e, 0x0178,
 ]);
 
+/**
+ * Control characters have no glyph in any font and are not encodable by the
+ * standard faces — pdf-lib throws `WinAnsi cannot encode "\n" (0x000a)` on
+ * one, which is the same hard export failure as an unsupported script.
+ *
+ * They arrive routinely: a tender title extracted from a document that wraps
+ * across two source lines carries the newline into `tender.title`, and the
+ * cover page draws that field verbatim. That killed required-PDF finalization
+ * for an ordinary Latin tender, found by converting real generated documents
+ * rather than synthetic ones.
+ *
+ * C0 (0x00-0x1F), DEL (0x7F) and C1 (0x80-0x9F). The WIN_ANSI_EXTRA set above
+ * holds Unicode code points such as U+2013, not raw C1 bytes, so nothing in it
+ * is caught here.
+ */
+function isControlCharacter(code: number): boolean {
+  return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+}
+
+/**
+ * Text that a PDF font can actually draw.
+ *
+ * Line breaks, carriage returns and tabs become spaces — inside a field that
+ * is laid out as text they are break opportunities, and `wrapText` re-breaks
+ * on whitespace anyway. Every other control character is dropped: it carries
+ * no visible content, so removing it changes nothing an evaluator sees, and
+ * keeping it ends the export.
+ *
+ * Nothing else is touched. This is not a sanitiser for scripts or accents —
+ * those are rendered, not removed, which is the whole point of the embedded
+ * Unicode faces.
+ */
+export function sanitizePdfText(text: string): string {
+  let out = "";
+  for (const character of text) {
+    const code = character.codePointAt(0);
+    if (code === undefined) continue;
+    if (code === 0x0a || code === 0x0d || code === 0x09) { out += " "; continue; }
+    if (isControlCharacter(code)) continue;
+    out += character;
+  }
+  return out;
+}
+
 export function isWinAnsiEncodable(text: string): boolean {
   for (const character of text) {
     const code = character.codePointAt(0);
     if (code === undefined) continue;
+    // A control character is not encodable by the standard faces even though
+    // its code point is inside Latin-1. Saying otherwise is what routed a
+    // newline to Helvetica and threw.
+    if (isControlCharacter(code)) return false;
     if (code <= 0xff) continue;
     if (WIN_ANSI_EXTRA.has(code)) continue;
     return false;
@@ -133,7 +181,10 @@ export async function createPdfFontSetFor(doc: PDFDocument, fullText: string): P
     doc.embedFont(StandardFonts.HelveticaOblique),
   ]);
 
-  if (isWinAnsiEncodable(fullText)) {
+  // Decided on the sanitised text: nearly every document's full text contains
+  // newlines, so testing the raw string would now embed the 367 KB Unicode
+  // face in every PDF rather than only in the ones that need it.
+  if (isWinAnsiEncodable(sanitizePdfText(fullText))) {
     return buildFontSet({ regular, bold, italic }, null);
   }
 
