@@ -29,7 +29,7 @@ import {
   isExtractionAcceptableForExport,
 } from "./extraction-quality-gate";
 import {
-  detectAnalysisSourceWithApproval,
+  resolveCanonicalAnalysisSource,
   type AnalysisSource,
 } from "./analysis-source";
 import {
@@ -449,11 +449,11 @@ export async function computeTenderLifecycle(
 
   // ── Canonical analysis state ──────────────────────────────────────────────
   // resolveTenderAnalysisState looks at AiJob + AiAnalyzeChunk rows (not
-  // just tender.notes) and exposes a PARTIAL_NEEDS_RESUME state that the
-  // notes-based detectAnalysisSourceWithApproval cannot see. We use it
-  // ONLY to detect the partial-AI case — the existing analysisSource
-  // variable continues to drive the rest of the orchestrator so we don't
-  // accidentally weaken the regex-fallback audit-only guard.
+  // just tender.notes) and exposes a PARTIAL_NEEDS_RESUME state the
+  // notes-based detector cannot see. It is read here for the partial-AI
+  // branch; analysisSource below now resolves through the same state via
+  // resolveCanonicalAnalysisSource, so the two no longer describe the same
+  // tender differently.
   let canonicalAnalysisState: string | null = null;
   try {
     const { resolveTenderAnalysisState } = await import("./analysis-state-resolver");
@@ -496,7 +496,30 @@ export async function computeTenderLifecycle(
   });
 
   // ── Analysis source ────────────────────────────────────────────────────────
-  const analysisSource = await detectAnalysisSourceWithApproval(
+  // Resolver-first, matching lib/engine/export-readiness.ts.
+  //
+  // detectAnalysisSourceWithApproval reads tender.notes alone. A tender whose
+  // AI Analyze genuinely succeeded — proven by AiJob and AiAnalyzeChunk rows —
+  // but that carries no notes marker resolved to UNKNOWN here, and
+  // finalExportReady requires analysisSource === "AI". So this route published
+  // finalSubmissionStatus PARTIAL, with zero blockers and zero warnings, for a
+  // package the canonical readiness authority called READY and whose ZIP
+  // downloaded: an owner told the submission is not fully ready and given
+  // nothing to act on.
+  //
+  // The contradiction was visible inside one response — analysisStatus.source
+  // "UNKNOWN" beside analysisStatus.canonicalState "AI_SUCCEEDED", which this
+  // function already resolves a few lines above and previously used only to
+  // detect the partial case.
+  //
+  // resolveCanonicalAnalysisSource exists for exactly this and is documented
+  // for it; export-readiness.ts already reads it, which is why the two routes
+  // disagreed. The audit-only guard this call site was careful about is not
+  // weakened: the resolver maps only AI_SUCCEEDED to "AI", keeps
+  // HUMAN_APPROVED_FALLBACK and REGEX_FALLBACK_UNAPPROVED on their blocking
+  // sources, and defers to the notes detector for every other state and on any
+  // failure — so a fallback analysis still cannot become "AI" here.
+  const analysisSource = await resolveCanonicalAnalysisSource(
     client,
     tenderId,
     tender,
