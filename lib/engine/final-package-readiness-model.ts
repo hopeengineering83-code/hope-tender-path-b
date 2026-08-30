@@ -895,7 +895,19 @@ export async function getFinalPackageReadinessModel(
           where: { deletionStatus: "ACTIVE" },
           select: { id: true, extractedText: true, totalPages: true },
         },
-        generatedDocuments: { orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }] },
+        // SUPERSEDED rows are historical revisions, not documents this package
+        // has. Including them made documents.generated — and every count
+        // derived from its length — report a three-document package as six,
+        // and let a superseded revision win the manifest's last-resort
+        // per-key lookup when no live row matched. Every other surface
+        // (readiness-score, lifecycle, authority-review, the Export Hub) has
+        // always excluded them, which is why the published counts disagreed.
+        // The superseded rows remain queryable; they are simply not part of
+        // the current package.
+        generatedDocuments: {
+          where: { generationStatus: { not: "SUPERSEDED" } },
+          orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
+        },
         expertMatches: { include: { expert: { select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT } } },
         projectMatches: { include: { project: { select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT } } },
       },
