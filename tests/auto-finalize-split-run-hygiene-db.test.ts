@@ -123,8 +123,22 @@ describe("auto-finalize split-run hygiene — real PostgreSQL chain", { skip: !R
       assert.equal(result.validation.pending, 0, JSON.stringify(result.validation));
       assert.equal(result.pdfFinalization.finalized, 1, JSON.stringify(result.pdfFinalization));
       assert.equal(result.pdfFinalization.failed, 0, JSON.stringify(result.pdfFinalization));
-      assert.deepEqual(result.blockers, [], `unexpected auto-finalize blocker: ${result.blockers.join("; ")}`);
-      assert.equal(result.ok, true, `auto-finalize must converge: ${JSON.stringify(result)}`);
+      // Every stage this test is named for must finish clean. The fixture is a
+      // deliberately minimal tender — one document, no confirmed build plan, no
+      // submission metadata — so the canonical export gate legitimately refuses
+      // the package, and convergence now consults that gate rather than
+      // reporting success beside it. Asserting a bare empty list here would
+      // require the check to be removed, which is the false success this suite
+      // is meant to guard against.
+      const stageBlockers = result.blockers.filter(
+        (blocker: string) => !blocker.includes("export readiness check refuses this package"),
+      );
+      assert.deepEqual(stageBlockers, [], `unexpected auto-finalize stage blocker: ${stageBlockers.join("; ")}`);
+      assert.equal(
+        result.finalReadiness.evaluated,
+        true,
+        "the run must consult the canonical export gate before declaring convergence",
+      );
 
       const repaired = await prisma.generatedDocument.findUniqueOrThrow({
         where: { id: source.id },
@@ -201,8 +215,13 @@ describe("auto-finalize split-run hygiene — real PostgreSQL chain", { skip: !R
       assert.equal(second.pdfFinalization.failed, 0);
       assert.equal(second.pdfFinalization.finalized, 0, "retry must not re-render an existing valid PDF");
       assert.equal(second.pdfFinalization.skipped, 1);
-      assert.deepEqual(second.blockers, []);
-      assert.equal(second.ok, true);
+      // Same narrowing as the first run: the retry must reintroduce no stage
+      // blocker, while the minimal fixture's package remains one the canonical
+      // export gate legitimately refuses.
+      const secondStageBlockers = second.blockers.filter(
+        (blocker: string) => !blocker.includes("export readiness check refuses this package"),
+      );
+      assert.deepEqual(secondStageBlockers, [], `retry reintroduced a stage blocker: ${secondStageBlockers.join("; ")}`);
 
       const activePdfCount = await prisma.generatedDocument.count({
         where: {

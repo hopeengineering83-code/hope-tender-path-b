@@ -52,7 +52,37 @@ export type CanonicalValidationOutcome = {
 export type AutoFinalizeResult = {
   ok: boolean;
   sourceRepair: { checked: number; repaired: number; remaining: number };
-  exportRepair: { repaired: number; skipped: number; manualRequired: number };
+  /**
+   * The export-repair stage's own verdict, carried in full.
+   *
+   * This type used to declare only the three counters, while the value assigned
+   * to it also carried `finalExportReady` and the remaining blocker counts —
+   * the canonical answer to "can this tender export", computed by the very run
+   * that was about to report convergence. Because the field was not declared,
+   * the convergence evaluator could not see it, and so never asked. A run could
+   * therefore report ok:true with finalExportReady:false beside it.
+   */
+  exportRepair: {
+    repaired: number;
+    skipped: number;
+    manualRequired: number;
+    finalExportReady?: boolean;
+    remainingDocumentBlockers?: number;
+    remainingTenderLevelBlockers?: number;
+  };
+  /**
+   * The canonical export gate's verdict AFTER every stage of this run.
+   * `evaluated` is false only when the check itself could not be run, in which
+   * case convergence does not invent an answer either way.
+   */
+  finalReadiness: {
+    evaluated: boolean;
+    ok: boolean;
+    documentBlockers: number;
+    tenderLevelBlockers: number;
+    /** Blocker categories, so the failure names what is wrong rather than counting it. */
+    categories: string[];
+  };
   validation: CanonicalValidationOutcome;
   pdfFinalization: { finalized: number; skipped: number; failed: number };
   /**
@@ -168,6 +198,26 @@ export function evaluateAutoFinalizeConvergence(
   if (result.pdfValidation.pending > 0) {
     blockers.push(`readiness gate: ${result.pdfValidation.pending} auto-finalized PDF(s) are still unvalidated`);
   }
+  // The canonical export gate, consulted at the end of the run.
+  //
+  // Every check above could pass while the gate that actually decides whether a
+  // ZIP can be produced said no: the job was recorded SUCCEEDED, the owner was
+  // told the pipeline had converged, no further automatic stage ran, and the
+  // download was then refused — a silent dead end at the last stage.
+  //
+  // This must be the FINAL verdict, not the snapshot the repair stage returns.
+  // `exportRepair.finalExportReady` is computed part-way through, before
+  // canonical validation has run, so freshly regenerated documents are still
+  // PENDING when it is taken and it reports blockers that the very next stage
+  // clears. Reading it here would fail every ordinary successful run.
+  // Optional-chained: this evaluator is exported and is called with hand-built
+  // results in its own suites. A caller that never ran the check asserts
+  // nothing about readiness rather than crashing on a missing field.
+  if (result.finalReadiness?.evaluated && !result.finalReadiness.ok) {
+    blockers.push(
+      `readiness gate: the export readiness check refuses this package — ${result.finalReadiness.documentBlockers ?? 0} document blocker(s) and ${result.finalReadiness.tenderLevelBlockers ?? 0} tender-level blocker(s) remain${(result.finalReadiness.categories ?? []).length > 0 ? `: ${result.finalReadiness.categories.join(", ")}` : ""}`,
+    );
+  }
   if (result.packageReconciliation.missing > 0) {
     // Name WHY the package is still short. A shortfall that survives the
     // automatic generation stage is either a file the app must not invent (an
@@ -199,6 +249,7 @@ export async function runAutoFinalizeAfterGeneration(
     ok: true,
     sourceRepair: { checked: 0, repaired: 0, remaining: 0 },
     exportRepair: { repaired: 0, skipped: 0, manualRequired: 0 },
+    finalReadiness: { evaluated: false, ok: false, documentBlockers: 0, tenderLevelBlockers: 0, categories: [] },
     validation: { validated: 0, failed: 0, pending: 0, rejected: [] },
     pdfFinalization: { finalized: 0, skipped: 0, failed: 0 },
     pdfValidation: { validated: 0, failed: 0, pending: 0, rejected: [] },
@@ -513,6 +564,41 @@ export async function runAutoFinalizeAfterGeneration(
   // assumed from "no stage threw". A stage that completes while leaving
   // unresolved grounding, unvalidated documents, an unfinalizable PDF, or
   // manual-only work has not finished the job the user was promised.
+  // Ask the canonical gate whether this package can actually export, now that
+  // every stage has run. This is the same entry point the export-readiness
+  // route and the ZIP download use, so the job and the download cannot reach
+  // opposite conclusions about the same tender.
+  try {
+    const { getFinalSubmissionReadiness } = await import("../engine/final-submission-readiness");
+    // requireFileContent matches the ZIP download exactly. The job and the
+    // download must reach the same conclusion about the same tender, and the
+    // download is the authority that actually produces the archive.
+    const readiness = await getFinalSubmissionReadiness(prisma, { tenderId, userId, requireFileContent: true });
+    // A null verdict means the gate could not evaluate this tender at all.
+    // Convergence then asserts nothing about readiness rather than inventing
+    // either answer.
+    if (readiness) {
+      result.finalReadiness = {
+        evaluated: true,
+        ok: readiness.ok === true,
+        documentBlockers: readiness.documentBlockers?.length ?? 0,
+        tenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0,
+        categories: [
+          ...(readiness.tenderLevelBlockers ?? []),
+          ...(readiness.documentBlockers ?? []),
+        ]
+          .map((blocker) => String((blocker as { category?: unknown }).category ?? "UNKNOWN"))
+          .filter((value, index, all) => all.indexOf(value) === index)
+          .slice(0, 6),
+      };
+    }
+  } catch (error) {
+    logger.warn("[auto-finalize] final readiness evaluation failed; convergence will not assert readiness", {
+      tenderId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+  }
+
   result.blockers = evaluateAutoFinalizeConvergence(result);
   result.ok = result.blockers.length === 0;
 

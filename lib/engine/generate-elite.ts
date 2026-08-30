@@ -84,6 +84,7 @@ import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
 import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./build-plan";
 import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 import { computeBidStrategy } from "./bid-strategy";
 import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
@@ -3756,10 +3757,37 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // "EXPERT_CV_PACKAGE") so the user can download them individually or as
   // part of the ZIP bundle. They do NOT block the main proposal save above.
   // Each CV follows the standard World Bank / FIDIC CV template layout.
+  //
+  // A confirmed Build Plan is the authority on what the package contains, so a
+  // CV it does not name is not written at all.
+  //
+  // Writing them unconditionally put a file in the package the tender never
+  // asked for, and the export gate then hard-blocks on OUTSIDE_PLAN_DOCUMENTS,
+  // EXTRA_FILES and a readiness-count contradiction. An EOI whose plan names
+  // three files got a fourth document and could not reach a package on the
+  // automatic path at all — the owner's only route to a ZIP was the manual
+  // supersede control, which is exactly the manual step the workflow contract
+  // removes.
+  //
+  // Not creating the file is the safe direction. Superseding it afterwards was
+  // tried and rejected: when plan names and generated names disagree it can
+  // empty a package instead of trimming it, and it discards generated work on
+  // a judgement the plan has already made. Nothing here deletes anything, and
+  // a tender with no confirmed plan keeps today's behaviour, since there is
+  // nothing to be outside of.
+  const confirmedPlanForCvs = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId).catch(() => null);
+  const plannedCvFileNames = confirmedPlanForCvs?.ok
+    ? new Set(confirmedPlanForCvs.items.map((item: BuildPlanItem) => (item.exactFileName ?? "").trim().toLowerCase()).filter(Boolean))
+    : null;
+
   if (experts.length > 0) {
     const cvResults = await Promise.allSettled(
       experts.slice(0, 12).map(async (expert) => {
         const fileName = expertCvFileName(expert.fullName);
+        if (plannedCvFileNames && plannedCvFileNames.size > 0 && !plannedCvFileNames.has(fileName.trim().toLowerCase())) {
+          logger.info("[generate-elite] Skipping a CV the confirmed submission plan does not name", { fileName });
+          return;
+        }
         const cvBuffer = await generateExpertCvDocx({
           fullName: expert.fullName,
           title: (expert as { title?: string | null }).title,

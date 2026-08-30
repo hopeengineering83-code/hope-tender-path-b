@@ -122,7 +122,28 @@ test("manual AI Analyze and Run Engine once continue automatically to a real fin
     const finalizeJob = await prisma.aiJob.create({ data: { userId: user.id, tenderId: tender.id, jobType: "AUTO_FINALIZE", status: "RUNNING", input: "{}" } });
     const finalized = await runAutoFinalizeAfterGeneration(tender.id, user.id, finalizeJob.id);
     const finalizedAgain = await runAutoFinalizeAfterGeneration(tender.id, user.id, finalizeJob.id);
-    assert.equal(finalized.ok, true, finalized.blockers.join("; "));
+    // Every stage of the automatic continuation must finish clean.
+    //
+    // `ok` is no longer asserted bare. Convergence now consults the canonical
+    // export gate — the same getFinalSubmissionReadiness().ok the ZIP download
+    // enforces — and this fixture never confirms a Build Plan, so that gate
+    // legitimately refuses the package with FILE_NAMING, FILE_ORDER and
+    // SUBMISSION_INSTRUCTIONS_NOT_EXTRACTED. Asserting ok:true here previously
+    // passed only because convergence never asked the gate, which is exactly
+    // the false success being removed: the job reported the pipeline finished
+    // while the download would have answered 409.
+    //
+    // What this test proves is unchanged and still asserted below: the ZIP is
+    // assembled from real bytes and reopens with the expected entries.
+    const stageBlockers = finalized.blockers.filter(
+      (blocker: string) => !blocker.includes("export readiness check refuses this package"),
+    );
+    assert.deepEqual(stageBlockers, [], `unexpected auto-finalize stage blocker: ${stageBlockers.join("; ")}`);
+    assert.equal(
+      finalized.finalReadiness.evaluated,
+      true,
+      "convergence must consult the same gate the ZIP download enforces",
+    );
     assert.equal(finalizedAgain.pdfFinalization.finalized, 0);
 
     await prisma.generatedDocument.createMany({ data: [

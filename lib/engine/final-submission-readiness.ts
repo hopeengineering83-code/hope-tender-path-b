@@ -360,6 +360,38 @@ export function parseAdvisoryGapTitle(title: string): string | null {
   return title.slice(ADVISORY_GAP_PREFIX.length);
 }
 
+/**
+ * Give the quality scorer the bytes it is about to judge.
+ *
+ * A document row selected without `fileContent` has no visible text to
+ * extract, and a scorer handed no text returns QUALITY_FAILED — a verdict
+ * about content quality reached without consulting any content. Rows that
+ * already carry their bytes, or that live in external storage (the scorer
+ * reads those through the storage adapter), are returned untouched.
+ *
+ * Scoped to the final export candidates, which is a handful of rows, so the
+ * reason the projection omits blobs everywhere else still holds.
+ */
+async function loadVisibleTextInputsForQuality<T extends { id: string; fileContent?: string | null; storagePath?: string | null }>(
+  client: PrismaClient,
+  candidates: T[],
+): Promise<T[]> {
+  const needsBytes = candidates.filter(
+    (doc) => !doc.fileContent && !(doc.storagePath && doc.storagePath.trim().length > 0),
+  );
+  if (needsBytes.length === 0) return candidates;
+
+  const loaded = await client.generatedDocument.findMany({
+    where: { id: { in: needsBytes.map((doc) => doc.id) } },
+    select: { id: true, fileContent: true },
+  }).catch(() => [] as Array<{ id: string; fileContent: string | null }>);
+  const byId = new Map(loaded.map((row) => [row.id, row.fileContent]));
+
+  return candidates.map((doc) =>
+    byId.has(doc.id) ? ({ ...doc, fileContent: byId.get(doc.id) ?? null } as T) : doc,
+  );
+}
+
 async function loadAdvisoryResolutions(client: PrismaClient, tenderId: string): Promise<Map<string, { resolved: boolean; note: string | null }>> {
   const rows = await client.complianceGap.findMany({
     where: { tenderId, severity: "ADVISORY", title: { startsWith: ADVISORY_GAP_PREFIX } },
@@ -709,7 +741,28 @@ export async function getFinalSubmissionReadiness(
   // for all generated DOCX files.
   // Scored through lib/engine/current-document-quality.ts so the Document
   // Validator panel and this gate cannot score the same document differently.
-  const qualityReports = await assessCurrentDocumentQualityBatch(finalCandidates as any[], tender.requirements);
+  //
+  // The bytes must be loaded for exactly these candidates before scoring.
+  //
+  // `fileContent` is selected only when the caller asked for it, and every
+  // readiness-style caller passes requireFileContent=false to avoid pulling
+  // large blobs. The scorer then received rows with no content, extracted no
+  // visible text, and returned QUALITY_FAILED — for having read nothing. So
+  // the export gate reported "3 generated document(s) failed the quality gate"
+  // about documents the Document Validator panel, which loads the bytes,
+  // scores 100/100 PASSED.
+  //
+  // The two surfaces already share the scorer precisely so they cannot
+  // disagree; they were sharing the function and not the input. The
+  // disagreement only appears at the end of the pipeline, once documents are
+  // validated and therefore become final candidates, which is exactly when it
+  // blocks the ZIP — and it blocks with a verdict about content quality that no
+  // content was consulted for.
+  //
+  // This loads only the final candidates, not every generated document, so the
+  // blob-size reason the projection exists for still holds everywhere else.
+  const qualityInputs = await loadVisibleTextInputsForQuality(client, finalCandidates as any[]);
+  const qualityReports = await assessCurrentDocumentQualityBatch(qualityInputs as any[], tender.requirements);
   const qualityFailed = countQualityFailed(qualityReports);
 
   // ── Metadata completeness gate (Part 5) ──────────────────────────────────
