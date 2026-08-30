@@ -1,5 +1,5 @@
 import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
-import { isCompanyProfileDocName } from "../../../../../lib/engine/document-type-normalizer";
+import { isCapabilityStatementDocName, isCompanyProfileDocName } from "../../../../../lib/engine/document-type-normalizer";
 import { NextResponse } from "next/server";
 import { Document, HeadingLevel, Packer, Paragraph, TextRun } from "docx";
 import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
@@ -154,7 +154,38 @@ function supportSections(docName: string, context: { tenderTitle: string; requir
     { title: "Technical Methodology — Tender Requirements Addressed", lines: context.requirements.slice(0, 14) },
     { title: "Work Plan", lines: ["Each tender scope item is mapped to a deliverable, a responsible expert, a quality-review gate, and a submission milestone.", "Senior technical review and final compliance verification are applied before each deliverable issue.", "The detailed methodology, phasing, and deliverables are presented in the main Technical Proposal document; this support file is the methodology cover for package indexing."] },
   ];
-  if (kind === "COMPANY_PROFILE") return [{ title: "Company Profile and Capability Statement — Tender Alignment", lines: context.requirements.slice(0, 12) }, { title: "Capability Evidence", lines: [...context.experts.slice(0, 8), ...context.projects.slice(0, 8)].filter(Boolean) }];
+  if (kind === "COMPANY_PROFILE") {
+    // A tender may require a Company Profile AND a Capability Statement as two
+    // separate deliverables. Both are company-written, so both classify the
+    // same way — and both used to be written from this one layout, so the
+    // package shipped two files identical apart from the filename echoed
+    // inside them. An evaluator opening the Capability Statement found the
+    // Company Profile.
+    //
+    // A capability statement answers "what has this firm proven it can do", so
+    // it leads with the evidence and maps requirements to it. The profile
+    // leads with the requirement alignment and cites evidence in support. The
+    // classification rule is untouched; only the layout differs.
+    if (isCapabilityStatementDocName(docName)) {
+      const evidence = [...context.experts.slice(0, 10), ...context.projects.slice(0, 10)].filter(Boolean);
+      return [
+        {
+          title: "Demonstrated Capability — Source-Verified Evidence",
+          // No claim is made about evidence that does not exist. Asserting that
+          // material is "attached separately" when nothing was linked would be
+          // a fabricated statement in a submitted document.
+          lines: evidence.length
+            ? evidence
+            : ["No source-verified expert or project evidence has been linked to this tender yet, so this statement is limited to the requirement mapping below."],
+        },
+        { title: "Requirements This Capability Addresses", lines: context.requirements.slice(0, 12) },
+      ];
+    }
+    return [
+      { title: "Company Profile and Capability Statement — Tender Alignment", lines: context.requirements.slice(0, 12) },
+      { title: "Capability Evidence", lines: [...context.experts.slice(0, 8), ...context.projects.slice(0, 8)].filter(Boolean) },
+    ];
+  }
   if (kind === "SECTOR_TECHNICAL_SCOPE") return [{ title: "Tender Scope Items Addressed in This Package", lines: context.requirements.slice(0, 16) }, { title: "Linked Evidence", lines: [...context.experts.slice(0, 6), ...context.projects.slice(0, 6)].filter(Boolean) }];
   if (kind === "FINANCIAL_PLACEHOLDER") return [{ title: "Required Original Documents", lines: ["Audited financial statements for the years specified in the tender.", "Tax / VAT certificates valid at submission date.", "Bank reference letter or proof of liquid capacity if requested by the tender.", "Annual turnover declaration in the format the tender prescribes."] }, { title: "Insertion Instructions", lines: placeholderIntro() }, { title: "No Financial Offer Included", lines: ["This is a TECHNICAL submission. No financial offer, fee schedule, rate, or price is included in this file or anywhere in the technical package."] }];
   if (kind === "LEGAL_PLACEHOLDER") return [{ title: "Required Original Documents", lines: ["Business registration certificate.", "Tax Identification Number (TIN) certificate.", "VAT registration certificate.", "Trade / professional licence valid at submission date.", "Sector-specific authority registration (e.g., Construction Authority grade certificate).", "Any other eligibility documents the tender prescribes."] }, { title: "Insertion Instructions", lines: placeholderIntro() }];

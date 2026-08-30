@@ -100,7 +100,14 @@ describe("differential: reconciler and generate route agree through the shared r
   });
 
   it("the generate route's COMPANY_PROFILE branch IS the shared predicate", () => {
-    assert.match(GENERATE_ROUTE, /import \{ isCompanyProfileDocName \} from "\.\.\/\.\.\/\.\.\/\.\.\/\.\.\/lib\/engine\/document-type-normalizer"/);
+    // The property is that the classifier comes from the shared module, not
+    // that the import statement has one name in it. A layout-only companion
+    // predicate now travels with it, and pinning the exact statement text made
+    // adding one look like a regression of a rule it does not touch.
+    assert.match(
+      GENERATE_ROUTE,
+      /import \{[^}]*\bisCompanyProfileDocName\b[^}]*\} from "\.\.\/\.\.\/\.\.\/\.\.\/\.\.\/lib\/engine\/document-type-normalizer"/,
+    );
     assert.match(GENERATE_ROUTE, /if \(isCompanyProfileDocName\(docName\)\) return "COMPANY_PROFILE"/);
     assert.doesNotMatch(GENERATE_ROUTE, /if \(`?\/company profile\|capability statement\/`?\.test\(name\)\) return "COMPANY_PROFILE"/);
   });

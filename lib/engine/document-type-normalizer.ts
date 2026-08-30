@@ -218,6 +218,29 @@ export function planDocumentReclassification(doc: {
 export const COMPANY_PROFILE_DOC_NAME_RX =
   /(?:^|[^a-z0-9])(?:company|firm|organi[sz]ational)[\s._-]*profile\b|(?:^|[^a-z0-9])about[\s._-]*us\b|(?:^|[^a-z0-9])capability[\s._-]*statement\b/i;
 
+/**
+ * The capability-statement half of the rule above.
+ *
+ * Both names classify as COMPANY_PROFILE, and that is correct: both are
+ * documents the firm writes from its own evidence, not forms the client
+ * issues. But a tender may require BOTH as separate deliverables, and they
+ * were then written from the same section layout — so the package shipped two
+ * files whose bodies were byte-for-byte identical apart from the filename
+ * echoed inside them. An evaluator opening the Capability Statement found the
+ * Company Profile.
+ *
+ * This narrows the layout only. Classification, and therefore which producer
+ * writes the document, is unchanged, and no gate, envelope or integrity rule
+ * consults it — so the two rules cannot drift into disagreeing about which
+ * files are company-written, which is the failure the note above describes.
+ */
+export const CAPABILITY_STATEMENT_DOC_NAME_RX =
+  /(?:^|[^a-z0-9])capability[\s._-]*statement\b/i;
+
+export function isCapabilityStatementDocName(name: string | null | undefined): boolean {
+  return CAPABILITY_STATEMENT_DOC_NAME_RX.test(name ?? "");
+}
+
 export function isCompanyProfileDocName(name: string | null | undefined): boolean {
   return COMPANY_PROFILE_DOC_NAME_RX.test(name ?? "");
 }
