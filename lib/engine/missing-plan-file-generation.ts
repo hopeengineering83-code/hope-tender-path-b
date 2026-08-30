@@ -40,6 +40,7 @@ import {
   withTransactionalGenerationGate,
 } from "./transactional-generation-gate";
 import { logger } from "../observability";
+import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
 
 export type MissingPlanFileGenerationResult = {
   ok: boolean;
@@ -189,39 +190,105 @@ async function replacementControlContent(tenderTitle: string, fileName: string, 
   return buffer.toString("base64");
 }
 
+/**
+ * Source-verified company evidence for a document this function is about to
+ * write, or an empty set when the vault holds none it may quote.
+ *
+ * The same guard the generate route uses — canUseVaultRecord(..., "GENERATION")
+ * rather than a raw trustLevel check — so a stale or never-provenance-backed
+ * record cannot be quoted as evidence in a submittable document, and a
+ * soft-deleted one never surfaces at all.
+ */
+async function companyEvidenceFor(
+  prisma: PrismaClient,
+  tenderId: string,
+): Promise<{ experts: string[]; projects: string[] }> {
+  try {
+    const tender = await prisma.tender.findUnique({
+      where: { id: tenderId },
+      select: {
+        expertMatches: {
+          where: { isSelected: true },
+          include: { expert: { select: { ...VAULT_REVIEW_CONSUMER_SELECT.EXPERT, profile: true, deletedAt: true } } },
+          orderBy: { score: "desc" },
+        },
+        projectMatches: {
+          where: { isSelected: true },
+          include: { project: { select: { ...VAULT_REVIEW_CONSUMER_SELECT.PROJECT, summary: true, deletedAt: true } } },
+          orderBy: { score: "desc" },
+        },
+      },
+    });
+    if (!tender) return { experts: [], projects: [] };
+    const experts = tender.expertMatches
+      .filter((m) => m.expert && !m.expert.deletedAt && canUseVaultRecord(m.expert, "GENERATION"))
+      .map((m) => `${m.expert!.fullName}${m.expert!.title ? ` — ${m.expert!.title}` : ""}${m.expert!.yearsExperience ? ` | ${m.expert!.yearsExperience}+ years` : ""}`);
+    const projects = tender.projectMatches
+      .filter((m) => m.project && !m.project.deletedAt && canUseVaultRecord(m.project, "GENERATION"))
+      .map((m) => `${m.project!.name}${m.project!.clientName ? ` — ${m.project!.clientName}` : ""}${m.project!.country ? ` | ${m.project!.country}` : ""}`);
+    return { experts, projects };
+  } catch {
+    // Evidence is additive here. A failure to read it must not stop the
+    // automatic chain from producing the file the confirmed plan requires.
+    return { experts: [], projects: [] };
+  }
+}
+
+/**
+ * A company-produced narrative file for the confirmed plan.
+ *
+ * This document ships. It used to carry an internal worksheet — "Draft
+ * technical response … Proposed response structure … Reviewer completion
+ * checklist … Replace this draft with the final generated narrative or
+ * complete the draft manually before marking READY_FOR_EXPORT" — and on the
+ * automatic path that text reached the procuring entity inside the Final ZIP,
+ * proven by driving Run AI Analyze and Run Engine and downloading what came
+ * out.
+ *
+ * The generate route already had this fixed for the path an owner clicks
+ * through: it materialises the planned rows so they are written from vault
+ * evidence, and its own comment calls the worksheet "worse than nothing". The
+ * automatic chain calls this module directly and never reaches that code, so
+ * the fix existed on one path and not on the one the owner contract makes
+ * normal.
+ *
+ * Instructions addressed to the bid team or a reviewer are removed rather than
+ * reworded: there is no version of "replace this draft" that belongs in a
+ * document an evaluator opens. What remains is the tender's own requirements
+ * and the company's own source-verified evidence — real content, or an honest
+ * statement that a section has none yet.
+ */
 async function narrativeDraftContent(
   tenderTitle: string,
   fileName: string,
   documentType: string,
   requirements: RequirementLike[],
+  evidence: { experts: string[]; projects: string[] } = { experts: [], projects: [] },
 ) {
   const related = matchingRequirements(fileName, requirements);
   const children: Paragraph[] = [
     para(fileName, true),
     para(`Tender: ${tenderTitle}`),
-    heading("Draft technical response"),
-    para("This document has been generated from the current tender analysis and submission plan. It is a working draft for review, validation, and final approval before export."),
     subheading("Tender requirements addressed"),
   ];
   if (related.length === 0) {
-    children.push(bullet("No requirement text is currently linked to this planned document. Re-run AI Analyze or repair requirement extraction before final approval."));
+    children.push(para("No requirement from the tender source is currently linked to this file."));
   } else {
     for (const requirement of related) {
       children.push(bullet(`${requirement.title}${requirement.description ? ` — ${requirement.description}` : ""}`.slice(0, 700)));
     }
   }
-  children.push(
-    subheading("Proposed response structure"),
-    bullet("Confirm the assignment objectives, client priorities, location, and required deliverables using the tender source text."),
-    bullet("Describe the methodology in the same order as the tender scope, including responsibility assignment, quality gates, and deliverable controls."),
-    bullet("Reference only reviewed company evidence, selected experts, and selected projects approved in the Knowledge Vault."),
-    bullet("Keep technical and financial content separated. Pricing, rates, BOQ, and commercial terms must not appear in a technical-envelope document."),
-    subheading("Reviewer completion checklist"),
-    bullet("Replace this draft with the final generated narrative or complete the draft manually before marking READY_FOR_EXPORT."),
-    bullet("Validate that every mandatory requirement covered by this file has confirmed evidence and source traceability."),
-    bullet("Run document validation again after editing and before final ZIP packaging."),
-    para(`Document type: ${documentType}`),
-  );
+  if (evidence.experts.length > 0) {
+    children.push(subheading("Key personnel"));
+    for (const expert of evidence.experts.slice(0, 20)) children.push(bullet(expert));
+  }
+  if (evidence.projects.length > 0) {
+    children.push(subheading("Relevant project experience"));
+    for (const project of evidence.projects.slice(0, 20)) children.push(bullet(project));
+  }
+  if (evidence.experts.length === 0 && evidence.projects.length === 0) {
+    children.push(para("No source-verified personnel or project evidence has been linked to this tender yet."));
+  }
   const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }] }));
   return buffer.toString("base64");
 }
@@ -231,13 +298,14 @@ async function buildPlannedRowContent(args: {
   fileName: string;
   documentType: string;
   requirements: RequirementLike[];
+  evidence?: { experts: string[]; projects: string[] };
 }) {
   const replaceWithOriginal = needsOriginalReplacement(args.fileName, args.documentType);
   const isSubmissionRules = args.documentType === "SUBMISSION_RULES"
     || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(args.fileName);
   if (isNarrativeDraft(args.fileName, args.documentType)) {
     return {
-      fileContent: await narrativeDraftContent(args.tenderTitle, args.fileName, args.documentType, args.requirements),
+      fileContent: await narrativeDraftContent(args.tenderTitle, args.fileName, args.documentType, args.requirements, args.evidence),
       format: "DOCX",
       validationStatus: "NEEDS_REVALIDATION",
       reviewStatus: "NEEDS_REVIEW",
@@ -426,6 +494,10 @@ export async function generateMissingPlanFiles(args: {
 
   const preparedMissing: PreparedDocument[] = [];
   const skipped: string[] = [];
+  // Read once for every file this run writes: a company-produced narrative
+  // carries the firm's own source-verified personnel and project evidence,
+  // which is the material those files exist to present.
+  const evidence = await companyEvidenceFor(prisma, tenderId);
   for (const file of missing) {
     const documentType = documentTypeFor(file.exactFileName, file.documentType);
     const generated = await buildPlannedRowContent({
@@ -433,6 +505,7 @@ export async function generateMissingPlanFiles(args: {
       fileName: file.exactFileName,
       documentType,
       requirements: tender.requirements,
+      evidence,
     });
     // A file the app must not invent — a priced financial proposal, a
     // tender-issued form — still needs a row, as PLANNED awaiting its official
@@ -465,6 +538,7 @@ export async function generateMissingPlanFiles(args: {
       fileName,
       documentType,
       requirements: tender.requirements,
+      evidence,
     });
     preparedPlanned.push({
       fileName,
