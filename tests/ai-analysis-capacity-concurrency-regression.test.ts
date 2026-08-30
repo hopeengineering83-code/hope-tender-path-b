@@ -9,34 +9,31 @@ import {
   planAnalysisChunks,
 } from "../lib/ai";
 import { resetProviderHealth } from "../lib/ai-provider-health";
+import { providerEnv, isolateProviderEnv } from "./helpers/provider-env";
 
-const ENV_KEYS = [
-  "GEMINI_API_KEY", "GEMINI_ANALYSIS_MODEL", "GROQ_API_KEY", "GROQ_MODEL", "GROQ_PROPOSAL_MODEL", "GROQ_ANALYSIS_MODEL", "GROQ_FAST_MODEL",
-  "MISTRAL_API_KEY", "MISTRAL_ANALYSIS_MODEL",
-] as const;
-let saved: Record<string, string | undefined> = {};
+// Every provider-scoped variable is cleared, not a hand-written list of nine.
+// The list previously named only the Gemini/Groq/Mistral keys, so a leftover
+// CEREBRAS_API_KEY or CEREBRAS_BASE_URL on the machine running the suite
+// changed which providers these cases saw as configured.
+let restoreProviderEnv: (() => void) | null = null;
 let realFetch: typeof fetch;
 
 beforeEach(() => {
-  saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
-  for (const key of ENV_KEYS) delete process.env[key];
+  restoreProviderEnv = isolateProviderEnv();
   realFetch = globalThis.fetch;
   resetProviderHealth();
 });
 
 afterEach(() => {
-  for (const key of ENV_KEYS) {
-    if (saved[key] === undefined) delete process.env[key];
-    else process.env[key] = saved[key];
-  }
+  restoreProviderEnv?.();
+  restoreProviderEnv = null;
   globalThis.fetch = realFetch;
   resetProviderHealth();
 });
 
 describe("adaptive AI Analyze request shape", () => {
   it("CASE A: keeps one request when all configured early extraction models can accept it", () => {
-    const env = {
-      ...process.env,
+    const env = providerEnv({
       GEMINI_API_KEY: "test-key",
       GEMINI_ANALYSIS_MODEL: "gemini-3.5-flash",
       GROQ_API_KEY: "test-key",
@@ -44,7 +41,7 @@ describe("adaptive AI Analyze request shape", () => {
       GROQ_ANALYSIS_MODEL: "openai/gpt-oss-120b",
       MISTRAL_API_KEY: "test-key",
       MISTRAL_ANALYSIS_MODEL: "mistral-small-latest",
-    };
+    });
     const source = "consultancy supervision requirement. ".repeat(400).slice(0, 12_122).padEnd(12_122, "x");
     const plan = planAnalysisChunks(source, env);
 
@@ -56,8 +53,7 @@ describe("adaptive AI Analyze request shape", () => {
   });
 
   it("CASE B: restores Groq through sequential chunks when a monolith exceeds its exact TPM profile", () => {
-    const env = {
-      ...process.env,
+    const env = providerEnv({
       GEMINI_API_KEY: "test-key",
       GEMINI_ANALYSIS_MODEL: "gemini-3.5-flash",
       GROQ_API_KEY: "test-key",
@@ -65,7 +61,7 @@ describe("adaptive AI Analyze request shape", () => {
       GROQ_ANALYSIS_MODEL: "openai/gpt-oss-120b",
       MISTRAL_API_KEY: "test-key",
       MISTRAL_ANALYSIS_MODEL: "mistral-small-latest",
-    };
+    });
     // Represents the retained source plus canonical company/evidence context.
     // The former ANY-provider policy kept this monolithic because Gemini and
     // Mistral fit, even though it removed canonical rank #2 from the chain.
@@ -80,11 +76,10 @@ describe("adaptive AI Analyze request shape", () => {
   });
 
   it("CASE C/D: large sources are lossless and retain final-chunk mandatory requirements", () => {
-    const env = {
-      ...process.env,
+    const env = providerEnv({
       GEMINI_API_KEY: "test-key",
       GEMINI_ANALYSIS_MODEL: "gemini-3.5-flash",
-    };
+    });
     const source = `${"large source section. ".repeat(4_000)}[PAGE:FINAL] MANDATORY unusual signed schedule`;
     const plan = planAnalysisChunks(source, env);
     const reconstructed = plan.chunks.reduce(
@@ -97,16 +92,26 @@ describe("adaptive AI Analyze request shape", () => {
   });
 
   it("CASE E: a later huge-context provider cannot force a monolith that excludes configured Groq", () => {
-    const env = {
-      ...process.env,
+    const env = providerEnv({
       GROQ_API_KEY: "test-key",
       GROQ_PROPOSAL_MODEL: "openai/gpt-oss-120b",
       GROQ_ANALYSIS_MODEL: "openai/gpt-oss-120b",
       OPENAI_API_KEY: "test-key",
       OPENAI_ANALYSIS_MODEL: "gpt-4.1",
-    };
+    });
     const plan = planAnalysisChunks("x".repeat(20_000), env);
-    assert.deepEqual(plan.configuredProviders.slice(0, 2), ["groq", "openai"]);
+    // Exactly two providers are configured, so the whole list is assertable.
+    // The relative claim is stated too, because that is what this case is
+    // about: groq is canonical rank 2 and openai rank 7, and no later
+    // huge-context provider may reorder them. Written as an absolute prefix
+    // alone, this assertion used to fail whenever the machine running the
+    // suite had a third provider configured — which put that provider at its
+    // own correct canonical position, not at a wrong one.
+    assert.deepEqual(plan.configuredProviders, ["groq", "openai"]);
+    assert.ok(
+      plan.configuredProviders.indexOf("groq") < plan.configuredProviders.indexOf("openai"),
+      "groq precedes openai in the canonical order regardless of what else is configured",
+    );
     assert.equal(plan.fullRequestEligibleProviders.includes("groq"), false);
     assert.equal(plan.chunkEligibleProviders.includes("groq"), true);
     assert.equal(plan.reason, "EARLY_CHAIN_DIVERSITY");
