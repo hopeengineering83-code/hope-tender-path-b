@@ -250,6 +250,36 @@ dbDescribe("re-running Run Engine after a successful proposal", () => {
     assert.equal(count, 1);
   });
 
+  it("recovers a finalize stage whose worker never came back", async () => {
+    // A worker killed mid-invocation leaves the row RUNNING forever, and a
+    // RUNNING row is not claimable — so without recovery the pipeline
+    // dead-ends here in exactly the way the Engine gate did, one stage lower.
+    // The shared staleness rule decides, so a live finalization is untouched;
+    // the ALREADY_RUNNING case above proves that, its row having been claimed
+    // moments earlier and therefore still live.
+    await prisma.aiJob.update({
+      where: { id: strandedFinalizeJobId },
+      data: {
+        status: "RUNNING",
+        startedAt: new Date(Date.now() - 60 * 60 * 1000),
+        finishedAt: null,
+        output: null,
+      },
+    });
+
+    const finalize = await ensureAutoFinalizeContinuationJob({ tenderId, userId, analysisRevision: REVISION });
+    assert.equal(finalize.jobId, strandedFinalizeJobId, "recovery re-arms the same job");
+    assert.equal(finalize.state, "REARMED");
+    assert.equal(finalize.claimable, true);
+
+    const claimed = await claimJobForCaller({ jobType: "AUTO_FINALIZE", tenderId, userId, global: false });
+    assert.ok(claimed, "the recovered stage must be claimable by a worker");
+    assert.equal(claimed.id, strandedFinalizeJobId);
+
+    const count = await prisma.aiJob.count({ where: { tenderId, jobType: "AUTO_FINALIZE" } });
+    assert.equal(count, 1, "recovery must not leave a second finalize job behind");
+  });
+
   it("gives a changed analysis revision its own finalize stage", async () => {
     // Idempotency is per revision, not per tender. New source material must
     // still be able to produce a new package.

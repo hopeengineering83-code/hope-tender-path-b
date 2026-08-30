@@ -114,6 +114,12 @@ export interface ProposalContinuationRepository {
    * never has to assume a re-arm it did not observe.
    */
   rearmFailedProposal(jobId: string, attempts: number): Promise<boolean>;
+  /**
+   * Close a RUNNING row whose worker never came back, using the shared
+   * staleness rule. Returns whether it was closed; a live run returns false and
+   * is left strictly alone.
+   */
+  recoverAbandonedProposal(jobId: string): Promise<boolean>;
 }
 
 function parseObject(value: string | null | undefined): Record<string, unknown> {
@@ -267,6 +273,11 @@ export const prismaProposalContinuationRepository: ProposalContinuationRepositor
     return { ...job, created: !existing };
   },
 
+  async recoverAbandonedProposal(jobId) {
+    const { recoverIfStuck } = await import("../ai-jobs");
+    return recoverIfStuck(jobId).catch(() => false);
+  },
+
   async rearmFailedProposal(jobId, attempts) {
     if (attempts >= MAX_DURABLE_STAGE_ATTEMPTS) return false;
     const result = await prisma.aiJob.updateMany({
@@ -358,8 +369,20 @@ export async function continueSuccessfulEngineToProposal(
   }
 
   if (status === "RUNNING") {
-    // Another worker holds it. The transactional claim would refuse this row
-    // anyway; saying so plainly stops the caller waking a worker for nothing.
+    // Another worker may hold it — or a worker killed mid-invocation left it
+    // RUNNING forever, in which case nothing can ever claim it again and the
+    // rerun dead-ends here instead of at the stage below.
+    //
+    // The shared staleness rule decides which it is, so a live generation is
+    // never interrupted. A closed one becomes FAILED and is re-armed within
+    // the same bounded budget as any other failure.
+    const recovered = await repository.recoverAbandonedProposal(proposal.id);
+    const rearmed = recovered
+      ? await repository.rearmFailedProposal(proposal.id, proposal.retries ?? 0)
+      : false;
+    if (rearmed) {
+      return { queued: true, state: "REARMED", jobId: proposal.id, reused: true, analysisRevision };
+    }
     return {
       queued: false,
       state: "ALREADY_RUNNING",

@@ -31,10 +31,13 @@ function fakeRepository(args?: {
   readiness?: { ok: boolean; blockerCode?: string; blockerDetail?: string };
   initialStatus?: string;
   initialRetries?: number;
+  /** Treat a RUNNING row as a worker that never came back. */
+  abandoned?: boolean;
 }) {
   const jobs = new Map<string, { id: string; status: string; retries: number }>();
   let creates = 0;
   let rearms = 0;
+  let recoveries = 0;
   const repository: ProposalContinuationRepository = {
     async loadEngine() {
       return args?.engine === undefined ? eligibleEngine() : args.engine;
@@ -52,6 +55,20 @@ function fakeRepository(args?: {
       };
       jobs.set(runId, created);
       return { ...created, created: true };
+    },
+    async recoverAbandonedProposal(jobId) {
+      // The fake stands in for the shared staleness rule: a row this test put
+      // in RUNNING is treated as live unless the test says otherwise, so a
+      // live generation is never silently taken away from its worker.
+      recoveries += 1;
+      if (!args?.abandoned) return false;
+      for (const [runId, job] of jobs) {
+        if (job.id === jobId && job.status === "RUNNING") {
+          jobs.set(runId, { ...job, status: "FAILED" });
+          return true;
+        }
+      }
+      return false;
     },
     async rearmFailedProposal(jobId, attempts) {
       rearms += 1;
@@ -72,6 +89,7 @@ function fakeRepository(args?: {
     repository,
     get creates() { return creates; },
     get rearms() { return rearms; },
+    get recoveries() { return recoveries; },
     jobs,
   };
 }
@@ -203,5 +221,41 @@ describe("worker wiring", () => {
     assert.match(source, /nextJobType = "PROPOSAL_GENERATION"/);
     assert.match(source, /generationBlockerCode = continuation\.blockerCode/);
     assert.match(source, /continuationReason = "PROPOSAL_CONTINUATION_ERROR"/);
+  });
+});
+
+describe("an abandoned generation does not dead-end the rerun", () => {
+  it("leaves a live generation to its worker", async () => {
+    // A RUNNING row that is genuinely live must be reported as busy and never
+    // taken away mid-flight, however many times Run Engine is pressed.
+    const fake = fakeRepository({ initialStatus: "RUNNING" });
+    const result = await continueSuccessfulEngineToProposal("engine-1", fake.repository);
+    assert.equal(result.queued, false);
+    assert.equal(!result.queued && result.state, "ALREADY_RUNNING");
+    assert.equal([...fake.jobs.values()][0].status, "RUNNING");
+    assert.equal(fake.creates, 1, "no duplicate is created for a busy stage");
+  });
+
+  it("recovers a generation whose worker never came back", async () => {
+    // Without this the rerun dead-ends one stage lower than the Engine gate
+    // did: generation is reported busy by a worker that died hours ago, and a
+    // RUNNING row can never be claimed.
+    const fake = fakeRepository({ initialStatus: "RUNNING", abandoned: true });
+    const result = await continueSuccessfulEngineToProposal("engine-1", fake.repository);
+    assert.equal(result.queued, true, "the owner's click must produce claimable work");
+    assert.equal(result.queued && result.state, "REARMED");
+    assert.equal([...fake.jobs.values()][0].status, "QUEUED");
+    assert.equal(fake.creates, 1, "recovery re-arms the same job, it does not mint another");
+  });
+
+  it("still stops at the shared attempt budget when recovering", async () => {
+    const fake = fakeRepository({
+      initialStatus: "RUNNING",
+      abandoned: true,
+      initialRetries: MAX_DURABLE_STAGE_ATTEMPTS,
+    });
+    const result = await continueSuccessfulEngineToProposal("engine-1", fake.repository);
+    assert.equal(result.queued, false);
+    assert.equal(!result.queued && result.state, "ALREADY_RUNNING");
   });
 });

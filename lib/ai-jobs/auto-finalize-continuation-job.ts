@@ -74,6 +74,12 @@ export interface AutoFinalizeContinuationRepository {
     parentJobId: string | null;
   }): Promise<{ id: string; status: string; retries: number; created: boolean }>;
   rearmJob(jobId: string, attempts: number): Promise<boolean>;
+  /**
+   * Close a RUNNING row whose worker never came back, using the shared
+   * staleness rule. Returns whether it was closed; a live run returns false and
+   * is left strictly alone.
+   */
+  recoverAbandoned(jobId: string): Promise<boolean>;
 }
 
 function parseObject(value: string | null | undefined): Record<string, unknown> {
@@ -144,6 +150,11 @@ const prismaRepository: AutoFinalizeContinuationRepository = {
       select: { id: true, status: true, retries: true },
     });
     return { ...job, created: !existing };
+  },
+
+  async recoverAbandoned(jobId) {
+    const { recoverIfStuck } = await import("../ai-jobs");
+    return recoverIfStuck(jobId).catch(() => false);
   },
 
   async rearmJob(jobId, attempts) {
@@ -230,7 +241,23 @@ async function describe(
     return { jobId: job.id, state: "ALREADY_SUCCEEDED", claimable: false, reused };
   }
   if (status === "RUNNING") {
-    return { jobId: job.id, state: "ALREADY_RUNNING", claimable: false, reused };
+    // A worker killed mid-invocation leaves this row RUNNING forever, and a
+    // RUNNING row is not claimable — so without this the pipeline dead-ends one
+    // stage lower down in exactly the way the Engine gate did: Run Engine
+    // succeeds, generation is recognised as already done, and the finalize
+    // stage is reported as busy by a worker that died hours ago.
+    //
+    // The shared staleness rule decides, so a genuinely live finalization is
+    // left strictly alone and is never interrupted. A closed one becomes FAILED
+    // and is then re-armed within the same bounded budget as any other failure.
+    const recovered = await repository.recoverAbandoned(job.id);
+    if (!recovered) {
+      return { jobId: job.id, state: "ALREADY_RUNNING", claimable: false, reused };
+    }
+    const rearmed = await repository.rearmJob(job.id, job.retries ?? 0);
+    return rearmed
+      ? { jobId: job.id, state: "REARMED", claimable: true, reused }
+      : { jobId: job.id, state: "NOT_CLAIMABLE", claimable: false, reused };
   }
 
   const rearmed = await repository.rearmJob(job.id, job.retries ?? 0);
