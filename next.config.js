@@ -43,6 +43,13 @@ const nextConfig = {
   // Keep server-only packages external where their native/runtime behavior
   // requires it; do not remove active providers or document libraries here.
   serverExternalPackages: ["pdf-parse", "pdf2json", "pdfjs-dist", "mammoth", "bcryptjs", "@e965/xlsx", "@anthropic-ai/sdk", "@google/generative-ai", "openai", "undici", "docx", "pdf-lib", "jszip"],
+  // The PDF renderer reads these faces at runtime to draw scripts WinAnsi
+  // cannot encode. Serverless tracing does not follow a runtime readFileSync,
+  // so without this the fonts are absent on the deployment and Ethiopic text
+  // fails there while passing locally — the one environment where it matters.
+  outputFileTracingIncludes: {
+    "/**": ["./assets/fonts/**"],
+  },
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
   },
