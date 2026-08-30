@@ -5,6 +5,7 @@ import { completeJob, failJob, rearmDurableStageJob } from "../../../../lib/ai-j
 import { classifyStageRetry, isDurableRetryJobType, isSupersededStageFailure } from "../../../../lib/engine/stage-retry-policy";
 import { continueSuccessfulAnalysis } from "../../../../lib/ai-jobs/engine-continuation-service";
 import { continueSuccessfulEngineToProposal } from "../../../../lib/ai-jobs/proposal-continuation-service";
+import { ensureAutoFinalizeContinuationJob } from "../../../../lib/ai-jobs/auto-finalize-continuation-job";
 import { claimJobForCaller } from "../../../../lib/job-claim-policy";
 import { scheduleRequestScopedWorkerWake } from "../../../../lib/ai-jobs/request-scoped-worker-wake";
 import { getHandler, isTerminalHandlerResult } from "../../../../lib/ai-job-handlers";
@@ -363,9 +364,57 @@ export async function POST(req: Request) {
               nextJobType = "PROPOSAL_GENERATION";
               continuationReused = continuation.reused;
               analysisRevision = continuation.analysisRevision;
-            } else {
+            } else if (continuation.state === "ALREADY_SUCCEEDED") {
+              // Generation already succeeded for this exact analysis revision,
+              // so the stage that still has to run is the one after it.
+              //
+              // This is the owner's real history: the first run generated the
+              // proposal and then stalled at AUTO_FINALIZE, and the rerun
+              // resolved the deterministic proposal runId back to that
+              // SUCCEEDED row. The continuation used to answer "queued", the
+              // worker went looking for a claimable PROPOSAL_GENERATION job,
+              // found none — a SUCCEEDED row is not claimable — and the whole
+              // pipeline stopped with nothing logged as wrong.
+              //
+              // Re-running generation to manufacture something claimable would
+              // write a duplicate proposal version, duplicate CVs and
+              // duplicate documents for work already correctly done.
+              analysisRevision = continuation.analysisRevision;
+              continuationReused = true;
+              const finalize = await ensureAutoFinalizeContinuationJob({
+                tenderId: claimed.tenderId!,
+                userId: claimed.userId,
+                analysisRevision: continuation.analysisRevision,
+                parentJobId: continuation.jobId,
+              });
+              if (finalize.claimable) {
+                nextJobId = finalize.jobId;
+                nextJobType = "AUTO_FINALIZE";
+                continuationReason = "PROPOSAL_ALREADY_SUCCEEDED_ADVANCED_TO_AUTO_FINALIZE";
+              } else if (finalize.state === "ALREADY_SUCCEEDED") {
+                // Finalization already passed its own readiness gate for this
+                // revision. The package exists; rebuilding it would duplicate
+                // a reconciled ZIP.
+                continuationReason = "PIPELINE_ALREADY_COMPLETE";
+              } else {
+                continuationReason = `AUTO_FINALIZE_${finalize.state}`;
+              }
+              logger.info("[run-next] Proposal already generated for this revision; advancing downstream", {
+                jobId: claimed.id,
+                proposalJobId: continuation.jobId,
+                autoFinalizeJobId: finalize.jobId,
+                autoFinalizeState: finalize.state,
+              });
+            } else if (continuation.state === "BLOCKED") {
               continuationReason = continuation.reason;
               generationBlockerCode = continuation.blockerCode;
+            } else {
+              // ALREADY_RUNNING or NOT_CLAIMABLE: a real row exists that this
+              // invocation must not claim, re-arm or duplicate. Recorded as the
+              // reason rather than as a generation blocker — nothing about the
+              // tender is wrong.
+              continuationReason = continuation.reason;
+              analysisRevision = continuation.analysisRevision;
             }
           } catch (error) {
             continuationReason = "PROPOSAL_CONTINUATION_ERROR";
@@ -383,25 +432,47 @@ export async function POST(req: Request) {
         // the durable-stage retry policy on transient failure, and is
         // idempotent. No failure falls back to "manual retry" when it can be
         // safely automated.
+        //
+        // "Idempotent" was true of the handler and false of the enqueue. This
+        // was a bare create, so every proposal success minted another
+        // AUTO_FINALIZE row for the same tender and revision — two finalize
+        // jobs, each able to reconcile and package independently. The stage it
+        // follows had a deterministic runId guarding exactly that; this one now
+        // does too, enforced by the unique index rather than by a check two
+        // concurrent workers could both pass.
         if (claimed.jobType === "PROPOSAL_GENERATION") {
           try {
-            const { enqueueJob } = await import("../../../../lib/ai-jobs");
-            const analysisRevision = typeof claimed.input?.analysisRevision === "string"
+            const revision = typeof claimed.input?.analysisRevision === "string"
               ? claimed.input.analysisRevision
               : null;
-            const autoFinalizeJob = await enqueueJob({
-              userId: claimed.userId,
-              tenderId: claimed.tenderId ?? null,
-              jobType: "AUTO_FINALIZE",
-              input: {
+            if (!claimed.tenderId || !revision) {
+              // Without a tender and a revision there is no identity to be
+              // idempotent about, and a finalize job that cannot be located
+              // again is the duplicate this guards against.
+              continuationReason = "AUTO_FINALIZE_IDENTITY_MISSING";
+              logger.error("[run-next] Cannot enqueue AUTO_FINALIZE without a tender and analysis revision", {
+                jobId: claimed.id,
+                hasTender: Boolean(claimed.tenderId),
+                hasRevision: Boolean(revision),
+              });
+            } else {
+              const finalize = await ensureAutoFinalizeContinuationJob({
                 tenderId: claimed.tenderId,
-                analysisRevision,
-                source: "post-proposal-generation",
-              },
-            });
-            nextJobId = autoFinalizeJob.id;
-            nextJobType = "AUTO_FINALIZE";
-            continuationReused = false;
+                userId: claimed.userId,
+                analysisRevision: revision,
+                parentJobId: claimed.id,
+              });
+              analysisRevision = revision;
+              continuationReused = finalize.reused;
+              if (finalize.claimable) {
+                nextJobId = finalize.jobId;
+                nextJobType = "AUTO_FINALIZE";
+              } else if (finalize.state === "ALREADY_SUCCEEDED") {
+                continuationReason = "PIPELINE_ALREADY_COMPLETE";
+              } else {
+                continuationReason = `AUTO_FINALIZE_${finalize.state}`;
+              }
+            }
           } catch (error) {
             continuationReason = "AUTO_FINALIZE_ENQUEUE_ERROR";
             logger.error("[run-next] Failed to enqueue AUTO_FINALIZE after proposal generation", {

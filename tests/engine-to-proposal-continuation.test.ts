@@ -8,6 +8,7 @@ import {
   type EngineProposalContinuationRecord,
   type ProposalContinuationRepository,
 } from "../lib/ai-jobs/proposal-continuation-service";
+import { MAX_DURABLE_STAGE_ATTEMPTS } from "../lib/engine/stage-retry-policy";
 
 function eligibleEngine(overrides: Partial<EngineProposalContinuationRecord> = {}): EngineProposalContinuationRecord {
   return {
@@ -29,8 +30,9 @@ function fakeRepository(args?: {
   engine?: EngineProposalContinuationRecord | null;
   readiness?: { ok: boolean; blockerCode?: string; blockerDetail?: string };
   initialStatus?: string;
+  initialRetries?: number;
 }) {
-  const jobs = new Map<string, { id: string; status: string }>();
+  const jobs = new Map<string, { id: string; status: string; retries: number }>();
   let creates = 0;
   let rearms = 0;
   const repository: ProposalContinuationRepository = {
@@ -43,17 +45,27 @@ function fakeRepository(args?: {
     async upsertProposal({ runId }) {
       const existing = jobs.get(runId);
       if (existing) return { ...existing, created: false };
-      const created = { id: `proposal-${++creates}`, status: args?.initialStatus ?? "QUEUED" };
+      const created = {
+        id: `proposal-${++creates}`,
+        status: args?.initialStatus ?? "QUEUED",
+        retries: args?.initialRetries ?? 0,
+      };
       jobs.set(runId, created);
       return { ...created, created: true };
     },
-    async rearmFailedProposal(jobId) {
+    async rearmFailedProposal(jobId, attempts) {
       rearms += 1;
+      // The real repository refuses once the shared durable-stage attempt
+      // budget is spent, so the fake must too — otherwise a test could prove an
+      // unbounded retry loop "works".
+      if (attempts >= MAX_DURABLE_STAGE_ATTEMPTS) return false;
       for (const [runId, job] of jobs) {
         if (job.id === jobId && ["FAILED", "CANCELED", "PARTIAL_SUCCESS"].includes(job.status)) {
           jobs.set(runId, { ...job, status: "QUEUED" });
+          return true;
         }
       }
+      return false;
     },
   };
   return {
@@ -125,6 +137,10 @@ describe("proposal continuation behavior", () => {
     const result = await continueSuccessfulEngineToProposal("engine-1", fake.repository);
     assert.deepEqual(result, {
       queued: false,
+      // The result now names the state it is in, so callers can tell a refusal
+      // to start ("BLOCKED") apart from work that is already done or already
+      // running. Before, every non-queued answer looked identical.
+      state: "BLOCKED",
       reason: "GENERATION_NOT_READY",
       blockerCode: "BUILD_PLAN_NOT_CONFIRMED",
       blockerDetail: "Confirm the current Build Plan before generation.",
@@ -137,10 +153,28 @@ describe("proposal continuation behavior", () => {
     const first = await continueSuccessfulEngineToProposal("engine-1", fake.repository);
     const second = await continueSuccessfulEngineToProposal("engine-1", fake.repository);
     assert.equal(first.queued, true);
+    assert.equal(first.queued && first.state, "REARMED");
     assert.equal(second.queued, true);
     assert.equal(fake.creates, 1);
-    assert.equal(fake.rearms, 2);
+    // The second call finds the row already QUEUED and reuses it. It used to
+    // re-arm again unconditionally, which incremented the attempt counter for a
+    // job that had not failed a second time — spending retry budget on a
+    // success path and moving a healthy job closer to "budget exhausted".
+    assert.equal(second.queued && second.state, "REUSED_QUEUED");
+    assert.equal(fake.rearms, 1);
     assert.equal([...fake.jobs.values()][0].status, "QUEUED");
+  });
+
+  it("refuses to re-arm past the shared durable-stage attempt budget", async () => {
+    // An owner who keeps pressing Run Engine on a genuinely broken revision
+    // must not get an unbounded retry loop. The bound is the same one
+    // classifyStageRetry uses, not a second budget beside it.
+    const fake = fakeRepository({ initialStatus: "FAILED", initialRetries: MAX_DURABLE_STAGE_ATTEMPTS });
+    const result = await continueSuccessfulEngineToProposal("engine-1", fake.repository);
+    assert.equal(result.queued, false);
+    assert.equal(!result.queued && result.state, "NOT_CLAIMABLE");
+    assert.equal(!result.queued && "reason" in result ? result.reason : "", "PROPOSAL_RETRY_BUDGET_EXHAUSTED");
+    assert.equal([...fake.jobs.values()][0].status, "FAILED");
   });
 
   it("binds the proposal identity to company, user, tender, and analysis revision", () => {

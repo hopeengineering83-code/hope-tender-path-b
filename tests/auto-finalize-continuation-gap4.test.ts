@@ -45,18 +45,32 @@ describe("run-next enqueues durable AUTO_FINALIZE after PROPOSAL_GENERATION succ
     assert.doesNotMatch(runNext, /import \{ runAutoFinalizeAfterGeneration \} from/);
   });
 
-  it("enqueues an AUTO_FINALIZE job when PROPOSAL_GENERATION succeeds", () => {
+  // The region is bounded by the branch itself rather than by a character
+  // count. A fixed window silently stops covering the code it was written for
+  // the moment anything above it grows, and then passes or fails for reasons
+  // that have nothing to do with the property.
+  const proposalBranch = () => {
     const idx = runNext.indexOf('claimed.jobType === "PROPOSAL_GENERATION"');
     assert.ok(idx > -1, "PROPOSAL_GENERATION branch must exist");
-    const region = runNext.slice(idx, idx + 1000);
-    assert.match(region, /jobType: "AUTO_FINALIZE"/);
-    assert.match(region, /enqueueJob/);
+    const rest = runNext.slice(idx);
+    const end = rest.indexOf("processedJobs.push");
+    assert.ok(end > -1, "the branch must still end before the job result is recorded");
+    return rest.slice(0, end);
+  };
+
+  it("enqueues an AUTO_FINALIZE job when PROPOSAL_GENERATION succeeds", () => {
+    const region = proposalBranch();
+    assert.match(region, /nextJobType = "AUTO_FINALIZE"/);
+    // Enqueue is now idempotent: the successor is located or created under a
+    // deterministic runId. A bare enqueueJob minted a second finalize row for
+    // the same tender and revision on every rerun, so two finalize jobs could
+    // reconcile and package the same tender independently.
+    assert.match(region, /ensureAutoFinalizeContinuationJob\(/);
+    assert.doesNotMatch(region, /enqueueJob\(/);
   });
 
   it("logs enqueue errors but never crashes the worker", () => {
-    const idx = runNext.indexOf('claimed.jobType === "PROPOSAL_GENERATION"');
-    const region = runNext.slice(idx, idx + 1000);
-    assert.match(region, /AUTO_FINALIZE_ENQUEUE_ERROR/);
+    assert.match(proposalBranch(), /AUTO_FINALIZE_ENQUEUE_ERROR/);
   });
 });
 

@@ -18,6 +18,17 @@ const NON_RETRYABLE = /(?:NOT_FOUND_OR_FORBIDDEN|INVALID_PACKAGE|AUTHORITY|INTEG
 const RETRYABLE = /(?:TIMEOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|RATE.?LIMIT|TOO.?MANY.?REQUESTS|SERVICE.?UNAVAILABLE|TEMPORAR|STORAGE.*FAILED|PROVIDER|GENERATION_IN_PROGRESS)/i;
 const BACKOFF_MS = [30_000, 60_000, 180_000, 600_000] as const;
 
+/**
+ * The attempt budget every durable stage shares.
+ *
+ * classifyStageRetry already stops at `retryCount >= BACKOFF_MS.length`; this
+ * exports the same number so a re-arm performed outside that function — the
+ * proposal continuation re-arming a failed generation for a repeated Run
+ * Engine — is bounded by the SAME budget rather than a second one that can
+ * drift away from it.
+ */
+export const MAX_DURABLE_STAGE_ATTEMPTS = BACKOFF_MS.length;
+
 export function classifyStageRetry(errorCodeOrMessage: string, retryCount: number): RetryDecision {
   const value = errorCodeOrMessage.slice(0, 500);
   if (SUPERSEDED.test(value)) return { retryable: false, blockerCode: "ENGINE_SOURCE_SUPERSEDED", delayMs: null };

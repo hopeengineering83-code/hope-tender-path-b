@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { assertTenderReadyForGenerationAndExport } from "../engine/generation-readiness-gate";
+import { MAX_DURABLE_STAGE_ATTEMPTS } from "../engine/stage-retry-policy";
 import { prisma, prismaReady } from "../prisma";
 
 export type EngineProposalContinuationRecord = {
@@ -15,10 +16,72 @@ export type EngineProposalContinuationRecord = {
   companyId: string | null;
 };
 
+/**
+ * What actually happened to the PROPOSAL_GENERATION job for this revision.
+ *
+ * This used to be a boolean, and the boolean lied. The proposal job carries a
+ * deterministic runId derived from company + tender + user + analysis
+ * revision, so a repeated Run Engine against an unchanged analysis resolves to
+ * the SAME row. `upsertProposal` has `update: {}`, so it returns that row
+ * whatever state it is in — and the service returned `queued: true` for all of
+ * them. Only a QUEUED row can be claimed (claimJobForCaller updates
+ * `status = 'QUEUED'` and nothing else), so for a row that had already
+ * SUCCEEDED the worker was told to go claim something unclaimable: the claim
+ * loop found nothing, exited, and the HTTP wake that followed found nothing
+ * either. The pipeline stopped dead with no error anywhere.
+ *
+ * That is exactly the owner's case. The first run generated the proposal
+ * successfully and then stalled at AUTO_FINALIZE. On the rerun, generation was
+ * correctly recognised as already done — and the continuation reported it as
+ * freshly queued work, so nothing carried the tender forward to the stage that
+ * had actually been left undone.
+ *
+ * Each state below says what a caller may do next, and `queued` now means only
+ * one thing: a QUEUED row exists that a worker can claim.
+ */
+export type ProposalContinuationState =
+  /** A new PROPOSAL_GENERATION row was created; it is claimable. */
+  | "NEWLY_QUEUED"
+  /** An existing row was already QUEUED; it is claimable. */
+  | "REUSED_QUEUED"
+  /** A failed row was re-armed within the shared attempt budget; claimable. */
+  | "REARMED"
+  /** Generation already succeeded for this revision. Advance downstream. */
+  | "ALREADY_SUCCEEDED"
+  /** Another worker holds the row right now. Do not claim, do not duplicate. */
+  | "ALREADY_RUNNING"
+  /** The row exists, is not claimable, and must not be re-armed. */
+  | "NOT_CLAIMABLE"
+  /** No proposal row was reached at all: the engine or the gate refused. */
+  | "BLOCKED";
+
 export type ProposalContinuationResult =
-  | { queued: true; jobId: string; reused: boolean; analysisRevision: string }
+  | {
+      queued: true;
+      state: "NEWLY_QUEUED" | "REUSED_QUEUED" | "REARMED";
+      jobId: string;
+      reused: boolean;
+      analysisRevision: string;
+    }
   | {
       queued: false;
+      state: "ALREADY_SUCCEEDED";
+      reason: "PROPOSAL_ALREADY_SUCCEEDED";
+      jobId: string;
+      analysisRevision: string;
+      /** Generation is done; this is the stage that still has to run. */
+      advanceTo: "AUTO_FINALIZE";
+    }
+  | {
+      queued: false;
+      state: "ALREADY_RUNNING" | "NOT_CLAIMABLE";
+      reason: "PROPOSAL_ALREADY_RUNNING" | "PROPOSAL_RETRY_BUDGET_EXHAUSTED";
+      jobId: string;
+      analysisRevision: string;
+    }
+  | {
+      queued: false;
+      state: "BLOCKED";
       reason:
         | "ENGINE_NOT_FOUND"
         | "NOT_ENGINE_RUN"
@@ -44,8 +107,13 @@ export interface ProposalContinuationRepository {
     runId: string;
     engine: EngineProposalContinuationRecord;
     analysisRevision: string;
-  }): Promise<{ id: string; status: string; created: boolean }>;
-  rearmFailedProposal(jobId: string): Promise<void>;
+  }): Promise<{ id: string; status: string; created: boolean; retries?: number }>;
+  /**
+   * Re-arm a failed proposal row, bounded by the shared durable-stage attempt
+   * budget. Returns whether the row is claimable afterwards, so the caller
+   * never has to assume a re-arm it did not observe.
+   */
+  rearmFailedProposal(jobId: string, attempts: number): Promise<boolean>;
 }
 
 function parseObject(value: string | null | undefined): Record<string, unknown> {
@@ -91,34 +159,39 @@ export function proposalContinuationRunId(input: {
 export function evaluateProposalContinuation(
   engine: EngineProposalContinuationRecord | null,
 ): Exclude<ProposalContinuationResult, { queued: true }> | null {
-  if (!engine) return { queued: false, reason: "ENGINE_NOT_FOUND" };
-  if (engine.jobType !== "ENGINE_RUN") return { queued: false, reason: "NOT_ENGINE_RUN" };
+  if (!engine) return { queued: false, state: "BLOCKED", reason: "ENGINE_NOT_FOUND" };
+  if (engine.jobType !== "ENGINE_RUN") return { queued: false, state: "BLOCKED", reason: "NOT_ENGINE_RUN" };
   if (parseObject(engine.input).autoContinue !== true) {
-    return { queued: false, reason: "AUTO_CONTINUE_NOT_REQUESTED" };
+    return { queued: false, state: "BLOCKED", reason: "AUTO_CONTINUE_NOT_REQUESTED" };
   }
-  if (engine.status !== "SUCCEEDED") return { queued: false, reason: "ENGINE_NOT_SUCCEEDED" };
-  if (!engine.analysisInputHash) return { queued: false, reason: "ANALYSIS_REVISION_MISSING" };
+  if (engine.status !== "SUCCEEDED") return { queued: false, state: "BLOCKED", reason: "ENGINE_NOT_SUCCEEDED" };
+  if (!engine.analysisInputHash) return { queued: false, state: "BLOCKED", reason: "ANALYSIS_REVISION_MISSING" };
   if (!engine.tenderId || !engine.companyId || !engine.tenderOwnedByUser) {
-    return { queued: false, reason: "TENDER_OR_COMPANY_OWNERSHIP_INVALID" };
+    return { queued: false, state: "BLOCKED", reason: "TENDER_OR_COMPANY_OWNERSHIP_INVALID" };
   }
 
   const output = parseObject(engine.output);
   if (output.code === "ENGINE_COMPLETED_WITH_BLOCKERS" || hasBlockers(output.blockers)) {
-    return { queued: false, reason: "ENGINE_COMPLETED_WITH_BLOCKERS" };
+    return { queued: false, state: "BLOCKED", reason: "ENGINE_COMPLETED_WITH_BLOCKERS" };
   }
 
-  if (!("result" in output)) return { queued: false, reason: "ENGINE_OUTPUT_INVALID" };
+  if (!("result" in output)) return { queued: false, state: "BLOCKED", reason: "ENGINE_OUTPUT_INVALID" };
   const engineResult = asRecord(output.result);
-  if (engineResult.partial === true) return { queued: false, reason: "ENGINE_PARTIAL" };
-  if (engineResult.partial !== false) return { queued: false, reason: "ENGINE_OUTPUT_INVALID" };
+  if (engineResult.partial === true) return { queued: false, state: "BLOCKED", reason: "ENGINE_PARTIAL" };
+  if (engineResult.partial !== false) return { queued: false, state: "BLOCKED", reason: "ENGINE_OUTPUT_INVALID" };
   if (hasBlockers(engineResult.blockers) || typeof engineResult.nextAction === "string") {
-    return { queued: false, reason: "ENGINE_COMPLETED_WITH_BLOCKERS" };
+    return { queued: false, state: "BLOCKED", reason: "ENGINE_COMPLETED_WITH_BLOCKERS" };
   }
 
   return null;
 }
 
-const prismaRepository: ProposalContinuationRepository = {
+/**
+ * The real repository, exported so a database test can exercise the genuine
+ * upsert/re-arm behaviour against real rows while substituting only the
+ * generation-readiness gate (whose own suites cover it separately).
+ */
+export const prismaProposalContinuationRepository: ProposalContinuationRepository = {
   async loadEngine(engineJobId) {
     await prismaReady;
     const engine = await prisma.aiJob.findUnique({
@@ -189,13 +262,14 @@ const prismaRepository: ProposalContinuationRepository = {
         }),
       },
       update: {},
-      select: { id: true, status: true },
+      select: { id: true, status: true, retries: true },
     });
     return { ...job, created: !existing };
   },
 
-  async rearmFailedProposal(jobId) {
-    await prisma.aiJob.updateMany({
+  async rearmFailedProposal(jobId, attempts) {
+    if (attempts >= MAX_DURABLE_STAGE_ATTEMPTS) return false;
+    const result = await prisma.aiJob.updateMany({
       where: {
         id: jobId,
         jobType: "PROPOSAL_GENERATION",
@@ -213,12 +287,13 @@ const prismaRepository: ProposalContinuationRepository = {
         retries: { increment: 1 },
       },
     });
+    return result.count === 1;
   },
 };
 
 export async function continueSuccessfulEngineToProposal(
   engineJobId: string,
-  repository: ProposalContinuationRepository = prismaRepository,
+  repository: ProposalContinuationRepository = prismaProposalContinuationRepository,
 ): Promise<ProposalContinuationResult> {
   const engine = await repository.loadEngine(engineJobId);
   const blocked = evaluateProposalContinuation(engine);
@@ -232,6 +307,7 @@ export async function continueSuccessfulEngineToProposal(
   if (!readiness.ok) {
     return {
       queued: false,
+      state: "BLOCKED",
       reason: "GENERATION_NOT_READY",
       blockerCode: readiness.blockerCode,
       blockerDetail: readiness.blockerDetail,
@@ -246,12 +322,64 @@ export async function continueSuccessfulEngineToProposal(
     analysisRevision,
   });
   const proposal = await repository.upsertProposal({ runId, engine: eligible, analysisRevision });
-  await repository.rearmFailedProposal(proposal.id);
+
+  // Report the row's ACTUAL state. `queued: true` promises the caller a row it
+  // can claim, and only a QUEUED row is claimable.
+  //
+  // The status decides, not the fact that a row was just created — "created"
+  // only distinguishes a fresh row from a reused one. Deciding on `created`
+  // first would repeat the original mistake in miniature: reporting a state
+  // from how the row was reached rather than from what the row says.
+  const status = String(proposal.status ?? "").toUpperCase();
+
+  if (status === "QUEUED") {
+    return {
+      queued: true,
+      state: proposal.created ? "NEWLY_QUEUED" : "REUSED_QUEUED",
+      jobId: proposal.id,
+      reused: !proposal.created,
+      analysisRevision,
+    };
+  }
+
+  if (status === "SUCCEEDED") {
+    // Generation is done for this exact revision. Re-running it would produce a
+    // duplicate proposal version, a duplicate set of expert CVs and duplicate
+    // documents, purely to manufacture something claimable — the pipeline does
+    // not need generation repeated, it needs the stage after it.
+    return {
+      queued: false,
+      state: "ALREADY_SUCCEEDED",
+      reason: "PROPOSAL_ALREADY_SUCCEEDED",
+      jobId: proposal.id,
+      analysisRevision,
+      advanceTo: "AUTO_FINALIZE",
+    };
+  }
+
+  if (status === "RUNNING") {
+    // Another worker holds it. The transactional claim would refuse this row
+    // anyway; saying so plainly stops the caller waking a worker for nothing.
+    return {
+      queued: false,
+      state: "ALREADY_RUNNING",
+      reason: "PROPOSAL_ALREADY_RUNNING",
+      jobId: proposal.id,
+      analysisRevision,
+    };
+  }
+
+  // FAILED / CANCELED / PARTIAL_SUCCESS — re-arm within the shared budget.
+  const rearmed = await repository.rearmFailedProposal(proposal.id, proposal.retries ?? 0);
+  if (rearmed) {
+    return { queued: true, state: "REARMED", jobId: proposal.id, reused: true, analysisRevision };
+  }
 
   return {
-    queued: true,
+    queued: false,
+    state: "NOT_CLAIMABLE",
+    reason: "PROPOSAL_RETRY_BUDGET_EXHAUSTED",
     jobId: proposal.id,
-    reused: !proposal.created,
     analysisRevision,
   };
 }

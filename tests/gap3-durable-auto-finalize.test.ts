@@ -56,11 +56,16 @@ describe("Gap 3 — AUTO_FINALIZE is a durable, idempotent, revision-bound job",
   });
 
   it("run-next enqueues AUTO_FINALIZE after PROPOSAL_GENERATION (not inline)", () => {
+    // Bounded by the branch, not by a character count: a fixed window stops
+    // covering the code it was written for as soon as anything above it grows.
     const idx = runNext.indexOf('claimed.jobType === "PROPOSAL_GENERATION"');
     assert.ok(idx > -1);
-    const region = runNext.slice(idx, idx + 800);
-    assert.match(region, /jobType: "AUTO_FINALIZE"/);
-    assert.match(region, /enqueueJob/);
+    const rest = runNext.slice(idx);
+    const region = rest.slice(0, rest.indexOf("processedJobs.push"));
+    assert.match(region, /nextJobType = "AUTO_FINALIZE"/);
+    // Durable AND idempotent: located or created under a deterministic runId,
+    // so a rerun cannot leave two finalize jobs racing over one package.
+    assert.match(region, /ensureAutoFinalizeContinuationJob\(/);
     // Must NOT call runAutoFinalizeAfterGeneration inline.
     assert.doesNotMatch(region, /runAutoFinalizeAfterGeneration/);
   });

@@ -121,3 +121,43 @@ describe("the worker continues without a self-call", () => {
     );
   });
 });
+
+describe("a rerun after a successful proposal advances instead of dead-ending", () => {
+  // The services these assertions guard are proven against real rows in
+  // tests/rerun-after-successful-proposal-db.test.ts. What is pinned here is
+  // the wiring: that the worker acts on the state the continuation reports
+  // rather than on `queued` alone, which is what left the owner's tender one
+  // stage short of a ZIP with nothing logged as wrong.
+
+  it("continues to AUTO_FINALIZE when generation already succeeded", () => {
+    assert.match(runNextCode, /continuation\.state === "ALREADY_SUCCEEDED"/);
+    const branch = runNextCode.slice(runNextCode.indexOf('continuation.state === "ALREADY_SUCCEEDED"'));
+    const body = branch.slice(0, branch.indexOf("} else if"));
+    assert.match(body, /ensureAutoFinalizeContinuationJob\(/);
+    assert.match(body, /nextJobType = "AUTO_FINALIZE"/);
+    assert.doesNotMatch(
+      body,
+      /nextJobType = "PROPOSAL_GENERATION"/,
+      "re-running generation to manufacture a claimable job would duplicate the proposal",
+    );
+  });
+
+  it("never treats an unclaimable stage as claimable", () => {
+    // `claimable` is the only thing that may put a stage in nextJobType. A
+    // SUCCEEDED or RUNNING row reported as claimable is the original defect.
+    assert.match(runNextCode, /if \(finalize\.claimable\) \{/);
+    assert.match(runNextCode, /finalize\.state === "ALREADY_SUCCEEDED"/);
+    assert.match(runNextCode, /PIPELINE_ALREADY_COMPLETE/);
+  });
+
+  it("enqueues the finalize successor idempotently, not with a bare create", () => {
+    const branch = runNextCode.slice(runNextCode.indexOf('claimed.jobType === "PROPOSAL_GENERATION"'));
+    const body = branch.slice(0, branch.indexOf("processedJobs.push"));
+    assert.match(body, /ensureAutoFinalizeContinuationJob\(/);
+    assert.doesNotMatch(
+      body,
+      /enqueueJob\(/,
+      "a bare enqueue mints a second AUTO_FINALIZE row on every rerun",
+    );
+  });
+});
