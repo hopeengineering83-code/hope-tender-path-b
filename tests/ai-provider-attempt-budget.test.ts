@@ -9,19 +9,23 @@ import {
   analyzeOneChunkWithRetry,
   NoAiProviderReadyError,
 } from "../lib/ai";
+import { isolateProviderEnv } from "./helpers/provider-env";
 import {
   resetProviderHealth,
   recordProviderFailure,
   getProviderHealth,
 } from "../lib/ai-provider-health";
 
-const KEYS = ["ZAI_API_KEY", "CEREBRAS_API_KEY", "MISTRAL_API_KEY", "GROQ_API_KEY", "GROQ_PROPOSAL_MODEL", "OPENROUTER_API_KEY", "OPENROUTER_PROPOSAL_MODEL", "GEMINI_API_KEY", "OPENAI_API_KEY", "TOGETHER_API_KEY", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"];
-let saved: Record<string, string | undefined> = {};
+// Every provider-scoped variable is cleared, not just keys and two model
+// names. The old list left the `_BASE_URL` suffixes behind, so a configured
+// Cerebras gateway on the machine running the suite changed the URL the
+// router contacted — and an assertion that matched the vendor's hostname
+// failed even though the provider had been contacted at its correct rank.
+let restoreProviderEnv: (() => void) | null = null;
 let realFetch: typeof globalThis.fetch;
 
 beforeEach(() => {
-  saved = {};
-  for (const k of KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  restoreProviderEnv = isolateProviderEnv();
   realFetch = globalThis.fetch;
   resetProviderHealth();
 });
@@ -31,9 +35,8 @@ function configureGroq(): void {
   process.env.GROQ_PROPOSAL_MODEL = "llama-3.1-8b-instant";
 }
 afterEach(() => {
-  for (const k of KEYS) {
-    if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
-  }
+  restoreProviderEnv?.();
+  restoreProviderEnv = null;
   globalThis.fetch = realFetch;
   resetProviderHealth();
 });
@@ -84,6 +87,11 @@ describe("12. provider attempt budget caps actual outbound attempts", () => {
     process.env.TOGETHER_API_KEY = "k";
     process.env.ANTHROPIC_API_KEY = "k";
     process.env.CEREBRAS_API_KEY = "k";
+    // The base URL is pinned rather than left to the default, so this case
+    // asserts a position in the chain and not a vendor's DNS name. An
+    // operator who routes Cerebras through a gateway is running the same
+    // chain; matching on the hostname would call that a routing failure.
+    process.env.CEREBRAS_BASE_URL = "https://cerebras-under-test.invalid/v1";
 
     const contacted: string[] = [];
     mockFetch((url) => {
@@ -92,11 +100,23 @@ describe("12. provider attempt budget caps actual outbound attempts", () => {
     });
 
     await assert.rejects(() => generateWithFallback("hi", { useCase: "proposal" }));
-    assert.ok(contacted.some((url) => url.includes("cerebras")), "Cerebras must be attempted at rank 5");
+    assert.ok(
+      contacted.some((url) => url.startsWith("https://cerebras-under-test.invalid/")),
+      `Cerebras must be attempted at rank 5; contacted ${JSON.stringify(contacted)}`,
+    );
     assert.ok(contacted.some((url) => url.includes("openai.com")), "OpenAI must be attempted after OpenRouter");
     assert.ok(contacted.some((url) => url.includes("together")), "Together must remain in automatic fallback");
     assert.ok(contacted.some((url) => url.includes("deepseek")), "DeepSeek must remain in automatic fallback");
     assert.ok(contacted.some((url) => url.includes("anthropic")), "Anthropic must be the final AI-provider attempt");
+
+    // The contractual order itself, not merely presence: each configured
+    // provider is first contacted in canonical rank order.
+    const firstIndex = (needle: string) => contacted.findIndex((url) => url.includes(needle));
+    const cerebras = contacted.findIndex((url) => url.startsWith("https://cerebras-under-test.invalid/"));
+    assert.ok(cerebras < firstIndex("openai.com"), "Cerebras (rank 5) precedes OpenAI (rank 7)");
+    assert.ok(firstIndex("openai.com") < firstIndex("together"), "OpenAI (7) precedes Together (8)");
+    assert.ok(firstIndex("together") < firstIndex("deepseek"), "Together (8) precedes DeepSeek (9)");
+    assert.ok(firstIndex("deepseek") < firstIndex("anthropic"), "DeepSeek (9) precedes Anthropic (10)");
   });
 });
 
