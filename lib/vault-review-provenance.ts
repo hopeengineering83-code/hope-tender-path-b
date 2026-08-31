@@ -24,6 +24,28 @@ export type ReviewSourceDocument = {
   metadata?: string | null;
 };
 
+/**
+ * Every source-document field the runtime authority reads.
+ *
+ * Exported because a caller that hand-lists these gets a silent wrong answer
+ * rather than a type error: omit `metadata` and sourceExtractionRevision()
+ * falls back to "revision:1", which stops matching the stored provenance as
+ * soon as a document has been re-extracted once. The record is then reported
+ * NO_DURABLE_PROVENANCE — machine-verified evidence the owner uploaded,
+ * refused by the engine, with a "Provenance required" label and nothing they
+ * can do about it. Select through this constant, not by hand.
+ */
+export const VAULT_SOURCE_DOCUMENT_SELECT = {
+  id: true,
+  fileName: true,
+  companyId: true,
+  extractedText: true,
+  contentSha256: true,
+  contentByteLength: true,
+  integrityStatus: true,
+  metadata: true,
+} as const;
+
 const VAULT_REVIEW_AUTHORITY_SELECT = {
   companyId: true,
   trustLevel: true,
@@ -31,18 +53,7 @@ const VAULT_REVIEW_AUTHORITY_SELECT = {
   reviewedAt: true,
   reviewNotes: true,
   sourceDocumentId: true,
-  sourceDocument: {
-    select: {
-      id: true,
-      fileName: true,
-      companyId: true,
-      extractedText: true,
-      contentSha256: true,
-      contentByteLength: true,
-      integrityStatus: true,
-      metadata: true,
-    },
-  },
+  sourceDocument: { select: VAULT_SOURCE_DOCUMENT_SELECT },
 } as const;
 
 export const VAULT_REVIEW_CONSUMER_SELECT = {

@@ -16,7 +16,7 @@ import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
-import { canUseVaultRecord } from "../vault-review-provenance";
+import { canUseVaultRecord, VAULT_SOURCE_DOCUMENT_SELECT } from "../vault-review-provenance";
 import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
 import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
 import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
@@ -157,17 +157,29 @@ export async function runTenderEngine(
       experts: {
         where: { deletedAt: null },
         include: {
-          sourceDocument: {
-            select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
-          },
+          // Selected through the shared constant, not by hand. This list used
+          // to omit `metadata`, so sourceExtractionRevision() fell back to
+          // "revision:1" while the stored provenance said "revision:6" — the
+          // revision a document reaches after being re-extracted. Every
+          // machine-SOURCE_VERIFIED expert and project therefore failed
+          // checkMatchingEligibility, scored 0, and was never selected: the
+          // engine reported NO_SELECTED_SOURCE_VERIFIED_EXPERTS_AFTER_ENGINE
+          // for a vault full of verified evidence.
+          sourceDocument: { select: VAULT_SOURCE_DOCUMENT_SELECT },
         },
       },
       projects: {
         where: { deletedAt: null },
         include: {
-          sourceDocument: {
-            select: { id: true, companyId: true, extractedText: true, contentSha256: true, contentByteLength: true, integrityStatus: true },
-          },
+          // Selected through the shared constant, not by hand. This list used
+          // to omit `metadata`, so sourceExtractionRevision() fell back to
+          // "revision:1" while the stored provenance said "revision:6" — the
+          // revision a document reaches after being re-extracted. Every
+          // machine-SOURCE_VERIFIED expert and project therefore failed
+          // checkMatchingEligibility, scored 0, and was never selected: the
+          // engine reported NO_SELECTED_SOURCE_VERIFIED_EXPERTS_AFTER_ENGINE
+          // for a vault full of verified evidence.
+          sourceDocument: { select: VAULT_SOURCE_DOCUMENT_SELECT },
         },
       },
       documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },

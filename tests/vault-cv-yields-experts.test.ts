@@ -198,6 +198,60 @@ describe("deterministic expert extraction from a vault CV", () => {
     assert.equal(sara?.title, null);
   });
 
+  it("does not store a contract value inside a client name", () => {
+    // The project reference list writes the client and the value in one
+    // sentence. An open-ended capture ran past the sentence boundary and
+    // stored "Hawassa City Administration. Contract value: ETB 12,750,000."
+    // as the CLIENT — which then printed the value into a technical-envelope
+    // document through the evidence lines.
+    const references = [
+      "PROJECT REFERENCES",
+      "",
+      "1. Design and Supervision of 14 Primary School Facilities, Sidama Region.",
+      "Client: Hawassa City Administration. Contract value: ETB 12,750,000. Period: 2022-2024.",
+      "Country: Ethiopia. Role: Lead consultant.",
+      "",
+      "2. Borehole Siting, Design and Supervision, Somali Region Water Access.",
+      "Client: Ministry of Education / World Bank GEQIP-E. Contract value: USD 940,000.",
+      "Country: Ethiopia. Period: 2021-2023.",
+    ].join("\n");
+    const projects = collectDeterministicCandidates([
+      { id: "doc-2", originalFileName: "Project-References.txt", category: "PROJECT", extractedText: references } as never,
+    ]).projects;
+
+    assert.ok(projects.length >= 2, `both projects must be extracted; got ${projects.length}`);
+    for (const project of projects) {
+      for (const field of [project.clientName, project.country, project.name]) {
+        if (!field) continue;
+        assert.doesNotMatch(
+          String(field),
+          /(?:USD|ETB|EUR|GBP)\s?[\d,]+|contract\s+value/i,
+          `${JSON.stringify(field)} must not carry a contract value`,
+        );
+      }
+    }
+    const hawassa = projects.find((p) => /Hawassa/i.test(String(p.clientName ?? "")));
+    assert.equal(hawassa?.clientName, "Hawassa City Administration");
+  });
+
+  it("gives each project its own client, not the next entry's", () => {
+    const references = [
+      "PROJECT REFERENCES",
+      "",
+      "1. Design and Supervision of 14 Primary School Facilities, Sidama Region.",
+      "Client: Hawassa City Administration. Period: 2022-2024.",
+      "",
+      "2. Borehole Siting, Design and Supervision, Somali Region Water Access.",
+      "Client: Ministry of Education. Period: 2021-2023.",
+    ].join("\n");
+    const projects = collectDeterministicCandidates([
+      { id: "doc-2", originalFileName: "Project-References.txt", category: "PROJECT", extractedText: references } as never,
+    ]).projects;
+    const clients = projects.map((p) => p.clientName);
+    assert.ok(clients.includes("Hawassa City Administration"), `got ${JSON.stringify(clients)}`);
+    assert.ok(clients.includes("Ministry of Education"), `got ${JSON.stringify(clients)}`);
+  });
+
   it("keeps extracted candidates as drafts", () => {
     // The trust level is what stops an unverified regex reading from being
     // quoted in a submittable document. Widening the pattern must not touch
