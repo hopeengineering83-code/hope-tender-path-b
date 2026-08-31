@@ -21,6 +21,26 @@
  * misclassification bug routed it to FINANCIAL_EVIDENCE's
  * "replace with the tender-issued original" template instead — the
  * classification fix is what made this second bug reachable at all.
+ *
+ * SUPERSEDED IN PART, DELIBERATELY
+ * ---------------------------------
+ * PR #1305's `cb2e0d0d` then removed the boilerplate template wholesale: the
+ * same "Proposed response structure / Reviewer completion checklist" prose
+ * was itself a defect, because that bid-team worksheet was shipping inside
+ * the Final ZIP to the procuring entity. The draft is now written from
+ * tender requirements and vault-guarded company evidence instead.
+ *
+ * Two assertions in this file originally pinned the presence of that
+ * boilerplate ("still mentions pricing", "still uses the methodology-oriented
+ * template"). They pinned the SHAPE of the defect, so removing the defect
+ * broke them — exactly the failure mode this repo already documents in
+ * tests/proposal-section-provider-order.test.ts ("a test that pins an
+ * implementation's SHAPE rather than its PROPERTY becomes an argument for
+ * keeping the shape"). They are gone. What survives here is the PROPERTY
+ * that is still this file's own: whatever a financial-proposal draft
+ * contains, it must never carry technical-envelope language — including via
+ * requirement text quoted into it, which is a path #1305's own test does not
+ * cover.
  */
 
 import { describe, it } from "node:test";
@@ -49,22 +69,10 @@ describe("narrativeDraftContent avoids technical-envelope language for a financi
     assert.doesNotMatch(text, /methodology|work\s+plan|staffing\s+plan|technical\s+approach/i);
   });
 
-  it("the financial-proposal draft template still mentions pricing so the reviewer knows what to complete", async () => {
-    const content = await narrativeDraftContent("Sample Tender", "02-Financial-Proposal.docx", "FINANCIAL_PROPOSAL", []);
-    const text = await docxVisibleText(content);
-    assert.match(text, /pric(e|ing)|rate|bill of quantities/i);
-  });
-
   it("a real docx produced from the financial-proposal template opens (sanity check on the writer itself)", async () => {
     const content = await narrativeDraftContent("Sample Tender", "02-Financial-Proposal.docx", "FINANCIAL_PROPOSAL", []);
     const buffer = Buffer.from(content, "base64");
     assert.equal(buffer.subarray(0, 2).toString("ascii"), "PK");
-  });
-
-  it("a technical narrative draft still uses the methodology-oriented template (no regression for the existing path)", async () => {
-    const content = await narrativeDraftContent("Sample Tender", "01-Technical-Proposal.docx", "TECHNICAL_PROPOSAL", []);
-    const text = await docxVisibleText(content);
-    assert.match(text, /methodology/i);
   });
 
   it("does not quote an unrelated technical requirement's methodology/work-plan text into a financial proposal draft", async () => {
