@@ -190,7 +190,8 @@ function snippetAround(text: string, needle: string, radius = 1200): string {
 }
 
 /**
- * The part of a CV document that belongs to ONE named person.
+ * The part of a document that belongs to ONE named entry — a person in a
+ * CV, a project in a reference list.
  *
  * A fixed radius around the name spans neighbouring entries — a 1200-character
  * window over a three-CV document reaches well into the next person's — so
@@ -203,7 +204,7 @@ function snippetAround(text: string, needle: string, radius = 1200): string {
  * starts, and only falls back to the radius window when no later name bounds
  * it. `others` are the remaining names extracted from the same document.
  */
-function personBlock(text: string, name: string, others: string[]): string {
+function entryBlock(text: string, name: string, others: string[]): string {
   const haystack = text.toLocaleLowerCase("en-US");
   const start = haystack.indexOf(name.toLocaleLowerCase("en-US"));
   if (start < 0) return snippetAround(text, name);
@@ -303,7 +304,7 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
       for (const fullName of allNames) {
         // Bounded to this person's own entry, so no attribute is read from a
         // neighbouring CV.
-        const snippet = personBlock(text, fullName, allNames);
+        const snippet = entryBlock(text, fullName, allNames);
         experts.push({
           fullName,
           title: parseTitle(snippet),
@@ -330,17 +331,29 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
 
     const projectAuthority = projectCapability(document);
     if (projectAuthority > 0) {
-      for (const name of extractProjectNames(text)) {
-        const snippet = snippetAround(text, name);
+      const allProjectNames = extractProjectNames(text);
+      for (const name of allProjectNames) {
+        // Bounded to this project's own entry, for the same reason experts
+        // are: a fixed window spans the next project and mixes the two.
+        const snippet = entryBlock(text, name, allProjectNames);
         const financial = parseContractValue(snippet);
         const sectors = inferSectors(snippet);
         projects.push({
           name,
-          clientName: firstMatch(snippet, [/Client\s*[:\-]?\s*([^\n\r]{3,160})/i, /Owner\s*[:\-]?\s*([^\n\r]{3,160})/i]),
-          country: firstMatch(snippet, [/Country\s*[:\-]?\s*([^\n\r]{3,80})/i, /Location\s*[:\-]?\s*([^\n\r]{3,120})/i]),
+          // Stops at the end of the client, not 160 characters later. The
+          // open-ended capture ran straight through the sentence boundary and
+          // stored "Hawassa City Administration. Contract value: ETB
+          // 12,750,000." as the CLIENT — which then printed a contract value
+          // into a technical-envelope document, the one thing a technical
+          // envelope must never carry.
+          clientName: firstMatch(snippet, [/Client\s*[:\-]?\s*([^\n\r.;]{3,160})/i, /Owner\s*[:\-]?\s*([^\n\r.;]{3,160})/i]),
+          country: firstMatch(snippet, [/Country\s*[:\-]?\s*([^\n\r.;]{3,80})/i, /Location\s*[:\-]?\s*([^\n\r.;]{3,120})/i]),
           sector: sectors[0] ?? null,
           serviceAreas: inferServices(snippet),
-          summary: `Deterministic extraction from ${document.originalFileName}.`,
+          // The project's own entry, not a description of the extractor —
+          // same reason as the expert profile: the tender matcher scores this
+          // field, and a self-reference gives it nothing to score.
+          summary: `${snippet}\n\nSource: ${document.originalFileName}.`.slice(0, 4000),
           contractValue: financial.value,
           currency: financial.currency,
           sourceSnippet: snippet,
