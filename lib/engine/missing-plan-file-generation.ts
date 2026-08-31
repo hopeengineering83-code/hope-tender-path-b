@@ -118,6 +118,23 @@ function bullet(text: string) {
 
 function documentTypeFor(fileName: string, fallback: string) {
   const label = fileName.toLowerCase();
+  // Checked before the broader "financial" evidence match below: a financial
+  // or commercial PROPOSAL (the firm's own priced offer — price schedule,
+  // rate card, BoQ) is company-authored content, not a third-party original
+  // like a bank statement or audited financial statement. The evidence
+  // pattern's bare /financial/ would otherwise match "Financial-Proposal.docx"
+  // first and misclassify it as FINANCIAL_EVIDENCE, which forces
+  // needsOriginalReplacement/isNarrativeDraft to treat the firm's own price
+  // envelope as a document that must be "replaced with the tender-issued
+  // original" — and, downstream, the narrative quality gate's
+  // FINANCIAL_OFFICIAL branch caps it at a permanent 60/NEEDS_REWRITE with no
+  // stated reason, blocking export of an otherwise-clean document.
+  // lib/engine/document-type-normalizer.ts already gets this ordering right;
+  // this mirrors its FINANCIAL_PROPOSAL_PATTERNS.
+  // Real tender/plan file names use hyphens and underscores as word
+  // separators ("02-Financial-Proposal.docx"), not spaces, so the separator
+  // class below has to accept those too or this never matches real files.
+  if (/financial[\s._-]+proposal|commercial[\s._-]+proposal|price[\s._-]+schedule|rate[\s._-]+card|bill[\s._-]+of[\s._-]+quantities?|\bboq\b/.test(label)) return "FINANCIAL_PROPOSAL";
   if (/financial|audited|capacity|bank|turnover/.test(label)) return "FINANCIAL_EVIDENCE";
   if (/legal|eligibility|registration|licen[cs]ing|tax|certificate/.test(label)) return "LEGAL_EVIDENCE";
   if (/submission formatting|packaging rules|submission rules|delivery instruction|submission method|submission deadline/.test(label)) return "SUBMISSION_RULES";
@@ -714,3 +731,5 @@ export async function generateMissingPlanFiles(args: {
     nothingMissing: false,
   };
 }
+
+export const __testing__ = { documentTypeFor, needsOriginalReplacement, isNarrativeDraft };

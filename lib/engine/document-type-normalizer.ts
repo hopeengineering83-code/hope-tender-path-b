@@ -65,12 +65,15 @@ const SUBMISSION_RULES_PATTERNS = [
   /delivery\s+(?:rules?|instruction)/i,
 ];
 
+// Real plan/tender file names use hyphens and underscores as word separators
+// ("02-Financial-Proposal.docx"), not spaces, so \s+ alone missed exactly the
+// generated-file naming convention this pattern exists to recognize.
 const FINANCIAL_PROPOSAL_PATTERNS = [
-  /financial\s+proposal/i,
-  /commercial\s+proposal/i,
-  /price\s+schedule/i,
-  /rate\s+card/i,
-  /bill\s+of\s+quantities?/i,
+  /financial[\s._-]+proposal/i,
+  /commercial[\s._-]+proposal/i,
+  /price[\s._-]+schedule/i,
+  /rate[\s._-]+card/i,
+  /bill[\s._-]+of[\s._-]+quantities?/i,
   /\bboq\b/i,
 ];
 
