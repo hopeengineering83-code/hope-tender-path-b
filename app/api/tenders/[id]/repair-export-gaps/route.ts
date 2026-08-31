@@ -108,6 +108,19 @@ function safeTypeFor(name: string, fallback?: string | null): string {
   if (/expert|cv|personnel|staff/.test(label)) return "EXPERT_CV_PACKAGE";
   if (/project|experience|reference|portfolio/.test(label)) return "PROJECT_REFERENCE_PACKAGE";
   if (/legal|registration|licen[cs]e|tax|certificate/.test(label)) return "LEGAL_EVIDENCE";
+  // Checked before the broader /financial/ evidence match below: a financial
+  // or commercial PROPOSAL (the firm's own priced offer) is company-authored
+  // content, not a third-party original like a bank statement or audited
+  // financial statement. This route duplicates lib/engine/export-gap-repair.ts's
+  // safeTypeFor (a pre-existing drift between the HTTP route and the
+  // auto-finalize background worker's copy of the same repair logic) and had
+  // the identical bug: driving the real pipeline end-to-end showed this exact
+  // route resetting an already-correct FINANCIAL_PROPOSAL type back to
+  // FINANCIAL_EVIDENCE on every repair call, which is why fixing the lib copy
+  // alone did not resolve the live 60/100 export block. See the same fix and
+  // rationale there, and in missing-plan-file-generation.ts's documentTypeFor()
+  // and document-type-normalizer.ts's FINANCIAL_PROPOSAL_PATTERNS.
+  if (/financial[\s._-]+proposal|commercial[\s._-]+proposal|price[\s._-]+schedule|rate[\s._-]+card|bill[\s._-]+of[\s._-]+quantities?|\bboq\b/.test(label)) return "FINANCIAL_PROPOSAL";
   if (/financial|audited|bank|turnover|capacity/.test(label)) return "FINANCIAL_EVIDENCE";
   if (/submission|deadline|delivery|method|rules/.test(label)) return "SUBMISSION_RULES";
   return fallback || "TENDER_REQUIRED_FILE";

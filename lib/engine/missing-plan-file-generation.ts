@@ -227,18 +227,44 @@ async function narrativeDraftContent(
       children.push(bullet(`${requirement.title}${requirement.description ? ` — ${requirement.description}` : ""}`.slice(0, 700)));
     }
   }
-  children.push(
-    subheading("Proposed response structure"),
-    bullet("Confirm the assignment objectives, client priorities, location, and required deliverables using the tender source text."),
-    bullet("Describe the methodology in the same order as the tender scope, including responsibility assignment, quality gates, and deliverable controls."),
-    bullet("Reference only reviewed company evidence, selected experts, and selected projects approved in the Knowledge Vault."),
-    bullet("Keep technical and financial content separated. Pricing, rates, BOQ, and commercial terms must not appear in a technical-envelope document."),
-    subheading("Reviewer completion checklist"),
-    bullet("Replace this draft with the final generated narrative or complete the draft manually before marking READY_FOR_EXPORT."),
-    bullet("Validate that every mandatory requirement covered by this file has confirmed evidence and source traceability."),
-    bullet("Run document validation again after editing and before final ZIP packaging."),
-    para(`Document type: ${documentType}`),
-  );
+  // A financial/commercial proposal must not carry "methodology"/"work plan"/
+  // "technical approach" language — the same envelope-separation rule that
+  // keeps pricing out of a technical document (see pricing-hygiene.ts and
+  // document-quality-validator.ts's TECHNICAL_IN_FINANCIAL_RE check) applies
+  // in reverse. Before the financial/commercial-proposal filename fix above,
+  // a file like "02-Financial-Proposal.docx" was always misclassified as
+  // FINANCIAL_EVIDENCE and never reached this branch at all, so the generic
+  // technical-response template below was never actually exercised for a
+  // financial envelope. Once correctly classified, the SAME generic template
+  // failed real export with "Technical methodology content detected in a
+  // FINANCIAL document" — a latent defect this fix now has to reach, because
+  // the previous misclassification masked it.
+  if (/^FINANCIAL_PROPOSAL$/i.test(documentType) || /financial[\s._-]+proposal|commercial[\s._-]+proposal/i.test(fileName)) {
+    children.push(
+      subheading("Proposed response structure"),
+      bullet("Confirm the pricing structure, currency, and validity period the tender requires (lump sum, unit rates, or a bill of quantities)."),
+      bullet("Enter the firm's own priced offer: rates, quantities, taxes/duties, and the total price, following the tender's required pricing format exactly."),
+      bullet("Keep this file strictly financial — pricing, rates, and totals only. Any narrative about the assignment approach or team belongs in the technical envelope, not here."),
+      subheading("Reviewer completion checklist"),
+      bullet("Replace this draft with the firm's final priced offer before marking READY_FOR_EXPORT."),
+      bullet("Confirm the pricing follows the exact tender-required schedule/format and currency."),
+      bullet("Run document validation again after editing and before final ZIP packaging."),
+      para(`Document type: ${documentType}`),
+    );
+  } else {
+    children.push(
+      subheading("Proposed response structure"),
+      bullet("Confirm the assignment objectives, client priorities, location, and required deliverables using the tender source text."),
+      bullet("Describe the methodology in the same order as the tender scope, including responsibility assignment, quality gates, and deliverable controls."),
+      bullet("Reference only reviewed company evidence, selected experts, and selected projects approved in the Knowledge Vault."),
+      bullet("Keep technical and financial content separated. Pricing, rates, BOQ, and commercial terms must not appear in a technical-envelope document."),
+      subheading("Reviewer completion checklist"),
+      bullet("Replace this draft with the final generated narrative or complete the draft manually before marking READY_FOR_EXPORT."),
+      bullet("Validate that every mandatory requirement covered by this file has confirmed evidence and source traceability."),
+      bullet("Run document validation again after editing and before final ZIP packaging."),
+      para(`Document type: ${documentType}`),
+    );
+  }
   const buffer = await Packer.toBuffer(new Document({ sections: [{ properties: {}, children }] }));
   return buffer.toString("base64");
 }
@@ -732,4 +758,4 @@ export async function generateMissingPlanFiles(args: {
   };
 }
 
-export const __testing__ = { documentTypeFor, needsOriginalReplacement, isNarrativeDraft };
+export const __testing__ = { documentTypeFor, needsOriginalReplacement, isNarrativeDraft, narrativeDraftContent };

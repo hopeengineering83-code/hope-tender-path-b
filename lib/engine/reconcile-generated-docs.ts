@@ -92,12 +92,21 @@ function jaccard(a: Set<string>, b: Set<string>): number {
  * exact-name match fails.
  */
 const SEMANTIC_CATEGORIES: Array<{ id: string; test: RegExp }> = [
+  // Checked before FINANCIAL_EVIDENCE below: semanticCategory() is a
+  // first-match-wins scan, and FINANCIAL_EVIDENCE's bare "financial" would
+  // otherwise match "Financial Proposal" — the firm's own priced offer —
+  // before this more specific pattern ever runs, reconciling it against a
+  // plan slot meant for a third-party original (audited statement, bank
+  // record) instead of its own financial-proposal slot. Same bug fixed for
+  // the same reason in missing-plan-file-generation.ts's documentTypeFor(),
+  // document-type-normalizer.ts's FINANCIAL_PROPOSAL_PATTERNS, and
+  // export-gap-repair.ts's safeTypeFor().
+  { id: "FINANCIAL_PROPOSAL",    test: /\b(financial[\s._-]+proposal|price[\s._-]+proposal|commercial[\s._-]+proposal|priced[\s._-]+offer)\b/i },
   { id: "FINANCIAL_EVIDENCE",    test: /\b(financial|audited|turnover|revenue|profit|loss|capacity)\b/i },
   { id: "LEGAL_REGISTRATION",    test: /\b(legal|registration|incorporation|licen[cs]e|tin|vat|tax\s+clearance|grade\s+certificate|good\s+standing)\b/i },
   { id: "SUBMISSION_METHOD",     test: /\b(submission\s+method|deadline|delivery|portal|email\s+recipients?|envelope|where\s+to\s+submit)\b/i },
   { id: "TENDER_FORMS",          test: /\b(tender\s+forms?|forms?\s+and\s+templates|bid\s+form|price\s+schedule|schedule\s+of\s+(prices?|rates)|annexure|attachment\s+\d)\b/i },
   { id: "TECHNICAL_PROPOSAL",    test: /\b(technical\s+proposal|methodology|work\s+plan|approach\s+and\s+methodology|implementation\s+plan)\b/i },
-  { id: "FINANCIAL_PROPOSAL",    test: /\b(financial\s+proposal|price\s+proposal|commercial\s+proposal|priced\s+offer)\b/i },
   { id: "COMPANY_PROFILE",       test: COMPANY_PROFILE_DOC_NAME_RX },
   { id: "EXPERT_CV",             test: /\b(expert\s+cvs?|cv\s+package|curriculum\s+vitae|key\s+experts?)\b/i },
   { id: "PROJECT_EXPERIENCE",    test: /\b(project\s+experience|relevant\s+experience|past\s+performance|reference\s+projects)\b/i },
