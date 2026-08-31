@@ -34,7 +34,7 @@ const EMPTY_SECTION_RE = /^#+\s+.+\n+(?:\n|$)/m;
 // The canonical detector reads sentence by sentence and exempts identity,
 // quoted requirements and no-price assurances, so it does not confuse a tax
 // identifier with a quoted fee.
-const TECHNICAL_IN_FINANCIAL_RE = /methodology|work\s+plan|staffing\s+plan|technical\s+approach/i;
+export const TECHNICAL_IN_FINANCIAL_RE = /methodology|work\s+plan|staffing\s+plan|technical\s+approach/i;
 
 export function validateDocumentQuality(doc: {
   name: string;

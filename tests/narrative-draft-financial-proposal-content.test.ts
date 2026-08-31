@@ -66,4 +66,30 @@ describe("narrativeDraftContent avoids technical-envelope language for a financi
     const text = await docxVisibleText(content);
     assert.match(text, /methodology/i);
   });
+
+  it("does not quote an unrelated technical requirement's methodology/work-plan text into a financial proposal draft", async () => {
+    // The exact real-pipeline reproduction: matchingRequirements() matches on
+    // the shared generic word "proposal", so a financial-proposal filename
+    // pulled in these two TECHNICAL requirements verbatim and reintroduced
+    // the forbidden language via the quoted requirement text, even after the
+    // template itself was fixed.
+    const requirements = [
+      {
+        title: "Separate financial proposal",
+        description: "The Technical Proposal and the Financial Proposal must be submitted as two separate password protected files. The Technical Proposal must not contain any financial information.",
+      },
+      {
+        title: "Technical approach and methodology",
+        description: "The technical proposal shall present the approach and methodology for the scope of services, evaluated at 35 points.",
+      },
+      {
+        title: "Work plan, staffing schedule and quality assurance",
+        description: "The technical proposal shall include a work plan, staffing schedule and quality assurance arrangements, evaluated at 15 points.",
+      },
+    ];
+    const content = await narrativeDraftContent("Sample Tender", "02-Financial-Proposal.docx", "FINANCIAL_PROPOSAL", requirements);
+    const text = await docxVisibleText(content);
+    assert.doesNotMatch(text, /methodology|work\s+plan|staffing\s+plan|technical\s+approach/i);
+    assert.match(text, /Separate financial proposal/, "the genuinely relevant financial requirement must still be listed");
+  });
 });

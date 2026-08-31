@@ -40,6 +40,7 @@ import {
   withTransactionalGenerationGate,
 } from "./transactional-generation-gate";
 import { logger } from "../observability";
+import { TECHNICAL_IN_FINANCIAL_RE } from "./document-quality-validator";
 
 export type MissingPlanFileGenerationResult = {
   ok: boolean;
@@ -212,7 +213,29 @@ async function narrativeDraftContent(
   documentType: string,
   requirements: RequirementLike[],
 ) {
-  const related = matchingRequirements(fileName, requirements);
+  // A financial/commercial proposal must not carry "methodology"/"work plan"/
+  // "technical approach" language — the same envelope-separation rule that
+  // keeps pricing out of a technical document (see pricing-hygiene.ts and
+  // document-quality-validator.ts's TECHNICAL_IN_FINANCIAL_RE check) applies
+  // in reverse. Before the financial/commercial-proposal filename fix above,
+  // a file like "02-Financial-Proposal.docx" was always misclassified as
+  // FINANCIAL_EVIDENCE and never reached this branch at all, so none of this
+  // was ever exercised for a financial envelope.
+  const isFinancialProposal = /^FINANCIAL_PROPOSAL$/i.test(documentType) || /financial[\s._-]+proposal|commercial[\s._-]+proposal/i.test(fileName);
+
+  // matchingRequirements() scores on shared generic words with the filename
+  // ("proposal" is common to both "Financial Proposal" and "Technical
+  // Proposal" requirement text), with no awareness of which submission
+  // envelope a requirement belongs to. For a financial proposal that pulled
+  // in unrelated technical requirements verbatim — "Technical approach and
+  // methodology...", "Work plan, staffing schedule..." — and quoting them
+  // into the "Tender requirements addressed" section reintroduced the exact
+  // technical-envelope language the financial template below is written to
+  // avoid, failing export with "Technical methodology content detected in a
+  // FINANCIAL document" even after the template itself was fixed.
+  const related = matchingRequirements(fileName, requirements)
+    .filter((requirement) => !isFinancialProposal || !TECHNICAL_IN_FINANCIAL_RE.test(`${requirement.title} ${requirement.description ?? ""}`));
+
   const children: Paragraph[] = [
     para(fileName, true),
     para(`Tender: ${tenderTitle}`),
@@ -227,19 +250,7 @@ async function narrativeDraftContent(
       children.push(bullet(`${requirement.title}${requirement.description ? ` — ${requirement.description}` : ""}`.slice(0, 700)));
     }
   }
-  // A financial/commercial proposal must not carry "methodology"/"work plan"/
-  // "technical approach" language — the same envelope-separation rule that
-  // keeps pricing out of a technical document (see pricing-hygiene.ts and
-  // document-quality-validator.ts's TECHNICAL_IN_FINANCIAL_RE check) applies
-  // in reverse. Before the financial/commercial-proposal filename fix above,
-  // a file like "02-Financial-Proposal.docx" was always misclassified as
-  // FINANCIAL_EVIDENCE and never reached this branch at all, so the generic
-  // technical-response template below was never actually exercised for a
-  // financial envelope. Once correctly classified, the SAME generic template
-  // failed real export with "Technical methodology content detected in a
-  // FINANCIAL document" — a latent defect this fix now has to reach, because
-  // the previous misclassification masked it.
-  if (/^FINANCIAL_PROPOSAL$/i.test(documentType) || /financial[\s._-]+proposal|commercial[\s._-]+proposal/i.test(fileName)) {
+  if (isFinancialProposal) {
     children.push(
       subheading("Proposed response structure"),
       bullet("Confirm the pricing structure, currency, and validity period the tender requires (lump sum, unit rates, or a bill of quantities)."),
