@@ -61,3 +61,4 @@ browser-results/
 acceptance-evidence/
 .env*
 .ci-env.sh
+.start-drive-server.sh
