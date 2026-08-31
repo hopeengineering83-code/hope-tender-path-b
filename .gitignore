@@ -60,3 +60,4 @@ test-results-e2e/
 browser-results/
 acceptance-evidence/
 .env*
+.ci-env.sh

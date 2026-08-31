@@ -130,10 +130,26 @@ export async function generatedDocumentVisibleText(
     for (const part of TEXT_PARTS) {
       const entry = zip.file(part);
       if (!entry) continue;
-      chunks.push(...wordTextRuns(await entry.async("string")));
+      const xml = await entry.async("string");
+      // Split on paragraph/table-row/table-cell boundaries BEFORE extracting
+      // text runs, mirroring visibleXmlText() in export-readiness.ts. Without
+      // this, every run in a part was joined with nothing but a plain space,
+      // so adjacent table cells fused into one run-on unit with no boundary —
+      // a value in one cell could then defeat a pricing-leakage exemption
+      // meant for an unrelated cell. This is the same incident documented
+      // there (a compliance-matrix row put "Financial Proposal Controls" in
+      // one cell and "3 selected expert(s)" in another; the row had no price
+      // at all, but the fused text read as one line containing both a
+      // financial term and a digit) — it was fixed for that extractor but not
+      // for this one, so the export/validate path that actually calls
+      // generatedDocumentVisibleText kept hitting it.
+      for (const segment of xml.split(/<\/w:(?:p|tr|tc)>/)) {
+        const runs = wordTextRuns(segment);
+        if (runs.length > 0) chunks.push(runs.join(" "));
+      }
     }
     if (chunks.length === 0) return null;
-    return decodeXmlEntities(collapseWhitespace(chunks.join(" ")));
+    return decodeXmlEntities(chunks.map(collapseWhitespace).join("\n"));
   } catch {
     return null;
   }
