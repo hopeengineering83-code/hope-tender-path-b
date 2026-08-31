@@ -131,7 +131,12 @@ function inferCertifications(text: string): string[] {
 }
 
 function parseYears(text: string): number | null {
-  const values = [...text.matchAll(/(\d{1,2})\+?\s*(?:years|yrs|year)\s+(?:of\s+)?(?:professional\s+)?experience/gi)]
+  // A qualifier commonly sits between "years" and "experience" — "13 years
+  // ESIA experience", "15 years design experience", "8 years site experience".
+  // Requiring only "professional" as the optional word missed those, and a
+  // missing value is a person whose stated experience the app cannot see.
+  // Bounded to two short words so it cannot run across a sentence.
+  const values = [...text.matchAll(/(\d{1,2})\+?\s*(?:years|yrs|year)\s+(?:of\s+)?(?:[A-Za-z][\w-]{0,14}\s+){0,2}experience/gi)]
     .map((match) => Number(match[1]))
     .filter((value) => value > 0 && value < 70);
   return values.length ? Math.max(...values) : null;
@@ -139,8 +144,15 @@ function parseYears(text: string): number | null {
 
 function parseTitle(text: string): string | null {
   const patterns = [
-    /(?:Proposed\s+Position|Position|Title|Profession)\s*[:\-]?\s*([^\n\r:]{3,120})/i,
-    /\b(Architect|Urban Planner|Civil Engineer|Structural Engineer|Electrical Engineer|Mechanical Engineer|Sanitary Engineer|Project Manager|Team Leader|Quantity Surveyor|Surveyor|Geotechnical Engineer)\b/i,
+    // \b on both sides: without the trailing boundary "Profession" matched
+    // inside "professional", so "22 years professional experience in water
+    // supply…" was stored as a named person's job title — "al experience in
+    // water supply and municipal infrastructure. Registered".
+    /\b(?:Proposed\s+Position|Position|Title|Profession)\b\s*[:\-]?\s*([^\n\r:]{3,120})/i,
+    // Same role list the name-then-role pattern in extractExpertNames uses.
+    // The two disagreeing left a person the extractor found by their role
+    // ("Senior Water Supply Engineer") with no title at all.
+    /\b(Architect|Urban Planner|Civil Engineer|Structural Engineer|Electrical Engineer|Mechanical Engineer|Sanitary Engineer|Water Supply Engineer|Project Manager|Team Leader|Quantity Surveyor|Surveyor|Geotechnical Engineer)\b/i,
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
@@ -151,7 +163,9 @@ function parseTitle(text: string): string | null {
 
 function normalizeName(value: string): string {
   return clean(value)
-    .replace(/^(Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?|Prof\.?)\s+/i, "")
+    // Same set the extractor matches, or a title it recognises rides along
+    // into the stored name — "ARCH. DANIEL WOLDU" instead of "DANIEL WOLDU".
+    .replace(/^(Mr|Ms|Mrs|Dr|Eng|Ing|Prof|Arch)\.?\s+/i, "")
     .replace(/[,;].*$/, "")
     .replace(/\s+(Nationality|Country|Date|Birth|Education|Position|Profession|Experience|Phone|Email).*$/i, "")
     .slice(0, 90);
@@ -175,12 +189,63 @@ function snippetAround(text: string, needle: string, radius = 1200): string {
   return clean(text.slice(Math.max(0, index - 240), Math.min(text.length, index + radius)));
 }
 
+/**
+ * The part of a CV document that belongs to ONE named person.
+ *
+ * A fixed radius around the name spans neighbouring entries — a 1200-character
+ * window over a three-CV document reaches well into the next person's — so
+ * every expert inherited the others' title, years, disciplines and sectors.
+ * Attributes of a named individual, taken from a different individual's text,
+ * in records that are matched against a tender and can be promoted into a
+ * submission: values about a real person that the source does not support.
+ *
+ * The block therefore runs from this person's name to wherever the next one
+ * starts, and only falls back to the radius window when no later name bounds
+ * it. `others` are the remaining names extracted from the same document.
+ */
+function personBlock(text: string, name: string, others: string[]): string {
+  const haystack = text.toLocaleLowerCase("en-US");
+  const start = haystack.indexOf(name.toLocaleLowerCase("en-US"));
+  if (start < 0) return snippetAround(text, name);
+  // Begin slightly before the name so an honorific or heading on the same
+  // line stays with the person it belongs to.
+  const from = Math.max(0, text.lastIndexOf("\n", start) + 1);
+  let to = text.length;
+  for (const other of others) {
+    if (other === name) continue;
+    const at = haystack.indexOf(other.toLocaleLowerCase("en-US"), start + name.length);
+    if (at > start && at < to) to = at;
+  }
+  const block = text.slice(from, Math.min(to, from + 1200));
+  return clean(block.length >= 20 ? block : text.slice(from, Math.min(text.length, from + 1200)));
+}
+
 function extractExpertNames(text: string): string[] {
   const names = new Set<string>();
+  // Every name capture below uses [ \t]+ between words, not \s+: a person's
+  // name sits on one line, and \s+ crossed the line break to swallow the next
+  // line's first capitalised word — "Eng. Abebe Tesfaye" followed by "Twenty
+  // two years of experience" was filed as the person "Abebe Tesfaye Twenty".
   const patterns = [
-    /(?:Full\s+Name|Name\s+of\s+(?:Expert|Key\s+Staff|Personnel|Staff)|Expert\s+Name|Name)\s*[:\-]?\s*([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})/gi,
-    /(?:Mr\.?|Ms\.?|Mrs\.?|Dr\.?|Eng\.?|Prof\.?)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,4})/g,
-    /([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){1,2})\s+(?:Architect|Urban Planner|Civil Engineer|Structural Engineer|Electrical Engineer|Mechanical Engineer|Sanitary Engineer|Project Manager|Team Leader|Quantity Surveyor|Surveyor|Geotechnical Engineer)\b/g,
+    /(?:Full\s+Name|Name\s+of\s+(?:Expert|Key\s+Staff|Personnel|Staff)|Expert\s+Name|Name)\s*[:\-]?\s*([A-Z][A-Za-z.'-]+(?:[ \t]+[A-Z][A-Za-z.'-]+){1,4})/gi,
+    // The honorific is matched in either case; the NAME capture stays
+    // case-sensitive so the `i` flag cannot loosen it into ordinary prose.
+    //
+    // "ENG. ABEBE TESFAYE" — the way a CV actually writes it — matched
+    // nothing, because only the title-case "Eng." was listed. A vault CV
+    // document therefore yielded zero deterministic experts while the same
+    // ingestion found projects, and the tender blocked on
+    // NO_SELECTED_REVIEWED_EXPERTS with the evidence sitting in the vault.
+    // normalizeName below already stripped honorifics case-insensitively, so
+    // the module knew they arrive in any case; only the extractor did not.
+    /(?:Mr|Ms|Mrs|Dr|Eng|Ing|Prof|Arch|MR|MS|MRS|DR|ENG|ING|PROF|ARCH)\.?\s+([A-Z][A-Za-z.'-]+(?:[ \t]+[A-Z][A-Za-z.'-]+){1,4})/g,
+    // A role usually follows the name across a separator — "Abebe Tesfaye —
+    // Team Leader", "Daniel Woldu | Senior Architect", "Meron Gebrehiwot,
+    // Civil Engineer" — not immediately after it. Requiring adjacency missed
+    // every one of those and left this pattern matching only running prose.
+    // An optional qualifier ("Senior", "Lead", "Principal"…) is allowed
+    // between the separator and the role for the same reason.
+    /([A-Z][A-Za-z.'-]+(?:[ \t]+[A-Z][A-Za-z.'-]+){1,2})\s*(?:[\u2013\u2014|:,-]\s*)?(?:(?:Senior|Lead|Principal|Chief|Deputy|Assistant)\s+)?(?:Architect|Urban Planner|Civil Engineer|Structural Engineer|Electrical Engineer|Mechanical Engineer|Sanitary Engineer|Water Supply Engineer|Project Manager|Team Leader|Quantity Surveyor|Surveyor|Geotechnical Engineer)\b/g,
   ];
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
@@ -234,8 +299,11 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
 
     const expertAuthority = expertCapability(document);
     if (expertAuthority > 0) {
-      for (const fullName of extractExpertNames(text)) {
-        const snippet = snippetAround(text, fullName);
+      const allNames = extractExpertNames(text);
+      for (const fullName of allNames) {
+        // Bounded to this person's own entry, so no attribute is read from a
+        // neighbouring CV.
+        const snippet = personBlock(text, fullName, allNames);
         experts.push({
           fullName,
           title: parseTitle(snippet),
@@ -243,7 +311,15 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
           disciplines: inferServices(snippet),
           sectors: inferSectors(snippet),
           certifications: inferCertifications(snippet),
-          profile: `Deterministic extraction from ${document.originalFileName}.`,
+          // The person's own text, not a description of the extractor. The
+          // previous value — "Deterministic extraction from <file>." — carried
+          // none of the CV, so the tender matcher (which reads fullName,
+          // title, profile, disciplines, sectors, certifications) scored every
+          // extracted expert 0, selected none, and the tender blocked on
+          // NO_SELECTED_REVIEWED_EXPERTS with the evidence sitting in the
+          // vault. The document is still named, after the content rather than
+          // instead of it.
+          profile: `${snippet}\n\nSource: ${document.originalFileName}.`.slice(0, 4000),
           sourceSnippet: snippet,
           sourceDocumentId: document.id,
           sourceAuthority: expertAuthority,
