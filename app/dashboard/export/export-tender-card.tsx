@@ -45,7 +45,19 @@ export function ExportTenderCard({
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-3">
             <h2 className="min-w-0 break-words text-lg font-semibold text-slate-900">{tenderTitle}</h2>
-            {isExported && <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs text-green-700">Exported</span>}
+            {/* Exported is history, not a readiness verdict, and the two are
+                independent: a package downloaded earlier becomes not-ready
+                again the moment a document is regenerated or fails validation.
+                Captured on the Export Hub while proving the BLOCKED direction,
+                the green "Exported" pill sat beside the amber "Not ready" pill
+                on a package whose download answered 409 — two true facts
+                rendered as competing status pills, on the one surface this
+                release spent its effort making unambiguous.
+                The fact is kept, not removed: green only while the package IS
+                ready, otherwise a neutral "Exported earlier", so one verdict
+                leads and the history is still visible. */}
+            {isExported && isReady && <span className="rounded-full bg-green-100 px-2.5 py-0.5 text-xs text-green-700">Exported</span>}
+            {isExported && !isReady && <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-600">Exported earlier</span>}
             {isReady && !isExported && <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs text-emerald-700">Ready</span>}
             {!isReady && <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs text-amber-800">Not ready</span>}
           </div>
