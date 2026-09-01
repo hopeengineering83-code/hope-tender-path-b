@@ -236,9 +236,36 @@ function snippetAround(text: string, needle: string, radius = 1200): string {
  * starts, and only falls back to the radius window when no later name bounds
  * it. `others` are the remaining names extracted from the same document.
  */
+/**
+ * Find a name in the source even when the PDF wrapped it across lines.
+ *
+ * entryBlock located a record by plain indexOf, which works only while the
+ * name appears contiguously. Recovered wrapped titles never do: the stored
+ * name is "Entoto Eco-Park Master Planning & Feasibility" while the source
+ * reads "Entoto Eco-Park Master\nPlanning & Feasibility". The lookup failed,
+ * every such record fell back to the same opening window of the document, and
+ * they all inherited whichever sectors happened to be described there.
+ *
+ * That is not cosmetic. A hotel that inherits "Healthcare" from a neighbouring
+ * hospital entry scores as a healthcare comparable — measured, hotels reached
+ * 1.000 against this tender while the real hospitals sat at 0.950 — so the
+ * comparable-projects table of a medical-centre proposal would lead with
+ * hotels. The capability scorer is not at fault: on the name alone it ranks
+ * hotels 0.000-0.103 and hospitals highest, exactly as designed.
+ *
+ * Matching on the name's words in sequence, tolerating any whitespace between
+ * them, restores the true position.
+ */
+function locateName(text: string, name: string): number {
+  const direct = text.toLocaleLowerCase("en-US").indexOf(name.toLocaleLowerCase("en-US"));
+  if (direct >= 0) return direct;
+  const words = name.trim().split(/\s+/).filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (words.length === 0) return -1;
+  return text.search(new RegExp(words.join("\\s+"), "i"));
+}
+
 function entryBlock(text: string, name: string, others: string[]): string {
-  const haystack = text.toLocaleLowerCase("en-US");
-  const start = haystack.indexOf(name.toLocaleLowerCase("en-US"));
+  const start = locateName(text, name);
   if (start < 0) return snippetAround(text, name);
   // Begin slightly before the name so an honorific or heading on the same
   // line stays with the person it belongs to.
@@ -246,7 +273,11 @@ function entryBlock(text: string, name: string, others: string[]): string {
   let to = text.length;
   for (const other of others) {
     if (other === name) continue;
-    const at = haystack.indexOf(other.toLocaleLowerCase("en-US"), start + name.length);
+    // Same whitespace tolerance for the boundary scan, so a wrapped
+    // neighbour still bounds this record instead of being invisible.
+    const tail = text.slice(start + name.length);
+    const rel = locateName(tail, other);
+    const at = rel < 0 ? -1 : start + name.length + rel;
     if (at > start && at < to) to = at;
   }
   const block = text.slice(from, Math.min(to, from + 1200));
