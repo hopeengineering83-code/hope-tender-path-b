@@ -7,7 +7,7 @@ import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEl
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
-import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
+import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
@@ -4562,6 +4562,22 @@ interface SectionResult {
   durationMs: number;
 }
 
+/**
+ * Budget for one section's generation call, sized from the tokens that section
+ * is allowed to emit.
+ *
+ * PROPOSAL_SECTION_TIMEOUT_MS remains the FLOOR, so no section ever gets less
+ * time than it did before this became size-aware; only the larger sections
+ * gain. Exported for the regression test that pins the ordering property that
+ * actually matters: the Technical Approach section must be allowed more time
+ * than the smaller sections it outweighs.
+ */
+export function sectionTimeoutMsFor(spec: { maxOutputTokens?: number }): number {
+  const outputTokens = Math.max(0, spec.maxOutputTokens ?? 0);
+  const sized = PROPOSAL_SECTION_BASE_OVERHEAD_MS + outputTokens * PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN;
+  return Math.min(PROPOSAL_SECTION_TIMEOUT_CEILING_MS, Math.max(PROPOSAL_SECTION_TIMEOUT_MS, sized));
+}
+
 async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionResult> {
   const t0 = Date.now();
 
@@ -4569,11 +4585,24 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
   // that the Gemini fallback is not immediately rejected by an already-
   // settled timeout from a prior Claude attempt (a settled-rejected
   // promise in Promise.race resolves the race instantly).
+  //
+  // The budget is sized from THIS section's own output allowance rather than
+  // being the same flat number for all four. See the note on
+  // PROPOSAL_SECTION_TIMEOUT_CEILING_MS in timeout-config.ts: the flat 30s was
+  // unreachable for the Technical Approach section by construction, so on a
+  // real owner run it was the only section that fell back — the one section a
+  // technical proposal is actually judged on.
+  //
+  // resolveEffectiveTimeoutMs clamps the result to any armed worker deadline,
+  // so a larger ceiling can never consume the time that validation, PDF
+  // conversion and AUTO_FINALIZE need after generation returns.
+  const sectionTimeoutMs = sectionTimeoutMsFor(spec);
   function makeSectionTimeout() {
+    const budgetMs = resolveEffectiveTimeoutMs(sectionTimeoutMs);
     return new Promise<null>((_, reject) =>
       setTimeout(
-        () => reject(new Error(`section "${spec.id}" timed out after ${Math.round(PROPOSAL_SECTION_TIMEOUT_MS / 1000)}s`)),
-        PROPOSAL_SECTION_TIMEOUT_MS,
+        () => reject(new Error(`section "${spec.id}" timed out after ${Math.round(budgetMs / 1000)}s`)),
+        budgetMs,
       )
     );
   }
@@ -4601,9 +4630,65 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
   // per-provider token caps and timeouts from the registry, the Gemini key read
   // at request time rather than the module-load cache this function used, the
   // extraction/proposal capability recording, and the model override.
+  // Two passes over the SAME canonical order.
+  //
+  // Pass 1 takes only providers whose preflight says they can carry this
+  // prompt. Pass 2 is the fallback-of-last-resort: if nothing in pass 1
+  // produced text, try the chain again without the capacity filter.
+  //
+  // Both passes matter, and the second is not a loophole. Skipping a provider
+  // that cannot take the payload is the point — it is what stops the doomed
+  // Groq call the real run made. But skipping is only an improvement while
+  // some OTHER provider can still write the section. When the only configured
+  // provider has a small context window, a preflight-only loop skips
+  // everything and hands the section to the deterministic fallback — which is
+  // precisely the outcome this whole change exists to prevent, and it is
+  // strictly worse than letting the provider try and possibly succeed.
+  // Provider profiles are conservative estimates, not guarantees.
+  //
+  // Canonical order is walked identically in both passes; nothing is
+  // reordered, and no provider is excluded from the chain.
+  for (const pass of ["capacity-checked", "last-resort"] as const) {
   for (const provider of getAutomaticProviderOrder()) {
     if (!providerAutomaticEligibility(provider).eligible) continue;
     if (isProviderCooledDown(provider)) continue;
+
+    // Provider capability preflight — the same gate callAiWithFallback applies
+    // before every attempt, which this path did not run at all.
+    //
+    // Without it the section writer handed each provider the section prompt
+    // regardless of whether that provider could accept it. On a real owner run
+    // the Technical Approach fallback attempt sent Groq roughly 12,154 tokens
+    // against its 8,000 tokens-per-minute limit: a request that cannot succeed,
+    // spending an attempt and the wall-clock time to be refused.
+    //
+    // preflightProvider refuses it for whichever limit binds first. For Groq
+    // that is CONTEXT_OVERFLOW, not TPM_LIMIT: its context window is 8,192
+    // tokens, so a ~12,154-token prompt is already over the window before the
+    // throughput limit is reached. Both verdicts are refusals and both are
+    // correct; the point is that the refusal now happens before dispatch. A
+    // preflight skip deliberately does NOT consume the attempt budget, so the
+    // chain moves on to the next provider in canonical order rather than
+    // burning the section on a request that cannot succeed.
+    //
+    // This selects a provider that can carry the payload; it does not shrink,
+    // truncate or reorder anything. Canonical order is still whatever
+    // getAutomaticProviderOrder() returns.
+    const preflight = preflightProvider(provider, spec.userPrompt, {
+      systemPrompt: spec.systemPrompt,
+      useCase: "proposal",
+    });
+    if (!preflight.eligible && pass === "capacity-checked") {
+      logger.warn(
+        `[ai] section "${spec.id}" skipping ${provider} before dispatch (${preflight.reason}) — trying the next provider.`,
+      );
+      continue;
+    }
+    if (!preflight.eligible) {
+      logger.warn(
+        `[ai] section "${spec.id}" no provider had capacity headroom; attempting ${provider} anyway (${preflight.reason}) rather than dropping the section to the deterministic fallback.`,
+      );
+    }
 
     try {
       const text = await Promise.race([
@@ -4613,7 +4698,11 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
           // The section's own budget, not the whole-proposal one. Four of these
           // run concurrently in a single serverless invocation, which is why
           // the per-section cap exists and why it must survive this dispatch.
-          maxOutputTokens: spec.maxOutputTokens ?? 4096,
+          //
+          // Clamped by what preflight says this provider can actually emit for
+          // this prompt, so a section budget larger than the provider's own
+          // headroom no longer produces a request the provider must refuse.
+          maxOutputTokens: Math.min(spec.maxOutputTokens ?? 4096, preflight.maxOutputTokens || (spec.maxOutputTokens ?? 4096)),
         }),
         makeSectionTimeout(),
       ]);
@@ -4637,6 +4726,7 @@ async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionRes
         `[ai] section "${spec.id}" ${provider} failed (${err instanceof Error ? err.message : String(err)}) — trying the next provider.`,
       );
     }
+  }
   }
 
   // All providers failed (or unavailable). Use the deterministic per-section fallback.

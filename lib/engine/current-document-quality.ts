@@ -100,6 +100,7 @@ export async function resolveDocumentVisibleText(doc: QualityAssessableDocument)
 export async function assessCurrentDocumentQuality(
   doc: QualityAssessableDocument,
   requirements: QualityRequirementInput = [],
+  evidence: { selectedExpertNames?: string[]; selectedProjectNames?: string[] } = {},
 ): Promise<DocumentQualityReport> {
   const visibleText = await resolveDocumentVisibleText(doc);
   return assessGeneratedDocumentQuality({
@@ -108,6 +109,8 @@ export async function assessCurrentDocumentQuality(
     rawFileContent: doc.fileContent ?? null,
     hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
     requirements,
+    selectedExpertNames: evidence.selectedExpertNames,
+    selectedProjectNames: evidence.selectedProjectNames,
   });
 }
 
@@ -117,10 +120,26 @@ export type CurrentDocumentQualityRow<T> = { doc: T; report: DocumentQualityRepo
 export async function assessCurrentDocumentQualityBatch<T extends QualityAssessableDocument>(
   docs: T[],
   requirements: QualityRequirementInput = [],
+  // Selected evidence names, threaded through so this batch scores documents
+  // on the same terms resolveCurrentDocumentVerdict does.
+  //
+  // WHY THIS PARAMETER EXISTS
+  // countEvidenceReferences() returns 0 both when a document cites none of the
+  // selected evidence AND when it was handed no names to look for. This batch
+  // had no way to pass names at all, so every caller of it — including the
+  // AUTO_FINALIZE path in final-submission-readiness.ts — scored technical
+  // proposals with an empty name list and got MISSING_EVIDENCE_REFERENCE
+  // unconditionally, however well the document actually cited its evidence.
+  //
+  // validate.ts already passed the names, so the SAME document could pass
+  // validation and then fail the readiness gate on a verdict about content
+  // that no evidence list was supplied for. Two gates disagreeing about one
+  // document is the defect; this closes it by giving both the same input.
+  evidence: { selectedExpertNames?: string[]; selectedProjectNames?: string[] } = {},
 ): Promise<Array<CurrentDocumentQualityRow<T>>> {
   const rows: Array<CurrentDocumentQualityRow<T>> = [];
   for (const doc of docs) {
-    rows.push({ doc, report: await assessCurrentDocumentQuality(doc, requirements) });
+    rows.push({ doc, report: await assessCurrentDocumentQuality(doc, requirements, evidence) });
   }
   return rows;
 }

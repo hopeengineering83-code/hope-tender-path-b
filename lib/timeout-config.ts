@@ -72,3 +72,44 @@ export const O1_O3_TIMEOUT_MS = readTimeoutMs("O1_O3_TIMEOUT_MS", 90_000, 30_000
 // with less remaining budget still gets only what is left, and nothing here
 // lets a hung provider outlive its parent.
 export const GEMINI_TIMEOUT_MS = readTimeoutMs("GEMINI_TIMEOUT_MS", 60_000, 5_000, 120_000);
+
+// Ceiling for one proposal section's generation call.
+//
+// PROPOSAL_SECTION_TIMEOUT_MS above is a FLOOR, not the whole story. It was
+// applied flat to all four sections, but the sections do not ask for the same
+// amount of writing: in every tier the Technical Approach ("c") budget is the
+// largest — 2,800 output tokens at the smallest tier, 4,500 and 6,500 higher
+// up, 7,500–10,000 chunked — against 1,700 for the cover and 1,300 for the
+// closing section. Generation latency scales with output length, so a flat 30s
+// asked the biggest section to finish in the time the smallest one needs.
+//
+// That is exactly what a real owner run produced: cover-and-summary,
+// company-and-experience and additional-and-declaration all returned from
+// gemini, and only
+//
+//   section "technical-approach" timed out after 30s
+//
+// fell through to the deterministic fallback — the one section a technical
+// proposal is actually judged on. The three that succeeded are the three
+// smaller ones; the one that failed is the largest. Measured against the live
+// API, gemini-2.5-flash emitted 15,277 characters (~3,800 output tokens) in
+// 38,488ms — about 10ms per output token — so 2,800 tokens cannot fit in 30s
+// and the timeout was unreachable by construction, not by bad luck.
+//
+// The per-section budget is therefore derived from that section's own output
+// allowance (see sectionTimeoutMsFor in lib/ai.ts) and clamped here. This is a
+// CEILING, not a reservation: resolveEffectiveTimeoutMs still clamps it to the
+// worker's remaining budget, so raising it cannot eat the time that validation,
+// PDF conversion and AUTO_FINALIZE need after generation returns.
+export const PROPOSAL_SECTION_TIMEOUT_CEILING_MS = readTimeoutMs(
+  "PROPOSAL_SECTION_TIMEOUT_CEILING_MS", 120_000, 30_000, 300_000,
+);
+
+// Observed cost of one output token, used to size a section's budget from the
+// tokens it is allowed to emit. 12ms carries roughly 20% headroom over the
+// 10ms/token measured above, so a slower-than-usual response still lands.
+export const PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN = 12;
+
+// Fixed per-call overhead: connection setup and time-to-first-token, which do
+// not scale with output length.
+export const PROPOSAL_SECTION_BASE_OVERHEAD_MS = 8_000;

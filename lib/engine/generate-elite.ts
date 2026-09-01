@@ -1542,7 +1542,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // the facts also flow into a deterministic Section C.0 "Tender
   // Specifics Recognised by This Proposal" table that ALWAYS appears
   // at the top of Section C.
-  const tenderFacts = extractTenderFacts(intelligence.tenderText);
+  //
+  // The canonical deadline and reference come from the tender record that AI
+  // Analyze already grounded against the source; they are passed in rather
+  // than re-derived, so a date this extractor's patterns cannot parse is no
+  // longer silently dropped. See CanonicalTenderFacts in the extractor for the
+  // real run that made this necessary (0 deadlines extracted for a tender
+  // whose deadline was known).
+  const tenderFacts = extractTenderFacts(intelligence.tenderText, {
+    deadlineDisplay: tender.deadline
+      ? new Date(tender.deadline).toISOString().slice(0, 10)
+      : null,
+    referenceNumber: tender.reference ?? null,
+  });
   const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
   const tenderSpecificsTable = buildTenderSpecificsBlock(tenderFacts);
   if (tenderFacts.rawCount > 0) {

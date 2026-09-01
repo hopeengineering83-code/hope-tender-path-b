@@ -631,7 +631,27 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
 
   // ── Title / cover signal. ───────────────────────────────────────────────
   if (text && wordCount >= 200) {
-    const looksTitleHeavy = /^(?:title|cover|subject|date|technical\s+proposal|expression\s+of\s+interest|company\s+profile)\b/im.test(text.slice(0, 600));
+    // The window must clear a letterhead.
+    //
+    // This read text.slice(0, 600), which assumed the title is the first thing
+    // on the page. It is not: applyActiveUploadedLetterheadToTenderDocuments
+    // is a normal automatic stage, and a real Company Vault letterhead —
+    // legal name, address, PO box, phone, email, trade licence, TIN, VAT,
+    // registration lines — runs past 600 characters on its own. Measured on a
+    // realistic letterhead the title "Technical Proposal" began at character
+    // 614, so a document with a perfectly good cover page was reported as
+    // having none.
+    //
+    // That was the MISSING_TITLE_OR_COVER on a real owner run whose cover page
+    // WAS being injected. The fix is to look far enough to see it — roughly
+    // the first page of extracted text — not to inject a second cover.
+    const COVER_SCAN_CHARS = 2_500;
+    const head = text.slice(0, COVER_SCAN_CHARS);
+    const looksTitleHeavy =
+      /^(?:title|cover|subject|date|technical\s+proposal|expression\s+of\s+interest|company\s+profile)\b/im.test(head)
+      // A cover page addresses someone and names what it is. Both are title
+      // signals a letterhead does not produce by itself.
+      || /^(?:submitted\s+(?:to|by)|attention|re:|proposal\s+for|in\s+response\s+to)\b/im.test(head);
     if (!looksTitleHeavy && /technical\s+proposal|methodology|cover\s+letter/i.test(label)) {
       issues.push({ code: "MISSING_TITLE_OR_COVER", severity: "LOW", message: "Document does not begin with a clear title / subject line." });
     }

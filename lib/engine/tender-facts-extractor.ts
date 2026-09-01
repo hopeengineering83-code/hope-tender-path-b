@@ -147,8 +147,61 @@ function extractAll(text: string, patterns: RegExp[], group = 1): string[] {
 
 // ─── Public API ──────────────────────────────────────────────────────────
 
-export function extractTenderFacts(tenderText: string): TenderFacts {
+/**
+ * Facts that AI Analyze has already established against the tender source and
+ * persisted as canonical. These are NOT a second fact authority — they are the
+ * existing one, passed in so this extractor stops competing with it.
+ *
+ * WHY THIS PARAMETER EXISTS
+ * A real owner run had AI Analyze correctly extract the client (Pharo
+ * Ventures), the deadline (2026-08-25), the submission method and the
+ * technical-only instruction. The proposal writer then logged:
+ *
+ *   Tender facts extracted: 3 RFP ID(s), 0 deadline(s),
+ *   0 deliverable code(s), 0 quantity(s)
+ *
+ * Zero deadlines, for a tender whose deadline was already known and grounded.
+ * The writer called this extractor on raw tender text and used nothing else,
+ * so a deadline written in a format DEADLINE_PATTERNS does not match was
+ * simply lost — and the proposal could not echo the one date the evaluator
+ * most expects to see.
+ *
+ * Regex over raw text is the right tool for the classes the canonical record
+ * does not carry (quantities, deliverable codes, file formats, locations). It
+ * is the wrong tool for facts already resolved and source-grounded upstream.
+ * So canonical values are seeded first and regex only supplements: it can add
+ * a fact the canonical record lacks, never override one it holds.
+ */
+export type CanonicalTenderFacts = {
+  /** Effective deadline, already resolved (overrides applied) upstream. */
+  deadlineDisplay?: string | null;
+  /** Effective reference / procurement number. */
+  referenceNumber?: string | null;
+};
+
+export function extractTenderFacts(
+  tenderText: string,
+  canonical?: CanonicalTenderFacts,
+): TenderFacts {
+  const canonicalDeadlines = [canonical?.deadlineDisplay].filter((v): v is string => Boolean(v && v.trim()));
+  const canonicalRfpIds = [canonical?.referenceNumber].filter((v): v is string => Boolean(v && v.trim()));
+
   if (!tenderText || tenderText.length < 100) {
+    // Even with no usable tender text, canonical facts remain true and
+    // must still reach the proposal.
+    if (canonicalDeadlines.length > 0 || canonicalRfpIds.length > 0) {
+      return {
+        rfpIds: canonicalRfpIds,
+        deadlines: canonicalDeadlines,
+        validityPeriods: [],
+        locations: [],
+        quantities: [],
+        deliverableCodes: [],
+        fileFormats: [],
+        brandsOrWebsites: [],
+        rawCount: canonicalRfpIds.length + canonicalDeadlines.length,
+      };
+    }
     return {
       rfpIds: [],
       deadlines: [],
@@ -162,8 +215,11 @@ export function extractTenderFacts(tenderText: string): TenderFacts {
     };
   }
 
-  const rfpIds = extractAll(tenderText, RFP_PATTERNS).slice(0, 3);
-  const deadlines = extractAll(tenderText, DEADLINE_PATTERNS).slice(0, 3);
+  // Canonical first, regex second. uniq() keeps the canonical value at the
+  // head of the list and drops a regex match that merely repeats it, so the
+  // prompt block leads with the grounded fact.
+  const rfpIds = uniq([...canonicalRfpIds, ...extractAll(tenderText, RFP_PATTERNS)]).slice(0, 3);
+  const deadlines = uniq([...canonicalDeadlines, ...extractAll(tenderText, DEADLINE_PATTERNS)]).slice(0, 3);
   const validityPeriods = extractAll(tenderText, VALIDITY_PATTERNS).slice(0, 2);
 
   // Deliverable codes — collect, dedupe, sort numerically.

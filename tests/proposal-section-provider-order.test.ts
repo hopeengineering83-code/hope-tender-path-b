@@ -88,8 +88,14 @@ describe("every proposal path derives its provider order from one place", () => 
     // The per-section cap is what keeps four concurrent calls inside the
     // serverless timeout. Routing through the shared adapter must not silently
     // adopt the whole-proposal budget, which is up to 16K tokens.
+    //
+    // The bound is now the MINIMUM of the section's own cap and what preflight
+    // says the chosen provider can emit, which is strictly tighter. The
+    // section cap must still appear — dropping it in favour of the provider's
+    // headroom would let a generous provider pull one section past its share
+    // of the concurrent budget.
     const body = sliceFunction("generateOneSection");
-    assert.match(body, /maxOutputTokens: spec\.maxOutputTokens \?\? 4096/);
+    assert.match(body, /maxOutputTokens: Math\.min\(spec\.maxOutputTokens \?\? 4096, preflight\.maxOutputTokens/);
   });
 
   it("keeps Anthropic last, by position in the order rather than by a special case", () => {

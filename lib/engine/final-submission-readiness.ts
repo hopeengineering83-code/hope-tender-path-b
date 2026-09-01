@@ -590,6 +590,11 @@ export async function getFinalSubmissionReadiness(
       // emit the ANALYSIS_FROM_PARTIAL_EXTRACTION blocker when AI analysis ran on
       // partial extraction. Without this field the blocker silently never fires.
       analysisExtractionStatus: true,
+      // Selected evidence, so the quality gate can tell "cites nothing" apart
+      // from "was told nothing to look for". Same population validate.ts uses
+      // (isSelected: true) so the two gates cannot disagree about one document.
+      expertMatches: { where: { isSelected: true }, select: { expert: { select: { fullName: true } } } },
+      projectMatches: { where: { isSelected: true }, select: { project: { select: { name: true } } } },
       // Extraction metrics — needed by isExtractionAcceptableForExport in the
       // export readiness gate so the panel shows the blocker before export.
       files: {
@@ -763,7 +768,10 @@ export async function getFinalSubmissionReadiness(
   // This loads only the final candidates, not every generated document, so the
   // blob-size reason the projection exists for still holds everywhere else.
   const qualityInputs = await loadVisibleTextInputsForQuality(client, finalCandidates as any[]);
-  const qualityReports = await assessCurrentDocumentQualityBatch(qualityInputs as any[], tender.requirements);
+  const qualityReports = await assessCurrentDocumentQualityBatch(qualityInputs as any[], tender.requirements, {
+    selectedExpertNames: tender.expertMatches.map((match) => match.expert.fullName),
+    selectedProjectNames: tender.projectMatches.map((match) => match.project.name),
+  });
   const qualityFailed = countQualityFailed(qualityReports);
 
   // Name what failed, and why.

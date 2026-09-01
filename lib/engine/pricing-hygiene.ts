@@ -66,7 +66,15 @@ function withoutIdentifiers(sentence: string): string {
     // Requirement and clause IDs: TRB-10, ITB-4, SEC-12.
     .replace(/\b[A-Za-z]{2,6}-\d+\b/g, " ")
     // A bare year, only when no currency token is adjacent.
-    .replace(/(?<!\b(?:EUR|USD|ETB|GBP|Birr)\s{0,3})\b(?:19|20)\d{2}\b(?!\s{0,3}(?:EUR|USD|ETB|GBP|Birr))/gi, " ");
+    .replace(/(?<!\b(?:EUR|USD|ETB|GBP|Birr)\s{0,3})\b(?:19|20)\d{2}\b(?!\s{0,3}(?:EUR|USD|ETB|GBP|Birr))/gi, " ")
+    // Deliverable codes: D1, D7, A4. A single letter with one or two digits
+    // names an item; it never states a price.
+    .replace(/\b[A-Za-z]\d{1,2}\b/g, " ")
+    // Schedule markers: "Week 20", "Month 3", "Day 5", "Q1". A deliverables
+    // table pairs each item with WHEN it is due, and a due date is not money.
+    // Without this a timeline column made every row look priced.
+    .replace(/\b(?:week|month|day|quarter|phase|stage|year)s?\s*\d{1,3}\b/gi, " ")
+    .replace(/\bQ[1-4]\b/g, " ");
 }
 
 function isSafeNoPriceSentence(sentence: string): boolean {
@@ -210,6 +218,53 @@ function isTechnicalEnvelopeDoc(doc?: Pick<ExportReadyDocument, "name" | "exactF
   return /\b(technical|methodology|approach|workplan|work\s+plan|strategic|scope\s+of\s+work|implementation|execution\s+plan)\b/i.test(labelOf(doc));
 }
 
+/**
+ * A Bill of Quantities the consultant will PRODUCE is scope, not a price.
+ *
+ * "BOQ" appears in `standaloneFinancialTerm` below because a bill of
+ * quantities in a technical envelope is usually a priced document that belongs
+ * in the financial envelope. But preparing a BOQ for the client is also
+ * ordinary consultancy scope, and every deliverables table in this codebase's
+ * own deterministic fallback says so:
+ *
+ *   healthcare: … "Tender Documentation and BOQ Preparation" …
+ *   building:   … "BOQ and Cost Planning" …
+ *
+ * On a real owner run the Technical Approach section fell back to that
+ * deterministic content, and the healthcare deliverable above matched
+ * `standaloneFinancialTerm` with no figure anywhere in the sentence. The
+ * document was scored QUALITY_FAILED with PRICING_LEAKAGE on a proposal that
+ * quoted no price at all, and AUTO_FINALIZE could not converge — the same
+ * false-positive family as the compliance-statement and historical-value
+ * exemptions above.
+ *
+ * Deliberately narrow, and it does NOT weaken technical/financial separation:
+ *   - it covers ONLY the bill-of-quantities family, never "financial
+ *     proposal", "rate card", "fee schedule" or the rest;
+ *   - it requires explicit production/deliverable context, so "our BOQ is
+ *     attached" is untouched;
+ *   - it refuses any sentence carrying priced content — a currency amount, a
+ *     percentage, or any figure once identifiers are stripped. A BOQ line with
+ *     a number in it is still leakage.
+ */
+function isBoqDeliverableSentence(sentence: string): boolean {
+  const namesBoq = /\b(bill\s+of\s+quantities|BoQ)\b/i.test(sentence);
+  if (!namesBoq) return false;
+
+  const producesIt =
+    /\b(preparation|prepare|prepares|preparing|produce|produced|producing|production|develop|developed|developing|development|compile|compiled|compiling|documentation|deliverable|deliverables|scope\s+of\s+services|drawings|specifications|tender\s+documents?)\b/i
+      .test(sentence);
+  if (!producesIt) return false;
+
+  // Same priced-content test the compliance exemption uses, so a BOQ
+  // deliverable carrying an actual figure stays flagged.
+  const withoutIds = withoutIdentifiers(sentence);
+  const carriesPricedContent =
+    /[0-9%$€£]/.test(withoutIds)
+    || /\b(rate|rates|itemi[sz]ed|lump sum|total|amount|amounts|quotation|quoted|invoice|unit price|price list|costing|fee|fees)\b/i.test(withoutIds);
+  return !carriesPricedContent;
+}
+
 export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): boolean {
   if (!isTechnicalEnvelopeDoc(doc)) return false;
   if (isCommercialOrFinancialDoc(doc)) return false;
@@ -264,6 +319,7 @@ export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocum
   const scanText = textSentences
     .filter((s, index) => {
       if (isSafeNoPriceSentence(s)) return false;
+      if (isBoqDeliverableSentence(s)) return false;
       if (isHistoricalReferenceValueSentence(s)) return false;
       const priorContext = textSentences
         .slice(Math.max(0, index - REFERENCE_CONTEXT_FRAGMENTS), index)
