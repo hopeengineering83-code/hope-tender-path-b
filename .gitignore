@@ -66,3 +66,5 @@ acceptance-evidence/
 # Local diagnostic session token printed by pipeline-drive-seed.mjs. It is a
 # real credential for the harness user — never commit it.
 .drive-cookie
+.one-drive.sh
+.drive-out.txt
