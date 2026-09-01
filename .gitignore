@@ -63,3 +63,6 @@ acceptance-evidence/
 .ci-env.sh
 .start-drive-server.sh
 .gemini-key.sh
+# Local diagnostic session token printed by pipeline-drive-seed.mjs. It is a
+# real credential for the harness user — never commit it.
+.drive-cookie

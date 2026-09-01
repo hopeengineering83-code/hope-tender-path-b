@@ -126,27 +126,98 @@ const projectSourceDocumentId = findDoc(/Project-References/i);
 log("company/documents", "INFO",
   `expertSource=${expertSourceDocumentId ? "found" : "MISSING"} projectSource=${projectSourceDocumentId ? "found" : "MISSING"}`);
 
-const expertTrust = [];
-for (const expert of EXPERTS) {
-  const res = await call("POST", "/api/company/experts", {
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...expert, sourceDocumentId: expertSourceDocumentId }),
-  });
-  if (res.status >= 400) die("company/experts", res);
-  expertTrust.push(res.json?.trustLevel ?? "?");
+// ── 0b-i. Real vault ingestion ──────────────────────────────────────────────
+// The owner never types experts and projects in. They upload documents once and
+// the server extracts them, then autoVerifyCompanyKnowledge promotes whatever
+// it can actually find in the owned, byte-verified source bytes to
+// SOURCE_VERIFIED. That trust level is what generation eligibility requires
+// (canUseVaultRecordSafely), and MANUAL_DRAFT — what POST /api/company/experts
+// produces — is deliberately NOT machine-eligible for experts and projects.
+//
+// So a harness that POSTs the records directly can never reach generation: it
+// stops at INGESTION_NOT_READY with 0 source-verified experts/projects, which
+// looks like an application defect and is not one. Drive the real path instead
+// and keep the direct POSTs only as a fallback for documents ingestion could
+// not extract anything from.
+async function drainQueue(label, { maxRounds = 12 } = {}) {
+  const ran = [];
+  for (let round = 0; round < maxRounds; round += 1) {
+    const res = await call("POST", "/api/ai-jobs/run-next");
+    if (res.status >= 400) break;
+    const results = res.json?.results ?? res.json?.jobs ?? [];
+    if (!(res.json?.processed ?? results.length)) break;
+    for (const job of results) ran.push(`${job.jobType}:${job.status}`);
+  }
+  log(`worker (${label})`, "INFO", ran.length ? ran.join(", ") : "no queued jobs");
+  return ran;
 }
-log("company/experts", "OK", `${expertTrust.length} experts, trust=[${expertTrust.join(", ")}]`);
 
-const projectTrust = [];
-for (const project of PROJECTS) {
-  const res = await call("POST", "/api/company/projects", {
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...project, sourceDocumentId: projectSourceDocumentId }),
-  });
-  if (res.status >= 400) die("company/projects", res);
-  projectTrust.push(res.json?.trustLevel ?? "?");
+async function sourceVerifiedCounts() {
+  const [experts, projects] = await Promise.all([
+    call("GET", "/api/company/experts"),
+    call("GET", "/api/company/projects"),
+  ]);
+  const rows = (res, key) => {
+    const j = res.json ?? {};
+    return Array.isArray(j) ? j : (j[key] ?? j.items ?? j.records ?? []);
+  };
+  const verified = (list) => list.filter((r) => r?.trustLevel === "SOURCE_VERIFIED").length;
+  const e = rows(experts, "experts");
+  const p = rows(projects, "projects");
+  return { experts: e.length, expertsVerified: verified(e), projects: p.length, projectsVerified: verified(p) };
 }
-log("company/projects", "OK", `${projectTrust.length} projects, trust=[${projectTrust.join(", ")}]`);
+
+const ingestRes = await call("POST", "/api/company/knowledge/repair", {
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({}),
+});
+log("company/knowledge/repair", ingestRes.status < 400 ? "OK" : "INFO",
+  `HTTP ${ingestRes.status} ${ingestRes.json?.status ?? ""}`);
+if (ingestRes.status < 400) await drainQueue("vault ingest");
+
+let counts = await sourceVerifiedCounts();
+log("vault ingestion", counts.expertsVerified > 0 && counts.projectsVerified > 0 ? "OK" : "INFO",
+  `experts ${counts.expertsVerified}/${counts.experts} source-verified, ` +
+  `projects ${counts.projectsVerified}/${counts.projects} source-verified`);
+
+// Fallback ONLY when ingestion extracted nothing at all. These records are
+// MANUAL_DRAFT and will not pass the generation gate — the run then reports
+// INGESTION_NOT_READY honestly instead of pretending the vault is usable.
+const needsManualVaultFallback = counts.experts === 0 || counts.projects === 0;
+if (!needsManualVaultFallback) {
+  log("company/experts", "INFO", "skipped — records came from real ingestion, not typed in");
+}
+
+if (needsManualVaultFallback) {
+  const expertTrust = [];
+  for (const expert of EXPERTS) {
+    const res = await call("POST", "/api/company/experts", {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...expert, sourceDocumentId: expertSourceDocumentId }),
+    });
+    if (res.status >= 400) die("company/experts", res);
+    expertTrust.push(res.json?.trustLevel ?? "?");
+  }
+  log("company/experts", "INFO", `${expertTrust.length} typed-in experts, trust=[${expertTrust.join(", ")}]`);
+
+  const projectTrust = [];
+  for (const project of PROJECTS) {
+    const res = await call("POST", "/api/company/projects", {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...project, sourceDocumentId: projectSourceDocumentId }),
+    });
+    if (res.status >= 400) die("company/projects", res);
+    projectTrust.push(res.json?.trustLevel ?? "?");
+  }
+  log("company/projects", "INFO", `${projectTrust.length} typed-in projects, trust=[${projectTrust.join(", ")}]`);
+
+  // A second ingestion pass cannot promote these: MANUAL_DRAFT is not
+  // machine-eligible for experts and projects. Report the state plainly.
+  counts = await sourceVerifiedCounts();
+  log("vault fallback", "INFO",
+    `after typed-in records: experts ${counts.expertsVerified}/${counts.experts} source-verified, ` +
+    `projects ${counts.projectsVerified}/${counts.projects} source-verified`);
+}
 
 // ── 0c. Legal records (licence, tax clearance) ──────────────────────────────
 // Mandatory eligibility requirements are evidenced by structured vault records,
@@ -337,8 +408,21 @@ r = await call("POST", `/api/tenders/${tenderId}/link-vault-evidence-auto`, {
 log("link-vault-evidence-auto", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status} ${body(r, 500)}`);
 
 // ── 7. Generation readiness ─────────────────────────────────────────────────
-r = await call("GET", `/api/tenders/${tenderId}/generation-readiness`);
-log("generation-readiness", "INFO", `ready=${r.json?.ready} ${JSON.stringify(r.json?.blockers ?? r.json ?? null).slice(0, 500)}`);
+// Mandatory coverage is sampled here and again after generation. A run that
+// generates documents and comes out with LESS mandatory coverage than it went
+// in with cannot converge: AUTO_FINALIZE regenerates, coverage drops again,
+// and the loop ends at AUTO_FINALIZE_NOT_CONVERGED with no indication that
+// generation itself moved the number. Printing both samples makes that visible
+// in one line instead of requiring two gates to be compared by hand.
+async function mandatoryCoverage() {
+  const res = await call("GET", `/api/tenders/${tenderId}/generation-readiness`);
+  const found = JSON.stringify(res.json ?? {}).match(/coverage for (\d+)\/(\d+)/);
+  return { res, text: found ? `${found[1]}/${found[2]}` : "n/a" };
+}
+
+const coverageBefore = await mandatoryCoverage();
+r = coverageBefore.res;
+log("generation-readiness", "INFO", `ready=${r.json?.ready} mandatoryCoverage=${coverageBefore.text} ${JSON.stringify(r.json?.blockers ?? r.json ?? null).slice(0, 400)}`);
 
 // ── 8. Generate ─────────────────────────────────────────────────────────────
 // The generator refuses while any mandatory requirement is untraced and names
@@ -363,6 +447,11 @@ if (r.status >= 400 && r.json?.code === "UNTRACED_MANDATORY_REQUIREMENTS") {
 }
 if (r.status >= 400) die("generate", r);
 log("generate", "OK", body(r, 400));
+
+const coverageAfter = await mandatoryCoverage();
+log("coverage after generate", "INFO",
+  `mandatory coverage ${coverageBefore.text} -> ${coverageAfter.text}` +
+  (coverageAfter.text === coverageBefore.text ? "" : "  *** generation CHANGED its own evidence coverage ***"));
 
 // ── 8b. Generate any planned files the main generator did not produce ───────
 r = await call("POST", `/api/tenders/${tenderId}/generate-missing-plan-files`, {
