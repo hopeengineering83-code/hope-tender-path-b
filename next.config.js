@@ -48,7 +48,30 @@ const nextConfig = {
   // so without this the fonts are absent on the deployment and Ethiopic text
   // fails there while passing locally — the one environment where it matters.
   outputFileTracingIncludes: {
-    "/**": ["./assets/fonts/**"],
+    "/**": [
+      "./assets/fonts/**",
+      // Same failure mode as the fonts above, one layer deeper. pdf-parse and
+      // pdfjs-dist load their worker with a RUNTIME dynamic import built from
+      // a computed path, so tracing cannot follow it and the worker is absent
+      // from the deployment while every local run passes.
+      //
+      // Observed on the Preview, not inferred:
+      //   [extract-text] pdf-parse failed: Setting up fake worker failed:
+      //   "Cannot find module '/var/task/node_modules/pdf-parse/dist/
+      //    pdf-parse/cjs/pdf.worker.mjs'"
+      //   [extract-text] pdfjs failed: … '/var/task/node_modules/pdfjs-dist/
+      //    legacy/build/pdf.worker.mjs'
+      //
+      // extractTextFromBuffer races three extractors and keeps the best
+      // result. With both of these dead on the deployment, only pdf2json
+      // survived — the one the scorer's own comments call out for returning
+      // garbage characters — so PDF text quality silently degraded to the
+      // weakest engine everywhere a PDF is read: tender intake, Authority
+      // Review, export readiness and AUTO_FINALIZE. Nothing failed loudly,
+      // which is why it survived so long.
+      "./node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs",
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+    ],
   },
   experimental: {
     serverActions: { bodySizeLimit: "10mb" },
