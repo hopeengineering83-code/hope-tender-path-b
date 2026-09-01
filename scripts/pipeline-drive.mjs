@@ -525,6 +525,16 @@ r = await call("POST", `/api/tenders/${tenderId}/validate`, {
 });
 log("validate", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status} ${body(r, 400)}`);
 
+// Third sample. Coverage is reconciled by more than one stage: the Engine job
+// reconciles before and after Build Plan creation (lib/ai-job-handlers.ts),
+// and validate reconciles again (lib/engine/validate.ts). So "the number moved
+// after generation" is not by itself evidence that GENERATION moved it —
+// sampling here separates a change made by generate from one made by the
+// reconcile that validate triggers.
+const coverageAfterValidate = await mandatoryCoverage();
+log("coverage after validate", "INFO",
+  `mandatory coverage ${coverageBefore.text} (pre-generate) -> ${coverageAfter.text} (post-generate) -> ${coverageAfterValidate.text} (post-validate)`);
+
 // ── 10a. Repair export gaps (hygiene clean + validation) ────────────────────
 // Cleans DOCX hygiene issues (e.g. pricing language in a technical file) and
 // marks the repaired in-plan documents validated and export-ready.
