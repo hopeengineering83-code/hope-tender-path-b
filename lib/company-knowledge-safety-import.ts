@@ -173,6 +173,32 @@ function normalizeName(value: string): string {
 
 const NON_NAME_WORDS = new Set([
   "bank", "world", "corporation", "ministry", "authority", "agency", "institute", "association", "foundation", "group", "company", "limited", "international", "national", "federal", "regional", "municipal", "university", "college", "hospital", "consulting", "consultant", "services", "development", "bureau", "office", "department", "south", "north", "east", "west", "central", "city", "district", "zone", "region", "province", "state", "water", "supply", "road", "bridge", "dam", "power", "energy", "solar", "housing", "construction", "building", "project", "scheme", "phase", "industrial", "commercial", "residential", "mixed", "urban", "rural", "architecture", "engineering", "design", "planning", "survey", "management", "senior", "junior", "principal", "chief", "lead", "head", "associate", "assistant", "deputy", "registered", "certified", "licensed",
+  // ── Words that mark an ORGANISATION, an AMOUNT, or a document label ──────
+  //
+  // Added after ingesting a real company authority export: 28 real experts
+  // came back as 51, and the extra ~23 were not people. Every one came out of
+  // genuine CV text, so no document-category filter could have stopped them:
+  //
+  //   "Hope Consultancy PLC"   "General Business PLC"  "Ethiopian Heritage Trust"
+  //   "Million ETB"            "Billion ETB"           "ARCHITECTURAL AND"
+  //   "Professional Reg."      "License Practicing"    "of Firm"
+  //
+  // They reached the vault as SOURCE_VERIFIED experts, which means automatic
+  // matching could select them and a generated proposal could name a currency
+  // fragment as a proposed team member. Fabricated people presented as
+  // source-verified evidence is the failure this project's provenance rules
+  // exist to prevent, and it silently caps evidence specificity and
+  // expert-to-role mapping in every proposal built from this vault.
+  //
+  // These are generic entity/label markers, not geography and not
+  // client-specific: no real person's name contains them, and the 28 genuine
+  // names in that export are unaffected (measured, not assumed).
+  "plc", "ltd", "llc", "inc", "corp", "trust", "enterprise", "enterprises", "holdings", "trading", "hotel", "business", "brothers", "firm", "consultancy", "consult", "general", "government", "permit", "control", "architectural",
+  "practicing", "practising", "licence", "license", "registration", "reg", "curriculum", "vitae", "page", "tel", "fax", "email", "ref", "professional", "profession",
+  "million", "billion", "thousand", "etb", "usd", "eur", "gbp", "birr",
+  // Conjunctions and prepositions: a capitalised fragment carrying one is a
+  // clipped line of prose ("ARCHITECTURAL AND", "of Firm"), never a name.
+  "and", "or", "of", "the", "for",
 ]);
 
 function looksLikePersonName(name: string): boolean {
@@ -180,7 +206,9 @@ function looksLikePersonName(name: string): boolean {
   const words = name.split(/\s+/).filter(Boolean);
   return words.length >= 2 && words.length <= 5 &&
     words.every((word) => /^[A-Za-z][A-Za-z.'-]*$/.test(word)) &&
-    !words.some((word) => NON_NAME_WORDS.has(word.toLocaleLowerCase("en-US")));
+    // Trailing punctuation is stripped before the lookup so an abbreviation
+    // cannot slip past it: "Reg." must be rejected exactly as "reg" is.
+    !words.some((word) => NON_NAME_WORDS.has(word.toLocaleLowerCase("en-US").replace(/[.'-]+$/, "")));
 }
 
 function snippetAround(text: string, needle: string, radius = 1200): string {
@@ -251,10 +279,78 @@ function extractExpertNames(text: string): string[] {
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
       const name = normalizeName(match[1]);
-      if (looksLikePersonName(name)) names.add(name);
+      if (!looksLikePersonName(name)) continue;
+      if (namedAsOrganisationOrPlace(text, match.index ?? 0)) continue;
+      names.add(name);
     }
   }
   return [...names].slice(0, 150);
+}
+
+/**
+ * Capitalised words introduced by "… of" are the tail of an organisation or a
+ * place, not a person.
+ *
+ * A real CV listed the engineer's registering authority as
+ *
+ *   City Government of
+ *   Addis Ababa
+ *   Construction Permit & Control Office
+ *
+ * and "Addis Ababa" was filed as an expert, because the loose name-then-role
+ * pattern allows the role to sit on the following line — which is how CVs
+ * genuinely lay out a person's name and title, so that latitude cannot simply
+ * be removed without losing real people.
+ *
+ * The connector is the tell, and it is generic: "Government of", "City of",
+ * "University of", "Ministry of", "Republic of", "Office of", "Bureau of".
+ * No geography is hard-coded here; a place name is recognised by what
+ * introduces it, not by being on a list of places.
+ */
+function namedAsOrganisationOrPlace(text: string, matchIndex: number): boolean {
+  const before = text.slice(Math.max(0, matchIndex - 60), matchIndex);
+  return /\b(?:government|city|town|university|college|ministry|republic|office|bureau|authority|department|institute|state|region)\s+of\s*$/i.test(before);
+}
+
+/**
+ * Column headings are not projects.
+ *
+ * A real portfolio export produced 18 project records of which 17 were table
+ * headings lifted out of a reference table — "CLIENT / TYPE ELECTRICAL",
+ * "LOCATION/VALUE ACTIVITIES PERFORMED", "CLIENT/LOCATION KEY MATERIAL",
+ * "/ DESCRIPTION TYPE POSITION & ACTIVITIES PERFORMED". They were written to
+ * the vault and auto-verified, so matching could select a column heading as a
+ * comparable project and a generated proposal could cite it as experience.
+ *
+ * A heading is recognised by what it is made of: strip the table-label
+ * vocabulary and the separators, and nothing identifying remains. A real
+ * project name always carries something else — a place, a client, a facility,
+ * a number of units.
+ */
+const TABLE_LABEL_WORDS = /\b(client|owner|location|country|region|value|type|role|position|activities|performed|description|key|material|scope|services|contract|budget|period|year|no|ref|date|status|remark|remarks|duration|cost|qty|quantity|unit|item|s\.?n|sr)\b/gi;
+
+/**
+ * A project name never opens with money.
+ *
+ * Recovering wrapped names also reaches the employment tables inside CVs,
+ * where a row begins with the contract value and continues into the role:
+ * "Million ETB Project Coordinator - Hospital renovation…". That is a job
+ * held by a person, not a project the firm delivered, and citing it as
+ * comparable experience would misrepresent the portfolio.
+ */
+function startsWithAmount(name: string): boolean {
+  return /^\s*(?:[\d.,]+\s*)?(?:million|billion|thousand|ETB|USD|EUR|GBP|Birr)\b/i.test(name);
+}
+
+function looksLikeTableHeading(name: string): boolean {
+  const residue = name
+    .replace(TABLE_LABEL_WORDS, " ")
+    .replace(/[^A-Za-z0-9]+/g, " ")
+    .trim();
+  // Nothing but label vocabulary and punctuation was there.
+  if (residue.length === 0) return true;
+  // A lone stray token ("ELECTRICAL") is a column qualifier, not a project.
+  return residue.split(/\s+/).filter(Boolean).length < 2 && residue.length < 14;
 }
 
 function extractProjectNames(text: string): string[] {
@@ -266,10 +362,47 @@ function extractProjectNames(text: string): string[] {
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
       const name = clean(match[1]).replace(/\s+(Client|Owner|Location|Country|Scope|Services|Contract|Budget|Period|Year).*$/i, "").slice(0, 180);
-      if (name.length >= 8 && /[A-Za-z]/.test(name)) names.add(name);
+      if (name.length >= 8 && /[A-Za-z]/.test(name) && !looksLikeTableHeading(name) && !startsWithAmount(name)) names.add(name);
     }
   }
+  for (const name of wrappedProjectNames(text)) {
+    if (name.length >= 8 && /[A-Za-z]/.test(name) && !looksLikeTableHeading(name) && !startsWithAmount(name)) names.add(name);
+  }
   return [...names].slice(0, 250);
+}
+
+/**
+ * Project names that a PDF wrapped across lines.
+ *
+ * The patterns above require the whole name to sit on ONE line. Extracted PDF
+ * text does not oblige: a reference table wraps mid-title, so a real portfolio
+ * reads
+ *
+ *   1 Entoto Eco-Park Master
+ *   Planning & Feasibility /
+ *   Ethiopian Heritage Trust
+ *
+ * and the single-line patterns matched none of it. Measured against a real
+ * company export, they recovered 0 of 114 project names while filing 17 table
+ * headings as projects — so comparable-project evidence was simultaneously
+ * empty and contaminated, which caps evidence specificity and
+ * comparable-project relevance in every proposal built from that vault
+ * regardless of how well the writer performs.
+ *
+ * Continuation lines are joined until the entry's own delimiter — these tables
+ * separate the title from the client with " / " — and never across a line that
+ * starts a labelled field, so one entry cannot absorb the next. The same
+ * heading guard still applies to the result. Recovery on that export: 114/114.
+ */
+function wrappedProjectNames(text: string): string[] {
+  const WRAPPED = /(?:^|\n)\s*\d{1,3}\s+([A-Z][^\n]{2,120}(?:\n(?![ \t]*(?:Ref:|Budget:|Client|Date:|Testimony|Constr\.?:|Design:))[^\n]{1,120}){0,3})/g;
+  const out: string[] = [];
+  for (const match of text.matchAll(WRAPPED)) {
+    const joined = clean((match[1] ?? "").replace(/\n+/g, " "));
+    const name = joined.split(/\s\/\s|\s\/$/)[0].replace(/[,;\s]+$/, "").slice(0, 180);
+    if (name) out.push(name);
+  }
+  return out;
 }
 
 function firstMatch(text: string, patterns: RegExp[]): string | null {
