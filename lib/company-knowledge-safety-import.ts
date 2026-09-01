@@ -199,6 +199,10 @@ const NON_NAME_WORDS = new Set([
   // Conjunctions and prepositions: a capitalised fragment carrying one is a
   // clipped line of prose ("ARCHITECTURAL AND", "of Firm"), never a name.
   "and", "or", "of", "the", "for",
+  // Table column vocabulary. A reference table's header can reach the person
+  // extractor too — "CLIENT ELECTRICAL" was filed as an expert — and the same
+  // words never appear in someone's name.
+  "client", "owner", "value", "activities", "performed", "material", "remark", "remarks", "status", "item", "qty", "quantity", "duration",
 ]);
 
 function looksLikePersonName(name: string): boolean {
@@ -306,10 +310,22 @@ function extractExpertNames(text: string): string[] {
  * "University of", "Ministry of", "Republic of", "Office of", "Bureau of".
  * No geography is hard-coded here; a place name is recognised by what
  * introduces it, not by being on a list of places.
+ *
+ * A labelled location field is the same tell in shorter form. A portfolio row
+ * inside a CV reads
+ *
+ *   Entoto Eco-Park Project Client: EHT
+ *   Loc: Addis Ababa
+ *   Senior Sanitary Engineer:
+ *
+ * so the city sits between a location label and a role and was filed as a
+ * person. "Loc:", "Location:", "Site:", "Address:", "City:" introduce a place,
+ * never a member of staff.
  */
 function namedAsOrganisationOrPlace(text: string, matchIndex: number): boolean {
   const before = text.slice(Math.max(0, matchIndex - 60), matchIndex);
-  return /\b(?:government|city|town|university|college|ministry|republic|office|bureau|authority|department|institute|state|region)\s+of\s*$/i.test(before);
+  return /\b(?:government|city|town|university|college|ministry|republic|office|bureau|authority|department|institute|state|region)\s+of\s*$/i.test(before)
+    || /\b(?:loc|location|site|address|city|place|region|country|zone|woreda|kebele)\s*[:\-]\s*$/i.test(before);
 }
 
 /**
