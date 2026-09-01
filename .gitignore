@@ -62,3 +62,4 @@ acceptance-evidence/
 .env*
 .ci-env.sh
 .start-drive-server.sh
+.gemini-key.sh
