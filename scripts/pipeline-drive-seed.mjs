@@ -182,8 +182,46 @@ function vaultDocsFromAuthority(path) {
   return docs;
 }
 
+/**
+ * A structured authority export is not an ordinary upload.
+ *
+ * The app has a dedicated route for it — POST /api/company/plan-b-import —
+ * which accepts schemaVersion, importPolicy, experts[], projects[] and
+ * expectedCounts, preserves each record's canonical identity, and enforces
+ * completenessPolicy.enforceExpectedCounts.
+ *
+ * This harness previously flattened such a file into text blobs and let the
+ * heuristic entity extractor rediscover the records from that text. That is
+ * the wrong path for a file that already carries the identities: 28 canonical
+ * experts and 114 canonical projects came back as ~34 and ~172, with clients,
+ * places, table headings and amount fragments promoted alongside them. The
+ * inflation was an artefact of the harness choosing text re-extraction over
+ * the structured import the file was written for — the app's own route never
+ * had the chance to preserve what the export already stated.
+ *
+ * So: recognise the structured schema and drive the real structured route.
+ * The text-blob path stays for ordinary unstructured uploads, which is what
+ * the heuristic extractor is for.
+ */
+function looksLikeStructuredAuthority(path) {
+  try {
+    const j = JSON.parse(readFileSync(path, "utf8"));
+    return Boolean(j && (j.schemaVersion || j.importPolicy) && (Array.isArray(j.experts) || Array.isArray(j.projects)));
+  } catch { return false; }
+}
+
+const STRUCTURED_AUTHORITY = process.env.DRIVE_VAULT_JSON
+  && looksLikeStructuredAuthority(process.env.DRIVE_VAULT_JSON);
+
+// A structured authority brings its OWN source documents through the
+// structured route, carrying each record's rawText for provenance. Seeding the
+// flattened text blobs as well would hand the heuristic extractor a second,
+// unstructured copy of the very same content to re-mine — which is exactly
+// what happened: "Key-Experts-1.txt" alone yielded 44 additional "projects"
+// on top of the 114 the authority actually declares. Emit the blobs only for
+// the unstructured case.
 const VAULT = process.env.DRIVE_VAULT_JSON
-  ? vaultDocsFromAuthority(process.env.DRIVE_VAULT_JSON)
+  ? (STRUCTURED_AUTHORITY ? [] : vaultDocsFromAuthority(process.env.DRIVE_VAULT_JSON))
   : VAULT_DOCS;
 
 
@@ -262,6 +300,7 @@ async function main() {
     userId: user.id,
     companyId,
     vaultDocs: VAULT.length,
+    structuredAuthority: Boolean(STRUCTURED_AUTHORITY),
     cookie: token,
   }));
 }
