@@ -7,7 +7,7 @@ import { CANONICAL_AI_PROVIDER_ORDER, getAutomaticProviderOrder, automaticallyEl
 import { preflightProvider } from "./ai-preflight";
 import { protectPrompt, protectPromptWithBoundary } from "./ai-trust-boundary";
 import { redactSecrets } from "./sanitize-error";
-import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
+import { GEMINI_TIMEOUT_MS, DEEPSEEK_DEFAULT_TIMEOUT_MS, MISTRAL_EXTRACTION_TIMEOUT_MS, OPENAI_COMPAT_DEFAULT_TIMEOUT_MS, O1_O3_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_SECTION_TIMEOUT_CEILING_MS, PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN, PROPOSAL_SECTION_BASE_OVERHEAD_MS, PROPOSAL_SECTION_STITCH_RESERVE_MS, PROPOSAL_AI_TIMEOUT_MS, REFINEMENT_CALL_TIMEOUT_MS } from "./timeout-config";
 
 const apiKey = process.env.GEMINI_API_KEY;
 // Anthropic key is read at request time via getAnthropicApiKey() — never cached
@@ -4575,7 +4575,29 @@ interface SectionResult {
 export function sectionTimeoutMsFor(spec: { maxOutputTokens?: number }): number {
   const outputTokens = Math.max(0, spec.maxOutputTokens ?? 0);
   const sized = PROPOSAL_SECTION_BASE_OVERHEAD_MS + outputTokens * PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN;
-  return Math.min(PROPOSAL_SECTION_TIMEOUT_CEILING_MS, Math.max(PROPOSAL_SECTION_TIMEOUT_MS, sized));
+
+  // Never outlive the caller's own in-pipeline guard.
+  //
+  // withProposalAiTimeout() wraps the WHOLE generation — 45s on Tier 1, 220s
+  // above it — and the four sections run concurrently inside it, so the
+  // slowest section sets the wall clock. A section allowed to run right up to
+  // that guard leaves nothing for stitching, canonical reorder and the DOCX
+  // build that follow inside the same wrapper. On Tier 1 the largest section
+  // sized to 41.6s against a 45s guard: it fits, but only just, and a slower
+  // response would abort the whole proposal rather than one section.
+  //
+  // Reserving a stitch window makes the relationship explicit instead of
+  // coincidental. resolveEffectiveTimeoutMs still clamps to an armed worker
+  // deadline on top of this; this bound applies even when none is armed.
+  const wrapperBound = Math.max(
+    PROPOSAL_SECTION_TIMEOUT_MS,
+    PROPOSAL_AI_TIMEOUT_MS - PROPOSAL_SECTION_STITCH_RESERVE_MS,
+  );
+  return Math.min(
+    PROPOSAL_SECTION_TIMEOUT_CEILING_MS,
+    wrapperBound,
+    Math.max(PROPOSAL_SECTION_TIMEOUT_MS, sized),
+  );
 }
 
 async function generateOneSection(spec: ProposalSectionSpec): Promise<SectionResult> {

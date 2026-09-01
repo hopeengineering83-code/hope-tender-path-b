@@ -113,3 +113,9 @@ export const PROPOSAL_SECTION_MS_PER_OUTPUT_TOKEN = 12;
 // Fixed per-call overhead: connection setup and time-to-first-token, which do
 // not scale with output length.
 export const PROPOSAL_SECTION_BASE_OVERHEAD_MS = 8_000;
+
+// Time held back inside the whole-proposal guard for the work that follows
+// generation in the same wrapper: stitching the four sections, canonical
+// reorder, and the DOCX build. Without it the largest section could run right
+// up to the guard and abort the entire proposal instead of one section.
+export const PROPOSAL_SECTION_STITCH_RESERVE_MS = 5_000;

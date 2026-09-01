@@ -40,6 +40,8 @@ import { preflightProvider } from "../lib/ai-preflight";
 import {
   PROPOSAL_SECTION_TIMEOUT_MS,
   PROPOSAL_SECTION_TIMEOUT_CEILING_MS,
+  PROPOSAL_SECTION_STITCH_RESERVE_MS,
+  PROPOSAL_AI_TIMEOUT_MS,
 } from "../lib/timeout-config";
 
 describe("a section's time budget follows the writing it is asked for", () => {
@@ -89,6 +91,21 @@ describe("a section's time budget follows the writing it is asked for", () => {
 
   it("treats a missing budget as the floor rather than as zero", () => {
     assert.equal(sectionTimeoutMsFor({}), PROPOSAL_SECTION_TIMEOUT_MS);
+  });
+
+  it("leaves the caller's wrapper time to stitch the sections together", () => {
+    // withProposalAiTimeout() wraps the WHOLE generation and the four sections
+    // run concurrently inside it, so the slowest section sets the wall clock.
+    // A section allowed to run right up to that guard leaves nothing for
+    // stitching, canonical reorder and the DOCX build that follow in the same
+    // wrapper — and would abort the entire proposal rather than one section.
+    for (const maxOutputTokens of [2800, 6500, 10_000]) {
+      const budget = sectionTimeoutMsFor({ maxOutputTokens });
+      assert.ok(
+        budget <= Math.max(PROPOSAL_SECTION_TIMEOUT_MS, PROPOSAL_AI_TIMEOUT_MS - PROPOSAL_SECTION_STITCH_RESERVE_MS),
+        `a ${maxOutputTokens}-token section must leave the wrapper room to finish`,
+      );
+    }
   });
 });
 
