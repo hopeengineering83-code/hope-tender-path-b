@@ -49,6 +49,7 @@ import {
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./build-plan";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
 import { assessCurrentDocumentQualityBatch, countQualityFailed } from "./current-document-quality";
+import { logger } from "../observability";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
 import { getTenderFactLedgerSnapshot } from "./tender-facts-ledger-service";
@@ -764,6 +765,45 @@ export async function getFinalSubmissionReadiness(
   const qualityInputs = await loadVisibleTextInputsForQuality(client, finalCandidates as any[]);
   const qualityReports = await assessCurrentDocumentQualityBatch(qualityInputs as any[], tender.requirements);
   const qualityFailed = countQualityFailed(qualityReports);
+
+  // Name what failed, and why.
+  //
+  // This blocker used to reach the operator — and the logs — as nothing but
+  // "N generated document(s) failed the quality gate". A real run stopped at
+  // AUTO_FINALIZE_NOT_CONVERGED with "0 document blocker(s) and 1
+  // tender-level blocker(s): GENERATED_DOCUMENT_QUALITY_FAILED", and that
+  // sentence is the entire evidence trail: not which document, not its score,
+  // not what was wrong with it. Reconstructing it took reading the bytes by
+  // hand, and the actual cause turned out to be environmental — a PDF whose
+  // text could not be extracted on the deployment scores 10/100 for having
+  // read nothing, which is indistinguishable, from the blocker text alone,
+  // from a genuinely poor document.
+  //
+  // Deliberately metadata only: id, filename, score, status, issue CODES and
+  // whether any visible text was recovered. No document content, no source
+  // text, no credentials — the codes say what is wrong without quoting what
+  // the document says.
+  if (qualityFailed > 0) {
+    logger.warn("[final-readiness] documents failed the quality gate", {
+      tenderId: tender.id,
+      failedCount: qualityFailed,
+      documents: qualityReports
+        .filter(({ report }) => report.recommendedStatus === "QUALITY_FAILED")
+        .map(({ doc, report }) => ({
+          documentId: (doc as { id?: string | null }).id ?? null,
+          fileName: (doc as { exactFileName?: string | null }).exactFileName
+            ?? (doc as { name?: string | null }).name
+            ?? null,
+          format: (doc as { format?: string | null }).format ?? null,
+          score: report.score,
+          recommendedStatus: report.recommendedStatus,
+          wordCount: report.wordCount,
+          // The tell for the environmental case above: bytes present, no text.
+          visibleTextRecovered: report.wordCount > 0,
+          issueCodes: report.issues.map((issue) => issue.code),
+        })),
+    });
+  }
 
   // ── Metadata completeness gate (Part 5) ──────────────────────────────────
   const metadata = assessTenderMetadataCompleteness({
