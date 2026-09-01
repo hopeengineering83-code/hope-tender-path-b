@@ -431,11 +431,41 @@ const STRONG_SUPPORT = new Set(["FULL", "SUBSTANTIAL"]);
 async function mandatoryCoverage() {
   const requirements = await prisma.tenderRequirement.findMany({
     where: { tenderId, priority: { in: ["MANDATORY", "CRITICAL"] } },
-    select: { id: true, complianceMatrixRows: { select: { supportLevel: true } } },
+    select: {
+      id: true,
+      title: true,
+      complianceMatrixRows: { select: { supportLevel: true, evidenceSource: true } },
+    },
   });
   const covered = requirements.filter((requirement) =>
     requirement.complianceMatrixRows.some((row) => STRONG_SUPPORT.has(row.supportLevel))).length;
-  return { covered, total: requirements.length, text: `${covered}/${requirements.length}` };
+  // Keep the per-requirement detail, not just the total. Knowing that coverage
+  // fell from 9 to 5 does not say WHICH requirements lost their evidence or
+  // what replaced it, and each successful run is expensive: the AI provider's
+  // free tier allows roughly one AI Analyze per cooldown window, so a run that
+  // answers only "it dropped" costs another whole window to follow up.
+  const byRequirement = new Map(requirements.map((requirement) => [requirement.id, {
+    title: requirement.title,
+    covered: requirement.complianceMatrixRows.some((row) => STRONG_SUPPORT.has(row.supportLevel)),
+    rows: requirement.complianceMatrixRows
+      .map((row) => `${row.supportLevel}:${row.evidenceSource}`)
+      .sort()
+      .join(" | ") || "NO ROWS",
+  }]));
+  return { covered, total: requirements.length, text: `${covered}/${requirements.length}`, byRequirement };
+}
+
+/** Print only the requirements whose evidence actually changed between samples. */
+function logCoverageDiff(label, before, after) {
+  const changed = [];
+  for (const [id, now] of after.byRequirement) {
+    const then = before.byRequirement.get(id);
+    if (!then || then.rows === now.rows) continue;
+    changed.push(`    ${then.covered ? "COVERED" : "uncovered"} -> ${now.covered ? "COVERED" : "uncovered"}  ${now.title.slice(0, 52)}\n`
+      + `        was: ${then.rows}\n        now: ${now.rows}`);
+  }
+  log(`coverage diff (${label})`, "INFO",
+    changed.length ? `${changed.length} requirement(s) changed\n${changed.join("\n")}` : "no requirement changed");
 }
 
 const coverageBefore = await mandatoryCoverage();
@@ -467,6 +497,7 @@ if (r.status >= 400) die("generate", r);
 log("generate", "OK", body(r, 400));
 
 const coverageAfter = await mandatoryCoverage();
+logCoverageDiff("generate", coverageBefore, coverageAfter);
 log("coverage after generate", "INFO",
   `mandatory coverage ${coverageBefore.text} -> ${coverageAfter.text}` +
   (coverageAfter.text === coverageBefore.text ? "" : "  *** generation CHANGED its own evidence coverage ***"));
@@ -532,6 +563,7 @@ log("validate", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status} ${body(r, 400)
 // sampling here separates a change made by generate from one made by the
 // reconcile that validate triggers.
 const coverageAfterValidate = await mandatoryCoverage();
+logCoverageDiff("validate", coverageAfter, coverageAfterValidate);
 log("coverage after validate", "INFO",
   `mandatory coverage ${coverageBefore.text} (pre-generate) -> ${coverageAfter.text} (post-generate) -> ${coverageAfterValidate.text} (post-validate)`);
 
