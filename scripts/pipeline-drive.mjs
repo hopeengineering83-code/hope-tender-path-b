@@ -414,14 +414,32 @@ log("link-vault-evidence-auto", r.status < 400 ? "OK" : "INFO", `HTTP ${r.status
 // and the loop ends at AUTO_FINALIZE_NOT_CONVERGED with no indication that
 // generation itself moved the number. Printing both samples makes that visible
 // in one line instead of requiring two gates to be compared by hand.
+// Read the count from the database rather than from a gate message. The
+// message only appears when MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE happens to
+// be the blocker a gate chose to report, so scraping it returned "n/a"
+// whenever some other blocker won — and a "n/a -> 5/8" transition then reads
+// like a coverage drop that never happened. This counts the same population
+// the release snapshot counts (MANDATORY or CRITICAL) and applies the same
+// support-level threshold (FULL or SUBSTANTIAL) at any point in the run.
+//
+// Caveat worth knowing when reading the number: the snapshot additionally
+// requires an active source trace (hasTrustedTrace), which is not re-checked
+// here, so this can read equal to or slightly higher than the gate's count. It
+// is a movement probe, not a second authority on coverage.
+const STRONG_SUPPORT = new Set(["FULL", "SUBSTANTIAL"]);
+
 async function mandatoryCoverage() {
-  const res = await call("GET", `/api/tenders/${tenderId}/generation-readiness`);
-  const found = JSON.stringify(res.json ?? {}).match(/coverage for (\d+)\/(\d+)/);
-  return { res, text: found ? `${found[1]}/${found[2]}` : "n/a" };
+  const requirements = await prisma.tenderRequirement.findMany({
+    where: { tenderId, priority: { in: ["MANDATORY", "CRITICAL"] } },
+    select: { id: true, complianceMatrixRows: { select: { supportLevel: true } } },
+  });
+  const covered = requirements.filter((requirement) =>
+    requirement.complianceMatrixRows.some((row) => STRONG_SUPPORT.has(row.supportLevel))).length;
+  return { covered, total: requirements.length, text: `${covered}/${requirements.length}` };
 }
 
 const coverageBefore = await mandatoryCoverage();
-r = coverageBefore.res;
+r = await call("GET", `/api/tenders/${tenderId}/generation-readiness`);
 log("generation-readiness", "INFO", `ready=${r.json?.ready} mandatoryCoverage=${coverageBefore.text} ${JSON.stringify(r.json?.blockers ?? r.json ?? null).slice(0, 400)}`);
 
 // ── 8. Generate ─────────────────────────────────────────────────────────────
