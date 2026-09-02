@@ -400,6 +400,41 @@ function looksLikeTableHeading(name: string): boolean {
   return residue.split(/\s+/).filter(Boolean).length < 2 && residue.length < 14;
 }
 
+/**
+ * A captured attribute that is really the table's column-header run.
+ *
+ * `looksLikeTableHeading` guards project NAMES, but the same header line also
+ * reaches the attribute captures below, and there it survives: after the label
+ * vocabulary is stripped the caption text ("with Area & Full Address",
+ * "Testimony", "Supporting Doc") leaves a long residue, so the name-level
+ * guard passes it. Measured on a real portfolio export, 187 project rows
+ * stored
+ *
+ *   "/Location (with Area & Full Address) Testimony Details (Ref No, Date,
+ *    Author) Project Cost Details Project Duration Comprehensive Service
+ *    Details Supporting Doc"
+ *
+ * as the CLIENT (and its tail as the COUNTRY), because the header reads
+ * "Client/Location (with Area …" and the Client capture ran into the next
+ * column. Those rows were then auto-verified, so a generated proposal cited
+ * "Approach demonstrated on Dessie Specialized Hospital (/Location (with Area
+ * & Full Address) …)" to the evaluator.
+ *
+ * A client or a country is one name. A line that enumerates three or more
+ * column labels is the header of the table those names live in — that is the
+ * distinction, and it needs no vocabulary specific to any one export.
+ */
+function looksLikeColumnHeaderRun(value: string): boolean {
+  const labels = value.match(TABLE_LABEL_WORDS);
+  return (labels?.length ?? 0) >= 3;
+}
+
+/** Drop a captured attribute that is a column-header run rather than a value. */
+function attributeOrNull(value: string | null): string | null {
+  if (!value) return null;
+  return looksLikeColumnHeaderRun(value) ? null : value;
+}
+
 function extractProjectNames(text: string): string[] {
   const names = new Set<string>();
   const patterns = [
@@ -526,8 +561,8 @@ export function collectDeterministicCandidates(documents: SourceDocument[]): Com
           // 12,750,000." as the CLIENT — which then printed a contract value
           // into a technical-envelope document, the one thing a technical
           // envelope must never carry.
-          clientName: firstMatch(snippet, [/Client\s*[:\-]?\s*([^\n\r.;]{3,160})/i, /Owner\s*[:\-]?\s*([^\n\r.;]{3,160})/i]),
-          country: firstMatch(snippet, [/Country\s*[:\-]?\s*([^\n\r.;]{3,80})/i, /Location\s*[:\-]?\s*([^\n\r.;]{3,120})/i]),
+          clientName: attributeOrNull(firstMatch(snippet, [/Client\s*[:\-]?\s*([^\n\r.;]{3,160})/i, /Owner\s*[:\-]?\s*([^\n\r.;]{3,160})/i])),
+          country: attributeOrNull(firstMatch(snippet, [/Country\s*[:\-]?\s*([^\n\r.;]{3,80})/i, /Location\s*[:\-]?\s*([^\n\r.;]{3,120})/i])),
           sector: sectors[0] ?? null,
           serviceAreas: inferServices(snippet),
           // The project's own entry, not a description of the extractor —

@@ -1439,7 +1439,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         ? aiRematchExperts({
             tenderTitle: cleanedTenderTitle,
             tenderRequirementsText,
-            evaluationMethodology: intelligence.evaluationCriteria.join("; ") || "—",
+            evaluationMethodology: intelligence.evaluationCriteriaWriterNotes.join("; ") || "—",
             candidates: expertCandidates,
           }).then((r) => { batchHolder.expert = r; return r; })
         : Promise.resolve(null);
@@ -1841,7 +1841,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           // Placed FIRST in the methodology block so Claude reads
           // weights and disqualifiers before the legacy regex output.
           ...(deepComprehension ? [formatComprehensionForPrompt(deepComprehension), ""] : []),
-          clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+          clean(tender.evaluationMethodology) || intelligence.evaluationCriteriaWriterNotes.join("; "),
           ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
           tenderLanguageEchoBlock,
           // PR K — tender-FACTS prompt block. Forces Claude to weave
@@ -1959,7 +1959,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           intelligence.evaluationWeights,
           intelligence.topProjects,
           intelligence.topExperts,
-          tender.evaluationMethodology ?? intelligence.evaluationCriteria.join("\n"),
+          tender.evaluationMethodology ?? intelligence.evaluationCriteriaWriterNotes.join("\n"),
         ),
         toolUse: aiToolUse,
       };

@@ -24,7 +24,18 @@ export type ProposalIntelligence = {
   assignmentName: string;
   primarySector: string;
   requiredSections: string[];
+  /**
+   * Evaluator-facing criterion labels ONLY. These are rendered as client-visible
+   * headings and table rows (Section C dynamic sub-sections, Section F mirror,
+   * Section H self-score), so they must never carry writer instructions.
+   */
   evaluationCriteria: string[];
+  /**
+   * The same criteria with their in-house writing guidance attached
+   * ("<label> — lead with named hospitals, values, and client references").
+   * For AI/writer context only — never render this in a document.
+   */
+  evaluationCriteriaWriterNotes: string[];
   evaluationWeights: EvaluationWeight[];
   commercialTerms: CommercialTerms;
   submissionRules: string[];
@@ -529,92 +540,135 @@ function detectRequiredSections(tenderText: string): string[] {
   return detected.length >= 2 ? detected : ["Cover Letter", "Executive Summary", "Company Profile", "Relevant Experience", "Technical Approach", "Compliance and Declaration"];
 }
 
+// The evaluation-criteria window is one long line: textOf/clean() collapse
+// every newline in the tender before this runs. An unanchored `X.*experience`
+// pattern therefore matches across completely unrelated sentences. Measured on
+// a real hospital tender, `/compliance.*experience/i` matched the span
+// "Compliance with submission requirements ... focus on healthcare project
+// experience" and put a Financial Services / Basel-IFRS criterion into a
+// hospital proposal; `/GIS/` matched the "gis" inside "registration" and added
+// an urban master-planning criterion beside it.
+//
+// Splitting the window back into phrases and requiring each pattern to match
+// inside ONE phrase restores the sentence boundary the collapse removed. It
+// fixes every pattern in this catalogue at once, rather than rewriting forty
+// literals and leaving the next one to be added with the same defect.
+function evaluationPhrases(evalSection: string): string[] {
+  return evalSection
+    .split(/[.;:|\u2022\n]+|\s[-\u2013\u2014]\s/g)
+    .map((phrase) => phrase.trim())
+    .filter((phrase) => phrase.length > 0);
+}
+
+/**
+ * Split a catalogue entry into the evaluator-facing label and the in-house
+ * writing guidance that follows it.
+ *
+ * Entries in this catalogue are authored as "<criterion> — <how to answer it>".
+ * The guidance half is writing direction for the proposal author; a real
+ * hospital proposal shipped with the heading "C.7 Financial services /
+ * regulatory compliance experience — lead with named institutions, regulatory
+ * standard met (Basel/IFRS), and go-live outcomes" and repeated that sentence
+ * as its own body text, because the whole string was used as a heading. Keep
+ * the two halves apart at the source so no consumer has to know the convention.
+ */
+export function splitEvaluationCriterion(entry: string): { label: string; guidance: string | null } {
+  const separator = entry.indexOf(" \u2014 ");
+  if (separator < 0) return { label: entry.trim(), guidance: null };
+  return {
+    label: entry.slice(0, separator).trim(),
+    guidance: entry.slice(separator + 3).trim() || null,
+  };
+}
+
 function detectEvaluationCriteria(tenderText: string): string[] {
   const criteria: string[] = [];
   const evalSection = tenderText.match(/evaluation criteria[\s\S]{0,2000}/i)?.[0] ?? tenderText;
+  const phrases = evaluationPhrases(evalSection);
+  const mentions = (pattern: RegExp): boolean => phrases.some((phrase) => pattern.test(phrase));
 
   // Healthcare
-  if (/healthcare.*experience|similar.*hospital|medical.*facility.*experience/i.test(evalSection)) criteria.push("Relevant healthcare / similar medical facility project experience — lead with named hospitals, values, and client references");
-  if (/technical understanding|facility design|clinical|healthcare.*design/i.test(evalSection)) criteria.push("Technical understanding of healthcare facility design — demonstrate clinical workflow, IPC, MEP integration knowledge");
+  if (mentions(/healthcare.*experience|similar.*hospital|medical.*facility.*experience/i)) criteria.push("Relevant healthcare / similar medical facility project experience — lead with named hospitals, values, and client references");
+  if (mentions(/technical understanding|facility design|clinical|healthcare.*design/i)) criteria.push("Technical understanding of healthcare facility design — demonstrate clinical workflow, IPC, MEP integration knowledge");
 
   // Water/Infrastructure
-  if (/water.*experience|water.*project|hydraulic|\bWASH\b|sanitation.*experience/i.test(evalSection)) criteria.push("Relevant water supply / sanitation / hydraulic engineering project experience — lead with named schemes, capacities, and client references");
-  if (/borehole|groundwater|hydrogeol/i.test(evalSection)) criteria.push("Hydrogeological and borehole investigation expertise — show yield, depth, and field supervision evidence");
+  if (mentions(/water.*experience|water.*project|hydraulic|\bWASH\b|sanitation.*experience/i)) criteria.push("Relevant water supply / sanitation / hydraulic engineering project experience — lead with named schemes, capacities, and client references");
+  if (mentions(/borehole|groundwater|hydrogeol/i)) criteria.push("Hydrogeological and borehole investigation expertise — show yield, depth, and field supervision evidence");
 
   // Road/Bridge
-  if (/road.*experience|bridge.*experience|transport.*experience|pavement.*design/i.test(evalSection)) criteria.push("Relevant road / bridge / transport infrastructure experience — lead with route length, contract value, and supervision outcomes");
-  if (/traffic.*study|pavement.*design|highway.*design/i.test(evalSection)) criteria.push("Technical depth in road design — demonstrate pavement design, drainage, and safety audit capability");
+  if (mentions(/road.*experience|bridge.*experience|transport.*experience|pavement.*design/i)) criteria.push("Relevant road / bridge / transport infrastructure experience — lead with route length, contract value, and supervision outcomes");
+  if (mentions(/traffic.*study|pavement.*design|highway.*design/i)) criteria.push("Technical depth in road design — demonstrate pavement design, drainage, and safety audit capability");
 
   // Environmental/Social
-  if (/ESIA|environmental.*experience|social.*assessment|safeguard.*experience/i.test(evalSection)) criteria.push("ESIA/ESMP experience — show accepted reports, donor compliance, and stakeholder engagement track record");
-  if (/World Bank|UNDP|donor.*standard|safeguard.*framework/i.test(evalSection)) criteria.push("Donor compliance track record (World Bank ESF, IFC PS, or equivalent) — position as risk reduction advantage");
+  if (mentions(/ESIA|environmental.*experience|social.*assessment|safeguard.*experience/i)) criteria.push("ESIA/ESMP experience — show accepted reports, donor compliance, and stakeholder engagement track record");
+  if (mentions(/World Bank|UNDP|donor.*standard|safeguard.*framework/i)) criteria.push("Donor compliance track record (World Bank ESF, IFC PS, or equivalent) — position as risk reduction advantage");
 
   // ICT
-  if (/\bICT\b.*experience|system.*develop|software.*experience|\bMIS\b|\bERP\b/i.test(evalSection)) criteria.push("Relevant ICT / system development experience — show deployed systems, user counts, and client references");
-  if (/data.*security|cyber|network.*design/i.test(evalSection)) criteria.push("Technical depth in data security, network architecture, and system resilience");
+  if (mentions(/\bICT\b.*experience|system.*develop|software.*experience|\bMIS\b|\bERP\b/i)) criteria.push("Relevant ICT / system development experience — show deployed systems, user counts, and client references");
+  if (mentions(/data.*security|cyber|network.*design/i)) criteria.push("Technical depth in data security, network architecture, and system resilience");
 
   // Urban Planning
-  if (/urban.*experience|master.*plan.*experience|planning.*experience|GIS/i.test(evalSection)) criteria.push("Urban / master planning experience — show plans delivered, scale, and regulatory alignment outcomes");
+  if (mentions(/urban.*experience|master.*plan.*experience|planning.*experience|\bGIS\b/i)) criteria.push("Urban / master planning experience — show plans delivered, scale, and regulatory alignment outcomes");
 
   // Education
-  if (/school.*design|university.*design|education.*facility.*experience/i.test(evalSection)) criteria.push("Education facility design experience — show comparable school/campus projects with functional approval outcomes");
+  if (mentions(/school.*design|university.*design|education.*facility.*experience/i)) criteria.push("Education facility design experience — show comparable school/campus projects with functional approval outcomes");
 
   // Energy / Power
-  if (/energy.*experience|power.*experience|renewable.*experience|solar.*experience|grid.*experience|electrification.*experience/i.test(evalSection)) criteria.push("Relevant energy / power infrastructure experience — lead with named schemes, installed capacity (MW), and grid-code compliance outcomes");
-  if (/load.*forecast|generation.*design|protection.*relay|SCADA|grid.*integration/i.test(evalSection)) criteria.push("Technical depth in power systems design — demonstrate load-flow analysis, protection coordination, and SCADA integration capability");
+  if (mentions(/energy.*experience|power.*experience|renewable.*experience|solar.*experience|grid.*experience|electrification.*experience/i)) criteria.push("Relevant energy / power infrastructure experience — lead with named schemes, installed capacity (MW), and grid-code compliance outcomes");
+  if (mentions(/load.*forecast|generation.*design|protection.*relay|SCADA|grid.*integration/i)) criteria.push("Technical depth in power systems design — demonstrate load-flow analysis, protection coordination, and SCADA integration capability");
 
   // Agriculture / Irrigation
-  if (/irrigation.*experience|agri.*experience|rural.*develop.*experience|WUA.*experience/i.test(evalSection)) criteria.push("Irrigation / agricultural development experience — lead with named schemes, command area (ha), and WUA establishment outcomes");
-  if (/crop.*water|agronomy|hydrological.*analysis|Penman/i.test(evalSection)) criteria.push("Technical depth in irrigation design — demonstrate FAO Penman-Monteith crop water calculations and hydraulic network design capability");
+  if (mentions(/irrigation.*experience|agri.*experience|rural.*develop.*experience|WUA.*experience/i)) criteria.push("Irrigation / agricultural development experience — lead with named schemes, command area (ha), and WUA establishment outcomes");
+  if (mentions(/crop.*water|agronomy|hydrological.*analysis|Penman/i)) criteria.push("Technical depth in irrigation design — demonstrate FAO Penman-Monteith crop water calculations and hydraulic network design capability");
 
   // Mining / Extractive
-  if (/mining.*experience|mineral.*experience|JORC.*experience|resource.*assess.*experience/i.test(evalSection)) criteria.push("Mining / mineral resource assessment experience — lead with JORC-compliant reports delivered and competent-person credentials");
-  if (/slope.*stability|tailings|mine.*plan|geotechnical.*mining/i.test(evalSection)) criteria.push("Technical depth in mine geotechnics and TSF design — demonstrate slope-stability analyses and MAC/ANCOLD-compliant designs");
+  if (mentions(/mining.*experience|mineral.*experience|JORC.*experience|resource.*assess.*experience/i)) criteria.push("Mining / mineral resource assessment experience — lead with JORC-compliant reports delivered and competent-person credentials");
+  if (mentions(/slope.*stability|tailings|mine.*plan|geotechnical.*mining/i)) criteria.push("Technical depth in mine geotechnics and TSF design — demonstrate slope-stability analyses and MAC/ANCOLD-compliant designs");
 
   // Port / Maritime
-  if (/port.*experience|maritime.*experience|harbour.*experience|berth.*design.*experience/i.test(evalSection)) criteria.push("Port / maritime infrastructure experience — lead with named terminals, berth length, and ISPS certification outcomes");
-  if (/dredging|nautical.*simulation|met.?ocean|bathymetric/i.test(evalSection)) criteria.push("Technical depth in port engineering — demonstrate met-ocean analysis, fast-time simulation, and dredge design capability");
+  if (mentions(/port.*experience|maritime.*experience|harbour.*experience|berth.*design.*experience/i)) criteria.push("Port / maritime infrastructure experience — lead with named terminals, berth length, and ISPS certification outcomes");
+  if (mentions(/dredging|nautical.*simulation|met.?ocean|bathymetric/i)) criteria.push("Technical depth in port engineering — demonstrate met-ocean analysis, fast-time simulation, and dredge design capability");
 
   // Oil & Gas
-  if (/oil.*gas.*experience|pipeline.*experience|HAZOP.*experience|process.*safety.*experience/i.test(evalSection)) criteria.push("Oil & gas / pipeline engineering experience — lead with named projects, pipeline diameter/length, and HAZOP study completions");
-  if (/P&ID|LOPA|cathodic.*protection|pipeline.*integrity|commissioning.*procedure/i.test(evalSection)) criteria.push("Technical depth in process safety and pipeline design — demonstrate HAZOP facilitation, P&ID development, and integrity management capability");
+  if (mentions(/oil.*gas.*experience|pipeline.*experience|HAZOP.*experience|process.*safety.*experience/i)) criteria.push("Oil & gas / pipeline engineering experience — lead with named projects, pipeline diameter/length, and HAZOP study completions");
+  if (mentions(/P&ID|LOPA|cathodic.*protection|pipeline.*integrity|commissioning.*procedure/i)) criteria.push("Technical depth in process safety and pipeline design — demonstrate HAZOP facilitation, P&ID development, and integrity management capability");
 
   // Financial Services
-  if (/financial.*experience|banking.*experience|compliance.*experience|regulatory.*experience/i.test(evalSection)) criteria.push("Financial services / regulatory compliance experience — lead with named institutions, regulatory standard met (Basel/IFRS), and go-live outcomes");
-  if (/KYC|AML|core.*banking|IFRS|Basel.*compliance|prudential/i.test(evalSection)) criteria.push("Technical depth in banking regulation — demonstrate KYC/AML programme design, IFRS implementation, and prudential regulatory advisory");
+  if (mentions(/financial.*experience|banking.*experience|compliance.*experience|regulatory.*experience/i)) criteria.push("Financial services / regulatory compliance experience — lead with named institutions, regulatory standard met (Basel/IFRS), and go-live outcomes");
+  if (mentions(/KYC|AML|core.*banking|IFRS|Basel.*compliance|prudential/i)) criteria.push("Technical depth in banking regulation — demonstrate KYC/AML programme design, IFRS implementation, and prudential regulatory advisory");
 
   // Telecoms / Broadband
-  if (/telecom.*experience|broadband.*experience|spectrum.*experience|network.*rollout.*experience/i.test(evalSection)) criteria.push("Telecoms / broadband network experience — lead with named projects, network reach (km), and spectrum licensing outcomes");
-  if (/LTE|5G|base.*station.*design|backhaul.*design|broadband.*rollout/i.test(evalSection)) criteria.push("Technical depth in mobile and broadband network design — demonstrate RF planning, backhaul design, and commissioning protocol capability");
+  if (mentions(/telecom.*experience|broadband.*experience|spectrum.*experience|network.*rollout.*experience/i)) criteria.push("Telecoms / broadband network experience — lead with named projects, network reach (km), and spectrum licensing outcomes");
+  if (mentions(/\bLTE\b|\b5G\b|base.*station.*design|backhaul.*design|broadband.*rollout/i)) criteria.push("Technical depth in mobile and broadband network design — demonstrate RF planning, backhaul design, and commissioning protocol capability");
 
   // Interior Design / Fit-Out / Construction Supervision / Contract Administration
-  if (/interior.*experience|fit[- ]?out.*experience|space.*planning.*experience/i.test(evalSection)) criteria.push("Interior design / fit-out experience — lead with named projects, area (m²), and client references");
-  if (/supervision.*experience|resident engineer.*experience|site.*management.*experience/i.test(evalSection)) criteria.push("Construction supervision experience — show named contracts supervised, contract value, and IPC/hold-point outcomes");
-  if (/contract.*admin.*experience|FIDIC.*experience|claims.*experience|quantity.*survey.*experience/i.test(evalSection)) criteria.push("Contract administration / FIDIC experience — show named contracts, final account settlements, and EOT determinations");
+  if (mentions(/interior.*experience|fit[- ]?out.*experience|space.*planning.*experience/i)) criteria.push("Interior design / fit-out experience — lead with named projects, area (m²), and client references");
+  if (mentions(/supervision.*experience|resident engineer.*experience|site.*management.*experience/i)) criteria.push("Construction supervision experience — show named contracts supervised, contract value, and IPC/hold-point outcomes");
+  if (mentions(/contract.*admin.*experience|FIDIC.*experience|claims.*experience|quantity.*survey.*experience/i)) criteria.push("Contract administration / FIDIC experience — show named contracts, final account settlements, and EOT determinations");
 
   // Heritage Conservation
-  if (/heritage.*experience|conservation.*experience|historic.*building.*experience|restoration.*experience/i.test(evalSection)) criteria.push("Heritage conservation / restoration experience — lead with named historic buildings conserved, heritage authority approvals obtained, and conservation methods applied");
-  if (/ICOMOS|lime mortar|conservation.*plan|significance.*assessment|reversib/i.test(evalSection)) criteria.push("Technical depth in heritage conservation — demonstrate ICOMOS-aligned methodology, material-compatibility testing, and conservation plan preparation");
+  if (mentions(/heritage.*experience|conservation.*experience|historic.*building.*experience|restoration.*experience/i)) criteria.push("Heritage conservation / restoration experience — lead with named historic buildings conserved, heritage authority approvals obtained, and conservation methods applied");
+  if (mentions(/ICOMOS|lime mortar|conservation.*plan|significance.*assessment|reversib/i)) criteria.push("Technical depth in heritage conservation — demonstrate ICOMOS-aligned methodology, material-compatibility testing, and conservation plan preparation");
 
   // Industrial & Manufacturing
-  if (/industrial.*experience|manufactur.*experience|factory.*experience|abattoir.*experience|processing.*plant.*experience/i.test(evalSection)) criteria.push("Industrial / manufacturing facility experience — lead with named facilities delivered, production capacity, and commissioning outcomes");
-  if (/process.*flow|effluent.*treatment|EHS|FAT|cleaner.*production|lean.*design/i.test(evalSection)) criteria.push("Technical depth in industrial design — demonstrate process-flow analysis, effluent treatment design, and FAT commissioning protocol capability");
+  if (mentions(/industrial.*experience|manufactur.*experience|factory.*experience|abattoir.*experience|processing.*plant.*experience/i)) criteria.push("Industrial / manufacturing facility experience — lead with named facilities delivered, production capacity, and commissioning outcomes");
+  if (mentions(/process.*flow|effluent.*treatment|\bEHS\b|\bFAT\b|cleaner.*production|lean.*design/i)) criteria.push("Technical depth in industrial design — demonstrate process-flow analysis, effluent treatment design, and FAT commissioning protocol capability");
 
   // High-Rise Buildings
-  if (/high.rise.*experience|multi.stor.*experience|tower.*building.*experience|tall.*building.*experience/i.test(evalSection)) criteria.push("High-rise / multi-storey building experience — lead with named towers designed, height/storeys, structural system, and authority approval outcomes");
-  if (/ETABS|SAP2000|shear.*wall|seismic.*design|curtain.*wall|post.tension/i.test(evalSection)) criteria.push("Technical depth in high-rise structural design — demonstrate ETABS/SAP2000 analysis, seismic compliance, and independent peer review protocol");
+  if (mentions(/high.rise.*experience|multi.stor.*experience|tower.*building.*experience|tall.*building.*experience/i)) criteria.push("High-rise / multi-storey building experience — lead with named towers designed, height/storeys, structural system, and authority approval outcomes");
+  if (mentions(/ETABS|SAP2000|shear.*wall|seismic.*design|curtain.*wall|post.tension/i)) criteria.push("Technical depth in high-rise structural design — demonstrate ETABS/SAP2000 analysis, seismic compliance, and independent peer review protocol");
 
   // Hospitality & Tourism
-  if (/hotel.*experience|hospitality.*experience|resort.*experience|lodge.*experience/i.test(evalSection)) criteria.push("Hospitality / hotel design experience — lead with named hotels or resorts designed, star rating, room count, and brand operator sign-off outcomes");
-  if (/FF&E|brand.*standard|RevPAR|guestroom.*HVAC|mock.*room|pre.opening/i.test(evalSection)) criteria.push("Technical depth in hospitality design — demonstrate brand-standard compliance methodology, FF&E procurement schedule, and pre-opening punch list capability");
+  if (mentions(/hotel.*experience|hospitality.*experience|resort.*experience|lodge.*experience/i)) criteria.push("Hospitality / hotel design experience — lead with named hotels or resorts designed, star rating, room count, and brand operator sign-off outcomes");
+  if (mentions(/FF&E|brand.*standard|RevPAR|guestroom.*HVAC|mock.*room|pre.opening/i)) criteria.push("Technical depth in hospitality design — demonstrate brand-standard compliance methodology, FF&E procurement schedule, and pre-opening punch list capability");
 
   // Universal criteria
-  if (/portfolio|quality.*portfolio|relevance.*portfolio/i.test(evalSection)) criteria.push("Quality and relevance of project portfolio — include photos, drawings, and project outcome evidence");
-  if (/professional team|multidisciplinary|strength.*team|key.*personnel|team.*composition/i.test(evalSection)) criteria.push("Strength of professional team — show each expert's role on a comparable previous project");
-  if (/company.*profile|firm.*profile|organisational.*capacity/i.test(evalSection)) criteria.push("Company profile and organisational capacity — licence grade, staff count, registrations, certifications");
-  if (/submission.*requirement|compliance.*submission|format.*requirement/i.test(evalSection)) criteria.push("Compliance with all submission requirements — section structure, file format, subject line, deadline");
-  if (/value.*added|additional.*service|added.*value/i.test(evalSection)) criteria.push("Value-added services and in-house capabilities beyond minimum scope");
-  if (/methodology|technical.*approach|work.*plan/i.test(evalSection)) criteria.push("Quality of technical methodology — demonstrate structured, deliverable-linked work plan with QA gates");
+  if (mentions(/portfolio|quality.*portfolio|relevance.*portfolio/i)) criteria.push("Quality and relevance of project portfolio — include photos, drawings, and project outcome evidence");
+  if (mentions(/professional team|multidisciplinary|strength.*team|key.*personnel|team.*composition/i)) criteria.push("Strength of professional team — show each expert's role on a comparable previous project");
+  if (mentions(/company.*profile|firm.*profile|organisational.*capacity/i)) criteria.push("Company profile and organisational capacity — licence grade, staff count, registrations, certifications");
+  if (mentions(/submission.*requirement|compliance.*submission|format.*requirement/i)) criteria.push("Compliance with all submission requirements — section structure, file format, subject line, deadline");
+  if (mentions(/value.*added|additional.*service|added.*value/i)) criteria.push("Value-added services and in-house capabilities beyond minimum scope");
+  if (mentions(/methodology|technical.*approach|work.*plan/i)) criteria.push("Quality of technical methodology — demonstrate structured, deliverable-linked work plan with QA gates");
 
   return criteria.length > 0 ? criteria : [
     "Relevant project experience — lead with highest-value comparable projects by sector",
@@ -1315,6 +1369,8 @@ export function buildProposalIntelligence(params: {
     description: tender.description,
   });
 
+  const detectedCriteria = detectEvaluationCriteria(tenderText);
+
   return {
     tenderText,
     clientName: finalClientName,
@@ -1322,7 +1378,8 @@ export function buildProposalIntelligence(params: {
     assignmentName: finalAssignmentName,
     primarySector: inferSector(tenderText),
     requiredSections: detectRequiredSections(tenderText),
-    evaluationCriteria: detectEvaluationCriteria(tenderText),
+    evaluationCriteria: detectedCriteria.map((entry) => splitEvaluationCriterion(entry).label),
+    evaluationCriteriaWriterNotes: detectedCriteria,
     evaluationWeights: detectEvaluationWeights(tenderText),
     commercialTerms: detectCommercialTerms(tenderText),
     submissionRules: detectSubmissionRules(tender, tenderText),

@@ -148,3 +148,61 @@ describe("organisations, amounts and labels are never stored as people", () => {
     assert.ok(experts.some((e) => /Asamenew Alye Mohammed/i.test(e)), `lost a real expert: ${JSON.stringify(experts)}`);
   });
 });
+
+/**
+ * The column header must not become a project's CLIENT or COUNTRY either.
+ *
+ * `looksLikeTableHeading` guards project NAMES, and it does. The same header
+ * line still reached the attribute captures: the header reads
+ * "Client/Location (with Area & Full Address) Testimony Details (Ref No, Date,
+ * Author) …", so the `Client` capture ran straight into the next column. On a
+ * real portfolio export 187 project rows stored that whole caption run as
+ * their client and its tail as their country, were auto-verified to
+ * SOURCE_VERIFIED, and a generated proposal then told the evaluator "Approach
+ * demonstrated on <hospital> (/Location (with Area & Full Address) Testimony
+ * Details …)".
+ */
+const HEADER_ROW_DOC = {
+  id: "doc-header-row",
+  originalFileName: "Portfolio-Table.txt",
+  category: "PROJECT",
+  extractedText: `COMPANY PROJECT PORTFOLIO
+Project Name Client/Location (with Area & Full Address) Testimony Details (Ref No, Date, Author) Project Cost Details Project Duration Comprehensive Service Details Supporting Doc
+1 Northern Referral Hospital Expansion / Regional Health Bureau
+Client: Regional Health Bureau
+Location: Nakuru, Kenya
+Scope: Architectural and MEP design for a 120-bed referral hospital expansion, including medical gas, imaging suites and IPC-compliant circulation.
+2 Lakeside Museum Renovation / National Heritage Board
+Client: National Heritage Board
+Location: Kisumu, Kenya
+Scope: Conservation-led renovation of a listed museum building with new interpretation galleries.
+`,
+  integrityStatus: "VERIFIED",
+};
+
+describe("captured project attributes are values, not column headers", () => {
+  it("never stores a run of column captions as a client or a country", () => {
+    const { projects } = collectDeterministicCandidates([HEADER_ROW_DOC as never]);
+    assert.ok(projects.length > 0, "no projects extracted — fixture is not exercising the extractor");
+
+    for (const project of projects) {
+      for (const [field, value] of [["clientName", project.clientName], ["country", project.country]] as const) {
+        if (!value) continue;
+        assert.doesNotMatch(
+          value,
+          /Testimony Details|Supporting Doc|\(with Area/i,
+          `project "${project.name}" stored the table header as its ${field}: ${value}`,
+        );
+      }
+    }
+  });
+
+  it("still stores the genuine client and location stated by the row", () => {
+    // The rejection must not have been achieved by dropping every attribute.
+    const { projects } = collectDeterministicCandidates([HEADER_ROW_DOC as never]);
+    const clients = projects.map((project) => project.clientName).filter(Boolean).join(" | ");
+    const countries = projects.map((project) => project.country).filter(Boolean).join(" | ");
+    assert.match(clients, /Regional Health Bureau|National Heritage Board/i, `no genuine client survived: ${clients}`);
+    assert.match(countries, /Nakuru|Kisumu/i, `no genuine location survived: ${countries}`);
+  });
+});

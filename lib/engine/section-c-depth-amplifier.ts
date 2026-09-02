@@ -378,7 +378,10 @@ function buildAddendum(opts: {
       blocks.push(
         `## C.${dynIdx} ${criterion}`,
         "",
-        `${opts.companyName}'s approach to ${criterion} for this ${opts.primarySector.toLowerCase()} assignment is grounded in the firm's reviewed project portfolio. ${anchor}`,
+        // Not "approach to <criterion>": the heading already states the
+        // criterion, and repeating it verbatim in the first sentence reads as
+        // filler to an evaluator who has just read it.
+        `${opts.companyName}'s response to this criterion is grounded in the firm's reviewed portfolio of ${opts.primarySector.toLowerCase()} assignments. ${anchor}`,
       );
       dynIdx++;
     }
