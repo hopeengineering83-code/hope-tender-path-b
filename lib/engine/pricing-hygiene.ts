@@ -21,10 +21,39 @@ export function isCvOrProfileDoc(doc?: Pick<ExportReadyDocument, "name" | "exact
   return /\b(cv|curriculum\s+vitae|resume|biography|company\s+profile|cover\s+letter|organizational\s+profile)\b/i.test(labelOf(doc));
 }
 
+/**
+ * A list ordinal is not a sentence terminator.
+ *
+ * Fragment independence is this module's central rule, so where a fragment
+ * ends decides what context an exemption may read. The split used to treat
+ * every ". " as a boundary, which includes the "1. ", "2. ", "3. " of an
+ * enumerated list — and a Company Vault project reference is written exactly
+ * that way:
+ *
+ *   … Ref: … Date: 19/01/2018 E.C. Author: Tariku Abebaw (Building Officer,
+ *   Gimba City Admin) 1. Construction Cost: 550,074,678.02 ETB 2. Feasibility
+ *   Study, Geotechnical & New Design Cost: 1,100,000 ETB 3. Contract
+ *   Administration & Construction Supervision Cost: 110,000 ETB/month
+ *   2015-2018 E.C.
+ *
+ * Cutting at the ordinals severed each amount from the project heading, the
+ * client and the years that identify it as a PAST project, so
+ * isHistoricalReferenceValueSentence saw a bare "Construction Cost:
+ * 550,074,678.02 ETB 2" with no historic cue and the row was reported as this
+ * bid's price. Whether that happened at all depended on where the numbering
+ * fell: the same two vault records passed in one generation and failed in the
+ * next, and AUTO_FINALIZE could not converge on a proposal quoting no price.
+ *
+ * Keeping an enumerated list together is not a relaxation. The
+ * currentOfferPricing veto and the priced-content guards run on the resulting
+ * fragment too, so a merged fragment carrying "our fee" or "this proposal"
+ * is still refused the historical exemption — it gains context, and the
+ * context is judged.
+ */
 function sentences(text: string): string[] {
   return text
     .replace(/\r\n?/g, "\n")
-    .split(/(?:[.!?]\s+|\n+)/)
+    .split(/(?:(?<!(?:^|[\s(\[])\d{1,3})[.!?]\s+|\n+)/)
     .map((s) => s.replace(/\s+/g, " ").trim())
     .filter(Boolean);
 }
@@ -265,13 +294,43 @@ function isBoqDeliverableSentence(sentence: string): boolean {
   return !carriesPricedContent;
 }
 
+/**
+ * Remove the scaffolding the TEXT EXTRACTOR adds, which the document does not
+ * say.
+ *
+ * lib/extract-text.ts serialises a table it recovers as
+ *
+ *   [Table: 3 rows]
+ *   Row 1: Duration | Dates on file
+ *   Row 2: Contract Value | Value detail in Appendix B (project reference)
+ *
+ * The row numbering is the extractor's, not the author's, and `numberPricedTerm`
+ * pairs a digit with a priced term inside a 90-character window — so the "2" of
+ * "Row 2" pairs with "Contract Value" and a row that states no amount at all,
+ * and explicitly says the value lives in an appendix, was reported as pricing
+ * leakage. The DOCX of the same proposal has no row numbering and is clean; the
+ * finalized PDF, which must be re-extracted to be read, is not. One document,
+ * two verdicts.
+ *
+ * This is the same principle `withoutIdentifiers` already applies to page
+ * markers and reference numbers — digits that identify something rather than
+ * price it — applied to the reader's own annotations. Cell text is untouched,
+ * so an amount that really is in a table row is still read and still caught.
+ */
+function withoutExtractionScaffolding(text: string): string {
+  return text
+    .replace(/\[Table:\s*\d+\s*rows?\]/gi, " ")
+    .replace(/\[Page\s*\d+\]/gi, " ")
+    .replace(/(^|\n)[ \t]*Row\s+\d+\s*:[ \t]*/gi, "$1");
+}
+
 export function containsPricingLeakage(text: string, doc?: Pick<ExportReadyDocument, "name" | "exactFileName" | "documentType" | "format">): boolean {
   if (!isTechnicalEnvelopeDoc(doc)) return false;
   if (isCommercialOrFinancialDoc(doc)) return false;
   if (isSensitiveFinancialOrLegalDoc(doc)) return false;
   if (isCvOrProfileDoc(doc)) return false;
 
-  const textSentences = sentences(text);
+  const textSentences = sentences(withoutExtractionScaffolding(text));
   // One pass, and the context window reads the ORIGINAL fragments.
   //
   // These were two chained filters, and the second received the array the

@@ -66,7 +66,90 @@ export function wordTextRuns(xml: string): string[] {
   return runs;
 }
 
-/** Collapse whitespace runs to single spaces without backtracking. */
+/**
+ * Collapse whitespace runs to single spaces WITHIN each line, keeping the
+ * line structure the extractor produced.
+ *
+ * Line boundaries are not cosmetic here. Two authorities downstream read them:
+ *
+ *   - the cover/title check anchors on `^` with the `m` flag, so it can only
+ *     see a title that begins a line;
+ *   - pricing hygiene splits text into fragments on `\n` and relies on `.`
+ *     not matching a line terminator to keep its proximity windows
+ *     fragment-local — the "a fragment ending in a number must not pair with a
+ *     priced term starting the next fragment" rule that pricing-hygiene.ts
+ *     documents at length.
+ *
+ * Both guarantees held for DOCX, whose chunks are joined with newlines, and
+ * silently did not hold for PDF: this function used to flatten every newline
+ * to a space, so a 2,155-line finalized PDF reached both checks as ONE line.
+ * On a real owner run that produced, on the same document whose DOCX source
+ * passed, a MISSING_TITLE_OR_COVER on a PDF whose cover page reads
+ * "Subject: Technical Proposal for …", plus two pricing "leaks" that existed
+ * in no row of the document — "Row 2: Contract Value" pairing with a digit
+ * from a different table row. AUTO_FINALIZE could not converge.
+ *
+ * Nothing is relaxed: the same text, the same patterns, the same thresholds —
+ * they are simply applied to the lines the document actually has.
+ */
+export function collapseWhitespacePerLine(value: string): string {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => collapseWhitespace(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Rejoin the visual line wraps a PDF text layer emits, so a paragraph arrives
+ * as a paragraph.
+ *
+ * A newline in extracted PDF text is where the renderer ran out of column, not
+ * where the author ended a thought. Preserving those newlines is right — see
+ * collapseWhitespacePerLine — but treating each one as a semantic boundary is
+ * as wrong as flattening them all, and pricing hygiene splits on newlines:
+ *
+ *   3. Contract Administration & Construction Supervision Cost:
+ *   8,700 USD/month 2024-2026 G.C. (Ongoing)
+ *
+ * is one line of a Company Vault project reference that the PDF wrapped in
+ * two. Alone, the second half is an amount with no label — the reference
+ * exemption cannot see the contract, the supervision or the client that make
+ * it a PAST project, and the row reads as this bid's price. The DOCX of the
+ * same proposal, whose paragraphs survive extraction intact, is exempt. One
+ * document, two answers, and AUTO_FINALIZE stuck on the PDF.
+ *
+ * A continuation is recognised structurally, not by vocabulary. The previous
+ * line must not have ended a sentence, and then either this line begins with
+ * something that cannot begin one — a lowercase letter, a digit, or a currency
+ * symbol — or the previous line ends on a character that cannot end one: a
+ * comma, colon, semicolon, ampersand or dash. Both halves are needed, because
+ * a PDF wraps wherever the column runs out, including after "Study," and
+ * before a capitalised word. A heading, a table row and a new sentence begin
+ * with a capital AND follow a line that ended cleanly, so none of them is
+ * joined and the cover-page and per-row boundaries stay exactly where they
+ * were.
+ */
+export function reflowExtractedPdfLines(value: string): string {
+  const lines = value.split("\n");
+  const out: string[] = [];
+  for (const line of lines) {
+    const previous = out[out.length - 1];
+    const previousText = previous?.trim() ?? "";
+    const continues =
+      previous !== undefined
+      && previousText.length > 0
+      && !/[.!?]["'\u201d\u2019)\]]?$/.test(previousText)
+      && (/^[a-z0-9$€£]/.test(line.trim()) || /[,:;&\u2013\u2014-]$/.test(previousText));
+    if (continues) out[out.length - 1] = `${previous} ${line.trim()}`;
+    else out.push(line);
+  }
+  return out.join("\n");
+}
+
+/** Collapse every whitespace run — newlines included — to single spaces. */
 export function collapseWhitespace(value: string): string {
   let out = "";
   let inWhitespace = false;
@@ -184,7 +267,7 @@ async function readVisibleText(
       const fileName = document?.exactFileName ?? document?.name ?? "generated-document.pdf";
       const text = await extractTextFromBuffer(buffer, document?.contentMimeType ?? "application/pdf", fileName);
       if (!text.trim() || text.startsWith("[Extraction failed for ")) return null;
-      return collapseWhitespace(text);
+      return reflowExtractedPdfLines(collapseWhitespacePerLine(text));
     }
 
     // PK\x03\x04 — anything else is not an OPC container.
