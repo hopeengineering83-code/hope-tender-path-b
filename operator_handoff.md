@@ -123,6 +123,88 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-02 UTC — Claude Code (expert selection: discipline coverage; a wrong earlier conclusion corrected)
+
+- **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
+- **HEAD:** `7228f86f` → `79f1af2c`. No new lane, no merge, no Production deploy.
+
+- **THE PREVIOUS ENTRY'S CONCLUSION WAS WRONG.** It reported that the vault held
+  no healthcare-relevant experts, so selecting 1 of 28 was correct fail-closed
+  behaviour. That measurement regexed only `title` and `disciplines`. The
+  authority export declares Healthcare among the **sectors** of **22 of its 28
+  experts** — including Girum Wondwossen Seifu (Senior Architect & Urban
+  Planner), Elias Manaye Yancha (PM / Senior Civil), Kedir Mohammed Yesuf
+  (Senior Electrical) and Mohammed Nurey Guht (Senior Sanitary). The earlier
+  bullet has been struck through in place so it cannot be acted on again.
+
+- **FOUR STACKED DEFECTS, all fixed in `79f1af2c`, each pinned by a test that
+  was confirmed to fail against the pre-fix code:**
+
+  1. `enrich` (11dee2ae) could not serve the JSON-array columns — an empty list
+     arrives as the string "[]" and reads as a value. Measured through the real
+     routes: sectors lost content on 23 of 28 experts, disciplines on 25 of 28;
+     healthcare-tagged experts fell 22 → 5, with 8 left with no sectors and 7
+     with no disciplines. `enrichList` closes it. After: **28/28 experts, 22
+     healthcare-tagged, 0 empty sectors, 0 empty disciplines** — matching the
+     export exactly.
+  2. `capabilityFamilies` did not read the role nouns a tender actually uses:
+     "Architectural Consultancy Services …" and "…including architects,
+     engineers, a biomedical engineer, MEP experts" required no architecture at
+     all. Narrow additions only, so the earlier tightening of that family
+     stands.
+  3. Discipline coverage was only ever a tie-breaker among candidates that had
+     already cleared 0.75, and the passes swap rather than add — so a required
+     discipline whose only carriers score below it could never be covered.
+     Measured before: electrical engineer 100% + general manager 77% selected,
+     both architects at 74% and 73% excluded. A bounded completion pass now adds
+     the best carrier of an uncovered required family above the 0.55 floor that
+     `main-engine-selection-policy` already uses. Experts only; provenance
+     untouched (an ineligible record scores 0 and is unreachable at any floor).
+  4. `polishBenchmarkOutput`'s `/\s+\|\s+#/` matched across newlines, so any
+     section following a table was swallowed into its last cell. In the real
+     proposal that erased **"A.6 Biomedical Engineering Specialist Engagement
+     Plan"** — the honest statement that the firm will engage a licensed
+     specialist for a discipline it does not hold. The same pass now also strips
+     the vault's `[REGEX_DRAFT — AUTOMATIC SOURCE VERIFICATION PENDING]` marker
+     and the extraction page markers its existing rule could not match.
+
+- **COVERAGE PROOF (real tender, real 28-expert source-verified vault).**
+  Tender-required families: FINANCIAL_LEGAL, ELECTRO_MECHANICAL,
+  HEALTHCARE_FACILITIES, FEASIBILITY_DESIGN, PROJECT_MANAGEMENT,
+  ARCHITECTURE_BUILDINGS — **all six covered, none uncovered.** Selected team:
+  Habib Ahmed (Architect, 77%), Selamawit Mesfin (Architect, 76%), Daniel
+  Getachew Tadesse (Senior Electrical Engineer, 100%). Structural, sanitary and
+  dedicated PM roles are NOT selected because this tender's text never asks for
+  them: "structural", "civil", "sanitary" and "project management" appear **0
+  times**; "plumbing" appears once, inside "coordinate mechanical, electrical,
+  plumbing, medical gas", which is MEP and is covered. The vault's structural
+  (66%), sanitary (64–65%) and resident-engineer/PM candidates remain available
+  if Hope wants them added.
+
+- **BIOMEDICAL — HARD GAP, NOT FABRICATED.** The vault holds no biomedical
+  engineer. Nothing was invented. The correct, restored output is the A.6
+  Specialist Engagement Plan naming an externally engaged licensed specialist.
+
+- **TRIED AND BACKED OUT.** Adding `/plumbing/` to WATER_SUPPLY made a hospital
+  tender require a water family its own hospital records do not carry, dropping
+  genuine hospital evidence from ≥0.50 to 0.4375;
+  `tests/evidence-relevance-ranking.test.ts` caught it. Reverted, with the
+  reasoning recorded beside the pattern so it is not retried.
+
+- **TESTS ACTUALLY RUN** (this checkout): `npx tsc --noEmit` clean · `next lint`
+  clean · `next build` succeeds · `RUN_DB_INTEGRATION=true npm test` →
+  **11206/11206 pass, 0 fail**.
+
+- **STILL BLOCKED, NOT A CODE DEFECT.** The benchmark rerun needs the Gemini
+  free-tier daily quota (20/day, resets ~07:00 UTC); only Gemini is configured
+  in this environment, so there is nothing to fall through to. Not coded around.
+
+- **NEXT ACTION:** at the quota reset, regenerate and rescore, and confirm in the
+  produced bytes that A.6 is present as its own section, that the team is
+  multidisciplinary, and that no vault marker or extraction bookkeeping remains.
+
+- **MERGE STATUS:** not reviewed. Do not merge; do not promote Production.
+
 ### 2026-09-02 UTC — Claude Code (client-facing content integrity; benchmark rerun blocked on AI quota)
 
 - **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
@@ -188,19 +270,16 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
   the owner's standing instruction this was NOT coded around. A check-in is
   scheduled for the reset.
 
-- **INVESTIGATED AND DELIBERATELY NOT CHANGED.** "1 of 28 experts selected" and
-  "no biomedical expert is currently selected" are TRUE statements about the
-  vault, not a matching defect: the export contains **0** experts whose record
-  mentions biomedical or healthcare work, against 21 architects and 8 MEP-like
-  engineers. The single selection is the dominant-family penalty in
-  `capabilityScore(..., "expert")` working as designed and as pinned by
-  `tests/matching-fail-closed-negative-tests.test.ts:84`. Loosening it would
-  raise the benchmark score by weakening a deliberate relevance gate, which the
-  owner's instruction forbids and which is exactly the undo-each-other pattern
-  CLAUDE.md warns about. **Open question for Hope, not for an agent:** whether
-  expert eligibility should be judged on the tender's named DISCIPLINES rather
-  than on each individual carrying prior SECTOR experience. Do not change it
-  without an explicit decision.
+- ~~**INVESTIGATED AND DELIBERATELY NOT CHANGED.** "1 of 28 experts selected"
+  … the export contains 0 experts whose record mentions biomedical or
+  healthcare work …~~ **THIS WAS WRONG — CORRECTED BY THE NEXT SESSION
+  (`79f1af2c`).** The measurement behind it regexed only `title` and
+  `disciplines`. The export declares Healthcare among the **sectors** of **22
+  of its 28 experts**. The single selection was not a gate working as designed;
+  it was four stacked defects, all fixed and pinned. Do not reuse that
+  conclusion. Only the biomedical half stands: the vault genuinely holds no
+  biomedical engineer, and the correct output is the A.6 Specialist Engagement
+  Plan, not a fabricated person.
 
 - **NEXT ACTION:** at the quota reset, regenerate the Pharo benchmark, verify in
   the produced bytes that the five presentation fixes hold, and rescore all 17
