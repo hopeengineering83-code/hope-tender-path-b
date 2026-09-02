@@ -589,6 +589,35 @@ function sourceAuthority(category: string | null | undefined, kind: "EXPERT" | "
   return 1;
 }
 
+/**
+ * Enrichment, not replacement.
+ *
+ * A record that already exists is updated from the heuristic pass, and the
+ * update wrote every scalar unconditionally — so a pass that simply did not
+ * find a client erased the one already stored. On a real authority export
+ * declaring a client for 107 of its 114 projects, five survived: the header-run
+ * guard correctly refused the table caption the extractor had been capturing,
+ * and `clientName: null` then overwrote the canonical value. Before that guard
+ * the same write replaced the canonical client with the caption, which is how
+ * "Approach demonstrated on <hospital> (/Location (with Area & Full Address)
+ * ...)" reached a client proposal. Both are the same defect: a weaker source
+ * overwriting a stronger one.
+ *
+ * So: a blank never overwrites a stored value, and when the company's
+ * identities are owned by a structured authority (authorityOwned), a stored
+ * value is not replaced at all — the heuristic pass fills blanks and earns
+ * provenance, which is exactly what "verify and enrich" means. An ordinary
+ * unstructured vault keeps refresh-on-re-extraction, because there the
+ * heuristic IS the source.
+ */
+function enrich<T>(candidateValue: T, storedValue: T, authorityOwned: boolean): T {
+  const blank = candidateValue === null || candidateValue === undefined || candidateValue === "";
+  const stored = storedValue !== null && storedValue !== undefined && storedValue !== "";
+  if (blank && stored) return storedValue;
+  if (authorityOwned && stored) return storedValue;
+  return candidateValue;
+}
+
 async function persistOnce(
   client: PrismaClient,
   companyId: string,
@@ -596,6 +625,10 @@ async function persistOnce(
   options: { allowNewIdentities?: boolean } = {},
 ): Promise<Pick<SafetyImportResult, "expertsCreated" | "projectsCreated" | "expertsUpdated" | "projectsUpdated">> {
   const allowNewIdentities = options.allowNewIdentities !== false;
+  // Identities owned by a structured authority: the same signal that stops new
+  // records being minted also makes the stored attributes canonical, so the
+  // heuristic pass fills blanks instead of replacing them.
+  const authorityOwned = !allowNewIdentities;
   return client.$transaction(async (tx) => {
     let expertsCreated = 0;
     let projectsCreated = 0;
@@ -623,15 +656,15 @@ async function persistOnce(
     for (const candidate of expertByKey.values()) {
       const existing = await tx.expert.findFirst({
         where: { companyId, fullName: { equals: candidate.fullName, mode: "insensitive" }, deletedAt: null },
-        select: { id: true, trustLevel: true, sourceDocument: { select: { category: true } } },
+        select: { id: true, trustLevel: true, title: true, yearsExperience: true, sourceDocument: { select: { category: true } } },
       });
       if (existing?.trustLevel === "REVIEWED") continue;
       if (existing && sourceAuthority(existing.sourceDocument?.category, "EXPERT") > candidate.sourceAuthority) continue;
 
       const data = {
         fullName: candidate.fullName,
-        title: candidate.title,
-        yearsExperience: candidate.yearsExperience,
+        title: enrich(candidate.title, existing?.title ?? null, authorityOwned),
+        yearsExperience: enrich(candidate.yearsExperience, existing?.yearsExperience ?? null, authorityOwned),
         disciplines: JSON.stringify(candidate.disciplines),
         sectors: JSON.stringify(candidate.sectors),
         certifications: JSON.stringify(candidate.certifications),
@@ -658,20 +691,23 @@ async function persistOnce(
     for (const candidate of projectByKey.values()) {
       const existing = await tx.project.findFirst({
         where: { companyId, name: { equals: candidate.name, mode: "insensitive" }, deletedAt: null },
-        select: { id: true, trustLevel: true, sourceDocument: { select: { category: true } } },
+        select: {
+          id: true, trustLevel: true, clientName: true, country: true, sector: true,
+          contractValue: true, currency: true, sourceDocument: { select: { category: true } },
+        },
       });
       if (existing?.trustLevel === "REVIEWED") continue;
       if (existing && sourceAuthority(existing.sourceDocument?.category, "PROJECT") > candidate.sourceAuthority) continue;
 
       const data = {
         name: candidate.name,
-        clientName: candidate.clientName,
-        country: candidate.country,
-        sector: candidate.sector,
+        clientName: enrich(candidate.clientName, existing?.clientName ?? null, authorityOwned),
+        country: enrich(candidate.country, existing?.country ?? null, authorityOwned),
+        sector: enrich(candidate.sector, existing?.sector ?? null, authorityOwned),
         serviceAreas: JSON.stringify(candidate.serviceAreas),
         summary: `[${candidate.trustLevel} — AUTOMATIC SOURCE VERIFICATION PENDING]\n\n${candidate.summary}\n\nSource snippet:\n${candidate.sourceSnippet}`,
-        contractValue: candidate.contractValue,
-        currency: candidate.currency,
+        contractValue: enrich(candidate.contractValue, existing?.contractValue ?? null, authorityOwned),
+        currency: enrich(candidate.currency, existing?.currency ?? null, authorityOwned),
         trustLevel: candidate.trustLevel,
         reviewedBy: null,
         reviewedAt: null,
