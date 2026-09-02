@@ -29,6 +29,7 @@ import { repairSourceGrounding } from "../engine/repair-source-grounding";
 import { prisma } from "../prisma";
 import { logger } from "../observability";
 import { recordStep } from "../ai-jobs";
+import { isGenerated } from "../engine/document-output-state";
 
 /**
  * Canonical validation outcome.
@@ -895,9 +896,26 @@ async function runPdfFinalization(
   let failed = 0;
 
   for (const requiredName of requiredPdfNames) {
-    // Check if a PDF with this exact name already exists.
+    // Check if the required PDF has actually been PRODUCED.
+    //
+    // This asked whether a row with that name and format PDF exists, which is
+    // not the same question. A required PDF the tender names but nothing has
+    // rendered yet is carried as a PLANNED placeholder row — same exactFileName,
+    // format PDF, no bytes — so the placeholder was mistaken for the finished
+    // file, finalization was skipped, and the very same row was then reported
+    // by canonical validation as CONTROL_RECORD_ONLY and by export readiness as
+    // UNGENERATED_PLANNED_DOCUMENTS. AUTO_FINALIZE could not converge, and the
+    // owner was told to "generate or attach the real final file" for a file the
+    // pipeline had just declined to generate.
+    //
+    // Ask for real bytes instead, using the same GENERATED-and-exportable
+    // predicate the export gate applies. A finalized PDF still short-circuits;
+    // only a placeholder no longer pretends to be one.
     const existingPdf = docs.find(
-      (d) => d.exactFileName?.toLowerCase() === requiredName.toLowerCase() && d.format === "PDF",
+      (d) => d.exactFileName?.toLowerCase() === requiredName.toLowerCase()
+        && d.format === "PDF"
+        && isGenerated(d.generationStatus)
+        && Boolean(d.fileContent || d.storagePath),
     );
     if (existingPdf) {
       skipped++;
@@ -977,8 +995,25 @@ async function runPdfFinalization(
           filename: requiredName,
           claimedMimeType: "application/pdf",
         });
-        await prisma.generatedDocument.create({
-          data: {
+        // Fill the PLANNED row in rather than adding a second one.
+        //
+        // A required PDF the tender names is carried as a PLANNED placeholder
+        // until something renders it, and
+        // GeneratedDocument_tenderId_exactFileName_active_key makes
+        // (tenderId, exactFileName) unique across every non-superseded row. So
+        // creating the finalized PDF beside its own placeholder violated that
+        // constraint, the write threw, and the catch below counted a rendered,
+        // byte-verified PDF as "failed to finalize" — while the untouched
+        // placeholder went on being reported as CONTROL_RECORD_ONLY and
+        // UNGENERATED_PLANNED_DOCUMENTS. The plan row IS the deliverable's
+        // identity; finalization gives it its bytes.
+        const plannedRow = docs.find(
+          (d) => d.exactFileName?.toLowerCase() === requiredName.toLowerCase()
+            && !isGenerated(d.generationStatus)
+            && !d.fileContent
+            && !d.storagePath,
+        );
+        const finalizedPdfData = {
             tenderId,
             name: requiredName,
             exactFileName: requiredName,
@@ -990,8 +1025,12 @@ async function runPdfFinalization(
             reviewStatus: "PENDING",
             reviewNotes: "machine:auto-finalize-pdf — rendered from validated DOCX source. Awaiting canonical validation.",
             ...pdfIntegrity,
-          },
-        });
+        } as const;
+        if (plannedRow) {
+          await prisma.generatedDocument.update({ where: { id: plannedRow.id }, data: finalizedPdfData });
+        } else {
+          await prisma.generatedDocument.create({ data: finalizedPdfData });
+        }
 
         // The DOCX this PDF was rendered from is an intermediate, not a second
         // deliverable. Left GENERATED it becomes a file the tender never named:

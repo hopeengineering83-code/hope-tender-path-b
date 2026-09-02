@@ -122,18 +122,44 @@ export function collapseWhitespacePerLine(value: string): string {
  * document, two answers, and AUTO_FINALIZE stuck on the PDF.
  *
  * A continuation is recognised structurally, not by vocabulary. The previous
- * line must not have ended a sentence, and then either this line begins with
- * something that cannot begin one — a lowercase letter, a digit, or a currency
- * symbol — or the previous line ends on a character that cannot end one: a
- * comma, colon, semicolon, ampersand or dash. Both halves are needed, because
- * a PDF wraps wherever the column runs out, including after "Study," and
- * before a capitalised word. A heading, a table row and a new sentence begin
- * with a capital AND follow a line that ended cleanly, so none of them is
- * joined and the cover-page and per-row boundaries stay exactly where they
- * were.
+ * line must not have ended a sentence, and then any one of three signals says
+ * the text ran on:
+ *
+ *   - this line begins with something that cannot begin one — a lowercase
+ *     letter, a digit or a currency symbol;
+ *   - the previous line ends on a character that cannot end one — a comma,
+ *     colon, semicolon, ampersand or dash;
+ *   - the previous line reached the column edge, which is the only reason a
+ *     renderer breaks a line at all. The column width is measured from the
+ *     document's own lines rather than assumed, so a wrap is recognised even
+ *     where it falls between two ordinary words:
+ *
+ *         … 3. Contract Administration & Construction
+ *         Supervision Cost: 110,000 ETB/month 2015-2018 E.C.
+ *
+ * A heading, a title and a table row are short of the column edge and end
+ * cleanly, so none of them is ever joined, and the cover-page and per-row
+ * boundaries stay exactly where they were.
  */
 export function reflowExtractedPdfLines(value: string): string {
   const lines = value.split("\n");
+  // The column edge, measured from the document. The 90th-percentile line
+  // length is the body column: headings and last-lines-of-paragraph sit below
+  // it, and every wrapped line sits at it.
+  const lengths = lines.map((line) => line.trim().length).filter((length) => length > 0).sort((a, b) => a - b);
+  // Measurable only on a real page of text. On a handful of lines the
+  // percentile is noise, so the column-edge signal simply does not apply and
+  // the two structural signals below carry the decision on their own.
+  const columnWidth = lengths.length >= 20 ? lengths[Math.floor(lengths.length * 0.9)] : 0;
+  const atColumnEdge = (text: string) => columnWidth >= 40 && text.length >= columnWidth * 0.9;
+  // Structure the extractor recovered, not prose it read: a table marker and a
+  // row label are boundaries in the document, so nothing may be joined across
+  // one. (withoutExtractionScaffolding strips these before pricing hygiene
+  // judges the text; joining them into a neighbouring line first would hide
+  // them from that strip and put the extractor's own row numbering back into
+  // the middle of a sentence.)
+  const structuralMarker = /^\s*(?:\[Table:|\[Page\s|Row\s+\d+\s*:)/i;
+
   const out: string[] = [];
   for (const line of lines) {
     const previous = out[out.length - 1];
@@ -141,8 +167,14 @@ export function reflowExtractedPdfLines(value: string): string {
     const continues =
       previous !== undefined
       && previousText.length > 0
+      && !structuralMarker.test(line)
+      && !structuralMarker.test(previousText)
       && !/[.!?]["'\u201d\u2019)\]]?$/.test(previousText)
-      && (/^[a-z0-9$€£]/.test(line.trim()) || /[,:;&\u2013\u2014-]$/.test(previousText));
+      && (
+        /^[a-z0-9$€£]/.test(line.trim())
+        || /[,:;&\u2013\u2014-]$/.test(previousText)
+        || atColumnEdge(previousText)
+      );
     if (continues) out[out.length - 1] = `${previous} ${line.trim()}`;
     else out.push(line);
   }
