@@ -29,6 +29,18 @@ const PORTFOLIO_OPTIMIZATION_CYCLES = 20;
 // never empty when candidates exist.
 const SELECTION_THRESHOLD = 0.75;
 
+// Floor for the discipline-coverage completion pass (experts only).
+//
+// SELECTION_THRESHOLD answers "is this record strong enough to auto-select on
+// its own merits?". It is not a provenance gate — provenance is enforced
+// separately by checkMatchingEligibility, which scores an ungrounded record 0,
+// so nothing below that gate can be reached from here at any floor.
+//
+// 0.55 is the same floor lib/engine/main-engine-selection-policy.ts already
+// uses for "best available authoritative evidence", reused rather than
+// invented so the two mechanisms cannot drift apart.
+const COVERAGE_COMPLETION_FLOOR = 0.55;
+
 type KnowledgeWithOptionalTrust = { trustLevel?: string | null };
 
 // CapabilityFamily covers the major consultancy disciplines the matching
@@ -77,6 +89,14 @@ const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   // Word boundary on WASH — bare /WASH/i matched "Washington" /
   // "washroom" / "washable", causing matching false-positives on
   // non-water projects with Washington-state clients.
+  // /plumbing/ is deliberately NOT here. It was added and backed out: building
+  // services name the discipline "mechanical, electrical, plumbing", which
+  // ELECTRO_MECHANICAL already covers as MEP. Treating that mention as a
+  // WATER_SUPPLY requirement made a hospital tender require a water family its
+  // own hospital records do not carry, and genuine hospital evidence fell from
+  // >=0.50 to 0.4375 against it — below the comparable-experience bar, as
+  // tests/evidence-relevance-ranking.test.ts caught. WATER_SUPPLY belongs to
+  // tenders that ask for water or sanitation works.
   WATER_SUPPLY: [/water/i, /supply/i, /sanitary/i, /hydraulic/i, /pipeline/i, /pipe/i, /borehole/i, /well/i, /drilling/i, /reservoir/i, /pump/i, /irrigation/i, /woreda/i, /kebele/i, /\bWASH\b/i, /sanitation/i],
   SOLAR_PUMPING: [/solar/i, /\bpv\b/i, /photovoltaic/i, /pump/i, /pumping/i, /electromechanical/i, /electro[\s-]mechanical/i],
   FEASIBILITY_DESIGN: [/feasibility/i, /\bfsdd\b/i, /detailed[\s-]+design/i, /\bddp\b/i, /assessment/i, /investigation/i, /drawing/i, /specification/i, /bill[\s-]+of[\s-]+quantit/i, /\bboq\b/i],
@@ -84,7 +104,7 @@ const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   URBAN_MUNICIPAL: [/urban\s+plan/i, /master\s+plan/i, /municipal/i, /spatial\s+plan/i, /land[-\s]?use\s+(?:plan|study)/i, /zoning\s+(?:plan|regulation|code|by-?law)/i, /city\s+plan/i, /town\s+plan/i, /settlement\s+plan/i, /urban\s+design/i],
   // PR XX-MATCH-FIX MERGE — stricter than remote: drop /building/i, /construction/i,
   // /structure/i (too generic — warehouse projects matched these for healthcare tenders).
-  CIVIL_INFRASTRUCTURE: [/road\s+(?:design|construction|rehabilitation)/i, /\bbridge\s+(?:design|construction)/i, /highway/i, /pavement/i, /drainage\s+system/i, /culvert/i, /\bRCC\b/i, /civil\s+(?:engineering|works)/i, /infrastructure\s+(?:design|project)/i],
+  CIVIL_INFRASTRUCTURE: [/road\s+(?:design|construction|rehabilitation)/i, /\bbridge\s+(?:design|construction)/i, /highway/i, /pavement/i, /drainage\s+system/i, /culvert/i, /\bRCC\b/i, /civil\s+(?:engineering|works)/i, /infrastructure\s+(?:design|project)/i, /structural\s+(?:engineer|design|analysis|adequacy)/i],
   ELECTRO_MECHANICAL: [/electrical/i, /mechanical/i, /electro/i, /\bmep\b/i, /pump/i, /generator/i, /motor/i, /\bHVAC\b/i, /cooling/i],
   GEOTECH_HYDROGEOLOGY: [/geotech/i, /geological/i, /hydrogeology/i, /soil/i, /foundation/i, /investigation/i, /drilling/i, /groundwater/i, /aquifer/i],
   ENVIRONMENT_SOCIAL: [/environment/i, /social/i, /safeguard/i, /climate/i, /\besmp\b/i, /\besia\b/i, /impact/i, /resettlement/i, /biodiversity/i, /ESS\d/i, /\bESF\b/i],
@@ -92,7 +112,23 @@ const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   // PR XX-MATCH-FIX MERGE — stricter: require "architectural design"/"interior design"
   // signature words. /building/i, /residential/i, /housing/i moved here for residential
   // projects to match but require a residential-distinctive token, not just "building".
-  ARCHITECTURE_BUILDINGS: [/architectural\s+design/i, /interior\s+design/i, /floor\s+plan/i, /space\s+planning/i, /furniture\s+layout/i, /3D\s+(?:visualization|rendering)/i, /BIM\b/i, /Revit/i, /ArchiCAD/i, /SketchUp/i, /AutoCAD/i, /\bG\+\d/i, /residential\s+(?:design|building)/i, /housing\s+(?:project|design)/i],
+  // The role nouns were missing, so the family could be detected on a RECORD
+  // but never REQUIRED by a tender that asks for it in the words tenders
+  // actually use. Measured: capabilityFamilies("Architectural Consultancy
+  // Services for <…> Specialty Medical Center") returned only
+  // HEALTHCARE_FACILITIES, and the personnel requirement naming "a
+  // multidisciplinary group including architects, engineers, a biomedical
+  // engineer, MEP experts" returned only ELECTRO_MECHANICAL — so an
+  // ARCHITECTURAL consultancy assignment never required architecture and
+  // fielded no architect.
+  //
+  // Both additions are deliberately narrow so they do not undo the earlier
+  // tightening that moved /building/, /residential/ and /housing/ out of this
+  // family: `\barchitects?\b` does not match "Architectural" (the word
+  // continues past the boundary), and the phrase form requires a following
+  // service noun, so neither fires on a firm name such as "… Architectural and
+  // Engineering Consultancy".
+  ARCHITECTURE_BUILDINGS: [/\barchitects?\b/i, /architectural\s+(?:consultanc|service|work|drawing)/i, /architectural\s+design/i, /interior\s+design/i, /floor\s+plan/i, /space\s+planning/i, /furniture\s+layout/i, /3D\s+(?:visualization|rendering)/i, /BIM\b/i, /Revit/i, /ArchiCAD/i, /SketchUp/i, /AutoCAD/i, /\bG\+\d/i, /residential\s+(?:design|building)/i, /housing\s+(?:project|design)/i],
   FINANCIAL_LEGAL: [/financial/i, /audit/i, /turnover/i, /registration/i, /license/i, /certificate/i, /tax/i, /legal/i, /\bvat\b/i, /\btin\b/i, /procurement/i, /\bKYC\b/i, /\bAML\b/i, /\bBasel\b/i, /\bIFRS\b/i, /core\s+banking/i, /credit\s+risk/i, /microfinance/i, /prudential/i],
   // Universal families — added so the portfolio optimizer can match any
   // tender sector, not only the construction / consulting cluster.
@@ -614,6 +650,7 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
   limit: number,
   requiredFamilies: CapabilityFamily[],
   requiredDisciplines: Set<string>,
+  options: { completeRequiredCoverage?: boolean } = {},
 ): T[] {
   if (limit <= 0 || candidates.length === 0) {
     return matches.map((m) => ({ ...m, isSelected: false }));
@@ -758,6 +795,49 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
         bestSet.splice(dropIdx, 1, replacement);
         covered = distinctCovered();
       }
+    }
+  }
+
+  // Discipline-coverage completion (experts only).
+  //
+  // Both passes above can only SWAP members of `eligible`, and `eligible` is
+  // already filtered to score >= SELECTION_THRESHOLD. So a discipline the
+  // tender explicitly requires can never be covered when its only
+  // representatives score below that threshold, and because the passes preserve
+  // set size, a partially covered team is never extended either. Coverage is
+  // therefore a tie-breaker among candidates that already qualified — never a
+  // reason for a candidate to qualify.
+  //
+  // Measured on a real hospital tender that asks in its own words for "a
+  // multidisciplinary group including architects, engineers, a biomedical
+  // engineer, MEP experts", against the firm's 28 source-verified experts: the
+  // selected team was an electrical engineer at 100% and the general manager at
+  // 77%, with both architects sitting at 74% and 73% — so an ARCHITECTURAL
+  // consultancy assignment fielded no architect. That is not a stricter
+  // proposal than one which includes them; it is a wrong one.
+  //
+  // This pass therefore ADDS, up to the same limit, the highest-scoring
+  // candidate carrying a required family that nobody selected covers. It
+  // changes nothing about provenance (an ineligible record scores 0 and is
+  // unreachable at any floor), invents nobody, and cannot conjure a discipline
+  // the vault does not hold — a required family with no candidate simply stays
+  // uncovered and is reported as an evidence gap downstream.
+  if (options.completeRequiredCoverage && requiredFamilies.length > 0 && bestSet.length < limit) {
+    const coveredFamilies = (): Set<CapabilityFamily> => {
+      const covered = new Set<CapabilityFamily>();
+      for (const candidate of bestSet) for (const family of candidate.capabilityFamilies) covered.add(family);
+      return covered;
+    };
+    for (const family of requiredFamilies) {
+      if (bestSet.length >= limit) break;
+      if (coveredFamilies().has(family)) continue;
+      const addition = candidates
+        .filter((candidate) =>
+          candidate.match.score >= COVERAGE_COMPLETION_FLOOR &&
+          candidate.capabilityFamilies.includes(family) &&
+          !bestSet.includes(candidate))
+        .sort((a, b) => b.match.score - a.match.score)[0];
+      if (addition) bestSet.push(addition);
     }
   }
 
@@ -1038,6 +1118,12 @@ export function buildMatches(
       selectedLimit(requirements, "EXPERT", expertMatches.length),
       requiredFamilies,
       requiredDisciplines,
+      // Experts only. A person is proposed for the ROLE the tender asks them to
+      // fill; prior sector experience ranks them within that role. A project is
+      // offered as COMPARABLE EXPERIENCE, where sector fit is the claim itself,
+      // so admitting a below-threshold off-sector project would misrepresent
+      // the portfolio. That asymmetry is deliberate.
+      { completeRequiredCoverage: true },
     ),
     projectMatches: optimizePortfolioSelection(
       projectMatches,

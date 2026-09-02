@@ -618,6 +618,39 @@ function enrich<T>(candidateValue: T, storedValue: T, authorityOwned: boolean): 
   return candidateValue;
 }
 
+/**
+ * The same rule for the JSON-array columns.
+ *
+ * `enrich` cannot serve these: they are stored as JSON text, so an empty list
+ * arrives as the non-empty string "[]" and reads as a value worth writing.
+ * Measured on the real authority export through the real routes — structured
+ * import, then the VAULT_INGEST worker — the scalar rule held (title 0,
+ * yearsExperience 0, and every project field 0 lost) while the two list
+ * columns did not:
+ *
+ *   experts whose stored value lost content vs the export:
+ *     sectors 23 of 28, disciplines 25 of 28
+ *
+ * That is what emptied expert relevance. The export declares Healthcare among
+ * the sectors of 22 of its 28 experts; after ingestion 5 still had it, 8 had no
+ * sectors at all and 7 no disciplines. Expert matching scores exactly these
+ * fields, so a hospital tender then found almost nothing to select — the vault
+ * looked as if it had no healthcare people, when it had 22.
+ */
+function enrichList(candidateValue: string[], storedJson: string | null | undefined, authorityOwned: boolean): string {
+  const stored = ((): string[] => {
+    try {
+      const parsed = JSON.parse(storedJson ?? "[]");
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+    } catch {
+      return [];
+    }
+  })();
+  if (stored.length === 0) return JSON.stringify(candidateValue);
+  if (candidateValue.length === 0 || authorityOwned) return JSON.stringify(stored);
+  return JSON.stringify(candidateValue);
+}
+
 async function persistOnce(
   client: PrismaClient,
   companyId: string,
@@ -656,7 +689,11 @@ async function persistOnce(
     for (const candidate of expertByKey.values()) {
       const existing = await tx.expert.findFirst({
         where: { companyId, fullName: { equals: candidate.fullName, mode: "insensitive" }, deletedAt: null },
-        select: { id: true, trustLevel: true, title: true, yearsExperience: true, sourceDocument: { select: { category: true } } },
+        select: {
+          id: true, trustLevel: true, title: true, yearsExperience: true,
+          disciplines: true, sectors: true, certifications: true,
+          sourceDocument: { select: { category: true } },
+        },
       });
       if (existing?.trustLevel === "REVIEWED") continue;
       if (existing && sourceAuthority(existing.sourceDocument?.category, "EXPERT") > candidate.sourceAuthority) continue;
@@ -665,9 +702,9 @@ async function persistOnce(
         fullName: candidate.fullName,
         title: enrich(candidate.title, existing?.title ?? null, authorityOwned),
         yearsExperience: enrich(candidate.yearsExperience, existing?.yearsExperience ?? null, authorityOwned),
-        disciplines: JSON.stringify(candidate.disciplines),
-        sectors: JSON.stringify(candidate.sectors),
-        certifications: JSON.stringify(candidate.certifications),
+        disciplines: enrichList(candidate.disciplines, existing?.disciplines, authorityOwned),
+        sectors: enrichList(candidate.sectors, existing?.sectors, authorityOwned),
+        certifications: enrichList(candidate.certifications, existing?.certifications, authorityOwned),
         profile: `[${candidate.trustLevel} — AUTOMATIC SOURCE VERIFICATION PENDING]\n\n${candidate.profile}\n\nSource snippet:\n${candidate.sourceSnippet}`,
         trustLevel: candidate.trustLevel,
         reviewedBy: null,
@@ -693,7 +730,8 @@ async function persistOnce(
         where: { companyId, name: { equals: candidate.name, mode: "insensitive" }, deletedAt: null },
         select: {
           id: true, trustLevel: true, clientName: true, country: true, sector: true,
-          contractValue: true, currency: true, sourceDocument: { select: { category: true } },
+          serviceAreas: true, contractValue: true, currency: true,
+          sourceDocument: { select: { category: true } },
         },
       });
       if (existing?.trustLevel === "REVIEWED") continue;
@@ -704,7 +742,7 @@ async function persistOnce(
         clientName: enrich(candidate.clientName, existing?.clientName ?? null, authorityOwned),
         country: enrich(candidate.country, existing?.country ?? null, authorityOwned),
         sector: enrich(candidate.sector, existing?.sector ?? null, authorityOwned),
-        serviceAreas: JSON.stringify(candidate.serviceAreas),
+        serviceAreas: enrichList(candidate.serviceAreas, existing?.serviceAreas, authorityOwned),
         summary: `[${candidate.trustLevel} — AUTOMATIC SOURCE VERIFICATION PENDING]\n\n${candidate.summary}\n\nSource snippet:\n${candidate.sourceSnippet}`,
         contractValue: enrich(candidate.contractValue, existing?.contractValue ?? null, authorityOwned),
         currency: enrich(candidate.currency, existing?.currency ?? null, authorityOwned),
