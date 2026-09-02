@@ -558,7 +558,9 @@ async function persistOnce(
   client: PrismaClient,
   companyId: string,
   candidates: CompanyKnowledgeCandidates,
+  options: { allowNewIdentities?: boolean } = {},
 ): Promise<Pick<SafetyImportResult, "expertsCreated" | "projectsCreated" | "expertsUpdated" | "projectsUpdated">> {
+  const allowNewIdentities = options.allowNewIdentities !== false;
   return client.$transaction(async (tx) => {
     let expertsCreated = 0;
     let projectsCreated = 0;
@@ -612,6 +614,7 @@ async function persistOnce(
         await tx.expert.update({ where: { id: existing.id }, data });
         expertsUpdated += 1;
       } else {
+        if (!allowNewIdentities) continue;
         await tx.expert.create({ data: { companyId, ...data } });
         expertsCreated += 1;
       }
@@ -647,6 +650,7 @@ async function persistOnce(
         await tx.project.update({ where: { id: existing.id }, data });
         projectsUpdated += 1;
       } else {
+        if (!allowNewIdentities) continue;
         await tx.project.create({ data: { companyId, ...data } });
         projectsCreated += 1;
       }
@@ -660,11 +664,12 @@ export async function persistCompanyKnowledgeCandidates(
   client: PrismaClient,
   companyId: string,
   candidates: CompanyKnowledgeCandidates,
+  options: { allowNewIdentities?: boolean } = {},
 ) {
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      return await persistOnce(client, companyId, candidates);
+      return await persistOnce(client, companyId, candidates, options);
     } catch (error) {
       lastError = error;
       const code = (error as { code?: string }).code;
@@ -684,7 +689,31 @@ export async function runCompanyKnowledgeSafetyImport(client: PrismaClient, comp
     select: { id: true, originalFileName: true, category: true, extractedText: true },
   });
   const candidates = collectDeterministicCandidates(documents);
-  const persisted = await persistCompanyKnowledgeCandidates(client, companyId, candidates);
+
+  // A company whose knowledge came from a STRUCTURED authority import already
+  // states its own expert and project identities. Heuristic extraction may
+  // still verify and enrich those records from the uploaded source text — that
+  // is how they earn provenance — but it must not mint NEW canonical
+  // identities beside them.
+  //
+  // Measured on a real authority export (28 experts, 114 projects): letting
+  // the heuristic create as well turned that into 35 and 177, adding clients
+  // ("Dr Abdul Seid", who owns a hospital in a project row), places
+  // ("Addis Ababa", from "Loc:" above a role line), partial aliases
+  // ("Asamenew Alye" beside the canonical "Asamenew Alye Mohammed") and table
+  // fragments — each then auto-verified to SOURCE_VERIFIED, so automatic
+  // matching could select a client or a city as proposed HAEC staff.
+  //
+  // The marker is PlanBStaging, which the structured route writes for every
+  // source document it accepts. It is durable, already in the schema, and
+  // carries no counts or names, so nothing here is specific to one export.
+  // A company that never used the structured route is unaffected: ordinary
+  // unstructured uploads keep full heuristic extraction, which is what it is
+  // for.
+  const structuredAuthorityRows = await client.planBStaging.count({ where: { companyId } });
+  const persisted = await persistCompanyKnowledgeCandidates(client, companyId, candidates, {
+    allowNewIdentities: structuredAuthorityRows === 0,
+  });
   return {
     docsScanned: documents.length,
     ...persisted,

@@ -221,10 +221,31 @@ export async function ingestCompanyVault(companyId: string): Promise<CompanyVaul
     warnings.push("AI extraction was unavailable; deterministic ingestion completed.");
   }
 
+  // A company whose knowledge came from a STRUCTURED authority import already
+  // states its own expert and project identities. Extraction may still verify
+  // and enrich those records from the uploaded source text — that is how they
+  // earn provenance — but it must not mint NEW canonical identities beside
+  // them.
+  //
+  // Measured on a real authority export declaring 28 experts and 114 projects:
+  // with creation allowed, the same run stored 35 and 177. The extras were a
+  // client ("Dr Abdul Seid", who owns a hospital named in a project row), a
+  // place ("Addis Ababa", lifted from a "Loc:" line sitting above a role), a
+  // partial alias ("Asamenew Alye" beside the canonical "Asamenew Alye
+  // Mohammed") and table fragments — each then auto-verified to
+  // SOURCE_VERIFIED, so automatic matching could put a client or a city
+  // forward as proposed staff.
+  //
+  // The marker is PlanBStaging, which the structured route writes for every
+  // source document it accepts. It is durable, already in the schema, and
+  // carries no counts or names, so nothing here is specific to one export. A
+  // company that never used the structured route keeps full heuristic
+  // extraction, which is what ordinary unstructured uploads need.
+  const structuredAuthorityRows = await prisma.planBStaging.count({ where: { companyId } });
   const persisted = await persistCompanyKnowledgeCandidates(prisma, companyId, {
     experts: [...deterministic.experts, ...aiExperts],
     projects: [...deterministic.projects, ...aiProjects],
-  });
+  }, { allowNewIdentities: structuredAuthorityRows === 0 });
   // Backfills sourceDocumentId for drafts that already have a bona fide
   // owned document (for example, Plan-B legacy-data imports that persist
   // uploaded documents but do not always declare which one produced each

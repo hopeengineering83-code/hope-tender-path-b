@@ -213,15 +213,24 @@ function looksLikeStructuredAuthority(path) {
 const STRUCTURED_AUTHORITY = process.env.DRIVE_VAULT_JSON
   && looksLikeStructuredAuthority(process.env.DRIVE_VAULT_JSON);
 
-// A structured authority brings its OWN source documents through the
-// structured route, carrying each record's rawText for provenance. Seeding the
-// flattened text blobs as well would hand the heuristic extractor a second,
-// unstructured copy of the very same content to re-mine — which is exactly
-// what happened: "Key-Experts-1.txt" alone yielded 44 additional "projects"
-// on top of the 114 the authority actually declares. Emit the blobs only for
-// the unstructured case.
+// Seed the source documents in BOTH cases, because that is the owner's real
+// state: they upload the originals and import the structured authority.
+//
+// The documents matter for provenance, not for identity. plan-b-import keeps
+// its synthetic artifacts in PlanBStaging and links records only to official
+// uploads, so without documents the imported records stay AI_DRAFT with no
+// sourceDocumentId and never become generation-eligible. With them, the
+// auto-verification pass promotes the canonical records to SOURCE_VERIFIED
+// against owned, byte-verified text.
+//
+// Feeding the same text to the heuristic extractor no longer mints identities
+// beside the canonical ones: a company carrying PlanBStaging rows is
+// verify-and-enrich only (see lib/company-vault-ingestion.ts). Measured on the
+// real export in exactly this configuration — 18 documents, structured import,
+// auto-verification — experts 28/28 and projects 114/114 with zero extras,
+// zero duplicates, all SOURCE_VERIFIED.
 const VAULT = process.env.DRIVE_VAULT_JSON
-  ? (STRUCTURED_AUTHORITY ? [] : vaultDocsFromAuthority(process.env.DRIVE_VAULT_JSON))
+  ? vaultDocsFromAuthority(process.env.DRIVE_VAULT_JSON)
   : VAULT_DOCS;
 
 
