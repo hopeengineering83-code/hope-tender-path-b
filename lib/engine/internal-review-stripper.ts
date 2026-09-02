@@ -52,6 +52,16 @@ const INTERNAL_REVIEW_HEADINGS: RegExp[] = [
   /^##?\s+Final\s+Claim\s+(?:and|&)\s+Evidence\s+Control\b/i,
   // Generic bid-team metadata bleeds:
   /^##?\s+Senior\s+Bid\s+Review\s+(?:Notes|Memo)\b/i,
+  // A real client-facing proposal shipped "# Compliance and Bid Review Notes"
+  // carrying the engine's own support-level records, its vault file names, a
+  // serialized automatic-requirement-evidence payload and a named employee's
+  // date of birth and phone number, followed by "## Senior Bid-Review Items
+  // (gaps to address before submission)" listing the bid team's instructions
+  // to itself. The builder no longer emits either heading; these patterns stop
+  // any other path from shipping them. "Bid Review Notes" and "Bid-Review
+  // Items" are matched whichever way the hyphen falls.
+  /^##?\s+Compliance\s+and\s+Bid[-\s]Review\s+Notes\b/i,
+  /^##?\s+Senior\s+Bid[-\s]Review\s+Items\b/i,
   /^##?\s+Internal\s+(?:Bid|Review)\s+Notes\b/i,
   // PR DD additions: additional internal sections seen in real AI output
   /^##?\s+Bid-Team\s+(?:Action|Notes?|Review)\b/i,

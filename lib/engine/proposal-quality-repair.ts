@@ -55,9 +55,19 @@ function sectionF(input: EvaluatorMatrixInput): string {
     "| Evaluation criterion | Weight / priority | Where this proposal answers it | Evidence strength |",
     "|---|---|---|---|",
   ];
-  for (const [index, item] of blueprint.entries()) {
-    const priority = /mandatory|shall|must|required|eligib/i.test(item.requirement) ? "Mandatory / pass-fail" : `${Math.max(5, 100 - index * 5)}% relative attention`;
-    rows.push(`| ${clean(item.requirement)} | ${priority} | Section ${item.responseSection}; TRB-${index + 1} | ${item.evidenceSupport} |`);
+  for (const item of blueprint) {
+    // The weight column used to print `100 - index * 5` as an "N% relative
+    // attention" figure. That number came from the requirement's position in
+    // this list, not from the tender: a real proposal told the evaluator that
+    // one of their own criteria carried "100% relative attention" and another
+    // "65%", weights the tender never stated. An invented weight in the column
+    // an evaluator uses to check their own scoring is a fabricated fact, so
+    // where the tender states no weight this now says so.
+    const priority = /mandatory|shall|must|required|eligib/i.test(item.requirement)
+      ? "Mandatory / pass-fail"
+      : "Scored criterion (no weight stated in tender)";
+    // "TRB-1" was an internal trace label with no meaning to the reader.
+    rows.push(`| ${clean(item.requirement)} | ${priority} | Section ${item.responseSection} | ${item.evidenceSupport} |`);
   }
   return [
     "## Section F: Evaluation Criteria Response Mirror",

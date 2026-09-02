@@ -51,7 +51,7 @@ import { buildBidComplianceMapping } from "./bid-compliance-mapping";
 import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./compliance-matrix-builder";
 import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
 import { buildWinThemesSection, hasWinThemesHeading } from "./win-themes-builder";
-import { buildSelfScoreSection, hasSelfScoreHeading } from "./self-score-builder";
+import { buildSelfScoreSection, hasSelfScoreHeading, stripSelfScoreSections } from "./self-score-builder";
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "./tender-language-echoes";
 import { extractTenderFacts, formatFactsForPrompt, buildTenderSpecificsBlock } from "./tender-facts-extractor";
 import { clientSafeComplianceNote } from "./automatic-requirement-coverage";
@@ -527,7 +527,6 @@ function fallbackProposalMarkdown(params: {
   const themes = params.themes ?? [];
   const evalCriteria = params.evaluationCriteria ?? [];
   const appendixList = params.appendixList ?? [];
-  const gaps = params.gapsToAddressInNarrative ?? [];
   const sections = params.requiredSections ?? [];
   const exactSubject = params.exactSubjectLine ?? `Technical Proposal for ${params.tenderTitle}`;
   const toRecipient = params.exactEmails?.length
@@ -589,7 +588,7 @@ function fallbackProposalMarkdown(params: {
   } else {
     tocItems.push("Section A: Company Profile", "Section B: Relevant Experience", "Section C: Technical Approach", "Section D: Additional Information");
   }
-  tocItems.push("Compliance and Bid Review Notes", "Appendix Register", "Declaration");
+  tocItems.push("Compliance Statement", "Appendix Register", "Declaration");
   lines.push("# Table of Contents");
   lines.push(...tocItems.map((item, i) => `${i + 1}. ${item}`));
 
@@ -762,16 +761,34 @@ function fallbackProposalMarkdown(params: {
   }
   lines.push("Additional certifications, awards, company manuals, and institutional affiliations are provided in the appendices.");
 
-  // ── Compliance and Bid Review Notes ───────────────────────────────────────────
-  lines.push("# Compliance and Bid Review Notes");
-  lines.push("This proposal is submitted in strict compliance with the tender instructions. The following compliance items have been reviewed:");
-  if (params.complianceLines.length > 0) lines.push(...params.complianceLines.slice(0, 16).map((x) => `- ${x}`));
-  if (params.expertRequired > expertSelected) lines.push(`- Tender requests ${params.expertRequired} expert(s); ${expertSelected} reviewed expert(s) are included. Confirm or add ${params.expertRequired - expertSelected} expert(s) before final submission.`);
-  if (params.projectRequired > projectSelected) lines.push(`- Tender requests ${params.projectRequired} project reference(s); ${projectSelected} reviewed reference(s) are included. Confirm or add ${params.projectRequired - projectSelected} reference(s) before final submission.`);
-  if (gaps.length > 0) {
-    lines.push("## Senior Bid-Review Items (gaps to address before submission)");
-    lines.push(...gaps.map((g) => `- ${g}`));
-  }
+  // ── Compliance Statement ──────────────────────────────────────────────────────
+  //
+  // This section used to be "Compliance and Bid Review Notes" and it printed
+  // params.complianceLines verbatim. Those lines are the engine's own working
+  // context, not prose: a real client-facing Technical Proposal shipped with
+  //
+  //   "PARTIAL: Cover Letter | PROPOSAL_RESPONSE from Company evidence
+  //    available for drafting | ref: Key-Experts-1.txt — ... the proposal
+  //    engine will write a staffing-compliance narrative ..."
+  //   "FULL: ... — automatic-requirement-evidence:v1:{"requirementSourceQuote
+  //    Hash": ... ,"linkageScore":100 ...}"
+  //   "Company document: Key-Experts-1.txt | category: EXPERT | evidence:
+  //    ... Date of Birth March 19, 1990 ... Phone +251 ..."
+  //
+  // — the engine's internal support levels and record identifiers, its vault
+  // FILE NAMES, and a named employee's date of birth and personal phone
+  // number, all addressed to the evaluator. The same block then listed the
+  // bid team's own instructions to itself ("Confirm or add 2 expert(s) before
+  // final submission", "No biomedical expert is currently selected").
+  //
+  // None of that is lost: the compliance matrix, the quantity shortfalls and
+  // the senior-review gaps are stored on the tender and surfaced to the owner
+  // through the generation result and the review screens. What changes is that
+  // the CLIENT document now carries only what a client can act on — a
+  // compliance statement pointing at the evidence-mapped matrix that this
+  // proposal already contains.
+  lines.push("# Compliance Statement");
+  lines.push(`This proposal is submitted in strict compliance with the tender instructions. Every requirement stated in the tender is mapped to its response, its supporting evidence and its evidence strength in the Compliance Matrix, and the supporting documents are listed in the Appendix Register.`);
 
   // ── Appendix Register ──────────────────────────────────────────────────────────
   lines.push("# Appendix Register");
@@ -2075,29 +2092,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // produce Section H, but its version uses rough estimates while the deterministic
   // builder (buildSelfScoreSection) uses the structured evidence we have. Keeping
   // both would give duplicate headings; the deterministic version always wins.
-  function stripAiSectionH(md: string): string {
-    const lines = md.split("\n");
-    const out: string[] = [];
-    let i = 0;
-    while (i < lines.length) {
-      const isSelfScore = /(^|\n)\s*#{1,4}\s*(?:section\s*[H:.\-\s]*)?\s*(?:proposal\s+)?self.?score\b/i.test(lines[i]);
-      if (isSelfScore) {
-        const level = lines[i].match(/^(#+)\s/)?.[1].length ?? 2;
-        i += 1;
-        while (i < lines.length) {
-          const m = lines[i].match(/^(#+)\s/);
-          if (m && m[1].length <= level) break;
-          i += 1;
-        }
-        continue;
-      }
-      out.push(lines[i]);
-      i += 1;
-    }
-    return out.join("\n");
-  }
-
-  const matrixMarkdown = appendEvaluatorResponseMatrix(stripAiSectionH(sourceMarkdown), evaluatorMatrixInput);
+  const matrixMarkdown = appendEvaluatorResponseMatrix(stripSelfScoreSections(sourceMarkdown), evaluatorMatrixInput);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: cleanedTenderTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
 
@@ -2292,7 +2287,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     requirements: tender.requirements,
   });
 
-  const combinedMarkdown = [
+  // stripSelfScoreSections runs over the COMBINED upstream, not just the raw AI
+  // markdown. Stripping only sourceMarkdown left a hole that
+  // applyProposalQualityRepairAddenda — which adds its own Section H whenever
+  // none is present — immediately filled, and the deterministic section was
+  // then appended beside it. A real client proposal shipped two Section H
+  // tables in a row that contradicted each other: "Predicted overall technical
+  // score: 45/100" followed by "Predicted overall technical score: 69 / 100".
+  // The comment above states the intent — the deterministic builder always
+  // wins — so make it the single owner of the section at the point where the
+  // document is assembled.
+  const combinedUpstream = [
     matrixMarkdown,
     strengtheningMarkdown,
     benchmarkTables,
@@ -2300,6 +2305,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     deterministicComplianceMatrix,
     deterministicEvaluatorMirror,
     deterministicWinThemes,
+  ].filter(Boolean).join("\n\n");
+  const combinedMarkdown = [
+    stripSelfScoreSections(combinedUpstream),
     deterministicSelfScore,
   ].filter(Boolean).join("\n\n");
 
