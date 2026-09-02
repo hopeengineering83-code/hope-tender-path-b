@@ -1,4 +1,5 @@
-import { PDFDocument, rgb, type PDFPage } from "pdf-lib";
+import { PDFDocument, PDFHexString, rgb, type PDFPage } from "pdf-lib";
+import { createHash } from "node:crypto";
 import { createPdfFontSetFor, sanitizePdfText, type PdfFontSet, type PdfFontStyle } from "./pdf-unicode-fonts";
 
 const PAGE_MARGIN = 56; // points (approx 20mm)
@@ -610,6 +611,23 @@ export async function generateProposalPdf(opts: {
     }
     prevType = tok.type;
   }
+
+  // Give the file the trailer /ID the PDF specification asks every document to
+  // carry. pdf-lib emits none, so every proposal this app produced was
+  // identity-less, and a reader that keys anything on document identity sees
+  // two different proposals as the same file. Measured: pdf2json, one of the
+  // three text-layer extractors, returned the FIRST document's text when asked
+  // to parse a second, structurally similar one — so a validator could judge a
+  // regenerated proposal against the bytes of the previous version. Two
+  // obviously different PDFs (different page counts and sizes) did not
+  // collide, which is what made this invisible until two near-identical
+  // proposals were read in one process.
+  //
+  // The identity is derived from the document's own content, so identical
+  // bytes keep an identical id and a changed document gets a new one.
+  const identitySource = [opts.title, opts.clientName ?? "", opts.reference ?? "", opts.companyName ?? "", opts.markdown].join("\u0000");
+  const documentId = PDFHexString.of(createHash("sha256").update(identitySource, "utf8").digest("hex").slice(0, 32).toUpperCase());
+  doc.context.trailerInfo.ID = doc.context.obj([documentId, documentId]);
 
   // Header/footer already drawn on every content page as it was added.
   return doc.save();

@@ -14,6 +14,7 @@
  * drift apart on that question the way the pricing detectors did.
  */
 
+import { createHash } from "node:crypto";
 import JSZip from "jszip";
 import { extractTextFromBuffer } from "../extract-text";
 
@@ -99,6 +100,54 @@ export function decodeXmlEntities(value: string): string {
  * leaves the caller on its metadata fallback rather than reporting a clean
  * document nothing ever opened.
  */
+/**
+ * Same bytes, same text — so read them once.
+ *
+ * The visible text of a document is a pure function of its bytes, but nothing
+ * remembered that, and reading a PDF is not cheap: on a real 262 KB generated
+ * Technical Proposal the three text-layer extractors cost 1.3 s (pdf2json),
+ * 3.2 s (pdf-parse) and 4.4 s (pdfjs), and extractPdf waits for all of them.
+ *
+ * GET /api/tenders/[id]/export-readiness is read-only, is polled by the UI, and
+ * runs three readiness models in parallel. Measured on a two-document package
+ * (that PDF plus a DOCX cover letter), the SAME PDF was extracted twice in one
+ * request — once by getCanonicalTenderWorkflowDecision and once by
+ * getFinalSubmissionReadiness — and again on the next poll. The route declares
+ * `maxDuration = 10`; the owner's Preview returned 504 "Vercel Runtime Timeout
+ * after 10 seconds".
+ *
+ * Keying on a digest of the bytes makes the cache exact: different bytes are a
+ * different key, so no stale text can survive a regenerated document, and the
+ * verdict computed from the text is unchanged. The in-flight promise is cached
+ * rather than only the result, because the duplicate readers run concurrently —
+ * caching the result alone would let both start the work before either
+ * finished. Failures are not cached: a read that threw is retried next time
+ * rather than remembered as "no text", which is the difference between an
+ * environment hiccup and a verdict about the document.
+ *
+ * The missing optional `@napi-rs/canvas` warnings that accompany the timeout
+ * come from pdfjs-dist loading its canvas backend; they are a symptom of the
+ * extraction running, not the cost, and are left alone.
+ */
+const VISIBLE_TEXT_CACHE_LIMIT = 32;
+const visibleTextCache = new Map<string, Promise<string | null>>();
+
+function rememberVisibleText(key: string, work: Promise<string | null>): Promise<string | null> {
+  visibleTextCache.set(key, work);
+  if (visibleTextCache.size > VISIBLE_TEXT_CACHE_LIMIT) {
+    const oldest = visibleTextCache.keys().next();
+    if (!oldest.done) visibleTextCache.delete(oldest.value);
+  }
+  // A failed read must not become a cached "no text" answer.
+  void work.catch(() => visibleTextCache.delete(key));
+  return work;
+}
+
+/** Test seam: drop everything remembered about previously read documents. */
+export function clearGeneratedDocumentVisibleTextCache(): void {
+  visibleTextCache.clear();
+}
+
 export async function generatedDocumentVisibleText(
   document: {
     fileContent?: string | null;
@@ -109,6 +158,21 @@ export async function generatedDocumentVisibleText(
 ): Promise<string | null> {
   const base64 = typeof document?.fileContent === "string" ? document.fileContent : null;
   if (!base64 || base64.length > MAX_GENERATED_ARTIFACT_BASE64_CHARS) return null;
+  const cacheKey = `${createHash("sha256").update(base64).digest("hex")}:${document?.contentMimeType ?? ""}:${document?.exactFileName ?? document?.name ?? ""}`;
+  const remembered = visibleTextCache.get(cacheKey);
+  if (remembered) return remembered;
+  return rememberVisibleText(cacheKey, readVisibleText(document, base64));
+}
+
+async function readVisibleText(
+  document: {
+    fileContent?: string | null;
+    exactFileName?: string | null;
+    name?: string | null;
+    contentMimeType?: string | null;
+  } | null | undefined,
+  base64: string,
+): Promise<string | null> {
   try {
     const buffer = Buffer.from(base64, "base64");
     // PDF bytes must be opened and inspected too. Previously every finalized

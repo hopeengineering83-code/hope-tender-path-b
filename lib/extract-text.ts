@@ -786,14 +786,39 @@ async function extractPdf(buffer: Buffer): Promise<string> {
   // the first non-corrupted result with > 1000 chars wins. If all fail or
   // return garbage, we fall through to the OCR path.
   const extractorTimeout = 10_000; // 10s per extractor
-  const extractors = [
+  // pdf2json is a LAST RESORT, not a peer.
+  //
+  // Reproduced on this checkout: parse one generated proposal PDF, then parse a
+  // second, structurally similar one (same page count, same layout, one
+  // paragraph different) in the same process, and pdf2json returns the FIRST
+  // document's text for the second document — every time, sequentially or
+  // concurrently, with a fresh `new PDFParser()` per call and even after
+  // deleting the module from require.cache. Two obviously different PDFs
+  // (different page counts and sizes) do not collide, which is why this stayed
+  // invisible: the case it breaks on is exactly the app's own regenerated
+  // proposals.
+  //
+  // It is not a scoring problem. The selection below picks the highest-quality
+  // non-corrupted text, and the wrong document's text is clean, well-formed and
+  // scores well — so it wins, and a validator then judges a proposal against
+  // the bytes of a previous version. Giving each generated PDF a unique trailer
+  // /ID (lib/engine/proposal-pdf.ts) did not change it either.
+  //
+  // So pdf2json is consulted only when both engines whose output can be trusted
+  // returned nothing usable. That keeps it available for the awkward PDFs it
+  // was added for, while making the bleed unreachable on the normal path. When
+  // all three fail the existing OCR fallback still runs; failing closed to OCR
+  // is correct, and returning another document's text never is.
+  const primaryExtractors = [
     { source: "pdf-parse", fn: () => extractPdfWithPdfParse(buffer) },
-    { source: "pdf2json", fn: () => extractPdfWithPdf2Json(buffer) },
     { source: "pdfjs", fn: () => extractPdfWithPdfJs(buffer) },
+  ];
+  const lastResortExtractors = [
+    { source: "pdf2json", fn: () => extractPdfWithPdf2Json(buffer) },
   ];
 
   const results: Array<{ source: string; text: string; pages: number }> = [];
-  await Promise.allSettled(
+  const runExtractors = async (extractors: Array<{ source: string; fn: () => Promise<{ text: string; pages: number }> }>) => await Promise.allSettled(
     extractors.map(async (ext) => {
       let timer: NodeJS.Timeout | undefined;
       try {
@@ -814,6 +839,10 @@ async function extractPdf(buffer: Buffer): Promise<string> {
       }
     }),
   );
+
+  await runExtractors(primaryExtractors);
+  const primaryUsable = results.some((r) => r.text && r.text.length >= 20);
+  if (!primaryUsable) await runExtractors(lastResortExtractors);
 
   // Pick the best extractor by quality score, not text length.
   // Previously: `results.sort((a, b) => b.text.length - a.text.length)[0]`
