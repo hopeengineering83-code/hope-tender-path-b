@@ -119,7 +119,23 @@ export async function DocumentValidatorPanel({ tenderId }: { tenderId: string })
     select: { title: true, description: true, priority: true },
   }).catch(() => [] as Array<{ title: string | null; description: string | null; priority: string | null }>);
 
-  const rows = await resolveCurrentDocumentVerdicts(docs, requirements);
+  // The rubric scores a proposal partly on whether it actually names the
+  // experts and projects this tender selected, and validate.ts has always
+  // passed those names. This panel did not, so the same document could be
+  // scored differently by the two surfaces that share the scorer — the exact
+  // failure mode the module header says this module exists to prevent.
+  const selectedEvidence = await prisma.tender.findFirst({
+    where: { id: tenderId },
+    select: {
+      expertMatches: { where: { isSelected: true }, select: { expert: { select: { fullName: true } } } },
+      projectMatches: { where: { isSelected: true }, select: { project: { select: { name: true } } } },
+    },
+  }).catch(() => null);
+
+  const rows = await resolveCurrentDocumentVerdicts(docs, requirements, {
+    selectedExpertNames: (selectedEvidence?.expertMatches ?? []).map((match) => match.expert.fullName),
+    selectedProjectNames: (selectedEvidence?.projectMatches ?? []).map((match) => match.project.name),
+  });
 
   const blockedCount = rows.filter((r) => r.score === "BLOCKED").length;
   const warningCount = rows.filter((r) => r.score === "WARNING").length;

@@ -333,6 +333,21 @@ async function narrativeDraftContent(
   return buffer.toString("base64");
 }
 
+/**
+ * The format a still-planned row should declare.
+ *
+ * A planned row's identity is its required file name — that is what the tender
+ * asked for and what finalization must produce. Declaring the format of the
+ * interim body instead makes the row contradict itself while it is still empty.
+ */
+export function plannedRowFormat(fileName: string, contentFormat: string): string {
+  if (contentFormat === "CONTROL") return contentFormat;
+  const extension = fileName.toLowerCase().match(/\.([a-z0-9]{2,5})$/)?.[1];
+  if (extension === "pdf") return "PDF";
+  if (extension === "docx") return "DOCX";
+  return contentFormat;
+}
+
 async function buildPlannedRowContent(args: {
   tenderTitle: string;
   fileName: string;
@@ -634,7 +649,14 @@ export async function generateMissingPlanFiles(args: {
               ? {
                 name: document.fileName.replace(/\.[a-z0-9]{2,5}$/i, ""),
                 documentType: document.documentType,
-                format: document.format,
+                // Declare the format the planned FILE NAME promises, not the
+                // format of the body that could not be produced for it. A
+                // planned "Technical Proposal.pdf" was written with format
+                // DOCX, so the row contradicted itself before it held a single
+                // byte, and every surface that compares name against declared
+                // format reported an artifact-identity mismatch for a file that
+                // did not exist yet.
+                format: plannedRowFormat(document.fileName, document.format),
                 exactFileName: document.fileName,
                 exactOrder: document.exactOrder,
                 fileContent: null,

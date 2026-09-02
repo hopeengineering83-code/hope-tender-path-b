@@ -287,10 +287,18 @@ export async function resolveCurrentDocumentVerdict<T extends QualityAssessableD
 export async function resolveCurrentDocumentVerdicts<T extends QualityAssessableDocument>(
   docs: T[],
   requirements: QualityRequirementInput = [],
+  // The single-document form has always accepted the selected evidence names —
+  // the rubric scores a proposal partly on whether it actually names the
+  // experts and projects the tender selected — but this batch form dropped
+  // them, so the Document Validator panel (batch) could score a document
+  // differently from validate.ts (single, with evidence). Two surfaces sharing
+  // one scorer but not one input is exactly the disagreement this module exists
+  // to prevent.
+  evidence: { selectedExpertNames?: string[]; selectedProjectNames?: string[] } = {},
 ): Promise<Array<CurrentDocumentVerdict<T>>> {
   const verdicts: Array<CurrentDocumentVerdict<T>> = [];
   for (const doc of docs) {
-    verdicts.push(await resolveCurrentDocumentVerdict(doc, requirements));
+    verdicts.push(await resolveCurrentDocumentVerdict(doc, requirements, evidence));
   }
   return verdicts;
 }

@@ -18,6 +18,7 @@ import {
   isGroundedEvidenceInActiveFiles,
   type GroundingActiveFile,
 } from "./evidence-grounding";
+import { resolveCurrentDocumentVerdicts, selectCurrentDocuments } from "./current-document-quality";
 import { canUseVaultRecord, canUseVaultRecordField, partialVerificationSummary, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "../vault-review-provenance";
 import {
   evaluatePackageConformance,
@@ -943,14 +944,59 @@ export async function getFinalPackageReadinessModel(
       planConfirmed: buildPlanAuthority.confirmed,
     },
   );
+  // Ask the same authority the Document Validator asks, before deciding what
+  // this package contains.
+  //
+  // Every field this model reads from a document row is metadata — statuses,
+  // format, byte identity — and none of it can tell whether the document the
+  // client receives actually says anything. Reproduced on one snapshot, one
+  // document, one revision: the validator scored a real generated
+  // Technical Proposal.pdf "BLOCKED (14/100) QUALITY_FAILED" while this model
+  // reported it READY_FOR_EXPORT, In ZIP, with no blocker — the contradiction
+  // the owner photographed. It was not stale cross-revision state; the two
+  // surfaces were answering the same question from different authorities.
+  //
+  // The verdict costs one read of each document's bytes, which
+  // lib/engine/generated-document-text.ts now remembers by content digest, so
+  // the readiness route that already computes it elsewhere in the same request
+  // pays for it once.
+  const qualityVerdicts = await resolveCurrentDocumentVerdicts(
+    selectCurrentDocuments(tender.generatedDocuments as never) as never,
+    tender.requirements as never,
+    {
+      selectedExpertNames: tender.expertMatches.map((match: { expert: { fullName: string } }) => match.expert.fullName),
+      selectedProjectNames: tender.projectMatches.map((match: { project: { name: string } }) => match.project.name),
+    },
+  );
+  // Only a verdict reached by actually reading the document counts here.
+  // A storage-backed row keeps its bytes outside the database, so this model —
+  // which loads rows, not object storage — sees no text for it, and a scorer
+  // handed no text returns QUALITY_FAILED for having read nothing. Marking that
+  // as a content verdict would block a package for a document nobody inspected.
+  // wordCount > 0 is the evidence that the assessment had something to judge.
+  //
+  // Nothing is suppressed by this: when content genuinely cannot be read,
+  // final-submission-readiness still raises GENERATED_DOCUMENT_QUALITY_FAILED
+  // from its own byte-loading path and the export gate still blocks.
+  const qualityBlockedIds = new Set(
+    qualityVerdicts
+      .filter((verdict) => verdict.score === "BLOCKED" && verdict.report.wordCount > 0)
+      .map((verdict) => (verdict.doc as { id?: string }).id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const generatedDocumentsWithQuality = tender.generatedDocuments.map((document: { id: string }) => ({
+    ...document,
+    qualityBlocked: qualityBlockedIds.has(document.id),
+  }));
+
   const planned = buildPlanAuthority.confirmed
     ? derivePlannedPackageDocumentsFromFiles(
         buildPlanAuthority.items,
-        tender.generatedDocuments,
+        generatedDocumentsWithQuality,
       )
-    : deriveRequiredPackageDocuments(tender, tender.generatedDocuments);
+    : deriveRequiredPackageDocuments(tender, generatedDocumentsWithQuality);
   const generated = mapGeneratedDocumentsToSubmissionPlan(
-    tender.generatedDocuments,
+    generatedDocumentsWithQuality,
     planned,
   );
   const missingRequired = detectMissingRequiredDocuments(planned);

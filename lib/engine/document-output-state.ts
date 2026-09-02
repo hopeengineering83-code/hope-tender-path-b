@@ -11,6 +11,7 @@ export type DocumentOutputState =
   | "NEEDS_REVALIDATION"
   | "VALIDATED"
   | "ARTIFACT_IDENTITY_MISMATCH"
+  | "QUALITY_BLOCKED"
   | "READY_FOR_EXPORT";
 
 export type DocumentLike = {
@@ -27,6 +28,26 @@ export type DocumentLike = {
    */
   hasInlineFileContent?: boolean | null;
   storagePath?: string | null;
+  /**
+   * The canonical narrative-quality verdict for this document, when the caller
+   * has computed it.
+   *
+   * Everything else on this type is metadata: statuses, format, byte identity.
+   * None of it can tell whether the document the client receives actually says
+   * anything, and so a document could be READY_FOR_EXPORT here while the
+   * Document Validator — which reads the bytes through
+   * lib/engine/current-document-quality.ts — called the same document BLOCKED.
+   * Reproduced on one snapshot, one document, one revision: validator "BLOCKED
+   * (14/100) QUALITY_FAILED", manifest "READY_FOR_EXPORT, In ZIP, Blocked 0".
+   * That is the contradiction the owner photographed, and it was not stale
+   * state — the two surfaces were answering the same question from different
+   * authorities.
+   *
+   * Optional so metadata-only callers keep their current behaviour; a surface
+   * that can afford the verdict passes it and cannot then contradict the
+   * validator.
+   */
+  qualityBlocked?: boolean | null;
   generationStatus?: string | null;
   validationStatus?: string | null;
   reviewStatus?: string | null;
@@ -226,7 +247,22 @@ export function deriveDocumentOutputState(doc: DocumentLike): DocumentOutputStat
   // the derived state said READY_FOR_EXPORT while isFinalExportCandidateDocument
   // said false — two surfaces disagreeing about the same row, which is how a
   // mislabelled artifact stayed plausible everywhere it was displayed.
-  if (!hasConsistentArtifactIdentity(doc)) return "ARTIFACT_IDENTITY_MISMATCH";
+  // A row that is still PLANNED and holds no bytes has no artifact yet, so it
+  // cannot be inconsistent with one. Without this, a planned "Technical
+  // Proposal.pdf" awaiting PDF finalization — created with no content at all —
+  // was reported as "file name, declared format and actual bytes disagree… a
+  // .pdf that does not contain PDF bytes will not open for the evaluator",
+  // which describes a corrupted file that does not exist and sends the owner
+  // looking for it. Narrow on purpose: the moment a row carries bytes, the
+  // identity check below runs exactly as before, which is what stops a
+  // mislabelled artifact from passing on its statuses.
+  const plannedWithoutBytes = gen === "PLANNED" && !hasVisibleStoredFile(doc);
+  if (!plannedWithoutBytes && !hasConsistentArtifactIdentity(doc)) return "ARTIFACT_IDENTITY_MISMATCH";
+  // Ranked below artifact identity — a file that is not what it claims is a
+  // worse problem than one that reads poorly — and above every "looks ready"
+  // state, so a quality-blocked document can never be reported as ready for
+  // export or as included in the ZIP.
+  if (doc.qualityBlocked === true) return "QUALITY_BLOCKED";
   // REPLACE_WITH_ORIGINAL takes priority over NEEDS_REVALIDATION — a doc that
   // must use the tender-issuer's original file is ORIGINAL_REQUIRED regardless
   // of whether a reconcile also flagged it for revalidation.
@@ -286,6 +322,8 @@ export function exportBlockReason(state: DocumentOutputState): string | null {
       return null;
     case "ARTIFACT_IDENTITY_MISMATCH":
       return "File name, declared format and actual bytes disagree. A .pdf that does not contain PDF bytes will not open for the evaluator, so it can never be exported.";
+    case "QUALITY_BLOCKED":
+      return "The document failed the canonical narrative-quality rubric. The Document Validator shows the score and the specific issues; it must be regenerated or repaired before it can be exported.";
     case "CONTROL_RECORD_ONLY":
       return "Document is a control, placeholder, or text-only row. Generate or attach the real final file.";
     case "ORIGINAL_REQUIRED":
