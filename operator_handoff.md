@@ -123,6 +123,117 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-02 UTC — Claude Code (Preview 504, cross-surface release state, PDF extraction integrity)
+
+- **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
+- **HEAD:** `c73b5489` → `506f2b64` → `b42b28ee`. No new lane, no merge, no Production deploy.
+
+- **THE PREVIEW 504 — MEASURED, NOT GUESSED.** `GET /api/tenders/[id]/export-readiness`
+  returned "Vercel Runtime Timeout after 10 seconds". The
+  missing-`@napi-rs/canvas` warnings beside it are pdfjs-dist loading its canvas
+  backend — a symptom of extraction running, not its cost — and were left alone.
+  On a real 262 KB generated Technical Proposal the three text-layer extractors
+  cost **1.3 s (pdf2json), 3.2 s (pdf-parse), 4.4 s (pdfjs)** and `extractPdf`
+  waits for all of them. The route declares `maxDuration = 10`, is polled by the
+  UI, and runs three readiness models in parallel; on a two-document package the
+  SAME PDF was extracted **twice per request** and again on every poll.
+
+  Visible text is now remembered by a digest of the bytes (in-flight promise
+  cached, failures never cached, different bytes always a different key).
+
+  | | before | after |
+  |---|---|---|
+  | canonical decision | 676–5371 ms | 167 ms |
+  | final submission readiness | 4104–6409 ms | 2648 ms |
+  | repeat poll | 1361 ms | 72 ms |
+
+  **Real HTTP proof on the exact-head build** (268 KB Technical Proposal.pdf +
+  a real DOCX, authenticated): `HTTP 200 in 2422 ms` cold, then **141 / 142 /
+  222 ms** warm, against a 10 000 ms budget. On the Preview
+  (`dpl_AJTRAYCinMQd5farLAWVmrvGb82S`, READY, built from `b42b28ee`) the route
+  answers `401 Unauthorized` with `x-matched-path:
+  /api/tenders/[id]/export-readiness` — the function cold-starts and returns
+  instead of timing out. An authenticated Preview timing run needs owner
+  credentials and was not attempted.
+
+- **AN EXTRACTOR WAS RETURNING A DIFFERENT DOCUMENT'S TEXT.** Found while
+  reproducing the above. Parse one generated proposal PDF, then a second,
+  structurally similar one in the same process, and **pdf2json returns the
+  first document's text for the second** — every time, sequentially or
+  concurrently, with a fresh `new PDFParser()` per call and even after deleting
+  the module from `require.cache`. Two obviously different PDFs never collide,
+  which is why it stayed invisible: the case it breaks is this app's own
+  regenerated proposals. The wrong text is clean and well-formed, so it wins the
+  quality selection — a validator could judge a regenerated proposal against the
+  previous version's bytes. pdf2json is now a **last resort**, consulted only
+  when both trustworthy engines return nothing usable; OCR still backstops all
+  three. Side effect: the same PDF now extracts in 2376 ms.
+
+  Generated PDFs also carried **no trailer `/ID` at all**; each now carries one
+  derived from its own content. That was tried FIRST as a possible cause of the
+  bleed and measured — it did not fix it — but the specification asks for it and
+  artifact identity depends on it.
+
+- **THE CONTRADICTORY RELEASE STATES — REPRODUCED ON ONE SNAPSHOT.** Validator
+  "Technical Proposal.pdf — BLOCKED, 68/100" beside Final Package Manifest
+  "Ready, In ZIP, Blocked 0". Reproduced with ONE revision and ONE document, so
+  it is **not** stale cross-revision state: validator "BLOCKED (14/100)
+  QUALITY_FAILED", package model "READY_FOR_EXPORT, exportReady, no blocker".
+  The two surfaces answered from different authorities — everything the package
+  model read was metadata, which cannot tell whether the document says anything.
+
+  - `deriveDocumentOutputState` now understands a quality verdict and returns
+    `QUALITY_BLOCKED`, ranked below `ARTIFACT_IDENTITY_MISMATCH`.
+  - `getFinalPackageReadinessModel` asks the same authority the validator asks;
+    a quality-blocked document is not a candidate, not export-ready, not in the
+    ZIP manifest.
+  - Only a verdict reached by **actually reading** the document counts
+    (`wordCount > 0`), so a storage-backed row is never blocked for bytes nobody
+    loaded. Nothing is suppressed: `final-submission-readiness` still raises
+    `GENERATED_DOCUMENT_QUALITY_FAILED` from its own byte-loading path.
+  - The validator panel and `validate.ts` now score on the **same evidence
+    names**; the batch resolver had no parameter for them at all.
+
+- **THE ARTIFACT_IDENTITY_MISMATCH ON Technical Proposal.pdf — FOUND AND FIXED.**
+  `generateMissingPlanFiles` writes a still-PLANNED row for a required file it
+  cannot yet produce (`fileContent: null`) but declared the format of the
+  interim body (DOCX) rather than the format its own name promises. The row
+  contradicted itself before holding a byte, and every surface comparing name
+  against declared format reported "a .pdf that does not contain PDF bytes will
+  not open for the evaluator" — a corrupted file that does not exist. Planned
+  rows now declare the format their file name promises, and a byte-less planned
+  row reads as awaiting content. Narrow: the moment a row carries bytes the
+  identity check runs exactly as before. The other half of the reported deadlock
+  is not real on this head — `generate-elite` already stores the proposal body as
+  `<base>.docx` when the plan requires `<base>.pdf`, which is precisely the
+  source `finalize-pdf` looks for.
+
+- **VERIFIED ON THIS CHECKOUT:** `npx tsc --noEmit` clean · `next lint` clean ·
+  `next build` succeeds · `RUN_DB_INTEGRATION=true npm test` →
+  **11225/11225 pass, 0 fail** · `npm run audit:release-integrity` ok
+  (447 routes, 1693 files, provider order intact) ·
+  `audit:workflow-state-consistency` ok · `db:check-critical-schema` ok
+  (0 failures) · `prisma migrate status` up to date (51 migrations) ·
+  `prisma validate` valid. Every new assertion was confirmed to fail against the
+  pre-fix code.
+
+- **VAULT RE-VERIFIED THROUGH THE REAL ROUTES ON THIS HEAD:** experts 28/28
+  (22 healthcare-tagged, 0 empty sectors, 0 empty disciplines), projects 114/114
+  SOURCE_VERIFIED with 107 clients preserved and 0 header-contaminated rows.
+
+- **STILL BLOCKED — PROVIDER QUOTA, NOT CODE.** Two full Pharo drives today
+  stopped at AI Analyze: `AI_PROVIDERS_RATE_LIMITED: all 1 configured
+  provider(s) are in cooldown after recent rate-limit/quota errors`. Gemini is
+  the only provider configured in this environment, so there is nothing to fall
+  through to, and the free-tier daily quota was spent on the 07:41Z run. Not
+  coded around. The tender deadline is genuinely past and was left untouched.
+
+- **NEXT ACTION:** at the quota reset, run the full Pharo acceptance flow and
+  inspect the actual DOCX/PDF/ZIP bytes against the acceptance list, then score
+  the 17 dimensions.
+
+- **MERGE STATUS:** not reviewed. Do not merge; do not promote Production.
+
 ### 2026-09-02 UTC — Claude Code (expert selection: discipline coverage; a wrong earlier conclusion corrected)
 
 - **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
