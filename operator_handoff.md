@@ -123,6 +123,96 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-02 UTC — Claude Code (client-facing content integrity; benchmark rerun blocked on AI quota)
+
+- **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
+- **HEAD:** `03b76358` → `690a39bb` → `6b81523c` → `11dee2ae`. No new lane, no merge, no Production deploy.
+
+- **SCOPE.** Root-caused, from the persisted markdown and DOCX bytes of a real
+  generated Technical Proposal, why professional presentation scored 45/100 in
+  the previous benchmark run. Five defects, all shipping engine internals or
+  invented facts to the evaluator:
+
+  1. `detectEvaluationCriteria` matched patterns across unrelated sentences,
+     because `textOf`/`clean` collapse every newline before it runs.
+     `/compliance.*experience/i` matched "Compliance with submission
+     requirements … focus on healthcare project experience" and put a Financial
+     Services / Basel-IFRS sub-section into a hospital proposal; bare `/GIS/`
+     matched the "gis" in "registration" and added urban master planning.
+     Fixed by matching within one phrase (`evaluationPhrases`), which corrects
+     all forty patterns at once, plus word boundaries on short acronyms.
+  2. Catalogue entries are "<criterion> — <how to answer it>", and the whole
+     string was used as a client-facing heading and self-score row. Split at
+     source: `evaluationCriteria` is labels only; `evaluationCriteriaWriterNotes`
+     carries the guidance to the AI writer.
+  3. `# Compliance and Bid Review Notes` printed `complianceLines` verbatim —
+     engine support records, a serialized `automatic-requirement-evidence:v1`
+     payload with content hashes, Company Vault FILE NAMES with raw extracted
+     text including a named employee's date of birth and personal phone number,
+     and the bid team's own instructions to itself. Replaced by a Compliance
+     Statement; the internal-review stripper learned both headings.
+  4. Section F's "Weight / priority" column printed `100 - index * 5` as
+     "N% relative attention" — a weight the tender never stated, in the column
+     an evaluator uses to check their own scoring. Now states no weight when
+     the tender states none; internal `TRB-n` labels removed.
+  5. Two contradictory Section H self-scores in a row (45/100 then 69/100),
+     because the strip ran only over the raw AI markdown. `stripSelfScoreSections`
+     now runs over the assembled upstream and lives beside `hasSelfScoreHeading`.
+
+- **VAULT AUTHORITY INTEGRITY (continued).** 187 project rows stored the
+  portfolio table's column-header run as their CLIENT and its tail as their
+  COUNTRY, auto-verified to SOURCE_VERIFIED, and it reached the proposal as
+  "Approach demonstrated on <hospital> (/Location (with Area & Full Address)
+  Testimony Details …)". Two fixes: a value enumerating three or more column
+  labels is a header, not a name; and heuristic re-extraction now ENRICHES an
+  authority's records instead of replacing them — a blank never overwrites a
+  stored value, and authority-owned attributes are not replaced at all.
+  Measured end to end through the real routes on the real export after the fix:
+  **experts 28/28 and projects 114/114 all SOURCE_VERIFIED, 107 clients
+  preserved (exactly what the export declares), 0 header-contaminated rows.**
+
+- **TESTS ACTUALLY RUN** (this checkout, quoted from the run):
+  `npx tsc --noEmit` clean · `next lint` clean · `next build` succeeds ·
+  `RUN_DB_INTEGRATION=true npm test` → **11191/11191 pass, 0 fail**.
+  Every new test was confirmed to FAIL against the pre-fix code before being
+  accepted.
+
+- **CI:** running on `11dee2ae` at the time of writing; a check-in is scheduled
+  to confirm it.
+
+- **BLOCKED — NOT A CODE DEFECT.** The benchmark rerun cannot proceed today: the
+  Gemini free-tier daily quota (20 requests/day, resets ~07:00 UTC) was spent on
+  the 07:41Z run, and AI Analyze failed with "All configured AI providers
+  exhausted for use-case \"extraction\" (tried: gemini)". Only Gemini is
+  configured in this environment, so there is nothing to fall through to. Per
+  the owner's standing instruction this was NOT coded around. A check-in is
+  scheduled for the reset.
+
+- **INVESTIGATED AND DELIBERATELY NOT CHANGED.** "1 of 28 experts selected" and
+  "no biomedical expert is currently selected" are TRUE statements about the
+  vault, not a matching defect: the export contains **0** experts whose record
+  mentions biomedical or healthcare work, against 21 architects and 8 MEP-like
+  engineers. The single selection is the dominant-family penalty in
+  `capabilityScore(..., "expert")` working as designed and as pinned by
+  `tests/matching-fail-closed-negative-tests.test.ts:84`. Loosening it would
+  raise the benchmark score by weakening a deliberate relevance gate, which the
+  owner's instruction forbids and which is exactly the undo-each-other pattern
+  CLAUDE.md warns about. **Open question for Hope, not for an agent:** whether
+  expert eligibility should be judged on the tender's named DISCIPLINES rather
+  than on each individual carrying prior SECTOR experience. Do not change it
+  without an explicit decision.
+
+- **NEXT ACTION:** at the quota reset, regenerate the Pharo benchmark, verify in
+  the produced bytes that the five presentation fixes hold, and rescore all 17
+  dimensions against the previous run (overall ~73; presentation 45, narrative
+  coherence 58, expert→role→project 60, risk/mitigation 62, regulatory 65,
+  evaluator alignment 70). Still open from earlier sessions: the
+  `finalize-pdf` ⇄ `validate` deadlock and `ARTIFACT_IDENTITY_MISMATCH` on
+  `Technical Proposal.pdf`, and why validate's internal reconcile does not
+  refresh artifact evidence.
+
+- **MERGE STATUS:** not reviewed. Do not merge; do not promote Production.
+
 ### 2026-08-29 UTC — Claude Code (post-click runtime search; inconclusive by evidence)
 
 - **TOOL:** Claude Code · **HEAD:** `0e9b807f` (unchanged, tree clean) · **PR:** #1175
