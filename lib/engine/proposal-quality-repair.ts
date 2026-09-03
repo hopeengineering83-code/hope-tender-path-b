@@ -1,4 +1,5 @@
 import { filterCleanLines } from "./pattern-filter";
+import { truncateDisplayLine } from "./proposal-labels";
 import type { EvaluatorMatrixInput } from "./proposal-evaluator-matrix";
 import { buildTenderResponseBlueprint } from "./tender-response-blueprint";
 
@@ -15,7 +16,7 @@ function take(lines: string[], count: number, maxLen = 220): string[] {
     .filter(Boolean)
     .filter((line) => filterCleanLines([line]).length > 0)
     .slice(0, count)
-    .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
+    .map((line) => truncateDisplayLine(line, maxLen));
 }
 
 function hasHeading(markdown: string, pattern: RegExp): boolean {

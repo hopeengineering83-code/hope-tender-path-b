@@ -1,5 +1,6 @@
 import { clientSafeComplianceNote } from "./automatic-requirement-coverage";
 import { filterCleanLines } from "./pattern-filter";
+import { truncateDisplayLine } from "./proposal-labels";
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
 
 export type BlueprintEvidenceInput = {
@@ -43,7 +44,7 @@ function take(lines: string[], count: number, maxLen = 260): string[] {
     .filter(Boolean)
     .filter((line) => filterCleanLines([line]).length > 0)
     .slice(0, count)
-    .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
+    .map((line) => truncateDisplayLine(line, maxLen));
 }
 
 function tokenize(value: string): string[] {
@@ -152,7 +153,18 @@ function finalAction(support: TenderResponseBlueprintItem["evidenceSupport"]): s
 }
 
 export function buildTenderResponseBlueprint(input: BlueprintEvidenceInput): TenderResponseBlueprintItem[] {
-  const reqs = take(input.requirements, 16, 320);
+  // 420, not the original 320: formatRequirementLine's title+description alone
+  // can reach 380 chars before its [p.N]/(§ …)/(quote: "…") tags are even
+  // appended, so 320 truncated (via take -> truncateDisplayLine) more requirement
+  // lines than it needed to — dropping their tags even when the requirement
+  // itself was short enough that the FULL tagged line would have fit
+  // comfortably with a little more room. 420 covers a short/medium real-world
+  // requirement (title + one-sentence description + all three tags) without
+  // truncation; a genuinely long one (see the real Pharo tender's 506-char
+  // "Specialized Healthcare Design Experience" line) still safely drops its
+  // tags rather than being cut mid-tag — truncateDisplayLine's job, not this
+  // budget's.
+  const reqs = take(input.requirements, 16, 420);
   const finalReqs = reqs.length > 0 ? reqs : ["Technical understanding and methodology", "Relevant company experience", "Professional team and CV strength", "Compliance with submission requirements"];
   return finalReqs.map((requirement, index) => {
     const evidence = pickEvidence(requirement, input, index);

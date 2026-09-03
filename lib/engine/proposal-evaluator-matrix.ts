@@ -1,4 +1,5 @@
 import { filterCleanLines } from "./pattern-filter";
+import { truncateDisplayLine } from "./proposal-labels";
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
 import { renderTenderResponseBlueprint } from "./tender-response-blueprint";
 import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
@@ -47,7 +48,7 @@ function take(lines: string[], count: number, maxLen = 260): string[] {
     .filter(Boolean)
     .filter((line) => filterCleanLines([line]).length > 0)
     .slice(0, count)
-    .map((line) => line.length > maxLen ? `${line.slice(0, maxLen - 1)}…` : line);
+    .map((line) => truncateDisplayLine(line, maxLen));
 }
 
 function tokenize(value: string): string[] {
