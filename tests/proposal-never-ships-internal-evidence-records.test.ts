@@ -91,11 +91,30 @@ describe("the proposal builder reads notes through the helper", () => {
     );
   });
 
-  it("uses clientSafeComplianceNote when building compliance lines", () => {
+  it("routes the whole compliance row through the owning module's client-safe renderer", () => {
+    // This asserted `clientSafeComplianceNote(m.notes)` verbatim, which pinned
+    // the note field alone. The other four fields on the same line were just
+    // as internal and leaked into a real client proposal — the evidence-kind
+    // enum (PROPOSAL_RESPONSE, PACKAGE_CONFORMANCE), the drafting-state source
+    // (AUTO_BYTE_VERIFIED_VAULT_DOCUMENT, "Company evidence available for
+    // drafting") and a stored Company Vault filename in the reference.
+    //
+    // The guarantee is therefore stated over the WHOLE row, and the raw-field
+    // check below makes this strictly stronger than the assertion it replaces:
+    // sanitising the note is no longer enough to pass.
     const start = SRC.indexOf("const complianceLines = [");
     assert.ok(start > 0, "complianceLines must exist");
     const block = SRC.slice(start, start + 1400);
-    assert.ok(block.includes("clientSafeComplianceNote(m.notes)"),
-      "compliance lines must be sanitised through the owning module's helper");
+    assert.ok(
+      block.includes("clientSafeComplianceEvidence(m)"),
+      "compliance lines must be sanitised through the owning module's helper",
+    );
+    for (const field of ["m.evidenceType", "m.evidenceSource", "m.evidenceReference", "m.supportLevel", "m.notes"]) {
+      assert.equal(
+        block.includes(`\${${field}}`),
+        false,
+        `${field} must not be interpolated raw into a client-facing compliance line`,
+      );
+    }
   });
 });

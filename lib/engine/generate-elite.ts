@@ -54,7 +54,7 @@ import { buildWinThemesSection, hasWinThemesHeading } from "./win-themes-builder
 import { buildSelfScoreSection, hasSelfScoreHeading, stripSelfScoreSections } from "./self-score-builder";
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "./tender-language-echoes";
 import { extractTenderFacts, formatFactsForPrompt, buildTenderSpecificsBlock } from "./tender-facts-extractor";
-import { clientSafeComplianceNote } from "./automatic-requirement-coverage";
+import { clientSafeComplianceEvidence } from "./automatic-requirement-coverage";
 import { formatQualityScoreSummary, scoreProposalQuality } from "./proposal-quality-scorer";
 import {
   buildCertificationsSection,
@@ -1626,19 +1626,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const complianceLines = [
     ...tender.complianceMatrix.map((m) => {
       const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row";
-      // Read the note through clientSafeComplianceNote: ComplianceMatrix.notes
-      // carries the engine's serialized evidence record
-      // ("automatic-requirement-evidence:v1:{...}") with document UUIDs,
-      // content hashes and linkage scores. That module owns the marker and
-      // says every consumer rendering a note to a human must strip it here.
-      //
-      // This consumer did not, and the raw payload was written verbatim into a
-      // real client-facing Technical Proposal — a JSON blob carrying
-      // requirementSourceQuoteHash, sourceContentHash and linkageScore, in the
-      // document the evaluator reads. It also tripped the hygiene gate, which
-      // blocked the required PDF and with it the whole export.
-      const safeNote = clientSafeComplianceNote(m.notes);
-      return `${m.supportLevel}: ${req} | ${m.evidenceType} from ${m.evidenceSource}${m.evidenceReference ? ` | ref: ${m.evidenceReference}` : ""}${safeNote ? ` — ${safeNote}` : ""}`;
+      // ComplianceMatrix rows are ENGINE bookkeeping, and this line is writer
+      // context — what the generator is told exists, not what the client is
+      // told. Rendering the row verbatim put the engine's own vocabulary into
+      // the document the evaluator reads: a serialized
+      // "automatic-requirement-evidence:v1:{...}" payload with document UUIDs
+      // and content hashes (fixed earlier, for the note field alone), and
+      // beside it the evidence-kind enum, the drafting-state source and the
+      // stored Company Vault filename — all of which reached Section E of a
+      // real client-facing Technical Proposal.
+      // Read the WHOLE row through the client-safe renderer, not just the
+      // note. Every other field on this line was internal too — the
+      // evidence-kind enum, the drafting-state source, and the stored vault
+      // filename in the reference — and the writer copied all of it into
+      // Section E of a real client proposal. clientSafeComplianceEvidence owns
+      // the translation so this consumer cannot drift from it again.
+      const evidence = clientSafeComplianceEvidence(m);
+      return evidence ? `${req} — ${evidence}` : req;
     }),
     ...companyEvidenceLines.slice(0, 14).map((line) => `Company evidence available: ${line}`),
     ...projectEvidenceLines.slice(0, 10).map((line) => `Project evidence available: ${line}`),

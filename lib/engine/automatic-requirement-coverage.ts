@@ -638,6 +638,116 @@ export function clientSafeComplianceNote(notes: string | null | undefined): stri
   return (at === -1 ? notes : notes.slice(0, at)).replace(/\s*[—-]\s*$/, "").trim();
 }
 
+/**
+ * One compliance row, described the way a client may read it.
+ *
+ * The writer context handed to generation carried a ComplianceMatrix row
+ * verbatim:
+ *
+ *   PARTIAL: Annexes for Supporting Documents | PROPOSAL_RESPONSE from
+ *   Company evidence available for drafting | ref: Key-Experts-1.txt — One
+ *   relevant Company Vault document, 3 selected expert(s)…
+ *
+ * and the writer copied it into Section E of a real client-facing Technical
+ * Proposal. Everything after the requirement name there is the ENGINE talking
+ * to itself: `PROPOSAL_RESPONSE` and `PACKAGE_CONFORMANCE` are internal
+ * evidence-kind enums, `AUTO_BYTE_VERIFIED_VAULT_DOCUMENT` and "Company
+ * evidence available for drafting" describe a drafting state rather than any
+ * evidence, and `Key-Experts-1.txt` / `02_Legal_Registration_Documents_
+ * Summary.docx.txt` are stored Company Vault filenames that must never reach a
+ * client. The row was also cut mid-word by the writer's length budget, so the
+ * proposal shipped "…HOPE URBAN PLANNING ARCHI".
+ *
+ * This is the same failure as the `automatic-requirement-evidence:v1:{…}` leak
+ * documented on clientSafeComplianceNote above — internal bookkeeping reaching
+ * the reader — closed for that one field and left open on the four beside it.
+ * Closing it here, where the module already owns "how a compliance row is
+ * described to a human", keeps one answer instead of four consumers guessing.
+ *
+ * The writer LOSES NOTHING it needs: it still learns the requirement, how
+ * strongly it is covered, and what kind of evidence backs it. A reference that
+ * names real evidence — a certificate, a project, an expert — is kept verbatim,
+ * because that is exactly what an evaluator wants to see; only a stored
+ * filename is dropped, and it is recognised by its extension rather than by a
+ * list of names, so a vault file this codebase has never seen is dropped too.
+ */
+const CLIENT_SAFE_SUPPORT_LEVEL: Record<string, string> = {
+  FULL: "fully evidenced",
+  SUBSTANTIAL: "substantially evidenced",
+  PARTIAL: "partially evidenced",
+  NONE: "not yet evidenced",
+  NOT_COVERED: "not yet evidenced",
+};
+
+const CLIENT_SAFE_EVIDENCE_KIND: Record<string, string> = {
+  PROJECT: "project reference",
+  EXPERT: "expert CV",
+  COMPANY_DOCUMENT: "company document",
+  LEGAL_RECORD: "legal/registration record",
+  PROPOSAL_RESPONSE: "proposal narrative",
+  BUILD_PLAN_ITEM: "planned deliverable",
+  PACKAGE_CONFORMANCE: "package conformance check",
+};
+
+/** A stored file rather than a thing the client can be told about. */
+function looksLikeStoredFileName(value: string): boolean {
+  return /\.(?:txt|docx?|pdf|xlsx?|csv|json|pptx?)\b/i.test(value.trim());
+}
+
+export function clientSafeEvidenceReference(reference: string | null | undefined): string {
+  const raw = (reference ?? "").trim();
+  if (!raw) return "";
+  // A reference may list several items; judge each on its own so one filename
+  // does not discard the project names beside it.
+  const kept = raw
+    .split(/\s*[,;]\s*/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !looksLikeStoredFileName(part));
+  return kept.join(", ");
+}
+
+export function clientSafeComplianceEvidence(row: {
+  supportLevel?: string | null;
+  evidenceType?: string | null;
+  evidenceSource?: string | null;
+  evidenceReference?: string | null;
+  notes?: string | null;
+}): string {
+  const parts: string[] = [];
+
+  const coverage = CLIENT_SAFE_SUPPORT_LEVEL[String(row.supportLevel ?? "").toUpperCase()];
+  if (coverage) parts.push(coverage);
+
+  const kind = CLIENT_SAFE_EVIDENCE_KIND[String(row.evidenceType ?? "").toUpperCase()];
+  if (kind) parts.push(`from ${kind}`);
+
+  // evidenceSource is a drafting state ("Company evidence available for
+  // drafting") or an internal token ("AUTO_BYTE_VERIFIED_VAULT_DOCUMENT"). It
+  // describes how the engine reached the row, never the evidence, so none of
+  // it is client-facing and none of it is rendered.
+
+  const reference = clientSafeEvidenceReference(row.evidenceReference);
+  if (reference) parts.push(`(${reference})`);
+
+  // `notes` is not rendered at all. clientSafeComplianceNote strips the
+  // serialized evidence record, but what remains is still the engine
+  // describing its own plan and its own record counts — measured across the
+  // real Pharo run, every distinct note read like:
+  //
+  //   "One relevant Company Vault document, 3 selected expert(s), and 3
+  //    selected project reference(s) may support drafting. The response is not
+  //    covered until generated content is automatically source-linked."
+  //   "3 reviewed/selected expert(s) are available from 28 expert record(s)…
+  //    the proposal engine will write a staffing-compliance narrative."
+  //
+  // None of that is a fact about the bid; it is the pipeline talking about
+  // itself, down to how many records the Company Vault holds. A client-facing
+  // line has no use for it, and the writer already knows the coverage, the
+  // evidence kind and the reference from the fields above.
+
+  return parts.join(" ").trim();
+}
+
 export function parseAutomaticRequirementEvidence(
   notes: string | null | undefined,
 ): AutomaticRequirementEvidenceMetadata | null {
