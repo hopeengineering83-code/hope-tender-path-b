@@ -1,0 +1,58 @@
+name: Manually migrate a Preview database
+
+# Manually triggered ONLY — never wired to push/pull_request, so it cannot
+# fire without an explicit human (or API) dispatch naming it directly.
+#
+# Why this exists: scripts/vercel-build.mjs deliberately never runs database
+# migrations on a Vercel Preview build ("Preview builds are compile-and-test
+# only; they never mutate the shared Production database"), to protect a
+# possibly-shared database from an accidental Preview build. That is correct
+# for the automatic build path, but it also means there is no automated way
+# to initialize a *new*, deliberately-provisioned Preview database's schema.
+# This workflow is that path: a separate, explicit, operator-confirmed action
+# that runs the exact same non-destructive script the production build
+# already trusts (`npm run prisma:migrate:safe` -> `prisma migrate deploy`,
+# never `db push`/reset), against whichever database the operator has put in
+# the PREVIEW_DATABASE_URL_MIGRATION secret. This session's own sandbox has
+# no route to raw-TCP Postgres at all (its egress proxy only carries HTTPS),
+# so a GitHub-hosted runner — which has ordinary outbound network access —
+# is what actually runs the migration; nothing about the migration itself
+# changes.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "migrate" to confirm: this runs prisma migrate deploy against the database in the PREVIEW_DATABASE_URL_MIGRATION secret.'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migrate-preview-db
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    if: github.event.inputs.confirm == 'migrate'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Run the repository's non-destructive migration
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+        run: npm run prisma:migrate:safe
+
+      - name: Report Preview health (no secrets involved — GET only)
+        if: always()
+        run: |
+          curl -sS -o /tmp/health.json -w 'HTTP %{http_code}\n' \
+            "https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app/api/health" || true
+          cat /tmp/health.json || true
