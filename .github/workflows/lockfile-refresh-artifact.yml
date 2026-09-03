@@ -128,8 +128,18 @@ jobs:
           # reimplemented inline rather than imported so the whole safety
           # check is visible in this one file for anyone reviewing it.
 
-      - name: Install psql client
-        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends postgresql-client
+      - name: Install PostgreSQL 18 client tools (matches the Neon server version)
+        # Ubuntu's default postgresql-client is v16; pg_dump refuses to dump
+        # from a newer server (Neon runs Postgres 18) as a safety check. Add
+        # the official PGDG apt repo to get a matching client version instead
+        # of downgrading the check.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends postgresql-client-18
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
 
       - name: Phase 1 — read-only structural + row-count forensics (no mutation)
         env:
