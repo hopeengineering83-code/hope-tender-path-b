@@ -1399,15 +1399,112 @@ export function buildProposalIntelligence(params: {
 export function projectProofLine(project: ProjectLite): string {
   const value = money(project.contractValue, project.currency);
   const parts = [project.clientName, project.country, project.sector, value].filter(Boolean);
-  const summary = clean(project.summary).slice(0, 600);
+  const summary = truncateAtWordBoundary(clean(project.summary), 600);
   return `${project.name}${parts.length ? ` — ${parts.join(" | ")}` : ""}${summary ? `. ${summary}` : ""}`;
+}
+
+/**
+ * The CV form fields a proposal may quote, and the ones it may not.
+ *
+ * An expert's stored `profile` is the text extracted from their CV, and the
+ * standard consultancy CV opens with a personnel form whose labels and values
+ * run together with no punctuation:
+ *
+ *   1. PERSONNEL INFORMATION Proposed Position Architect Name of Firm Hope
+ *   Urban Planning … Name of Expert Habib Ahmed Date of Birth 1997 G.C.
+ *   (Approx) Nationality Ethiopian Education B.Sc. in Architecture
+ *
+ * expertProofLine hands that text to the writer, and the writer copied it into
+ * the team table of a real client-facing Technical Proposal — so the submitted
+ * document stated an employee's date of birth and nationality. Neither is
+ * evidence of capability, and neither belongs in a document that leaves the
+ * company.
+ *
+ * This is a privacy classifier, not a contaminant list: the categories are
+ * enumerated because personal data IS enumerated (birth, origin, civil status,
+ * identity numbers, personal contact details). The professional fields beside
+ * them — position, firm, education, registration — are exactly what an
+ * evaluator is meant to read and are kept.
+ *
+ * Removal is by FORM FIELD, not by blind deletion: a personal label consumes
+ * text only up to the next known label, so the professional field that follows
+ * it survives intact.
+ */
+const CV_FORM_LABELS = [
+  "Proposed Position", "Name of Firm", "Name of Expert", "Name of Staff",
+  "Date of Birth", "Place of Birth", "Nationality", "Citizenship",
+  "Marital Status", "Gender", "Sex", "Religion",
+  "Passport Number", "Passport No", "National ID", "ID Number", "ID No",
+  "Telephone", "Mobile", "Phone", "Email", "Address",
+  "Education", "Languages", "Membership in Professional Associations",
+  "Membership", "Years with Firm", "Key Qualifications", "Employment Record",
+] as const;
+
+const PERSONAL_CV_LABELS = new Set<string>([
+  "Date of Birth", "Place of Birth", "Nationality", "Citizenship",
+  "Marital Status", "Gender", "Sex", "Religion",
+  "Passport Number", "Passport No", "National ID", "ID Number", "ID No",
+  "Telephone", "Mobile", "Phone", "Email", "Address",
+]);
+
+export function withoutPersonalCvFields(profile: string): string {
+  if (!profile) return profile;
+  // Longest label first so "Passport Number" is not matched as "Passport No".
+  const labels = [...CV_FORM_LABELS].sort((a, b) => b.length - a.length);
+  const labelPattern = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const boundary = new RegExp(`\\b(${labelPattern})\\b`, "g");
+
+  const segments: Array<{ label: string | null; text: string }> = [];
+  let lastIndex = 0;
+  let lastLabel: string | null = null;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(profile)) !== null) {
+    segments.push({ label: lastLabel, text: profile.slice(lastIndex, match.index) });
+    lastLabel = match[1];
+    lastIndex = match.index + match[0].length;
+  }
+  segments.push({ label: lastLabel, text: profile.slice(lastIndex) });
+
+  return segments
+    .filter((segment) => !(segment.label && PERSONAL_CV_LABELS.has(segment.label)))
+    .map((segment) => (segment.label ? `${segment.label}${segment.text}` : segment.text))
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Cut long evidence text at a WORD boundary, not mid-word.
+ *
+ * These proof lines are writer context, and the writer copies them into the
+ * team and experience tables. A raw `.slice(0, 600)` therefore shipped, in a
+ * real client-facing Technical Proposal:
+ *
+ *   … SELAMAWIT MESFIN ARCHITECT HOPE URBAN PLANNING ARCHI
+ *   … Name of Firm Hope Urban Planning Architectural and Engineering Consultan
+ *
+ * A proposal that stops mid-word reads as broken to an evaluator, and it is the
+ * kind of defect no amount of prompt quality can fix because the damage is done
+ * before the writer sees the text.
+ *
+ * The budget is unchanged — the same amount of evidence reaches the writer —
+ * only the cut moves back to the last space, and the ellipsis marks it as
+ * shortened. A single token longer than the whole budget still gets a hard cut,
+ * because there is no word boundary to find.
+ */
+export function truncateAtWordBoundary(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const window = text.slice(0, max);
+  const lastSpace = window.lastIndexOf(" ");
+  const cut = lastSpace > Math.floor(max * 0.5) ? window.slice(0, lastSpace) : window;
+  return `${cut.replace(/[\s,;:—–-]+$/, "")}…`;
 }
 
 export function expertProofLine(expert: ExpertLite): string {
   const disciplines = safeParseArr(expert.disciplines).slice(0, 6).join(", ");
   const certs = safeParseArr(expert.certifications).slice(0, 6).join(", ");
   const sectors = safeParseArr(expert.sectors).slice(0, 4).join(", ");
-  const profile = clean(expert.profile).slice(0, 600);
+  const profile = truncateAtWordBoundary(withoutPersonalCvFields(clean(expert.profile)), 600);
   return [
     `${expert.fullName}${expert.title ? ` — ${expert.title}` : ""}`,
     expert.yearsExperience ? `${expert.yearsExperience}+ years experience` : null,
