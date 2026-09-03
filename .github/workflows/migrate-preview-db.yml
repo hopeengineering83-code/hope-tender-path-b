@@ -24,6 +24,9 @@ on:
       confirm:
         description: 'Type "migrate" to confirm: this runs prisma migrate deploy against the database in the PREVIEW_DATABASE_URL_MIGRATION secret.'
         required: true
+      expected_fingerprint:
+        description: 'The exact databaseFingerprint (from /api/health, e.g. d74f2ac75c88) the target database MUST already produce. The job refuses to run migrate if it does not match — this is the only thing that stops the secret from silently pointing at the wrong database.'
+        required: true
 
 permissions:
   contents: read
@@ -44,6 +47,42 @@ jobs:
           node-version: 22
 
       - run: npm ci --no-audit --no-fund
+
+      - name: Verify target database identity (fail closed)
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+          EXPECTED_FINGERPRINT: ${{ github.event.inputs.expected_fingerprint }}
+        run: |
+          node -e '
+            const { createHash } = require("crypto");
+            const url = process.env.DATABASE_URL || "";
+            let identity;
+            try {
+              const u = new URL(url);
+              const db = u.pathname.replace(/^\/+/, "");
+              identity = `${u.host}/${db}`;
+            } catch {
+              console.error("DATABASE_URL is not a parseable URL. Refusing to proceed.");
+              process.exit(1);
+            }
+            const fp = createHash("sha256").update(identity).digest("hex").slice(0, 12);
+            console.log("Target database fingerprint:", fp);
+            const expected = process.env.EXPECTED_FINGERPRINT;
+            if (!expected) {
+              console.error("No expected fingerprint supplied. Refusing to proceed blind.");
+              process.exit(1);
+            }
+            if (fp !== expected) {
+              console.error(`REFUSING TO MIGRATE: fingerprint ${fp} does not match expected ${expected}. This secret does not point at the intended database.`);
+              process.exit(1);
+            }
+            console.log("Fingerprint matches the expected target. Proceeding with migration.");
+          '
+          # This is the exact algorithm lib/database-fingerprint.ts uses at
+          # runtime (host + "/" + database name only, sha256, first 12 hex
+          # chars) — never the credential, never the query string. It is
+          # reimplemented inline rather than imported so the whole safety
+          # check is visible in this one file for anyone reviewing it.
 
       - name: Run the repository's non-destructive migration
         env:
