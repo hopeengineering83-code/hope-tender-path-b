@@ -128,10 +128,19 @@ jobs:
           # reimplemented inline rather than imported so the whole safety
           # check is visible in this one file for anyone reviewing it.
 
-      - name: Run the repository's non-destructive migration
+      - name: Install psql client
+        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Phase 1 — read-only structural + row-count forensics (no mutation)
         env:
-          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
-        run: npm run prisma:migrate:safe
+          SNAPSHOT_DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+        run: bash scripts/tmp-schema-structural-snapshot.sh
+
+      # Phase 4/5 (verified baseline resolve + normal migrate deploy) is
+      # deliberately not run in this dispatch — it needs the Phase 1 output
+      # first, to compute exactly which migrations are already reflected.
+      # Re-running `prisma migrate deploy` blind here would just reproduce
+      # the known P3005 failure.
 
       - name: Report Preview health (no secrets involved — GET only)
         if: always()
