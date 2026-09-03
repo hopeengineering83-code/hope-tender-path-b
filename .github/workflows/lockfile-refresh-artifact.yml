@@ -136,11 +136,31 @@ jobs:
           SNAPSHOT_DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
         run: bash scripts/tmp-schema-structural-snapshot.sh
 
-      # Phase 4/5 (verified baseline resolve + normal migrate deploy) is
-      # deliberately not run in this dispatch — it needs the Phase 1 output
-      # first, to compute exactly which migrations are already reflected.
-      # Re-running `prisma migrate deploy` blind here would just reproduce
-      # the known P3005 failure.
+      # Forensics (this dispatch and the prior one) proved the live schema is
+      # not a valid prefix of this repository's 51 migrations — root-caused
+      # to lib/prisma.ts's legacy runtime bootstrap path, not this repo's
+      # migration history. Every business table is empty (Role, a 4-row fixed
+      # lookup table, is the only exception). Owner explicitly authorized a
+      # one-time reset of ONLY this fingerprint-verified database, subject to
+      # the hard gates in tmp-verified-clean-rebuild.mjs (it independently
+      # re-checks the fingerprint and every table's row count and refuses to
+      # proceed — separately from this workflow's own checks above — if
+      # anything unexpected is found).
+      - name: Phase 2 — gated verified reset (DROP/CREATE SCHEMA only if every gate passes)
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+          EXPECTED_FINGERPRINT: ${{ github.event.inputs.expected_fingerprint }}
+        run: node scripts/tmp-verified-clean-rebuild.mjs
+
+      - name: Phase 3 — apply the full repository migration history from empty
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+        run: npm run prisma:migrate:safe
+
+      - name: Phase 4 — restore the 4 canonical Role rows + verify migration history
+        env:
+          DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+        run: node scripts/tmp-restore-canonical-roles-and-verify.mjs
 
       - name: Report Preview health (no secrets involved — GET only)
         if: always()
