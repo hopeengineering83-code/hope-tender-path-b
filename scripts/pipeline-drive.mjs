@@ -8,6 +8,7 @@
  * Stops at the FIRST step that cannot continue and prints the actual response.
  * This is a development/diagnostic harness, not production code.
  */
+import { Agent, setGlobalDispatcher } from "undici";
 import { writeFileSync, mkdirSync, readFileSync } from "node:fs";
 
 const BASE = process.env.DRIVE_BASE ?? "http://127.0.0.1:3100";
@@ -52,6 +53,18 @@ function log(name, status, detail) {
   const mark = status === "OK" ? "PASS" : status === "INFO" ? "  ->" : "STOP";
   console.log(`[${String(step).padStart(2, "0")}] ${mark}  ${name}${detail ? `  ${detail}` : ""}`);
 }
+
+// Long-running stages must not be cut off by the CLIENT.
+//
+// Node's fetch applies undici's 300 s headersTimeout, and a real
+// VAULT_INGEST over the full Company Vault, an AI_ANALYZE, and a
+// PROPOSAL_GENERATION each run past that. The request was aborted with
+// UND_ERR_HEADERS_TIMEOUT while the SERVER kept working and finished the job
+// — so the harness reported "fetch failed" for a stage that in fact
+// succeeded, which is the one thing a measurement harness must never do.
+// Disable the client-side header/body timeouts and let the server decide how
+// long its own work takes.
+setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0, connectTimeout: 30_000 }));
 
 async function call(method, path, opts = {}) {
   // Origin/Referer are sent because the app enforces same-origin on every
@@ -583,11 +596,32 @@ log("generate-missing-plan-files", r.status < 400 ? "OK" : "INFO", `HTTP ${r.sta
 {
   const { PrismaClient } = await import("@prisma/client");
   const prisma = new PrismaClient();
-  const awaiting = await prisma.generatedDocument.findMany({
+  const planned = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: "PLANNED" },
     select: { id: true, exactFileName: true },
   });
+  const generated = await prisma.generatedDocument.findMany({
+    where: { tenderId, generationStatus: "GENERATED" },
+    select: { exactFileName: true, name: true },
+  });
   await prisma.$disconnect();
+  // Attach an original ONLY where a human really has to supply one.
+  //
+  // This attached the DOCX fixture to EVERY planned row, including
+  // "Technical Proposal.pdf" — a row the automatic chain fills itself by
+  // rendering the validated DOCX. The app refused it correctly
+  // (FILE_SIGNATURE_INVALID: ".pdf extension but is not a valid PDF"), and the
+  // harness then reported a STOP for a stage that has no defect. A required
+  // PDF with a generated source of the same base name is AUTO_FINALIZE's job,
+  // and so is anything this harness has no matching fixture for.
+  const generatedBaseNames = new Set(
+    generated.map((d) => (d.exactFileName ?? d.name ?? "").replace(/\.[a-z0-9]+$/i, "").toLowerCase()),
+  );
+  const awaiting = planned.filter((d) => {
+    const fileName = d.exactFileName ?? "";
+    if (!/\.docx$/i.test(fileName)) return false;
+    return !generatedBaseNames.has(fileName.replace(/\.[a-z0-9]+$/i, "").toLowerCase());
+  });
   const { buildFinancialProposalDocx } = await import("./make-financial-proposal-docx.mjs");
   let attached = 0;
   for (const d of awaiting) {

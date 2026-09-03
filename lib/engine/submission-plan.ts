@@ -383,12 +383,56 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
   const files = new Map<string, SubmissionPlanFile>();
   const restrictions = restrictionText(requirements);
 
+  // The tender's own list of file names is the authority on WHAT the
+  // deliverables are; a requirement title is a description of one.
+  //
+  // A requirement row that elaborates a deliverable the tender has already
+  // named must not become a SECOND file. The Pharo tender names exactly one —
+  // exactFileNaming ["Technical Proposal.pdf"] — and also carries a MANDATORY
+  // FORMAT requirement titled "Technical Proposal Structure", which says how
+  // that proposal must be structured. The planner turned the second into its
+  // own deliverable, "Technical Proposal Structure.docx"; generation then
+  // wrote the entire 11,590-word technical proposal into THAT file and
+  // superseded the correctly named one, so the package simultaneously reported
+  // EXTRA_FILES and "MISSING_REQUIRED_FILES: technical proposal.pdf" — the
+  // required deliverable existed, under a name the tender never asked for.
+  //
+  // Folding is by name containment against the declared list and applies only
+  // to rows with no exactFileName of their own, so a row that names its own
+  // file still gets one, and a genuinely different deliverable (an annex, a
+  // financial offer) is untouched: its base name neither contains nor is
+  // contained by a declared name. The row's requirement ids move to the file it
+  // describes, so nothing loses its provenance.
+  const declaredBaseNames = parseStringArray(tender.exactFileNaming)
+    .concat(parseStringArray(tender.exactFileOrder))
+    .map((name) => normalize(name.trim().replace(/\.[a-z0-9]+$/i, "")))
+    .filter(Boolean);
+  const elaboratesDeclaredFile = (requirement: TenderRequirementLike, file: SubmissionPlanFile): string | null => {
+    if ((requirement.exactFileName ?? "").trim()) return null;
+    const base = normalize(file.exactFileName.replace(/\.[a-z0-9]+$/i, ""));
+    if (!base) return null;
+    return declaredBaseNames.find((declared) => declared !== base && (base.includes(declared) || declared.includes(base))) ?? null;
+  };
+  const foldedRequirementIds = new Map<string, string[]>();
+
   requirements.forEach((requirement, index) => {
     const file = buildFileFromRequirement(requirement, index);
-    if (file) addFile(files, file);
+    if (!file) return;
+    const declaredBase = elaboratesDeclaredFile(requirement, file);
+    if (declaredBase) {
+      foldedRequirementIds.set(declaredBase, [...(foldedRequirementIds.get(declaredBase) ?? []), ...file.sourceRequirementIds]);
+      return;
+    }
+    addFile(files, file);
   });
 
-  buildFilesFromExactNames(tender, files.size + 1).forEach((file) => addFile(files, file));
+  buildFilesFromExactNames(tender, files.size + 1).forEach((file) => {
+    const base = normalize(file.exactFileName.replace(/\.[a-z0-9]+$/i, ""));
+    const folded = foldedRequirementIds.get(base) ?? [];
+    addFile(files, folded.length > 0
+      ? { ...file, sourceRequirementIds: Array.from(new Set([...file.sourceRequirementIds, ...folded])) }
+      : file);
+  });
 
   // ── The tender's stated attachment order is authoritative ────────────────
   //

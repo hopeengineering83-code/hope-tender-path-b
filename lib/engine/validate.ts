@@ -12,6 +12,15 @@ export interface ValidationIssue {
   code: string;
   severity: "BLOCK" | "WARN";
   message: string;
+  /**
+   * The document this issue is ABOUT, when it is about one.
+   *
+   * Absent means the issue is about the package — a required file that is
+   * missing, a count that does not match, a compliance gap — not about the
+   * bytes of any particular document. The distinction decides what gets
+   * stamped FAILED; see the status write at the end of validateTender().
+   */
+  documentId?: string;
 }
 
 export interface ValidationReport {
@@ -158,6 +167,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
     issues.push({
       code: "ARTIFACT_IDENTITY_MISMATCH",
       severity: "BLOCK",
+      documentId: doc.id,
       message: `"${label}" is not the kind of file it claims to be — its name, declared format and actual bytes disagree. A file that will not open cannot be submitted; regenerate or re-attach it.`,
     });
   }
@@ -227,11 +237,12 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
       issues.push({
         code: "DOCUMENT_TEXT_UNREADABLE",
         severity: "WARN",
+        documentId: doc.id,
         message: `Document "${doc.name}" has stored bytes but no readable text could be extracted, so placeholder and hygiene checks could not inspect it.`,
       });
     }
 
-    if (hasPlaceholder(documentText)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
+    if (hasPlaceholder(documentText)) issues.push({ code: "PLACEHOLDER_IN_DOCUMENT", severity: "BLOCK", documentId: doc.id, message: `Document "${doc.name}" contains placeholder text that must be replaced.` });
 
     // Document hygiene: catch pricing leakage in technical envelopes, AI
     // disclosure phrases, and unresolved placeholder instructions. Surfacing
@@ -244,7 +255,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
       format: (doc as { format?: string | null }).format ?? null,
     });
     for (const hygieneIssue of hygieneIssues) {
-      issues.push({ code: "DOCUMENT_HYGIENE_FAILURE", severity: "BLOCK", message: `Document "${doc.name}": ${hygieneIssue}` });
+      issues.push({ code: "DOCUMENT_HYGIENE_FAILURE", severity: "BLOCK", documentId: doc.id, message: `Document "${doc.name}": ${hygieneIssue}` });
     }
 
     // Validation and readiness use the same narrative-quality authority. A
@@ -258,6 +269,7 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
       issues.push({
         code: "GENERATED_DOCUMENT_QUALITY_FAILED",
         severity: "BLOCK",
+        documentId: doc.id,
         message: `Document "${doc.name}" has not passed the canonical narrative-quality rubric (${verdict.report.score}/100): ${verdict.reasons.slice(0, 4).map((reason) => reason.message).join("; ")}`,
       });
     }
@@ -339,8 +351,47 @@ export async function validateTender(tenderId: string): Promise<ValidationReport
 
   if (tender.deadline && new Date(tender.deadline) < new Date()) issues.push({ code: "DEADLINE_PASSED", severity: "WARN", message: "The tender deadline has already passed." });
 
-  const blockCount = issues.filter((i) => i.severity === "BLOCK").length;
-  const newStatus = blockCount === 0 ? "PASSED" : "FAILED";
-  await prisma.generatedDocument.updateMany({ where: { id: { in: generatedDocs.map((d) => d.id) } }, data: { validationStatus: newStatus } });
-  return { passed: blockCount === 0, issues, checkedAt: new Date().toISOString() };
+  // Each document is stamped with ITS OWN outcome.
+  //
+  // This flattened every BLOCK issue into one tender-wide status and wrote it
+  // onto all of them, so a blocker about a file that does NOT EXIST condemned
+  // the files that do. On a real owner run the tender required
+  // "Technical Proposal.pdf", nothing had rendered it yet, and
+  // MISSING_REQUIRED_FILES therefore stamped validationStatus FAILED on a
+  // 98/100 source DOCX and an 84/100 annex whose only findings were MEDIUM.
+  // finalize-pdf then refused to render the PDF — PDF_REQUIRED_NOT_READY,
+  // "no machine-validated source" — because the source it needed had just been
+  // failed by a blocker about the PDF's own absence. Neither route could move,
+  // and the owner was told to "run Validate", which is what produced the state.
+  //
+  // Attribution decides the stamp: an issue carrying a documentId is about
+  // that document's bytes; an unattributed BLOCK is about the PACKAGE — a
+  // missing file, a count mismatch, an unresolved compliance gap — and is not
+  // evidence that an existing document is bad. The two exceptions are content
+  // findings computed across the whole proposal text, which no single document
+  // owns and every document shares.
+  //
+  // Nothing is relaxed for EXPORT: `passed` still requires zero BLOCK issues
+  // of any kind, every tender-level blocker is still returned, and the export
+  // gate still refuses the package. Only the per-document column changes, so
+  // that a document is judged by what is wrong with IT.
+  const WHOLE_PROPOSAL_CONTENT_CODES = new Set(["PROHIBITION_VIOLATION", "DISQUALIFIER_VIOLATION"]);
+  const blockingIssues = issues.filter((issue) => issue.severity === "BLOCK");
+  const condemnsEveryDocument = blockingIssues.some(
+    (issue) => !issue.documentId && WHOLE_PROPOSAL_CONTENT_CODES.has(issue.code),
+  );
+  const failedDocumentIds = new Set(
+    blockingIssues.map((issue) => issue.documentId).filter((id): id is string => Boolean(id)),
+  );
+  const failedIds = generatedDocs
+    .filter((doc) => condemnsEveryDocument || failedDocumentIds.has(doc.id))
+    .map((doc) => doc.id);
+  const passedIds = generatedDocs.map((doc) => doc.id).filter((id) => !failedIds.includes(id));
+  if (failedIds.length > 0) {
+    await prisma.generatedDocument.updateMany({ where: { id: { in: failedIds } }, data: { validationStatus: "FAILED" } });
+  }
+  if (passedIds.length > 0) {
+    await prisma.generatedDocument.updateMany({ where: { id: { in: passedIds } }, data: { validationStatus: "PASSED" } });
+  }
+  return { passed: blockingIssues.length === 0, issues, checkedAt: new Date().toISOString() };
 }
