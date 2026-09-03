@@ -14,7 +14,7 @@ import { runDeepRefinement } from "./deep-reasoning-refiner";
 import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
 import { executeProposalTool, PROPOSAL_TOOL_DEFS, type ToolEvidenceInventory } from "./proposal-tools";
 import { DeepReasoningTelemetry } from "./deep-reasoning-telemetry";
-import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, inlineEvidenceValue, projectProofLine, safeParseArr } from "./proposal-intelligence";
 import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
@@ -613,7 +613,10 @@ function fallbackProposalMarkdown(params: {
     );
   } else {
     const topProject = reviewedProjects[0];
-    const projectClientPart = topProject.clientName ? ` for ${topProject.clientName}` : "";
+    // Same trim as fmtProjectInline: the sentence supplies the full stop, so a
+    // client field ending in a comma must not render "… Amhara Region,.".
+    const inlineClient = inlineEvidenceValue(topProject.clientName);
+    const projectClientPart = inlineClient ? ` for ${inlineClient}` : "";
     const projectValuePart = topProject.contractValue ? ` (${topProject.currency ?? "ETB"} ${topProject.contractValue.toLocaleString()})` : "";
     lines.push(
       `${params.companyName} has delivered comparable assignments. ${topProject.name}${projectClientPart}${projectValuePart}. ` +

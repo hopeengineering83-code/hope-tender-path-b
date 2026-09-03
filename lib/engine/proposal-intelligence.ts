@@ -1404,6 +1404,35 @@ export function projectProofLine(project: ProjectLite): string {
 }
 
 /**
+ * A stored field, made fit to sit inside a sentence.
+ *
+ * Evidence values are interpolated straight into prose — "delivered X (client)"
+ * and "X for client." — so whatever punctuation the field ends with collides
+ * with the sentence's own. A real Company Vault project carries the client
+ * "Gimba City, South Wollo Zone, Amhara Region," — a location string that ends
+ * in a comma — and the client-facing Technical Proposal therefore read:
+ *
+ *   … G+6 General Hospital – Dr Abdul Seid (Gimba City, South Wollo Zone,
+ *   Amhara Region,) and Moyale Abattoir Rehabilitation …
+ *   … G+6 General Hospital – Dr Abdul Seid for Gimba City, South Wollo
+ *   Zone, Amhara Region,. The same team is proposed …
+ *
+ * ",)" and ",." three times over in the document an evaluator reads.
+ *
+ * The data is not edited to fix this: the vault keeps exactly what its source
+ * says, and only the rendering trims the separator that the sentence is about
+ * to supply itself.
+ */
+export function inlineEvidenceValue(value: string | null | undefined): string {
+  return (value ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[\s,;:.\u2013\u2014-]+/, "")
+    .replace(/[\s,;:\u2013\u2014-]+$/, "")
+    .trim();
+}
+
+/**
  * The CV form fields a proposal may quote, and the ones it may not.
  *
  * An expert's stored `profile` is the text extracted from their CV, and the

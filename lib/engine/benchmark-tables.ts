@@ -1,4 +1,5 @@
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
+import { inlineEvidenceValue } from "./proposal-intelligence";
 /**
  * Benchmark-quality tabular sections built deterministically from the
  * reviewed knowledge vault. These are appended to the proposal so that
@@ -106,7 +107,11 @@ function hasContractValue(value: number | null | undefined): boolean {
 function fmtProjectInline(project: Pick<ProjectRecord, "name" | "contractValue" | "currency" | "clientName">): string {
   const parts: string[] = [];
   if (hasContractValue(project.contractValue)) parts.push(fmtMoney(project.contractValue, project.currency));
-  if (project.clientName) parts.push(project.clientName);
+  // Trim the separator the sentence is about to supply. A vault client of
+  // "Gimba City, South Wollo Zone, Amhara Region," otherwise renders as
+  // "… (Gimba City, South Wollo Zone, Amhara Region,)".
+  const client = inlineEvidenceValue(project.clientName);
+  if (client) parts.push(client);
   return parts.length > 0 ? `${project.name} (${parts.join(", ")})` : project.name;
 }
 
