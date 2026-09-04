@@ -643,18 +643,50 @@ export async function runTenderEngine(
       contentSummary: document.contentSummary,
     }));
 
+    // Every Engine run used to supersede EVERY active GeneratedDocument
+    // unconditionally, whether or not the requirement-derived document plan
+    // it just recomputed still names them — including a document that was
+    // already GENERATED, VALIDATED, and (for a required PDF) already
+    // byte-verified by the auto-finalize PDF conversion step. documentRows
+    // above is never persisted here (only its count is), so nothing rebuilt
+    // what this step just destroyed until a later stage (/generate or
+    // generate-missing-plan-files) started over from empty. A tender whose
+    // requirements did not meaningfully change — a routine re-run, an
+    // AUTO_FINALIZE-triggered rearm, an operator re-clicking Run Engine —
+    // paid for that with a full regenerate-then-reconvert cycle every time,
+    // repeatedly burning AI provider quota and never letting AUTO_FINALIZE
+    // converge on a package it had just finished assembling correctly.
+    //
+    // Superseding only the documents this fresh plan no longer names — by
+    // exact, case-insensitive file name, the same identity export readiness
+    // and package reconciliation already key on — keeps the destructive path
+    // for genuine drift (a renamed or removed required file) while leaving an
+    // already-correct document alone. This mirrors the KEEP_AS_PLANNED /
+    // MARK_SUPERSEDED distinction reconcile-generated-docs.ts already applies
+    // on the manual reconciliation route, just inline here where the engine
+    // recomputes its own plan.
+    const currentPlanFileKeys = new Set(
+      documentPlan.documents
+        .map((document) => (document.exactFileName ?? "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const documentsToSupersede = activeGeneratedDocuments.filter((document) => {
+      const key = (document.exactFileName ?? document.name ?? "").trim().toLowerCase();
+      return !key || !currentPlanFileKeys.has(key);
+    });
+
     await prisma.$transaction(async (tx) => {
       const tenderMutationLock = computeTenderMutationLockKey(tenderId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${tenderMutationLock})`;
 
-      if (activeGeneratedDocuments.length > 0) {
+      if (documentsToSupersede.length > 0) {
         await tx.generatedDocument.updateMany({
-          where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+          where: { tenderId, id: { in: documentsToSupersede.map((document) => document.id) } },
           data: {
             generationStatus: "SUPERSEDED",
             validationStatus: "SUPERSEDED",
             reviewStatus: "SUPERSEDED",
-            reviewNotes: `Superseded by tender engine run ${engineRunId}. Review and comment history was preserved.`,
+            reviewNotes: `Superseded by tender engine run ${engineRunId}: no longer named by the current requirement-derived document plan. Review and comment history was preserved.`,
             updatedAt: new Date(),
           },
         });
@@ -662,11 +694,11 @@ export async function runTenderEngine(
           userId,
           tenderId,
           action: "TENDER_ENGINE_DOCUMENTS_SUPERSEDED",
-          description: `Superseded ${activeGeneratedDocuments.length} generated document(s) before engine rerun for "${tender.title}"`,
+          description: `Superseded ${documentsToSupersede.length} generated document(s) no longer named by the current document plan before engine rerun for "${tender.title}"`,
           metadata: {
             engineRunId,
             supersededAt: new Date().toISOString(),
-            preservedGeneratedDocuments: activeGeneratedDocuments.map((document) => ({
+            preservedGeneratedDocuments: documentsToSupersede.map((document) => ({
               id: document.id,
               name: document.name,
               documentType: document.documentType,
@@ -712,7 +744,7 @@ export async function runTenderEngine(
             `Engine run ID: ${engineRunId}`,
             canReusePromotedAnalysis ? "Engine reused the current manual AI Analyze output; requirement extraction was not repeated." : null,
             Math.max(0, tender.files.length - canonicalFiles.length) > 0 ? `${tender.files.length - canonicalFiles.length} duplicate or alternate source representation(s) were excluded.` : null,
-            activeGeneratedDocuments.length > 0 ? `${activeGeneratedDocuments.length} previous generated document(s) were superseded and preserved.` : null,
+            documentsToSupersede.length > 0 ? `${documentsToSupersede.length} previous generated document(s) no longer named by the current plan were superseded and preserved.` : null,
             "Deterministic matching uses source-verified Company Vault evidence and broad capability/sector equivalence.",
             mainEngineAIRematch.aiApplied ? `Bounded AI reranking assessed ${mainEngineAIRematch.expertAssessments} expert and ${mainEngineAIRematch.projectAssessments} project candidate(s).` : null,
             mainEngineAIRematch.warning ? `AI reranking warning: ${mainEngineAIRematch.warning}` : null,

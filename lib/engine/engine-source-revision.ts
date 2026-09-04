@@ -200,40 +200,50 @@ export async function computeEngineSourceRevision(
     company: {
       id: company.id,
       updatedAt: iso(company.updatedAt),
+      // updatedAt is deliberately excluded below (for every vault record, not
+      // just documents). It is write-bookkeeping, not evidence: an idempotent
+      // re-verification pass (autoVerifyCompanyKnowledge, called on every
+      // Engine run via prepareCompanyVaultForEngine) can touch a record's
+      // updatedAt while writing back the exact same trustLevel/reviewedBy/
+      // reviewedAt/reviewNotes/content hash it already had — isDurablySource
+      // Verified is what actually decides "nothing changed" and it does not
+      // depend on updatedAt. Hashing updatedAt anyway meant that harmless
+      // touch still produced a new sourceRevision, which invalidated the
+      // Engine job that had just produced a valid Build Plan and proposal,
+      // forcing a full ENGINE_RUN -> PROPOSAL_GENERATION redo — including
+      // superseding an already-finalized, byte-verified PDF — for a change
+      // that never happened. Every field that DOES represent real content
+      // (sha256/contentSha256, trustLevel, sourceDocumentId, reviewedBy,
+      // reviewedAt, reviewNotes, status, expiryDate, deletedAt) stays hashed,
+      // so a genuine change still produces a new revision.
       documents: sortById(documents).map((document) => ({
         id: document.id,
-        updatedAt: iso(document.updatedAt),
         sha256: document.contentSha256,
         byteLength: document.contentByteLength,
         integrityStatus: document.integrityStatus,
         extractionStatus: document.aiExtractionStatus,
       })),
-      experts: sortById(experts).map((record) => ({
+      experts: sortById(experts).map(({ updatedAt: _updatedAt, ...record }) => ({
         ...record,
-        updatedAt: iso(record.updatedAt),
         reviewedAt: record.reviewedAt ? iso(record.reviewedAt) : null,
         deletedAt: record.deletedAt ? iso(record.deletedAt) : null,
       })),
-      projects: sortById(projects).map((record) => ({
+      projects: sortById(projects).map(({ updatedAt: _updatedAt, ...record }) => ({
         ...record,
-        updatedAt: iso(record.updatedAt),
         reviewedAt: record.reviewedAt ? iso(record.reviewedAt) : null,
         deletedAt: record.deletedAt ? iso(record.deletedAt) : null,
       })),
-      legalRecords: sortById(legalRecords).map((record) => ({
+      legalRecords: sortById(legalRecords).map(({ updatedAt: _updatedAt, ...record }) => ({
         ...record,
-        updatedAt: iso(record.updatedAt),
         reviewedAt: record.reviewedAt ? iso(record.reviewedAt) : null,
         expiryDate: record.expiryDate ? iso(record.expiryDate) : null,
       })),
-      financialRecords: sortById(financialRecords).map((record) => ({
+      financialRecords: sortById(financialRecords).map(({ updatedAt: _updatedAt, ...record }) => ({
         ...record,
-        updatedAt: iso(record.updatedAt),
         reviewedAt: record.reviewedAt ? iso(record.reviewedAt) : null,
       })),
-      complianceRecords: sortById(complianceRecords).map((record) => ({
+      complianceRecords: sortById(complianceRecords).map(({ updatedAt: _updatedAt, ...record }) => ({
         ...record,
-        updatedAt: iso(record.updatedAt),
         reviewedAt: record.reviewedAt ? iso(record.reviewedAt) : null,
         expiryDate: record.expiryDate ? iso(record.expiryDate) : null,
       })),

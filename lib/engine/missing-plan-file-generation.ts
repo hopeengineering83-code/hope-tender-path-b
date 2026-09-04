@@ -42,6 +42,7 @@ import {
 import { logger } from "../observability";
 import { TECHNICAL_IN_FINANCIAL_RE } from "./document-quality-validator";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT } from "../vault-review-provenance";
+import { cleanClientName } from "./proposal-labels";
 
 export type MissingPlanFileGenerationResult = {
   ok: boolean;
@@ -167,6 +168,20 @@ function isNarrativeDraft(fileName: string, documentType: string) {
   return /technical|methodology|approach|work\s*plan|strategic|proposal|narrative|scope|requirement|company\s*[-_]?\s*profile|capability\s*[-_]?\s*statement|expression[-\s_]*of[-\s_]*interest|\beoi\b|experience|track\s*record|project\s*[-_]?\s*reference/.test(label);
 }
 
+/**
+ * A cover/transmittal letter is a distinct genre from the generic
+ * requirements-list narrative draft below: an evaluator expects a dated,
+ * addressed business letter with a subject line, a salutation, and a
+ * signed close — not a bulleted restatement of the tender's own requirements.
+ * isNarrativeDraft still recognizes it as company-authored content (a bare
+ * documentType of "TECHNICAL" matches its own "technical" pattern), so this
+ * only needs to select the letter template within that branch.
+ */
+function isCoverLetter(fileName: string, documentType: string) {
+  const label = `${fileName} ${documentType}`.toLowerCase();
+  return /cover\s*[-_]?\s*letter|transmittal\s*letter|letter\s+of\s+transmittal/.test(label);
+}
+
 function matchingRequirements(fileName: string, requirements: RequirementLike[]) {
   const labelWords = new Set(
     fileName.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/).filter((word) => word.length >= 4),
@@ -276,13 +291,79 @@ async function companyEvidenceFor(
  * and the company's own source-verified evidence — real content, or an honest
  * statement that a section has none yet.
  */
+/**
+ * Real business-letter body for a cover/transmittal letter — dated, addressed
+ * to the tender's own client name, with a subject line naming the tender, a
+ * salutation, evidence-anchored body paragraphs, and a signed close. No
+ * signatory name is invented: the tender's own contact person is used only
+ * when the source itself named one, otherwise the close names the role
+ * ("Authorized Representative") the same way buildDeclaration in
+ * benchmark-tables.ts signs without a confirmed name.
+ */
+function coverLetterContent(opts: {
+  tenderTitle: string;
+  clientName: string | null;
+  companyName: string;
+  reference: string | null;
+  requirements: RequirementLike[];
+  evidence: { experts: string[]; projects: string[] };
+}): Paragraph[] {
+  const client = clean(opts.clientName || "the Procuring Entity");
+  const dateLine = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const subject = `Submission of Technical Proposal — ${clean(opts.tenderTitle)}${opts.reference ? ` (Ref: ${clean(opts.reference)})` : ""}`;
+
+  const requirementTitles = opts.requirements.slice(0, 5).map((r) => clean(r.title)).filter(Boolean);
+  const openingClause = requirementTitles.length > 0
+    ? `in response to the requirements set out in the tender, including ${requirementTitles.slice(0, 3).join("; ")}`
+    : "in response to the request for proposal issued for this assignment";
+
+  const evidenceClause = opts.evidence.projects.length > 0
+    ? `Our submission is supported by directly comparable project delivery experience, including ${opts.evidence.projects.slice(0, 2).join(" and ")}.`
+    : null;
+  const teamClause = opts.evidence.experts.length > 0
+    ? `The proposed team is led by reviewed, source-verified specialists, including ${opts.evidence.experts.slice(0, 2).join(" and ")}.`
+    : null;
+
+  const bodyParagraphs = [
+    `Dear Sir/Madam,`,
+    `On behalf of ${opts.companyName}, we are pleased to submit our Technical Proposal for ${clean(opts.tenderTitle)} ${openingClause}.`,
+    [evidenceClause, teamClause].filter(Boolean).join(" ") || `${opts.companyName} confirms its technical capacity and availability to deliver the full scope described in the tender.`,
+    `This Technical Proposal, together with its supporting annexes, has been prepared strictly in accordance with the tender's stated submission instructions and remains valid for the acceptance period the tender specifies. We confirm our understanding of the scope of services and our commitment to the quality, schedule, and compliance standards required by ${client}.`,
+    `Please direct any request for clarification regarding this submission to the contact details provided in the accompanying company documentation. We thank you for the opportunity to be considered for this assignment and look forward to the evaluation outcome.`,
+  ];
+
+  return [
+    para(dateLine),
+    para(""),
+    para(client, true),
+    para(`Re: ${clean(opts.tenderTitle)}`),
+    para(""),
+    para(`Subject: ${subject}`, true),
+    para(""),
+    ...bodyParagraphs.map((text) => para(text)),
+    para(""),
+    para("Sincerely,"),
+    para(""),
+    para("Authorized Representative", true),
+    para(opts.companyName, true),
+  ];
+}
+
 async function narrativeDraftContent(
   tenderTitle: string,
   fileName: string,
   documentType: string,
   requirements: RequirementLike[],
   evidence: { experts: string[]; projects: string[] } = { experts: [], projects: [] },
+  letterContext?: { clientName: string | null; companyName: string; reference: string | null },
 ) {
+  if (letterContext && isCoverLetter(fileName, documentType)) {
+    const buffer = await Packer.toBuffer(new Document({
+      sections: [{ properties: {}, children: coverLetterContent({ tenderTitle, requirements, evidence, ...letterContext }) }],
+    }));
+    return buffer.toString("base64");
+  }
+
   // A financial/commercial proposal must not carry "methodology"/"work plan"/
   // "technical approach" language — the same envelope-separation rule that
   // keeps pricing out of a technical document (see pricing-hygiene.ts and
@@ -354,13 +435,14 @@ async function buildPlannedRowContent(args: {
   documentType: string;
   requirements: RequirementLike[];
   evidence?: { experts: string[]; projects: string[] };
+  letterContext?: { clientName: string | null; companyName: string; reference: string | null };
 }) {
   const replaceWithOriginal = needsOriginalReplacement(args.fileName, args.documentType);
   const isSubmissionRules = args.documentType === "SUBMISSION_RULES"
     || /submission formatting|packaging rules|submission rules|delivery instruction/i.test(args.fileName);
   if (isNarrativeDraft(args.fileName, args.documentType)) {
     return {
-      fileContent: await narrativeDraftContent(args.tenderTitle, args.fileName, args.documentType, args.requirements, args.evidence),
+      fileContent: await narrativeDraftContent(args.tenderTitle, args.fileName, args.documentType, args.requirements, args.evidence, args.letterContext),
       format: "DOCX",
       validationStatus: "NEEDS_REVALIDATION",
       reviewStatus: "NEEDS_REVIEW",
@@ -553,6 +635,15 @@ export async function generateMissingPlanFiles(args: {
   // carries the firm's own source-verified personnel and project evidence,
   // which is the material those files exist to present.
   const evidence = await companyEvidenceFor(prisma, tenderId);
+  // Read once for a cover/transmittal letter: the letter template needs the
+  // tender's own client name and the submitting firm's name, neither of which
+  // the generic narrative draft above required.
+  const company = await prisma.company.findUnique({ where: { userId: tender.userId }, select: { name: true, legalName: true } }).catch(() => null);
+  const letterContext = {
+    clientName: cleanClientName(tender.clientName || tender.procuringEntityName, tender.description),
+    companyName: company?.legalName || company?.name || "The Firm",
+    reference: tender.reference ?? null,
+  };
   for (const file of missing) {
     const documentType = documentTypeFor(file.exactFileName, file.documentType);
     const generated = await buildPlannedRowContent({
@@ -561,6 +652,7 @@ export async function generateMissingPlanFiles(args: {
       documentType,
       requirements: tender.requirements,
       evidence,
+      letterContext,
     });
     // A file the app must not invent — a priced financial proposal, a
     // tender-issued form — still needs a row, as PLANNED awaiting its official
@@ -594,6 +686,7 @@ export async function generateMissingPlanFiles(args: {
       documentType,
       requirements: tender.requirements,
       evidence,
+      letterContext,
     });
     preparedPlanned.push({
       fileName,
