@@ -545,6 +545,7 @@ export async function runTenderEngine(
         documentType: true,
         exactFileName: true,
         exactOrder: true,
+        format: true,
         generationStatus: true,
         validationStatus: true,
         reviewStatus: true,
@@ -670,9 +671,31 @@ export async function runTenderEngine(
         .map((document) => (document.exactFileName ?? "").trim().toLowerCase())
         .filter(Boolean),
     );
+    // A plan item requiring "Technical Proposal.pdf" is generated to
+    // "Technical Proposal.docx" — generate-elite.ts writes the proposal in
+    // the format it actually produces and leaves PDF conversion to the
+    // canonical finalizer, naming the source by the format it is rather than
+    // the format the plan ultimately needs (see its own comment on
+    // proposalFileName for why: a .docx row cannot carry the .pdf name
+    // without failing artifact-identity validation). Matching plan file keys
+    // by exact name alone made this legitimate, necessary DOCX source
+    // "no longer named by the plan" the moment a PDF-format item existed for
+    // it, so it was superseded on every Engine rerun before AUTO_FINALIZE's
+    // PDF-finalization step ever got to convert it — the exact
+    // regenerate-then-reconvert loop this function was fixed to stop, just
+    // one file-extension away from the case already covered.
+    const currentPlanBaseNameKeys = new Set(
+      documentPlan.documents
+        .map((document) => (document.exactFileName ?? "").trim().toLowerCase().replace(/\.[a-z0-9]{2,5}$/, ""))
+        .filter(Boolean),
+    );
     const documentsToSupersede = activeGeneratedDocuments.filter((document) => {
       const key = (document.exactFileName ?? document.name ?? "").trim().toLowerCase();
-      return !key || !currentPlanFileKeys.has(key);
+      if (!key) return true;
+      if (currentPlanFileKeys.has(key)) return false;
+      const baseKey = key.replace(/\.[a-z0-9]{2,5}$/, "");
+      if (document.format === "DOCX" && currentPlanBaseNameKeys.has(baseKey)) return false;
+      return true;
     });
 
     await prisma.$transaction(async (tx) => {
