@@ -72,6 +72,21 @@ export async function POST(
       reviewStatus: document.reviewStatus,
       fileContent: document.fileContent,
       storagePath: document.storagePath,
+      // Dropping these defeated the persisted-integrity mechanism entirely:
+      // verifyPersistedFileBytes (via readGeneratedDocumentContent) saw
+      // integrityStatus undefined, concluded the row predated integrity
+      // tracking, and refused a document whose stored status was already
+      // VERIFIED with FILE_BYTES_NOT_VERIFIED: LEGACY_INTEGRITY_UNKNOWN — the
+      // exact defect lib/engine/final-submission-readiness.ts's asReadyDoc
+      // was already fixed for, on this separate route building its own plain
+      // object from the same generatedDocuments rows.
+      contentSha256: document.contentSha256,
+      contentByteLength: document.contentByteLength,
+      contentMimeType: document.contentMimeType,
+      detectedFormat: document.detectedFormat,
+      integrityStatus: document.integrityStatus,
+      integrityVerifiedAt: document.integrityVerifiedAt,
+      integrityFailureCode: document.integrityFailureCode,
     }));
 
     const ctx = buildTenderDocumentContext(
