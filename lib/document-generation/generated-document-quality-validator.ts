@@ -143,12 +143,37 @@ export function validateGeneratedDocumentQuality(
   }
 
   // Check technical/financial separation
+  //
+  // A technical proposal's own project-experience/evidence section routinely
+  // quotes a PAST project's cost ("Construction Cost: 550,074,678.02 ETB") as
+  // portfolio evidence, and a compliant proposal often explicitly states it
+  // carries no financial offer ("This is a TECHNICAL PROPOSAL ONLY. No
+  // financial offer or pricing is included"). Both contain the same bare
+  // currency/pricing keywords this check flags, and both are the opposite of
+  // contamination — the first cites someone else's completed project, the
+  // second disclaims the firm's own offer. Counting keyword occurrences with
+  // no context flagged reference-project citations and compliance
+  // disclaimers as violations, at the exact quality/depth level (rich,
+  // evidence-dense project references) this proposal is expected to reach.
+  //
+  // The genuine risk this check protects against is the FIRM'S OWN price/fee
+  // for THIS assignment leaking into the technical envelope, so a match only
+  // counts when its surrounding context does not read as a reference-project
+  // cost line or an explicit no-offer disclaimer.
   if (documentType === "TECHNICAL_PROPOSAL") {
-    if (/\b(?:price|pricing|quotation|ETB|USD|EUR|GBP|fee|rate|lump\s+sum|unit\s+price)\b/i.test(documentText)) {
-      const financialWords = documentText.match(/\b(?:price|pricing|quotation|ETB|USD|EUR|GBP|fee|rate|lump\s+sum|unit\s+price)\b/gi);
-      if (financialWords && financialWords.length > 3) {
-        finalBlockers.push("Financial content detected in technical proposal — possible envelope contamination");
-      }
+    const financialKeyword = /\b(?:price|pricing|quotation|ETB|USD|EUR|GBP|fee|rate|lump\s+sum|unit\s+price)\b/gi;
+    const REFERENCE_COST_CONTEXT_RE = /\b(?:construction|design|supervision|contract|project|feasibility|geotechnical)\s+cost\b|contract\s+value|cost\s+details|comparable\s+project|project\s+reference/i;
+    const NO_OFFER_DISCLAIMER_RE = /no\s+financial\s+offer|no\s+pricing|not\s+include[sd]?\s+(?:any\s+)?(?:financial|price|pricing)|technical\s+proposal\s+only|do\s+not\s+include\s+any\s+financial/i;
+    let contaminatingMatches = 0;
+    for (const match of documentText.matchAll(financialKeyword)) {
+      const start = Math.max(0, (match.index ?? 0) - 80);
+      const end = Math.min(documentText.length, (match.index ?? 0) + match[0].length + 80);
+      const surrounding = documentText.slice(start, end);
+      if (REFERENCE_COST_CONTEXT_RE.test(surrounding) || NO_OFFER_DISCLAIMER_RE.test(surrounding)) continue;
+      contaminatingMatches += 1;
+    }
+    if (contaminatingMatches > 3) {
+      finalBlockers.push("Financial content detected in technical proposal — possible envelope contamination");
     }
   }
 
