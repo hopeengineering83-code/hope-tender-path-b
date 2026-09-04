@@ -815,6 +815,29 @@ async function runCanonicalValidation(
       continue;
     }
 
+    // A fresh PLANNED row is an empty identity, not a deliverable yet — it
+    // has no content for this pass to judge one way or the other. Most
+    // PLANNED rows are already filled in by the missing-plan-file generation
+    // stage that runs earlier in this same job, but a PLANNED row for a
+    // required PDF is deliberately left empty here: PDF finalization (the
+    // stage right after this one, in runAutoFinalizeAfterGeneration) fills
+    // this exact row in place with the rendered bytes. Marking it FAILED
+    // pre-judged a placeholder before finalization had the chance to fill
+    // it, and — because AUTO_FINALIZE's identity is deterministic per
+    // analysis revision — that FAILED verdict, once persisted, stood as a
+    // terminal blocker even after finalization went on to fill and validate
+    // the very same row two stages later in the same run. A PLANNED row
+    // finalization does not end up filling is still caught downstream by
+    // packageReconciliation's "N required file(s) are not in the package"
+    // and by the final export-readiness gate's own
+    // UNGENERATED_PLANNED_DOCUMENTS check, so nothing here lets a
+    // genuinely-missing deliverable through — it only stops this pass from
+    // prejudging one this run has not tried to produce yet.
+    if (doc.generationStatus === "PLANNED") {
+      pending++;
+      continue;
+    }
+
     const passes = !failedDocIds.has(doc.id);
     await prisma.generatedDocument.update({
       where: { id: doc.id },

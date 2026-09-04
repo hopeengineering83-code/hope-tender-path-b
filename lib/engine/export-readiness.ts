@@ -480,16 +480,35 @@ export function exportReadinessError(failures: ExportReadinessFailure[], tenderL
   return out.length === 0 ? "" : out.join("\n\n");
 }
 
-export function filePlanBlockersFromLists(docs: ExportReadyDocument[], exactFileNaming: string | null | undefined, exactFileOrder: string | null | undefined): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
+export function filePlanBlockersFromLists(
+  docs: ExportReadyDocument[],
+  exactFileNaming: string | null | undefined,
+  exactFileOrder: string | null | undefined,
+  // Names the confirmed Build Plan also requires, beyond the tender's raw
+  // exactFileNaming/exactFileOrder text. That text is frequently a PARTIAL
+  // naming instruction — it names the primary Technical Proposal file and
+  // says nothing about a cover letter or annex, leaving those to the bidder.
+  // The confirmed Build Plan is the authoritative, comprehensive required-file
+  // scope: it is compiled from this same text PLUS whatever documents the
+  // tender's own mandatory requirements demand. Without this, a legitimately
+  // required, plan-confirmed document the raw text never named was reported
+  // "extra" and permanently blocked export/auto-finalize — permanently
+  // because exactFileNaming never changes, so no later run could clear it.
+  additionalAllowedNames: Iterable<string> = [],
+): NonNullable<ExportReadinessResult["tenderLevelBlockers"]> {
   const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
   const requiredNames = parseRequiredFileList(exactFileNaming);
   const requiredOrder = parseRequiredFileList(exactFileOrder);
   const actualNames = docs.map((doc) => documentFileName(doc)).filter(Boolean);
   const actualNameSet = new Set(actualNames.map(normalizeFileName));
+  const allowedExtraNameSet = new Set(Array.from(additionalAllowedNames, normalizeFileName));
 
   const missingNames = requiredNames.filter((name) => !actualNameSet.has(normalizeFileName(name)));
   if (missingNames.length > 0) blockers.push({ category: "FILE_NAMING", severity: "HIGH", title: `Missing required generated file name(s): ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}`, recommendedAction: "Generate or rename documents to match the tender's exact required file names before final export." });
-  const extraFiles = actualNames.filter((name) => requiredNames.length > 0 && !requiredNames.some((required) => normalizeFileName(required) === normalizeFileName(name)));
+  const extraFiles = actualNames.filter((name) =>
+    requiredNames.length > 0
+    && !requiredNames.some((required) => normalizeFileName(required) === normalizeFileName(name))
+    && !allowedExtraNameSet.has(normalizeFileName(name)));
   if (extraFiles.length > 0) blockers.push({ category: "EXTRA_FILES", severity: "HIGH", title: `Generated package contains non-required file(s): ${extraFiles.slice(0, 5).join(", ")}${extraFiles.length > 5 ? ` and ${extraFiles.length - 5} more` : ""}`, recommendedAction: "Remove extra generated files not listed in the tender's exact file naming instructions before final export." });
 
   if (requiredOrder.length > 0) {
@@ -901,7 +920,18 @@ export async function checkTenderLevelExportBlockers(tenderId: string, docs: Exp
   const ungroundedMandatory = tender.requirements.filter((req) => req.priority === "MANDATORY" && !req.sectionReference && !req.sourceTenderFileId && !req.sourcePageNumber && !req.sourceExactQuote && (req.sourceConfidence ?? 0) <= 0);
   if (ungroundedMandatory.length > 0) blockers.push(tenderBlocker("SOURCE_REFERENCES_MISSING", `${ungroundedMandatory.length} mandatory requirement(s) lack source/page/quote traceability.`, "Run source extraction and review mandatory requirement references before export.", "HIGH"));
 
-  blockers.push(...filePlanBlockersFromLists(docs, tender.exactFileNaming, tender.exactFileOrder));
+  // Look up the confirmed Build Plan (if any) so its file names are never
+  // flagged as "extra" by the narrower text-only check below — see the
+  // comment on filePlanBlockersFromLists for why the two can legitimately
+  // disagree, and why the Build Plan is the authoritative one.
+  const { getCurrentConfirmedBuildPlan } = await import("./build-plan");
+  const confirmedBuildPlanForFileNaming = await getCurrentConfirmedBuildPlan(prisma, tenderId, tender.userId).catch(
+    () => ({ ok: false as const, blocker: "" }),
+  );
+  const buildPlanFileNames = confirmedBuildPlanForFileNaming.ok
+    ? confirmedBuildPlanForFileNaming.items.map((item) => item.exactFileName)
+    : [];
+  blockers.push(...filePlanBlockersFromLists(docs, tender.exactFileNaming, tender.exactFileOrder, buildPlanFileNames));
 
   const highOpen = await prisma.evaluatorObjection.findMany({ where: { tenderId, status: "OPEN", severity: "HIGH" }, select: { id: true, title: true, severity: true, category: true, recommendedAction: true }, take: 20 });
   for (const o of highOpen) blockers.push({ category: `EVALUATOR_${o.category}`, severity: o.severity, title: o.title, recommendedAction: o.recommendedAction });

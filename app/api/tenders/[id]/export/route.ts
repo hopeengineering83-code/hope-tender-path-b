@@ -220,6 +220,25 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         }
       } catch { /* invalid legacy JSON is ignored; canonical gates remain fail-closed */ }
     }
+    // The two sources above are frequently PARTIAL: a per-requirement
+    // exactFileName is only populated for the requirement the tender's naming
+    // text explicitly names (here, just the Technical Proposal), and
+    // exactFileNaming/exactFileOrder carry the same narrow text. The confirmed
+    // Build Plan is the authoritative, comprehensive file list — compiled from
+    // that same text PLUS whatever documents the tender's own mandatory
+    // requirements demand (a cover letter, an annex) — so a document the
+    // Build Plan confirms but the narrower sources never named was reported
+    // EXTRA_DOCUMENT_NOT_IN_MANIFEST and MISSING_REQUIRED_SECTION by Authority
+    // Review below, permanently: exactFileNaming never changes, so no later
+    // run could clear either blocker.
+    const manifestBuildPlan = await getCurrentConfirmedBuildPlan(prisma, id, userId);
+    if (manifestBuildPlan.ok) {
+      for (const item of manifestBuildPlan.items) {
+        if (item.exactFileName?.trim()) {
+          manifestEntries.push({ exactFileName: item.exactFileName, documentType: item.documentType ?? "TENDER_REQUIRED_FILE" });
+        }
+      }
+    }
 
     // Judge the documents by their own bytes. Passing only contentSummary and
     // reviewNotes made this gate read the generator's audit prose instead of
@@ -282,7 +301,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
       }, { status: 409 });
     }
 
-    const reviewBuildPlan = await getCurrentConfirmedBuildPlan(prisma, id, userId);
+    const reviewBuildPlan = manifestBuildPlan;
     const reviewOperationGate = resolveTenderOperationGate({
       tender: {
         id: tender.id,

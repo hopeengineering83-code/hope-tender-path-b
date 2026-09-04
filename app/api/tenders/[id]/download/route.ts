@@ -314,6 +314,24 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
         }
       }
     } catch { /* ignore invalid JSON */ }
+    // The two sources above are frequently PARTIAL: a per-requirement
+    // exactFileName is only populated for the requirement the tender's naming
+    // text explicitly names, and exactFileNaming carries that same narrow
+    // text. The confirmed Build Plan (finalBuildPlan, already fetched above)
+    // is the authoritative, comprehensive file list — compiled from that same
+    // text PLUS whatever documents the tender's own mandatory requirements
+    // demand (a cover letter, an annex) — so a document the Build Plan
+    // confirms but the narrower sources never named was reported
+    // EXTRA_DOCUMENT_NOT_IN_MANIFEST here even after /export's own equivalent
+    // manifest gap was fixed, because this route builds its manifest
+    // independently.
+    if (finalBuildPlan.ok) {
+      for (const item of finalBuildPlan.items) {
+        if (item.exactFileName?.trim()) {
+          manifestEntries.push({ exactFileName: item.exactFileName, documentType: item.documentType ?? "TENDER_REQUIRED_FILE" });
+        }
+      }
+    }
 
     const requiredSections: string[] = [];
     for (const raw of [tender.exactFileNaming, tender.exactFileOrder]) {
