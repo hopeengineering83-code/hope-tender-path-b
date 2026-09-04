@@ -1072,8 +1072,21 @@ export async function checkDocumentQualityGate(
     }
     if (!text || looksLikeEncodedBytes(text) || !looksLikePlainText(text)) continue;
 
-    const documentType = doc.documentType ?? "";
-    const requiredSections = requiredSectionsByType[documentType] ?? [];
+    // A cover/transmittal letter is routinely persisted with a generic
+    // documentType (TECHNICAL, TECHNICAL_PROPOSAL — whatever the confirmed
+    // Build Plan item or the main proposal writer used), because
+    // DEFAULT_REQUIRED_SECTIONS_BY_TYPE has no COVER_LETTER key of its own.
+    // Looking it up by that field then ran a real, correctly-written business
+    // letter against the full Technical Proposal's section list (Work Plan,
+    // Team Composition, Compliance Matrix, ...), which no one-page letter can
+    // ever satisfy. Recognizing it by name first — the same signal
+    // lib/engine/document-quality-gate.ts already uses for this exact
+    // document kind — routes it to its own, letter-appropriate check instead.
+    const isCoverLetterDoc = /cover\s*[-_]?\s*letter|transmittal\s*letter|letter\s+of\s+transmittal/i.test(`${doc.name ?? ""} ${fileName}`);
+    const documentType = isCoverLetterDoc ? "COVER_LETTER" : (doc.documentType ?? "");
+    const requiredSections = isCoverLetterDoc
+      ? ["Dear", "Subject", "Sincerely"]
+      : requiredSectionsByType[documentType] ?? [];
     const result = validateGeneratedDocumentQuality(
       text,
       documentType,
