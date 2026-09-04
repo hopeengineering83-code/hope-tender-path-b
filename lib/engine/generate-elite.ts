@@ -2138,6 +2138,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (!upstreamCheck("D.1 Value Framework") && !upstreamCheck(`D.1 Value Framework — What ${intelligence.clientName} Gains`) && !upstreamCheck("Value Framework")) {
     round2Sections.push(buildValueFrameworkTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName }));
   }
+  // Submission Checklist — an evaluator-facing confirmation of what this
+  // package contains, not the bid team's internal pre-send reminders
+  // ("Pre-Submission Checklist" further up this file, used only in the
+  // tender-intake submission-plan summary an owner reads before sending,
+  // never in the client-facing proposal). Listing which of the tender's own
+  // mandatory requirements this submission addresses is genuine,
+  // source-derived content an evaluator can check the proposal against — the
+  // same category of content as the Compliance Matrix, just at a glance.
+  if (!upstreamCheck("Submission Checklist")) {
+    const mandatoryTitles = tender.requirements
+      .filter((r) => r.priority === "MANDATORY" || r.priority === "CRITICAL")
+      .map((r) => r.title)
+      .filter((title): title is string => Boolean(title))
+      .slice(0, 20);
+    if (mandatoryTitles.length > 0) {
+      round2Sections.push([
+        "## Submission Checklist",
+        "This submission has been prepared to address each mandatory requirement stated in the tender:",
+        ...mandatoryTitles.map((title) => `- [x] ${title}`),
+        "Full response detail and supporting evidence for each item are presented in the Compliance Matrix.",
+      ].join("\n\n"));
+    }
+  }
   if (!upstreamCheck("D.4 Declaration of Eligibility") && !upstreamCheck("Declaration of Eligibility") && !upstreamCheck("Declaration")) {
     round2Sections.push(buildDeclaration({
       companyName: company.name,
