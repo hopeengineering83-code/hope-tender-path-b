@@ -701,7 +701,10 @@ function detectSubmissionRules(tender: TenderLite, tenderText: string): string[]
   if (subjectMatch?.[1]) rules.push(`Exact subject line (verbatim): "${subjectMatch[1].trim()}".`);
 
   // Deadline
-  if (tender.deadline) {
+  const groundedDeadline = tenderText.match(/Submission\s+Deadline\s*:\s*([^\n]{5,100})/i)?.[1]?.trim();
+  if (groundedDeadline) {
+    rules.push(`Submission deadline: ${groundedDeadline.replace(/\.$/, "")}.`);
+  } else if (tender.deadline) {
     rules.push(`Submission deadline: ${new Date(tender.deadline).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}.`);
   } else {
     const deadlineMatch = tenderText.match(/[Dd]eadline\s*[:\-]\s*([^\n]{5,60})/);
@@ -710,7 +713,7 @@ function detectSubmissionRules(tender: TenderLite, tenderText: string): string[]
 
   // Submission method/address
   if (tender.submissionMethod) rules.push(`Submission method: ${tender.submissionMethod}.`);
-  if (tender.submissionAddress) rules.push(`Submission portal / address: ${tender.submissionAddress}.`);
+  if (tender.submissionAddress && !/email/i.test(tender.submissionMethod ?? "")) rules.push(`Submission portal / address: ${tender.submissionAddress}.`);
 
   // File format
   if (/PDF only|submit.*PDF|electronic.*PDF/i.test(tenderText)) rules.push("File format: PDF (electronic submission only).");

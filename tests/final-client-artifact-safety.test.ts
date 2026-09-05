@@ -5,6 +5,7 @@ import { formatSubmissionDeadline } from '../lib/engine/benchmark-tables';
 import { assessGeneratedDocumentQuality } from '../lib/engine/document-quality-gate';
 import { stripInternalReviewSections } from '../lib/engine/internal-review-stripper';
 import { disambiguateRepeatedHeadings } from '../lib/engine/generate-elite';
+import { buildProposalIntelligence } from '../lib/engine/proposal-intelligence';
 
 const internalSections = [
   '## Proposal Evaluator Loop\n\nPrivate evaluator simulation.',
@@ -106,4 +107,17 @@ test('repeated all-caps table values are not misclassified as duplicate section 
     rawFileContent: 'bytes',
   });
   assert.ok(!report.issues.some((issue) => issue.code === 'DUPLICATED_SECTIONS'));
+});
+
+test('email submission rules use the grounded deadline text and omit a physical portal', () => {
+  const result = buildProposalIntelligence({
+    tender: {
+      title: 'Healthcare design', deadline: new Date('2026-08-25T00:00:00Z'),
+      submissionMethod: 'Email', submissionAddress: '/ Portal: No physical address or portal i',
+      description: 'Submission Deadline: August 25, 2026, 5:00 PM Addis Ababa Time\nSubmission Method: Email submission only',
+    },
+    company: { name: 'Hope', serviceLines: '[]', sectors: '[]' }, requirements: [], experts: [], projects: [],
+  });
+  assert.ok(result.submissionRules.some((rule) => /5:00 PM Addis Ababa Time/.test(rule)));
+  assert.ok(!result.submissionRules.some((rule) => /portal \/ address/i.test(rule)));
 });
