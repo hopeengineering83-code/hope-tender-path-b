@@ -2954,7 +2954,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     logger.info("[generate-elite] Three-column signature block injected (PR JJ).");
   }
 
+  // The deterministic path does not enter the later refinement branch. Apply
+  // the same client-artifact safety sweep before its first render.
+  humanizedMarkdown = stripInternalReviewSections(humanizedMarkdown).markdown
+    .replace(/\b(?:the\s+)?same\s+project\s+team\b[^.!?]*(?:[.!?]|$)/gi, "")
+    .replace(/\bzero\s+learning\s+curve\b/gi, "a structured mobilisation")
+    .replace(/\bdirectly\s+comparable\b/gi, "relevant")
+    .replace(/^.*\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.*\b(?:attached|provided)\b.*\b(?:appendix|appendices|annex|annexes)\b.*$/gim, "")
+    .replace(/^(?:[-*]\s*)?Submission\s+(?:Address|Portal)[^:\n]*:\s*.*\b[a-z]{1,2}\s*$/gim, "")
+    .replace(/^.*\b(?:Signature|Company Stamp|Stamp|Date)\s*:\s*_+.*$/gim, "")
+    .replace(/\[\s*\]/g, "—")
+    .replace(/\n{3,}/g, "\n\n");
+  humanizedMarkdown = stripPlaceholders(humanizedMarkdown).markdown;
+
   const auditSummary = benchmarkAuditSummary(humanizedMarkdown);
+  const children = markdownToDocx(humanizedMarkdown);
   const contactFooter = buildContactFooterText({
     name: company.name,
     address: company.address,
@@ -2997,6 +3011,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       : null,
     exactSubjectLine: intelligence.exactSubjectLine,
   };
+
+  const doc = buildProfessionalDocument({
+    tenderTitle: cleanedTenderTitle,
+    clientName: intelligence.clientName,
+    companyName: company.name,
+    reference: tender.reference,
+    contactFooter,
+    children,
+    suppressCoverBlock: tenderForbidsCoverPage,
+    suppressBrandedHeader: tenderForbidsBranding,
+    logo: tenderForbidsBranding ? undefined : companyLogo,
+    coverVault,
+  });
 
   // Round-11: multi-pass refinement. Score the assembled proposal; if it
   // falls below threshold and the AI is configured, ask the AI to rewrite
@@ -3264,7 +3291,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // win themes, self-score) if any are missing from the final markdown.
   const repairedMarkdown = applyProposalQualityRepairAddenda(workingMarkdown, evaluatorMatrixInput);
   const repairAddendaApplied = repairedMarkdown !== workingMarkdown;
-  {
+  if (repairAddendaApplied) {
     logger.info("[generate-elite] Quality repair addenda applied — one or more critical sections were missing.");
     workingMarkdown = repairedMarkdown;
     // Re-score after repair so contentSummary reflects the improved proposal.
@@ -3335,7 +3362,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   // Final placeholder sweep — repair addenda may have injected placeholder text.
   // Run stripPlaceholders one more time so markdownToDocx never sees raw placeholders.
-  {
+  if (refinementApplied || repairAddendaApplied) {
     const finalStrip = stripPlaceholders(workingMarkdown);
     if (finalStrip.removedLines + finalStrip.blankedCells + finalStrip.removedParagraphs > 0) {
       logger.info(`[generate-elite] Final placeholder sweep: removed ${finalStrip.removedLines} line(s), ${finalStrip.removedParagraphs} paragraph(s); blanked ${finalStrip.blankedCells} table cell(s).`);
@@ -3358,9 +3385,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     .replace(/[→⇒]/g, "->")
     .replace(/[←⇐]/g, "<-");
 
-  // Always render the exact post-gate markdown, including deterministic fallback.
-  const finalChildren = markdownToDocx(workingMarkdown);
-  const finalDoc = buildProfessionalDocument({
+  // Re-render the DOCX from the (possibly refined) markdown.
+  const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;
+  const finalDoc = (refinementApplied || repairAddendaApplied)
+    ? buildProfessionalDocument({
         tenderTitle: cleanedTenderTitle,
         clientName: intelligence.clientName,
         companyName: company.name,
@@ -3371,7 +3399,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         suppressBrandedHeader: tenderForbidsBranding,
         logo: tenderForbidsBranding ? undefined : companyLogo,
         coverVault,
-      });
+      })
+    : doc;
   const fileContent = (await Packer.toBuffer(finalDoc)).toString("base64");
   const proposalIntegrity = verifiedIntegrityDataFromBase64({ fileContent, filename: "Technical-Proposal.docx", claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
   const refinementProvider = refinementApplied ? getLastProposalProvider() : null;
