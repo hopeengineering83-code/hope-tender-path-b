@@ -85,10 +85,10 @@ describe("the regex extractor still does the work canonical does not cover", () 
 
 describe("nothing is invented", () => {
   it("does not turn flattened table labels and filenames into references or locations", () => {
-    const flattened = (`Tender Reference: document.docx Type Row\nTender Reference: METADATA, Title, Issuing\n` +
+    const flattened = (`Tender Reference: document.docx Type Row\nTender Reference: METADATA, Title, Issuing\nTender Reference: Status, issued, references\n` +
       `Location: Addis Ababa Submission Method: Email Submission Address: No portal\n`).repeat(8);
     const facts = extractTenderFacts(flattened);
-    assert.ok(!facts.rfpIds.some((value) => /document\.docx|^type$|^row$|metadata|issuing/i.test(value)));
+    assert.ok(!facts.rfpIds.some((value) => /document\.docx|^type$|^row$|metadata|issuing|status|references/i.test(value)));
     assert.deepEqual(facts.locations, ["Addis Ababa"]);
     assert.ok(facts.locations.every((value) => !/Submission|Portal|Method/i.test(value)));
   });

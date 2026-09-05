@@ -225,7 +225,11 @@ export function extractTenderFacts(
     .filter((value) =>
       !/\.(?:docx?|pdf|xlsx?)$/i.test(value)
       && !/^(?:type|row|document)$/i.test(value)
-      && !/\b(?:metadata|title|issuing)\b/i.test(value),
+      && !/\b(?:metadata|title|issuing|status|references?)\b/i.test(value)
+      // Procurement references are identifiers, not prose labels. Requiring a
+      // digit rejects flattened column headings such as "Status, issued,
+      // references" while retaining ordinary RFP/2026/014-style identifiers.
+      && /\d/.test(value),
     )
     .slice(0, 3);
   const deadlines = uniq([...canonicalDeadlines, ...extractAll(tenderText, DEADLINE_PATTERNS)]).slice(0, 3);
