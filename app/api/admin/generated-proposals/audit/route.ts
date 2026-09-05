@@ -66,6 +66,7 @@ type AuditRow = {
   requirementCoverageRatio: number;
   qualityScore: number;
   qualityRecommendedStatus: string;
+  qualityIssues: Array<{ code: string; severity: string; message: string }>;
   aiTraceIssue: boolean;
   placeholderIssue: boolean;
   bidTeamToConfirmIssue: boolean;
@@ -350,6 +351,7 @@ export async function GET(req: Request) {
         requirementCoverageRatio,
         qualityScore,
         qualityRecommendedStatus,
+        qualityIssues: quality?.issues ?? [],
         aiTraceIssue,
         placeholderIssue,
         bidTeamToConfirmIssue,

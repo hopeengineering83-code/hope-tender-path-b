@@ -455,7 +455,7 @@ function countSections(text: string): number {
   return count;
 }
 
-function detectDuplicatedSections(text: string): boolean {
+function duplicatedSectionHeadings(text: string): string[] {
   // A document with the same heading repeated ≥3 times has likely been
   // regenerated without dedupe; very likely poor quality.
   const headings = text
@@ -464,8 +464,11 @@ function detectDuplicatedSections(text: string): boolean {
     .filter((line) => /^#{1,6}\s+\S/.test(line) || /^(?:[0-9]+\.|[A-Z][A-Z0-9 \-,'/&]{3,})$/.test(line));
   const counts = new Map<string, number>();
   for (const h of headings) counts.set(h, (counts.get(h) ?? 0) + 1);
-  for (const c of counts.values()) if (c >= 3) return true;
-  return false;
+  return [...counts.entries()].filter(([, count]) => count >= 3).map(([heading]) => heading);
+}
+
+function detectDuplicatedSections(text: string): boolean {
+  return duplicatedSectionHeadings(text).length > 0;
 }
 
 function findRequirementCoverage(
@@ -622,8 +625,9 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
   }
 
   // ── Duplicated sections. ────────────────────────────────────────────────
-  if (text && detectDuplicatedSections(text)) {
-    issues.push({ code: "DUPLICATED_SECTIONS", severity: "MEDIUM", message: "Same heading appears ≥3 times — likely regenerated without dedupe." });
+  const repeatedHeadings = text ? duplicatedSectionHeadings(text) : [];
+  if (repeatedHeadings.length > 0) {
+    issues.push({ code: "DUPLICATED_SECTIONS", severity: "MEDIUM", message: `Same heading appears ≥3 times: ${repeatedHeadings.slice(0, 5).join("; ")}.` });
   }
 
   // ── Requirement coverage. ───────────────────────────────────────────────
