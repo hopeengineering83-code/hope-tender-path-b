@@ -985,6 +985,8 @@ The next exact-head hosted run proved the model was correct (`DOCX exportCandida
 
 Hosted run `33969698668` then passed zero-blocker export readiness and reached POST `/export`, where the central generation/export gate independently rejected the same retained DOCX as outside the confirmed PDF plan. Confirmed-plan validation now recognizes only same-base alternate-format rows as conversion workspace sources; the exact required PDF must still exist exactly once, be non-empty and machine-validated, while genuinely different extra files still block.
 
+After that fix, hosted run `33970121264` passed every automated step and returned a valid ZIP, but byte inspection found the archive contained both `Technical Proposal.docx` and `Technical Proposal.pdf` even though the confirmed plan names only the PDF. The download route now filters quality review, authority review, and final ZIP inputs to exact confirmed delivery names. This preserves the DOCX in the workspace while preventing it from leaking into the client package.
+
 ### 2026-08-29 UTC — Codex (exact retained-source request-shape preservation)
 
 - **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only. The refreshed container initially lacked a remote and exposed a synthetic `work` branch; after adding the canonical repository remote, its worktree was proven byte-identical to exact remote `04b93e0a004bfc672cda1a9516be45484b3e5c58`, then safely reattached to the existing consolidation branch. No branch or PR was created, merged, or promoted.

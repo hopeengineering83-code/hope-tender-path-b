@@ -215,6 +215,14 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   }
 
   const finalBuildPlan = await getCurrentConfirmedBuildPlan(prisma, tender.id, userId);
+  const plannedDeliveryNames = new Set(
+    finalBuildPlan.ok
+      ? finalBuildPlan.items.map((item) => item.exactFileName.trim().toLowerCase())
+      : [],
+  );
+  const isConfirmedDelivery = (doc: any) => plannedDeliveryNames.has(
+    String(doc.exactFileName ?? doc.name ?? "").trim().toLowerCase(),
+  );
   const finalOperationGate = resolveTenderOperationGate({
     tender: {
       id: tender.id,
@@ -256,7 +264,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   const { extractDocxVisibleText: extractVisibleText } = await import("../../../../../lib/engine/export-readiness");
   const blockedDocs: any[] = [];
   for (const doc of tender.generatedDocuments) {
-    if (!isFinalExportCandidateDocument(doc)) continue;
+    if (!isFinalExportCandidateDocument(doc) || !isConfirmedDelivery(doc)) continue;
     let visibleText: string | null = null;
     const currentFileName = doc.exactFileName ?? doc.name ?? "";
     if (doc.fileContent && currentFileName.toLowerCase().endsWith(".docx")) {
@@ -285,7 +293,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
 
   {
     const authorityCandidates = tender.generatedDocuments
-      .filter((doc: any) => isFinalExportCandidateDocument(doc) && doc.generationStatus === "GENERATED");
+      .filter((doc: any) => isFinalExportCandidateDocument(doc) && isConfirmedDelivery(doc) && doc.generationStatus === "GENERATED");
     const authorityDocs = await Promise.all(authorityCandidates.map(async (doc: any) => ({
       id: String(doc.id),
       name: String(doc.name ?? doc.exactFileName ?? doc.id),
@@ -377,7 +385,7 @@ async function zipPackage(userId: string, tender: any, envelopeFilter: EnvelopeF
   }
 
   const docs: ExportReadyDocument[] = filterFinalExportCandidateDocuments(tender.generatedDocuments as any[])
-    .filter((d: any) => d.generationStatus === "GENERATED")
+    .filter((d: any) => d.generationStatus === "GENERATED" && isConfirmedDelivery(d))
     .map(asReadyDoc)
     .sort((a, b) => (a.exactOrder ?? Number.MAX_SAFE_INTEGER) - (b.exactOrder ?? Number.MAX_SAFE_INTEGER));
 
