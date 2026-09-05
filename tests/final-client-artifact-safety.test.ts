@@ -7,6 +7,7 @@ import { stripInternalReviewSections } from '../lib/engine/internal-review-strip
 import { disambiguateRepeatedHeadings } from '../lib/engine/generate-elite';
 import { buildProposalIntelligence } from '../lib/engine/proposal-intelligence';
 import { cleanClientName } from '../lib/engine/proposal-labels';
+import { readFileSync } from 'node:fs';
 
 const internalSections = [
   '## Proposal Evaluator Loop\n\nPrivate evaluator simulation.',
@@ -128,4 +129,8 @@ test('a concatenated client metadata row resolves to only the procuring entity',
     cleanClientName('Pharo Ventures Procuring Entity / Client Name: Pharo Ventures Legal Client Name: Pharo Ventures Project Name: Pharo Health'),
     'Pharo Ventures'
   );
+});
+
+test('the deterministic signatory block does not claim an unattached signed copy', () => {
+  assert.doesNotMatch(readFileSync('lib/engine/tender-closers.ts', 'utf8'), /signed copy in submission pack/i);
 });

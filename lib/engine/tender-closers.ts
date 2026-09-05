@@ -286,7 +286,7 @@ export function buildEthicsDeclarationBlock(vault: EthicsVault): string {
   const law = vault.countryLegalCitation?.trim() || "Federal Ethics and Anti-Corruption Commission Establishment Proclamation No. 433/2005 and Federal Anti-Corruption Special Procedure and Rules of Evidence Proclamation No. 657/2009";
   const gmLine = vault.gmName
     ? `${vault.gmName}${vault.gmTitle ? `, ${vault.gmTitle}` : ", General Manager"}${vault.gmLicense ? ` (${vault.gmLicense})` : ""}`
-    : "General Manager (signed copy in submission pack)";
+    : "General Manager";
 
   return [
     MARKER_ETHICS,

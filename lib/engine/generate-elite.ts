@@ -634,8 +634,7 @@ function fallbackProposalMarkdown(params: {
     const projectClientPart = inlineClient ? ` for ${inlineClient}` : "";
     const projectValuePart = topProject.contractValue ? ` (${topProject.currency ?? "ETB"} ${topProject.contractValue.toLocaleString()})` : "";
     lines.push(
-      `${params.companyName} has delivered comparable assignments. ${topProject.name}${projectClientPart}${projectValuePart}. ` +
-      `The same team is proposed for this engagement.`,
+      `${params.companyName} presents ${topProject.name}${projectClientPart}${projectValuePart} as a relevant reviewed project record.`,
     );
   }
   if (reviewedExperts.length > 0) {
@@ -643,7 +642,7 @@ function fallbackProposalMarkdown(params: {
     const titlePart = topExpert.title ? `, ${topExpert.title}` : "";
     const yearsPart = topExpert.yearsExperience ?? 10;
     lines.push(
-      `Led by ${topExpert.fullName}${titlePart}, the proposed team brings ${yearsPart}+ years of ${params.primarySector} expertise.`,
+      `Led by ${topExpert.fullName}${titlePart}, whose reviewed record states ${yearsPart}+ years of professional experience, the proposed team is structured around the tender's required disciplines.`,
     );
   }
   if (evalCriteria.length > 0) {

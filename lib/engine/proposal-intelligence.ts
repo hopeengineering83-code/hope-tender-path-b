@@ -867,7 +867,7 @@ function makeDifferentiators(
     if (/hospital|health.*facilit|medical.*cent/i.test(allProjectText)) {
       items.push("Reviewed hospital and medical-centre records inform the healthcare-specific delivery approach described in this proposal.");
     }
-    items.push("Healthcare-specific design depth: IPC compliance, clinical zone segregation, radiation shielding for imaging, medical gas coordination, and Health Authority licensing are core deliverables, not afterthoughts.");
+    items.push("Healthcare-specific methodology addresses IPC, clinical zone segregation and medical-gas coordination; radiation shielding and licensing activities are included only where the confirmed equipment brief and applicable authority require them.");
     items.push("The proposed disciplines are mapped to the tender's healthcare scope; individual experience claims remain limited to each reviewed specialist record.");
   }
 
@@ -878,7 +878,7 @@ function makeDifferentiators(
 
   // Donor compliance — claim, not instruction.
   if (/World Bank|ESF|UNDP|British Council/i.test(companyText + allProjectText)) {
-    items.push("Donor-grade documentation track record (World Bank ESF, British Council, equivalent): documentation discipline exceeds typical regulatory requirements, reducing approval risk.");
+    items.push("Reviewed World Bank ESF and British Council records inform the proposal's documentation and review controls; each applicable standard remains subject to the tender and authority requirements.");
   }
 
   // In-house geotechnical — claim.
