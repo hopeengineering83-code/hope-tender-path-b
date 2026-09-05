@@ -58,11 +58,11 @@ describe("bid-review working notes never reach the client document", () => {
     assert.doesNotMatch(markdown, /No biomedical expert is currently selected/, "an internal review action survived");
   });
 
-  it("keeps the client-facing sections on either side of it", () => {
+  it("keeps preceding client content but removes a phantom appendix register", () => {
     assert.match(markdown, /# Section D: Additional Information/);
     assert.match(markdown, /Additional certifications are provided in the appendices\./);
-    assert.match(markdown, /# Appendix Register/);
-    assert.match(markdown, /Appendix A: Company Profile and Registration Documents/);
+    assert.doesNotMatch(markdown, /# Appendix Register/);
+    assert.doesNotMatch(markdown, /Appendix A: Company Profile and Registration Documents/);
   });
 
   it("reports what it removed, for audit", () => {
