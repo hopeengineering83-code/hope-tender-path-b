@@ -157,9 +157,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       warnings: publicWarnings,
       primaryBlockerReason: canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionReason : readiness.summary.primaryBlockerReason,
       primaryFixAction: canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionLabel : readiness.summary.primaryFixAction,
-      requiredDocumentsTotal: readiness.summary.requiredDocumentsTotal,
+      requiredDocumentsTotal: Math.max(finalPackage.documents.required.length, finalPackage.documents.planned.length),
       generatedDocumentsTotal: finalPackage.documents.generated.length,
-      exportReadyDocumentsTotal: readiness.summary.exportReadyDocumentsTotal,
+      exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
     });
 
     return NextResponse.json({

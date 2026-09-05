@@ -972,6 +972,8 @@ be re-confirmed from here, and AI Analyze genuinely requires the owner.
 
 The repair made AUTO_FINALIZE succeed on the real Preview. Export readiness then exposed one remaining count-only contradiction: the retained editable DOCX was still labelled an export candidate alongside its required PDF, producing `exportReadyDocumentsTotal=2` for one confirmed delivery. The package model now treats only the row whose format matches the confirmed plan as the export candidate; retained conversion sources remain active workspace documents but cannot inflate final-package counts. The focused regression asserts one export-ready delivery while both byte-bearing rows remain stored.
 
+The next exact-head hosted run proved the model was correct (`DOCX exportCandidate=false`, `PDF exportCandidate=true`) but the route's top-level public envelope still copied its numerator from the older broad readiness summary. The envelope now takes both required and export-ready totals from the final-package authority already returned in the same response, matching its nested canonical totals instead of manufacturing `2 > 1` from two different populations.
+
 ### 2026-08-29 UTC — Codex (exact retained-source request-shape preservation)
 
 - **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only. The refreshed container initially lacked a remote and exposed a synthetic `work` branch; after adding the canonical repository remote, its worktree was proven byte-identical to exact remote `04b93e0a004bfc672cda1a9516be45484b3e5c58`, then safely reattached to the existing consolidation branch. No branch or PR was created, merged, or promoted.
