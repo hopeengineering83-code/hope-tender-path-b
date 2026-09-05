@@ -1,5 +1,7 @@
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
 import { inlineEvidenceValue } from "./proposal-intelligence";
+import { withoutPersonalCvFields } from "./proposal-intelligence";
+
 /**
  * Benchmark-quality tabular sections built deterministically from the
  * reviewed knowledge vault. These are appended to the proposal so that
@@ -154,7 +156,7 @@ export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHi
     const yearsLine = expert.yearsExperience ? `${expert.yearsExperience} yrs experience` : "";
     const qualParts = [disciplines, certs, yearsLine].filter(Boolean).join(" | ");
     const sectors = safeArr(expert.sectors).join(", ");
-    const profile = (expert.profile ?? "").replace(/\s+/g, " ").trim().slice(0, 280);
+    const profile = withoutPersonalCvFields(expert.profile ?? "").replace(/\s+/g, " ").trim().slice(0, 280);
     const sectorExp = [sectors, profile].filter(Boolean).join(" — ");
     const role = position.toLowerCase().includes("lead") || position.toLowerCase().includes("principal")
       ? `${position} on this assignment. ${assignmentRoleHint}`

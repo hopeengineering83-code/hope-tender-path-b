@@ -7,6 +7,8 @@ import { stripInternalReviewSections } from '../lib/engine/internal-review-strip
 import { disambiguateRepeatedHeadings } from '../lib/engine/generate-elite';
 import { buildProposalIntelligence } from '../lib/engine/proposal-intelligence';
 import { cleanClientName } from '../lib/engine/proposal-labels';
+import { buildProposedTeamTable } from '../lib/engine/benchmark-tables';
+import { buildPrincipalQualificationsSection } from '../lib/engine/principal-qualifications';
 import { readFileSync } from 'node:fs';
 
 const internalSections = [
@@ -162,4 +164,15 @@ test('reference throughlines never invent same-team continuity', () => {
   for (const file of ['lib/engine/narrative-throughline-enforcer.ts', 'lib/engine/why-us-summary.ts']) {
     assert.doesNotMatch(readFileSync(file, 'utf8'), /same team proposed|same project, already delivered/i);
   }
+});
+
+test('client-facing team summaries remove irrelevant personal CV fields', () => {
+  const experts = [{
+    fullName: 'Daniel Example', title: 'Electrical Engineer', yearsExperience: 11,
+    disciplines: '["Electrical Engineering"]', sectors: '["Healthcare"]', certifications: '[]',
+    profile: 'Professional Profile Daniel Example Date of Birth 10 January 1983 Nationality Ethiopian Highest Education MSc Electrical Engineering Key Qualifications Hospital MEP design',
+  }];
+  const output = `${buildProposedTeamTable(experts, 'Lead coordination')}\n${buildPrincipalQualificationsSection({ experts })}`;
+  assert.doesNotMatch(output, /Date of Birth|10 January 1983|Nationality Ethiopian/);
+  assert.match(output, /Education MSc Electrical Engineering|Hospital MEP design/);
 });

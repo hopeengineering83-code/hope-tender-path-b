@@ -15,6 +15,7 @@
  */
 
 import type { ExpertRecord } from "./benchmark-tables";
+import { withoutPersonalCvFields } from "./proposal-intelligence";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -55,7 +56,7 @@ export function buildPrincipalQualificationsSection(opts: {
     const sectors = safeArr(expert.sectors);
     const certifications = safeArr(expert.certifications);
     const years = expert.yearsExperience ? `${expert.yearsExperience} years experience` : null;
-    const profile = clean(expert.profile, 480);
+    const profile = clean(withoutPersonalCvFields(expert.profile ?? ""), 480);
 
     blocks.push(`### ${expert.fullName} — ${position}`);
 

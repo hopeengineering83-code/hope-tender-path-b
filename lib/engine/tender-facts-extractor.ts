@@ -222,7 +222,11 @@ export function extractTenderFacts(
     // A label followed by a source filename/table heading is not a procurement
     // reference. The loose legacy regex accepted values such as
     // "document.docx" and "Type" from flattened extraction tables.
-    .filter((value) => !/\.(?:docx?|pdf|xlsx?)$/i.test(value) && !/^(?:type|row|document)$/i.test(value))
+    .filter((value) =>
+      !/\.(?:docx?|pdf|xlsx?)$/i.test(value)
+      && !/^(?:type|row|document)$/i.test(value)
+      && !/\b(?:metadata|title|issuing)\b/i.test(value),
+    )
     .slice(0, 3);
   const deadlines = uniq([...canonicalDeadlines, ...extractAll(tenderText, DEADLINE_PATTERNS)]).slice(0, 3);
   const validityPeriods = extractAll(tenderText, VALIDITY_PATTERNS).slice(0, 2);
