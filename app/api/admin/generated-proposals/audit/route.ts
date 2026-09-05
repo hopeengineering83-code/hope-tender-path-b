@@ -58,6 +58,7 @@ type AuditRow = {
   hasStoragePath: boolean;
   storageReadable: boolean | null;
   byteSignatureOk: boolean | null;
+  contentSha256: string | null;
   docxVisibleTextInspectable: boolean;
   wordCount: number;
   sectionCount: number;
@@ -343,6 +344,7 @@ export async function GET(req: Request) {
         hasStoragePath,
         storageReadable,
         byteSignatureOk,
+        contentSha256: document.contentSha256 ?? null,
         docxVisibleTextInspectable,
         wordCount,
         sectionCount,

@@ -364,6 +364,24 @@ jobs:
             exit 1
           fi
           unzip -t /tmp/preview-final.zip
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" > /tmp/generated-proposal-audit-post-export.json
+          python3 - <<'PY'
+          import hashlib, json, zipfile
+          with zipfile.ZipFile('/tmp/preview-final.zip') as archive:
+              names = archive.namelist()
+              if names != ['Technical Proposal.pdf']:
+                  raise SystemExit(f'Unexpected ZIP entries: {names!r}')
+              payload = archive.read(names[0])
+          audit = json.load(open('/tmp/generated-proposal-audit-post-export.json', encoding='utf-8'))
+          rows = [row for row in audit.get('documents', []) if row.get('generationStatus') == 'GENERATED' and row.get('exactFileName') == names[0]]
+          if len(rows) != 1:
+              raise SystemExit(f'Expected one current audit row for {names[0]}, got {len(rows)}')
+          expected = rows[0].get('contentSha256')
+          actual = hashlib.sha256(payload).hexdigest()
+          if not expected or expected != actual:
+              raise SystemExit('Downloaded artifact hash does not match the persisted generated-document identity')
+          PY
 
       - name: Upload acceptance artifacts
         if: always()
@@ -375,6 +393,7 @@ jobs:
             /tmp/workflow-center-final.json
             /tmp/export-readiness-final.json
             /tmp/generated-proposal-audit.json
+            /tmp/generated-proposal-audit-post-export.json
             /tmp/export-response.json
             /tmp/preview-final.zip
           if-no-files-found: warn
