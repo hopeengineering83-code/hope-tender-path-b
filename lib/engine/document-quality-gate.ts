@@ -461,7 +461,7 @@ function duplicatedSectionHeadings(text: string): string[] {
   const headings = text
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => /^#{1,6}\s+\S/.test(line) || /^(?:[0-9]+\.|[A-Z][A-Z0-9 \-,'/&]{3,})$/.test(line));
+    .filter((line) => /^#{1,6}\s+\S/.test(line) || /^(?:[0-9]+\.)\s+\S/.test(line) || (/^[A-Z][A-Z0-9 \-,'/&]{3,}$/.test(line) && line.split(/\s+/).length >= 2));
   const counts = new Map<string, number>();
   for (const h of headings) counts.set(h, (counts.get(h) ?? 0) + 1);
   return [...counts.entries()].filter(([, count]) => count >= 3).map(([heading]) => heading);

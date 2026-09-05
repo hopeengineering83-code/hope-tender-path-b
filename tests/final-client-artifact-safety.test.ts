@@ -97,3 +97,12 @@ test('late generated headings are disambiguated before client rendering', () => 
   assert.match(result, /Technical Proposal — Continued 2/);
   assert.match(result, /Technical Proposal — Continued 3/);
 });
+
+test('repeated all-caps table values are not misclassified as duplicate section headings', () => {
+  const report = assessGeneratedDocumentQuality({
+    doc: { name: 'Technical Proposal', exactFileName: 'Technical Proposal.docx', documentType: 'TECHNICAL_PROPOSAL', format: 'DOCX' },
+    visibleText: `${'# Technical Proposal\n# Executive Summary\n# Methodology\n# Work Plan\n# Team\n# Risk\n# Quality Assurance\n'}${'MANDATORY\nSCORED\n'.repeat(4)}${'Substantive source-grounded methodology and delivery detail. '.repeat(140)}`,
+    rawFileContent: 'bytes',
+  });
+  assert.ok(!report.issues.some((issue) => issue.code === 'DUPLICATED_SECTIONS'));
+});
