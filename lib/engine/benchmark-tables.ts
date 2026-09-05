@@ -891,6 +891,8 @@ export function formatSubmissionDeadline(deadline: Date | string, sourceQuote?: 
   const quote = sourceQuote?.replace(/\s+/g, " ").trim() ?? "";
   const grounded = quote.match(/(?:deadline(?:\s+for\s+submission)?|submission\s+deadline)\s*[:\-]?\s*((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday,?\s+)?\d{1,2}\s+[A-Za-z]+\s+\d{4}(?:\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?(?:\s+(?:Addis Ababa time|EAT|UTC[+-]\d{1,2}(?::\d{2})?))?)?)/i)?.[1];
   if (grounded) return grounded.replace(/\s+at\s+/i, " ").trim();
+  const monthFirst = quote.match(/(?:deadline(?:\s+for\s+submission)?|submission\s+deadline)\s*[:\-]?\s*([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4}),?\s*(\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?))(?:\s+(Addis Ababa time|EAT|UTC[+-]\d{1,2}(?::\d{2})?))?/i);
+  if (monthFirst) return `${monthFirst[2]} ${monthFirst[1]} ${monthFirst[3]} ${monthFirst[4]}${monthFirst[5] ? ` ${monthFirst[5]}` : ""}`;
   const parsed = deadline instanceof Date ? deadline : new Date(deadline);
   return Number.isNaN(parsed.getTime()) ? String(deadline) : parsed.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }

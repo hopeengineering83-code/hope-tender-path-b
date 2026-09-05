@@ -4,6 +4,7 @@ import { AI_TRACE_PATTERNS } from '../lib/engine/detection-patterns';
 import { formatSubmissionDeadline } from '../lib/engine/benchmark-tables';
 import { assessGeneratedDocumentQuality } from '../lib/engine/document-quality-gate';
 import { stripInternalReviewSections } from '../lib/engine/internal-review-stripper';
+import { disambiguateRepeatedHeadings } from '../lib/engine/generate-elite';
 
 const internalSections = [
   '## Proposal Evaluator Loop\n\nPrivate evaluator simulation.',
@@ -78,7 +79,21 @@ test('submission deadline uses grounded time and never invents midnight from a d
     '25 August 2026 5:00 PM Addis Ababa time'
   );
   assert.equal(
+    formatSubmissionDeadline(
+      new Date('2026-08-25T00:00:00.000Z'),
+      'Submission Deadline: August 25, 2026, 5:00 PM Addis Ababa Time'
+    ),
+    '25 August 2026 5:00 PM Addis Ababa Time'
+  );
+  assert.equal(
     formatSubmissionDeadline(new Date('2026-08-25T00:00:00.000Z'), null),
     '25 August 2026'
   );
+});
+
+test('late generated headings are disambiguated before client rendering', () => {
+  const result = disambiguateRepeatedHeadings('# Technical Proposal\n\n# Technical Proposal\n\n# Technical Proposal');
+  assert.equal((result.match(/^# Technical Proposal$/gm) ?? []).length, 1);
+  assert.match(result, /Technical Proposal — Continued 2/);
+  assert.match(result, /Technical Proposal — Continued 3/);
 });

@@ -106,6 +106,18 @@ type CompanyLogo = {
   height: number;
 };
 
+export function disambiguateRepeatedHeadings(markdown: string): string {
+  const seen = new Map<string, number>();
+  return markdown.split("\n").map((line) => {
+    const match = line.match(/^(#{1,6}\s+)(\S.*)$/);
+    if (!match) return line;
+    const key = match[2].trim().toLowerCase();
+    const count = (seen.get(key) ?? 0) + 1;
+    seen.set(key, count);
+    return count >= 2 ? `${match[1]}${match[2]} — Continued ${count}` : line;
+  }).join("\n");
+}
+
 function brandImageTransformation(data: Buffer, type: "png" | "jpg"): {
   width: number;
   height: number;
@@ -2966,6 +2978,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     .replace(/\[\s*\]/g, "—")
     .replace(/\n{3,}/g, "\n\n");
   humanizedMarkdown = stripPlaceholders(humanizedMarkdown).markdown;
+  humanizedMarkdown = disambiguateRepeatedHeadings(humanizedMarkdown);
   if (humanizedMarkdown.split(/\s+/).filter(Boolean).length < 650) {
     const groundedRequirements = tender.requirements.slice(0, 12).map((requirement) => {
       const source = clean(requirement.description || requirement.title);
@@ -3402,6 +3415,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     .replace(/≤/g, "<=")
     .replace(/[→⇒]/g, "->")
     .replace(/[←⇐]/g, "<-");
+  workingMarkdown = disambiguateRepeatedHeadings(workingMarkdown);
 
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;
