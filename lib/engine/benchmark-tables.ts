@@ -1,6 +1,6 @@
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
 import { inlineEvidenceValue } from "./proposal-intelligence";
-import { withoutPersonalCvFields } from "./proposal-intelligence";
+import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
 
 /**
  * Benchmark-quality tabular sections built deterministically from the
@@ -156,7 +156,12 @@ export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHi
     const yearsLine = expert.yearsExperience ? `${expert.yearsExperience} yrs experience` : "";
     const qualParts = [disciplines, certs, yearsLine].filter(Boolean).join(" | ");
     const sectors = safeArr(expert.sectors).join(", ");
-    const profile = withoutPersonalCvFields(expert.profile ?? "").replace(/\s+/g, " ").trim().slice(0, 280);
+    // Same defect as the Principal Qualifications bios: the CV file's own
+    // furniture reaching the client, and a hard slice stopping mid-word.
+    const profile = truncateAtWordBoundary(
+      withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? "")).replace(/\s+/g, " ").trim(),
+      280,
+    );
     const sectorExp = [sectors, profile].filter(Boolean).join(" — ");
     const role = position.toLowerCase().includes("lead") || position.toLowerCase().includes("principal")
       ? `${position} on this assignment. ${assignmentRoleHint}`
@@ -206,7 +211,7 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
     const previousRole = expert.title?.toLowerCase().includes("lead") || expert.title?.toLowerCase().includes("principal")
       ? expert.title
       : `Senior ${expert.title || "Specialist"}`;
-    const contribution = (matchedProject.summary ?? "").replace(/\s+/g, " ").trim().slice(0, 200) ||
+    const contribution = truncateAtWordBoundary((matchedProject.summary ?? "").replace(/\s+/g, " ").trim(), 200) ||
       `${safeArr(expert.disciplines).join(", ") || "Discipline-led"} contribution covering ${safeArr(matchedProject.serviceAreas).join(", ") || matchedProject.sector || "scope-relevant works"}.`;
 
     return `| ${escCell(`${expert.fullName}, ${expert.title || "Specialist"}`)} | ${escCell(previousRole || "Specialist Lead")} | ${escCell(projectLabel)} | ${escCell(contribution)} |`;
@@ -373,10 +378,10 @@ function buildRelevanceStatement(project: ProjectRecord, tenderTitle: string, pr
   const summary = (project.summary ?? "").replace(/\s+/g, " ").trim();
 
   if (summary && sectorMatch) {
-    return `Direct ${primarySector} relevance: ${summary.slice(0, 280)}`;
+    return `Direct ${primarySector} relevance: ${truncateAtWordBoundary(summary, 280)}`;
   }
   if (summary) {
-    return `Demonstrates transferable competency for ${tenderTitle}: ${summary.slice(0, 280)}`;
+    return `Demonstrates transferable competency for ${tenderTitle}: ${truncateAtWordBoundary(summary, 280)}`;
   }
   if (sectorMatch) {
     return `Direct ${primarySector} project — same team and methodology applicable to ${tenderTitle}.`;

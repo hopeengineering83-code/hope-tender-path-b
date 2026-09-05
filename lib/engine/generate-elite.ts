@@ -14,7 +14,7 @@ import { runDeepRefinement } from "./deep-reasoning-refiner";
 import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
 import { executeProposalTool, PROPOSAL_TOOL_DEFS, type ToolEvidenceInventory } from "./proposal-tools";
 import { DeepReasoningTelemetry } from "./deep-reasoning-telemetry";
-import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, inlineEvidenceValue, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, inlineEvidenceValue, projectProofLine, safeParseArr, truncateAtWordBoundary } from "./proposal-intelligence";
 import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
@@ -305,9 +305,12 @@ function clean(text?: string | null): string {
   return (text ?? "").replace(/\s+/g, " ").trim();
 }
 
+// The ellipsis was already here; the cut was not. Evidence descriptions and
+// extracted source text reach the client through the experience tables, and a
+// mid-word slice shipped "Author: Tariku Abebaw (Building Officer, Gimba Ci" in
+// a delivered proposal. Same budget, same ellipsis, cut moved to the last word.
 function shortText(text?: string | null, max = 700): string {
-  const value = clean(text);
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+  return truncateAtWordBoundary(clean(text), max);
 }
 
 function cleanClientLanguage(text: string): string {
@@ -1210,8 +1213,33 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
   }
 
-  const allSelectedExperts = tender.expertMatches.map((m) => m.expert);
-  const allSelectedProjects = tender.projectMatches.map((m) => m.project);
+  // Vault text fields carry whatever punctuation whoever typed them left
+  // behind. One reviewed project's country is stored as "Gimba City, South
+  // Wollo Zone, Amhara Region," — with a trailing comma — and roughly a dozen
+  // producers interpolate these values straight into client-facing prose and
+  // tables. A delivered Technical Proposal therefore read "… Amhara Region,)"
+  // seven times, in seven different sentences, from seven different builders.
+  //
+  // Trimming edge separators in each producer is the version of this fix that
+  // never finishes: the next builder added starts the count again. The values
+  // are normalised once, here, where the reviewed records enter the generation
+  // context, so every downstream consumer gets clean text by construction.
+  // Only leading/trailing separator characters go — internal punctuation, which
+  // is part of the value, is untouched.
+  const tidyVaultText = <T,>(record: T, fields: readonly string[]): T => {
+    const source = record as Record<string, unknown>;
+    const patched: Record<string, unknown> = { ...source };
+    for (const field of fields) {
+      const value = source[field];
+      if (typeof value !== "string") continue;
+      const cleaned = value.replace(/\s+/g, " ").trim().replace(/^[\s,;:|/–—-]+/, "").replace(/[\s,;:|/–—-]+$/, "");
+      if (cleaned !== value) patched[field] = cleaned;
+    }
+    return patched as T;
+  };
+
+  const allSelectedExperts = tender.expertMatches.map((m) => tidyVaultText(m.expert, ["fullName", "title"]));
+  const allSelectedProjects = tender.projectMatches.map((m) => tidyVaultText(m.project, ["name", "country", "clientName", "sector"]));
   let experts = allSelectedExperts.filter((e) => canUseVaultRecord(e, "GENERATION"));
   let projects = allSelectedProjects.filter((p) => canUseVaultRecord(p, "GENERATION"));
 

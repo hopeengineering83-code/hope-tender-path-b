@@ -48,6 +48,7 @@
  */
 
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
+import { truncateAtWordBoundary } from "./proposal-intelligence";
 
 const MARKER_CROSSWALK = "<!-- deliverable:crosswalk -->";
 const MARKER_PHASES = "<!-- methodology:phase-narrative -->";
@@ -136,7 +137,7 @@ export function buildDeliverableCrosswalk(opts: {
     }
     const matchedDisplay = matched.length > 0 ? matched.join(", ") : "—";
     const v = p.contractValue ? `${p.currency || "ETB"} ${Math.round(p.contractValue).toLocaleString("en-US")}` : "";
-    const scope = (p.summary || "").replace(/\s+/g, " ").slice(0, 220);
+    const scope = truncateAtWordBoundary((p.summary || "").replace(/\s+/g, " ").trim(), 220);
     return `| ${idx + 1} | ${p.name}${v ? ` (${v})` : ""} | ${matchedDisplay} | ${scope || "—"} |`;
   });
 
