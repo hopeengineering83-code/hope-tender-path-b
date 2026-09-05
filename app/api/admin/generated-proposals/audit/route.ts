@@ -58,7 +58,6 @@ type AuditRow = {
   hasStoragePath: boolean;
   storageReadable: boolean | null;
   byteSignatureOk: boolean | null;
-  contentSha256: string | null;
   docxVisibleTextInspectable: boolean;
   wordCount: number;
   sectionCount: number;
@@ -67,7 +66,6 @@ type AuditRow = {
   requirementCoverageRatio: number;
   qualityScore: number;
   qualityRecommendedStatus: string;
-  qualityIssues: Array<{ code: string; severity: string; message: string }>;
   aiTraceIssue: boolean;
   placeholderIssue: boolean;
   bidTeamToConfirmIssue: boolean;
@@ -221,7 +219,6 @@ export async function GET(req: Request) {
         reviewStatus: true,
         fileContent: true,
         storagePath: true,
-        contentSha256: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -345,7 +342,6 @@ export async function GET(req: Request) {
         hasStoragePath,
         storageReadable,
         byteSignatureOk,
-        contentSha256: document.contentSha256 ?? null,
         docxVisibleTextInspectable,
         wordCount,
         sectionCount,
@@ -354,7 +350,6 @@ export async function GET(req: Request) {
         requirementCoverageRatio,
         qualityScore,
         qualityRecommendedStatus,
-        qualityIssues: quality?.issues ?? [],
         aiTraceIssue,
         placeholderIssue,
         bidTeamToConfirmIssue,
