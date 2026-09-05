@@ -533,6 +533,24 @@ export async function runAutoFinalizeAfterGeneration(
       });
       throw error;
     }
+    // Finalization supersedes the DOCX evidence row and creates new PDF bytes.
+    // Reconcile once more after those bytes pass validation so mandatory
+    // submission rules are judged from the final artifact, not the source row
+    // that was deliberately superseded above.
+    try {
+      const { reconcileAutomaticRequirementCoverage } = await import("../engine/reconcile-automatic-requirement-coverage");
+      const coverage = await reconcileAutomaticRequirementCoverage(prisma, tenderId, userId);
+      result.coverageReconciliation = {
+        refreshed: coverage.ok === true,
+        requirementsChecked: coverage.requirementsChecked ?? 0,
+      };
+    } catch (error) {
+      logger.warn("[auto-finalize] post-PDF requirement-coverage reconcile failed; judging stored coverage", {
+        tenderId,
+        jobId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    }
   }
 
   // Step 6: reconcile the package against the confirmed plan. Every stage
