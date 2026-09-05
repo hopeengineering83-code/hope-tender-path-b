@@ -11,20 +11,29 @@ on:
     inputs:
       confirm:
         description: >-
-          TEMPORARY, owner-authorized, single-use input for the
-          temporary-preview-migration job below (see PR #1175). Type exactly
-          "migrate" to run it; any other value (including leaving this blank)
-          runs only the ordinary lockfile-refresh job.
+          TEMPORARY, owner-authorized, single-use input shared by the two
+          temporary-preview-* jobs below (see PR #1175). Type "migrate" to run
+          the fingerprint-gated migration job, or "accept" to run the hosted
+          AI-Analyze -> Run-Engine -> ZIP acceptance job. Any other value
+          (including leaving this blank) runs only the ordinary
+          lockfile-refresh job.
         required: false
         default: ""
       expected_fingerprint:
         description: >-
-          TEMPORARY, paired with confirm above. The databaseFingerprint (from
-          /api/health) the target database MUST already report — verified
-          against the live database before any write. The job refuses to run
-          if this does not match exactly.
+          TEMPORARY, paired with confirm=migrate. The databaseFingerprint
+          (from /api/health) the target database MUST already report —
+          verified against the live database before any write. The job
+          refuses to run if this does not match exactly.
         required: false
         default: ""
+      tender_id:
+        description: >-
+          TEMPORARY, paired with confirm=accept. The Preview tender ID
+          (already uploaded, canonical files and vault already in place) to
+          run AI Analyze -> Run Engine -> ZIP against.
+        required: false
+        default: "fed8756d-4210-4ad8-808b-b6f63742f656"
 
 permissions:
   contents: read
@@ -153,3 +162,163 @@ jobs:
             exit 1
           fi
           echo "Preview health verified: 200, schema matches, fingerprint unchanged."
+
+  # ─── TEMPORARY — owner-authorized, single-use ──────────────────────────────
+  #
+  # Drives the real hosted acceptance walkthrough (AI Analyze -> Run Engine ->
+  # automatic ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE -> ZIP)
+  # against the Preview deployment, using the tender and canonical vault
+  # already uploaded there. Every mutating route it calls
+  # (manual-ai-analyze, engine, export) requires a real authenticated owner
+  # session — this sandbox cannot authenticate as the owner and cannot POST to
+  # the Preview host at all (its egress proxy rejects it by policy), so this
+  # job runs the walkthrough from a GitHub-hosted runner instead, using:
+  #   - PREVIEW_OWNER_SESSION_COOKIE — the owner's own live `hope_session`
+  #     cookie value, copied from an already-logged-in browser tab on the
+  #     Preview app. Never printed; used only as a request header. Reuses an
+  #     existing session rather than forging one or handling a password.
+  #   - AI_JOBS_WORKER_SECRET — the secret drain-ai-job-queue.yml already
+  #     uses to drain this same Preview's AiJob queue via X-Worker-Secret.
+  #
+  # Runs ONLY on workflow_dispatch with confirm=accept. Uploads the final ZIP
+  # and the readiness/export-readiness responses as a workflow artifact for
+  # inspection; makes no other write beyond the normal application actions a
+  # signed-in owner clicking through the UI would make. Remove this job, the
+  # confirm=accept branch, and the tender_id input once acceptance is done.
+  temporary-preview-hosted-acceptance:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'accept'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      SESSION_COOKIE: ${{ secrets.PREVIEW_OWNER_SESSION_COOKIE }}
+      WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+      TENDER_ID: ${{ inputs.tender_id }}
+    steps:
+      - name: Verify secrets and inputs are present
+        run: |
+          if [ -z "$SESSION_COOKIE" ]; then
+            echo "::error::PREVIEW_OWNER_SESSION_COOKIE secret is not set. Log into the Preview app in a browser as the tender's owner, copy the hope_session cookie value, and add it as this repository secret."
+            exit 1
+          fi
+          if [ -z "$WORKER_SECRET" ]; then
+            echo "::error::AI_JOBS_WORKER_SECRET secret is not set."
+            exit 1
+          fi
+          if [ -z "$TENDER_ID" ]; then
+            echo "::error::tender_id input is required."
+            exit 1
+          fi
+
+      - name: Verify the session cookie authenticates against the target tender
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 30 -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID")
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          echo "GET tender status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Session cookie did not authenticate against tender $TENDER_ID (HTTP $status). Provide a fresh cookie value copied from an active browser session logged in as the tender's owner."
+            exit 1
+          fi
+          echo "Session verified against tender $TENDER_ID."
+
+      - name: Trigger AI Analyze (manual, owner-authorized)
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
+            "$BASE_URL/api/tenders/$TENDER_ID/manual-ai-analyze")
+          echo "$resp"
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          if [ "$status" != "200" ] && [ "$status" != "202" ]; then
+            echo "::error::manual-ai-analyze failed (HTTP $status)."
+            exit 1
+          fi
+
+      - name: Drain the AiJob queue until AI Analyze completes
+        run: |
+          for i in $(seq 1 40); do
+            out=$(curl -sS --connect-timeout 15 --max-time 65 -X POST \
+              -H "X-Worker-Secret: $WORKER_SECRET" -H "Content-Type: application/json" \
+              "$BASE_URL/api/ai-jobs/run-next")
+            echo "iter $i: $out"
+            if echo "$out" | grep -q '"resultCode":"QUEUE_EMPTY"'; then
+              echo "Queue empty."
+              break
+            fi
+            sleep 5
+          done
+
+      - name: Snapshot readiness after AI Analyze
+        run: |
+          curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-after-analyze.json
+
+      - name: Trigger Run Engine (manual, owner-authorized)
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" -H "Content-Type: application/json" \
+            -d '{"action":"run"}' \
+            "$BASE_URL/api/tenders/$TENDER_ID/engine")
+          echo "$resp"
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          if [ "$status" != "200" ]; then
+            echo "::error::Run Engine failed (HTTP $status)."
+            exit 1
+          fi
+
+      - name: Drain the AiJob queue through ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE
+        run: |
+          for i in $(seq 1 40); do
+            out=$(curl -sS --connect-timeout 15 --max-time 65 -X POST \
+              -H "X-Worker-Secret: $WORKER_SECRET" -H "Content-Type: application/json" \
+              "$BASE_URL/api/ai-jobs/run-next")
+            echo "iter $i: $out"
+            if echo "$out" | grep -q '"resultCode":"QUEUE_EMPTY"'; then
+              echo "Queue empty."
+              break
+            fi
+            sleep 5
+          done
+
+      - name: Snapshot final workflow-center and export-readiness state
+        run: |
+          curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-final.json
+          echo
+          curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" | tee /tmp/export-readiness-final.json
+
+      - name: Trigger export readiness build (POST /export)
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
+            "$BASE_URL/api/tenders/$TENDER_ID/export")
+          echo "$resp" | tee /tmp/export-response.json
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          if [ "$status" != "200" ]; then
+            echo "::warning::POST /export did not return 200 (HTTP $status) — ZIP download will likely fail; inspect the uploaded artifact for the reason."
+          fi
+
+      - name: Download the final ZIP
+        run: |
+          curl -sS --connect-timeout 15 --max-time 120 -o /tmp/preview-final.zip \
+            -w "HTTP:%{http_code} SIZE:%{size_download}\n" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/download?type=zip"
+          file /tmp/preview-final.zip || true
+
+      - name: Upload acceptance artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-hosted-acceptance
+          path: |
+            /tmp/workflow-center-after-analyze.json
+            /tmp/workflow-center-final.json
+            /tmp/export-readiness-final.json
+            /tmp/export-response.json
+            /tmp/preview-final.zip
+          if-no-files-found: warn
+          retention-days: 3
