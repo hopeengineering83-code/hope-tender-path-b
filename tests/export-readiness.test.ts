@@ -178,6 +178,14 @@ describe("exportReadinessError", () => {
 });
 
 describe("filePlanBlockersFromLists", () => {
+  it("does not treat a retained editable DOCX as an extra attachment after its required PDF exists", () => {
+    const blockers = filePlanBlockersFromLists([
+      { ...READY, exactOrder: 1, exactFileName: "Technical Proposal.docx", format: "DOCX" },
+      { ...READY, id: "pdf", exactOrder: 1, exactFileName: "Technical Proposal.pdf", format: "PDF" },
+    ], JSON.stringify(["Technical Proposal.pdf"]), JSON.stringify(["Technical Proposal.pdf"]));
+    assert.deepEqual(blockers, []);
+  });
+
   it("blocks extra generated files when tender exact naming is explicit", () => {
     const blockers = filePlanBlockersFromLists([
       { ...READY, exactFileName: "Technical-Proposal.docx" },

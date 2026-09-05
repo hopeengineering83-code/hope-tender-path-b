@@ -499,9 +499,23 @@ export function filePlanBlockersFromLists(
   const blockers: NonNullable<ExportReadinessResult["tenderLevelBlockers"]> = [];
   const requiredNames = parseRequiredFileList(exactFileNaming);
   const requiredOrder = parseRequiredFileList(exactFileOrder);
-  const actualNames = docs.map((doc) => documentFileName(doc)).filter(Boolean);
+  const additionalAllowedNameList = Array.from(additionalAllowedNames);
+  // PDF finalization deliberately retains its DOCX source so the generated
+  // proposal remains editable. When the confirmed delivery name is the PDF,
+  // that source is workspace material, not a second package attachment.
+  const requiredDeliveryNames = [...requiredNames, ...additionalAllowedNameList];
+  const deliveryDocs = docs.filter((doc) => {
+    const name = documentFileName(doc);
+    const base = normalizeFileName(name).replace(/\.[a-z0-9]+$/i, "");
+    return !docs.some((candidate) => {
+      const candidateName = documentFileName(candidate);
+      if (candidate === doc || normalizeFileName(candidateName).replace(/\.[a-z0-9]+$/i, "") !== base) return false;
+      return requiredDeliveryNames.some((required) => normalizeFileName(required) === normalizeFileName(candidateName));
+    });
+  });
+  const actualNames = deliveryDocs.map((doc) => documentFileName(doc)).filter(Boolean);
   const actualNameSet = new Set(actualNames.map(normalizeFileName));
-  const allowedExtraNameSet = new Set(Array.from(additionalAllowedNames, normalizeFileName));
+  const allowedExtraNameSet = new Set(additionalAllowedNameList.map(normalizeFileName));
 
   const missingNames = requiredNames.filter((name) => !actualNameSet.has(normalizeFileName(name)));
   if (missingNames.length > 0) blockers.push({ category: "FILE_NAMING", severity: "HIGH", title: `Missing required generated file name(s): ${missingNames.slice(0, 5).join(", ")}${missingNames.length > 5 ? ` and ${missingNames.length - 5} more` : ""}`, recommendedAction: "Generate or rename documents to match the tender's exact required file names before final export." });
@@ -512,14 +526,14 @@ export function filePlanBlockersFromLists(
   if (extraFiles.length > 0) blockers.push({ category: "EXTRA_FILES", severity: "HIGH", title: `Generated package contains non-required file(s): ${extraFiles.slice(0, 5).join(", ")}${extraFiles.length > 5 ? ` and ${extraFiles.length - 5} more` : ""}`, recommendedAction: "Remove extra generated files not listed in the tender's exact file naming instructions before final export." });
 
   if (requiredOrder.length > 0) {
-    const orderedActual = [...docs].sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999)).map((doc) => normalizeFileName(documentFileName(doc)));
+    const orderedActual = [...deliveryDocs].sort((a, b) => (a.exactOrder ?? 9999) - (b.exactOrder ?? 9999)).map((doc) => normalizeFileName(documentFileName(doc)));
     const mismatches = requiredOrder.map((name, index) => ({ name, expected: normalizeFileName(name), actual: orderedActual[index] ?? "" })).filter((row) => row.actual && row.expected !== row.actual);
     if (mismatches.length > 0) blockers.push({ category: "FILE_ORDER", severity: "HIGH", title: `Generated file order does not match tender order near: ${mismatches.slice(0, 3).map((m) => m.name).join(", ")}`, recommendedAction: "Reorder the generated documents/export package to match the tender's required attachment order." });
   }
 
   // Duplicate exactOrder detection — two documents with the same position
   // value would produce an undefined submission order for the evaluator.
-  const orderValues = docs.map((d) => d.exactOrder).filter((v): v is number => v != null);
+  const orderValues = deliveryDocs.map((d) => d.exactOrder).filter((v): v is number => v != null);
   const orderSeen = new Map<number, number>();
   for (const v of orderValues) orderSeen.set(v, (orderSeen.get(v) ?? 0) + 1);
   const duplicateOrders = [...orderSeen.entries()].filter(([, count]) => count > 1).map(([v]) => v);

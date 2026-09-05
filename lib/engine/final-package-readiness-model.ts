@@ -390,6 +390,15 @@ function chooseBestGeneratedDocument(documents: GeneratedDocLike[]): GeneratedDo
   return scored[0]?.document ?? null;
 }
 
+function chooseBestGeneratedDocumentForFormat(
+  documents: GeneratedDocLike[],
+  format: string,
+): GeneratedDocLike | null {
+  return chooseBestGeneratedDocument(
+    documents.filter((document) => expectedFormat(document.format ?? document.exactFileName) === format),
+  ) ?? chooseBestGeneratedDocument(documents);
+}
+
 function generatedDocumentExclusionReason(
   document: GeneratedDocLike,
   plannedDocumentKey: string | null,
@@ -551,7 +560,10 @@ function derivePlannedPackageDocumentsFromFiles(
 
   return files.map((file) => {
     const key = submissionPlanFileKey(file.exactFileName);
-    const document = chooseBestGeneratedDocument(documentsByKey.get(key) ?? []);
+    const document = chooseBestGeneratedDocumentForFormat(
+      documentsByKey.get(key) ?? [],
+      expectedFormat(file.format),
+    );
     const derived = plannedStatusFor(document, file);
     return {
       key,
@@ -722,10 +734,14 @@ export function buildFinalZipManifestFromModel(
     .filter((document) => document.status !== "not_applicable")
     .map((plannedDocument) => {
       const document = generated.find(
-        (candidate) => candidate.plannedDocumentKey === plannedDocument.key && candidate.exportReady,
+        (candidate) => candidate.plannedDocumentKey === plannedDocument.key
+          && candidate.format === plannedDocument.expectedFormat
+          && candidate.exportReady,
       )
         ?? generated.find(
-          (candidate) => candidate.plannedDocumentKey === plannedDocument.key && candidate.exportCandidate,
+          (candidate) => candidate.plannedDocumentKey === plannedDocument.key
+            && candidate.format === plannedDocument.expectedFormat
+            && candidate.exportCandidate,
         )
         ?? generated.find((candidate) => candidate.plannedDocumentKey === plannedDocument.key)
         ?? null;

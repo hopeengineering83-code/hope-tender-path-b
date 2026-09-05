@@ -322,7 +322,18 @@ jobs:
             "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-final.json
           echo
           curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
-            "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" | tee /tmp/export-readiness-final.json || true
+            "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" | tee /tmp/export-readiness-final.json
+
+      - name: Require real final readiness with zero blockers
+        run: |
+          python3 - <<'PY'
+          import json
+          with open('/tmp/export-readiness-final.json', encoding='utf-8') as stream:
+              result = json.load(stream)
+          blockers = result.get('blockers') or []
+          if result.get('ok') is not True or blockers:
+              raise SystemExit(f"Hosted readiness did not pass: ok={result.get('ok')!r}, blockers={len(blockers)}")
+          PY
 
       - name: Trigger export readiness build (POST /export)
         run: |
@@ -332,18 +343,27 @@ jobs:
           echo "$resp" | tee /tmp/export-response.json
           status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
           if [ "$status" != "200" ]; then
-            echo "::warning::POST /export did not return 200 (HTTP $status) — ZIP download will likely fail; inspect the uploaded artifact for the reason."
+            echo "::error::POST /export did not return 200 (HTTP $status)."
+            exit 1
           fi
 
       - name: Download the final ZIP
         run: |
           curl -sS --connect-timeout 15 --max-time 120 -o /tmp/preview-final.zip \
-            -w "HTTP:%{http_code} SIZE:%{size_download}\n" \
+            -w "%{http_code}" \
             -H "Cookie: hope_session=$SESSION_COOKIE" \
-            "$BASE_URL/api/tenders/$TENDER_ID/download?type=zip"
-          file /tmp/preview-final.zip || true
+            "$BASE_URL/api/tenders/$TENDER_ID/download?type=zip" > /tmp/zip-status.txt
+          status=$(cat /tmp/zip-status.txt)
+          size=$(wc -c < /tmp/preview-final.zip)
+          echo "ZIP HTTP:$status SIZE:$size"
+          if [ "$status" != "200" ] || [ "$size" -le 0 ]; then
+            echo "::error::Final ZIP download failed (HTTP $status, $size bytes)."
+            exit 1
+          fi
+          unzip -t /tmp/preview-final.zip
 
       - name: Upload acceptance artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: preview-hosted-acceptance

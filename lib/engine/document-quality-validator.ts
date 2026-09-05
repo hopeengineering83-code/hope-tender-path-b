@@ -20,7 +20,10 @@ export interface DocumentValidationResult {
   status: "GOOD" | "WARNING" | "BLOCKED" | "NEEDS_REVIEW";
 }
 
-const EMPTY_SECTION_RE = /^#+\s+.+\n+(?:\n|$)/m;
+// A blank line after a Markdown heading is normal Markdown, not an empty
+// section. Only call the section empty when the next non-blank line is another
+// heading (or there is no next line at all).
+const EMPTY_SECTION_RE = /^#{1,6}\s+.+(?:\r?\n[ \t]*)+(?=#{1,6}\s+\S|(?![\s\S]))/m;
 // Pricing leakage is decided by lib/engine/pricing-hygiene.ts, the same
 // detector the export-readiness gate uses. This module used to carry its own
 // regex, and the two disagreed on real documents.

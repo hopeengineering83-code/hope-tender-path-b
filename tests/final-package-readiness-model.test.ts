@@ -237,6 +237,20 @@ test("PDF required with DOCX blocks; machine-validated PDF unblocks without inve
   }
 });
 
+test("PDF delivery selects the finalized PDF while retaining its editable DOCX source", () => {
+  const tender = { id: "t", requirements: [{ id: "r1", title: "Technical Proposal", description: "PDF", requirementType: "TECHNICAL", priority: "MANDATORY", exactFileName: "Technical Proposal.pdf" }] };
+  const source = doc({ id: "source", exactFileName: "Technical Proposal.docx", format: "DOCX" });
+  const pdf = doc({ id: "pdf", exactFileName: "Technical Proposal.pdf", format: "PDF", storagePath: "uploads/final.pdf" });
+  const planned = deriveRequiredPackageDocuments(tender, [source, pdf]);
+  const generated = mapGeneratedDocumentsToSubmissionPlan([source, pdf], planned);
+  const manifest = buildFinalZipManifestFromModel("t", planned, generated);
+
+  assert.equal(planned[0]?.generatedDocumentId, "pdf");
+  assert.equal(manifest.ready, true);
+  assert.equal(manifest.files[0]?.sourceDocumentId, "pdf");
+  assert.equal(manifest.files[0]?.format, "PDF");
+});
+
 test("final ZIP manifest rejects missing, wrong format, unapproved, duplicate and excludes outside-plan workspace docs", () => {
   const tender = { id: "t", requirements: [{ id: "r1", title: "A", description: "", requirementType: "TECHNICAL", priority: "MANDATORY", exactFileName: "A.pdf" }] };
   const docs = [
