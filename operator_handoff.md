@@ -947,6 +947,17 @@ be re-confirmed from here, and AI Analyze genuinely requires the owner.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-09-05 13:10 UTC — Codex (hosted-acceptance failure diagnostics)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; continued from verified remote head `6579eb745abeadce8f15326102ad8e49a81e0ea5`.
+- **Scope:** Ran the real authenticated Preview acceptance against tender `fed8756d-4210-4ad8-808b-b6f63742f656`. AI Analyze, ENGINE_RUN and PROPOSAL_GENERATION succeeded; AUTO_FINALIZE failed, export readiness remained blocked, POST `/export` returned 400, and ZIP download returned HTTP 409 JSON (263 bytes), not a ZIP. The temporary workflow itself incorrectly concluded success because its final steps were observational.
+- **Verified blocker:** the current package has an active validated `Technical Proposal.docx` and its active validated `Technical Proposal.pdf`; the confirmed plan requires only the PDF. Canonical narrative validation also reports the DOCX at 98/100 but rejects it for empty headings and a heading repeated at least three times. No production code was changed on this diagnostic commit.
+- **Files changed:** `scripts/tmp-summarize-tender-jobs.py`, `operator_handoff.md`. The temporary job summarizer now prints the safe failure detail returned for failed AiJob rows so the next hosted run identifies AUTO_FINALIZE's actual terminal reason instead of only its status.
+- **Tests actually run:** `python3 -m py_compile scripts/tmp-summarize-tender-jobs.py`; `git diff --check`. Hosted acceptance run `33967673866` completed as a GitHub workflow but did **not** satisfy acceptance.
+- **Risks / assumptions:** failure details returned by the authenticated owner-scoped AiJob API are intended operator diagnostics; credentials and session cookies remain masked and are not printed. Temporary infrastructure remains in place because acceptance has not passed.
+- **Next action:** push this diagnostic-only commit, await the exact-head Preview, rerun hosted acceptance, use the exposed AUTO_FINALIZE error plus artifact state to prove the narrow production root cause, then add a regression and fix only that cause.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — hosted acceptance failed.
+
 ### 2026-08-29 UTC — Codex (exact retained-source request-shape preservation)
 
 - **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only. The refreshed container initially lacked a remote and exposed a synthetic `work` branch; after adding the canonical repository remote, its worktree was proven byte-identical to exact remote `04b93e0a004bfc672cda1a9516be45484b3e5c58`, then safely reattached to the existing consolidation branch. No branch or PR was created, merged, or promoted.

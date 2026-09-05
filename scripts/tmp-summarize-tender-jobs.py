@@ -31,3 +31,5 @@ else:
             j.get("jobType"), j.get("status"), j.get("id"),
             j.get("createdAt"), j.get("finishedAt"),
         ))
+        if j.get("status") == "FAILED":
+            print("    error={0}".format(j.get("error") or j.get("result") or "(no failure detail returned)"))
