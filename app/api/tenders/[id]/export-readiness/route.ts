@@ -10,7 +10,21 @@ import { safeApiError } from "../../../../../lib/engine/safe-api-error";
 import { getCanonicalTenderWorkflowDecision } from "../../../../../lib/engine/canonical-workflow-decision";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 10;
+// This route runs three aggregate readiness models concurrently
+// (getFinalSubmissionReadiness, getFinalPackageReadinessModel,
+// getCanonicalTenderWorkflowDecision) and then a further evidence-stats query
+// over every mandatory requirement's compliance rows. That is the workload of
+// the 60s tier (engine, download, generate), not of the 10s tier it was filed
+// under alongside genuinely small readers.
+//
+// Observed on the exact-head Preview against a real tender (163 evidence
+// records, 7 requirements, Neon pooled connection): the request was killed at
+// its 10s cap and Vercel answered the owner with a raw
+// FUNCTION_INVOCATION_TIMEOUT page — no JSON, no blocker list, nothing the
+// Export Readiness panel can render. A readiness reader that cannot answer is
+// worse than a slow one, because the owner cannot tell "not ready" from
+// "route died".
+export const maxDuration = 60;
 
 function jsonError(message: string, status = 500, extra: Record<string, unknown> = {}) {
   const code = typeof extra.code === "string" ? extra.code : "EXPORT_READINESS_ERROR";

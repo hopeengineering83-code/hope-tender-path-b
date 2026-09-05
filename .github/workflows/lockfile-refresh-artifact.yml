@@ -190,7 +190,7 @@ jobs:
   temporary-preview-hosted-acceptance:
     if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'accept'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 55
     permissions:
       contents: read
     env:
@@ -200,6 +200,9 @@ jobs:
       BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
       TENDER_ID: ${{ inputs.tender_id }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Verify secrets and inputs are present
         run: |
           if [ -z "$OWNER_EMAIL" ]; then
@@ -287,19 +290,8 @@ jobs:
             exit 1
           fi
 
-      - name: Drain the AiJob queue until AI Analyze completes
-        run: |
-          for i in $(seq 1 40); do
-            out=$(curl -sS --connect-timeout 15 --max-time 65 -X POST \
-              -H "X-Worker-Secret: $WORKER_SECRET" -H "Content-Type: application/json" \
-              "$BASE_URL/api/ai-jobs/run-next")
-            echo "iter $i: $out"
-            if echo "$out" | grep -q '"resultCode":"QUEUE_EMPTY"'; then
-              echo "Queue empty."
-              break
-            fi
-            sleep 5
-          done
+      - name: Wait for AI Analyze to reach a terminal state
+        run: bash scripts/tmp-await-tender-jobs.sh 40
 
       - name: Snapshot readiness after AI Analyze
         run: |
@@ -321,38 +313,16 @@ jobs:
             exit 1
           fi
 
-      - name: Drain the AiJob queue through ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE
-        run: |
-          # QUEUE_EMPTY is also what run-next returns while a job sits in
-          # scheduled backoff, so a single empty response does not mean the
-          # continuation chain has finished. Require three consecutive empties,
-          # spaced far enough apart to outlast the shortest backoff step.
-          empties=0
-          for i in $(seq 1 60); do
-            out=$(curl -sS --connect-timeout 15 --max-time 120 -X POST \
-              -H "X-Worker-Secret: $WORKER_SECRET" -H "Content-Type: application/json" \
-              "$BASE_URL/api/ai-jobs/run-next")
-            echo "iter $i: $out"
-            if echo "$out" | grep -q '"resultCode":"QUEUE_EMPTY"'; then
-              empties=$((empties + 1))
-              if [ "$empties" -ge 3 ]; then
-                echo "Queue empty three times running; continuation chain is settled."
-                break
-              fi
-              sleep 15
-              continue
-            fi
-            empties=0
-            sleep 5
-          done
+      - name: Wait for ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE to settle
+        run: bash scripts/tmp-await-tender-jobs.sh 120
 
       - name: Snapshot final workflow-center and export-readiness state
         run: |
           curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-final.json
           echo
-          curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
-            "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" | tee /tmp/export-readiness-final.json
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" | tee /tmp/export-readiness-final.json || true
 
       - name: Trigger export readiness build (POST /export)
         run: |
