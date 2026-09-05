@@ -274,7 +274,6 @@ jobs:
             exit 1
           fi
           echo "Session verified against tender $TENDER_ID."
-          echo "Session verified against tender $TENDER_ID."
 
       - name: Trigger AI Analyze (manual, owner-authorized)
         run: |
@@ -315,22 +314,35 @@ jobs:
             "$BASE_URL/api/tenders/$TENDER_ID/engine")
           echo "$resp"
           status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
-          if [ "$status" != "200" ]; then
+          # 202 is the normal success shape: the route enqueues a durable
+          # ENGINE_RUN job and returns Accepted, exactly as manual-ai-analyze does.
+          if [ "$status" != "200" ] && [ "$status" != "202" ]; then
             echo "::error::Run Engine failed (HTTP $status)."
             exit 1
           fi
 
       - name: Drain the AiJob queue through ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE
         run: |
-          for i in $(seq 1 40); do
-            out=$(curl -sS --connect-timeout 15 --max-time 65 -X POST \
+          # QUEUE_EMPTY is also what run-next returns while a job sits in
+          # scheduled backoff, so a single empty response does not mean the
+          # continuation chain has finished. Require three consecutive empties,
+          # spaced far enough apart to outlast the shortest backoff step.
+          empties=0
+          for i in $(seq 1 60); do
+            out=$(curl -sS --connect-timeout 15 --max-time 120 -X POST \
               -H "X-Worker-Secret: $WORKER_SECRET" -H "Content-Type: application/json" \
               "$BASE_URL/api/ai-jobs/run-next")
             echo "iter $i: $out"
             if echo "$out" | grep -q '"resultCode":"QUEUE_EMPTY"'; then
-              echo "Queue empty."
-              break
+              empties=$((empties + 1))
+              if [ "$empties" -ge 3 ]; then
+                echo "Queue empty three times running; continuation chain is settled."
+                break
+              fi
+              sleep 15
+              continue
             fi
+            empties=0
             sleep 5
           done
 
