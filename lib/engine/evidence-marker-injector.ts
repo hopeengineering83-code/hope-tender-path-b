@@ -124,7 +124,7 @@ function buildAnchorSentence(project: ProjectRecord, templateIndex = 0): string 
   const templates = [
     `Consistent with the firm's delivery on ${name}${detail}.`,
     `The same approach was applied on ${name}${detail}, yielding the methodology referenced here.`,
-    `This methodology has been validated on ${name}${detail}.`,
+    `Relevant lessons recorded for ${name}${detail} inform this methodology.`,
     `${name}${detail} demonstrates the firm's prior delivery of this exact scope element.`,
     `Comparable scope was completed on ${name}${detail}.`,
     `The proposed approach mirrors the methodology proven on ${name}${detail}.`,

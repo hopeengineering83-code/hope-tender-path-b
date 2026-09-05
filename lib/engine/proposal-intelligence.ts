@@ -862,10 +862,10 @@ function makeDifferentiators(
   // Healthcare positioning — claim, not instruction.
   if (themes.some((t) => t.code === "HEALTHCARE")) {
     if (/hospital|health.*facilit|medical.*cent/i.test(allProjectText)) {
-      items.push("Direct healthcare facility delivery experience: prior hospital and medical-centre projects in the firm's reviewed portfolio give this engagement a same-team continuity advantage.");
+      items.push("Reviewed hospital and medical-centre records inform the healthcare-specific delivery approach described in this proposal.");
     }
     items.push("Healthcare-specific design depth: IPC compliance, clinical zone segregation, radiation shielding for imaging, medical gas coordination, and Health Authority licensing are core deliverables, not afterthoughts.");
-    items.push("Each proposed lead has performed a comparable role on a previous reviewed project — credentials matched to actual delivery, not just discipline.");
+    items.push("The proposed disciplines are mapped to the tender's healthcare scope; individual experience claims remain limited to each reviewed specialist record.");
   }
 
   // Facility assessment — claim, not instruction.
@@ -898,7 +898,8 @@ function makeDifferentiators(
 
   // PhD / senior credentials — claim.
   if (/PhD|doctorate|Eindhoven|Oxford|imperial/i.test(allExpertText)) {
-    items.push("Team includes PhD-qualified specialists — deep technical capability supported by international academic credentials.");
+    // Individual source-backed qualifications belong in the relevant CV entry;
+    // do not turn them into a proposal-wide specialist capability claim.
   }
 
   // Energy / Power

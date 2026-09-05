@@ -144,4 +144,21 @@ describe("proposal PDF rendering", () => {
       "the document needing a Unicode face embeds one",
     );
   });
+
+  it("uses whole-document page totals and preserves long wrapped cover metadata", async () => {
+    const longAddress = "Bole Road, Addis Ababa, Ethiopia — Engineering and Architectural Consultancy Headquarters";
+    const markdown = Array.from({ length: 220 }, (_, i) => `Paragraph ${i + 1}: ${"source-grounded delivery detail ".repeat(8)}`).join("\n\n");
+    const bytes = await generateProposalPdf({
+      title: "Long proposal",
+      companyAddress: longAddress,
+      submissionEmailSubject: "Technical Proposal for Pharo Ventures",
+      markdown,
+    });
+    const text = await textOf(bytes);
+    const numbers = [...text.matchAll(/Page\s+(\d+)\s+of\s+(\d+)/g)].map((match) => [Number(match[1]), Number(match[2])]);
+    assert.ok(numbers.length > 2, "fixture spans several pages");
+    assert.deepEqual(numbers.map(([page]) => page), Array.from({ length: numbers.length }, (_, i) => i + 1));
+    assert.ok(numbers.every(([, total]) => total === numbers.length));
+    assert.match(text, /Engineering and Architectural Consultancy Headquarters/);
+  });
 });

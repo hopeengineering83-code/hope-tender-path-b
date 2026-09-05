@@ -54,15 +54,21 @@ function addPage(ctx: RenderContext): PDFPage {
   const page = ctx.doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   ctx.pages.push(page);
   ctx.y = PAGE_HEIGHT - PAGE_MARGIN;
-  drawHeaderFooter(ctx);
   return page;
 }
 
-function drawHeaderFooter(ctx: RenderContext): void {
-  const page = currentPage(ctx);
+function fitTextToWidth(text: string, fonts: PdfFontSet, size: number, maxWidth: number): string {
+  if (fonts.widthOf(text, size) <= maxWidth) return text;
+  const ellipsis = "...";
+  let fitted = text;
+  while (fitted.length > 1 && fonts.widthOf(`${fitted}${ellipsis}`, size) > maxWidth) fitted = fitted.slice(0, -1);
+  return `${fitted.trimEnd()}${ellipsis}`;
+}
+
+function drawHeaderFooter(ctx: RenderContext, page: PDFPage, pageIndex: number, totalPages: number): void {
   // Branded header — right-aligned small text
   if (ctx.headerText) {
-    const headerText = sanitizePdfText(ctx.headerText);
+    const headerText = fitTextToWidth(sanitizePdfText(ctx.headerText), ctx.fonts, FONT_SIZE_SMALL, CONTENT_WIDTH);
     const hw = ctx.fonts.widthOf(headerText, FONT_SIZE_SMALL);
     page.drawText(headerText, {
       x: PAGE_WIDTH - PAGE_MARGIN - hw,
@@ -80,7 +86,7 @@ function drawHeaderFooter(ctx: RenderContext): void {
   }
   // Contact strip footer — left-aligned
   if (ctx.footerContact) {
-    const fc = sanitizePdfText(ctx.footerContact).slice(0, 110);
+    const fc = fitTextToWidth(sanitizePdfText(ctx.footerContact), ctx.fonts, FONT_SIZE_SMALL - 1, CONTENT_WIDTH - 75);
     page.drawText(fc, {
       x: PAGE_MARGIN,
       y: 28,
@@ -90,8 +96,7 @@ function drawHeaderFooter(ctx: RenderContext): void {
     });
   }
   // Page number — right-aligned
-  const idx = ctx.pages.length - 1;
-  const num = `Page ${idx} of ${ctx.pages.length - 1}`;
+  const num = `Page ${pageIndex + 1} of ${totalPages}`;
   const nw = ctx.fonts.widthOf(num, FONT_SIZE_SMALL);
   page.drawText(num, {
     x: PAGE_WIDTH - PAGE_MARGIN - nw,
@@ -467,10 +472,12 @@ async function buildCoverPage(
   // and drawn as the same string. A newline in any of them used to end the
   // export at the font layer.
   const drawCentered = (raw: string, style: PdfFontStyle, size: number, color: [number, number, number]) => {
-    const text = sanitizePdfText(raw);
-    const w = ctx.fonts.widthOf(text, size, style);
-    page.drawText(text, { x: cx - w / 2, y: sy, size, font: ctx.fonts.fontFor(text, style), color: rgb(...color) });
-    sy -= size + 6;
+    const lines = wrapText(sanitizePdfText(raw), ctx.fonts, style, size, CONTENT_WIDTH);
+    for (const text of lines) {
+      const w = ctx.fonts.widthOf(text, size, style);
+      page.drawText(text, { x: cx - w / 2, y: sy, size, font: ctx.fonts.fontFor(text, style), color: rgb(...color) });
+      sy -= size + 6;
+    }
   };
   if (opts.companyName) drawCentered(opts.companyName, "bold", FONT_SIZE_H2, BRAND_COLOR);
   if (opts.reference) drawCentered(`Reference: ${opts.reference}`, "regular", FONT_SIZE_BODY, MUTED_COLOR);
@@ -629,6 +636,9 @@ export async function generateProposalPdf(opts: {
   const documentId = PDFHexString.of(createHash("sha256").update(identitySource, "utf8").digest("hex").slice(0, 32).toUpperCase());
   doc.context.trailerInfo.ID = doc.context.obj([documentId, documentId]);
 
-  // Header/footer already drawn on every content page as it was added.
+  const totalPages = ctx.pages.length;
+  ctx.pages.forEach((page, pageIndex) => drawHeaderFooter(ctx, page, pageIndex, totalPages));
   return doc.save();
 }
+
+export const __testing__ = { fitTextToWidth };

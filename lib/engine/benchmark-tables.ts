@@ -212,7 +212,7 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
 
   return [
     "## A.5 Team-to-Project Experience Mapping",
-    "Each lead expert proposed for this assignment has performed the same or directly comparable role on a previous reviewed project. The table below provides the direct mapping.",
+    "The table below maps reviewed specialist disciplines to relevant project records. It does not assert personnel continuity unless an individual record proves that relationship.",
     "",
     header,
     separator,
@@ -854,6 +854,7 @@ export function buildSubmittedByToBlock(opts: {
   exactEmails: string[];
   exactSubject: string;
   deadline?: Date | string | null;
+  deadlineSourceQuote?: string | null;
 }): string {
   const submittedBy: string[] = [
     `**${opts.companyName}**`,
@@ -869,7 +870,7 @@ export function buildSubmittedByToBlock(opts: {
     opts.clientAddress ? opts.clientAddress : "",
     opts.exactEmails.length > 0 ? `Email recipients: ${opts.exactEmails.join("; ")}` : "Email recipients: see tender submission instructions",
     `Subject: ${opts.exactSubject}`,
-    opts.deadline ? `Deadline: ${new Date(opts.deadline).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}` : "",
+    opts.deadline ? `Deadline: ${formatSubmissionDeadline(opts.deadline, opts.deadlineSourceQuote)}` : "",
   ].filter(Boolean);
 
   // Pad rows so both columns have equal length for a tidy table render
@@ -884,6 +885,14 @@ export function buildSubmittedByToBlock(opts: {
     "|---|---|",
     ...rows,
   ].join("\n");
+}
+
+export function formatSubmissionDeadline(deadline: Date | string, sourceQuote?: string | null): string {
+  const quote = sourceQuote?.replace(/\s+/g, " ").trim() ?? "";
+  const grounded = quote.match(/(?:deadline(?:\s+for\s+submission)?|submission\s+deadline)\s*[:\-]?\s*((?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday,?\s+)?\d{1,2}\s+[A-Za-z]+\s+\d{4}(?:\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?(?:\s+(?:Addis Ababa time|EAT|UTC[+-]\d{1,2}(?::\d{2})?))?)?)/i)?.[1];
+  if (grounded) return grounded.replace(/\s+at\s+/i, " ").trim();
+  const parsed = deadline instanceof Date ? deadline : new Date(deadline);
+  return Number.isNaN(parsed.getTime()) ? String(deadline) : parsed.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
 }
 
 // ─── Portfolio Reading Guide (intro before B.2) ──────────────────────────────
@@ -946,7 +955,7 @@ export function buildCoverLetterOpener(opts: {
 
   return [
     `${opts.companyName} is pleased to submit this Technical Proposal for ${opts.tenderTitle} in response to the request issued by ${opts.clientName}.`,
-    `${opts.companyName} brings to this assignment a directly comparable evidence base. The same project team that delivered ${projectFragment} is available for this engagement, with zero learning curve. Detailed credentials, contracts, and client testimony letters are provided in the appendices.`,
+    `${opts.companyName} has reviewed ${projectFragment} as relevant reference experience. The applicable delivery lessons inform the approach described in this proposal.`,
   ].join("\n\n");
 }
 
@@ -961,9 +970,7 @@ export function buildExecutiveSummaryOpener(opts: {
   topExpertTitle?: string | null;
 }): string {
   const top = opts.projects.slice(0, 2);
-  const expertClause = opts.topExpertName
-    ? ` **${opts.topExpertName}**${opts.topExpertTitle ? `, ${opts.topExpertTitle},` : ""} who directed that assignment, leads the proposed team for this engagement.`
-    : opts.reviewedExpertCount > 0 ? ` ${opts.reviewedExpertCount} reviewed specialist(s) are confirmed for this assignment.` : "";
+  const expertClause = opts.reviewedExpertCount > 0 ? ` The evidence inventory includes ${opts.reviewedExpertCount} reviewed specialist record(s).` : "";
 
   if (top.length === 0) {
     const expertStr = opts.reviewedExpertCount > 0
@@ -974,11 +981,11 @@ export function buildExecutiveSummaryOpener(opts: {
 
   if (top.length === 1) {
     const p = top[0];
-    return `**${opts.companyName} has already delivered this assignment.** ${fmtProjectInline(p)} is the directly comparable reference — same scope, same sector, same delivery standards required by ${opts.clientName}.${expertClause}`.trim();
+    return `**${opts.companyName} brings relevant reviewed experience to this assignment.** ${fmtProjectInline(p)} provides a reference point for the proposed delivery approach for ${opts.clientName}.${expertClause}`.trim();
   }
 
   const [a, b] = top;
-  return `**${opts.companyName} has already delivered this assignment twice.** ${fmtProjectInline(a)} and ${fmtProjectInline(b)} are the directly comparable references — both confirm the firm's capacity for ${opts.clientName}'s scope.${expertClause}`.trim();
+  return `**${opts.companyName} brings relevant reviewed experience to this assignment.** ${fmtProjectInline(a)} and ${fmtProjectInline(b)} provide reference points for the proposed delivery approach for ${opts.clientName}.${expertClause}`.trim();
 }
 
 // ─── D.4 Declaration with GM name + license ──────────────────────────────────

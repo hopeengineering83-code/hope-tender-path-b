@@ -33,6 +33,7 @@ export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\[COMPANY[^\]]*\]/i,
   /\[Company Name\]/i,        // explicit variant preserved for test compatibility
   /\[CLIENT(?:\s+TO\s+BE\s+CONFIRMED)?\]/i,
+  /\[\s*\]/,
   /\{[A-Z_]{3,}\}/,              // {FIELD_NAME} template slots
   /<<(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^>]{0,60}>>/i, // <<INSERT NAME>>
   /\{\{(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^}]{0,60}\}\}/i, // {{INSERT NAME}}
@@ -63,6 +64,13 @@ export const PLACEHOLDER_PATTERNS = DOCUMENT_PLACEHOLDER_PATTERNS;
 /** Phrases identifying content as AI-generated.
  *  Merged from proposal-quality-scorer.ts and other gates. */
 export const AI_TRACE_PATTERNS: RegExp[] = [
+  /\bAI[-\s]assisted\s+(?:tender\s+)?proposal\s+generation\b/i,
+  /\b(?:tender\s+)?proposal\s+AI[-\s]ready\s+summary\b/i,
+  /\bproposal\s+evaluator\s+loop\b/i,
+  /\bproposal\s+self[-\s]score\b/i,
+  /\bcompliance\s+and\s+bid\s+review\s+strategy\b/i,
+  /\b(?:bid[-\s]team|internal)\s+(?:review|strategy|scoring|evaluation)\b/i,
+  /\bprepared\s+for\s+(?:AI|model)[-\s]assisted\b/i,
   /as an ai/i,
   /\bi am an ai\b/i,
   /\bas a language model\b/i,

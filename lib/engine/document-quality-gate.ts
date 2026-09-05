@@ -406,6 +406,15 @@ const UNSUPPORTED_CLAIM_PATTERNS: RegExp[] = [
   /\branked\s+(?:first|top|#1)\b/i,
 ];
 
+const UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS: RegExp[] = [
+  /\balready\s+delivered\s+this\s+assignment\b/i,
+  /\bsame\s+project\s+team\b.{0,100}\b(?:available|proposed|zero\s+learning\s+curve)\b/i,
+  /\bdirectly\s+comparable\s+assignment\b/i,
+  /\beach\s+proposed\s+lead\b.{0,120}\bcomparable\s+role\b/i,
+];
+const PHANTOM_ATTACHMENT_CLAIM = /\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.{0,160}\b(?:attached|provided)\b.{0,80}\b(?:appendix|appendices|annex|annexes)\b/i;
+const TRUNCATED_SUBMISSION_METADATA = /^(?:[-*]\s*)?Submission\s+(?:Address|Portal)[^:\n]*:\s*.*\b[a-z]{1,2}\s*$/im;
+
 const OFFICIAL_ORIGINAL_LABEL_PATTERNS: RegExp[] = [
   /\bbid\s+form\b/i,
   /\btender\s+form\b/i,
@@ -602,6 +611,15 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
   if (text && UNSUPPORTED_CLAIM_PATTERNS.some((rx) => rx.test(text))) {
     issues.push({ code: "UNSUPPORTED_CLAIM_RISK", severity: "MEDIUM", message: "Document may contain unsupported numeric claims (e.g. 'over X projects delivered'). Verify against reviewed evidence." });
   }
+  if (text && UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS.some((rx) => rx.test(text))) {
+    issues.push({ code: "UNSUPPORTED_CLAIM_RISK", severity: "HIGH", message: "Document makes a categorical assignment-equivalence or personnel-continuity claim that requires explicit relationship evidence." });
+  }
+  if (text && PHANTOM_ATTACHMENT_CLAIM.test(text)) {
+    issues.push({ code: "UNSUPPORTED_CLAIM_RISK", severity: "HIGH", message: "Document claims supporting material is attached in an appendix or annex without package-level proof." });
+  }
+  if (text && TRUNCATED_SUBMISSION_METADATA.test(text)) {
+    issues.push({ code: "PLACEHOLDER", severity: "HIGH", message: "Document contains malformed or visibly truncated submission metadata." });
+  }
 
   // ── Duplicated sections. ────────────────────────────────────────────────
   if (text && detectDuplicatedSections(text)) {
@@ -714,6 +732,7 @@ export const __testing__ = {
   GENERIC_FILLER_PATTERNS,
   INTERNAL_TRACEABILITY_PATTERNS,
   UNSUPPORTED_CLAIM_PATTERNS,
+  UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS,
   OFFICIAL_ORIGINAL_LABEL_PATTERNS,
   MIN_WORD_COUNTS,
   REQUIRED_SECTIONS_BY_KIND,
