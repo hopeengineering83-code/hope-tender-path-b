@@ -22,6 +22,7 @@ import {
   type PackageConformanceFacts,
   type PackageConformanceVerdict,
 } from "./package-conformance";
+import { generatedDocumentVisibleText } from "./generated-document-text";
 
 /**
  * Persisted automatic requirement-evidence rows carry this prefix in notes.
@@ -409,6 +410,10 @@ function scoreCandidate(
   if (matchingTokens.length > 0) {
     score += Math.min(18, matchingTokens.length * 3);
     reasons.push(`matching terms: ${matchingTokens.slice(0, 6).join(", ")}`);
+  }
+  if (candidate.recordType === "GENERATED_DOCUMENT" && candidate.facets?.visibleTextInspected === true && matchingTokens.length >= 2) {
+    score += 40;
+    reasons.push("verified artifact text directly addresses the requirement");
   }
 
   // Shared capability family — the difference between reading and matching.
@@ -1132,6 +1137,12 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
   const selectedExpertIds = new Set<string>(tender.expertMatches.map((row: any) => row.expertId));
   const selectedProjectIds = new Set<string>(tender.projectMatches.map((row: any) => row.projectId));
   const candidates: AutomaticEvidenceCandidate[] = [];
+  const generatedVisibleText = new Map<string, string>();
+  await Promise.all(tender.generatedDocuments.map(async (document: any) => {
+    if (!document.fileContent && !document.storagePath) return;
+    const text = await generatedDocumentVisibleText(document).catch(() => "");
+    if (text) generatedVisibleText.set(document.id, text.slice(0, 20_000));
+  }));
 
   for (const expert of experts) {
     const candidate = vaultRecordCandidate(
@@ -1260,7 +1271,7 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       recordType: "GENERATED_DOCUMENT",
       recordId: document.id,
       label: document.exactFileName ?? document.name,
-      searchableText: `${document.name ?? ""} ${document.exactFileName ?? ""} ${document.documentType ?? ""} ${document.format ?? ""}`,
+      searchableText: `${document.name ?? ""} ${document.exactFileName ?? ""} ${document.documentType ?? ""} ${document.format ?? ""} ${generatedVisibleText.get(document.id) ?? ""}`,
       evidenceKinds: ["OUTPUT_ARTIFACT", "PACKAGE_FORMAT", "METHODOLOGY_NARRATIVE", "DECLARATION", "FORM_TEMPLATE"],
       evidenceKey: candidateKey("GENERATED_DOCUMENT", document.id, integrity.hash),
       sourceDocumentId: document.id,
@@ -1273,7 +1284,7 @@ async function loadCoverageContext(db: any, tenderId: string, userId: string): P
       sourceSection: document.documentType ?? null,
       sourceQuote: null,
       evidenceRevision: integrity.hash,
-      facets: { validationStatus, generationStatus },
+      facets: { validationStatus, generationStatus, visibleTextInspected: generatedVisibleText.has(document.id) },
     });
   }
 
