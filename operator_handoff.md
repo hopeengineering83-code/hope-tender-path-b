@@ -968,6 +968,10 @@ be re-confirmed from here, and AI Analyze genuinely requires the owner.
 - **Risks / next action:** the real current confirmed Build Plan reported one required delivery (`Technical Proposal.pdf`), while the owner acceptance target also names Cover Letter and Annexes. Do not invent them or alter the confirmed source-derived scope: rerun exact-head hosted acceptance and inspect the real ZIP/manifest first, then reconcile only if the source-derived Build Plan itself proves those deliverables. Push this surgical repair, require exact-head CI/Preview, and rerun the hosted workflow.
 - **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — hosted ZIP acceptance and artifact inspection remain incomplete.
 
+#### Exact-head hosted follow-up (`369d1273`)
+
+The repair made AUTO_FINALIZE succeed on the real Preview. Export readiness then exposed one remaining count-only contradiction: the retained editable DOCX was still labelled an export candidate alongside its required PDF, producing `exportReadyDocumentsTotal=2` for one confirmed delivery. The package model now treats only the row whose format matches the confirmed plan as the export candidate; retained conversion sources remain active workspace documents but cannot inflate final-package counts. The focused regression asserts one export-ready delivery while both byte-bearing rows remain stored.
+
 ### 2026-08-29 UTC — Codex (exact retained-source request-shape preservation)
 
 - **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only. The refreshed container initially lacked a remote and exposed a synthetic `work` branch; after adding the canonical repository remote, its worktree was proven byte-identical to exact remote `04b93e0a004bfc672cda1a9516be45484b3e5c58`, then safely reattached to the existing consolidation branch. No branch or PR was created, merged, or promoted.

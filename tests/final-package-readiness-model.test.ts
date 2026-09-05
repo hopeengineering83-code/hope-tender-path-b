@@ -249,6 +249,8 @@ test("PDF delivery selects the finalized PDF while retaining its editable DOCX s
   assert.equal(manifest.ready, true);
   assert.equal(manifest.files[0]?.sourceDocumentId, "pdf");
   assert.equal(manifest.files[0]?.format, "PDF");
+  assert.equal(generated.find((row) => row.id === "source")?.exportCandidate, false);
+  assert.equal(generated.filter((row) => row.exportReady).length, 1);
 });
 
 test("final ZIP manifest rejects missing, wrong format, unapproved, duplicate and excludes outside-plan workspace docs", () => {

@@ -666,8 +666,12 @@ export function mapGeneratedDocumentsToSubmissionPlan(
   return generated.map((document) => {
     const key = keyForDocument(document);
     const plannedDocumentKey = plannedByKey.has(key) ? key : null;
+    const plannedDocument = plannedDocumentKey ? plannedByKey.get(plannedDocumentKey) : null;
     const outputState = deriveDocumentOutputState(document);
-    const exportCandidate = Boolean(plannedDocumentKey) && isFinalExportCandidateDocument(document);
+    const documentFormat = activeStatus(document.format) || expectedFormat(document.exactFileName);
+    const exportCandidate = Boolean(plannedDocumentKey)
+      && documentFormat === plannedDocument?.expectedFormat
+      && isFinalExportCandidateDocument(document);
     const exportReady = exportCandidate && outputState === "READY_FOR_EXPORT" && byteSize(document) > 0;
     const exclusionReason = generatedDocumentExclusionReason(document, plannedDocumentKey);
     return {
@@ -676,7 +680,7 @@ export function mapGeneratedDocumentsToSubmissionPlan(
       name: document.name ?? document.exactFileName ?? document.id,
       finalFileName: document.exactFileName ?? document.name ?? `${document.id}.docx`,
       documentType: document.documentType ?? "",
-      format: activeStatus(document.format) || expectedFormat(document.exactFileName),
+      format: documentFormat,
       generationStatus: document.generationStatus ?? "",
       validationStatus: document.validationStatus ?? "",
       reviewStatus: document.reviewStatus ?? "",
