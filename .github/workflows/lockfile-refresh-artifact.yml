@@ -173,10 +173,12 @@ jobs:
   # session — this sandbox cannot authenticate as the owner and cannot POST to
   # the Preview host at all (its egress proxy rejects it by policy), so this
   # job runs the walkthrough from a GitHub-hosted runner instead, using:
-  #   - PREVIEW_OWNER_SESSION_COOKIE — the owner's own live `hope_session`
-  #     cookie value, copied from an already-logged-in browser tab on the
-  #     Preview app. Never printed; used only as a request header. Reuses an
-  #     existing session rather than forging one or handling a password.
+  #   - PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD — signed in through the
+  #     real /api/auth/login endpoint exactly as e2e/global-setup.ts does
+  #     (same Origin and Referer a same-origin browser form would send, so
+  #     strict CSRF stays enabled). The password is never printed, and the
+  #     returned hope_session value is registered with ::add-mask:: before it
+  #     is used, so it cannot appear in any log line either.
   #   - AI_JOBS_WORKER_SECRET — the secret drain-ai-job-queue.yml already
   #     uses to drain this same Preview's AiJob queue via X-Worker-Secret.
   #
@@ -192,15 +194,20 @@ jobs:
     permissions:
       contents: read
     env:
-      SESSION_COOKIE: ${{ secrets.PREVIEW_OWNER_SESSION_COOKIE }}
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
       WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
       BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
       TENDER_ID: ${{ inputs.tender_id }}
     steps:
       - name: Verify secrets and inputs are present
         run: |
-          if [ -z "$SESSION_COOKIE" ]; then
-            echo "::error::PREVIEW_OWNER_SESSION_COOKIE secret is not set. Log into the Preview app in a browser as the tender's owner, copy the hope_session cookie value, and add it as this repository secret."
+          if [ -z "$OWNER_EMAIL" ]; then
+            echo "::error::PREVIEW_OWNER_EMAIL secret is not set."
+            exit 1
+          fi
+          if [ -z "$OWNER_PASSWORD" ]; then
+            echo "::error::PREVIEW_OWNER_PASSWORD secret is not set."
             exit 1
           fi
           if [ -z "$WORKER_SECRET" ]; then
@@ -212,7 +219,50 @@ jobs:
             exit 1
           fi
 
-      - name: Verify the session cookie authenticates against the target tender
+      - name: Sign in through the real /api/auth/login endpoint
+        run: |
+          # Same request shape e2e/global-setup.ts uses: JSON credentials with
+          # the Origin and Referer a same-origin browser form would send, so
+          # strict CSRF stays enabled. Credentials go in a --data-binary file
+          # rather than argv so they never reach the process table.
+          umask 077
+          printf '{"email":%s,"password":%s}' \
+            "$(printf '%s' "$OWNER_EMAIL" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            "$(printf '%s' "$OWNER_PASSWORD" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            > /tmp/login-body.json
+          status=$(curl -sS --connect-timeout 15 --max-time 45 \
+            -o /tmp/login-body-response.json -D /tmp/login-headers.txt \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -H "Origin: $BASE_URL" \
+            -H "Referer: $BASE_URL/login" \
+            --data-binary @/tmp/login-body.json \
+            "$BASE_URL/api/auth/login")
+          rm -f /tmp/login-body.json
+          echo "login status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Login against the Preview app failed (HTTP $status). Check PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD."
+            rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+            exit 1
+          fi
+          cookie=$(grep -i '^set-cookie:' /tmp/login-headers.txt \
+            | grep -o 'hope_session=[^;]*' \
+            | head -1 \
+            | cut -d= -f2-)
+          rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+          if [ -z "$cookie" ]; then
+            echo "::error::Login succeeded but no hope_session cookie was returned."
+            exit 1
+          fi
+          # Register the session value as a masked secret BEFORE it is used, so
+          # it can never surface in a later log line.
+          echo "::add-mask::$cookie"
+          echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+          echo "Signed in; session captured and masked."
+
+      - name: Verify the session authenticates against the target tender
         run: |
           resp=$(curl -sS --connect-timeout 15 --max-time 30 -w "\n---STATUS:%{http_code}---" \
             -H "Cookie: hope_session=$SESSION_COOKIE" \
@@ -220,9 +270,10 @@ jobs:
           status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
           echo "GET tender status: $status"
           if [ "$status" != "200" ]; then
-            echo "::error::Session cookie did not authenticate against tender $TENDER_ID (HTTP $status). Provide a fresh cookie value copied from an active browser session logged in as the tender's owner."
+            echo "::error::The signed-in session could not read tender $TENDER_ID (HTTP $status). Confirm the tender belongs to PREVIEW_OWNER_EMAIL's account."
             exit 1
           fi
+          echo "Session verified against tender $TENDER_ID."
           echo "Session verified against tender $TENDER_ID."
 
       - name: Trigger AI Analyze (manual, owner-authorized)
