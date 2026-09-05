@@ -309,6 +309,35 @@ function clean(text?: string | null): string {
 // extracted source text reach the client through the experience tables, and a
 // mid-word slice shipped "Author: Tariku Abebaw (Building Officer, Gimba Ci" in
 // a delivered proposal. Same budget, same ellipsis, cut moved to the last word.
+/**
+ * Normalise the vault text fields that reach client-facing output.
+ *
+ * Vault values carry whatever punctuation whoever typed them left behind. One
+ * reviewed project's country is stored as "Gimba City, South Wollo Zone, Amhara
+ * Region," — with a trailing comma — and roughly a dozen producers interpolate
+ * these values straight into client-facing prose and tables. A delivered
+ * Technical Proposal therefore read "… Amhara Region,)" seven times, in seven
+ * different sentences, from seven different builders.
+ *
+ * Trimming edge separators in each producer is the version of this fix that
+ * never finishes: the next builder added starts the count again. The values are
+ * normalised once, where the reviewed records enter the generation context, so
+ * every downstream consumer gets clean text by construction. Only leading and
+ * trailing separator characters go — internal punctuation is part of the value
+ * and is untouched.
+ */
+function tidyVaultText<T>(record: T, fields: readonly string[]): T {
+  const source = record as Record<string, unknown>;
+  const patched: Record<string, unknown> = { ...source };
+  for (const field of fields) {
+    const value = source[field];
+    if (typeof value !== "string") continue;
+    const cleaned = value.replace(/\s+/g, " ").trim().replace(/^[\s,;:|/–—-]+/, "").replace(/[\s,;:|/–—-]+$/, "");
+    if (cleaned !== value) patched[field] = cleaned;
+  }
+  return patched as T;
+}
+
 function shortText(text?: string | null, max = 700): string {
   return truncateAtWordBoundary(clean(text), max);
 }
@@ -1212,31 +1241,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       });
     }
   }
-
-  // Vault text fields carry whatever punctuation whoever typed them left
-  // behind. One reviewed project's country is stored as "Gimba City, South
-  // Wollo Zone, Amhara Region," — with a trailing comma — and roughly a dozen
-  // producers interpolate these values straight into client-facing prose and
-  // tables. A delivered Technical Proposal therefore read "… Amhara Region,)"
-  // seven times, in seven different sentences, from seven different builders.
-  //
-  // Trimming edge separators in each producer is the version of this fix that
-  // never finishes: the next builder added starts the count again. The values
-  // are normalised once, here, where the reviewed records enter the generation
-  // context, so every downstream consumer gets clean text by construction.
-  // Only leading/trailing separator characters go — internal punctuation, which
-  // is part of the value, is untouched.
-  const tidyVaultText = <T,>(record: T, fields: readonly string[]): T => {
-    const source = record as Record<string, unknown>;
-    const patched: Record<string, unknown> = { ...source };
-    for (const field of fields) {
-      const value = source[field];
-      if (typeof value !== "string") continue;
-      const cleaned = value.replace(/\s+/g, " ").trim().replace(/^[\s,;:|/–—-]+/, "").replace(/[\s,;:|/–—-]+$/, "");
-      if (cleaned !== value) patched[field] = cleaned;
-    }
-    return patched as T;
-  };
 
   const allSelectedExperts = tender.expertMatches.map((m) => tidyVaultText(m.expert, ["fullName", "title"]));
   const allSelectedProjects = tender.projectMatches.map((m) => tidyVaultText(m.project, ["name", "country", "clientName", "sector"]));

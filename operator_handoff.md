@@ -237,10 +237,34 @@ templates, an out-of-order table of contents (C.0, C.1, C.3, C.4, C.6, C.2,
 C.5a), and repeated identical Section G cells. These are content-generation
 quality problems, not gate problems, and they need their own session.
 
-**Next action.** Re-run the hosted acceptance on the new head to confirm the
-four fixes in the delivered bytes, then address the evidence-marker padding and
-section ordering before attempting the 17-dimension assessment. Remove the
-temporary acceptance tooling once that assessment passes.
+**A harness limitation worth knowing before trusting the next green run.**
+Hosted run 33996268451 on `1029f6ad` reported success on every gate and
+delivered a ZIP whose `contentSha256` (`713a57f8…`), byte size (234635) and
+defect counts were *identical* to the previous run's artifact. It regenerated
+nothing. Run Engine is idempotent by design, so re-triggering it against an
+unchanged analysis revision enqueues no new job: the newest ENGINE_RUN /
+PROPOSAL_GENERATION / AUTO_FINALIZE rows were still from 22:21-22:23, and the
+document's `updatedAt` was 22:23:45. This is the same shape as the earlier
+"QUEUE_EMPTY does not mean finished" trap — a green acceptance that proves less
+than it appears to.
+
+Consequence: the `1029f6ad` hygiene fixes (single-point vault normalisation,
+`shortText` word-boundary cut, the benchmark-table truncations) are
+**unverified against a delivered artifact — not disproven**. The artifact
+inspected still reflects `84c63294`'s code. Before the next acceptance is
+believed, the harness needs to either force a fresh generation or assert that
+`contentSha256` changed from the previous run; a run that regenerates nothing
+should fail, not pass.
+
+**Verified counts on the `84c63294` artifact** (for comparison when the next
+real regeneration happens): dangling `Region,)` 2, CV document furniture 9,
+`Bid-Team Action` 0, mid-word truncations 5.
+
+**Next action.** Teach the acceptance job to prove a regeneration happened, then
+re-run it to confirm the hygiene fixes in delivered bytes. After that, address
+the evidence-marker padding and section ordering before attempting the
+17-dimension assessment. Remove the temporary acceptance tooling once that
+assessment passes.
 
 **Merge status:** not reviewed — do not merge.
 
