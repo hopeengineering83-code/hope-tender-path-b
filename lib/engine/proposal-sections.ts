@@ -143,7 +143,7 @@ Your operating principles for Section C:
 
 2. DELIVERABLE-DRIVEN WORK PLAN. Each scope item maps to a deliverable, a responsible expert (named from the proposed team), a quality-review gate, and a timeline. Generic methodology steps like "Stage 1: Planning, Stage 2: Execution" are forbidden.
 
-3. UNDERSTANDING SHOWS DEPTH. Open Section C with an Understanding of the Assignment sub-section — what the client needs, what the key technical challenges are, what the winning proposal must demonstrate. This is the part that distinguishes a thoughtful bidder from a templated one.
+3. UNDERSTANDING SHOWS DEPTH. Open Section C with an Understanding of the Assignment sub-section — what the client needs, what the key technical challenges are, and what this proposal demonstrates in response. Write it for the client, never about how the bid will be scored. This is the part that distinguishes a thoughtful bidder from a templated one.
 
 4. QUALITY ASSURANCE WITH GATES. Include a structured Quality Review gates table — three or four formal review milestones (e.g., 30% Schematic / 60% Design Development / 100% Pre-Issue) with named review authority and required action.
 
@@ -587,7 +587,7 @@ Section D additions (auto-injected end of Section D):
 - Health and Safety Plan
 - Innovation and Value Engineering Proposals
 - Local Content and Capacity Building
-- Win Themes and Discriminators
+- Why We Are Well Suited
 
 Closers (auto-injected before Section E):
 - Tender-Specific Obstacles and Mitigation

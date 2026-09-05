@@ -22,6 +22,8 @@
  * Section F heading.
  */
 
+import { CLIENT_FACING_SECTION_F_HEADING, SECTION_F_HEADING_RX } from "./client-facing-section-titles";
+
 type EvaluationWeightLite = { criterion: string; weight: string; rawMatch: string };
 
 export type EvaluatorMirrorBuilderInput = {
@@ -47,7 +49,7 @@ function escCell(text: string | null | undefined): string {
  */
 export function hasEvaluatorMirrorHeading(markdown: string): boolean {
   const re = /(^|\n)\s*#{1,4}\s*(?:section\s*[F:.\-\s]*)?\s*(?:evaluation\s+criteria\s+response\s+mirror|evaluation\s+(?:criteria\s+)?response|evaluator(?:'s)?\s+mirror|evaluation\s+mirror)/i;
-  return re.test(markdown);
+  return re.test(markdown) || SECTION_F_HEADING_RX.test(markdown);
 }
 
 /**
@@ -161,17 +163,23 @@ export function buildEvaluatorMirrorSection(input: EvaluatorMirrorBuilderInput):
   });
 
   const weightFootnote = input.evaluationWeights.length > 0
-    ? `_${input.evaluationWeights.length} numeric weight${input.evaluationWeights.length === 1 ? "" : "s"} detected in tender; populated where the criterion phrasing matched._`
-    : "_No numeric weights stated in this tender — weight column shows em-dash. Mirror table still scores against the criterion language itself._";
+    ? `_${input.evaluationWeights.length} numeric weight${input.evaluationWeights.length === 1 ? "" : "s"} stated in the tender; populated where the criterion phrasing matched._`
+    : "_No numeric weights are stated in this tender, so the weight column shows an em-dash. Each criterion is answered against its own wording._";
 
   return [
-    "## SECTION F: EVALUATION CRITERIA RESPONSE MIRROR",
+    `## ${CLIENT_FACING_SECTION_F_HEADING.toUpperCase()}`,
     "",
-    "Every detected evaluation criterion is mirrored back to the evaluator using their own language, with the numeric weight (when stated in the tender) and a pointer to the proposal section that answers the criterion. Mirroring criterion language back at the evaluator using their exact wording is a high-leverage scoring tactic — evaluators score what they recognise.",
+    // This paragraph used to explain to the client that quoting their own
+    // criterion wording back at them "is a high-leverage scoring tactic —
+    // evaluators score what they recognise". That is the bid desk describing
+    // its technique, printed in the evaluator's copy. The table itself is
+    // genuinely useful to an evaluator, so it stays; the tactic commentary does
+    // not.
+    "Each evaluation criterion stated in the tender is listed below in the tender's own wording, with the weight where the tender states one and a pointer to the section of this proposal that answers it. The table is provided so each criterion can be checked directly against the response.",
     "",
     weightFootnote,
     "",
-    "| Evaluation Criterion (echoed in tender language) | Weight | Where This Proposal Answers It | Strongest Evidence Anchor |",
+    "| Evaluation Criterion (in the tender's wording) | Weight | Where This Proposal Answers It | Supporting Evidence |",
     "|---|---|---|---|",
     ...rows,
   ].join("\n");

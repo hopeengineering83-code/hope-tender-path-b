@@ -47,6 +47,7 @@
  */
 
 import type { ProjectRecord } from "./benchmark-tables";
+import { CLIENT_FACING_SECTION_G_HEADING } from "./client-facing-section-titles";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -56,6 +57,9 @@ const HEADING_PATTERNS: RegExp[] = [
   /^##\s+(?:Section\s+G[:.\-\s]*)?Win\s+Themes(?:\s+(?:and|&)\s+(?:Discriminators?|Differentiators?))?/im,
   /^###\s+(?:Section\s+G[:.\-\s]*)?Win\s+Themes(?:\s+(?:and|&)\s+(?:Discriminators?|Differentiators?))?/im,
   /^##\s+Themes\s+(?:and|&)\s+Discriminators/im,
+  // The client-facing replacement heading, so re-running the injector on an
+  // already-built proposal stays idempotent.
+  /^###?\s+(?:Section\s+G[:.\-\s]*)?Why\s+We\s+Are\s+Well\s+Suited/im,
 ];
 
 const TABLE_ROW_RE = /\|\s*[^|\n]{8,80}\s*\|\s*[^|\n]{12,160}\s*\|\s*[^|\n]{6,80}\s*\|/g;
@@ -99,31 +103,31 @@ function defaultRows(sector: string): ThemeRow[] {
       pain: "Mid-engagement scope creep eroding budget",
       strength: "Inception-stage scope freeze + variation log signed weekly",
       discriminator: "Variation log circulated to client every Friday — written audit trail of what is and isn't in scope",
-      evidenceFallback: "Bid-Team Action: confirm comparable engagement reference",
+      evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
     },
     {
       pain: "Late client decisions delaying critical path",
       strength: "Approval-pack pre-circulation 5 working days ahead with explicit decision request",
       discriminator: "Client-decision turnaround SLA monitored and reported monthly",
-      evidenceFallback: "Bid-Team Action: confirm comparable engagement reference",
+      evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
     },
     {
       pain: "Loss of key expert mid-engagement",
       strength: "Named back-up expert per role written into the contract",
       discriminator: "48-hour mobilization commitment for back-up; CV-rotation kept current",
-      evidenceFallback: "Bid-Team Action: confirm comparable engagement reference",
+      evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
     },
     {
       pain: "Deliverable failing client / regulatory review",
       strength: "Three formal QA gates (30% / 60% / 100%) with independent peer review at 100%",
       discriminator: "Independent reviewer is NOT a team member — fresh eyes on every issuance",
-      evidenceFallback: "Bid-Team Action: confirm peer-review track record",
+      evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
     },
     {
       pain: "Knowledge lost at handover; client returns to designer for clarifications",
       strength: "Structured lessons-learned memo + post-handover advisory call (60 min) at no fee",
       discriminator: "Six-month post-handover advisory window protected against scope re-engagement fees",
-      evidenceFallback: "Bid-Team Action: confirm post-handover commitment",
+      evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
     },
   ];
 
@@ -133,13 +137,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Late changes to clinical brief invalidating IPC zoning",
         strength: "Clinical-brief sign-off freeze at 30% gate; written variation order required for any change",
         discriminator: "MoH functional-programming-aligned IPC zoning — no rework when a unit changes service mix",
-        evidenceFallback: "Bid-Team Action: confirm hospital-design reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "Medical-equipment specifications drifting after MEP design freeze",
         strength: "Equipment schedule confirmed before MEP design freeze; conservative provisions for power, gas, heat",
         discriminator: "Biomedical-equipment-coordinated MEP — no late variations because of imaging or laboratory changes",
-        evidenceFallback: "Bid-Team Action: confirm clinical-MEP coordination reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -150,13 +154,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Borehole yield falling below design demand",
         strength: "72-hour pumping test at investigation; conservative safe-yield factor; back-up source identified",
         discriminator: "Yield contingency plan documented BEFORE detailed design — no design re-do when source disappoints",
-        evidenceFallback: "Bid-Team Action: confirm water-source-investigation reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "Pipe-network pressure-test failure during commissioning",
         strength: "Joint inspection hold-points every 500 m; pressure test at each pressure zone before backfill",
         discriminator: "AWWA C600 pressure-test discipline embedded in supervision protocol",
-        evidenceFallback: "Bid-Team Action: confirm pressure-test track record",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -167,13 +171,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Subgrade CBR below design assumption — pavement re-design needed",
         strength: "Geotechnical investigation at 200 m intervals; conservative pavement design factor; standby re-design protocol",
         discriminator: "Pre-budgeted re-design contingency — no claim event when subgrade disappoints",
-        evidenceFallback: "Bid-Team Action: confirm pavement-design reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "Cross-drainage failure during first wet season",
         strength: "Hydrology check using 25-year return period with climate uplift; culvert capacity verified",
         discriminator: "Climate-uplift drainage design specifically called out in calculation memo",
-        evidenceFallback: "Bid-Team Action: confirm drainage-design reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -184,13 +188,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Community resistance to proposed land-use changes",
         strength: "Three structured consultation rounds; published comments log; council pre-briefing",
         discriminator: "Pre-published comments log shifts political risk away from the council into structured response",
-        evidenceFallback: "Bid-Team Action: confirm urban-planning reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "GIS / cadastral data gaps invalidating baseline",
         strength: "Data-completeness assessment at inception; supplementary field survey budgeted",
         discriminator: "Field-survey contingency built into the lump-sum — no variation order when records are incomplete",
-        evidenceFallback: "Bid-Team Action: confirm GIS-baseline reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -201,13 +205,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Protection relay settings rejected at utility interconnection review",
         strength: "Independent power-systems peer review of relay settings before utility submission; relay setting schedule issued with 100% design package",
         discriminator: "No other bidder includes an independent protection-relay review as a standard deliverable — utility pre-approval secured before construction starts",
-        evidenceFallback: "Bid-Team Action: confirm energy-design reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "Solar/wind yield forecast over-stated — energy target missed",
         strength: "P50/P90 yield estimates from ≥ 10 years validated resource data; conservative degradation factor; HOMER sensitivity analysis",
         discriminator: "Yield model and sensitivity analysis handed to client — lender can interrogate assumptions directly without commissioning new study",
-        evidenceFallback: "Bid-Team Action: confirm renewable-energy reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -218,13 +222,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Hydrological source flow lower than scheme design — crops under-served",
         strength: "20-year flow record analysis; conservative safe-yield factor; back-up source identified before design starts",
         discriminator: "Flow contingency documented BEFORE detailed design — no redesign cost when source under-performs",
-        evidenceFallback: "Bid-Team Action: confirm irrigation-scheme reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "WUA collapses after handover — scheme falls into disuse",
         strength: "WUA readiness assessment at inception; governance framework and tariff model agreed before construction",
         discriminator: "WUA governance kit (constitution, water allocation rules, fee collection template) handed over as a project deliverable",
-        evidenceFallback: "Bid-Team Action: confirm WUA establishment reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -235,13 +239,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Resource estimate downgraded at independent competent-person review",
         strength: "JORC-compliant estimate with sensitivity analysis; independent competent-person review before report issue",
         discriminator: "Competent-person review is a built-in project deliverable, not an afterthought — estimate quality is investor-ready from issue",
-        evidenceFallback: "Bid-Team Action: confirm JORC resource report reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "TSF slope failure — safety incident and environmental liability",
         strength: "TSF design to MAC/ANCOLD guidelines; slope stability by three methods; instrumentation programme from first raise",
         discriminator: "TSF instrumentation and monitoring plan handed to mine operator at handover — early warning system operational from day one",
-        evidenceFallback: "Bid-Team Action: confirm TSF design reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -252,13 +256,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Berth design fails pre-operations nautical safety review — commercial launch delayed",
         strength: "Fast-time nautical simulation validates berth layout before structural design is finalised",
         discriminator: "Simulation report is a handover deliverable — port authority retains safety evidence for future vessel-class upgrades without commissioning new study",
-        evidenceFallback: "Bid-Team Action: confirm port design reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "Dredge material disposal site rejected — project delay and cost overrun",
         strength: "Sediment characterisation completed before dredge volumes are estimated; disposal site pre-approved by environmental authority before mobilisation",
         discriminator: "Pre-approved disposal plan eliminates the most common cause of port-project delay — no contingency cost for disposal site re-approval",
-        evidenceFallback: "Bid-Team Action: confirm dredging reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -269,13 +273,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Outstanding HAZOP actions reach construction — safety incident risk",
         strength: "HAZOP action register tracked to full close-out; LOPA for high-severity nodes; PSI documented before construction release",
         discriminator: "No construction release until HAZOP action register is formally closed — safety case is complete before ground is broken",
-        evidenceFallback: "Bid-Team Action: confirm HAZOP facilitation reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "Cathodic protection failure — pipeline leak and environmental liability",
         strength: "CP design to NACE/ISO; soil resistivity survey before design; CIPS baseline within 12 months of commissioning",
         discriminator: "ILI baseline run schedule handed to client at handover — integrity management lifecycle begins immediately, not when a leak occurs",
-        evidenceFallback: "Bid-Team Action: confirm pipeline engineering reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -286,13 +290,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "System goes live before regulatory compliance is confirmed — enforcement action",
         strength: "Regulatory gap analysis reviewed by licensed local legal counsel; compliance attestation before go-live",
         discriminator: "Legal counsel sign-off is a formal go-live gate — no system launch without documented compliance confirmation",
-        evidenceFallback: "Bid-Team Action: confirm regulatory compliance reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "Data migration errors discovered post-cutover — reconciliation failure",
         strength: "Parallel-run cutover; data reconciliation protocol signed off before live; documented rollback path",
         discriminator: "Rollback plan is tested before the cutover window — not written after the cutover fails",
-        evidenceFallback: "Bid-Team Action: confirm core banking implementation reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -303,13 +307,13 @@ function defaultRows(sector: string): ThemeRow[] {
         pain: "Coverage underperforms simulation — dead zones in target service area",
         strength: "Calibrated propagation model with field-measured correction factors; drive-test acceptance against coverage KPIs",
         discriminator: "Drive-test data archived and handed to NOC team — future comparative measurement campaigns use our baseline, not a new study",
-        evidenceFallback: "Bid-Team Action: confirm broadband network reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       {
         pain: "Spectrum not licensed in time — rollout delayed",
         strength: "Spectrum licensing roadmap prepared at project inception; frequency assignment application submitted with full technical data package",
         discriminator: "Site engineering does not start until in-principle spectrum approval is received — no sunk cost on sites that cannot be activated",
-        evidenceFallback: "Bid-Team Action: confirm spectrum licensing reference",
+        evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
       },
       ...generic,
     ];
@@ -317,36 +321,34 @@ function defaultRows(sector: string): ThemeRow[] {
   return generic;
 }
 
-// Pull tender-specific pains from the gapsToAddressInNarrative / themes
-// arrays. Each becomes a high-priority row at the top of the table,
-// pushing generic rows downstream.
+// Pull tender-specific rows from the tender's own themes. Each becomes a
+// high-priority row at the top of the table, pushing generic rows downstream.
+//
+// `gapsToAddressInNarrative` is DELIBERATELY NOT READ HERE.
+// -------------------------------------------------------
+// That array is the engine's internal gap channel (lib/engine/
+// proposal-intelligence.ts `detectGaps`). Every entry in it is an
+// instruction the bid team writes to itself — "Use the closest
+// electromechanical or infrastructure project and flag the sector gap as a
+// senior bid-review action", "Add or review additional experts before final
+// submission", "note the gap for the bid team". This builder used to copy
+// those strings verbatim into the client-facing table's first column, so a
+// real submitted proposal told the procuring entity that the bidder had no
+// sector-matching project and instructed its own staff to substitute the
+// closest one. The gap analysis is legitimate and stays available
+// internally; it simply is not client-facing content, and no amount of
+// per-phrase filtering downstream can make an internal instruction into a
+// client sentence. The channel is cut here, at the boundary.
 function tenderSpecificRows(opts: {
-  gapsToAddressInNarrative?: string[];
   themes?: string[];
   evaluationCriteria?: string[];
 }): ThemeRow[] {
   const out: ThemeRow[] = [];
   const seen = new Set<string>();
 
-  // Take up to 3 narrative gaps as direct pain rows (these are
-  // the BID-TEAM-flagged things to address).
-  for (const g of opts.gapsToAddressInNarrative ?? []) {
-    if (out.length >= 3) break;
-    const trimmed = g.trim().slice(0, 110);
-    if (!trimmed) continue;
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      pain: trimmed,
-      strength: "Addressed directly in our methodology and evidence vault — see Section C and the Compliance Matrix",
-      discriminator: "Bid-Team Action: confirm specific discriminator language for this gap before submission",
-      evidenceFallback: "Bid-Team Action: confirm evidence anchor for this discriminator",
-    });
-  }
-
-  // Take up to 2 themes as opportunity rows (these are the
-  // intelligence-extracted hot buttons).
+  // Tender themes are the client's own stated priorities, so they read as
+  // requirements — not as "hot-buttons", which is bid-desk shorthand for
+  // what the evaluator can be nudged on.
   for (const t of opts.themes ?? []) {
     if (out.length >= 5) break;
     const trimmed = t.trim().slice(0, 110);
@@ -355,10 +357,10 @@ function tenderSpecificRows(opts: {
     if (seen.has(key)) continue;
     seen.add(key);
     out.push({
-      pain: `Tender hot-button: ${trimmed}`,
+      pain: trimmed,
       strength: "Mapped to a specific firm capability and a project anchor in our methodology",
-      discriminator: "Bid-Team Action: confirm quantified discriminator for this theme",
-      evidenceFallback: "Bid-Team Action: confirm evidence anchor",
+      discriminator: "Addressed directly in our methodology — see Section C and the Compliance Matrix",
+      evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
     });
   }
 
@@ -371,7 +373,6 @@ interface BuildOpts {
   primarySector: string;
   projects: ProjectRecord[];
   differentiators?: string[];
-  gapsToAddressInNarrative?: string[];
   themes?: string[];
   evaluationCriteria?: string[];
   companyName: string;
@@ -380,7 +381,6 @@ interface BuildOpts {
 function buildTable(opts: BuildOpts): string {
   const sectorRows = defaultRows(opts.primarySector);
   const tenderRows = tenderSpecificRows({
-    gapsToAddressInNarrative: opts.gapsToAddressInNarrative,
     themes: opts.themes,
     evaluationCriteria: opts.evaluationCriteria,
   });
@@ -389,8 +389,11 @@ function buildTable(opts: BuildOpts): string {
   // Cap at 10 rows so the table covers complex tenders without becoming unwieldy.
   const all = [...tenderRows, ...sectorRows].slice(0, 10);
 
-  const head = "| # | Tender Pain / Need | Our Strength | Discriminator | Evidence Anchor |";
-  const sep = "|---|--------------------|--------------|---------------|-----------------|";
+  // Column labels are the client's vocabulary, not the bid desk's. The
+  // underlying row fields keep their original internal names; only what is
+  // rendered changes.
+  const head = "| # | Requirement or Client Need | Our Capability | What This Means for the Client | Evidence |";
+  const sep = "|---|----------------------------|----------------|--------------------------------|----------|";
   const body = all.map((r, i) => {
     // Use each project once; once exhausted fall back to the row's own
     // evidenceFallback text rather than cycling the same projects repeatedly.
@@ -404,7 +407,7 @@ function buildTable(opts: BuildOpts): string {
   // table. This isn't required by the scorer but improves readability.
   const diffBullets: string[] = [];
   if ((opts.differentiators ?? []).length > 0) {
-    diffBullets.push("", "**Additional discriminators:**");
+    diffBullets.push("", "**Further strengths we bring to this assignment:**");
     for (const d of (opts.differentiators ?? []).slice(0, 5)) {
       const trimmed = String(d).trim().slice(0, 220);
       if (!trimmed) continue;
@@ -414,9 +417,9 @@ function buildTable(opts: BuildOpts): string {
 
   return [
     MARKER,
-    `## Section G: Win Themes and Discriminators`,
+    `## ${CLIENT_FACING_SECTION_G_HEADING}`,
     "",
-    `The table below maps each tender pain or need to a specific firm strength, the quantified discriminator that sets us apart, and the evidence anchor a client can verify. Each row is a discriminator, not a marketing claim — backed by methodology, vault, or a written commitment in this proposal.`,
+    `The table below maps each requirement or client need to a specific firm capability, what that capability means in practice for this assignment, and the evidence a client can verify. Each row is a commitment, not a marketing claim — backed by methodology, a reviewed project record, or a written undertaking in this proposal.`,
     "",
     head,
     sep,
@@ -478,7 +481,7 @@ export function injectWinThemesTable(
       ...lines.slice(0, insert.line),
       "",
       // Drop the heading line from our block since one already exists.
-      block.replace(/^## Section G: Win Themes and Discriminators\n/, "").replace(/^<!-- win-themes:table -->\n/, `${MARKER}\n`),
+      block.replace(new RegExp(`^## ${CLIENT_FACING_SECTION_G_HEADING}\\n`), "").replace(/^<!-- win-themes:table -->\n/, `${MARKER}\n`),
       "",
       ...lines.slice(insert.line),
     ];

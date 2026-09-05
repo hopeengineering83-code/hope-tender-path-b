@@ -3582,8 +3582,8 @@ export async function refineProposalWithAI(input: {
     throughlineConsistency: `Ensure these specific projects appear by name in the Cover Letter, Executive Summary, AND Section B Relevant Experience: ${input.topProjectNames.join("; ") || "the strongest comparable projects available in the document"}.`,
     aiTraceFreedom: `Remove any AI-trace phrases ("As an AI", "Certainly!", "Please note", "[INSERT]", any [square bracket] placeholders, "we look forward to the opportunity", "committed to excellence", "team of qualified professionals"). Replace with substantive content.`,
     complianceMatrixCoverage: "Add or complete Section E: Compliance Matrix. Format MUST be a Markdown table with columns: # | Requirement (verbatim from tender) | Where Addressed in This Proposal (section + sub-section) | Supporting Evidence | Compliance Status. Compliance Status MUST be one of FULLY MET / PARTIALLY MET / NOT MET. Every mandatory and scored requirement listed in the document must have a row. For NOT MET rows, propose a credible mitigation in the same row (subcontractor, joint venture, deferred delivery).",
-    evaluatorMirrorCoverage: "Add or complete Section F: Evaluation Criteria Response Mirror. Format MUST be a Markdown table with columns: Evaluation Criterion (echoed in tender language) | Weight (if stated) | Where This Proposal Answers It | Strongest Evidence Anchor. Mirror the evaluator's exact wording back at them — this is a high-leverage scoring tactic. If weights are stated anywhere in the document, populate them verbatim.",
-    winThemesPresence: "Add or complete Section G: Win Themes & Discriminators. Open with one paragraph (60–120 words) framing the firm's overall positioning for THIS tender, then a Markdown table with columns: Win Theme | Discriminator (what we have, others typically don't) | Linked Evaluation Criterion | Evidence Anchor. Provide 3–5 themes drawn ONLY from the existing evidence in the document.",
+    evaluatorMirrorCoverage: "Add or complete Section F: Response to Evaluation Criteria. Format MUST be a Markdown table with columns: Evaluation Criterion (in the tender's wording) | Weight (if stated) | Where This Proposal Answers It | Supporting Evidence. Quote each criterion in the tender's own wording so it can be checked directly against the response. Do NOT describe scoring tactics, win themes or discriminators anywhere in the client-facing text. If weights are stated anywhere in the document, populate them verbatim.",
+    winThemesPresence: "Add or complete Section G: Why We Are Well Suited. Open with one paragraph (60–120 words) describing what the firm brings to THIS assignment, then a Markdown table with columns: Capability | What This Means for the Client | Linked Evaluation Criterion | Supporting Evidence. Provide 3–5 rows drawn ONLY from the existing evidence in the document. Write for the client: do not use the words \"win theme\" or \"discriminator\", and never describe what competitors lack.",
     selfScorePresence: "Add or complete Section H: Proposal Self-Score. Format MUST be a Markdown table with columns: Evaluation Criterion | Weight | Self-Score (0–10) | Rationale | Risk to Score / Mitigation. End with: \"Predicted overall technical score: X / 100. Top three risks to address before submission: 1. … 2. … 3. …\". Be honest — over-confident self-scores damage credibility.",
   };
 
@@ -4274,7 +4274,7 @@ B.4 Additional Projects — concise table with Name | Client | Country | Value |
 B.5 Client References — confirmed client names and, if available, contact details for reference letters
 
 ### SECTION C: TECHNICAL APPROACH
-C.1 Understanding of the Assignment — what the client needs, what the key technical challenges are, and what the winning proposal must demonstrate
+C.1 Understanding of the Assignment — what the client needs, what the key technical challenges are, and what this proposal demonstrates in response (write for the client; never describe how the bid will be scored)
 C.2 Technical Methodology — numbered sub-sections matching the tender's scope items
 ${allSectorGuidance}
 C.3 Work Plan and Deliverables — stages, deliverables, responsible experts, timelines
@@ -4303,24 +4303,24 @@ Rules: every requirement gets one row. Compliance Status MUST be one of FULLY ME
 The evaluator will score this proposal against the criteria listed in EVALUATION CRITERIA. For each criterion, mirror the criterion language back and point to where in the proposal it is answered:
 
 \`\`\`
-| Evaluation Criterion (echoed in tender language) | Weight (if stated) | Where This Proposal Answers It | Strongest Evidence Anchor |
+| Evaluation Criterion (in the tender's wording) | Weight (if stated) | Where This Proposal Answers It | Supporting Evidence |
 |---|---|---|---|
 | "Relevant healthcare facility experience" | 25% | Section B.2, B.3 + Cover Letter para 1 | G+6 Dr. Abdul Seid Hospital (ETB 550M, 2018) — same scope, same team |
 | "Strength of proposed multidisciplinary team" | 20% | Section A.4, A.5 (Team-to-Project mapping) | 12-expert team incl. Dr. Almaz Tadesse, EIASC Grade A |
 \`\`\`
 
-If the tender lists weights, populate the Weight column verbatim. If weights are not stated, leave blank — do not invent. Mirroring criterion language back to the evaluator using their exact wording is a high-leverage scoring tactic and is non-optional.
+If the tender lists weights, populate the Weight column verbatim. If weights are not stated, leave blank — do not invent. Quote each criterion in the tender's own wording so the evaluator can check it directly against the response. This table is mandatory. Never explain scoring tactics in the client-facing text.
 
-### SECTION G: WIN THEMES & DISCRIMINATORS (mandatory — short narrative + TABLE)
-A win theme is a defensible reason this firm wins this tender. A discriminator is a specific advantage we hold that competitors typically lack. Derive 3–5 themes from the COMPANY EVIDENCE — never invent.
+### SECTION G: WHY WE ARE WELL SUITED (mandatory — short narrative + TABLE)
+Each row states a capability this firm holds, what it means in practice for this client, the evaluation criterion it addresses, and the evidence that supports it. Derive 3–5 rows from the COMPANY EVIDENCE — never invent. Write for the client: do not use the words "win theme" or "discriminator" in the output, and never describe what competitors do or do not have.
 
 Open with one paragraph (60–120 words) framing the firm's overall positioning for THIS tender. Then the table:
 
 \`\`\`
-| Win Theme | Discriminator (what we have, others typically don't) | Linked Evaluation Criterion | Evidence Anchor |
+| Capability | What This Means for the Client | Linked Evaluation Criterion | Supporting Evidence |
 |---|---|---|---|
-| Proven hospital delivery track record | 2 fully-completed G+6 hospitals delivered with same team available now | Relevant healthcare experience (25%) | Dr. Abdul Seid Hospital ETB 550M; St. Paul's specialist wing ETB 312M |
-| In-house geotechnical capability | Owned drilling rig + licensed lab on staff (most peers subcontract) | Quality of methodology (15%) | 8 boreholes self-supervised on Eco-Park assignment 2022 |
+| Proven hospital delivery track record | Design decisions are informed by two completed G+6 hospitals, so clinical adjacency and phasing questions are settled from experience rather than first principles | Relevant healthcare experience (25%) | Dr. Abdul Seid Hospital ETB 550M; St. Paul's specialist wing ETB 312M |
+| In-house geotechnical capability | Investigation is scheduled and supervised directly by the firm, so ground data reaches the design team without a subcontractor interface | Quality of methodology (15%) | 8 boreholes self-supervised on Eco-Park assignment 2022 |
 \`\`\`
 
 ### SECTION H: PROPOSAL SELF-SCORE (mandatory — TABLE)

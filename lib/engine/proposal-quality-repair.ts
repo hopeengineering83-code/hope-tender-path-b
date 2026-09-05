@@ -1,4 +1,5 @@
 import { filterCleanLines } from "./pattern-filter";
+import { CLIENT_FACING_SECTION_F_HEADING, CLIENT_FACING_SECTION_G_HEADING, SECTION_F_HEADING_RX, SECTION_G_HEADING_RX } from "./client-facing-section-titles";
 import { truncateDisplayLine } from "./proposal-labels";
 import type { EvaluatorMatrixInput } from "./proposal-evaluator-matrix";
 import { buildTenderResponseBlueprint } from "./tender-response-blueprint";
@@ -71,8 +72,8 @@ function sectionF(input: EvaluatorMatrixInput): string {
     rows.push(`| ${clean(item.requirement)} | ${priority} | Section ${item.responseSection} | ${item.evidenceSupport} |`);
   }
   return [
-    "## Section F: Evaluation Criteria Response Mirror",
-    "This mirror helps the evaluator see where each criterion is answered and prevents generic proposal sections from hiding scoring gaps.",
+    `## ${CLIENT_FACING_SECTION_F_HEADING}`,
+    "This section shows where each published evaluation criterion is answered in this proposal, so the criterion can be checked directly against the response.",
     rows.join("\n"),
   ].join("\n\n");
 }
@@ -82,20 +83,24 @@ function sectionG(input: EvaluatorMatrixInput): string {
   const fallback = [
     "Evidence-led response based on reviewed company, project and expert records.",
     "Multidisciplinary capability across design, interior design, supervision, contract administration, geotechnical investigation, urban planning and asset management.",
-    "Evaluator-first proposal structure that maps scope, criteria, evidence and submission controls.",
+    "Proposal structure that maps scope, criteria, evidence and submission controls.",
   ];
   const finalItems = differentiators.length > 0 ? differentiators : fallback;
   const rows = [
-    "| Discriminator | Linked evaluation criterion | Proof / control |",
+    "| Our Capability | Linked evaluation criterion | Where it is evidenced |",
     "|---|---|---|",
   ];
   const requirements = take(input.requirements, finalItems.length, 180);
   finalItems.forEach((item, index) => {
-    rows.push(`| ${clean(item)} | ${requirements[index] ?? "Technical quality and evidence strength"} | Use reviewed evidence and remove unsupported claims before export. |`);
+    // The third column used to read "Use reviewed evidence and remove
+    // unsupported claims before export." — an instruction the engine writes to
+    // the bid team, printed in the client's copy as though it were proof. It
+    // now names where the reader can actually check the capability.
+    rows.push(`| ${clean(item)} | ${requirements[index] ?? "Technical quality and evidence strength"} | Reviewed company, project and expert records — see Section B (Relevant Experience) and the Compliance Matrix. |`);
   });
   return [
-    "## Section G: Win Themes & Discriminators",
-    "The win themes below are only valid when supported by reviewed evidence. They are written as evaluator-facing discriminators, not generic marketing claims.",
+    `## ${CLIENT_FACING_SECTION_G_HEADING}`,
+    "Each capability below is stated only where a reviewed record supports it, and is linked to the evaluation criterion it addresses.",
     rows.join("\n"),
   ].join("\n\n");
 }
@@ -111,7 +116,7 @@ function sectionH(input: EvaluatorMatrixInput): string {
     "|---|---:|---|",
     `| Tender requirement coverage | ${missing === 0 ? "9/10" : missing <= 2 ? "7/10" : "5/10"} | ${direct} DIRECT, ${partial} PARTIAL, ${missing} NEEDS_CONFIRMATION evidence mappings. |`,
     `| Evidence strength | ${direct >= partial + missing ? "8/10" : partial > 0 ? "6/10" : "4/10"} | Claims are controlled by evidence support levels and final bid-team actions. |`,
-    "| Evaluator readability | 8/10 | Proposal now includes blueprint, compliance matrix, criteria mirror, win themes and appendix controls. |",
+    "| Evaluator readability | 8/10 | Proposal now includes the response blueprint, compliance matrix, criteria response table, capability table and appendix controls. |",
     "| Submission risk control | 7/10 | Final submission still requires file-name, deadline, signature/stamp, appendix and commercial-envelope verification. |",
   ];
   return [
@@ -126,8 +131,11 @@ export function applyProposalQualityRepairAddenda(markdown: string, input: Evalu
   let output = markdown.trim();
   const repairs: string[] = [];
   if (!hasHeading(output, /(^|\n)\s*#{1,4}\s*(?:section\s*[E:.\-\s]*)?\s*compliance\s+matrix/i)) repairs.push(sectionE(input));
-  if (!hasHeading(output, /(^|\n)\s*#{1,4}\s*(?:section\s*[F:.\-\s]*)?\s*(?:evaluation\s+criteria\s+response\s+mirror|evaluation\s+(?:criteria\s+)?response|evaluator(?:'s)?\s+mirror|evaluation\s+mirror)/i)) repairs.push(sectionF(input));
-  if (!hasHeading(output, /(^|\n)\s*#{1,4}\s*(?:section\s*[G:.\-\s]*)?\s*(?:win\s+themes?|themes?\s+(?:and|&)\s+discriminators?)/i)) repairs.push(sectionG(input));
+  // SECTION_F_HEADING_RX / SECTION_G_HEADING_RX match both the client-facing
+  // names these sections now ship under and the older internal names, so a
+  // proposal that already has the section never gets a second copy appended.
+  if (!hasHeading(output, SECTION_F_HEADING_RX)) repairs.push(sectionF(input));
+  if (!hasHeading(output, SECTION_G_HEADING_RX)) repairs.push(sectionG(input));
   if (!hasHeading(output, /(^|\n)\s*#{1,4}\s*(?:section\s*[H:.\-\s]*)?\s*(?:proposal\s+)?self.score/i)) repairs.push(sectionH(input));
   if (repairs.length === 0) return output;
   // No engine self-narration in the deliverable. This block used to open with
@@ -135,7 +143,7 @@ export function applyProposalQualityRepairAddenda(markdown: string, input: Evalu
   // sections were inserted by the proposal engine because evaluator-critical
   // quality controls were missing or not detectable in the generated draft" —
   // shipped verbatim to the procuring entity. The sections themselves are
-  // genuine client content (compliance matrix, evaluation mirror, win themes,
+  // genuine client content (compliance matrix, criteria response table, capability table,
   // self-assessment); only the commentary about why the engine added them was
   // internal. That the engine repaired the draft belongs in the job record, not
   // in the proposal.

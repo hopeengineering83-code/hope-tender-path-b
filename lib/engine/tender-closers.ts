@@ -66,6 +66,47 @@ const HEADING_PATTERNS_ETHICS: RegExp[] = [
 
 // ─── Tender-specific obstacles ─────────────────────────────────────────
 
+/**
+ * All-caps runs that extraction produces but a tender never uses as a name.
+ *
+ * These fall into three families, all of which have been observed leaking
+ * into client-facing text as though they were the procuring entity's brand:
+ *
+ *   - the extractor's own structural markers (FILE, PAGE, METADATA, PARSED);
+ *   - table column labels and cell values (STATUS, MANDATORY, SCORED, YES);
+ *   - ordinary tender furniture set in capitals (ANNEX, TOR, LOT, RFP).
+ *
+ * Anything on this list is a label about the document, not an identity in it.
+ */
+const NON_BRAND_ALLCAPS_TOKENS = new Set([
+  "FILE", "FILES", "PAGE", "PAGES", "TEXT", "METADATA", "PARSED", "SOURCE", "DOCUMENT",
+  "TITLE", "STATUS", "TYPE", "NAME", "DATE", "NOTE", "NOTES", "REF", "REFERENCE",
+  "MANDATORY", "SCORED", "OPTIONAL", "REQUIRED", "YES", "NO", "N/A", "NIL", "TBD", "TBC",
+  "ANNEX", "APPENDIX", "SECTION", "PART", "ITEM", "LOT", "TOR", "RFP", "RFQ", "EOI", "ITB",
+  "TOTAL", "SUBTOTAL", "SUM", "QTY", "UNIT", "VAT", "TIN", "ETB", "USD", "EUR",
+  "PDF", "DOC", "DOCX", "XLS", "XLSX", "CSV", "ZIP",
+  "AND", "THE", "FOR", "ALL", "ANY", "NOT", "SHALL", "MUST",
+]);
+
+/**
+ * First all-caps run in the tender text that plausibly names an organisation
+ * rather than describing the document. Returns null when nothing qualifies,
+ * so the caller can omit the claim instead of inventing an identity.
+ */
+function firstBrandLikeToken(text: string): string | null {
+  const candidates = text.match(/\b[A-Z][A-Z]{2,}(?:\s+(?:Ethiopia|Foundation|International))?/g) ?? [];
+  for (const raw of candidates) {
+    const candidate = raw.trim();
+    const head = candidate.split(/\s+/)[0];
+    if (NON_BRAND_ALLCAPS_TOKENS.has(head)) continue;
+    // A bare run of capitals with no vowel is almost always a code or a
+    // column abbreviation rather than a readable organisation name.
+    if (!/[AEIOU]/.test(head)) continue;
+    return candidate;
+  }
+  return null;
+}
+
 interface ObstacleRow {
   category: string;
   obstacle: string;
@@ -103,13 +144,27 @@ function detectObstacles(tenderText: string): ObstacleRow[] {
   }
 
   // 3. Brand / website mention — implies brand-alignment work
+  //
+  // The brand pattern is /\b[A-Z][A-Z]{2,}.../ — any run of three or more
+  // capitals in the extracted tender text. Extracted text is full of such
+  // runs that are not brands: the extractor's own structural markers (FILE,
+  // PAGE, METADATA, TEXT), table column labels (STATUS, MANDATORY, SCORED),
+  // and document furniture (ANNEX, TOR, LOT). A real shipped proposal told
+  // the client that "Client identity (FILE) implies brand-alignment
+  // requirements", because "FILE" was the first all-caps run in the parsed
+  // document. Anything that is a source label rather than a name is rejected
+  // here; when nothing brand-like survives, the row is built from the
+  // website (a real fact) or skipped entirely rather than naming a token the
+  // tender never used as an identity.
   const websiteMatch = text.match(/\b(?:https?:\/\/|www\.)\S+/i);
-  const brandMatch = text.match(/\b[A-Z][A-Z]{2,}(?:\s+(?:Ethiopia|Foundation|International))?/);
-  if (websiteMatch || brandMatch) {
-    const brandLabel = (brandMatch?.[0] || websiteMatch?.[0] || "client brand").trim();
+  const brandLabel = firstBrandLikeToken(text);
+  if (websiteMatch || brandLabel) {
+    const identityClause = brandLabel
+      ? `Client identity (${brandLabel.slice(0, 40)}) implies brand-alignment requirements.`
+      : `The tender references the client's own web presence, which implies brand-alignment requirements.`;
     out.push({
       category: "Brand alignment",
-      obstacle: `Client identity (${brandLabel.slice(0, 40)}) implies brand-alignment requirements. Designs that ignore the client's visual standard are routinely rejected at design-review.`,
+      obstacle: `${identityClause} Designs that ignore the client's visual standard are routinely rejected at design-review.`,
       mitigation: `Brand guidelines will be downloaded from the client website / requested at inception. Concept design at 30% gate carries an explicit brand-alignment review item. Revision rounds budgeted into fee for any brand-driven adjustments.`,
     });
   }
@@ -177,7 +232,23 @@ interface CommercialDetail {
   acknowledgement: string;
 }
 
-function detectCommercialDetails(tenderText: string): CommercialDetail[] {
+/**
+ * Turn a required file name or extension into the label a reader expects
+ * ("Technical Proposal.pdf" -> "PDF"). Returns null when nothing usable is
+ * supplied, so the caller falls back to the tender-text detection.
+ */
+function normalizeFormatLabel(value?: string | null): string | null {
+  const raw = (value ?? "").trim();
+  if (!raw) return null;
+  const ext = raw.includes(".") ? raw.slice(raw.lastIndexOf(".") + 1) : raw;
+  const cleaned = ext.replace(/[^A-Za-z0-9/]/g, "").toUpperCase();
+  return cleaned.length >= 2 && cleaned.length <= 8 ? cleaned : null;
+}
+
+function detectCommercialDetails(
+  tenderText: string,
+  authoritativeDeliverableFormat?: string | null,
+): CommercialDetail[] {
   if (!tenderText || tenderText.length < 200) return [];
   const out: CommercialDetail[] = [];
   const text = tenderText.replace(/\s+/g, " ").slice(0, 12_000);
@@ -235,8 +306,27 @@ function detectCommercialDetails(tenderText: string): CommercialDetail[] {
   }
 
   // File format
+  //
+  // This row states, in the client's copy, what format the bidder will submit
+  // in. That is a fact the confirmed Build Plan owns — it is the authority for
+  // which files are actually produced and delivered. The regex below reads the
+  // extracted tender text, which also contains the source document's own file
+  // name ("pharo tender document.docx") and any format mentioned in passing, so
+  // on a real tender it announced "Deliverable Format | docx" and promised
+  // "Final deliverables are issued in DOCX format" while the confirmed Build
+  // Plan required exactly one file: Technical Proposal.pdf. A row that
+  // contradicts the deliverable actually being submitted is worse than no row,
+  // so when an authoritative format is known it wins, and a detected format
+  // that disagrees with it is dropped rather than printed.
   const fileFmt = text.match(/\b(AutoCAD|DWG|Revit|PDF\/A|MS\s+Word|DOCX|XLSX)\b/i);
-  if (fileFmt) {
+  const authoritative = normalizeFormatLabel(authoritativeDeliverableFormat);
+  if (authoritative) {
+    out.push({
+      field: "Deliverable Format",
+      detected: authoritative,
+      acknowledgement: `Final deliverables are issued in ${authoritative} format per the tender's submission instructions. File-naming convention is followed verbatim.`,
+    });
+  } else if (fileFmt) {
     out.push({
       field: "Deliverable Format",
       detected: fileFmt[0],
@@ -247,19 +337,47 @@ function detectCommercialDetails(tenderText: string): CommercialDetail[] {
   return out;
 }
 
-export function buildCommercialUnderstandingBlock(tenderText: string): string {
-  const rows = detectCommercialDetails(tenderText);
+export interface CommercialUnderstandingOptions {
+  /**
+   * The format the submission is actually delivered in, derived from the
+   * confirmed Build Plan (e.g. "PDF"). When set it overrides any format
+   * mentioned in the tender text, because the Build Plan — not a regex over
+   * extracted prose — is the authority for what is submitted.
+   */
+  authoritativeDeliverableFormat?: string | null;
+  /**
+   * False when the tender requires no financial proposal at this stage. The
+   * closing paragraph must then not tell the client that commercial clauses
+   * are "built into the technical and financial submission", because no
+   * financial submission exists.
+   */
+  financialProposalRequired?: boolean;
+}
+
+export function buildCommercialUnderstandingBlock(
+  tenderText: string,
+  opts: CommercialUnderstandingOptions = {},
+): string {
+  const rows = detectCommercialDetails(tenderText, opts.authoritativeDeliverableFormat);
   if (rows.length === 0) return "";
 
   const head = "| Commercial Field | Tender Says | Bidder's Acknowledgement |";
   const sep = "|------------------|-------------|--------------------------|";
   const body = rows.map((r) => `| ${r.field} | ${r.detected} | ${r.acknowledgement} |`);
 
+  // When the tender asks for no financial proposal at this stage, saying the
+  // clauses are built into "the technical and financial submission" tells the
+  // evaluator a financial submission is enclosed. Nothing about the
+  // two-envelope handling changes for tenders that do require one.
+  const submissionPhrase = opts.financialProposalRequired === false
+    ? "built into this technical submission"
+    : "built into the technical and financial submission";
+
   return [
     MARKER_COMMERCIAL,
     "## Commercial Understanding and Compliance",
     "",
-    "The bidder has examined the commercial clauses in the tender and confirms acknowledgement on each below. This is not a separate offer — it is the bidder's written confirmation that every commercial clause is read, understood, and built into the technical and financial submission.",
+    `The bidder has examined the commercial clauses in the tender and confirms acknowledgement on each below. This is not a separate offer — it is the bidder's written confirmation that every commercial clause is read, understood, and ${submissionPhrase}.`,
     "",
     head,
     sep,
@@ -331,6 +449,10 @@ export function injectTenderClosers(
   opts: {
     tenderText: string;
     ethicsVault: EthicsVault;
+    /** Format the submission is actually delivered in, from the confirmed Build Plan. */
+    authoritativeDeliverableFormat?: string | null;
+    /** False when the tender requires no financial proposal at this stage. */
+    financialProposalRequired?: boolean;
   },
 ): ClosersResult {
   const blocks: string[] = [];
@@ -348,7 +470,10 @@ export function injectTenderClosers(
     }
   }
   if (!hasCommercial) {
-    const block = buildCommercialUnderstandingBlock(opts.tenderText);
+    const block = buildCommercialUnderstandingBlock(opts.tenderText, {
+      authoritativeDeliverableFormat: opts.authoritativeDeliverableFormat,
+      financialProposalRequired: opts.financialProposalRequired,
+    });
     if (block) {
       blocks.push(block);
       injected.commercial = true;

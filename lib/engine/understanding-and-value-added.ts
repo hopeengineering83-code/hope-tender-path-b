@@ -84,12 +84,17 @@ export function buildUnderstandingSection(opts: {
       `${opts.clientName} requires a telecoms engineering partner who brings spectrum licensing expertise, calibrated RF coverage simulation, backhaul design rigour, and a site-acceptance test protocol that gives commercial confidence before launch. Coverage that underperforms against simulation, backhaul that saturates at peak load, or spectrum not licensed in time to support the rollout date are the three most common value-destroying outcomes in broadband network programmes.`;
   } else {
     sectorParagraph =
-      `${opts.clientName} requires a disciplined consultancy partner who maps each scope item to a deliverable, a responsible expert, and a quality gate. The winning proposal must demonstrate scope understanding through evidence, not generic capability statements.`;
+      `${opts.clientName} requires a disciplined consultancy partner who maps each scope item to a deliverable, a responsible expert, and a quality gate. This proposal therefore demonstrates scope understanding through evidence rather than generic capability statements.`;
   }
 
+  // "The winning proposal must demonstrate..." is the bid desk telling itself
+  // what it takes to win, written in the second person about a document the
+  // reader is already holding. The commitment underneath it — every criterion
+  // answered with a named, checkable evidence anchor — is exactly what an
+  // evaluator wants to read, so it is now stated as what this proposal does.
   const evaluatorAnchor = opts.evaluationCriteria.length > 0
-    ? `The winning proposal must demonstrate, for each evaluation criterion, a specific evidence anchor (named project, expert, license, certification, or institutional capability). The evaluation criteria detected for this assignment are addressed below in Section C.2 (Technical Methodology), Section A.4 (Proposed Project Team), Section B (Relevant Experience), and Section D.1 (Value Framework).`
-    : `The winning proposal must demonstrate, for each scope item, a specific evidence anchor (named project, expert, license, certification, or institutional capability) drawn from the firm's reviewed knowledge vault.`;
+    ? `For each evaluation criterion, this proposal gives a specific evidence anchor (named project, expert, license, certification, or institutional capability). The evaluation criteria stated for this assignment are addressed below in Section C.2 (Technical Methodology), Section A.4 (Proposed Project Team), Section B (Relevant Experience), and Section D.1 (Value Framework).`
+    : `For each scope item, this proposal gives a specific evidence anchor (named project, expert, license, certification, or institutional capability) drawn from the firm's reviewed records.`;
 
   return [
     "## C.1 Understanding of the Assignment",

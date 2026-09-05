@@ -74,7 +74,7 @@ import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
-import { stripInternalReviewSections } from "./internal-review-stripper";
+import { stripInternalReviewSections, stripInternalDiagnosticContent } from "./internal-review-stripper";
 import { reorderSectionsAndRebuildToc } from "./section-orderer-and-toc";
 import { enforceClientName } from "./client-name-enforcer";
 import { suppressDuplicateSectionHeadings } from "./duplicate-section-suppressor";
@@ -2600,19 +2600,22 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
   humanizedMarkdown = beyondSpec.markdown;
 
-  // ─── Win Themes & Discriminators table (PR G) ────────────────────────────
+  // ─── Section G "Why We Are Well Suited" table (PR G) ─────────────────────
   // The 10-axis quality scorer's winThemesPresence axis caps at 7/10
-  // unless there are >= 2 table rows under a Win Themes heading. Existing
+  // unless there are >= 2 table rows under this section's heading. Existing
   // proposal-evaluator-matrix emits bullets, never a table. This pass
-  // injects a 4-column table mapping each tender pain → firm strength →
-  // quantified discriminator → evidence anchor. Sector-aware default
-  // rows; tender-specific rows pulled from gapsToAddressInNarrative +
-  // themes. Idempotent via <!-- win-themes:table --> marker.
+  // injects a 4-column table mapping each requirement → firm capability →
+  // what it means for the client → evidence. Sector-aware default rows;
+  // tender-specific rows pulled from the tender's own themes. Idempotent via
+  // <!-- win-themes:table --> marker.
+  //
+  // `intelligence.gapsToAddressInNarrative` is deliberately NOT passed: it is
+  // the internal gap channel, and its entries are instructions the bid team
+  // writes to itself. See the note on tenderSpecificRows in win-themes-table.ts.
   const winThemes = injectWinThemesTable(humanizedMarkdown, {
     primarySector: intelligence.primarySector,
     projects: evidenceLibrary,
     differentiators: intelligence.differentiators,
-    gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative,
     themes: (intelligence.themes ?? []).map((t) => t.label),
     evaluationCriteria: intelligence.evaluationCriteria,
     companyName: company.name,
@@ -2634,6 +2637,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Idempotent via marker comments. Mobilization sits in Section A;
   // Checklist sits at end of document.
   const mobAndChecklist = injectMobilizationAndChecklist(humanizedMarkdown, {
+    financialProposalRequired: intelligence.noFinancialProposal !== true,
     experts: allSelectedExperts as unknown as Parameters<typeof injectMobilizationAndChecklist>[1]["experts"],
   });
   if (mobAndChecklist.injected.mobilization) {
@@ -2708,8 +2712,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   //      Ethiopian law citation, GM signature block.
   // Idempotent via marker comments. Inserts before Section E /
   // Compliance Matrix.
+  // The Commercial Understanding table states, in the client's copy, which
+  // format the submission is delivered in and whether a financial submission
+  // accompanies it. Both are facts the confirmed Build Plan and the tender's
+  // own financial-proposal rule own — not facts to be regex-guessed out of
+  // extracted tender prose. Reuse the plan fetched here for the CV filter
+  // further down so this costs one query, not two.
+  const confirmedPlanForClosers = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId).catch(() => null);
+  const authoritativeDeliverableFormat = confirmedPlanForClosers?.ok
+    ? (confirmedPlanForClosers.items
+        .map((item: BuildPlanItem) => (item.exactFileName ?? "").trim())
+        .find((name: string) => name.includes(".")) ?? null)
+    : null;
+
   const closers = injectTenderClosers(humanizedMarkdown, {
     tenderText: intelligence.tenderText,
+    authoritativeDeliverableFormat,
+    financialProposalRequired: intelligence.noFinancialProposal !== true,
     ethicsVault: {
       companyName: company.name,
       legalName: company.legalName,
@@ -3422,6 +3441,21 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     .replace(/≤/g, "<=")
     .replace(/[→⇒]/g, "->")
     .replace(/[←⇐]/g, "<-");
+  // Last boundary before the DOCX render: remove internal-diagnostic CONTENT
+  // that survived inside otherwise legitimate client-facing sections. The
+  // section-level stripper above only removes a whole section when it carries
+  // a recognisable internal heading; a real submitted proposal still shipped
+  // engine gap reports and bid-desk instructions as individual table rows
+  // under ordinary headings. Both producing channels are cut at source, so
+  // this pass exists for what the model writer can still produce on its own.
+  // It runs unconditionally — not only when refinement or repair ran — because
+  // the leak observed in production came from the deterministic path.
+  const diagnosticSweep = stripInternalDiagnosticContent(workingMarkdown);
+  if (diagnosticSweep.removedLines.length > 0) {
+    logger.info(`[generate-elite] Internal-diagnostic content sweep removed ${diagnosticSweep.removedLines.length} line(s)/row(s) before render.`);
+  }
+  workingMarkdown = diagnosticSweep.markdown;
+
   workingMarkdown = disambiguateRepeatedHeadings(workingMarkdown);
 
   // Re-render the DOCX from the (possibly refined) markdown.
@@ -3905,7 +3939,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // a judgement the plan has already made. Nothing here deletes anything, and
   // a tender with no confirmed plan keeps today's behaviour, since there is
   // nothing to be outside of.
-  const confirmedPlanForCvs = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId).catch(() => null);
+  const confirmedPlanForCvs = confirmedPlanForClosers;
   const plannedCvFileNames = confirmedPlanForCvs?.ok
     ? new Set(confirmedPlanForCvs.items.map((item: BuildPlanItem) => (item.exactFileName ?? "").trim().toLowerCase()).filter(Boolean))
     : null;
