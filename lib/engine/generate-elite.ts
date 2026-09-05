@@ -2729,6 +2729,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     tenderText: intelligence.tenderText,
     authoritativeDeliverableFormat,
     financialProposalRequired: intelligence.noFinancialProposal !== true,
+    // The brand-alignment obstacle names the client. That name is the extracted,
+    // source-grounded identity every other section already uses — not the first
+    // run of capitals in the tender prose, which is how "Client identity (FILE)"
+    // and then "Client identity (CLIENT)" reached the client's copy.
+    clientName: intelligence.clientName,
     ethicsVault: {
       companyName: company.name,
       legalName: company.legalName,

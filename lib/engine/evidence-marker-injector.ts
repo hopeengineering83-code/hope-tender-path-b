@@ -112,7 +112,16 @@ function buildAnchorSentence(project: ProjectRecord, templateIndex = 0): string 
   const endDate = project.endDate ? new Date(project.endDate) : null;
   const year = endDate && !Number.isNaN(endDate.getFullYear()) ? endDate.getFullYear() : null;
   if (year) detailParts.push(`completed ${year}`);
-  const detail = detailParts.length > 0 ? ` (${detailParts.join(", ")})` : "";
+  // Vault fields carry their own punctuation. A country recorded as
+  // "Gimba City, South Wollo Zone, Amhara Region," joined raw and wrapped in
+  // parentheses shipped "(… Amhara Region,)" to the client — a dangling
+  // separator in the final PDF. Each part is trimmed of surrounding
+  // whitespace and edge separators before joining, and empties are dropped so
+  // a field that is nothing but punctuation cannot open an empty bracket.
+  const cleanedParts = detailParts
+    .map((part) => String(part).trim().replace(/^[\s,;:/|-]+/, "").replace(/[\s,;:/|-]+$/, ""))
+    .filter((part) => part.length > 0);
+  const detail = cleanedParts.length > 0 ? ` (${cleanedParts.join(", ")})` : "";
 
   // Template pool — 8 distinct shapes. Selected via modulo so a
   // round-robin through the candidate library cycles through all

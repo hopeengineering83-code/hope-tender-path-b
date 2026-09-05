@@ -199,9 +199,48 @@ blocker, and is expected for a fixture tender. `storage-backed-document-audit.ts
 has the same latent evidence-names gap as cause 3 but was not exercised by any
 reproduced run, so it is deliberately left unchanged.
 
-**Next action.** Re-run the hosted acceptance on the new head, then complete the
-17-dimension assessment against the downloaded PDF and remove the temporary
-acceptance tooling.
+**Second round — defects found by reading the passing artifact.** Hosted run
+33994698504 on `844d4654` passed every gate end-to-end (`export-readiness
+ok=True status=READY blockers=0`; audit `score=100 PASSED readyForExport=True
+zipEligible=True`; `ZIP HTTP:200 SIZE:234086`; 36/36 pages carrying a correct
+"Page N of M"; "layout: no clipping, overflow, footer collision or pagination
+problem found on any page"). Reading the delivered PDF's own text then found
+four client-visible defects a green run does not catch:
+
+- `Client identity (CLIENT)` on page 35. The earlier fix blacklisted `FILE`;
+  the next run shipped `CLIENT` from the same line. The producer guessed a brand
+  from the first all-caps run in the tender, and CLIENT / CONSULTANT / EMPLOYER
+  are a construction tender's standard capitalised defined terms, so no
+  blacklist finishes. The row now takes the extracted, source-grounded
+  `clientName`, or is built with no identity clause at all.
+- `(… Amhara Region,)` — seven occurrences of a dangling separator, because
+  vault field values carry their own punctuation and were joined raw inside
+  parentheses.
+- Raw CV document furniture in the client's copy — `CURRICULUM VITAE`,
+  `1. PERSONNEL INFORMATION`, `Name of Firm`, `PROFESSIONAL PROFILE` — plus
+  eight mid-word truncations (`… Engineering Consultan`, `… Gimba Ci`). The
+  word-boundary cutter already existed for exactly this defect; two producers
+  never adopted it, and nothing stripped the document's own furniture.
+- Eleven `Bid-Team Action: confirm …` literals rendering into client-facing
+  personnel tables. These were doubly harmful: the diagnostic sweep deletes any
+  table row containing one, so legitimate rows were being dropped from the
+  proposal. Empty vault fields now read as "Not recorded in the reviewed
+  specialist record", and the no-experts branch emits nothing rather than an
+  empty section over an internal instruction.
+
+**Not fixed, and stated plainly.** The 17-dimension target (>= 90 overall, no
+dimension < 85) is NOT met by the current artifact and this entry does not claim
+it is. Beyond the four defects above, the delivered PDF shows evidence-marker
+sentences spliced onto unrelated paragraphs (including an address line), the
+single reviewed project cited four times in ten lines through four different
+templates, an out-of-order table of contents (C.0, C.1, C.3, C.4, C.6, C.2,
+C.5a), and repeated identical Section G cells. These are content-generation
+quality problems, not gate problems, and they need their own session.
+
+**Next action.** Re-run the hosted acceptance on the new head to confirm the
+four fixes in the delivered bytes, then address the evidence-marker padding and
+section ordering before attempting the 17-dimension assessment. Remove the
+temporary acceptance tooling once that assessment passes.
 
 **Merge status:** not reviewed — do not merge.
 

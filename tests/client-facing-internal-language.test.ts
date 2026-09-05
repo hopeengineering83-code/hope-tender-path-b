@@ -23,6 +23,7 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 
 import { stripInternalDiagnosticContent } from "../lib/engine/internal-review-stripper";
 import { injectWinThemesTable } from "../lib/engine/win-themes-table";
@@ -246,5 +247,169 @@ describe("declarations state what the company authority can support", () => {
     // The commitment this proposal actually makes survives.
     assert.match(qa, /three mandatory stages before issue/i);
     assert.match(qa, /written sign-off/i);
+  });
+});
+
+// The brand-alignment row must name the client, or name nobody.
+//
+// This row shipped "Client identity (FILE) implies brand-alignment
+// requirements" because FILE was the first all-caps run in the parsed tender.
+// FILE was added to a non-brand blacklist, and hosted run 33994698504 then
+// shipped "Client identity (CLIENT)" from the very same line. The heuristic —
+// first run of three or more capitals — cannot succeed: CLIENT, CONSULTANT,
+// EMPLOYER, CONTRACTOR and PROCURING ENTITY are the standard capitalised
+// defined terms of a construction tender, so its most likely answer is always
+// a defined term. The row now takes the extracted, source-grounded client name
+// that every other section uses, and is built without an identity clause when
+// there is none.
+describe("the brand-alignment obstacle names the real client", () => {
+  const tenderText = [
+    "REQUEST FOR PROPOSAL — ARCHITECTURAL CONSULTANCY SERVICES",
+    "The CLIENT shall provide access to the site. The CONSULTANT shall submit",
+    "deliverables in DWG and PDF format. See www.example-client.org for details.",
+    "FILE: tender.docx  PAGE: 1  STATUS: MANDATORY",
+    "The EMPLOYER reserves the right to reject any bid.",
+  ].join("\n").repeat(4);
+
+  it("never prints a capitalised defined term or a source label as the client's identity", async () => {
+    const { buildTenderObstaclesBlock } = await import("../lib/engine/tender-closers");
+    for (const name of [null, undefined, "", "CLIENT", "Client", "PROCURING ENTITY", "FILE", "Consultant"]) {
+      const block = buildTenderObstaclesBlock(tenderText, name as string | null);
+      // Assert the whole class, not the two literals already seen shipping:
+      // no identity clause may name anything at all when the grounded client
+      // name is absent or is a bare role word.
+      assert.doesNotMatch(
+        block,
+        /identity\s*\(/i,
+        `clientName=${String(name)} must produce no identity clause — got: ${block.slice(0, 400)}`,
+      );
+      // And no token lifted out of the tender prose may appear in parentheses
+      // anywhere in the row, whichever all-caps word happened to come first.
+      for (const leaked of ["FILE", "PAGE", "STATUS", "MANDATORY", "CLIENT", "CONSULTANT", "EMPLOYER", "REQUEST", "ARCHITECTURAL"]) {
+        assert.ok(
+          !block.includes(`(${leaked})`),
+          `clientName=${String(name)} leaked (${leaked}) into the client's copy — got: ${block.slice(0, 400)}`,
+        );
+      }
+    }
+  });
+
+  it("names the client when the extracted identity is a real organisation", async () => {
+    const { buildTenderObstaclesBlock } = await import("../lib/engine/tender-closers");
+    const block = buildTenderObstaclesBlock(tenderText, "Pharo Ventures");
+    assert.match(block, /Pharo Ventures/, "the grounded client name belongs in the brand-alignment row");
+    assert.doesNotMatch(block, /\(CLIENT\)|\(FILE\)/);
+  });
+
+  it("falls back to the web-presence wording rather than inventing an identity", async () => {
+    const { buildTenderObstaclesBlock } = await import("../lib/engine/tender-closers");
+    const block = buildTenderObstaclesBlock(tenderText, null);
+    assert.match(
+      block,
+      /references the client's own web presence/,
+      "with no grounded client name the row states the fact it has, not a guess",
+    );
+  });
+
+  it("does not read an identity out of the tender prose at all", () => {
+    // The producer must not reach for the tender text for this. A future edit
+    // that reintroduces a capitalisation scan silently restores the defect.
+    const source = readFileSync("lib/engine/tender-closers.ts", "utf8");
+    const code = source.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+    assert.doesNotMatch(
+      code,
+      /firstBrandLikeToken/,
+      "the all-caps brand guess must not come back",
+    );
+  });
+});
+
+// Vault punctuation must not reach the client as a dangling separator.
+//
+// Hosted run 33994698504's page 32 read "Consistent with the firm's delivery
+// on G+6 General Hospital – Dr Abdul Seid (Gimba City, South Wollo Zone,
+// Amhara Region,)." The country field is stored with its own trailing comma,
+// and the evidence-marker detail joined the parts raw before wrapping them in
+// parentheses.
+describe("evidence markers do not ship dangling punctuation", () => {
+  it("never emits a bracket that opens or closes on a separator", () => {
+    const source = readFileSync("lib/engine/evidence-marker-injector.ts", "utf8");
+    assert.match(
+      source,
+      /cleanedParts/,
+      "the evidence-marker detail must join cleaned parts, not raw vault values",
+    );
+    assert.doesNotMatch(
+      source,
+      /\$\{detailParts\.join\(", "\)\}/,
+      "raw detailParts must not be interpolated into the client-facing bracket",
+    );
+  });
+});
+
+// A proposal must not read as a file someone pasted in.
+//
+// Pages 7-8 of hosted run 33994698504's Technical Proposal.pdf printed, under
+// "A.4.1 Principal Qualifications — Detailed Bios":
+//
+//   Profile. HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC
+//   CURRICULUM VITAE ENG. AHMED KEBEDE TEKAW General Manager & Practicing
+//   Professional Engineer … 1. PERSONNEL INFORMATION Proposed Position General
+//   Manager & Practicing Professional Engineer Name of Firm Hope Urban Planning
+//   Architectural and Engineering Consultan
+//
+// Two defects in one line: the CV document's own furniture reached the client,
+// and the text stopped mid-word because the producer hard-sliced it. The word
+// boundary cutter already existed for exactly this; this producer never used it.
+const REAL_SHIPPED_PROFILE = "HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC "
+  + "CURRICULUM VITAE ENG. AHMED KEBEDE TEKAW General Manager & Practicing Professional Engineer "
+  + "Structural Engineer · Geotechnical Engineer · Project Manager Major Projects | 5 International "
+  + "| 11+ Years Experience 1. PERSONNEL INFORMATION Proposed Position General Manager & Practicing "
+  + "Professional Engineer Name of Firm Hope Urban Planning Architectural and Engineering Consultancy PLC "
+  + "and has led the structural design of multi-storey hospital buildings across the Amhara Region.";
+
+describe("expert bios read as prose, not as a pasted CV file", () => {
+  it("removes the CV document's own furniture", async () => {
+    const { withoutCvDocumentFurniture } = await import("../lib/engine/proposal-intelligence");
+    const cleaned = withoutCvDocumentFurniture(REAL_SHIPPED_PROFILE);
+
+    for (const furniture of [/CURRICULUM\s+VITAE/i, /PERSONNEL\s+INFORMATION/i, /Name of Firm/i, /Proposed Position/i]) {
+      assert.doesNotMatch(cleaned, furniture, `document furniture survived: ${cleaned.slice(0, 200)}`);
+    }
+    // The substantive narrative must survive untouched.
+    assert.match(cleaned, /led the structural design of multi-storey hospital buildings/);
+  });
+
+  it("never leaves a bio stopping mid-word", async () => {
+    const { buildPrincipalQualificationsSection } = await import("../lib/engine/principal-qualifications");
+    const section = buildPrincipalQualificationsSection({
+      experts: [{
+        fullName: "Ahmed Kebede Tekaw",
+        title: "General Manager & Practicing Professional Engineer",
+        profile: REAL_SHIPPED_PROFILE,
+        disciplines: ["Structural Engineering"],
+        sectors: ["Healthcare"],
+        certifications: [],
+        yearsExperience: 11,
+      } as never],
+    });
+    assert.ok(section, "the section should build");
+    assert.ok(!section!.includes("Consultan "), "a bio must not stop mid-word");
+    assert.ok(!/\bConsultan$/m.test(section!), "a bio must not end mid-word");
+    // A cut bio is marked as shortened rather than simply stopping.
+    const profileLine = section!.split("\n").find((line) => line.startsWith("**Profile.**")) ?? "";
+    if (profileLine.length > 0 && !profileLine.includes("Amhara Region")) {
+      assert.match(profileLine, /…$/, "a shortened bio ends with an ellipsis");
+    }
+  });
+
+  it("does not tell the client what the bid desk should confirm", async () => {
+    const source = readFileSync("lib/engine/personnel-deep.ts", "utf8");
+    const code = source.split("\n").filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line)).join("\n");
+    assert.doesNotMatch(
+      code,
+      /"Bid-Team Action[^"]*"/,
+      "an empty vault field must not render as an instruction to the bid desk",
+    );
   });
 });

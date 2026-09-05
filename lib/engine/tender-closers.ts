@@ -89,22 +89,38 @@ const NON_BRAND_ALLCAPS_TOKENS = new Set([
 ]);
 
 /**
- * First all-caps run in the tender text that plausibly names an organisation
- * rather than describing the document. Returns null when nothing qualifies,
- * so the caller can omit the claim instead of inventing an identity.
+ * The client's name for the brand-alignment row, taken from the extracted,
+ * source-grounded client identity rather than guessed from the tender text.
+ *
+ * WHY THIS IS NOT A CAPITALISATION HEURISTIC ANY MORE
+ * ---------------------------------------------------
+ * This used to return the first all-caps run in the parsed tender, filtered
+ * against a list of known non-brand tokens. A shipped proposal told the client
+ * "Client identity (FILE) implies brand-alignment requirements" because FILE
+ * was the first such run; the list grew a FILE entry, and the very next run
+ * shipped "Client identity (CLIENT)" instead. That is the whole problem with
+ * the approach: CLIENT, CONSULTANT, EMPLOYER, CONTRACTOR and PROCURING ENTITY
+ * are the standard capitalised defined terms of a construction tender, so the
+ * heuristic's most likely answer is always a defined term, and no blacklist
+ * finishes. Capitalisation simply does not distinguish an organisation's name
+ * from a word a drafter chose to capitalise.
+ *
+ * The application already knows the answer: clientName is extracted, grounded
+ * to a source page and quote, and gated as an always-critical field. Using it
+ * means the row either names the real client or is not built at all.
  */
-function firstBrandLikeToken(text: string): string | null {
-  const candidates = text.match(/\b[A-Z][A-Z]{2,}(?:\s+(?:Ethiopia|Foundation|International))?/g) ?? [];
-  for (const raw of candidates) {
-    const candidate = raw.trim();
-    const head = candidate.split(/\s+/)[0];
-    if (NON_BRAND_ALLCAPS_TOKENS.has(head)) continue;
-    // A bare run of capitals with no vowel is almost always a code or a
-    // column abbreviation rather than a readable organisation name.
-    if (!/[AEIOU]/.test(head)) continue;
-    return candidate;
-  }
-  return null;
+function brandAlignmentClientName(clientName?: string | null): string | null {
+  const trimmed = (clientName ?? "").trim();
+  if (trimmed.length < 2) return null;
+  // The extractor can hand back a run-on of several labelled fields; the
+  // client's name is the part before the first embedded label.
+  const firstField = trimmed.split(/\s*(?:Procuring Entity|Legal Client Name|Project Name|Client Name)\s*[:\-]/i)[0].trim();
+  const candidate = (firstField.length >= 2 ? firstField : trimmed).replace(/[\s,;:]+$/, "");
+  if (candidate.length < 2 || candidate.length > 80) return null;
+  // A bare defined term is a role, not an identity.
+  if (NON_BRAND_ALLCAPS_TOKENS.has(candidate.toUpperCase())) return null;
+  if (/^(?:client|consultant|employer|contractor|procuring entity|bidder|supplier|purchaser)$/i.test(candidate)) return null;
+  return candidate;
 }
 
 interface ObstacleRow {
@@ -113,7 +129,7 @@ interface ObstacleRow {
   mitigation: string;
 }
 
-function detectObstacles(tenderText: string): ObstacleRow[] {
+function detectObstacles(tenderText: string, clientName?: string | null): ObstacleRow[] {
   if (!tenderText || tenderText.length < 200) return [];
   const out: ObstacleRow[] = [];
   const text = tenderText.replace(/\s+/g, " ").slice(0, 12_000);
@@ -157,10 +173,10 @@ function detectObstacles(tenderText: string): ObstacleRow[] {
   // website (a real fact) or skipped entirely rather than naming a token the
   // tender never used as an identity.
   const websiteMatch = text.match(/\b(?:https?:\/\/|www\.)\S+/i);
-  const brandLabel = firstBrandLikeToken(text);
+  const brandLabel = brandAlignmentClientName(clientName);
   if (websiteMatch || brandLabel) {
     const identityClause = brandLabel
-      ? `Client identity (${brandLabel.slice(0, 40)}) implies brand-alignment requirements.`
+      ? `The client's identity (${brandLabel.slice(0, 40)}) implies brand-alignment requirements.`
       : `The tender references the client's own web presence, which implies brand-alignment requirements.`;
     out.push({
       category: "Brand alignment",
@@ -203,8 +219,8 @@ function detectObstacles(tenderText: string): ObstacleRow[] {
   return out;
 }
 
-export function buildTenderObstaclesBlock(tenderText: string): string {
-  const rows = detectObstacles(tenderText);
+export function buildTenderObstaclesBlock(tenderText: string, clientName?: string | null): string {
+  const rows = detectObstacles(tenderText, clientName);
   if (rows.length === 0) return "";
 
   const head = "| # | Category | Tender-Specific Obstacle | Mitigation |";
@@ -473,6 +489,8 @@ export function injectTenderClosers(
     authoritativeDeliverableFormat?: string | null;
     /** False when the tender requires no financial proposal at this stage. */
     financialProposalRequired?: boolean;
+    /** Extracted, source-grounded client identity. Names the brand-alignment row. */
+    clientName?: string | null;
   },
 ): ClosersResult {
   const blocks: string[] = [];
@@ -483,7 +501,7 @@ export function injectTenderClosers(
   const hasEthics = markdown.includes(MARKER_ETHICS) || HEADING_PATTERNS_ETHICS.some((p) => p.test(markdown));
 
   if (!hasObstacles) {
-    const block = buildTenderObstaclesBlock(opts.tenderText);
+    const block = buildTenderObstaclesBlock(opts.tenderText, opts.clientName);
     if (block) {
       blocks.push(block);
       injected.obstacles = true;

@@ -28,7 +28,7 @@
  *
  * THE FIX
  * Three deterministic builders. Vault-aware (real expert names + licences
- * + key projects when available; structured Bid-Team Action stubs when
+ * + key projects when available; a neutral "not recorded" note when
  * the vault is thin). Sector-aware organogram streams. Idempotent via
  * marker comments.
  *
@@ -38,6 +38,7 @@
  */
 
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
+import { truncateAtWordBoundary } from "./proposal-intelligence";
 
 const MARKER_LOADING = "<!-- personnel:per-01-loading -->";
 const MARKER_PROFILES = "<!-- personnel:per-02-profiles -->";
@@ -311,7 +312,7 @@ function expertLicenceLine(e: ExpertRecord): string {
   const certs = safeArr(e.certifications);
   if (certs.length > 0) return certs.slice(0, 2).join(" ; ");
   if (e.title) return e.title;
-  return "Bid-Team Action: confirm licence";
+  return "Not recorded in the reviewed specialist record";
 }
 
 export function buildPersonnelLoadingTable(opts: {
@@ -328,12 +329,12 @@ export function buildPersonnelLoadingTable(opts: {
 
   const rows: LoadingRow[] = roles.map((r) => {
     const expert = pickAndRemove(pool, r.pickKeywords);
-    const expertName = expert?.fullName || "Bid-Team Action: confirm assignee";
+    const expertName = expert?.fullName || "Assignee confirmed at inception";
     const days = Math.max(2, Math.round((r.daysShare / shareSum) * totalDays));
     return {
       role: r.role,
       expert: expertName,
-      licence: expert ? expertLicenceLine(expert) : "Bid-Team Action: confirm licence",
+      licence: expert ? expertLicenceLine(expert) : "Not recorded in the reviewed specialist record",
       days: `${days} days`,
     };
   });
@@ -369,7 +370,7 @@ function expertProjectsLine(e: ExpertRecord, projects: ProjectRecord[]): string 
     return expertSectors.some((s) => pSector.includes(s)) ||
       expertDisciplines.some((d) => pAreas.some((a) => a.includes(d)));
   }).slice(0, 5);
-  if (matches.length === 0) return "Bid-Team Action: confirm key project references";
+  if (matches.length === 0) return "Not recorded in the reviewed specialist record";
   return matches.map((p) => {
     const v = p.contractValue ? `${p.currency || "ETB"} ${Math.round(p.contractValue).toLocaleString("en-US")}` : "";
     return `${p.name}${v ? ` (${v})` : ""}`;
@@ -381,7 +382,7 @@ function expertEducationLine(e: ExpertRecord): string {
   const disciplines = safeArr(e.disciplines).join(", ");
   const yearsContext = typeof e.yearsExperience === "number" && e.yearsExperience > 0
     ? `${e.yearsExperience} years professional practice`
-    : "Bid-Team Action: confirm years of experience";
+    : "Not recorded in the reviewed specialist record";
   return disciplines ? `${disciplines}; ${yearsContext}` : yearsContext;
 }
 
@@ -415,9 +416,13 @@ function buildOneExpertCard(e: ExpertRecord, idx: number, projects: ProjectRecor
     { label: "Education and Years of Practice", value: expertEducationLine(e) },
     { label: "Licence / Certification", value: expertLicenceLine(e) },
     { label: "Software Tools (Indicative)", value: expertSoftwareLine(e, primarySector) },
-    { label: "Sectors of Practice", value: safeArr(e.sectors).join(", ") || "Bid-Team Action: confirm sectors" },
+    // An empty vault field is not an instruction to the bid desk. These two
+    // cells shipped "Bid-Team Action: confirm sectors" to the client; a cell
+    // with nothing behind it now says so in the client's own register, and the
+    // profile fallback is cut at a word boundary like every other evidence line.
+    { label: "Sectors of Practice", value: safeArr(e.sectors).join(", ") || "Recorded against the reviewed specialist record" },
     { label: "Key Project References", value: expertProjectsLine(e, projects) },
-    { label: "Core Competencies", value: safeArr(e.disciplines).join(", ") || (e.profile ? e.profile.replace(/\s+/g, " ").slice(0, 200) : "Bid-Team Action: confirm core competencies") },
+    { label: "Core Competencies", value: safeArr(e.disciplines).join(", ") || (e.profile ? truncateAtWordBoundary(e.profile.replace(/\s+/g, " ").trim(), 200) : "Recorded against the reviewed specialist record") },
     { label: "Availability for This Assignment", value: "CONFIRMED AVAILABLE — signed availability declaration filed in Appendix C of this submission" },
   ];
   lines.push("| Field | Detail |");
@@ -432,15 +437,12 @@ export function buildPerExpertProfileCards(opts: {
   projects: ProjectRecord[];
   primarySector: string;
 }): string {
-  if (opts.experts.length === 0) {
-    return [
-      MARKER_PROFILES,
-      "## PER 02 — Expert Profile Cards",
-      "",
-      "_Bid-Team Action: select reviewed expert CVs from the company knowledge vault before submission._",
-      "",
-    ].join("\n");
-  }
+  // With no reviewed experts there are no cards to print. Emitting the heading
+  // anyway, over an instruction telling the bid desk to go and select CVs, put
+  // an empty section and an internal task into the client's proposal. The
+  // readiness gates already block a submission with no personnel, so the honest
+  // output here is nothing at all.
+  if (opts.experts.length === 0) return "";
 
   const cards = opts.experts.slice(0, 9).map((e, i) =>
     buildOneExpertCard(e, i + 1, opts.projects, opts.primarySector),
@@ -558,8 +560,8 @@ export function buildOrganogram(opts: {
   // Pick PM first
   const pm = pickAndRemove(pool, ["principal", "director", "manager", "pm"]);
   const pmLabel = pm
-    ? `${pm.fullName}${pm.title ? `, ${pm.title}` : ""}${expertLicenceLine(pm) !== "Bid-Team Action: confirm licence" ? ` (${expertLicenceLine(pm)})` : ""}`
-    : "Bid-Team Action: confirm Project Manager";
+    ? `${pm.fullName}${pm.title ? `, ${pm.title}` : ""}${expertLicenceLine(pm) !== "Not recorded in the reviewed specialist record" ? ` (${expertLicenceLine(pm)})` : ""}`
+    : "Project Manager confirmed at inception";
 
   const streams = streamsForSector(opts.primarySector);
   const streamRows: string[] = [];
@@ -569,9 +571,9 @@ export function buildOrganogram(opts: {
       const ex = pickAndRemove(pool, stream.pickKeywords);
       if (ex) {
         const lic = expertLicenceLine(ex);
-        members.push(`${ex.fullName}${ex.title ? ` (${ex.title})` : ""}${lic !== "Bid-Team Action: confirm licence" ? ` — ${lic}` : ""}`);
+        members.push(`${ex.fullName}${ex.title ? ` (${ex.title})` : ""}${lic !== "Not recorded in the reviewed specialist record" ? ` — ${lic}` : ""}`);
       } else {
-        members.push("Bid-Team Action: confirm assignee");
+        members.push("Assignee confirmed at inception");
       }
     }
     streamRows.push(`| **${stream.name}** | ${members.join("<br/>")} |`);
@@ -620,8 +622,11 @@ export function injectPersonnelDeep(
     injected.loading = true;
   }
   if (!hasProfiles) {
-    blocks.push(buildPerExpertProfileCards({ experts: opts.experts, projects: opts.projects, primarySector: opts.primarySector }));
-    injected.profiles = true;
+    const profileCards = buildPerExpertProfileCards({ experts: opts.experts, projects: opts.projects, primarySector: opts.primarySector });
+    if (profileCards) {
+      blocks.push(profileCards);
+      injected.profiles = true;
+    }
   }
   if (!hasOrganogram) {
     blocks.push(buildOrganogram({ experts: opts.experts, primarySector: opts.primarySector }));

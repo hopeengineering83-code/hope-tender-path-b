@@ -15,7 +15,7 @@
  */
 
 import type { ExpertRecord } from "./benchmark-tables";
-import { withoutPersonalCvFields } from "./proposal-intelligence";
+import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -33,11 +33,15 @@ function safeArr(value: unknown): string[] {
   return trimmed.split(/[,;|\n]/).map((s) => s.trim()).filter(Boolean);
 }
 
+// The bio text reaches the client verbatim, so it is cut the same way every
+// other evidence line is: at a word boundary, with an ellipsis marking the cut.
+// A raw .slice() shipped "Name of Firm Hope Urban Planning Architectural and
+// Engineering Consultan" in the Principal Qualifications bios of a real
+// submitted proposal — the very defect truncateAtWordBoundary was written for,
+// on a producer that never adopted it.
 function clean(text: string | null | undefined, max = 320): string {
-  return (text ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
+  const collapsed = (text ?? "").replace(/\s+/g, " ").trim();
+  return truncateAtWordBoundary(collapsed, max);
 }
 
 export function buildPrincipalQualificationsSection(opts: {
@@ -56,7 +60,7 @@ export function buildPrincipalQualificationsSection(opts: {
     const sectors = safeArr(expert.sectors);
     const certifications = safeArr(expert.certifications);
     const years = expert.yearsExperience ? `${expert.yearsExperience} years experience` : null;
-    const profile = clean(withoutPersonalCvFields(expert.profile ?? ""), 480);
+    const profile = clean(withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? "")), 480);
 
     blocks.push(`### ${expert.fullName} — ${position}`);
 

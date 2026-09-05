@@ -1510,6 +1510,46 @@ export function withoutPersonalCvFields(profile: string): string {
 }
 
 /**
+ * Strip the furniture of a CV *document* from a stored expert profile.
+ *
+ * `withoutPersonalCvFields` removes the personal data. What it leaves is still
+ * the raw text of a file, and the Principal Qualifications bios print it to the
+ * client verbatim. A real submitted proposal therefore read:
+ *
+ *   Profile. HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC
+ *   CURRICULUM VITAE ENG. AHMED KEBEDE TEKAW General Manager & Practicing
+ *   Professional Engineer … 1. PERSONNEL INFORMATION Proposed Position General
+ *   Manager … Name of Firm Hope Urban Planning Architectural and Engineering
+ *   Consultan
+ *
+ * An evaluator reads that as the bidder having pasted a file into the proposal.
+ * Three families of furniture are removed: the shouty letterhead banner a CV
+ * opens with, the document titles ("CURRICULUM VITAE", "PROFESSIONAL PROFILE"),
+ * and the numbered form-section headings with their bare labels. The narrative
+ * itself is untouched — this only removes text that describes the document
+ * rather than the person.
+ */
+const CV_DOCUMENT_FURNITURE: RegExp[] = [
+  /\b\d+\s*\.\s*PERSONNEL\s+INFORMATION\b/gi,
+  /\bCURRICULUM\s+VITAE\b/gi,
+  /\bPROFESSIONAL\s+PROFILE\b/gi,
+  /\bPERSONNEL\s+INFORMATION\b/gi,
+  /\b(?:Proposed Position|Current Position|Name of Firm|Name of Expert|Name of Staff|Full Name|Employer)\s*[:\-]?\s*/gi,
+];
+
+export function withoutCvDocumentFurniture(profile: string): string {
+  if (!profile) return profile;
+  let text = profile.replace(/\s+/g, " ").trim();
+  // A CV usually opens with the firm's name in capitals, sometimes twice, then
+  // the holder's name in capitals. Drop a leading run of shouty words before
+  // any ordinary prose starts; stop at the first token that is not upper-case
+  // furniture so a real sentence is never eaten.
+  text = text.replace(/^(?:(?:[A-Z][A-Z&.()À-ɏ]{1,}|\d+\.)\s+){4,}/, "");
+  for (const pattern of CV_DOCUMENT_FURNITURE) text = text.replace(pattern, " ");
+  return text.replace(/\s{2,}/g, " ").replace(/^[\s,;:.\-–—]+/, "").trim();
+}
+
+/**
  * Cut long evidence text at a WORD boundary, not mid-word.
  *
  * These proof lines are writer context, and the writer copies them into the
