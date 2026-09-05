@@ -323,6 +323,9 @@ jobs:
           echo
           curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" | tee /tmp/export-readiness-final.json
+          echo
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" | tee /tmp/generated-proposal-audit.json
 
       - name: Require real final readiness with zero blockers
         run: |
@@ -371,6 +374,7 @@ jobs:
             /tmp/workflow-center-after-analyze.json
             /tmp/workflow-center-final.json
             /tmp/export-readiness-final.json
+            /tmp/generated-proposal-audit.json
             /tmp/export-response.json
             /tmp/preview-final.zip
           if-no-files-found: warn
