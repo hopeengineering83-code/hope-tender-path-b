@@ -911,6 +911,7 @@ async function runPdfFinalization(
       format: true, generationStatus: true, validationStatus: true,
       reviewStatus: true, fileContent: true, storagePath: true,
       contentSha256: true, contentByteLength: true, integrityStatus: true,
+      updatedAt: true,
     },
   });
 
@@ -940,11 +941,6 @@ async function runPdfFinalization(
         && isGenerated(d.generationStatus)
         && Boolean(d.fileContent || d.storagePath),
     );
-    if (existingPdf) {
-      skipped++;
-      continue;
-    }
-
     // Find the matching DOCX source (by base name, ignoring extension).
     const baseName = requiredName.replace(/\.pdf$/i, "");
     const sourceDoc = docs.find((d) => {
@@ -956,6 +952,10 @@ async function runPdfFinalization(
 
     if (!sourceDoc) {
       // No validated source — skip (don't fabricate).
+      skipped++;
+      continue;
+    }
+    if (existingPdf && existingPdf.updatedAt >= sourceDoc.updatedAt) {
       skipped++;
       continue;
     }
@@ -1049,8 +1049,9 @@ async function runPdfFinalization(
             reviewNotes: "machine:auto-finalize-pdf — rendered from validated DOCX source. Awaiting canonical validation.",
             ...pdfIntegrity,
         } as const;
-        if (plannedRow) {
-          await prisma.generatedDocument.update({ where: { id: plannedRow.id }, data: finalizedPdfData });
+        const targetRow = existingPdf ?? plannedRow;
+        if (targetRow) {
+          await prisma.generatedDocument.update({ where: { id: targetRow.id }, data: finalizedPdfData });
         } else {
           await prisma.generatedDocument.create({ data: finalizedPdfData });
         }
