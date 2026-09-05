@@ -6,6 +6,7 @@ import { assessGeneratedDocumentQuality } from '../lib/engine/document-quality-g
 import { stripInternalReviewSections } from '../lib/engine/internal-review-stripper';
 import { disambiguateRepeatedHeadings } from '../lib/engine/generate-elite';
 import { buildProposalIntelligence } from '../lib/engine/proposal-intelligence';
+import { cleanClientName } from '../lib/engine/proposal-labels';
 
 const internalSections = [
   '## Proposal Evaluator Loop\n\nPrivate evaluator simulation.',
@@ -120,4 +121,11 @@ test('email submission rules use the grounded deadline text and omit a physical 
   });
   assert.ok(result.submissionRules.some((rule) => /5:00 PM Addis Ababa Time/.test(rule)));
   assert.ok(!result.submissionRules.some((rule) => /portal \/ address/i.test(rule)));
+});
+
+test('a concatenated client metadata row resolves to only the procuring entity', () => {
+  assert.equal(
+    cleanClientName('Pharo Ventures Procuring Entity / Client Name: Pharo Ventures Legal Client Name: Pharo Ventures Project Name: Pharo Health'),
+    'Pharo Ventures'
+  );
 });

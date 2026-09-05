@@ -67,6 +67,7 @@ export function cleanClientName(value?: string | null, fallback?: string | null)
   if (!candidate) return "Client";
 
   const cleaned = candidate
+    .replace(/\b(?:procuring\s+entity\s*\/\s*client\s+name|legal\s+client\s+name|project\s+name)\s*:.*$/i, "")
     .replace(/\b(full name|relationship|headquarters|not specified in texts)\b.*$/i, "")
     .replace(/\s*\([^)]{0,80}$/g, "")
     .replace(/[.,;:\-–—\s]+$/g, "")
