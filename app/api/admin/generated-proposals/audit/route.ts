@@ -221,6 +221,7 @@ export async function GET(req: Request) {
         reviewStatus: true,
         fileContent: true,
         storagePath: true,
+        contentSha256: true,
         createdAt: true,
         updatedAt: true,
       },
