@@ -842,6 +842,9 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
 
   const requiredItems = items.filter((item) => item.required);
   const requiredKeys = new Set(requiredItems.map((item) => planDocumentMatchKey(item.exactFileName)));
+  const requiredBaseNames = new Set(
+    requiredItems.map((item) => planDocumentMatchKey(item.exactFileName).replace(/\.[a-z0-9]+$/i, "")),
+  );
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, format: true, fileContent: true, storagePath: true, generationStatus: true, validationStatus: true, reviewStatus: true },
@@ -853,7 +856,10 @@ export async function validateConfirmedPlanDocuments(prisma: PrismaClient, tende
     const bucket = docsByKey.get(key) ?? [];
     bucket.push(doc);
     docsByKey.set(key, bucket);
-    if (!requiredKeys.has(key) && doc.generationStatus === "GENERATED") blockers.push(`Generated document ${doc.name} is not in the confirmed Build Plan.`);
+    const isRetainedAlternateFormatSource = requiredBaseNames.has(key.replace(/\.[a-z0-9]+$/i, ""));
+    if (!requiredKeys.has(key) && !isRetainedAlternateFormatSource && doc.generationStatus === "GENERATED") {
+      blockers.push(`Generated document ${doc.name} is not in the confirmed Build Plan.`);
+    }
   }
 
   for (const item of requiredItems) {

@@ -983,6 +983,8 @@ The repair made AUTO_FINALIZE succeed on the real Preview. Export readiness then
 
 The next exact-head hosted run proved the model was correct (`DOCX exportCandidate=false`, `PDF exportCandidate=true`) but the route's top-level public envelope still copied its numerator from the older broad readiness summary. The envelope now takes both required and export-ready totals from the final-package authority already returned in the same response, matching its nested canonical totals instead of manufacturing `2 > 1` from two different populations.
 
+Hosted run `33969698668` then passed zero-blocker export readiness and reached POST `/export`, where the central generation/export gate independently rejected the same retained DOCX as outside the confirmed PDF plan. Confirmed-plan validation now recognizes only same-base alternate-format rows as conversion workspace sources; the exact required PDF must still exist exactly once, be non-empty and machine-validated, while genuinely different extra files still block.
+
 ### 2026-08-29 UTC — Codex (exact retained-source request-shape preservation)
 
 - **Branch / PR:** existing `release/consolidated-recovery-20260717` / draft PR #1175 only. The refreshed container initially lacked a remote and exposed a synthetic `work` branch; after adding the canonical repository remote, its worktree was proven byte-identical to exact remote `04b93e0a004bfc672cda1a9516be45484b3e5c58`, then safely reattached to the existing consolidation branch. No branch or PR was created, merged, or promoted.
