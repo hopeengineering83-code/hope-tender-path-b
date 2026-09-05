@@ -81,6 +81,7 @@ const INTERNAL_REVIEW_HEADINGS: RegExp[] = [
   /^##?\s+Compliance\s+and\s+Bid\s+Review\s+Strategy\b/i,
   /^##?\s+Tender\s+Proposal\s+AI[-\s]Ready\s+Summary\b/i,
   /^##?\s+Annex\s+(?:&|and)\s+Appendix\s+Readiness\s+Register\b/i,
+  /^##?\s+Appendix\s+Register\b/i,
 ];
 
 function isInternalReviewHeading(line: string): boolean {

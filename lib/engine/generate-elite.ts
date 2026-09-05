@@ -34,6 +34,7 @@ import {
   buildPortfolioReadingGuide,
   buildSpecialistEngagementSection,
   buildSubmittedByToBlock,
+  formatSubmissionDeadline,
   buildValueFrameworkTable,
   makeHasHeadingChecker,
   type ExpertRecord,
@@ -2864,7 +2865,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     tenderTitle: cleanedTenderTitle,
     clientName: intelligence.clientName,
     reference: tender.reference,
-    exactSubjectLine: intelligence.exactSubjectLine,
+    exactSubjectLine: tender.submissionEmailSubject ?? intelligence.exactSubjectLine,
     submissionDate: null,
     proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
       ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "") || null
@@ -2974,10 +2975,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     .replace(/\bdirectly\s+comparable\b/gi, "relevant")
     .replace(/^.*\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.*\b(?:attached|provided)\b.*\b(?:appendix|appendices|annex|annexes)\b.*$/gim, "")
     .replace(/^(?:[-*]\s*)?Submission\s+(?:Address|Portal)[^:\n]*:\s*.*\b[a-z]{1,2}\s*$/gim, "")
+    .replace(/Submission\s+Address\s*\/\s*Portal:\s*No\s+physical\s+address\s+or\s+portal\s+i\b/gi, "Email submission only")
+    .replace(/^.*\b(?:filed|listed|provided|presented|included|detail)\b.*\b(?:Appendix|Appendices|Annex|Annexes)\b.*$/gim, "")
+    .replace(/^Appendix\s+[A-Z](?::|\b).*$/gim, "")
     .replace(/^.*\b(?:Signature|Company Stamp|Stamp|Date)\s*:\s*_+.*$/gim, "")
     .replace(/\[\s*\]/g, "—")
     .replace(/\n{3,}/g, "\n\n");
   humanizedMarkdown = stripPlaceholders(humanizedMarkdown).markdown;
+  if (tender.deadline) {
+    const groundedDeadline = formatSubmissionDeadline(tender.deadline, tender.deadlineSourceQuote);
+    humanizedMarkdown = humanizedMarkdown.replace(/^Submission deadline:.*$/gim, `Submission deadline: ${groundedDeadline}.`);
+  }
   humanizedMarkdown = disambiguateRepeatedHeadings(humanizedMarkdown);
   if (humanizedMarkdown.split(/\s+/).filter(Boolean).length < 650) {
     const groundedRequirements = tender.requirements.slice(0, 12).map((requirement) => {
@@ -3040,7 +3048,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
       ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "")
       : null,
-    exactSubjectLine: intelligence.exactSubjectLine,
+    exactSubjectLine: tender.submissionEmailSubject ?? intelligence.exactSubjectLine,
   };
 
   const doc = buildProfessionalDocument({

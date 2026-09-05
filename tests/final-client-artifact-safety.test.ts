@@ -12,13 +12,14 @@ const internalSections = [
   '## Compliance and Bid Review Strategy\n\nBid-team review notes.',
   '## Tender Proposal AI-Ready Summary\n\nPrepared for AI-assisted tender proposal generation.',
   '## Annex & Appendix Readiness Register\n\nAttach vault records later.',
+  '## Appendix Register\n\nAppendix A: documents not in the package.',
 ].join('\n\n');
 
 test('the final internal-section sweep removes evaluator, self-score, AI-preparation, and bid-review scaffolding', () => {
   const result = stripInternalReviewSections(
     `# Technical Proposal\n\nClient content.\n\n${internalSections}\n\n# Declaration\n\nAccurate and source-grounded.`
   );
-  assert.equal(result.removedSections.length, 5);
+  assert.equal(result.removedSections.length, 6);
   assert.doesNotMatch(
     result.markdown,
     /Evaluator Loop|Self-Score|Bid Review Strategy|AI-Ready|Readiness Register/i
