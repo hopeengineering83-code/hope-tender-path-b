@@ -34,6 +34,7 @@ import {
   isValidationPassed,
 } from "../document-output-state";
 import type { TenderFormatPolicy } from "../export-format-policy";
+import { cleanClientName } from "../proposal-labels";
 
 export type PdfFinalizationBlockerCode =
   | "PDF_REQUIRED_CONVERSION_UNAVAILABLE"
@@ -356,7 +357,7 @@ export async function finalizeRequiredPdf(input: {
     if (company?.website) contactParts.push(company.website);
     pdfBytes = await generateProposalPdf({
       title: tender.title?.trim() || "Technical Proposal",
-      clientName: tender.clientName ?? null,
+      clientName: tender.clientName ? cleanClientName(tender.clientName) : null,
       reference: tender.reference ?? null,
       submissionEmailSubject: tender.submissionEmailSubject ?? null,
       markdown: renderText,

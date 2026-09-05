@@ -16,3 +16,8 @@ test("AUTO_FINALIZE refreshes coverage after the replacement PDF is validated", 
   const packageReconcile = source.indexOf("auto-finalize.package-reconciliation");
   assert.ok(validation < postPdfReconcile && postPdfReconcile < packageReconcile);
 });
+
+test("PDF finalization sanitizes stored client metadata before rendering the cover", () => {
+  const pdfFinalizer = readFileSync("lib/engine/workflow/pdf-finalizer.ts", "utf8");
+  assert.match(pdfFinalizer, /clientName: tender\.clientName \? cleanClientName\(tender\.clientName\) : null/);
+});
