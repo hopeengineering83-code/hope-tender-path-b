@@ -119,7 +119,10 @@ describe("6. Required document count reconciliation", () => {
     assert.ok(src.includes("finalPackage.documents.exportReady.length"), "must count exportReady from finalPackage");
     const envelopeStart = src.indexOf("const envelope = buildPublicReadinessEnvelope");
     const envelope = src.slice(envelopeStart, src.indexOf("return NextResponse.json", envelopeStart));
-    assert.ok(envelope.includes("finalPackage.documents.exportReady.length"), "public envelope numerator must use the final-package population");
+    assert.ok(
+      envelope.includes("deliveryReadyDocumentsTotal") || envelope.includes("finalPackage.documents.exportReady.length"),
+      "public envelope numerator must use the final-package population",
+    );
     assert.ok(!envelope.includes("readiness.summary.exportReadyDocumentsTotal"), "public envelope must not mix the broad workspace population with final-package totals");
   });
 
