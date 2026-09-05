@@ -151,6 +151,14 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       severity: warning.severity,
     }));
 
+    // Count confirmed package deliveries, not retained editable source rows.
+    // A PDF-only plan legitimately keeps its DOCX source in the workspace, but
+    // that source is not a second attachment and must not create a 2/1 count
+    // contradiction in an otherwise ready package.
+    const deliveryReadyDocumentsTotal = finalPackage.documents.exportReady.filter(
+      (document) => document.exportCandidate,
+    ).length;
+
     const envelope = buildPublicReadinessEnvelope({
       ok: reconciledOk,
       blockers: publicBlockers,
@@ -159,7 +167,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       primaryFixAction: canonicalBlocker.length > 0 ? canonicalDecision.nextRequiredActionLabel : readiness.summary.primaryFixAction,
       requiredDocumentsTotal: Math.max(finalPackage.documents.required.length, finalPackage.documents.planned.length),
       generatedDocumentsTotal: finalPackage.documents.generated.length,
-      exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+      exportReadyDocumentsTotal: deliveryReadyDocumentsTotal,
     });
 
     return NextResponse.json({
@@ -236,7 +244,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           return null;
         })(),
         requiredDocumentsTotal: Math.max(finalPackage.documents.required.length, finalPackage.documents.planned.length),
-        exportReadyDocumentsTotal: finalPackage.documents.exportReady.length,
+        exportReadyDocumentsTotal: deliveryReadyDocumentsTotal,
         plannedRequiredDocuments: finalPackage.documents.planned.length,
       },
     });

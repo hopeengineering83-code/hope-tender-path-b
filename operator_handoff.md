@@ -947,6 +947,15 @@ be re-confirmed from here, and AI Analyze genuinely requires the owner.
 
 <!-- Add newest entry at the top. -->
 
+### 2026-09-05 13:38 UTC — Codex (public delivery-count convergence)
+
+- **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; based on real remote head `7bce8e9d42a66f1eb2fe2c7a6665db94a22da83f`.
+- **Verified failure:** exact-head hosted run `33969155527` reached successful AI Analyze, ENGINE_RUN, PROPOSAL_GENERATION and AUTO_FINALIZE. The package model had zero document/tender blockers and one confirmed PDF delivery, but the route-level public envelope still passed its older workspace-derived count (`2` export-ready rows: editable DOCX plus delivery PDF) against `1` required delivery, manufacturing `READINESS_COUNT_CONTRADICTION`.
+- **Fix / files:** `app/api/tenders/[id]/export-readiness/route.ts` now feeds both public and nested payloads the final-package model's confirmed delivery-candidate count; `tests/export-readiness-delivery-count.test.ts` pins that the retained editable source cannot inflate the delivery count. No gate or candidate classification was relaxed.
+- **Tests:** focused 14 tests passed; `npx tsc --noEmit` passed; `npm run lint` passed; `git diff --check` passed. `npm test` was attempted before this commit and correctly refused by the repository guard because the container-provided `DATABASE_URL` points at Neon; exact-head CI must provide the required ephemeral PostgreSQL service and run the full suite.
+- **Risks / next action:** temporary acceptance infrastructure remains. Push, wait for exact-head Preview and full CI, rerun authenticated hosted acceptance, then inspect actual ZIP bytes/manifest/document content before any cleanup.
+- **Merge status:** **DO NOT MERGE / DO NOT PROMOTE PRODUCTION** — final ZIP acceptance remains pending.
+
 ### 2026-09-05 13:10 UTC — Codex (hosted-acceptance failure diagnostics)
 
 - **Branch / PR:** `release/consolidated-recovery-20260717` / draft #1175; continued from verified remote head `6579eb745abeadce8f15326102ad8e49a81e0ea5`.
