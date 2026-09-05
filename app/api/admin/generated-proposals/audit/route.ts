@@ -26,8 +26,8 @@ import {
 } from "../../../../../lib/engine/document-output-state";
 import {
   documentHygieneIssues,
-  extractDocxVisibleText,
 } from "../../../../../lib/engine/export-readiness";
+import { generatedDocumentVisibleText } from "../../../../../lib/engine/generated-document-text";
 import { validateFileSignature } from "../../../../../lib/engine/export-format-policy";
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
 import { inferEnvelope } from "../../../../../lib/engine/submission-plan";
@@ -58,7 +58,7 @@ type AuditRow = {
   hasStoragePath: boolean;
   storageReadable: boolean | null;
   byteSignatureOk: boolean | null;
-  docxVisibleTextInspectable: boolean;
+  visibleTextInspectable: boolean;
   wordCount: number;
   sectionCount: number;
   requiredSectionsPresent: string[];
@@ -245,16 +245,29 @@ export async function GET(req: Request) {
         byteSignatureOk = validateFileSignature(fileName, document.fileContent).ok;
       }
 
+      // Read through the canonical reader, which opens DOCX *and* PDF bytes.
+      // This used to call extractDocxVisibleText, whose maybeBase64Docx() guard
+      // returns null for anything that is not an OPC package — so for a
+      // finalized PDF, the deliverable this audit exists to judge, it saw no
+      // text at all. quality came back null, the score defaulted to 0 and the
+      // status to DRAFT_ONLY, while export-readiness (which does read the PDF)
+      // reported READY with zero blockers and shipped the ZIP. The audit now
+      // reads the same bytes as every other release surface.
       let visibleText: string | null = null;
-      let docxVisibleTextInspectable = false;
+      let visibleTextInspectable = false;
       let storageReadable: boolean | null = null;
       const inlineBase64 = document.fileContent ?? null;
       if (inlineBase64 && inlineBase64.length > 0 && inlineBase64.length < 2_000_000) {
         try {
-          visibleText = await extractDocxVisibleText(inlineBase64, fileName);
-          docxVisibleTextInspectable = visibleText !== null;
+          visibleText = await generatedDocumentVisibleText({
+            fileContent: inlineBase64,
+            exactFileName: document.exactFileName ?? null,
+            name: document.name ?? null,
+            contentMimeType: null,
+          });
+          visibleTextInspectable = visibleText !== null;
         } catch {
-          docxVisibleTextInspectable = false;
+          visibleTextInspectable = false;
         }
       } else if (hasStoragePath && document.storagePath) {
         try {
@@ -268,8 +281,13 @@ export async function GET(req: Request) {
           storageReadable = true;
           if (buffer.length < 2_000_000) {
             const base64FromStorage = buffer.toString("base64");
-            visibleText = await extractDocxVisibleText(base64FromStorage, fileName).catch(() => null);
-            docxVisibleTextInspectable = visibleText !== null;
+            visibleText = await generatedDocumentVisibleText({
+              fileContent: base64FromStorage,
+              exactFileName: document.exactFileName ?? null,
+              name: document.name ?? null,
+              contentMimeType: null,
+            }).catch(() => null);
+            visibleTextInspectable = visibleText !== null;
             if (byteSignatureOk === null) {
               byteSignatureOk = validateFileSignature(fileName, base64FromStorage).ok;
             }
@@ -342,7 +360,7 @@ export async function GET(req: Request) {
         hasStoragePath,
         storageReadable,
         byteSignatureOk,
-        docxVisibleTextInspectable,
+        visibleTextInspectable,
         wordCount,
         sectionCount,
         requiredSectionsPresent,

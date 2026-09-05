@@ -491,7 +491,13 @@ export function buildThreeStageReviewTable(companyName: string, primarySector: s
 
   return [
     "## C.3 Quality Assurance: Three-Stage Review",
-    `Every deliverable package is reviewed through three mandatory stages before issue. This protocol is documented in ${companyName}'s Quality Management System (ISO 9001:2015-aligned where certified) and applied on all certified projects.`,
+    // This sentence used to assert that the protocol "is documented in
+    // <firm>'s Quality Management System (ISO 9001:2015-aligned where
+    // certified) and applied on all certified projects" — a claim about an
+    // existing documented QMS, an ISO alignment and a body of certified
+    // projects, none of which the company authority records. What is
+    // defensible is the commitment this proposal makes for this assignment.
+    `Every deliverable package is reviewed through three mandatory stages before issue. ${companyName} applies this review protocol to the deliverables of this assignment, and each stage carries the named review authority and written sign-off set out below.`,
     "",
     "| Stage | Milestone | Review Authority and Required Action |",
     "|---|---|---|",

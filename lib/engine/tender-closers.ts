@@ -400,7 +400,11 @@ export interface EthicsVault {
 
 export function buildEthicsDeclarationBlock(vault: EthicsVault): string {
   const company = vault.legalName?.trim() || vault.companyName;
-  const codeRef = vault.codeOfEthicsRef?.trim() || "the firm's internal Code of Ethics document";
+  // An identified Code of Ethics is a recorded fact; an unidentified one is not.
+  // codeOfEthicsRef is null on every production call today, so the old default
+  // ("the firm's internal Code of Ethics document") cited a document nothing in
+  // the vault names.
+  const identifiedCodeRef = vault.codeOfEthicsRef?.trim() || null;
   const law = vault.countryLegalCitation?.trim() || "Federal Ethics and Anti-Corruption Commission Establishment Proclamation No. 433/2005 and Federal Anti-Corruption Special Procedure and Rules of Evidence Proclamation No. 657/2009";
   const gmLine = vault.gmName
     ? `${vault.gmName}${vault.gmTitle ? `, ${vault.gmTitle}` : ", General Manager"}${vault.gmLicense ? ` (${vault.gmLicense})` : ""}`
@@ -420,11 +424,27 @@ export function buildEthicsDeclarationBlock(vault: EthicsVault): string {
     "",
     `4. **No use of confidential information** — The Bidder has not obtained or used confidential information from the Procuring Entity in preparing this submission. Any information supplied during the bid window has been treated as restricted and shared only with personnel directly involved in this submission.`,
     "",
-    `5. **Compliance with the firm's ethics framework** — All personnel proposed for this engagement have signed the Bidder's Code of Ethics (${codeRef}). Breach of the Code is grounds for immediate removal from the engagement.`,
+    // Clause 5 used to read: "All personnel proposed for this engagement have
+    // signed the Bidder's Code of Ethics (...)". That is a completed act by
+    // each named individual, asserted as fact. The company authority records
+    // that an ethics framework exists; it holds no per-person signature
+    // evidence, and on every production call the cited reference was the
+    // generic phrase "the firm's internal Code of Ethics document" — a
+    // signature against a document nothing in the vault identifies. A firm
+    // policy and a forward commitment are both true and both defensible; a
+    // historical claim about individuals is neither.
+    identifiedCodeRef
+      ? `5. **Compliance with the firm's ethics framework** — Personnel assigned to this engagement work under the Bidder's Code of Ethics (${identifiedCodeRef}). Acceptance of the Code is a condition of assignment, and breach of it is grounds for immediate removal from the engagement.`
+      : `5. **Compliance with the firm's ethics framework** — Personnel assigned to this engagement work under the Bidder's ethics and anti-corruption framework. Acceptance of that framework is a condition of assignment, and breach of it is grounds for immediate removal from the engagement.`,
     "",
     `6. **Compliance with applicable law** — The Bidder is subject to ${law} and any other applicable national, regional, or international anti-corruption framework. The Bidder cooperates with any lawful investigation arising from this engagement.`,
     "",
-    `7. **Whistleblowing channel** — The Bidder maintains an internal whistleblowing channel that any team member, sub-contractor, or client representative can use to raise an integrity concern. The channel is confidential and protected.`,
+    // Clause 7 used to assert an existing operational control — "The Bidder
+    // maintains an internal whistleblowing channel ... confidential and
+    // protected" — with nothing in the vault recording one. What the Bidder
+    // can commit to for this engagement is a route for raising an integrity
+    // concern, so that is what it now says.
+    `7. **Raising an integrity concern** — For the duration of this engagement, any team member, sub-contractor, or client representative may raise an integrity concern in confidence with the signatory below, and the Bidder undertakes to investigate it and to protect the person who raises it from retaliation.`,
     "",
     `8. **Right of audit** — The Bidder accepts the Procuring Entity's right to audit any aspect of contract performance relevant to integrity, including expenses, sub-contractor relationships, and on-site practices, on reasonable notice.`,
     "",

@@ -26,7 +26,8 @@ import { strict as assert } from "node:assert";
 
 import { stripInternalDiagnosticContent } from "../lib/engine/internal-review-stripper";
 import { injectWinThemesTable } from "../lib/engine/win-themes-table";
-import { buildCommercialUnderstandingBlock } from "../lib/engine/tender-closers";
+import { buildCommercialUnderstandingBlock, buildEthicsDeclarationBlock } from "../lib/engine/tender-closers";
+import { buildThreeStageReviewTable } from "../lib/engine/benchmark-tables";
 import {
   CLIENT_FACING_SECTION_F_HEADING,
   CLIENT_FACING_SECTION_G_HEADING,
@@ -179,5 +180,71 @@ describe("the Commercial Understanding table states facts the submission owns", 
       financialProposalRequired: true,
     });
     assert.match(block, /technical\s+and\s+financial\s+submission/i);
+  });
+});
+
+describe("declarations state what the company authority can support", () => {
+  it("does not claim each proposed person has already signed the Code of Ethics", () => {
+    // The company authority records that an ethics framework exists. It holds
+    // no per-person signature evidence, and codeOfEthicsRef is null on every
+    // production call — so the old clause asserted a completed act by named
+    // individuals against a document nothing in the vault identifies.
+    const block = buildEthicsDeclarationBlock({
+      companyName: "Hope Engineering",
+      legalName: "Hope Engineering PLC",
+      gmName: "A. Person",
+      gmTitle: "General Manager",
+      gmLicense: null,
+      codeOfEthicsRef: null,
+      countryLegalCitation: null,
+    });
+
+    assert.doesNotMatch(block, /have\s+signed\s+the\s+Bidder's\s+Code\s+of\s+Ethics/i);
+    assert.doesNotMatch(block, /All\s+personnel\s+proposed[^.]*have\s+signed/i);
+    // A policy plus a forward commitment is both true and defensible.
+    assert.match(block, /Acceptance of that framework is a condition of assignment/i);
+    // With no identified Code, no document reference is invented.
+    assert.doesNotMatch(block, /the firm's internal Code of Ethics document/i);
+  });
+
+  it("cites the Code of Ethics only when the vault identifies one", () => {
+    const block = buildEthicsDeclarationBlock({
+      companyName: "Hope Engineering",
+      legalName: null,
+      gmName: "A. Person",
+      gmTitle: null,
+      gmLicense: null,
+      codeOfEthicsRef: "HAEC/125/22",
+      countryLegalCitation: null,
+    });
+    assert.match(block, /Code of Ethics \(HAEC\/125\/22\)/);
+    assert.match(block, /condition of assignment/i);
+    assert.doesNotMatch(block, /have\s+signed/i);
+  });
+
+  it("does not assert an existing whistleblowing channel the vault never recorded", () => {
+    const block = buildEthicsDeclarationBlock({
+      companyName: "Hope Engineering",
+      legalName: null,
+      gmName: "A. Person",
+      gmTitle: null,
+      gmLicense: null,
+      codeOfEthicsRef: null,
+      countryLegalCitation: null,
+    });
+    assert.doesNotMatch(block, /maintains an internal whistleblowing channel/i);
+    // The forward commitment for this engagement is what the firm can make.
+    assert.match(block, /may raise an integrity concern in confidence/i);
+    assert.match(block, /protect the person who raises it from retaliation/i);
+  });
+
+  it("does not claim a documented QMS, an ISO alignment or certified projects", () => {
+    const qa = buildThreeStageReviewTable("Hope Engineering", "Healthcare / Medical Facility Design");
+    assert.doesNotMatch(qa, /Quality Management System/i);
+    assert.doesNotMatch(qa, /ISO\s*9001/i);
+    assert.doesNotMatch(qa, /certified projects/i);
+    // The commitment this proposal actually makes survives.
+    assert.match(qa, /three mandatory stages before issue/i);
+    assert.match(qa, /written sign-off/i);
   });
 });
