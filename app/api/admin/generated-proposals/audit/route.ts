@@ -58,6 +58,9 @@ type AuditRow = {
   hasStoragePath: boolean;
   storageReadable: boolean | null;
   byteSignatureOk: boolean | null;
+  /** Persisted artifact identity. A release surface that cannot name the
+   *  revision it judged cannot be reconciled with the surfaces that shipped it. */
+  contentSha256: string | null;
   visibleTextInspectable: boolean;
   wordCount: number;
   sectionCount: number;
@@ -66,6 +69,8 @@ type AuditRow = {
   requirementCoverageRatio: number;
   qualityScore: number;
   qualityRecommendedStatus: string;
+  /** Why the score is what it is. A verdict without its reasons cannot be acted on. */
+  qualityIssues: Array<{ code: string; severity: string; message: string }>;
   aiTraceIssue: boolean;
   placeholderIssue: boolean;
   bidTeamToConfirmIssue: boolean;
@@ -219,6 +224,7 @@ export async function GET(req: Request) {
         reviewStatus: true,
         fileContent: true,
         storagePath: true,
+        contentSha256: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -360,6 +366,7 @@ export async function GET(req: Request) {
         hasStoragePath,
         storageReadable,
         byteSignatureOk,
+        contentSha256: document.contentSha256 ?? null,
         visibleTextInspectable,
         wordCount,
         sectionCount,
@@ -368,6 +375,7 @@ export async function GET(req: Request) {
         requirementCoverageRatio,
         qualityScore,
         qualityRecommendedStatus,
+        qualityIssues: quality?.issues ?? [],
         aiTraceIssue,
         placeholderIssue,
         bidTeamToConfirmIssue,
