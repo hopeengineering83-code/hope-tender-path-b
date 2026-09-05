@@ -530,15 +530,18 @@ export async function generateProposalPdf(opts: {
     opts.markdown,
   ].join("\n"));
 
-  // Header text — tender title or company name, right-aligned on every page.
-  const headerText = opts.companyName
-    ? `${opts.companyName} | ${opts.title}`
-    : opts.title;
+  // Repeating the full company name plus tender title cannot fit an A4 header
+  // and previously ended every page in a visible ellipsis. The cover already
+  // carries the complete tender title; the running header identifies the
+  // bidder without clipping or silently abbreviating client-facing text.
+  const headerText = opts.companyName ?? opts.title;
 
   // Footer contact strip — composed from any provided branding fields.
   const footerParts: string[] = [];
-  if (opts.companyAddress) footerParts.push(opts.companyAddress);
+  // Prefer the concise contact strip. The full address remains on the cover;
+  // combining both here overflowed the footer on every page.
   if (opts.companyContact) footerParts.push(opts.companyContact);
+  else if (opts.companyAddress) footerParts.push(opts.companyAddress);
   const footerContact = footerParts.length ? footerParts.join("  |  ") : null;
 
   // Cover page (page 0 — not numbered)

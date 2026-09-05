@@ -703,7 +703,10 @@ function detectSubmissionRules(tender: TenderLite, tenderText: string): string[]
   // Deadline
   const groundedDeadline = tenderText.match(/Submission\s+Deadline\s*:\s*([^\n]{5,100})/i)?.[1]?.trim();
   if (groundedDeadline) {
-    rules.push(`Submission deadline: ${groundedDeadline.replace(/\.$/, "")}.`);
+    const boundedDeadline = groundedDeadline
+      .split(/\s+(?=(?:Submission\s+Email|Submission\s+Method|Email\s*\(|Subject|Submission\s+Address|Portal)\b)/i)[0]
+      .trim();
+    rules.push(`Submission deadline: ${boundedDeadline.replace(/\.$/, "")}.`);
   } else if (tender.deadline) {
     rules.push(`Submission deadline: ${new Date(tender.deadline).toLocaleString("en-US", { year: "numeric", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}.`);
   } else {

@@ -74,6 +74,16 @@ test('quality gate blocks unproven continuity, phantom appendices, and truncated
   );
 });
 
+test('quality gate blocks visibly broken email-submission rows', () => {
+  const report = assessGeneratedDocumentQuality({
+    doc: { name: 'Technical Proposal', exactFileName: 'Technical Proposal.pdf', documentType: 'TECHNICAL_PROPOSAL', format: 'PDF' },
+    visibleText: `${'# Technical Proposal\n\n'}${'Source-grounded methodology and delivery detail. '.repeat(80)}\nSubmission Email(s): edessalegn@pharoventures.com; fgetach.`,
+    rawFileContent: '%PDF-bytes',
+  });
+  assert.ok(report.issues.some((issue) => issue.code === 'PLACEHOLDER' && issue.severity === 'HIGH'));
+  assert.equal(report.recommendedStatus, 'QUALITY_FAILED');
+});
+
 test('submission deadline uses grounded time and never invents midnight from a date-only value', () => {
   assert.equal(
     formatSubmissionDeadline(
@@ -122,6 +132,19 @@ test('email submission rules use the grounded deadline text and omit a physical 
   });
   assert.ok(result.submissionRules.some((rule) => /5:00 PM Addis Ababa Time/.test(rule)));
   assert.ok(!result.submissionRules.some((rule) => /portal \/ address/i.test(rule)));
+});
+
+test('flattened submission metadata cannot be swallowed by the deadline', () => {
+  const result = buildProposalIntelligence({
+    tender: {
+      title: 'Healthcare design', submissionMethod: 'Email',
+      description: 'Submission Deadline: August 25, 2026, 5:00 PM Addis Ababa Time Submission Email(s): edessalegn@pharoventures.com; fgetachew@pharoventures.com Subject: Technical Proposal for Pharo Ventures',
+    },
+    company: { name: 'Hope', serviceLines: '[]', sectors: '[]' }, requirements: [], experts: [], projects: [],
+  });
+  const deadline = result.submissionRules.find((rule) => rule.startsWith('Submission deadline:')) ?? '';
+  assert.equal(deadline, 'Submission deadline: August 25, 2026, 5:00 PM Addis Ababa Time.');
+  assert.doesNotMatch(deadline, /Email|@/);
 });
 
 test('a concatenated client metadata row resolves to only the procuring entity', () => {

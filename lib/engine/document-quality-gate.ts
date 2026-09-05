@@ -414,6 +414,7 @@ const UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS: RegExp[] = [
 ];
 const PHANTOM_ATTACHMENT_CLAIM = /\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.{0,160}\b(?:attached|provided)\b.{0,80}\b(?:appendix|appendices|annex|annexes)\b/i;
 const TRUNCATED_SUBMISSION_METADATA = /^(?:[-*]\s*)?Submission\s+(?:Address|Portal)[^:\n]*:\s*.*\b[a-z]{1,2}\s*$/im;
+const MALFORMED_SUBMISSION_LINE = /^(?:[-*]\s*)?(?:Submission\s+)?Email(?:\(s\))?\s*:[^\n]*(?:[;,]\s*[a-z0-9._%+\-]{1,20}\.?)\s*$|\bSubmission\b[^\n]{0,30}\s;\s[a-z]/im;
 
 const OFFICIAL_ORIGINAL_LABEL_PATTERNS: RegExp[] = [
   /\bbid\s+form\b/i,
@@ -620,7 +621,7 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
   if (text && PHANTOM_ATTACHMENT_CLAIM.test(text)) {
     issues.push({ code: "UNSUPPORTED_CLAIM_RISK", severity: "HIGH", message: "Document claims supporting material is attached in an appendix or annex without package-level proof." });
   }
-  if (text && TRUNCATED_SUBMISSION_METADATA.test(text)) {
+  if (text && (TRUNCATED_SUBMISSION_METADATA.test(text) || MALFORMED_SUBMISSION_LINE.test(text))) {
     issues.push({ code: "PLACEHOLDER", severity: "HIGH", message: "Document contains malformed or visibly truncated submission metadata." });
   }
 

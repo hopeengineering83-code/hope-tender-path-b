@@ -218,7 +218,12 @@ export function extractTenderFacts(
   // Canonical first, regex second. uniq() keeps the canonical value at the
   // head of the list and drops a regex match that merely repeats it, so the
   // prompt block leads with the grounded fact.
-  const rfpIds = uniq([...canonicalRfpIds, ...extractAll(tenderText, RFP_PATTERNS)]).slice(0, 3);
+  const rfpIds = uniq([...canonicalRfpIds, ...extractAll(tenderText, RFP_PATTERNS)])
+    // A label followed by a source filename/table heading is not a procurement
+    // reference. The loose legacy regex accepted values such as
+    // "document.docx" and "Type" from flattened extraction tables.
+    .filter((value) => !/\.(?:docx?|pdf|xlsx?)$/i.test(value) && !/^(?:type|row|document)$/i.test(value))
+    .slice(0, 3);
   const deadlines = uniq([...canonicalDeadlines, ...extractAll(tenderText, DEADLINE_PATTERNS)]).slice(0, 3);
   const validityPeriods = extractAll(tenderText, VALIDITY_PATTERNS).slice(0, 2);
 
@@ -239,17 +244,14 @@ export function extractTenderFacts(
     .filter((s) => !/\.(?:pdf|docx?|xlsx?|jpg|png|gif)$/i.test(s))
     .slice(0, 5);
 
-  // Locations — scan for hint matches and keep the surrounding 2-4 words
+  // Locations — the matched hint itself is evidence. Surrounding extraction
+  // text may cross flattened table-cell boundaries and must not be presented
+  // as though it were one source-grounded location.
   const locations: string[] = [];
   for (const re of LOCATION_HINTS) {
     re.lastIndex = 0;
     for (const m of tenderText.matchAll(re)) {
-      const start = Math.max(0, (m.index ?? 0) - 30);
-      const end = Math.min(tenderText.length, (m.index ?? 0) + (m[0]?.length ?? 0) + 30);
-      const window = tenderText.slice(start, end).replace(/\s+/g, " ").trim();
-      // Pick the smallest reasonable substring that contains the hint
-      const trimmed = window.length > 80 ? window.slice(0, 80) + "…" : window;
-      locations.push(trimmed);
+      if (m[0]) locations.push(m[0]);
     }
   }
   const dedupedLocations = uniq(locations).slice(0, 4);

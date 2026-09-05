@@ -8,6 +8,32 @@ on:
     branches:
       - release/production-engine-2026-06
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: >-
+          TEMPORARY, owner-authorized, single-use input shared by the two
+          temporary-preview-* jobs below (see PR #1175). Type "migrate" to run
+          the fingerprint-gated migration job, or "accept" to run the hosted
+          AI-Analyze -> Run-Engine -> ZIP acceptance job. Any other value
+          (including leaving this blank) runs only the ordinary
+          lockfile-refresh job.
+        required: false
+        default: ""
+      expected_fingerprint:
+        description: >-
+          TEMPORARY, paired with confirm=migrate. The databaseFingerprint
+          (from /api/health) the target database MUST already report —
+          verified against the live database before any write. The job
+          refuses to run if this does not match exactly.
+        required: false
+        default: ""
+      tender_id:
+        description: >-
+          TEMPORARY, paired with confirm=accept. The Preview tender ID
+          (already uploaded, canonical files and vault already in place) to
+          run AI Analyze -> Run Engine -> ZIP against.
+        required: false
+        default: "fed8756d-4210-4ad8-808b-b6f63742f656"
 
 permissions:
   contents: read
@@ -45,3 +71,330 @@ jobs:
             package-lock.json
           if-no-files-found: error
           retention-days: 1
+
+  # ─── TEMPORARY — owner-authorized, single-use ──────────────────────────────
+  #
+  # Applies the one outstanding migration (20260904180000_narrow_generated_
+  # document_coverage_invalidation) to the isolated Preview database whose
+  # /api/health already reports databaseFingerprint d74f2ac75c88 — a host
+  # (ep-sweet-silence-...) independently confirmed distinct from Production's
+  # configured host (ep-red-dew-...) by reading each deployment's own build
+  # logs, not by trusting either environment's documentation.
+  #
+  # Runs ONLY on workflow_dispatch with confirm=migrate, and only after
+  # re-deriving the target database's fingerprint (via the same
+  # lib/database-fingerprint.ts the app itself uses) and refusing to proceed
+  # if it does not exactly match expected_fingerprint. Runs no command but the
+  # repository's own trusted `npm run prisma:migrate:safe` — never db push,
+  # reset, baseline, or a manual SQL statement.
+  #
+  # Preview builds themselves still never migrate anything automatically —
+  # this job is the fingerprint-bound, explicitly-authorized maintenance
+  # exception, not a relaxation of that default. Remove this job and the two
+  # workflow_dispatch inputs above once the migration is verified applied.
+  temporary-preview-migration:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'migrate'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Verify target database fingerprint before any write
+        env:
+          EXPECTED_FINGERPRINT: ${{ inputs.expected_fingerprint }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::PREVIEW_DATABASE_URL_MIGRATION secret is not set."
+            exit 1
+          fi
+          if [ -z "$EXPECTED_FINGERPRINT" ]; then
+            echo "::error::expected_fingerprint input is required."
+            exit 1
+          fi
+          npx tsx scripts/tmp-verify-preview-fingerprint.mjs
+
+      - name: Apply outstanding migrations via the trusted safe path
+        run: npm run prisma:migrate:safe
+
+      - name: Verify migration history and status
+        run: |
+          npx prisma migrate status
+          npx tsx scripts/tmp-verify-preview-migration.mjs
+
+      - name: Verify the GeneratedDocument trigger has the narrowed definition
+        run: npx tsx scripts/tmp-verify-preview-trigger.mjs
+
+      - name: Verify live Preview health after migration
+        run: |
+          response=$(curl -sS --connect-timeout 15 --max-time 30 \
+            -w "\n---STATUS:%{http_code}---" \
+            "https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app/api/health")
+          echo "$response"
+          status=$(echo "$response" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          body=$(echo "$response" | sed -E "s/---STATUS:[0-9]+---//")
+          if [ "$status" != "200" ]; then
+            echo "::error::Preview health check failed after migration (HTTP $status)."
+            exit 1
+          fi
+          if ! echo "$body" | grep -q '"schemaMatchesDeployedCode":true'; then
+            echo "::error::Preview reports schemaMatchesDeployedCode=false after migration."
+            exit 1
+          fi
+          if ! echo "$body" | grep -q '"databaseFingerprint":"d74f2ac75c88"'; then
+            echo "::error::Preview databaseFingerprint changed unexpectedly after migration."
+            exit 1
+          fi
+          echo "Preview health verified: 200, schema matches, fingerprint unchanged."
+
+  # ─── TEMPORARY — owner-authorized, single-use ──────────────────────────────
+  #
+  # Drives the real hosted acceptance walkthrough (AI Analyze -> Run Engine ->
+  # automatic ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE -> ZIP)
+  # against the Preview deployment, using the tender and canonical vault
+  # already uploaded there. Every mutating route it calls
+  # (manual-ai-analyze, engine, export) requires a real authenticated owner
+  # session — this sandbox cannot authenticate as the owner and cannot POST to
+  # the Preview host at all (its egress proxy rejects it by policy), so this
+  # job runs the walkthrough from a GitHub-hosted runner instead, using:
+  #   - PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD — signed in through the
+  #     real /api/auth/login endpoint exactly as e2e/global-setup.ts does
+  #     (same Origin and Referer a same-origin browser form would send, so
+  #     strict CSRF stays enabled). The password is never printed, and the
+  #     returned hope_session value is registered with ::add-mask:: before it
+  #     is used, so it cannot appear in any log line either.
+  #   - AI_JOBS_WORKER_SECRET — the secret drain-ai-job-queue.yml already
+  #     uses to drain this same Preview's AiJob queue via X-Worker-Secret.
+  #
+  # Runs ONLY on workflow_dispatch with confirm=accept. Uploads the final ZIP
+  # and the readiness/export-readiness responses as a workflow artifact for
+  # inspection; makes no other write beyond the normal application actions a
+  # signed-in owner clicking through the UI would make. Remove this job, the
+  # confirm=accept branch, and the tender_id input once acceptance is done.
+  temporary-preview-hosted-acceptance:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'accept'
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    permissions:
+      contents: read
+    env:
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
+      WORKER_SECRET: ${{ secrets.AI_JOBS_WORKER_SECRET }}
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+      TENDER_ID: ${{ inputs.tender_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify secrets and inputs are present
+        run: |
+          if [ -z "$OWNER_EMAIL" ]; then
+            echo "::error::PREVIEW_OWNER_EMAIL secret is not set."
+            exit 1
+          fi
+          if [ -z "$OWNER_PASSWORD" ]; then
+            echo "::error::PREVIEW_OWNER_PASSWORD secret is not set."
+            exit 1
+          fi
+          if [ -z "$WORKER_SECRET" ]; then
+            echo "::error::AI_JOBS_WORKER_SECRET secret is not set."
+            exit 1
+          fi
+          if [ -z "$TENDER_ID" ]; then
+            echo "::error::tender_id input is required."
+            exit 1
+          fi
+
+      - name: Sign in through the real /api/auth/login endpoint
+        run: |
+          # Same request shape e2e/global-setup.ts uses: JSON credentials with
+          # the Origin and Referer a same-origin browser form would send, so
+          # strict CSRF stays enabled. Credentials go in a --data-binary file
+          # rather than argv so they never reach the process table.
+          umask 077
+          printf '{"email":%s,"password":%s}' \
+            "$(printf '%s' "$OWNER_EMAIL" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            "$(printf '%s' "$OWNER_PASSWORD" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            > /tmp/login-body.json
+          status=$(curl -sS --connect-timeout 15 --max-time 45 \
+            -o /tmp/login-body-response.json -D /tmp/login-headers.txt \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -H "Origin: $BASE_URL" \
+            -H "Referer: $BASE_URL/login" \
+            --data-binary @/tmp/login-body.json \
+            "$BASE_URL/api/auth/login")
+          rm -f /tmp/login-body.json
+          echo "login status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Login against the Preview app failed (HTTP $status). Check PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD."
+            rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+            exit 1
+          fi
+          cookie=$(grep -i '^set-cookie:' /tmp/login-headers.txt \
+            | grep -o 'hope_session=[^;]*' \
+            | head -1 \
+            | cut -d= -f2-)
+          rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+          if [ -z "$cookie" ]; then
+            echo "::error::Login succeeded but no hope_session cookie was returned."
+            exit 1
+          fi
+          # Register the session value as a masked secret BEFORE it is used, so
+          # it can never surface in a later log line.
+          echo "::add-mask::$cookie"
+          echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+          echo "Signed in; session captured and masked."
+
+      - name: Verify the session authenticates against the target tender
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 30 -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID")
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          echo "GET tender status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::The signed-in session could not read tender $TENDER_ID (HTTP $status). Confirm the tender belongs to PREVIEW_OWNER_EMAIL's account."
+            exit 1
+          fi
+          echo "Session verified against tender $TENDER_ID."
+
+      - name: Trigger AI Analyze (manual, owner-authorized)
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
+            "$BASE_URL/api/tenders/$TENDER_ID/manual-ai-analyze")
+          echo "$resp"
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          if [ "$status" != "200" ] && [ "$status" != "202" ]; then
+            echo "::error::manual-ai-analyze failed (HTTP $status)."
+            exit 1
+          fi
+
+      - name: Wait for AI Analyze to reach a terminal state
+        run: bash scripts/tmp-await-tender-jobs.sh 40
+
+      - name: Snapshot readiness after AI Analyze
+        run: |
+          curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-after-analyze.json
+
+      - name: Trigger Run Engine (manual, owner-authorized)
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" -H "Content-Type: application/json" \
+            -d '{"action":"run"}' \
+            "$BASE_URL/api/tenders/$TENDER_ID/engine")
+          echo "$resp"
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          # 202 is the normal success shape: the route enqueues a durable
+          # ENGINE_RUN job and returns Accepted, exactly as manual-ai-analyze does.
+          if [ "$status" != "200" ] && [ "$status" != "202" ]; then
+            echo "::error::Run Engine failed (HTTP $status)."
+            exit 1
+          fi
+
+      - name: Wait for ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE to settle
+        run: bash scripts/tmp-await-tender-jobs.sh 120
+
+      - name: Snapshot final workflow-center and export-readiness state
+        run: |
+          curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-final.json
+          echo
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/export-readiness" | tee /tmp/export-readiness-final.json
+          echo
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" | tee /tmp/generated-proposal-audit.json
+
+      - name: Require real final readiness with zero blockers
+        run: |
+          python3 - <<'PY'
+          import json
+          with open('/tmp/export-readiness-final.json', encoding='utf-8') as stream:
+              result = json.load(stream)
+          blockers = result.get('blockers') or []
+          if result.get('ok') is not True or blockers:
+              raise SystemExit(f"Hosted readiness did not pass: ok={result.get('ok')!r}, blockers={len(blockers)}")
+          PY
+
+      - name: Trigger export readiness build (POST /export)
+        run: |
+          resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" -H "Origin: $BASE_URL" \
+            "$BASE_URL/api/tenders/$TENDER_ID/export")
+          echo "$resp" | tee /tmp/export-response.json
+          status=$(echo "$resp" | grep -oE "STATUS:[0-9]+" | cut -d: -f2)
+          if [ "$status" != "200" ]; then
+            echo "::error::POST /export did not return 200 (HTTP $status)."
+            exit 1
+          fi
+
+      - name: Download the final ZIP
+        run: |
+          curl -sS --connect-timeout 15 --max-time 120 -o /tmp/preview-final.zip \
+            -w "%{http_code}" \
+            -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/tenders/$TENDER_ID/download?type=zip" > /tmp/zip-status.txt
+          status=$(cat /tmp/zip-status.txt)
+          size=$(wc -c < /tmp/preview-final.zip)
+          echo "ZIP HTTP:$status SIZE:$size"
+          if [ "$status" != "200" ] || [ "$size" -le 0 ]; then
+            echo "::error::Final ZIP download failed (HTTP $status, $size bytes)."
+            exit 1
+          fi
+          unzip -t /tmp/preview-final.zip
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" > /tmp/generated-proposal-audit-post-export.json
+          python3 - <<'PY'
+          import hashlib, json, zipfile
+          with zipfile.ZipFile('/tmp/preview-final.zip') as archive:
+              names = archive.namelist()
+              if names != ['Technical Proposal.pdf']:
+                  raise SystemExit(f'Unexpected ZIP entries: {names!r}')
+              payload = archive.read(names[0])
+          audit = json.load(open('/tmp/generated-proposal-audit-post-export.json', encoding='utf-8'))
+          rows = [row for row in audit.get('documents', []) if row.get('generationStatus') == 'GENERATED' and row.get('exactFileName') == names[0]]
+          if len(rows) != 1:
+              raise SystemExit(f'Expected one current audit row for {names[0]}, got {len(rows)}')
+          expected = rows[0].get('contentSha256')
+          actual = hashlib.sha256(payload).hexdigest()
+          if not expected or expected != actual:
+              raise SystemExit('Downloaded artifact hash does not match the persisted generated-document identity')
+          PY
+
+      - name: Upload acceptance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-hosted-acceptance
+          path: |
+            /tmp/workflow-center-after-analyze.json
+            /tmp/workflow-center-final.json
+            /tmp/export-readiness-final.json
+            /tmp/generated-proposal-audit.json
+            /tmp/generated-proposal-audit-post-export.json
+            /tmp/export-response.json
+            /tmp/preview-final.zip
+          if-no-files-found: warn
+          retention-days: 3

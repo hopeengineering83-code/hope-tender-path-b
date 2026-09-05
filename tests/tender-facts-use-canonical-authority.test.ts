@@ -84,6 +84,15 @@ describe("the regex extractor still does the work canonical does not cover", () 
 });
 
 describe("nothing is invented", () => {
+  it("does not turn flattened table labels and filenames into references or locations", () => {
+    const flattened = (`Tender Reference: document.docx Type Row\n` +
+      `Location: Addis Ababa Submission Method: Email Submission Address: No portal\n`).repeat(8);
+    const facts = extractTenderFacts(flattened);
+    assert.ok(!facts.rfpIds.some((value) => /document\.docx|^type$|^row$/i.test(value)));
+    assert.deepEqual(facts.locations, ["Addis Ababa"]);
+    assert.ok(facts.locations.every((value) => !/Submission|Portal|Method/i.test(value)));
+  });
+
   it("adds no deadline when neither source has one", () => {
     const facts = extractTenderFacts(TENDER_TEXT_WITHOUT_PARSEABLE_DEADLINE, {});
     assert.equal(facts.deadlines.length, 0);

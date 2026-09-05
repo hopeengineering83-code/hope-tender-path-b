@@ -161,4 +161,19 @@ describe("proposal PDF rendering", () => {
     assert.ok(numbers.every(([, total]) => total === numbers.length));
     assert.match(text, /Engineering and Architectural Consultancy Headquarters/);
   });
+
+  it("keeps running furniture concise instead of visibly truncating it", async () => {
+    const bytes = await generateProposalPdf({
+      title: "Architectural Consultancy Services for a Very Long Specialty Medical Centre Assignment",
+      companyName: "Hope Engineering and Architectural Consultancy",
+      companyAddress: "A deliberately long headquarters address that belongs on the cover rather than every page footer",
+      companyContact: "info@hope.example | +251 11 000 0000",
+      markdown: Array.from({ length: 90 }, (_, i) => `Paragraph ${i + 1}: ${"grounded delivery detail ".repeat(8)}`).join("\n\n"),
+    });
+    const text = await textOf(bytes);
+    assert.match(text, /Hope Engineering and Architectural Consultancy/);
+    assert.match(text, /info@hope\.example/);
+    assert.doesNotMatch(text, /Specialty Medical Centre Assign\.\.\./);
+    assert.doesNotMatch(text, /headquarters address that belongs\.\.\./);
+  });
 });
