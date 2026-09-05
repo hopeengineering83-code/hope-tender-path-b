@@ -134,3 +134,9 @@ test('a concatenated client metadata row resolves to only the procuring entity',
 test('the deterministic signatory block does not claim an unattached signed copy', () => {
   assert.doesNotMatch(readFileSync('lib/engine/tender-closers.ts', 'utf8'), /signed copy in submission pack/i);
 });
+
+test('reference throughlines never invent same-team continuity', () => {
+  for (const file of ['lib/engine/narrative-throughline-enforcer.ts', 'lib/engine/why-us-summary.ts']) {
+    assert.doesNotMatch(readFileSync(file, 'utf8'), /same team proposed|same project, already delivered/i);
+  }
+});

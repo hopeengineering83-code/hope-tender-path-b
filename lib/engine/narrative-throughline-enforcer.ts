@@ -100,7 +100,7 @@ export function enforceNarrativeThroughline(opts: {
       const value = project.contractValue
         ? ` (${project.currency || "ETB"} ${Math.round(project.contractValue).toLocaleString("en-US")}${project.clientName ? `, ${project.clientName}` : ""})`
         : project.clientName ? ` (${project.clientName})` : "";
-      const sentence = `_Comparable reference anchor:_ ${project.name}${value} is a directly comparable assignment delivered by the same team proposed for this engagement.`;
+      const sentence = `_Relevant reference anchor:_ ${project.name}${value} is a reviewed project record whose applicable lessons inform this engagement.`;
       injections.push({
         sectionIdx: section.headingLine,
         insertAfter: section.nextHeadingLine - 1,
