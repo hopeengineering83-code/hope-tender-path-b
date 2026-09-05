@@ -123,6 +123,88 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-05 UTC — Claude Code (client-facing language, deliverable format, audit/export agreement)
+
+- **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
+- **HEAD:** `0e903f4f` → `488d4174` → `6a26b757` → `9dddd485` → this commit. No new lane, no merge, no Production deploy.
+
+**Scope.** Seven defects the owner found by reading the bytes of the last hosted
+artifact. Six were code defects fixed at their producers; the seventh is the
+quality target that the others were suppressing.
+
+- **Internal reasoning shipping to the client** (`lib/engine/win-themes-table.ts`,
+  `lib/engine/internal-review-stripper.ts`, `lib/engine/generate-elite.ts`,
+  `lib/ai.ts`, `lib/engine/evaluator-mirror-builder.ts`,
+  `lib/engine/win-themes-builder.ts`, new
+  `lib/engine/client-facing-section-titles.ts`). The gap channel that fed
+  "Tender hot-button", "no energy-specific reviewed project is selected", "Use
+  the closest…", "Additional discriminators" into the proposal was removed at
+  source, not blacklisted; a shape-based sweep
+  (`stripInternalDiagnosticContent`) is the generic backstop, and the quality
+  scorer no longer rewards the vocabulary it was meant to remove.
+- **Wrong deliverable format** (`lib/engine/tender-closers.ts`,
+  `lib/engine/generate-elite.ts`). The confirmed Build Plan's exact file name is
+  now the authority for the stated submission format; a benchmark default can no
+  longer answer "DOCX" when the required file is a PDF.
+- **Financial-proposal contradiction** (`lib/engine/tender-closers.ts`,
+  `lib/engine/mobilization-and-checklist.ts`). With
+  `financialProposalRequired: false`, client-facing text no longer implies a
+  financial submission. Two-envelope controls are untouched for tenders that
+  need them.
+- **Unsupported declarations** (`lib/engine/tender-closers.ts`,
+  `lib/engine/benchmark-tables.ts`). Signed-Code-of-Ethics-per-person, an
+  existing whistleblowing channel and a documented ISO-aligned QMS were asserted
+  with nothing in the vault behind them; each is now either firm policy or a
+  forward commitment, and cited only when the vault identifies the reference.
+- **Audit vs export-readiness disagreement**
+  (`app/api/admin/generated-proposals/audit/route.ts`,
+  `lib/engine/storage-backed-document-audit.ts`). Three separate causes, all
+  reproduced on hosted runs:
+  1. the audit read artifact text with a DOCX-only reader, so it never opened
+     the final PDF (score 0 / DRAFT_ONLY against READY);
+  2. it required `isReviewReadyForExport(reviewStatus)` on top of the canonical
+     resolver — a status the automatic path is contractually forbidden to write
+     (`auto-finalize-continuation-service.ts`: "Per Gap 1, automation does not
+     write reviewStatus=READY_FOR_EXPORT"), so every automatically produced
+     deliverable read as blocked here and shipped by the export route;
+  3. it called the quality rubric with no selected expert/project names, so
+     `MISSING_EVIDENCE_REFERENCE` fired unconditionally — the ambiguity
+     `current-document-quality.ts` documents and that `validate.ts` already
+     avoids.
+  None of these weaken a quality requirement: a thin PDF still scores 20 and
+  returns QUALITY_FAILED, and a document citing none of the reviewed evidence is
+  still flagged.
+
+**Tests actually run.** `npx tsc --noEmit` clean. `npx next lint` — no ESLint
+warnings or errors. Full suite with `RUN_DB_INTEGRATION=true` against local
+PostgreSQL — see the commit message for the exact counts from the run that
+gated this push. New regression files:
+`tests/client-facing-internal-language.test.ts` (13 tests) and
+`tests/audit-surfaces-read-the-final-pdf.test.ts` (8 tests, real `pdf-lib`
+PDFs).
+
+**Hosted evidence.** Run 33987922811 completed the owner flow to a real ZIP. Run
+33993906509 re-ran it on `9dddd485` and reached
+`export-readiness: ok=True status=READY blockers=0`, with the audit row now
+`visibleTextInspectable=true, qualityScore=88, qualityRecommendedStatus=PASSED,
+wordCount=12632, sectionCount=38, missingRequiredSections=[],
+requirementCoverageRatio=1, sha256=988d8ca4…` — up from
+`visibleTextInspectable=false, score=0, DRAFT_ONLY`. That run failed on the new
+agreement gate at `readyForExport=false`, which is what exposed causes 2 and 3
+above; the gate did its job and the fix is in this commit.
+
+**Risks / assumptions.** The Preview tender's deadline (2026-08-25) has passed,
+so export-readiness carries a `DEADLINE_PASSED` warning; it is a warning, not a
+blocker, and is expected for a fixture tender. `storage-backed-document-audit.ts`
+has the same latent evidence-names gap as cause 3 but was not exercised by any
+reproduced run, so it is deliberately left unchanged.
+
+**Next action.** Re-run the hosted acceptance on the new head, then complete the
+17-dimension assessment against the downloaded PDF and remove the temporary
+acceptance tooling.
+
+**Merge status:** not reviewed — do not merge.
+
 ### 2026-09-02 UTC — Claude Code (Preview 504, cross-surface release state, PDF extraction integrity)
 
 - **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
