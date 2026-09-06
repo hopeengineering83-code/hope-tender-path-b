@@ -67,6 +67,7 @@ export function cleanClientName(value?: string | null, fallback?: string | null)
   if (!candidate) return "Client";
 
   const cleaned = candidate
+    .replace(/\b(?:procuring\s+entity\s*\/\s*client\s+name|legal\s+client\s+name|project\s+name)\s*:.*$/i, "")
     .replace(/\b(full name|relationship|headquarters|not specified in texts)\b.*$/i, "")
     .replace(/\s*\([^)]{0,80}$/g, "")
     .replace(/[.,;:\-–—\s]+$/g, "")
@@ -163,10 +164,142 @@ export function formatRequirementLine(req: { title?: string | null; description?
   return `${base}${pageTag}${sectionTag}${quoteTag}`;
 }
 
+/**
+ * Truncate a display line WITHOUT landing inside — or half-closing — a
+ * provenance tag this module appended.
+ *
+ * WHY THIS FUNCTION EXISTS
+ * ------------------------
+ * formatRequirementLine() above always returns a complete, closed line: the
+ * quote/section/page tags are appended AFTER their values are already sliced,
+ * so `[p.7] (§ SECTION) (quote: "…")` is never malformed at the point this
+ * module builds it. But three DOWNSTREAM deterministic renderers
+ * (lib/engine/tender-response-blueprint.ts, proposal-evaluator-matrix.ts,
+ * proposal-quality-repair.ts) each carried their own copy-pasted `take()`
+ * helper that RE-TRUNCATES an already-complete line with a raw
+ * `line.slice(0, maxLen - 1) + "…"` — with no idea the line ends in
+ * structural syntax.
+ *
+ * On the real Pharo tender (deterministic fallback path — every AI call was
+ * rate-limited, so `formatRequirementLine`'s 506-character, well-formed line
+ * for "Specialized Healthcare Design Experience" was the whole input),
+ * tender-response-blueprint.ts's `take(input.requirements, 16, 320)` cut it
+ * at character 320 — inside the section-heading VALUE, before the tag's own
+ * closing paren — and that fragment flowed, unchanged, into the client-facing
+ * "Section E: Compliance Matrix" of the submitted DOCX and PDF:
+ *
+ *   … Include reviewed healthcare project references. [p.7]
+ *   (§ QUALIFICATIONS AND APP EXTR…
+ *
+ * This is not a model-generation artifact — it is 100% deterministic,
+ * reproducible on stored data with zero AI calls (see
+ * tests/requirement-line-truncates-without-breaking-its-own-tags.test.ts).
+ *
+ * THE FIX
+ * -------
+ * This function is the ONE place that decides how to shorten a line built by
+ * formatRequirementLine(). It never partially prints a tag:
+ *   1. If the line ends in a `(quote: "…")`, `(§ …)` or `[p.N]` tag (in any
+ *      combination formatRequirementLine produces), the tag suffix is
+ *      identified and set aside.
+ *   2. If the core text plus the FULL tag suffix already fits in `maxLen`,
+ *      the line is returned completely unchanged — nothing is touched.
+ *   3. If the core text alone fits but the tags push it over, the tags are
+ *      dropped WHOLESALE (never partially) and the core is returned
+ *      untruncated — the tags are grounding metadata for a writer, not a
+ *      fact the client-facing line loses meaning without.
+ *   4. Only if the core text itself exceeds `maxLen` is it truncated, and
+ *      always at the last word boundary before the limit, with a trailing
+ *      "…" — the same rule truncateAtWordBoundary applies elsewhere in the
+ *      generator (see proposal-intelligence.ts), so a display line never
+ *      stops mid-word regardless of which renderer shortened it.
+ *
+ * Operates on ONE caller-supplied line at a time and never touches `\n`:
+ * every value that reaches formatRequirementLine's output is already
+ * single-line by construction (normalizeLabel collapses all whitespace,
+ * control characters included), so there is no assembled markdown, table
+ * row, or section boundary here for a fix to damage.
+ */
+const TRAILING_QUOTE_TAG = /\s*\(quote:\s*"[^"]*"?\)?\s*$/i;
+const TRAILING_SECTION_TAG = /\s*\(§[^)]*\)?\s*$/;
+const TRAILING_PAGE_TAG = /\s*\[p\.\s*\d+\]\s*$/i;
+
+export function truncateDisplayLine(value: string, maxLen: number): string {
+  const line = value.replace(/\s+/g, " ").trim();
+  if (line.length <= maxLen) return line;
+
+  // Peel known trailing tags off, in the order formatRequirementLine appends
+  // them (quote is always last, then section, then page), so a line with
+  // only some of the three tags is handled the same as one with all three.
+  let core = line;
+  let removedAnyTag = false;
+  for (const tagPattern of [TRAILING_QUOTE_TAG, TRAILING_SECTION_TAG, TRAILING_PAGE_TAG]) {
+    const withoutTag = core.replace(tagPattern, "");
+    if (withoutTag !== core) {
+      core = withoutTag;
+      removedAnyTag = true;
+    }
+  }
+
+  if (removedAnyTag && core.length <= maxLen) {
+    // The core statement — the actual requirement text — fits once the
+    // provenance tags are set aside. Return it whole: no half-open
+    // parenthesis, no ellipsis needed, no fact lost.
+    return core;
+  }
+
+  // Either there were no tags to remove, or even the bare core is too long.
+  // Cut the core at the last word boundary before the limit.
+  const budget = Math.max(1, maxLen - 1);
+  const window = core.slice(0, budget);
+  const lastSpace = window.lastIndexOf(" ");
+  const cut = lastSpace > Math.floor(budget * 0.5) ? window.slice(0, lastSpace) : window;
+  return `${cut.replace(/[\s,;:—–-]+$/, "")}…`;
+}
+
 export function safeFileBaseName(value?: string | null, fallback = "submission-package"): string {
   const cleaned = cleanTenderTitle(value, { fallback })
     .replace(/[^a-zA-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 90);
   return cleaned || fallback;
+}
+
+/**
+ * A requirement line with its provenance tags removed, for a page a client reads.
+ *
+ * THE DELIVERED DEFECT
+ * --------------------
+ * formatRequirementLine() appends `[p.N] (§ SECTION) (quote: "…")` because the
+ * writer needs to know where a requirement came from. truncateDisplayLine()
+ * drops those tags when they would not fit — but returns the line untouched
+ * when it does fit, tags and all. Hosted run 34052912750 shipped the result
+ * into "Section E: Compliance Matrix" of the submitted proposal:
+ *
+ *   Proposal in PDF format, strictly named 'Technical Proposal.pdf'. No
+ *   financial proposal should be generated or submitted at this stage. [p.4]
+ *   (§ REQUIRED DOCUMENTS / MANDATORY DOCUMENTS) (quote: "Required Documents:
+ *   Technical Proposal.pdf Mandatory Document: …")
+ *
+ * The client is being shown our own citation apparatus, and the quote repeats
+ * back to them a passage from the tender they wrote.
+ *
+ * Fitting in a cell is not what decides whether a citation belongs on a client
+ * page — the page does. So the renderers that build client-facing tables call
+ * this, and the grounding tags stay where they are useful: in the text handed
+ * to the writer. Tags are removed wholesale wherever they appear, never
+ * partially, and the requirement's own words are untouched.
+ */
+const ANY_QUOTE_TAG = /\s*\(quote:\s*"[^"]*"?\)?/gi;
+const ANY_SECTION_TAG = /\s*\(§[^)]*\)?/g;
+const ANY_PAGE_TAG = /\s*\[p\.\s*\d+\]/gi;
+
+export function withoutProvenanceTags(value: string): string {
+  return value
+    .replace(ANY_QUOTE_TAG, "")
+    .replace(ANY_SECTION_TAG, "")
+    .replace(ANY_PAGE_TAG, "")
+    .replace(/\s+/g, " ")
+    .replace(/[\s,;:]+$/, "")
+    .trim();
 }

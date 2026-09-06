@@ -1,6 +1,10 @@
 import { prisma, prismaReady } from "./prisma";
-import { resolveStorageProvider } from "./storage";
+import { isEmailDeliveryConfigured } from "./email";
+import { getStorageReadiness } from "./storage";
+import { checkAiProviderHealth } from "./ai-provider-health-check";
 import {
+  getAutomaticProviderOrder,
+  providerAutomaticEligibility,
   CANONICAL_AI_PROVIDER_ORDER,
   CANONICAL_AI_PROVIDER_DISPLAY_NAMES,
   isProviderConfigured,
@@ -26,13 +30,12 @@ function has(value: string | undefined | null): boolean {
   return Boolean(value && value.trim().length > 0);
 }
 
-// Required provider order — generated from the authoritative registry so it
-// never drifts from the single source of truth.
-export const REQUIRED_PROVIDER_ORDER = CANONICAL_AI_PROVIDER_DISPLAY_NAMES;
+// Required provider order — generated from the authoritative registry.
+export const REQUIRED_PROVIDER_ORDER = getAutomaticProviderOrder().map((p) => providerDisplayName(p));
 
 function configuredAiProviders(): string[] {
-  return CANONICAL_AI_PROVIDER_ORDER
-    .filter((p) => isProviderConfigured(p))
+  return getAutomaticProviderOrder()
+    .filter((p) => providerAutomaticEligibility(p).eligible)
     .map((p) => providerDisplayName(p));
 }
 
@@ -96,11 +99,21 @@ async function databaseChecks(): Promise<ReadinessCheck[]> {
 export async function getSystemReadiness(): Promise<SystemReadiness> {
   const checks = await databaseChecks();
   const configuredProviders = configuredAiProviders();
-  const storageProvider = resolveStorageProvider();
+  const aiHealth = checkAiProviderHealth();
+  // getStorageReadiness() (lib/storage.ts) is the single canonical policy
+  // resolver for storage readiness -- it already accounts for
+  // isDatabaseStorageAllowed()'s default-allow-when-unset-and-no-token
+  // behavior. This check previously re-derived its own, subtly different
+  // condition (requiring ALLOW_DB_FILE_STORAGE === "true" exactly), which
+  // reported CRITICAL for a configuration lib/storage.ts itself treats as
+  // ready (unset ALLOW_DB_FILE_STORAGE + no Blob token, the default
+  // bounded-fallback-allowed state) -- an operator dashboard false alarm
+  // for storage that was actually working. Delegating avoids the two
+  // modules disagreeing about the same fact.
+  const storageReadiness = getStorageReadiness();
   const production = process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL_ENV);
   const strongSessionSecret = (process.env.SESSION_SECRET ?? process.env.AUTH_SECRET ?? "").length >= 32;
-  const smtpConfigured = has(process.env.SMTP_HOST) && has(process.env.SMTP_USER) && has(process.env.SMTP_PASS) && has(process.env.EMAIL_FROM);
-  const durableStorage = storageProvider === "blob" || (storageProvider === "db-base64" && process.env.ALLOW_DB_FILE_STORAGE === "true");
+  const smtpConfigured = isEmailDeliveryConfigured();
 
   checks.push(
     {
@@ -113,20 +126,34 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
     {
       key: "file_storage",
       title: "Durable private file storage",
-      severity: !production || durableStorage ? "OK" : "CRITICAL",
+      severity: !production || storageReadiness.ready ? "OK" : "CRITICAL",
       requiredForProduction: true,
-      detail: !production || durableStorage
-        ? `Storage provider: ${storageProvider}.`
-        : "Production requires Vercel Blob or an explicitly approved durable database storage mode.",
+      detail: `Storage provider: ${storageReadiness.provider}. ${storageReadiness.detail}`,
     },
     {
       key: "ai_providers",
       title: "AI provider chain",
-      severity: configuredProviders.length > 0 ? "OK" : "CRITICAL",
+      // A configured key is no longer enough to pass this check.
+      //
+      // It used to be: severity was OK the moment any provider had a key, so
+      // production readiness reported green on an environment where every
+      // provider was rejecting every request. The check was green exactly when
+      // it needed to be informative.
+      //
+      // Passing now requires a provider that has completed a REAL AI Analyze
+      // extraction in this process. "Configured but unverified" is a WARNING,
+      // not a pass and not a critical failure — nothing is known to be broken,
+      // but nothing is known to work either, and the operator is told how to
+      // find out.
+      severity: aiHealth.state === "healthy" ? "OK" : aiHealth.state === "degraded" ? "WARNING" : "CRITICAL",
       requiredForProduction: true,
-      detail: configuredProviders.length > 0
-        ? `Configured providers in policy order: ${configuredProviders.join(" → ")}.`
-        : `Configure at least one provider. Policy order: ${REQUIRED_PROVIDER_ORDER.join(" → ")}.`,
+      detail: aiHealth.state === "healthy"
+        ? `Runtime-verified for AI Analyze: ${aiHealth.analysisVerifiedProviders.join(", ")}. Active chain: ${aiHealth.activeChain}.`
+        : aiHealth.state === "degraded"
+          ? `${configuredProviders.join(" → ")} configured, but no provider has completed a real AI Analyze extraction on this instance. Run the provider capability test (/api/ai-providers/diagnostics?live=1) to confirm.`
+          : aiHealth.billingBlockedProviders.length > 0
+            ? `No usable AI provider right now: ${aiHealth.billingBlockedProviders.join(", ")} refused payment and are cooling down. They are retried automatically; configure another provider to avoid waiting. Active chain: ${aiHealth.activeChain}.`
+            : `Configure at least one provider from the chain. Active chain: ${aiHealth.activeChain}.`,
     },
     {
       key: "email",
@@ -145,21 +172,21 @@ export async function getSystemReadiness(): Promise<SystemReadiness> {
       // (automated global callers — cron, external orchestrators — cannot
       // invoke the worker without a user session), not a security hole.
       //
-      // This is NOT an unconditional production blocker — the endpoint
-      // remains safely usable through authenticated user-scoped execution.
-      // Marking production CRITICAL is only correct when this deployment
-      // is configured to require cron/global automated processing. Since
-      // we cannot infer that from the environment, we keep this as a
-      // WARNING with a precise operational limitation, and do NOT mark
-      // it requiredForProduction. Deployments that require automated
-      // callers should monitor this check and set secrets accordingly.
+      // This product's target workflow is upload-and-continue: later Engine
+      // and proposal jobs must keep moving after the browser closes. The
+      // endpoint remains secure without a secret, but the promised background
+      // automation does not. Treat missing automated-caller authentication as
+      // a production-readiness blocker rather than silently degrading to a
+      // manual, browser-dependent workflow.
       severity: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
         ? "OK"
-        : "WARNING",
-      requiredForProduction: false,
+        : !production
+          ? "WARNING"
+          : "CRITICAL",
+      requiredForProduction: true,
       detail: has(process.env.AI_JOBS_WORKER_SECRET) || has(process.env.CRON_SECRET)
         ? "Automated worker authentication is configured (AI_JOBS_WORKER_SECRET or CRON_SECRET)."
-        : "No automated worker secret is configured. The worker endpoint falls back to requireRole(ADMIN, PROPOSAL_MANAGER) — user-scoped execution remains available. Set AI_JOBS_WORKER_SECRET or CRON_SECRET ONLY if this deployment requires automated callers (cron, external orchestrators).",
+        : "No automated worker secret is configured. User-scoped execution remains secure, but queued Engine and proposal continuations cannot reliably progress after the browser closes. Configure AI_JOBS_WORKER_SECRET or CRON_SECRET and the queue-drain scheduler.",
     },
   );
 

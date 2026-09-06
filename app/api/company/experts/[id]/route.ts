@@ -1,26 +1,34 @@
 import { logger } from "../../../../../lib/observability";
 import { NextResponse } from "next/server";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
-import { getSession, requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
+import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
+import { extractRequestId } from "../../../../../lib/request-id";
+import {
+  buildReviewProvenance,
+  buildPartialSourceVerificationProvenance,
+  expertReviewFields,
+  publicVaultIdentifier,
+  reviewEvidenceEquals,
+} from "../../../../../lib/vault-review-provenance";
 
 function toJsonArray(value: unknown): string {
   if (Array.isArray(value)) return JSON.stringify(value.filter(Boolean));
   return JSON.stringify(
-    String(value || "").split(",").map((v) => v.trim()).filter(Boolean)
+    String(value || "").split(",").map((item) => item.trim()).filter(Boolean),
   );
 }
 
-function safeParseArr(v: unknown): string[] {
-  try { return JSON.parse(v as string) as string[]; } catch { return []; }
+function safeParseArr(value: unknown): string[] {
+  try { return JSON.parse(value as string) as string[]; } catch { return []; }
 }
 
-function normalizeExpert(e: Record<string, unknown>) {
+function normalizeExpert(expert: Record<string, unknown>) {
   return {
-    ...e,
-    disciplines: safeParseArr(e.disciplines),
-    sectors: safeParseArr(e.sectors),
-    certifications: safeParseArr(e.certifications),
+    ...expert,
+    disciplines: safeParseArr(expert.disciplines),
+    sectors: safeParseArr(expert.sectors),
+    certifications: safeParseArr(expert.certifications),
   };
 }
 
@@ -28,12 +36,13 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const userId = await getSession();
-  if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  let actor;
+  try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady;
 
   const { id } = await params;
-  const company = await prisma.company.findUnique({ where: { userId } });
+  const company = await prisma.company.findUnique({ where: { userId: actor.id } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const expert = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
@@ -46,11 +55,9 @@ export async function PUT(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  // Company knowledge mutations require ADMIN or PROPOSAL_MANAGER — REVIEWER
-  // and VIEWER are read-only roles (per lib/security/rbac.ts COMPANY_KNOWLEDGE_MGMT).
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
   await prismaReady;
 
   const { id } = await params;
@@ -63,51 +70,82 @@ export async function PUT(
   try {
     const body = await req.json().catch(() => null) as Record<string, unknown> | null;
     if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
+
+    const nextValues = {
+      fullName: String(body.fullName ?? existing.fullName),
+      title: body.title !== undefined ? (String(body.title) || null) : existing.title,
+      email: body.email !== undefined ? (String(body.email) || null) : existing.email,
+      phone: body.phone !== undefined ? (String(body.phone) || null) : existing.phone,
+      yearsExperience: body.yearsExperience !== undefined
+        ? (body.yearsExperience ? Number(body.yearsExperience) : null)
+        : existing.yearsExperience,
+      disciplines: body.disciplines !== undefined ? toJsonArray(body.disciplines) : existing.disciplines,
+      sectors: body.sectors !== undefined ? toJsonArray(body.sectors) : existing.sectors,
+      certifications: body.certifications !== undefined ? toJsonArray(body.certifications) : existing.certifications,
+      profile: body.profile !== undefined ? (String(body.profile) || null) : existing.profile,
+      isActive: body.isActive !== undefined ? Boolean(body.isActive) : existing.isActive,
+    };
+
+    const hasDurableTrust = existing.trustLevel === "REVIEWED" || existing.trustLevel === "SOURCE_VERIFIED";
+    const provenanceInvalidated = hasDurableTrust &&
+      !reviewEvidenceEquals(expertReviewFields(existing), expertReviewFields(nextValues));
+
     const updated = await prisma.expert.update({
       where: { id },
       data: {
-        fullName: String(body.fullName ?? existing.fullName),
-        title: body.title !== undefined ? (String(body.title) || null) : existing.title,
-        email: body.email !== undefined ? (String(body.email) || null) : existing.email,
-        phone: body.phone !== undefined ? (String(body.phone) || null) : existing.phone,
-        yearsExperience: body.yearsExperience !== undefined
-          ? (body.yearsExperience ? Number(body.yearsExperience) : null)
-          : existing.yearsExperience,
-        disciplines: body.disciplines !== undefined ? toJsonArray(body.disciplines) : existing.disciplines,
-        sectors: body.sectors !== undefined ? toJsonArray(body.sectors) : existing.sectors,
-        certifications: body.certifications !== undefined ? toJsonArray(body.certifications) : existing.certifications,
-        profile: body.profile !== undefined ? (String(body.profile) || null) : existing.profile,
-        isActive: body.isActive !== undefined ? Boolean(body.isActive) : existing.isActive,
+        ...nextValues,
+        ...(provenanceInvalidated
+          ? {
+              trustLevel: "AI_DRAFT",
+              reviewedBy: null,
+              reviewedAt: null,
+              reviewNotes: null,
+            }
+          : {}),
         updatedAt: new Date(),
       },
     });
+
+    if (provenanceInvalidated) {
+      const invalidatedTrust = existing.trustLevel === "REVIEWED" ? "machine-verified review" : "source verification";
+      await logAction({
+        userId: actor.id,
+        action: "EXPERT_TRUST_INVALIDATED",
+        entityType: "Expert",
+        entityId: id,
+        description: `Expert durable trust invalidated because bound evidence fields changed.`,
+        metadata: {
+          recordRef: publicVaultIdentifier(id),
+          invalidatedTrust,
+          previousTrustLevel: existing.trustLevel,
+          nextTrustLevel: "AI_DRAFT",
+        },
+      });
+    }
+
     return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
   } catch (error) {
-    logger.error("Request failed", { detail: error });
+    logger.error("expert update failed", {
+      expertId: id,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
     return NextResponse.json({ error: "Failed to update expert" }, { status: 500 });
   }
 }
 
-/**
- * PATCH — review an expert record.
- * Body: { action: "approve" | "reject", notes?: string }
- * Sets trustLevel to REVIEWED (approve) or back to the previous draft level (reject).
- */
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER", "REVIEWER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
+  const requestId = extractRequestId(req);
   await prismaReady;
   const { id } = await params;
   const company = await prisma.company.findUnique({ where: { userId: actor.id } });
   if (!company) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const existing = await prisma.expert.findFirst({ where: { id, companyId: company.id, deletedAt: null } });
-  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const body = await req.json().catch(() => null) as { action?: string; notes?: string } | null;
   if (!body) return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 });
@@ -115,37 +153,193 @@ export async function PATCH(
     return NextResponse.json({ error: "action must be 'approve' or 'reject'" }, { status: 400 });
   }
 
-  const isApprove = body.action === "approve";
-  const updated = await prisma.expert.update({
-    where: { id },
-    data: {
-      trustLevel: isApprove ? "REVIEWED" : "AI_DRAFT",
-      reviewedBy: actor.id,
-      reviewedAt: new Date(),
-      reviewNotes: body.notes ?? null,
-      updatedAt: new Date(),
+  const record = await prisma.expert.findFirst({
+    where: { id, companyId: company.id, deletedAt: null },
+    select: {
+      id: true,
+      companyId: true,
+      fullName: true,
+      title: true,
+      yearsExperience: true,
+      disciplines: true,
+      sectors: true,
+      certifications: true,
+      sourceDocumentId: true,
+      sourceDocument: {
+        select: {
+          id: true,
+          companyId: true,
+          extractedText: true,
+          contentSha256: true,
+          contentByteLength: true,
+          integrityStatus: true,
+          metadata: true,
+        },
+      },
     },
   });
+  if (!record) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  await logAction({
-    userId: actor.id,
-    action: "EXPERT_REVIEW",
-    entityType: "Expert",
-    entityId: id,
-    description: `Expert "${existing.fullName}" ${isApprove ? "approved" : "rejected"}${body.notes ? ` — ${body.notes}` : ""}`,
-    metadata: { expertId: id, action: body.action },
-  });
+  const isApprove = body.action === "approve";
+  const reviewedAt = new Date();
+  const ownedSource = record.sourceDocument?.companyId === company.id ? record.sourceDocument : null;
+  const provenance = isApprove
+    ? buildReviewProvenance({
+        recordType: "EXPERT",
+        sourceDocument: ownedSource,
+        fields: expertReviewFields(record),
+        reviewerId: actor.id,
+        reviewedAt,
+      })
+    : null;
 
-  return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
+  // Source-less auto-approval is forbidden (Gap 3). When no verified source
+  // exists, the record stays UNVERIFIED — never REVIEWED, never reviewedBy,
+  // never reviewedAt, never a fabricated "manual" hash.
+  if (!provenance?.ok) {
+    // Defect 4: try partial source verification before rejecting. If the
+    // identity field (fullName) IS verified against the source bytes, allow
+    // the approval as SOURCE_VERIFIED (not REVIEWED) with the partial
+    // provenance payload. The human click triggered the check; the authority
+    // is the machine verification of the identity field. Inferred fields
+    // that are not in source text are listed in unverifiedFields and
+    // canUseVaultRecordField returns false for them.
+    const partial = isApprove
+      ? buildPartialSourceVerificationProvenance({
+          recordType: "EXPERT",
+          sourceDocument: ownedSource,
+          fields: expertReviewFields(record),
+          verificationMethod: "HYBRID",
+          verifiedAt: reviewedAt,
+        })
+      : null;
+    if (!partial?.ok) {
+      return NextResponse.json(
+        { ok: false, error: "Cannot approve without a verified source document. Upload the source document so the Engine can source-verify it automatically.", code: "SOURCE_REQUIRED_FOR_APPROVAL" },
+        { status: 422 },
+      );
+    }
+    // Partial verification succeeded — persist SOURCE_VERIFIED with the
+    // partial provenance payload. No reviewer identity (machine-verified,
+    // not human-reviewed).
+    try {
+      const updated = await prisma.$transaction(async (tx) => {
+        const result = await tx.expert.updateMany({
+          where: { id, companyId: company.id, deletedAt: null },
+          data: {
+            trustLevel: "SOURCE_VERIFIED",
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewNotes: partial.serialized,
+            updatedAt: new Date(),
+          },
+        });
+        if (result.count !== 1) throw new Error("CONCURRENT_UPDATE");
+
+        await tx.auditLog.create({
+          data: {
+            userId: actor.id,
+            action: "EXPERT_REVIEW",
+            entityType: "Expert",
+            entityId: id,
+            description: `Expert record was partially source-verified (identity verified, ${partial.unverifiedFields.length} inferred field(s) unverified: ${partial.unverifiedFields.join(", ")}).`,
+            metadata: JSON.stringify({
+              requestId,
+              recordRef: publicVaultIdentifier(id),
+              action: body.action,
+              partialVerification: true,
+              verifiedFields: partial.verifiedFields,
+              unverifiedFields: partial.unverifiedFields,
+              sourceContentHash: partial.sourceContentHash,
+              sourceByteLength: partial.sourceByteLength,
+              sourceTextHash: partial.sourceTextHash,
+            }),
+          },
+        });
+
+        return tx.expert.findUniqueOrThrow({ where: { id } });
+      });
+      return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
+    } catch (error) {
+      if (error instanceof Error && error.message === "CONCURRENT_UPDATE") {
+        return NextResponse.json({ error: "Expert changed during review. Retry.", code: "CONCURRENT_UPDATE", requestId }, { status: 409 });
+      }
+      logger.error("expert partial-verification review failed", {
+        requestId,
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+      return NextResponse.json({ error: "Expert review failed. Retry with the request ID.", code: "EXPERT_REVIEW_FAILED", requestId }, { status: 500 });
+    }
+  }
+  const durableProvenance = provenance;
+  try {
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.expert.updateMany({
+        where: { id, companyId: company.id, deletedAt: null },
+        data: isApprove
+          ? {
+              trustLevel: "REVIEWED",
+              reviewedBy: actor.id,
+              reviewedAt,
+              reviewNotes: durableProvenance!.serialized,
+              updatedAt: new Date(),
+            }
+          : {
+              trustLevel: "AI_DRAFT",
+              reviewedBy: null,
+              reviewedAt: null,
+              reviewNotes: body.notes?.trim() || null,
+              updatedAt: new Date(),
+            },
+      });
+      if (result.count !== 1) throw new Error("CONCURRENT_UPDATE");
+
+      await tx.auditLog.create({
+        data: {
+          userId: actor.id,
+          action: "EXPERT_REVIEW",
+          entityType: "Expert",
+          entityId: id,
+          description: isApprove
+            ? "Expert record was reviewed and approved."
+            : "Expert record was returned to draft review state.",
+          metadata: JSON.stringify({
+            requestId,
+            recordRef: publicVaultIdentifier(id),
+            action: body.action,
+            ...(isApprove ? { reviewerId: actor.id, reviewedAt: reviewedAt.toISOString() } : {}),
+            ...(durableProvenance ? {
+              sourceContentHash: durableProvenance.sourceContentHash,
+              sourceByteLength: durableProvenance.sourceByteLength,
+              sourceTextHash: durableProvenance.sourceTextHash,
+              evidenceFields: durableProvenance.evidenceFields,
+            } : {}),
+          }),
+        },
+      });
+
+      return tx.expert.findUniqueOrThrow({ where: { id } });
+    });
+    return NextResponse.json(normalizeExpert(updated as unknown as Record<string, unknown>));
+  } catch (error) {
+    if (error instanceof Error && error.message === "CONCURRENT_UPDATE") {
+      return NextResponse.json({ error: "Expert changed during review. Retry.", code: "CONCURRENT_UPDATE", requestId }, { status: 409 });
+    }
+    logger.error("expert review failed", {
+      requestId,
+      errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+    });
+    return NextResponse.json({ error: "Expert review failed. Retry with the request ID.", code: "EXPERT_REVIEW_FAILED", requestId }, { status: 500 });
+  }
 }
 
 export async function DELETE(
   _req: Request,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
 ) {
   let actor;
   try { actor = await requireRole("ADMIN", "PROPOSAL_MANAGER"); }
-  catch (e) { return e instanceof Error && e.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
+  catch (error) { return error instanceof Error && error.message === "Forbidden" ? forbiddenResponse() : unauthorizedResponse(); }
 
   await prismaReady;
   const { id } = await params;
@@ -162,8 +356,8 @@ export async function DELETE(
     action: "EXPERT_DELETE",
     entityType: "Expert",
     entityId: id,
-    description: `Expert "${existing.fullName}" soft-deleted`,
-    metadata: { expertId: id, fullName: existing.fullName, companyId: company.id },
+    description: "Expert record soft-deleted.",
+    metadata: { recordRef: publicVaultIdentifier(id), companyId: company.id },
   });
 
   return NextResponse.json({ success: true });

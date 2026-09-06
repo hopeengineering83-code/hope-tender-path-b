@@ -50,6 +50,37 @@ describe("document quality gate — extreme regressions from the screenshots", (
     assert.notEqual(r.recommendedStatus, "PASSED");
   });
 
+  it("does not flag ordinary QA-process prose as internal traceability", () => {
+    // A real technical proposal was failed at HIGH severity for the sentence
+    // below. "internal review" describes how the firm assures quality; it is
+    // not a working note that leaked into the submission. The refusal was one
+    // the owner could not act on, because nothing was wrong with the text.
+    const body = "Technical Proposal\n"
+      + "Quality assurance is applied through independent internal review before any deliverable is issued. ".repeat(40)
+      + "Every calculation set is checked by an engineer who did not prepare it. ".repeat(40);
+    const r = technicalDoc({ visibleText: body });
+    assert.ok(
+      !r.issues.some((i) => i.code === "INTERNAL_TRACEABILITY"),
+      `QA-process prose must not be reported as internal traceability: ${JSON.stringify(r.issues)}`,
+    );
+  });
+
+  it("still flags genuine internal annotation markers", () => {
+    for (const marker of [
+      "Internal use only.",
+      "Internal note: confirm the deadline with the client.",
+      "For internal review before issue.",
+      "Reviewer note: rewrite this paragraph.",
+    ]) {
+      const body = "Technical Proposal\n" + "Our team will deliver the work in three phases. ".repeat(80) + marker;
+      const r = technicalDoc({ visibleText: body });
+      assert.ok(
+        r.issues.some((i) => i.code === "INTERNAL_TRACEABILITY"),
+        `"${marker}" must still be caught as internal traceability`,
+      );
+    }
+  });
+
   it("detects generic marketing filler", () => {
     const body = "Technical Proposal. " + "We bring a state-of-the-art, holistic approach with cutting-edge methodologies. ".repeat(80);
     const r = technicalDoc({ visibleText: body });

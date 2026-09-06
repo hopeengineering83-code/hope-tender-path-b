@@ -33,6 +33,7 @@ export const DOCUMENT_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\[COMPANY[^\]]*\]/i,
   /\[Company Name\]/i,        // explicit variant preserved for test compatibility
   /\[CLIENT(?:\s+TO\s+BE\s+CONFIRMED)?\]/i,
+  /\[\s*\]/,
   /\{[A-Z_]{3,}\}/,              // {FIELD_NAME} template slots
   /<<(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^>]{0,60}>>/i, // <<INSERT NAME>>
   /\{\{(?:INSERT|NAME|DATE|COMPANY|PLACEHOLDER|YOUR)[^}]{0,60}\}\}/i, // {{INSERT NAME}}
@@ -63,9 +64,25 @@ export const PLACEHOLDER_PATTERNS = DOCUMENT_PLACEHOLDER_PATTERNS;
 /** Phrases identifying content as AI-generated.
  *  Merged from proposal-quality-scorer.ts and other gates. */
 export const AI_TRACE_PATTERNS: RegExp[] = [
+  /\bAI[-\s]assisted\s+(?:tender\s+)?proposal\s+generation\b/i,
+  /\b(?:tender\s+)?proposal\s+AI[-\s]ready\s+summary\b/i,
+  /\bproposal\s+evaluator\s+loop\b/i,
+  /\bproposal\s+self[-\s]score\b/i,
+  /\bcompliance\s+and\s+bid\s+review\s+strategy\b/i,
+  /\b(?:bid[-\s]team|internal)\s+(?:review|strategy|scoring|evaluation)\b/i,
+  /\bprepared\s+for\s+(?:AI|model)[-\s]assisted\b/i,
   /as an ai/i,
   /\bi am an ai\b/i,
   /\bas a language model\b/i,
+  // Bare "language model" with no "as a"/"AI" prefix. The generators already
+  // strip this exact phrase before rendering — FORBIDDEN_TRACE_PATTERNS in
+  // lib/engine/expert-cv-docx.ts carries /\blanguage model\b/gi and its comment
+  // states that the export quality gate "rejects any CV that still carries it".
+  // The gate only ever matched the prefixed forms, so a stripped-prefix
+  // leftover such as "I am a language model." passed every gate, while the
+  // Document Validator panel's own private copy of these patterns caught it.
+  // Unifying the panel onto this list would have LOST that detection.
+  /\blanguage\s+model\b/i,
   /\bas a large language\b/i,
   /\bi cannot\b/i,
   /\bi'?m sorry,? i\b/i,
@@ -118,7 +135,15 @@ export const INTERNAL_BOILERPLATE_PATTERNS: RegExp[] = [
   /\bmatch[-_\s]?score\b/i,
   /\bwin\s+probability\b/i,
   /\bevaluator[-_\s]?score\b/i,
-  /\b(?:internal\s+(?:use|note|review)|reviewer\s+note)\b/i,
+  // Genuine internal-annotation markers only. This was
+  // /\b(?:internal\s+(?:use|note|review)|reviewer\s+note)\b/i, whose bare
+  // "internal review" alternative fired on ordinary QA-process prose — "quality
+  // assurance is applied through independent internal review before any
+  // deliverable is issued" is a description of how the firm works, not a
+  // working note leaking into a submission. It failed a real technical proposal
+  // at HIGH severity, which is a refusal the owner cannot act on because there
+  // is nothing wrong with the sentence.
+  /\b(?:internal\s+use(?:\s+only)?|internal\s+notes?|for\s+internal\s+review|internal\s+review\s+only|reviewer\s+notes?)\b/i,
   /\btraceability\s+map\b/i,
   /\baudit\s+metadata\b/i,
   /\bTODO\b/i,

@@ -67,49 +67,38 @@ describe("Spec Test 2 — Generation Readiness blocked when snapshot blocked", (
   });
 });
 
-// ─── 3. Bid Control Full Proposal card = Blocked ─────────────────────────────
-
-describe("Spec Test 3 — Bid Control Full Proposal card blocked", () => {
-  it("bid-control-verdict-panel uses effectiveFullProposalReady (not raw)", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    assert.ok(src.includes("effectiveFullProposalReady"), "must use effectiveFullProposalReady");
-    assert.ok(src.includes("hasSnapshotBlocker"), "must compute hasSnapshotBlocker");
-    assert.ok(
-      /effectiveFullProposalReady.*\?.*"Ready".*:\s*"Blocked"/.test(src),
-      "must show Blocked when snapshot blocked",
+// ─── 3-6. Bid Control / Tender Health stale-analysis and no-compliance-rows
+// gating (Spec Tests 3-6) — components/bid-control-verdict-panel.tsx and
+// components/tender-health-score-panel.tsx were retired in favor of the
+// canonical Tender Release State. The SAME underlying protections (a stale
+// analysis, or zero compliance rows on mandatory requirements, must never
+// present as ready/confident) now hold transitively:
+//   - stale analysis: lib/engine/tender-release-state.ts gates
+//     readinessScore/verdict behind analysisGrounded, which reads
+//     snapshot.analysis.eligibleForExport — false whenever the content hash
+//     no longer matches (i.e. stale) — see release-integration-panel-truth.test.ts.
+//   - zero compliance rows: lib/engine/canonical-workflow-decision.ts's
+//     Priority 9 ("MANDATORY_NO_COMPLIANCE_ROWS") surfaces as the primary
+//     next action whenever mandatoryComplianceRowsCount === 0, and
+//     tender-release-state.ts's primaryNextAction is a direct passthrough
+//     of that decision (never recomputed).
+describe("Spec Test 3-6 — canonical Tender Release State inherits stale-analysis and no-compliance-rows gating", () => {
+  it("primaryNextAction is a passthrough of getCanonicalTenderWorkflowDecision, not recomputed", () => {
+    const src = read("lib/engine/tender-release-state.ts");
+    assert.match(
+      src,
+      /primaryNextAction = workflowDecision\s*\?\s*\{\s*action:\s*workflowDecision\.nextRequiredAction/,
+      "primaryNextAction must forward the canonical workflow decision's action/label/reason verbatim",
     );
   });
-});
 
-// ─── 4. Bid Control Analysis card = Stale/Re-run ─────────────────────────────
-
-describe("Spec Test 4 — Bid Control Analysis card stale", () => {
-  it("bid-control-verdict-panel shows Stale when analysis is stale", () => {
-    const src = read("components/bid-control-verdict-panel.tsx");
-    assert.ok(src.includes("hasStaleAnalysis"), "must compute hasStaleAnalysis");
-    assert.ok(src.includes("Stale — re-run required"), "must show stale message");
-  });
-});
-
-// ─── 5. Tender Health AI Analysis dimension = stale/blocked ──────────────────
-
-describe("Spec Test 5 — Tender Health AI Analysis stale", () => {
-  it("tender-health-score-panel accepts analysisStale prop", () => {
-    const src = read("components/tender-health-score-panel.tsx");
-    assert.ok(src.includes("analysisStale"), "must accept analysisStale prop");
-    assert.ok(src.includes("analysisStale ? 0"), "must score 0 when stale");
-    assert.ok(src.includes("Stale — re-run required"), "must show stale detail");
-  });
-});
-
-// ─── 6. Tender Health Compliance dimension fails when compliance rows = 0 ────
-
-describe("Spec Test 6 — Tender Health Compliance fails with 0 rows", () => {
-  it("tender-health-score-panel checks mandatoryComplianceRowsCount", () => {
-    const src = read("components/tender-health-score-panel.tsx");
-    assert.ok(src.includes("mandatoryComplianceRowsCount"), "must accept mandatoryComplianceRowsCount");
-    assert.ok(src.includes("hasNoComplianceRows"), "must compute hasNoComplianceRows");
-    assert.ok(src.includes("No compliance matrix rows"), "must show no-rows detail");
+  it("canonical workflow decision blocks on zero mandatory compliance rows before generation/export", () => {
+    const src = read("lib/engine/canonical-workflow-decision.ts");
+    assert.ok(src.includes("MANDATORY_NO_COMPLIANCE_ROWS"), "must have a zero-compliance-rows blocker code");
+    assert.ok(
+      src.includes("input.mandatoryRequirementCount > 0 && input.mandatoryComplianceRowsCount === 0"),
+      "must trigger specifically when mandatory requirements exist but have no compliance rows",
+    );
   });
 });
 
@@ -137,32 +126,28 @@ describe("Spec Test 8 — Lifecycle panel 200 handling", () => {
     );
   });
 
-  it("recovery-command-center does not throw on json.ok=false", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    // Must NOT include !json.ok in the throw predicate
-    assert.ok(
-      !stripComments(src).includes("!json.ok"),
-      "must NOT throw on json.ok=false — only throw on HTTP non-2xx",
-    );
-    assert.ok(
-      src.includes("Only throw on HTTP non-2xx"),
-      "must document the fix",
-    );
-  });
+  // "recovery-command-center does not throw on json.ok=false" test removed --
+  // components/tender-recovery-command-center.tsx was deleted as unrendered
+  // dead code (nothing imports or renders it). Its live successor,
+  // components/next-action-panel.tsx, is a server component that reads
+  // getCanonicalTenderWorkflowDecision() directly (via Prisma) rather than
+  // doing a client-side fetch()+load() against a JSON API response, so the
+  // specific failure mode this test guarded (throwing on a business-logic
+  // `json.ok` field instead of only on HTTP non-2xx) cannot occur in the new
+  // architecture. There is nothing structurally equivalent to redirect to.
 });
 
 // ─── 9. Waiting-step buttons disabled/secondary ──────────────────────────────
 
 describe("Spec Test 9 — Waiting-step buttons", () => {
-  it("recovery-command-center Analysis StatusRow checks stale flag", () => {
-    const src = read("components/tender-recovery-command-center.tsx");
-    assert.ok(src.includes("data.analysisStatus.stale"), "must check stale flag");
-    assert.ok(src.includes("STALE — re-run required"), "must show stale label");
-    assert.ok(
-      /ok=\{data\.analysisStatus\.source === "AI" && !data\.analysisStatus\.stale/.test(src),
-      "ok predicate must include !stale",
-    );
-  });
+  // "recovery-command-center Analysis StatusRow checks stale flag" test
+  // removed -- components/tender-recovery-command-center.tsx was deleted as
+  // unrendered dead code (nothing imports or renders it). The live successor
+  // is lib/tender-next-action.ts, whose resolveTenderNextAction() gates on
+  // aiAnalysis.stale directly — a stronger property than a status label,
+  // since it hard-blocks Build Plan/generation/export via a red-toned
+  // RERUN_AI_ANALYZE decision. See tests/deep-remaining-gaps-round3.test.ts's
+  // "Bug #5" block for the redirected assertion.
 });
 
 // ─── 10. Required-doc counts do not contradict ───────────────────────────────
@@ -220,7 +205,7 @@ describe("Spec Test 12 — No 'metadata' wording", () => {
 describe("Spec Test 13 — Provider fallback order", () => {
   it("CANONICAL_AI_PROVIDER_ORDER includes all 10 providers", () => {
     const src = read("lib/ai-provider-catalog.cjs");
-    for (const p of ["zai", "cerebras", "mistral", "groq", "openrouter", "gemini", "openai", "together", "deepseek", "anthropic"]) {
+    for (const p of ["gemini", "groq", "mistral", "zai", "cerebras", "openrouter", "openai", "together", "deepseek", "anthropic"]) {
       assert.ok(src.includes(p), `must include ${p}`);
     }
   });
@@ -251,5 +236,59 @@ describe("Spec Test 15 — Orchestrator forwards stale/partial", () => {
     const src = read("lib/engine/tender-lifecycle-orchestrator.ts");
     assert.ok(src.includes("resolveCurrentAnalysisBinding"), "must call resolveCurrentAnalysisBinding");
     assert.ok(src.includes("analysisInputHash !== binding.contentHash"), "must compare hashes");
+  });
+
+  // Preserved from the now-deleted tests/recovery-action-scoping.test.ts (its
+  // subject, tender-recovery-command-center.tsx, was itself deleted as
+  // unrendered dead code, but this specific assertion protects a real
+  // property of the still-live canonical release-state engine).
+  it("the canonical release-state engine does not import the separate lifecycle orchestrator", () => {
+    // tender-release-state.ts and tender-lifecycle-orchestrator.ts compute
+    // next-action decisions via two independent paths on purpose (see
+    // tests/tender-workspace-consolidation.test.ts) — one importing the
+    // other would silently couple them and reintroduce exactly the
+    // competing-next-action contradiction this consolidation removed.
+    const releaseStateSrc = read("lib/engine/tender-release-state.ts");
+    assert.doesNotMatch(releaseStateSrc, /tender-lifecycle-orchestrator/);
+  });
+});
+
+// ─── 16. Tender Health "Submission Plan" dimension requires a CONFIRMED Build
+//         Plan, not just a non-empty derived/legacy plan ────────────────────
+//
+// Regression for a real, screenshot-verified contradiction: the Submission
+// Plan dimension previously scored 10/10 PASS whenever
+// `finalPackage.documents.planned` was non-empty — but that array is also
+// populated by a legacy derived-fallback plan
+// (deriveRequiredPackageDocuments) even when NO confirmed Build Plan exists.
+// The Recovery Command Center and Workflow Control Center both correctly
+// report "No confirmed Build Plan exists" / "No Build Plan exists" for the
+// same tender in that state, so the health score must agree with them
+// instead of silently scoring the unconfirmed derived draft as complete.
+// components/tender-health-score-panel.tsx was retired in favor of the
+// canonical Tender Release State. Its "Submission Plan" dimension is gone,
+// but the underlying PR #1188 protection — the submission plan must never
+// read as built from a merely non-empty planned array, only from a genuinely
+// CONFIRMED Build Plan — lives in lib/engine/tender-release-snapshot.ts's
+// buildPlan.gateValid, which lib/engine/tender-release-state.ts consumes
+// (via getCanonicalTenderWorkflowDecision's confirmedBuildPlanExists) rather
+// than recomputing its own hasPlan check.
+describe("Spec Test 16 — canonical Tender Release State agrees with the confirmed Build Plan gate", () => {
+  it("tender-release-snapshot's buildPlan.gateValid is computed via getCurrentConfirmedBuildPlan, not a non-empty array check", () => {
+    const src = read("lib/engine/tender-release-snapshot.ts");
+    assert.ok(src.includes("getCurrentConfirmedBuildPlan"), "must call the shared confirmed-build-plan authority");
+  });
+
+  it("canonical workflow decision reads buildPlan.gateValid, not a raw document count", () => {
+    const src = read("lib/engine/canonical-workflow-decision.ts");
+    assert.ok(
+      src.includes("confirmedBuildPlanExists = snapshot.buildPlan.gateValid"),
+      "must use the gate-aligned strict validity, not a count-based heuristic",
+    );
+  });
+
+  it("tender-release-state does not recompute its own submission-plan-built flag", () => {
+    const src = read("lib/engine/tender-release-state.ts");
+    assert.ok(!/hasPlan\s*=/.test(src), "must not recompute a local hasPlan flag");
   });
 });

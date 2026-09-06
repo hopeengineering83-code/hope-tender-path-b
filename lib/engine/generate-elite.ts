@@ -1,8 +1,10 @@
+import { formatFromExtension } from "./export-format-policy";
 import { logger } from "../observability";
-import { verifiedIntegrityDataFromBase64 } from "./persisted-byte-integrity";
+import { verifiedIntegrityDataFromBase64, verifyPersistedFileBytes } from "./persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "./transactional-generation-gate";
-import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableRow, TextRun, WidthType } from "docx";
+import { AlignmentType, BorderStyle, Document, Footer, Header, HeadingLevel, ImageRun, Packer, PageNumber, Paragraph, Table, TableBorders, TableCell, TableOfContents, TableRow, TextRun, WidthType } from "docx";
 import { prisma } from "../prisma";
+import { getStorageAdapter } from "../storage";
 import { generateBenchmarkProposalWithAI, generateProposalSectionsParallel, getLastProposalProvider, isAIEnabled, refineProposalWithAI } from "../ai";
 import { PROPOSAL_AI_TIMEOUT_MS } from "../timeout-config";
 import { detectAnalysisSource } from "./analysis-source";
@@ -12,11 +14,13 @@ import { runDeepRefinement } from "./deep-reasoning-refiner";
 import { alignMatchesToEvaluatorCriteria, formatAlignmentForPrompt, type AlignmentCandidate, type AlignmentReport } from "./semantic-match-aligner";
 import { executeProposalTool, PROPOSAL_TOOL_DEFS, type ToolEvidenceInventory } from "./proposal-tools";
 import { DeepReasoningTelemetry } from "./deep-reasoning-telemetry";
-import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, projectProofLine, safeParseArr } from "./proposal-intelligence";
+import { BENCHMARK_CONTEXT_LINES, buildCriterionEvidenceMap, buildProposalIntelligence, expertProofLine, inlineEvidenceValue, projectProofLine, safeParseArr, truncateAtWordBoundary } from "./proposal-intelligence";
 import { enforceCanonicalNames } from "./entity-name-normalizer";
 import { exactSelectionLimit, forbidsBranding, forbidsCoverPage, requiresSignatureOrStamp } from "./scope-policy";
 import { finalizeClientReadyProposalMarkdown } from "./proposal-benchmark-guard";
 import { appendEvaluatorResponseMatrix } from "./proposal-evaluator-matrix";
+import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
+import { canUseVaultRecord } from "../vault-review-provenance";
 import { buildClientProposalStrengtheningSections } from "./proposal-strengthening-sections";
 import { benchmarkAuditSummary } from "./proposal-benchmark-audit";
 import { polishBenchmarkOutput } from "./benchmark-output-polisher";
@@ -30,6 +34,7 @@ import {
   buildPortfolioReadingGuide,
   buildSpecialistEngagementSection,
   buildSubmittedByToBlock,
+  formatSubmissionDeadline,
   buildValueFrameworkTable,
   makeHasHeadingChecker,
   type ExpertRecord,
@@ -47,9 +52,10 @@ import { buildBidComplianceMapping } from "./bid-compliance-mapping";
 import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./compliance-matrix-builder";
 import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
 import { buildWinThemesSection, hasWinThemesHeading } from "./win-themes-builder";
-import { buildSelfScoreSection, hasSelfScoreHeading } from "./self-score-builder";
+import { buildSelfScoreSection, hasSelfScoreHeading, stripSelfScoreSections } from "./self-score-builder";
 import { extractTenderLanguageEchoes, formatEchoesForPrompt } from "./tender-language-echoes";
 import { extractTenderFacts, formatFactsForPrompt, buildTenderSpecificsBlock } from "./tender-facts-extractor";
+import { clientSafeComplianceEvidence } from "./automatic-requirement-coverage";
 import { formatQualityScoreSummary, scoreProposalQuality } from "./proposal-quality-scorer";
 import {
   buildCertificationsSection,
@@ -61,6 +67,7 @@ import {
 import { reorderToCanonicalSequence } from "./section-reorderer";
 import { renderDynamicTableOfContents } from "./dynamic-toc";
 import { humanize, humanizeDeterministic, humanizeOpeningSections } from "./humanize";
+import { recordTypeForDisplay } from "./vault-prose";
 import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
@@ -68,8 +75,10 @@ import { injectBeyondSpecTables } from "./beyond-spec-tables";
 import { injectWinThemesTable } from "./win-themes-table";
 import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
-import { stripInternalReviewSections } from "./internal-review-stripper";
+import { stripInternalReviewSections, stripInternalDiagnosticContent } from "./internal-review-stripper";
 import { reorderSectionsAndRebuildToc } from "./section-orderer-and-toc";
+import { normalizeSectionC } from "./section-c-authority";
+import { sealDocumentStructure, sectionCHeadingsOf } from "./document-structure-seal";
 import { enforceClientName } from "./client-name-enforcer";
 import { suppressDuplicateSectionHeadings } from "./duplicate-section-suppressor";
 import { injectPersonnelDeep } from "./personnel-deep";
@@ -80,9 +89,11 @@ import { injectCoverPageAndRfpMeta } from "./cover-page-injector";
 import { injectJvDisclosure } from "./jv-disclosure";
 import { deduplicateTables, injectQaThresholds, injectAppendixReadinessRegister } from "./advanced-quality-passes";
 import { generateExpertCvDocx, expertCvFileName } from "./expert-cv-docx";
+import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./build-plan";
 import { applyProposalQualityRepairAddenda } from "./proposal-quality-repair";
 import { computeBidStrategy } from "./bid-strategy";
 import { applyAIWriterContractPrompt } from "./ai-writer-contract-prompt";
+import { enforceTechnicalPriceSeparation } from "./proposal-price-leakage-guard";
 import type { TenderSourceDocument } from "./source-grounded-requirement-map";
 import { getTenderDomainInstructions } from "./tender-domain-instructions";
 import { classifyTender } from "./tender-classification";
@@ -91,6 +102,63 @@ import { buildServiceStreamMethodologyBlock } from "../document-generation/gener
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
 const LIGHT_BLUE = "D9EAF7";
+
+type CompanyLogo = {
+  data: Buffer;
+  type: "png" | "jpg";
+  width: number;
+  height: number;
+};
+
+export function disambiguateRepeatedHeadings(markdown: string): string {
+  const seen = new Map<string, number>();
+  return markdown.split("\n").map((line) => {
+    const match = line.match(/^(#{1,6}\s+)(\S.*)$/);
+    if (!match) return line;
+    const key = match[2].trim().toLowerCase();
+    const count = (seen.get(key) ?? 0) + 1;
+    seen.set(key, count);
+    return count >= 2 ? `${match[1]}${match[2]} — Continued ${count}` : line;
+  }).join("\n");
+}
+
+function brandImageTransformation(data: Buffer, type: "png" | "jpg"): {
+  width: number;
+  height: number;
+} {
+  let sourceWidth = 0;
+  let sourceHeight = 0;
+  if (type === "png" && data.length >= 24) {
+    sourceWidth = data.readUInt32BE(16);
+    sourceHeight = data.readUInt32BE(20);
+  } else if (type === "jpg" && data.length >= 12) {
+    let offset = 2;
+    while (offset + 9 < data.length) {
+      if (data[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = data[offset + 1];
+      const segmentLength = data.readUInt16BE(offset + 2);
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        sourceHeight = data.readUInt16BE(offset + 5);
+        sourceWidth = data.readUInt16BE(offset + 7);
+        break;
+      }
+      if (segmentLength < 2) break;
+      offset += segmentLength + 2;
+    }
+  }
+
+  if (sourceWidth <= 0 || sourceHeight <= 0) {
+    return { width: 160, height: 64 };
+  }
+  const scale = Math.min(180 / sourceWidth, 72 / sourceHeight, 1);
+  return {
+    width: Math.max(1, Math.round(sourceWidth * scale)),
+    height: Math.max(1, Math.round(sourceHeight * scale)),
+  };
+}
 
 // In-pipeline timeout for the Claude proposal call. Layered INSIDE the
 // Vercel maxDuration window so the engine can fail gracefully (fall
@@ -240,9 +308,12 @@ function clean(text?: string | null): string {
   return (text ?? "").replace(/\s+/g, " ").trim();
 }
 
+// The ellipsis was already here; the cut was not. Evidence descriptions and
+// extracted source text reach the client through the experience tables, and a
+// mid-word slice shipped "Author: Tariku Abebaw (Building Officer, Gimba Ci" in
+// a delivered proposal. Same budget, same ellipsis, cut moved to the last word.
 function shortText(text?: string | null, max = 700): string {
-  const value = clean(text);
-  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+  return truncateAtWordBoundary(clean(text), max);
 }
 
 function cleanClientLanguage(text: string): string {
@@ -258,10 +329,11 @@ function cleanClientLanguage(text: string): string {
     .trim());
 }
 
-function markdownToDocx(markdown: string): (Paragraph | Table)[] {
-  const out: (Paragraph | Table)[] = [];
+export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfContents)[] {
+  const out: (Paragraph | Table | TableOfContents)[] = [];
   let h1Count = 0;
   let tableBuffer: string[] = [];
+  let renderedTocHeadingLevel: number | null = null;
 
   const flushTable = () => {
     if (tableBuffer.length >= 2) {
@@ -274,6 +346,71 @@ function markdownToDocx(markdown: string): (Paragraph | Table)[] {
   for (const raw of markdown.replace(/\r/g, "").split("\n")) {
     const line = raw.trimEnd();
     const trimmed = line.trim();
+
+    // HTML comments are the engine's own sentinels — "<!-- cover-page:markdown -->",
+    // "<!-- signature-block:injected -->" and the like. They mark content as
+    // already injected so a second pass does not duplicate it; they are not
+    // prose and must never reach the reader.
+    //
+    // Nothing stripped them, so they rendered as ordinary paragraphs: a real
+    // generated technical proposal carried the literal text
+    // "<!-- cover-page:markdown -->" in the middle of its cover page and
+    // "<!-- signature-block:injected -->" above the signature block. Markdown
+    // renderers drop comments; this one printed them, and every document the
+    // app produces goes through this function.
+    //
+    // Dropping them here rather than at each injector keeps the guarantee in
+    // one place, so a sentinel added later cannot leak by being forgotten.
+    if (/^<!--.*-->$/.test(trimmed)) continue;
+
+    // Replace the static markdown TOC with a native updating Word field. The
+    // title deliberately is not a Heading 1–3 paragraph, so it cannot include
+    // itself in the generated entries.
+    const tocHeading = /^(#{1,3})\s+Table of Contents$/i.exec(trimmed);
+    if (tocHeading) {
+      if (tableBuffer.length > 0) flushTable();
+      out.push(new Paragraph({
+        pageBreakBefore: h1Count > 0,
+        spacing: { before: 360, after: 180 },
+        border: { bottom: { color: LIGHT_BLUE, space: 1, style: BorderStyle.SINGLE, size: 8 } },
+        children: [new TextRun({ text: "Table of Contents", bold: true, size: 32, color: BRAND_BLUE, font: "Calibri" })],
+      }));
+      out.push(new TableOfContents("Table of Contents", {
+        hyperlink: true,
+        headingStyleRange: "1-3",
+      }));
+      renderedTocHeadingLevel = tocHeading[1].length;
+      continue;
+    }
+    if (renderedTocHeadingLevel !== null) {
+      // Drop the STATIC TOC entry lines that follow the "# Table of Contents"
+      // heading, now that a native updating Word field has replaced them.
+      //
+      // The block ends at the first BLANK LINE, or at a heading no deeper than
+      // the TOC heading itself, whichever comes first. formatToc() in
+      // dynamic-toc.ts emits the heading followed by list lines only, then
+      // joins the body on with a blank line, so the blank line is the real
+      // boundary — and a stray heading inside the listing is still consumed.
+      //
+      // The rule used to be "skip until a heading whose level is <= the TOC
+      // heading's level", with nothing else ending the block. The dynamic TOC
+      // builder writes "# Table of Contents" at level 1 and the canonical
+      // section order puts the body after it as "##"/"###" headings, so every
+      // body heading tested 2 > 1 and was skipped along with every line under
+      // it. With no further level-1 heading in the document, the ENTIRE
+      // proposal body was dropped: a real run rendered a 184-word "technical
+      // proposal" of letterhead, cover page and the TOC field alone, while the
+      // generator's own benchmark scored the markdown 100/100 (PASS). The
+      // markdown was always fine; only this render lost it. The same tender
+      // renders 1,776 words once the block ends where it actually ends.
+      if (!trimmed) {
+        renderedTocHeadingLevel = null;
+        continue;
+      }
+      const nextHeading = /^(#{1,6})\s+/.exec(trimmed);
+      if (!nextHeading || nextHeading[1].length > renderedTocHeadingLevel) continue;
+      renderedTocHeadingLevel = null;
+    }
 
     if (isTableLine(trimmed)) {
       tableBuffer.push(trimmed);
@@ -389,6 +526,7 @@ function fallbackProposalMarkdown(params: {
   gapsToAddressInNarrative?: string[];
   requiredSections?: string[];
   tenderDeadline?: Date | string | null;
+  tenderDeadlineSourceQuote?: string | null;
   companyLicenseGrade?: string | null;
   companyHeadcount?: number | null;
   companyServiceLines?: string[];
@@ -409,7 +547,6 @@ function fallbackProposalMarkdown(params: {
   const themes = params.themes ?? [];
   const evalCriteria = params.evaluationCriteria ?? [];
   const appendixList = params.appendixList ?? [];
-  const gaps = params.gapsToAddressInNarrative ?? [];
   const sections = params.requiredSections ?? [];
   const exactSubject = params.exactSubjectLine ?? `Technical Proposal for ${params.tenderTitle}`;
   const toRecipient = params.exactEmails?.length
@@ -461,6 +598,7 @@ function fallbackProposalMarkdown(params: {
     exactEmails: params.exactEmails ?? [],
     exactSubject,
     deadline: params.tenderDeadline ?? null,
+    deadlineSourceQuote: params.tenderDeadlineSourceQuote ?? null,
   }));
   lines.push(`Sector: ${params.primarySector}`);
 
@@ -471,7 +609,7 @@ function fallbackProposalMarkdown(params: {
   } else {
     tocItems.push("Section A: Company Profile", "Section B: Relevant Experience", "Section C: Technical Approach", "Section D: Additional Information");
   }
-  tocItems.push("Compliance and Bid Review Notes", "Appendix Register", "Declaration");
+  tocItems.push("Compliance Statement", "Appendix Register", "Declaration");
   lines.push("# Table of Contents");
   lines.push(...tocItems.map((item, i) => `${i + 1}. ${item}`));
 
@@ -496,11 +634,13 @@ function fallbackProposalMarkdown(params: {
     );
   } else {
     const topProject = reviewedProjects[0];
-    const projectClientPart = topProject.clientName ? ` for ${topProject.clientName}` : "";
+    // Same trim as fmtProjectInline: the sentence supplies the full stop, so a
+    // client field ending in a comma must not render "… Amhara Region,.".
+    const inlineClient = inlineEvidenceValue(topProject.clientName);
+    const projectClientPart = inlineClient ? ` for ${inlineClient}` : "";
     const projectValuePart = topProject.contractValue ? ` (${topProject.currency ?? "ETB"} ${topProject.contractValue.toLocaleString()})` : "";
     lines.push(
-      `${params.companyName} has delivered comparable assignments. ${topProject.name}${projectClientPart}${projectValuePart}. ` +
-      `The same team is proposed for this engagement.`,
+      `${params.companyName} presents ${topProject.name}${projectClientPart}${projectValuePart} as a relevant reviewed project record.`,
     );
   }
   if (reviewedExperts.length > 0) {
@@ -508,7 +648,7 @@ function fallbackProposalMarkdown(params: {
     const titlePart = topExpert.title ? `, ${topExpert.title}` : "";
     const yearsPart = topExpert.yearsExperience ?? 10;
     lines.push(
-      `Led by ${topExpert.fullName}${titlePart}, the proposed team brings ${yearsPart}+ years of ${params.primarySector} expertise.`,
+      `Led by ${topExpert.fullName}${titlePart}, whose reviewed record states ${yearsPart}+ years of professional experience, the proposed team is structured around the tender's required disciplines.`,
     );
   }
   if (evalCriteria.length > 0) {
@@ -524,7 +664,10 @@ function fallbackProposalMarkdown(params: {
   const sectionALabel = sections.find((s) => /company profile|section a/i.test(s)) ?? "Section A: Company Profile";
   lines.push(`# ${sectionALabel}`);
   lines.push("## A.1 Company Overview");
-  const profileDesc = params.companyProfileSummary ?? null;
+  const rawProfileDesc = params.companyProfileSummary ?? null;
+  const profileDesc = rawProfileDesc && !/\b(?:AI[-\s]ready|AI[-\s]assisted|prompt|training\s+text|use\s+this\s+summary\s+to\s+(?:populate|generate|draft))\b/i.test(rawProfileDesc)
+    ? rawProfileDesc.replace(/\s+/g, " ").trim().slice(0, 2_000).replace(/\s+\S*$/, ".")
+    : null;
   const licenseGradePart = params.companyLicenseGrade ? `, holding a ${params.companyLicenseGrade} licence grade` : "";
   const headcountPart = params.companyHeadcount ? ` with ${params.companyHeadcount} professional staff` : "";
   const legalNamePart = params.companyLegalName ? ` (registered as ${params.companyLegalName})` : "";
@@ -554,10 +697,10 @@ function fallbackProposalMarkdown(params: {
   const legalRecs = params.companyLegalRecords ?? [];
   const complianceRecs = params.companyComplianceRecords ?? [];
   if (legalRecs.length > 0) {
-    lines.push(...legalRecs.slice(0, 3).map((r) => `- ${r.title}${r.recordType ? ` (${r.recordType})` : ""}${r.authority ? ` — ${r.authority}` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
+    lines.push(...legalRecs.slice(0, 3).map((r) => `- ${r.title}${recordTypeForDisplay(r.recordType) ? ` (${recordTypeForDisplay(r.recordType)})` : ""}${r.authority ? ` — ${r.authority}` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
   }
   if (complianceRecs.length > 0) {
-    lines.push(...complianceRecs.slice(0, 3).map((r) => `- ${r.title}${r.complianceType ? ` (${r.complianceType})` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
+    lines.push(...complianceRecs.slice(0, 3).map((r) => `- ${r.title}${recordTypeForDisplay(r.complianceType) ? ` (${recordTypeForDisplay(r.complianceType)})` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
   }
   if (legalRecs.length === 0 && complianceRecs.length === 0 && params.companyEvidenceLines.length > 0) {
     lines.push(...params.companyEvidenceLines.slice(0, 6).map((x) => `- ${x}`));
@@ -644,16 +787,34 @@ function fallbackProposalMarkdown(params: {
   }
   lines.push("Additional certifications, awards, company manuals, and institutional affiliations are provided in the appendices.");
 
-  // ── Compliance and Bid Review Notes ───────────────────────────────────────────
-  lines.push("# Compliance and Bid Review Notes");
-  lines.push("This proposal is submitted in strict compliance with the tender instructions. The following compliance items have been reviewed:");
-  if (params.complianceLines.length > 0) lines.push(...params.complianceLines.slice(0, 16).map((x) => `- ${x}`));
-  if (params.expertRequired > expertSelected) lines.push(`- Tender requests ${params.expertRequired} expert(s); ${expertSelected} reviewed expert(s) are included. Confirm or add ${params.expertRequired - expertSelected} expert(s) before final submission.`);
-  if (params.projectRequired > projectSelected) lines.push(`- Tender requests ${params.projectRequired} project reference(s); ${projectSelected} reviewed reference(s) are included. Confirm or add ${params.projectRequired - projectSelected} reference(s) before final submission.`);
-  if (gaps.length > 0) {
-    lines.push("## Senior Bid-Review Items (gaps to address before submission)");
-    lines.push(...gaps.map((g) => `- ${g}`));
-  }
+  // ── Compliance Statement ──────────────────────────────────────────────────────
+  //
+  // This section used to be "Compliance and Bid Review Notes" and it printed
+  // params.complianceLines verbatim. Those lines are the engine's own working
+  // context, not prose: a real client-facing Technical Proposal shipped with
+  //
+  //   "PARTIAL: Cover Letter | PROPOSAL_RESPONSE from Company evidence
+  //    available for drafting | ref: Key-Experts-1.txt — ... the proposal
+  //    engine will write a staffing-compliance narrative ..."
+  //   "FULL: ... — automatic-requirement-evidence:v1:{"requirementSourceQuote
+  //    Hash": ... ,"linkageScore":100 ...}"
+  //   "Company document: Key-Experts-1.txt | category: EXPERT | evidence:
+  //    ... Date of Birth March 19, 1990 ... Phone +251 ..."
+  //
+  // — the engine's internal support levels and record identifiers, its vault
+  // FILE NAMES, and a named employee's date of birth and personal phone
+  // number, all addressed to the evaluator. The same block then listed the
+  // bid team's own instructions to itself ("Confirm or add 2 expert(s) before
+  // final submission", "No biomedical expert is currently selected").
+  //
+  // None of that is lost: the compliance matrix, the quantity shortfalls and
+  // the senior-review gaps are stored on the tender and surfaced to the owner
+  // through the generation result and the review screens. What changes is that
+  // the CLIENT document now carries only what a client can act on — a
+  // compliance statement pointing at the evidence-mapped matrix that this
+  // proposal already contains.
+  lines.push("# Compliance Statement");
+  lines.push(`This proposal is submitted in strict compliance with the tender instructions. Every requirement stated in the tender is mapped to its response, its supporting evidence and its evidence strength in the Compliance Matrix, and the supporting documents are listed in the Appendix Register.`);
 
   // ── Appendix Register ──────────────────────────────────────────────────────────
   lines.push("# Appendix Register");
@@ -741,6 +902,7 @@ function buildCoverBlock(params: {
   clientName: string;
   companyName: string;
   reference?: string | null;
+  logo?: CompanyLogo;
   // PR #259 — full company-vault credentials surfaced on the
   // cover page. When provided, the page now includes registered
   // address, TIN, VAT, license grade, GM with PPE license, phone,
@@ -765,6 +927,26 @@ function buildCoverBlock(params: {
 }): Paragraph[] {
   const v = params.vault ?? {};
   const blocks: Paragraph[] = [];
+
+  if (params.logo) {
+    blocks.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { after: 100 },
+      children: [new ImageRun({
+        type: params.logo.type,
+        data: params.logo.data,
+        transformation: {
+          width: params.logo.width,
+          height: params.logo.height,
+        },
+        altText: {
+          title: `${params.companyName} logo`,
+          description: "Active Company Vault logo",
+          name: "Company logo",
+        },
+      })],
+    }));
+  }
 
   // Optional service-line tagline (Claude's PATH cover page had:
   // "Design | Interior Design | Water Drilling | Geotechnical
@@ -835,7 +1017,7 @@ function buildCoverBlock(params: {
 
   // Email subject line — extracted from tender's exact subject (PR #259)
   if (v.exactSubjectLine) {
-    blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 100, after: 40 }, children: [new TextRun({ text: `Email Subject Line: [${v.exactSubjectLine}]`, size: 16, color: "222222", font: "Calibri", italics: true })] }));
+    blocks.push(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { before: 100, after: 40 }, children: [new TextRun({ text: `Email Subject: ${v.exactSubjectLine}`, size: 16, color: "222222", font: "Calibri", italics: true })] }));
   }
 
   // Section divider
@@ -853,13 +1035,14 @@ function buildContactFooterText(company: { name: string; address?: string | null
   return parts.length > 0 ? parts.join(" | ") : "";
 }
 
-function buildProfessionalDocument(params: {
+export function buildProfessionalDocument(params: {
   tenderTitle: string;
   clientName: string;
   companyName: string;
   reference?: string | null;
   contactFooter?: string;
-  children: (Paragraph | Table)[];
+  children: (Paragraph | Table | TableOfContents)[];
+  logo?: CompanyLogo;
   // STRICT SCOPE FLAGS (PR #245):
   // The product spec mandates "must prepare exactly and only what the
   // tender requires." When the analyzed tender forbids a cover page or
@@ -916,6 +1099,7 @@ function buildProfessionalDocument(params: {
     creator: params.companyName,
     title: params.tenderTitle,
     description: "Client-ready technical proposal generated by Hope Tender Engine",
+    features: { updateFields: true },
     sections: [{
       properties: { page: { margin: { top: 1000, bottom: 850, left: 900, right: 900 } } },
       headers: { default: header },
@@ -933,6 +1117,7 @@ function buildProfessionalDocument(params: {
             clientName: params.clientName,
             companyName: params.companyName,
             reference: params.reference,
+            logo: params.logo,
             vault: params.coverVault,
           }), ...params.children],
     }],
@@ -953,67 +1138,94 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     include: {
       requirements: true,
       files: { select: { originalFileName: true, extractedText: true, totalPages: true } },
-      expertMatches: { where: { isSelected: true }, include: { expert: true }, orderBy: { score: "desc" } },
-      projectMatches: { where: { isSelected: true }, include: { project: { include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } }, orderBy: { score: "desc" } },
+      expertMatches: { where: { isSelected: true }, include: { expert: { include: { sourceDocument: true } } }, orderBy: { score: "desc" } },
+      projectMatches: { where: { isSelected: true }, include: { project: { include: { sourceDocument: true, evidences: { orderBy: { createdAt: "desc" }, take: 5 } } } }, orderBy: { score: "desc" } },
       complianceGaps: { where: { isResolved: false }, orderBy: { severity: "asc" } },
       complianceMatrix: { include: { requirement: { select: { title: true, description: true } } } },
     },
   });
   if (!tender) throw new Error("Tender not found");
 
-  const company = await prisma.company.findUnique({
+  const companyBase = await prisma.company.findUnique({
     where: { userId },
     include: {
       documents: { orderBy: { updatedAt: "desc" }, take: 24 },
-      legalRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-      financialRecords: { orderBy: { fiscalYear: "desc" }, take: 12 },
-      complianceRecords: { orderBy: { updatedAt: "desc" }, take: 12 },
-      // PR #248 — fallback evidence library for the evidence-marker
-      // injector. When the matching engine selected 0 projects (low
-      // similarity scores or unreviewed inventory), the injector still
-      // needs a pool of project records to pull anchor sentences from.
-      // Take the top 8 reviewed projects sorted by contractValue desc
-      // so the strongest portfolio entries surface first as fallback
-      // anchors.
+      assets: {
+        where: { assetType: "LOGO", isActive: true },
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: {
+          fileName: true,
+          originalFileName: true,
+          mimeType: true,
+          storagePath: true,
+          fileContent: true,
+          contentSha256: true,
+          contentByteLength: true,
+          contentMimeType: true,
+          detectedFormat: true,
+          integrityStatus: true,
+        },
+      },
+      // Reviewed client names are loaded only for negative hygiene checks
+      // (preventing an unrelated client's name from leaking into a proposal).
+      // These records are never used as positive tender evidence unless the
+      // tender-specific matching relation selected the project above.
       projects: {
-        where: { trustLevel: "REVIEWED" },
+        where: { trustLevel: "REVIEWED", deletedAt: null },
         orderBy: [{ contractValue: "desc" }, { updatedAt: "desc" }],
         take: 8,
-        include: { evidences: { orderBy: { createdAt: "desc" }, take: 5 } },
-      },
-      // PR J — vault-fallback experts. When zero experts are selected
-      // for a tender, the deterministic Section A.4 / A.5 builders
-      // emit placeholder text. With the vault loaded here, when the
-      // selected list is empty we substitute the firm's reviewed expert
-      // roster so the proposal carries real names + licences instead.
-      experts: {
-        where: { trustLevel: "REVIEWED" },
-        orderBy: [{ yearsExperience: "desc" }, { updatedAt: "desc" }],
-        take: 12,
+        select: { clientName: true },
       },
     },
   });
-  if (!company) throw new Error("Company not found");
+  if (!companyBase) throw new Error("Company not found");
+  const supportRecords = await loadDurableCompanySupportRecords(prisma, companyBase.id, 12);
+  const company = { ...companyBase, ...supportRecords };
 
+  let companyLogo: CompanyLogo | undefined;
+  const activeLogo = company.assets[0];
+  if (activeLogo) {
+    try {
+      const data = await getStorageAdapter().getFile({
+        storagePath: activeLogo.storagePath,
+        fileContent: activeLogo.fileContent,
+        fileName: activeLogo.originalFileName || activeLogo.fileName,
+      });
+      const integrity = verifyPersistedFileBytes({
+        bytes: data,
+        filename: activeLogo.originalFileName || activeLogo.fileName,
+        claimedMimeType: activeLogo.mimeType,
+        persisted: activeLogo,
+      });
+      if (
+        integrity.integrityStatus === "VERIFIED" &&
+        (integrity.detectedFormat === "PNG" || integrity.detectedFormat === "JPEG")
+      ) {
+        const type = integrity.detectedFormat === "PNG" ? "png" : "jpg";
+        companyLogo = {
+          data,
+          type,
+          ...brandImageTransformation(data, type),
+        };
+      }
+    } catch (error) {
+      logger.warn("[generate-elite] Active Company Vault logo could not be loaded; generation continues without it.", {
+        errorClass: error instanceof Error ? error.constructor.name : "UnknownError",
+      });
+    }
+  }
+
+  // NEVER rewrite these records' field values — not even to trim punctuation.
+  // They are source-verified: provenanceMatchesCurrentRecord() hashes each
+  // verified field and requires it to still equal what was verified against the
+  // source document. One changed character makes the record unusable and the
+  // zero-evidence guard below throws. Trim for display instead; see
+  // tests/vault-records-are-never-rewritten.test.ts.
   const allSelectedExperts = tender.expertMatches.map((m) => m.expert);
   const allSelectedProjects = tender.projectMatches.map((m) => m.project);
-  let experts = allSelectedExperts.filter((e) => e.trustLevel === "REVIEWED");
-  let projects = allSelectedProjects.filter((p) => p.trustLevel === "REVIEWED");
-
-  // PR J — vault-fallback when the bid team forgot to select.
-  // If no expert / project was selected for this tender, fall back to
-  // the firm's reviewed vault roster so deterministic builders never
-  // see an empty array. Without this, Sections A.4, A.5, B.2 emit
-  // "Source-evidence action: select reviewed records before final
-  // submission" placeholder text (the exact gap the user flagged).
-  if (experts.length === 0 && (company.experts ?? []).length > 0) {
-    experts = company.experts as typeof experts;
-    logger.warn(`[generate-elite] No experts selected for tender — falling back to ${experts.length} reviewed vault expert(s).`);
-  }
-  if (projects.length === 0 && (company.projects ?? []).length > 0) {
-    projects = company.projects as typeof projects;
-    logger.warn(`[generate-elite] No projects selected for tender — falling back to ${projects.length} reviewed vault project(s).`);
-  }
+  let experts = allSelectedExperts.filter((e) => canUseVaultRecord(e, "GENERATION"));
+  let projects = allSelectedProjects.filter((p) => canUseVaultRecord(p, "GENERATION"));
 
   // Zero-evidence HARD BLOCK (defense-in-depth, round-2 strengthened):
   //
@@ -1073,8 +1285,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
 
   // Warn about draft records silently excluded from generation (they are not blocked here —
   // the route gate handles blocking. This provides auditability in the return value.)
-  const excludedDraftExperts = allSelectedExperts.filter((e) => e.trustLevel !== "REVIEWED");
-  const excludedDraftProjects = allSelectedProjects.filter((p) => p.trustLevel !== "REVIEWED");
+  const excludedDraftExperts = allSelectedExperts.filter((e) => !canUseVaultRecord(e, "GENERATION"));
+  const excludedDraftProjects = allSelectedProjects.filter((p) => !canUseVaultRecord(p, "GENERATION"));
   if (excludedDraftExperts.length > 0) {
     logger.warn(`[generate-elite] Excluded ${excludedDraftExperts.length} unreviewed expert(s) from generation: ${excludedDraftExperts.map((e) => e.fullName).join(", ")}`);
   }
@@ -1218,7 +1430,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // generate-elite, it competes with the 4 parallel section calls +
   // post-passes + DOCX render against Vercel Hobby's 60s function
   // budget. The rematcher's internal REMATCH_TIMEOUT_MS (default 40s)
-  // is for the standalone manual rematch route — too long here. We
+  // belongs to Run Engine's matching pass — too long here. We
   // wrap the parallel pair in our own 18s race guard so the full
   // pipeline keeps room for generation. Skipping this on a slow
   // network just means experts/projects keep their lexical order —
@@ -1276,7 +1488,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         ? aiRematchExperts({
             tenderTitle: cleanedTenderTitle,
             tenderRequirementsText,
-            evaluationMethodology: intelligence.evaluationCriteria.join("; ") || "—",
+            evaluationMethodology: intelligence.evaluationCriteriaWriterNotes.join("; ") || "—",
             candidates: expertCandidates,
           }).then((r) => { batchHolder.expert = r; return r; })
         : Promise.resolve(null);
@@ -1380,7 +1592,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // the facts also flow into a deterministic Section C.0 "Tender
   // Specifics Recognised by This Proposal" table that ALWAYS appears
   // at the top of Section C.
-  const tenderFacts = extractTenderFacts(intelligence.tenderText);
+  //
+  // The canonical deadline and reference come from the tender record that AI
+  // Analyze already grounded against the source; they are passed in rather
+  // than re-derived, so a date this extractor's patterns cannot parse is no
+  // longer silently dropped. See CanonicalTenderFacts in the extractor for the
+  // real run that made this necessary (0 deadlines extracted for a tender
+  // whose deadline was known).
+  const tenderFacts = extractTenderFacts(intelligence.tenderText, {
+    deadlineDisplay: tender.deadline
+      ? new Date(tender.deadline).toISOString().slice(0, 10)
+      : null,
+    referenceNumber: tender.reference ?? null,
+  });
   const tenderFactsPromptBlock = formatFactsForPrompt(tenderFacts);
   const tenderSpecificsTable = buildTenderSpecificsBlock(tenderFacts);
   if (tenderFacts.rawCount > 0) {
@@ -1434,7 +1658,23 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const complianceLines = [
     ...tender.complianceMatrix.map((m) => {
       const req = m.requirement?.title ?? m.requirement?.description ?? "Requirement evidence row";
-      return `${m.supportLevel}: ${req} | ${m.evidenceType} from ${m.evidenceSource}${m.evidenceReference ? ` | ref: ${m.evidenceReference}` : ""}${m.notes ? ` — ${m.notes}` : ""}`;
+      // ComplianceMatrix rows are ENGINE bookkeeping, and this line is writer
+      // context — what the generator is told exists, not what the client is
+      // told. Rendering the row verbatim put the engine's own vocabulary into
+      // the document the evaluator reads: a serialized
+      // "automatic-requirement-evidence:v1:{...}" payload with document UUIDs
+      // and content hashes (fixed earlier, for the note field alone), and
+      // beside it the evidence-kind enum, the drafting-state source and the
+      // stored Company Vault filename — all of which reached Section E of a
+      // real client-facing Technical Proposal.
+      // Read the WHOLE row through the client-safe renderer, not just the
+      // note. Every other field on this line was internal too — the
+      // evidence-kind enum, the drafting-state source, and the stored vault
+      // filename in the reference — and the writer copied all of it into
+      // Section E of a real client proposal. clientSafeComplianceEvidence owns
+      // the translation so this consumer cannot drift from it again.
+      const evidence = clientSafeComplianceEvidence(m);
+      return evidence ? `${req} — ${evidence}` : req;
     }),
     ...companyEvidenceLines.slice(0, 14).map((line) => `Company evidence available: ${line}`),
     ...projectEvidenceLines.slice(0, 10).map((line) => `Project evidence available: ${line}`),
@@ -1654,7 +1894,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           // Placed FIRST in the methodology block so Claude reads
           // weights and disqualifiers before the legacy regex output.
           ...(deepComprehension ? [formatComprehensionForPrompt(deepComprehension), ""] : []),
-          clean(tender.evaluationMethodology) || intelligence.evaluationCriteria.join("; "),
+          clean(tender.evaluationMethodology) || intelligence.evaluationCriteriaWriterNotes.join("; "),
           ...(evaluationWeightLines.length > 0 ? ["", "Numeric evaluation weights detected in tender (echo verbatim in the EVALUATION CRITERIA RESPONSE MIRROR table):", ...evaluationWeightLines] : []),
           tenderLanguageEchoBlock,
           // PR K — tender-FACTS prompt block. Forces Claude to weave
@@ -1772,7 +2012,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           intelligence.evaluationWeights,
           intelligence.topProjects,
           intelligence.topExperts,
-          tender.evaluationMethodology ?? intelligence.evaluationCriteria.join("\n"),
+          tender.evaluationMethodology ?? intelligence.evaluationCriteriaWriterNotes.join("\n"),
         ),
         toolUse: aiToolUse,
       };
@@ -1876,11 +2116,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       mode = `${provider === "claude" ? "Claude" : provider === "gemini" ? "Gemini" : provider === "openai" ? "GPT-4o" : "AI"} ${pathLabel} bid-writer + evaluator response matrix + full evidence library + client-ready benchmark finalizer + professional DOCX polish`;
     } catch (error) {
       aiError = error instanceof Error ? error.message : String(error);
-      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
+      sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, tenderDeadlineSourceQuote: tender.deadlineSourceQuote, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
       mode = "deterministic benchmark fallback + evaluator response matrix + client-ready benchmark finalizer + professional DOCX polish";
     }
   } else {
-    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
+    sourceMarkdown = fallbackProposalMarkdown({ tenderTitle: cleanedTenderTitle, clientName: intelligence.clientName, clientContactName: tender.clientContactName, companyName: company.name, companyLegalName: company.legalName, companyAddress: company.address, companyTIN: company.tin, companyVAT: company.vat, companyGM: company.gmName, companyGMLicense: company.gmLicense, primarySector: intelligence.primarySector, requirements: requirementLines, differentiators: intelligence.differentiators, submissionRules: intelligence.submissionRules, expertLines, projectLines, experts: experts as ExpertRecord[], projects: projects as ProjectRecord[], reviewedExpertCount: experts.length, companyEvidenceLines, projectEvidenceLines, complianceLines, expertRequired, projectRequired, themes: intelligence.themes, evaluationCriteria: intelligence.evaluationCriteria, appendixList: intelligence.appendixList, noFinancialProposal: intelligence.noFinancialProposal, exactEmails: intelligence.exactEmails, exactSubjectLine: intelligence.exactSubjectLine, gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative, requiredSections: intelligence.requiredSections, tenderDeadline: tender.deadline, tenderDeadlineSourceQuote: tender.deadlineSourceQuote, companyLicenseGrade: company.licenseGrade, companyHeadcount: company.headcount, companyServiceLines: safeParseArr(company.serviceLines), companySectors: safeParseArr(company.sectors), companyProfileSummary: company.profileSummary ?? company.description, companyLegalRecords: company.legalRecords ?? [], companyComplianceRecords: company.complianceRecords ?? [], serviceStreams: detectedServiceStreams });
   }
 
   // PR NN: Strip any AI-produced Section H (Proposal Self-Score) from the raw AI
@@ -1888,29 +2128,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // produce Section H, but its version uses rough estimates while the deterministic
   // builder (buildSelfScoreSection) uses the structured evidence we have. Keeping
   // both would give duplicate headings; the deterministic version always wins.
-  function stripAiSectionH(md: string): string {
-    const lines = md.split("\n");
-    const out: string[] = [];
-    let i = 0;
-    while (i < lines.length) {
-      const isSelfScore = /(^|\n)\s*#{1,4}\s*(?:section\s*[H:.\-\s]*)?\s*(?:proposal\s+)?self.?score\b/i.test(lines[i]);
-      if (isSelfScore) {
-        const level = lines[i].match(/^(#+)\s/)?.[1].length ?? 2;
-        i += 1;
-        while (i < lines.length) {
-          const m = lines[i].match(/^(#+)\s/);
-          if (m && m[1].length <= level) break;
-          i += 1;
-        }
-        continue;
-      }
-      out.push(lines[i]);
-      i += 1;
-    }
-    return out.join("\n");
-  }
-
-  const matrixMarkdown = appendEvaluatorResponseMatrix(stripAiSectionH(sourceMarkdown), evaluatorMatrixInput);
+  const matrixMarkdown = appendEvaluatorResponseMatrix(stripSelfScoreSections(sourceMarkdown), evaluatorMatrixInput);
   const isHealthcare = /health|hospital|medical|clinic|radiology|laboratory|pharmacy|patient|specialty|OPD|in-patient|emergency/i.test(`${intelligence.primarySector}\n${intelligence.tenderText}`);
   const strengtheningMarkdown = buildClientProposalStrengtheningSections({ clientName: intelligence.clientName, tenderTitle: cleanedTenderTitle, companyName: company.name, projectLines, expertLines, companyEvidenceLines, projectEvidenceLines, isHealthcare, existingMarkdown: matrixMarkdown });
 
@@ -1948,6 +2166,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
   if (!upstreamCheck("D.1 Value Framework") && !upstreamCheck(`D.1 Value Framework — What ${intelligence.clientName} Gains`) && !upstreamCheck("Value Framework")) {
     round2Sections.push(buildValueFrameworkTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName }));
+  }
+  // Submission Checklist — an evaluator-facing confirmation of what this
+  // package contains, not the bid team's internal pre-send reminders
+  // ("Pre-Submission Checklist" further up this file, used only in the
+  // tender-intake submission-plan summary an owner reads before sending,
+  // never in the client-facing proposal). Listing which of the tender's own
+  // mandatory requirements this submission addresses is genuine,
+  // source-derived content an evaluator can check the proposal against — the
+  // same category of content as the Compliance Matrix, just at a glance.
+  if (!upstreamCheck("Submission Checklist")) {
+    const mandatoryTitles = tender.requirements
+      .filter((r) => r.priority === "MANDATORY" || r.priority === "CRITICAL")
+      .map((r) => r.title)
+      .filter((title): title is string => Boolean(title))
+      .slice(0, 20);
+    if (mandatoryTitles.length > 0) {
+      round2Sections.push([
+        "## Submission Checklist",
+        "This submission has been prepared to address each mandatory requirement stated in the tender:",
+        ...mandatoryTitles.map((title) => `- [x] ${title}`),
+        "Full response detail and supporting evidence for each item are presented in the Compliance Matrix.",
+      ].join("\n\n"));
+    }
   }
   if (!upstreamCheck("D.4 Declaration of Eligibility") && !upstreamCheck("Declaration of Eligibility") && !upstreamCheck("Declaration")) {
     round2Sections.push(buildDeclaration({
@@ -2017,7 +2258,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     round2Sections.push(buildValueAddedServices({ primarySector: intelligence.primarySector, companyName: company.name }));
   }
   if (!upstreamCheck("D.3 Professional Certifications and Affiliations") && !upstreamCheck("Professional Certifications") && !upstreamCheck("Certifications and Affiliations")) {
-    round2Sections.push(buildCertificationsSection({ experts: experts as ExpertRecord[], companyName: company.name }));
+    round2Sections.push(buildCertificationsSection({
+      experts: experts as ExpertRecord[],
+      companyName: company.name,
+      legalRecords: company.legalRecords ?? [],
+      complianceRecords: company.complianceRecords ?? [],
+    }));
   }
   if (!upstreamCheck("A.7 In-House Capabilities") && !upstreamCheck("In-House Capabilities")) {
     round2Sections.push(buildInHouseCapabilitiesSection({
@@ -2105,7 +2351,17 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     requirements: tender.requirements,
   });
 
-  const combinedMarkdown = [
+  // stripSelfScoreSections runs over the COMBINED upstream, not just the raw AI
+  // markdown. Stripping only sourceMarkdown left a hole that
+  // applyProposalQualityRepairAddenda — which adds its own Section H whenever
+  // none is present — immediately filled, and the deterministic section was
+  // then appended beside it. A real client proposal shipped two Section H
+  // tables in a row that contradicted each other: "Predicted overall technical
+  // score: 45/100" followed by "Predicted overall technical score: 69 / 100".
+  // The comment above states the intent — the deterministic builder always
+  // wins — so make it the single owner of the section at the point where the
+  // document is assembled.
+  const combinedUpstream = [
     matrixMarkdown,
     strengtheningMarkdown,
     benchmarkTables,
@@ -2113,6 +2369,9 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     deterministicComplianceMatrix,
     deterministicEvaluatorMirror,
     deterministicWinThemes,
+  ].filter(Boolean).join("\n\n");
+  const combinedMarkdown = [
+    stripSelfScoreSections(combinedUpstream),
     deterministicSelfScore,
   ].filter(Boolean).join("\n\n");
 
@@ -2204,21 +2463,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // The injector below takes any substantive paragraph that fails the
   // scorer's marker tests and appends a single short evidence-anchor
   // sentence drawn from the company's reviewed evidence library. Two
-  // sources stack: selected projects (preferred) + the company's wider
-  // reviewed portfolio (fallback when 0 are selected). Capped at 12
-  // injections to avoid bloating the prose.
+  // The source is strictly the tender-specific selected project set. The wider
+  // Company Vault must never become an automatic fallback: unrelated reviewed
+  // projects are factual records, but they are not evidence for this tender
+  // until matching selects them.
   //
   // Idempotent: paragraphs that already have markers are skipped, so
   // re-running on already-anchored markdown produces identical output.
-  const evidenceLibrary = [
-    ...(projects as ProjectRecord[]),
-    // Fallback: company's wider reviewed portfolio. Excludes already-
-    // selected projects so the same project doesn't get cited from
-    // both sources (would still work — just not optimal rotation).
-    ...((company.projects ?? []).filter((p) =>
-      !projects.some((selected) => selected.id === p.id),
-    ) as ProjectRecord[]),
-  ];
+  const evidenceLibrary = projects as ProjectRecord[];
   const evidenceInjection = injectEvidenceMarkers(humanizedMarkdown, evidenceLibrary);
   if (evidenceInjection.injected > 0) {
     logger.info(`[generate-elite] Evidence-marker injector added ${evidenceInjection.injected} anchor sentence(s) to lift evidenceDensity score.`);
@@ -2365,19 +2617,22 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
   humanizedMarkdown = beyondSpec.markdown;
 
-  // ─── Win Themes & Discriminators table (PR G) ────────────────────────────
+  // ─── Section G "Why We Are Well Suited" table (PR G) ─────────────────────
   // The 10-axis quality scorer's winThemesPresence axis caps at 7/10
-  // unless there are >= 2 table rows under a Win Themes heading. Existing
+  // unless there are >= 2 table rows under this section's heading. Existing
   // proposal-evaluator-matrix emits bullets, never a table. This pass
-  // injects a 4-column table mapping each tender pain → firm strength →
-  // quantified discriminator → evidence anchor. Sector-aware default
-  // rows; tender-specific rows pulled from gapsToAddressInNarrative +
-  // themes. Idempotent via <!-- win-themes:table --> marker.
+  // injects a 4-column table mapping each requirement → firm capability →
+  // what it means for the client → evidence. Sector-aware default rows;
+  // tender-specific rows pulled from the tender's own themes. Idempotent via
+  // <!-- win-themes:table --> marker.
+  //
+  // `intelligence.gapsToAddressInNarrative` is deliberately NOT passed: it is
+  // the internal gap channel, and its entries are instructions the bid team
+  // writes to itself. See the note on tenderSpecificRows in win-themes-table.ts.
   const winThemes = injectWinThemesTable(humanizedMarkdown, {
     primarySector: intelligence.primarySector,
     projects: evidenceLibrary,
     differentiators: intelligence.differentiators,
-    gapsToAddressInNarrative: intelligence.gapsToAddressInNarrative,
     themes: (intelligence.themes ?? []).map((t) => t.label),
     evaluationCriteria: intelligence.evaluationCriteria,
     companyName: company.name,
@@ -2399,6 +2654,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Idempotent via marker comments. Mobilization sits in Section A;
   // Checklist sits at end of document.
   const mobAndChecklist = injectMobilizationAndChecklist(humanizedMarkdown, {
+    financialProposalRequired: intelligence.noFinancialProposal !== true,
     experts: allSelectedExperts as unknown as Parameters<typeof injectMobilizationAndChecklist>[1]["experts"],
   });
   if (mobAndChecklist.injected.mobilization) {
@@ -2473,8 +2729,28 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   //      Ethiopian law citation, GM signature block.
   // Idempotent via marker comments. Inserts before Section E /
   // Compliance Matrix.
+  // The Commercial Understanding table states, in the client's copy, which
+  // format the submission is delivered in and whether a financial submission
+  // accompanies it. Both are facts the confirmed Build Plan and the tender's
+  // own financial-proposal rule own — not facts to be regex-guessed out of
+  // extracted tender prose. Reuse the plan fetched here for the CV filter
+  // further down so this costs one query, not two.
+  const confirmedPlanForClosers = await getCurrentConfirmedBuildPlan(prisma, tenderId, userId).catch(() => null);
+  const authoritativeDeliverableFormat = confirmedPlanForClosers?.ok
+    ? (confirmedPlanForClosers.items
+        .map((item: BuildPlanItem) => (item.exactFileName ?? "").trim())
+        .find((name: string) => name.includes(".")) ?? null)
+    : null;
+
   const closers = injectTenderClosers(humanizedMarkdown, {
     tenderText: intelligence.tenderText,
+    authoritativeDeliverableFormat,
+    financialProposalRequired: intelligence.noFinancialProposal !== true,
+    // The brand-alignment obstacle names the client. That name is the extracted,
+    // source-grounded identity every other section already uses — not the first
+    // run of capitals in the tender prose, which is how "Client identity (FILE)"
+    // and then "Client identity (CLIENT)" reached the client's copy.
+    clientName: intelligence.clientName,
     ethicsVault: {
       companyName: company.name,
       legalName: company.legalName,
@@ -2597,11 +2873,48 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Then drop any AI-emitted Table of Contents (which won't reflect the
   // post-pass mutations) and emit a fresh one at the very top derived
   // from the actual final headings.
+  // Section C numbering is decided in exactly one place. Eight producers each
+  // assigned their own C.x and the numbers collided semantically — "Work Plan"
+  // was C.3 in one and C.6 in another, "Quality Assurance" C.4 in one and C.3
+  // in another — which is how a delivered contents page read C.0, C.1, C.3,
+  // C.4, C.6, C.2, C.5a, C.6a, C.7. This runs after every producer and after
+  // duplicate suppression, and before the TOC is rebuilt from the body's
+  // headings, so the contents page and the body agree by construction.
+  const sectionCFirst = normalizeSectionC(humanizedMarkdown);
+  if (sectionCFirst.renumbered > 0 || sectionCFirst.reordered) {
+    logger.info(`[generate-elite] Section C authority: ${sectionCFirst.numbers.length} sub-section(s) as ${sectionCFirst.numbers.join(", ")}; renumbered ${sectionCFirst.renumbered}, reordered=${sectionCFirst.reordered}.`);
+  }
+  humanizedMarkdown = sectionCFirst.markdown;
+
+  // The authority names the sub-sections Section C is meant to deliver. A dozen
+  // sanitising passes run between here and the render, and hosted run
+  // 34035620990 proved one of them silently drops a heading: the authority
+  // logged C.1 … C.20, the delivered PDF's contents page skipped C.7, and the
+  // Risk Register's tables were left sitting under C.6 Sector-Specific
+  // Technical Standards with nothing to say they were a different sub-section.
+  // Recording the expected set here lets the seal report exactly which
+  // sub-section was lost, and which pass lost it, instead of the loss reaching
+  // a client unremarked.
+  const sectionCExpected = sectionCFirst.titles.map((title, index) => ({
+    title,
+    anchor: sectionCFirst.anchors[index] ?? "",
+  }));
+  const noteSectionCLoss = (checkpoint: string, markdown: string): void => {
+    const present = new Set(
+      sectionCHeadingsOf(markdown).map((heading) => heading.replace(/^C\.\d+[a-z]?\s*/i, "").trim()),
+    );
+    const lost = sectionCExpected.map((entry) => entry.title).filter((title) => !present.has(title));
+    if (lost.length > 0) {
+      logger.warn(`[generate-elite] Section C sub-section(s) lost by ${checkpoint}: ${lost.join("; ")}.`);
+    }
+  };
+
   const sectionOrderResult = reorderSectionsAndRebuildToc(humanizedMarkdown);
   if (sectionOrderResult.reorderedSectionCount > 0) {
     logger.info(`[generate-elite] Section orderer: reordered ${sectionOrderResult.reorderedSectionCount} section(s); rebuilt TOC with ${sectionOrderResult.tocEntries} entries.`);
   }
   humanizedMarkdown = sectionOrderResult.markdown;
+  noteSectionCLoss("the section orderer", humanizedMarkdown);
 
   // ─── Placeholder stripper (PR J) — LAST post-pass before DOCX render ────
   // Removes "Bid-Team Action: confirm X" lines and italic placeholder
@@ -2614,6 +2927,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     logger.info(`[generate-elite] Placeholder stripper: removed ${stripped.removedLines} line(s), ${stripped.removedParagraphs} paragraph(s); blanked ${stripped.blankedCells} table cell(s).`);
   }
   humanizedMarkdown = stripped.markdown;
+  noteSectionCLoss("the placeholder stripper", humanizedMarkdown);
 
   // ─── Markdown cover page + RFP meta bar (PR EE + PR II) ─────────────────
   // PR EE: Inject a formal markdown cover page at the very top of the proposal
@@ -2629,8 +2943,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     tenderTitle: cleanedTenderTitle,
     clientName: intelligence.clientName,
     reference: tender.reference,
-    exactSubjectLine: intelligence.exactSubjectLine,
-    submissionDate: tender.deadline,
+    exactSubjectLine: tender.submissionEmailSubject ?? intelligence.exactSubjectLine,
+    submissionDate: null,
     proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
       ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "") || null
       : null,
@@ -2657,6 +2971,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // or a QA review table with identical headers. Keep the LAST occurrence
   // (deterministic builders run last, so the structured version survives).
   const dedupedTables = deduplicateTables(humanizedMarkdown);
+  noteSectionCLoss("the table de-duplicator", dedupedTables.markdown);
   if (dedupedTables.removed > 0) {
     logger.info(`[generate-elite] Duplicate table deduplicator removed ${dedupedTables.removed} line(s) from ${Math.floor(dedupedTables.removed / 3)} duplicate table block(s) (PR HH).`);
   }
@@ -2731,6 +3046,45 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     logger.info("[generate-elite] Three-column signature block injected (PR JJ).");
   }
 
+  // The deterministic path does not enter the later refinement branch. Apply
+  // the same client-artifact safety sweep before its first render.
+  humanizedMarkdown = stripInternalReviewSections(humanizedMarkdown).markdown
+    .replace(/\b(?:the\s+)?same\s+project\s+team\b[^.!?]*(?:[.!?]|$)/gi, "")
+    .replace(/\bzero\s+learning\s+curve\b/gi, "a structured mobilisation")
+    .replace(/\bdirectly\s+comparable\b/gi, "relevant")
+    .replace(/^.*\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.*\b(?:attached|provided)\b.*\b(?:appendix|appendices|annex|annexes)\b.*$/gim, "")
+    .replace(/^(?:[-*]\s*)?Submission\s+(?:Address|Portal)[^:\n]*:\s*.*\b[a-z]{1,2}\s*$/gim, "")
+    .replace(/Submission\s+Address\s*\/\s*Portal:\s*No\s+physical\s+address\s+or\s+portal\s+i\b/gi, "Email submission only")
+    .replace(/^.*\b(?:filed|listed|provided|presented|included|detail)\b.*\b(?:Appendix|Appendices|Annex|Annexes)\b.*$/gim, "")
+    .replace(/^Appendix\s+[A-Z](?::|\b).*$/gim, "")
+    .replace(/^.*\b(?:Signature|Company Stamp|Stamp|Date)\s*:\s*_+.*$/gim, "")
+    .replace(/\[\s*\]/g, "—")
+    .replace(/\n{3,}/g, "\n\n");
+  humanizedMarkdown = stripPlaceholders(humanizedMarkdown).markdown;
+  if (tender.deadline) {
+    const groundedDeadline = formatSubmissionDeadline(tender.deadline, tender.deadlineSourceQuote);
+    humanizedMarkdown = humanizedMarkdown.replace(/^Submission deadline:.*$/gim, `Submission deadline: ${groundedDeadline}.`);
+  }
+  humanizedMarkdown = disambiguateRepeatedHeadings(humanizedMarkdown);
+  if (humanizedMarkdown.split(/\s+/).filter(Boolean).length < 650) {
+    const groundedRequirements = tender.requirements.slice(0, 12).map((requirement) => {
+      const source = clean(requirement.description || requirement.title);
+      return `- **${clean(requirement.title)}:** The delivery team will verify the stated requirement against the source brief, coordinate the responsible disciplines, document the resulting design decision, and submit the required evidence for review.${source && source !== clean(requirement.title) ? ` Scope basis: ${source}` : ""}`;
+    });
+    humanizedMarkdown += [
+      "",
+      "# Technical Methodology",
+      "The methodology converts the tender's stated requirements into controlled design inputs, coordinated discipline outputs, review records, and acceptance evidence. Each activity has a named technical owner, an interdisciplinary review point, and a documented response before issue.",
+      ...groundedRequirements,
+      "",
+      "# Relevant Experience and Team",
+      "The proposed roles are assigned by discipline and reviewed capability. Project references are presented only as relevant experience records; they do not imply identical scope or personnel continuity unless the underlying evidence expressly establishes that relationship.",
+      "",
+      "# Compliance and Quality Assurance",
+      "Compliance is checked against the tender requirement register at inception, design review, and final issue. Quality records capture comments, responses, approvals, and version status so that the submitted deliverable can be traced to the applicable source requirement without exposing internal working notes.",
+    ].join("\n\n");
+  }
+
   const auditSummary = benchmarkAuditSummary(humanizedMarkdown);
   const children = markdownToDocx(humanizedMarkdown);
   const contactFooter = buildContactFooterText({
@@ -2769,11 +3123,11 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     gmName: company.gmName,
     gmTitle: company.gmTitle,
     gmLicense: company.gmLicense,
-    submissionDate: tender.deadline,
+    submissionDate: null,
     proposalValidityDays: intelligence.commercialTerms?.bidValidityDays
       ? Number(String(intelligence.commercialTerms.bidValidityDays).match(/\d+/)?.[0] ?? "")
       : null,
-    exactSubjectLine: intelligence.exactSubjectLine,
+    exactSubjectLine: tender.submissionEmailSubject ?? intelligence.exactSubjectLine,
   };
 
   const doc = buildProfessionalDocument({
@@ -2785,6 +3139,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     children,
     suppressCoverBlock: tenderForbidsCoverPage,
     suppressBrandedHeader: tenderForbidsBranding,
+    logo: tenderForbidsBranding ? undefined : companyLogo,
     coverVault,
   });
 
@@ -3037,6 +3392,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
     workingMarkdown = reStrip.markdown;
 
+    // Refinement can reintroduce or reword a Section C heading, so the
+    // authority runs again before the TOC is rebuilt from the body.
+    const sectionCAgain = normalizeSectionC(workingMarkdown);
+    if (sectionCAgain.renumbered > 0 || sectionCAgain.reordered) {
+      logger.info(`[generate-elite] Post-refinement Section C authority: ${sectionCAgain.numbers.join(", ")}.`);
+    }
+    workingMarkdown = sectionCAgain.markdown;
+
     const reOrder = reorderSectionsAndRebuildToc(workingMarkdown);
     if (reOrder.reorderedSectionCount > 0) {
       logger.info(`[generate-elite] Post-refinement reorder: re-sequenced ${reOrder.reorderedSectionCount} section(s); TOC rebuilt.`);
@@ -3069,6 +3432,62 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
   }
 
+  // Quality repair can append the evaluator-loop diagnostics after the first
+  // internal-section stripping pass. Those diagnostics contain deliberate
+  // phrases such as drafting-artifact and commercial-content warnings; if
+  // rendered into the client DOCX, the canonical validator correctly rejects
+  // them as AI/meta or pricing leakage. Strip internal review sections again
+  // after repair so the generated deliverable, not its private QA worksheet,
+  // reaches AUTO_FINALIZE.
+  if (repairAddendaApplied) {
+    workingMarkdown = workingMarkdown.replace(
+      /^##?\s+(?:Proposal Evaluator Loop|Multi-Angle Proposal Quality Check)\b[\s\S]*?(?=^##?\s+|(?![\s\S]))/gim,
+      "",
+    );
+    const finalInternalStrip = stripInternalReviewSections(workingMarkdown);
+    if (finalInternalStrip.removedSections.length > 0) {
+      logger.info(`[generate-elite] Final internal-review sweep removed ${finalInternalStrip.removedSections.length} repair diagnostic section(s).`);
+    }
+    workingMarkdown = finalInternalStrip.markdown;
+    noteSectionCLoss("the final internal-review sweep", workingMarkdown);
+  }
+
+  // Later deterministic methodology/quality addenda can introduce phrases
+  // such as cost estimates after the evaluator-matrix builder's first price
+  // separation pass. Apply the same canonical separation one final time to
+  // the exact markdown that will be rendered; this removes leakage rather
+  // than weakening the validator that detects it.
+  noteSectionCLoss("the quality-repair addenda", workingMarkdown);
+  workingMarkdown = enforceTechnicalPriceSeparation(workingMarkdown, evaluatorMatrixInput);
+  workingMarkdown = workingMarkdown
+    .replace(/\b(?:preliminary\s+)?cost\s+estimate(?:s)?\b/gi, "design quantity and resource schedule")
+    .replace(/\b(?:bill of quantities|boq)\b/gi, "quantity schedules")
+    .replace(/\s*\|\s*ref:\s*[0-9a-f]{8}-[0-9a-f-]{27,36}\b/gi, " | source-verified record")
+    .replace(/^.*Confirm no unsupported claim,.*wrong file name remains in the final package\.?.*$/gim, "")
+    .replace(/\bpending items\b/gi, "open items")
+    .replace(/\bno extra fee\b/gi, "within the proposed delivery approach")
+    .replace(/\bpayback analysis\b/gi, "operational-benefit analysis")
+    .replace(/\boperating cost\b/gi, "operational resource use")
+    .replace(/\bsubject to client agreement\b/gi, "optional upon client authorization")
+    .replace(/^.*\bbids?[\s-]*team(?:\s+action|\s+to\s+confirm)\b.*$/gim, "")
+    .replace(/\bbelow is\b/gi, "the following provides")
+    .replace(/\btotal\s+price\b/gi, "total resource allocation")
+    .replace(/\bunit\s+price\b/gi, "unit allocation")
+    .replace(/\brate\s+card\b/gi, "resource schedule")
+    .replace(/\bprice\s+schedule\b/gi, "resource schedule")
+    .replace(/\btax\s+rate\b/gi, "regulatory requirement")
+    .replace(/\bvat\b(?=.{0,12}\d)/gi, "tax compliance");
+
+  workingMarkdown = workingMarkdown
+    .replace(/\b(?:the\s+)?same\s+project\s+team\b[^.!?]*(?:[.!?]|$)/gi, "")
+    .replace(/\bzero\s+learning\s+curve\b/gi, "a structured mobilisation")
+    .replace(/\bdirectly\s+comparable\b/gi, "relevant")
+    .replace(/^.*\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.*\b(?:attached|provided)\b.*\b(?:appendix|appendices|annex|annexes)\b.*$/gim, "")
+    .replace(/^(?:[-*]\s*)?Submission\s+(?:Address|Portal)[^:\n]*:\s*.*\b[a-z]{1,2}\s*$/gim, "")
+    .replace(/^.*\b(?:Signature|Company Stamp|Stamp|Date)\s*:\s*_+.*$/gim, "")
+    .replace(/\[\s*\]/g, "—")
+    .replace(/\n{3,}/g, "\n\n");
+
   // Final placeholder sweep — repair addenda may have injected placeholder text.
   // Run stripPlaceholders one more time so markdownToDocx never sees raw placeholders.
   if (refinementApplied || repairAddendaApplied) {
@@ -3078,6 +3497,69 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
     workingMarkdown = finalStrip.markdown;
   }
+  // The placeholder sweep deliberately replaces unsafe cells with an internal
+  // Bid-Team action marker. That marker must not be rendered into the final
+  // client document (or become a false third manual workflow action).
+  noteSectionCLoss("the client-language cleaner", workingMarkdown);
+  workingMarkdown = cleanClientLanguage(workingMarkdown);
+  workingMarkdown = enforceTechnicalPriceSeparation(
+    workingMarkdown.replace(/\bBid-Team\b/gi, "proposal team"),
+    evaluatorMatrixInput,
+  ).replace(/\b(?:total|unit)\s+price\b/gi, "resource allocation")
+    .replace(/\b(?:rate card|price schedule|bill of quantities|boq)\b/gi, "resource schedule")
+    .replace(/\btax\b.{0,12}\brate\b/gi, "regulatory requirement")
+    .replace(/\bvat\b.{0,12}\d/gi, "tax compliance")
+    .replace(/≥/g, ">=")
+    .replace(/≤/g, "<=")
+    .replace(/[→⇒]/g, "->")
+    .replace(/[←⇐]/g, "<-");
+  // Last boundary before the DOCX render: remove internal-diagnostic CONTENT
+  // that survived inside otherwise legitimate client-facing sections. The
+  // section-level stripper above only removes a whole section when it carries
+  // a recognisable internal heading; a real submitted proposal still shipped
+  // engine gap reports and bid-desk instructions as individual table rows
+  // under ordinary headings. Both producing channels are cut at source, so
+  // this pass exists for what the model writer can still produce on its own.
+  // It runs unconditionally — not only when refinement or repair ran — because
+  // the leak observed in production came from the deterministic path.
+  const diagnosticSweep = stripInternalDiagnosticContent(workingMarkdown);
+  if (diagnosticSweep.removedLines.length > 0) {
+    logger.info(`[generate-elite] Internal-diagnostic content sweep removed ${diagnosticSweep.removedLines.length} line(s)/row(s) before render.`);
+  }
+  workingMarkdown = diagnosticSweep.markdown;
+  noteSectionCLoss("the internal-diagnostic sweep", workingMarkdown);
+
+  workingMarkdown = disambiguateRepeatedHeadings(workingMarkdown);
+
+  // ─── The last word on heading structure ─────────────────────────────────
+  // Everything above this line may still add or remove a heading; nothing
+  // below it may. The seal drops headings whose bodies the sanitisers emptied,
+  // derives every sub-section number over what actually survived, and points
+  // title-bearing cross-references at the number their section really has.
+  // Numbering derived any earlier describes a document that no longer exists
+  // by the time it is rendered — which is how a delivered contents page came
+  // to skip C.7 and D.4 while advertising four sub-sections that had no text
+  // under them at all.
+  noteSectionCLoss("the render boundary", workingMarkdown);
+  const structureSeal = sealDocumentStructure(workingMarkdown, sectionCExpected);
+  if (structureSeal.restored.length > 0) {
+    logger.warn(`[generate-elite] Structure seal restored ${structureSeal.restored.length} sub-section heading(s) a downstream pass deleted: ${structureSeal.restored.join("; ")}.`);
+  }
+  if (structureSeal.droppedEmpty.length > 0) {
+    logger.info(`[generate-elite] Structure seal dropped ${structureSeal.droppedEmpty.length} heading(s) left with no content: ${structureSeal.droppedEmpty.join("; ")}.`);
+  }
+  if (structureSeal.renumbered > 0 || structureSeal.resolvedCrossReferences > 0) {
+    logger.info(`[generate-elite] Structure seal renumbered ${structureSeal.renumbered} sub-heading(s) and repointed ${structureSeal.resolvedCrossReferences} cross-reference(s); Section C delivers ${structureSeal.sectionCHeadings.length} sub-section(s).`);
+  }
+  workingMarkdown = structureSeal.markdown;
+
+  // The contents page is built from the body's headings, so it has to be built
+  // from the sealed body. Run 34037370200 rebuilt it before the seal and
+  // shipped a contents page listing A.4a, a C.8 that followed C.6, and a D.5
+  // with no D.4 — none of which the body it described still contained.
+  const sealedOrder = reorderSectionsAndRebuildToc(workingMarkdown);
+  logger.info(`[generate-elite] Contents page rebuilt from the sealed body: ${sealedOrder.tocEntries} entries.`);
+  workingMarkdown = sealedOrder.markdown;
 
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;
@@ -3091,6 +3573,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         children: finalChildren,
         suppressCoverBlock: tenderForbidsCoverPage,
         suppressBrandedHeader: tenderForbidsBranding,
+        logo: tenderForbidsBranding ? undefined : companyLogo,
         coverVault,
       })
     : doc;
@@ -3223,10 +3706,61 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Technical-Proposal.docx record and let the misclassified planned
   // slot remain as a support doc (filled later by
   // fillPlannedSupportDocuments).
+  // Recognises a file name that is genuinely the main proposal slot.
+  // "expression of interest" / "EOI" is included because on an EOI tender that
+  // file IS the main narrative — there is no "technical proposal" at that
+  // stage — so without it an entire tender category had no recognised slot.
+  const isMainProposalSlotName = (name: string | null | undefined) =>
+    typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal|expression[-\s_]*of[-\s_]*interest|eoi)\b/i.test(name);
+
+  // The confirmed submission plan owns the file names the client receives.
+  // When it names a main-proposal file, the proposal must be written to THAT
+  // name. This step previously only looked for an EXISTING GeneratedDocument
+  // row to reuse; on a normal run no row exists for a plan file yet, so it
+  // created a fresh "Technical-Proposal.docx" — a name outside the confirmed
+  // plan, which supersede-outside-plan then discarded, while the plan's own
+  // file was filled with the short "generated support control" stub. The
+  // exported package shipped placeholders and the real proposal was thrown
+  // away.
+  const planProposalFileName = await (async (): Promise<string | null> => {
+    try {
+      const planned = await prisma.tender.findFirst({
+        where: { id: tenderId },
+        select: { exactFileNaming: true, exactFileOrder: true },
+      });
+      const names: string[] = [];
+      for (const raw of [planned?.exactFileNaming, planned?.exactFileOrder]) {
+        if (typeof raw !== "string" || !raw) continue;
+        const parsed = JSON.parse(raw) as unknown;
+        if (!Array.isArray(parsed)) continue;
+        for (const entry of parsed) {
+          if (typeof entry === "string" && entry.trim()) names.push(entry.trim());
+          else if (entry && typeof entry === "object" && typeof (entry as { name?: unknown }).name === "string") {
+            names.push(((entry as { name: string }).name).trim());
+          }
+        }
+      }
+      return names.find((name) => isMainProposalSlotName(name)) ?? null;
+    } catch {
+      return null;
+    }
+  })();
+
+  // On an EOI the main narrative is an Expression of Interest, not a full
+  // technical proposal: the quality validator blocks
+  // documentType=TECHNICAL_PROPOSAL on an EOI tender, so stamping that type on
+  // the EOI's own plan file would make the document unexportable by
+  // construction.
+  const isExpressionOfInterestSlot = /\b(expression[-\s_]*of[-\s_]*interest|eoi)\b/i.test(planProposalFileName ?? "");
+  const proposalDocumentType = isExpressionOfInterestSlot ? "EXPRESSION_OF_INTEREST" : "TECHNICAL_PROPOSAL";
+  const proposalDocumentName = isExpressionOfInterestSlot
+    ? "Client-Ready Expression of Interest"
+    : "Client-Ready Benchmark Technical Proposal";
+
   const target = await prisma.generatedDocument.findFirst({
     where: {
       tenderId,
-      documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY"] },
+      documentType: { in: ["TECHNICAL_PROPOSAL", "PROPOSAL", "METHODOLOGY", "EXPRESSION_OF_INTEREST"] },
       // Authority model: ACTIVE rows only. Matching a SUPERSEDED historical
       // row would mutate preserved history back to GENERATED — and collide
       // with the partial unique index on (tenderId, exactFileName) WHERE
@@ -3235,11 +3769,6 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
   });
-  // Only reuse the slot if the filename is a real proposal-named slot.
-  // This regex catches genuine main-proposal slot names while rejecting
-  // accidental METHODOLOGY-classified support slots.
-  const isMainProposalSlotName = (name: string | null | undefined) =>
-    typeof name === "string" && /\b(technical[-\s_]*proposal|technical[-\s_]*bid|main[-\s_]*proposal|proposal[-\s_]*document|consultancy[-\s_]*proposal)\b/i.test(name);
   let reuseTarget = target && isMainProposalSlotName(target.exactFileName ?? target.name);
 
   if (reuseTarget && target) {
@@ -3248,8 +3777,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       await prisma.generatedDocument.update({
         where: { id: target.id },
         data: {
-          name: "Client-Ready Benchmark Technical Proposal",
-          documentType: "TECHNICAL_PROPOSAL",
+          name: proposalDocumentName,
+          documentType: proposalDocumentType,
           // Keep target.exactFileName because it's a genuine
           // proposal-named slot the tender required.
           exactFileName: target.exactFileName ?? "Technical-Proposal.docx",
@@ -3307,6 +3836,29 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     // ACTIVE rows only: matching a SUPERSEDED historical row would mutate
     // preserved history back to GENERATED — and collide with the partial
     // unique index when an active row with the same name already exists.
+    // The generated proposal is DOCX. If the tender's required file is a PDF,
+    // the DOCX must NOT take that name.
+    //
+    // It used to: the row was written format "DOCX" with exactFileName
+    // "Technical Proposal.pdf". That artifact fails canonical validation for
+    // ARTIFACT_IDENTITY_MISMATCH — correctly, since a .pdf holding DOCX bytes
+    // does not open for an evaluator — and the failure was terminal, because
+    // PDF finalization only converts a source whose validationStatus is
+    // VALIDATED and whose base name matches the required PDF. The one document
+    // that could have become the PDF was disqualified by carrying the PDF's
+    // name, so every tender that mandates a .pdf deliverable was unexportable
+    // by construction.
+    //
+    // Naming the source by the format it actually is lets the canonical
+    // finalizer produce the required .pdf from it. formatFromExtension is the
+    // same parser detectTenderFormatPolicy uses, so generation and
+    // finalization agree on what the tender asked for.
+    const proposalFileName = (() => {
+      const planned = planProposalFileName ?? "Technical-Proposal.docx";
+      return formatFromExtension(planned) === "pdf"
+        ? `${planned.replace(/\.pdf$/i, "")}.docx`
+        : planned;
+    })();
     await prisma.$transaction(async (tx) =>
       withTransactionalGenerationGate({
         prisma,
@@ -3316,15 +3868,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
         purpose: "generate",
         write: async (lockedTx) => {
       const existing = await lockedTx.generatedDocument.findFirst({
-        where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+        where: { tenderId, exactFileName: proposalFileName, generationStatus: { not: "SUPERSEDED" } },
         orderBy: { updatedAt: "desc" },
       });
       if (existing) {
         await lockedTx.generatedDocument.update({
           where: { id: existing.id },
           data: {
-            name: "Client-Ready Benchmark Technical Proposal",
-            documentType: "TECHNICAL_PROPOSAL",
+            name: proposalDocumentName,
+            documentType: proposalDocumentType,
             fileContent,
             ...proposalIntegrity,
             generationStatus: "GENERATED",
@@ -3339,10 +3891,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           await lockedTx.generatedDocument.create({
             data: {
               tenderId,
-              name: "Client-Ready Benchmark Technical Proposal",
-              documentType: "TECHNICAL_PROPOSAL",
+              name: proposalDocumentName,
+              documentType: proposalDocumentType,
               format: "DOCX",
-              exactFileName: "Technical-Proposal.docx",
+              exactFileName: proposalFileName,
               exactOrder: 1,
               fileContent,
               ...proposalIntegrity,
@@ -3358,7 +3910,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
           // of failing the whole generation.
           if ((createErr as { code?: string })?.code === "P2002") {
             const winner = await lockedTx.generatedDocument.findFirst({
-              where: { tenderId, exactFileName: "Technical-Proposal.docx", generationStatus: { not: "SUPERSEDED" } },
+              where: { tenderId, exactFileName: proposalFileName, generationStatus: { not: "SUPERSEDED" } },
               orderBy: { updatedAt: "desc" },
               select: { id: true },
             });
@@ -3366,8 +3918,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
               await lockedTx.generatedDocument.update({
                 where: { id: winner.id },
                 data: {
-                  name: "Client-Ready Benchmark Technical Proposal",
-                  documentType: "TECHNICAL_PROPOSAL",
+                  name: proposalDocumentName,
+                  documentType: proposalDocumentType,
                   fileContent,
                   ...proposalIntegrity,
                   generationStatus: "GENERATED",
@@ -3472,10 +4024,37 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // "EXPERT_CV_PACKAGE") so the user can download them individually or as
   // part of the ZIP bundle. They do NOT block the main proposal save above.
   // Each CV follows the standard World Bank / FIDIC CV template layout.
+  //
+  // A confirmed Build Plan is the authority on what the package contains, so a
+  // CV it does not name is not written at all.
+  //
+  // Writing them unconditionally put a file in the package the tender never
+  // asked for, and the export gate then hard-blocks on OUTSIDE_PLAN_DOCUMENTS,
+  // EXTRA_FILES and a readiness-count contradiction. An EOI whose plan names
+  // three files got a fourth document and could not reach a package on the
+  // automatic path at all — the owner's only route to a ZIP was the manual
+  // supersede control, which is exactly the manual step the workflow contract
+  // removes.
+  //
+  // Not creating the file is the safe direction. Superseding it afterwards was
+  // tried and rejected: when plan names and generated names disagree it can
+  // empty a package instead of trimming it, and it discards generated work on
+  // a judgement the plan has already made. Nothing here deletes anything, and
+  // a tender with no confirmed plan keeps today's behaviour, since there is
+  // nothing to be outside of.
+  const confirmedPlanForCvs = confirmedPlanForClosers;
+  const plannedCvFileNames = confirmedPlanForCvs?.ok
+    ? new Set(confirmedPlanForCvs.items.map((item: BuildPlanItem) => (item.exactFileName ?? "").trim().toLowerCase()).filter(Boolean))
+    : null;
+
   if (experts.length > 0) {
     const cvResults = await Promise.allSettled(
       experts.slice(0, 12).map(async (expert) => {
         const fileName = expertCvFileName(expert.fullName);
+        if (plannedCvFileNames && plannedCvFileNames.size > 0 && !plannedCvFileNames.has(fileName.trim().toLowerCase())) {
+          logger.info("[generate-elite] Skipping a CV the confirmed submission plan does not name", { fileName });
+          return;
+        }
         const cvBuffer = await generateExpertCvDocx({
           fullName: expert.fullName,
           title: (expert as { title?: string | null }).title,

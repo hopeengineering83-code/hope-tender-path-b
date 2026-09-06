@@ -2,9 +2,9 @@
  * Runtime idempotency, route security, and revision safety tests.
  *
  * Tests:
- *   1. Operation lock helper exists and exports correct functions.
- *   2. Lock TTL is 10 minutes (not infinite).
- *   3. withTenderOperationLock wraps async operations.
+ *   1. The canonical per-tender operation guard is the one the routes use.
+ *   2. Its idempotency key is deterministic (a retry converges, not duplicates).
+ *   3. It is race-safe at the database level, not just in application code.
  *   4. Package revision helper computes composite hash.
  *   5. verifySourceFilesNotDeleted checks for active files.
  *   6. Download route revalidates source files before ZIP.
@@ -21,67 +21,102 @@
 
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 const read = (p: string) => readFileSync(p, "utf8");
 
-// ─── 1-3. Operation lock helper ─────────────────────────────────────────────
+// ─── 1-3. Canonical per-tender operation guard ──────────────────────────────
+//
+// This block used to assert against lib/engine/tender-operation-lock.ts, a
+// 266-line module that nothing in app/ or lib/ ever imported. It was a second
+// implementation of per-tender operation serialisation built on the very same
+// TenderWorkflowRun table and the same
+// @@unique([companyId, tenderId, operation, idempotencyKey]) constraint the
+// live runner uses. Because every assertion was a readFileSync + substring
+// match, the suite stayed green while the module was unreachable — it proved
+// the file's text, not the app's behaviour. The dead module is deleted; these
+// assertions now target lib/engine/tender-workflow-runner.ts, which the
+// workflow routes actually call.
 
-describe("1-3. Operation lock helper", () => {
-  it("lib/engine/tender-operation-lock.ts exists and exports required functions", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.ok(src.includes("export async function acquireTenderOperationLock"), "must export acquireTenderOperationLock");
-    assert.ok(src.includes("export async function releaseTenderOperationLock"), "must export releaseTenderOperationLock");
-    assert.ok(src.includes("export async function withTenderOperationLock"), "must export withTenderOperationLock");
-    assert.ok(src.includes("export async function isOperationRunning"), "must export isOperationRunning");
+describe("1-3. Canonical per-tender operation guard", () => {
+  const runner = read("lib/engine/tender-workflow-runner.ts");
+
+  it("is a single implementation that production actually imports", () => {
+    assert.match(runner, /export function deriveIdempotencyKey/);
+    assert.match(read("app/api/tenders/[id]/workflow-status/route.ts"), /tender-workflow-runner/);
+    // No second, competing serialisation module may reappear alongside it.
+    assert.equal(
+      existsSync("lib/engine/tender-operation-lock.ts"),
+      false,
+      "a second operation-serialisation authority on the same table must not exist",
+    );
   });
 
-  it("lock TTL is 10 minutes (not infinite)", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.ok(src.includes("LOCK_TTL_MS"), "must define LOCK_TTL_MS");
-    assert.ok(src.includes("10 * 60 * 1000"), "TTL must be 10 minutes");
+  it("derives a deterministic idempotency key, so a retry converges instead of duplicating", () => {
+    // A wall-clock component would make every retry a fresh row, defeating the
+    // unique constraint that provides the actual guard.
+    const codeOnly = runner.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    assert.doesNotMatch(codeOnly, /idempotencyKey[^\n]*Date\.now\(\)/);
+    assert.match(runner, /computeStableHash\(\{[\s\S]*?tenantId[\s\S]*?tenderId[\s\S]*?operation/);
   });
 
-  it("supports all 7 operation types", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    const ops = ["AI_ANALYZE", "BUILD_PLAN", "GENERATE_DOCUMENTS", "VALIDATE_DOCUMENTS", "APPROVE_DOCUMENTS", "EXPORT_PACKAGE", "DOWNLOAD_PACKAGE"];
-    for (const op of ops) {
-      assert.ok(src.includes(`"${op}"`), `must support operation: ${op}`);
-    }
+  it("is race-safe in the database, not only in application code", () => {
+    assert.match(runner, /companyId_tenderId_operation_idempotencyKey/);
+    const schema = read("prisma/schema.prisma");
+    assert.match(
+      schema,
+      /@@unique\(\[companyId, tenderId, operation, idempotencyKey\]/,
+      "the guard must rest on a real unique constraint",
+    );
   });
 
-  it("uses TenderWorkflowRun for DB-backed locking (not in-memory)", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.ok(src.includes("tenderWorkflowRun"), "must use TenderWorkflowRun model");
-    assert.ok(src.includes("P2002"), "must handle P2002 unique constraint for race safety");
-    assert.ok(src.includes("STALE_LOCK_EXPIRED"), "must expire stale locks");
-  });
-
-  it("withTenderOperationLock releases lock on success AND failure", () => {
-    const src = read("lib/engine/tender-operation-lock.ts");
-    assert.ok(src.includes('status: "SUCCEEDED"'), "must release with SUCCEEDED on success");
-    assert.ok(src.includes('status: "FAILED"'), "must release with FAILED on error");
-    assert.ok(src.includes("throw error"), "must re-throw error after releasing lock");
+  it("records a terminal status for both success and failure", () => {
+    assert.match(runner, /"SUCCEEDED"/);
+    assert.match(runner, /"FAILED"/);
   });
 });
 
 // ─── 4-5. Package revision safety ──────────────────────────────────────────
 
 describe("4-5. Package revision safety", () => {
-  it("lib/engine/package-revision-safety.ts exists and exports required functions", () => {
-    const src = read("lib/engine/package-revision-safety.ts");
-    assert.ok(src.includes("export async function computePackageRevision"), "must export computePackageRevision");
-    assert.ok(src.includes("export async function verifyPackageRevision"), "must export verifyPackageRevision");
-    assert.ok(src.includes("export async function verifySourceFilesNotDeleted"), "must export verifySourceFilesNotDeleted");
+  it("the final archive is rebuilt on every request, never served from storage", () => {
+    // This replaces two assertions that required
+    // lib/engine/package-revision-safety.ts to export computePackageRevision
+    // and verifyPackageRevision. Those fingerprinted requirements + build plan
+    // + generated docs so a previously built package could be checked for
+    // staleness before being served — and they had zero production callers.
+    //
+    // They were unwireable, not merely unwired: ExportPackage has no column to
+    // hold a revision hash, and nothing serves stored package bytes.
+    // packageSha256 is only ever written. So a stored package cannot go stale,
+    // because no stored package is ever handed to a client.
+    //
+    // What actually keeps the archive current is asserted instead: it is
+    // assembled from documents read at request time, after the gates. If that
+    // ever changes to serving a stored archive, this fails — and the revision
+    // check becomes necessary again.
+    const route = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(
+      route.includes("assembleFinalSubmissionZip("),
+      "the ZIP must be assembled during the request, not read from a stored package",
+    );
+    assert.ok(
+      route.includes("persistVerifiedExportPackageDownload("),
+      "the ExportPackage row must be written after assembly, as a record of what was served",
+    );
+    const persistIndex = route.indexOf("persistVerifiedExportPackageDownload(");
+    const assembleIndex = route.indexOf("assembleFinalSubmissionZip(");
+    assert.ok(
+      assembleIndex < persistIndex,
+      "assembly must precede persistence — persisting first would imply serving a stored package",
+    );
   });
 
-  it("computePackageRevision hashes requirements, build plan, and generated docs", () => {
+  it("keeps the source-file safety check that IS wired", () => {
     const src = read("lib/engine/package-revision-safety.ts");
-    assert.ok(src.includes("requirementHash"), "must compute requirement hash");
-    assert.ok(src.includes("buildPlanHash"), "must compute build plan hash");
-    assert.ok(src.includes("generatedDocHash"), "must compute generated doc hash");
-    assert.ok(src.includes("compositeHash"), "must compute composite hash");
-    assert.ok(src.includes("SUPERSEDED"), "must filter SUPERSEDED docs from hash");
+    assert.ok(src.includes("export async function verifySourceFilesNotDeleted"), "must export verifySourceFilesNotDeleted");
+    const route = read("app/api/tenders/[id]/download/route.ts");
+    assert.ok(route.includes("verifySourceFilesNotDeleted("), "the download route must still call it");
   });
 
   it("verifySourceFilesNotDeleted checks for active files", () => {
@@ -200,7 +235,7 @@ describe("10. Partial AI Analyze safety", () => {
   });
 
   it("generate-missing-plan-files route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {
-    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
     assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "must check PARTIAL_EXTRACTION_AI_ANALYZED");
   });
 });
@@ -319,30 +354,14 @@ describe("15. Additional route authorization", () => {
   });
 });
 
-// ─── 16. Export package idempotency ─────────────────────────────────────────
+// Export-package lifecycle behavior is database-backed in
+// export-package-persistence-postgres.test.ts. Keeping source-shape assertions
+// here previously forced package mutation back into POST /export, competing
+// with the live Final ZIP byte owner.
 
-describe("16. Export package idempotency", () => {
-  it("export route supersedes old READY packages before creating new one", () => {
-    const src = read("app/api/tenders/[id]/export/route.ts");
-    assert.ok(src.includes("updateMany"), "must update old packages");
-    assert.ok(src.includes('status: "SUPERSEDED"'), "must supersede old READY packages");
-    assert.ok(src.includes('status: "READY"'), "must create new READY package");
-    assert.ok(src.includes("$transaction"), "must use transaction for atomicity");
-  });
+// ─── 16. Download revalidation completeness ─────────────────────────────────
 
-  it("export route never creates package when readiness fails", () => {
-    const src = read("app/api/tenders/[id]/export/route.ts");
-    // The readiness check must come BEFORE the package creation
-    const readinessIdx = src.indexOf("checkFullExportReadiness");
-    const createIdx = src.indexOf("exportPackage.create");
-    assert.ok(readinessIdx > 0 && createIdx > 0, "must have both readiness check and package creation");
-    assert.ok(readinessIdx < createIdx, "readiness check must come BEFORE package creation");
-  });
-});
-
-// ─── 17. Download revalidation completeness ─────────────────────────────────
-
-describe("17. Download revalidation completeness", () => {
+describe("16. Download revalidation completeness", () => {
   it("download route does not serve stored packages (always builds fresh)", () => {
     const src = read("app/api/tenders/[id]/download/route.ts");
     // The download route should NOT query ExportPackage to serve a stored ZIP
@@ -406,7 +425,7 @@ describe("19. PARTIAL_EXTRACTION_AI_ANALYZED blocked on all generation/export ro
   });
 
   it("generate-missing-plan-files route blocks PARTIAL_EXTRACTION_AI_ANALYZED", () => {
-    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts");
+    const src = read("app/api/tenders/[id]/generate-missing-plan-files/route.ts") + read("lib/engine/missing-plan-file-generation.ts");
     assert.ok(src.includes("PARTIAL_EXTRACTION_AI_ANALYZED"), "generate-missing-plan-files must check PARTIAL_EXTRACTION_AI_ANALYZED");
   });
 

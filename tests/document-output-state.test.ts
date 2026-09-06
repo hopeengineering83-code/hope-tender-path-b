@@ -74,9 +74,11 @@ describe("document-output-state — DOCX content", () => {
     assert.equal(deriveDocumentOutputState(d), "DOCX_GENERATED");
   });
 
-  it("VALIDATED when DOCX content + validationStatus VALIDATED", () => {
+  it("READY_FOR_EXPORT when DOCX content + validationStatus VALIDATED (Gap C: VALIDATED is sufficient)", () => {
     const d = doc({ exactFileName: "Cover Letter.docx", fileContent: DOCX_HEADER_BASE64, validationStatus: "VALIDATED" });
-    assert.equal(deriveDocumentOutputState(d), "VALIDATED");
+    // Gap C: VALIDATED alone is now sufficient for READY_FOR_EXPORT —
+    // the canonical Document Validator is the machine-safe authority.
+    assert.equal(deriveDocumentOutputState(d), "READY_FOR_EXPORT");
   });
 
   it("READY_FOR_EXPORT when DOCX content + VALIDATED + READY_FOR_EXPORT review", () => {

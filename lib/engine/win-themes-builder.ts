@@ -21,6 +21,8 @@
  * Section G heading.
  */
 
+import { CLIENT_FACING_SECTION_G_HEADING, SECTION_G_HEADING_RX } from "./client-facing-section-titles";
+
 type ProjectLite = { name: string; clientName?: string | null; contractValue?: number | null; currency?: string | null };
 type ExpertLite = { fullName: string; title?: string | null };
 
@@ -58,7 +60,7 @@ function moneyShort(value?: number | null, currency?: string | null): string | n
  */
 export function hasWinThemesHeading(markdown: string): boolean {
   const re = /(^|\n)\s*#{1,4}\s*(?:section\s*[G:.\-\s]*)?\s*(?:win\s+themes?|themes?\s+(?:and|&)\s+discriminators?)/i;
-  return re.test(markdown);
+  return re.test(markdown) || SECTION_G_HEADING_RX.test(markdown);
 }
 
 /**
@@ -213,16 +215,24 @@ export function buildWinThemesSection(input: WinThemesBuilderInput): string | nu
     framingExpert,
   ].filter(Boolean).join(" + ");
 
+  // The earlier framing told the client that each row "rests on a
+  // discriminator the firm holds and competitors typically do not" and that
+  // the throughline was engineered "into one persuasive argument" running
+  // "from theme to evaluation score". That is the bid desk describing its own
+  // competitive strategy inside the document the evaluator reads. The
+  // substance — which capability, evidenced by what, answering which
+  // criterion — is unchanged; only the framing is now written for the reader
+  // it is handed to.
   const framing = framingFacts
-    ? `${input.companyName} positions for ${input.clientName}'s ${input.primarySector.toLowerCase()} requirement on the strength of ${framingFacts} and the firm's broader ${input.primarySector.toLowerCase()} portfolio. The themes below are not capability claims — each rests on a discriminator the firm holds and competitors typically do not, mapped to the evaluation criterion it scores against and the evidence anchor that proves the discriminator. The proposal carries the same project and expert names through the Cover Letter, Executive Summary, Section A team mapping, and Section B project portfolio so a single throughline ties theme, discriminator, evidence, and team continuity into one persuasive argument.`
-    : `${input.companyName}'s positioning for this ${input.primarySector.toLowerCase()} engagement rests on the discriminators below. Each theme is anchored in firm-specific evidence and mapped to a stated evaluation criterion. The proposal carries the same evidence through every section to maintain a single throughline from theme to evaluation score.`;
+    ? `${input.companyName} brings ${framingFacts} and the firm's broader ${input.primarySector.toLowerCase()} portfolio to ${input.clientName}'s ${input.primarySector.toLowerCase()} requirement. Each capability below is stated with the evidence that supports it and the evaluation criterion it addresses. The same project and expert names carry through the Cover Letter, Executive Summary, Section A team mapping and Section B project portfolio, so every claim can be traced to the same record wherever it appears.`
+    : `${input.companyName}'s response to this ${input.primarySector.toLowerCase()} engagement rests on the capabilities below. Each is anchored in a reviewed firm record and mapped to a stated evaluation criterion, and the same evidence carries through every section of this proposal.`;
 
   return [
-    "## SECTION G: WIN THEMES & DISCRIMINATORS",
+    `## ${CLIENT_FACING_SECTION_G_HEADING.toUpperCase()}`,
     "",
     framing,
     "",
-    "| Win Theme | Discriminator (what we have, others typically don't) | Linked Evaluation Criterion | Evidence Anchor |",
+    "| Capability | What This Means for the Client | Linked Evaluation Criterion | Supporting Evidence |",
     "|---|---|---|---|",
     ...rows,
   ].join("\n");

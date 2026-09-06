@@ -15,6 +15,8 @@
  */
 
 import type { ExpertRecord } from "./benchmark-tables";
+import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
+import { proseProfileOrEmpty } from "./vault-prose";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -32,11 +34,15 @@ function safeArr(value: unknown): string[] {
   return trimmed.split(/[,;|\n]/).map((s) => s.trim()).filter(Boolean);
 }
 
+// The bio text reaches the client verbatim, so it is cut the same way every
+// other evidence line is: at a word boundary, with an ellipsis marking the cut.
+// A raw .slice() shipped "Name of Firm Hope Urban Planning Architectural and
+// Engineering Consultan" in the Principal Qualifications bios of a real
+// submitted proposal — the very defect truncateAtWordBoundary was written for,
+// on a producer that never adopted it.
 function clean(text: string | null | undefined, max = 320): string {
-  return (text ?? "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
+  const collapsed = (text ?? "").replace(/\s+/g, " ").trim();
+  return truncateAtWordBoundary(collapsed, max);
 }
 
 export function buildPrincipalQualificationsSection(opts: {
@@ -55,7 +61,17 @@ export function buildPrincipalQualificationsSection(opts: {
     const sectors = safeArr(expert.sectors);
     const certifications = safeArr(expert.certifications);
     const years = expert.yearsExperience ? `${expert.yearsExperience} years experience` : null;
-    const profile = clean(expert.profile, 480);
+    // A stored profile that is the CV's letterhead rather than a biography is
+    // not printed. A delivered proposal opened this bio with "HOPE URBAN
+    // PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC ENG. AHMED KEBEDE
+    // TEKAW General Manager & Practicing Professional Engineer … Languages
+    // Amharic (Excellent), English…" — the firm's name twice, the person's name
+    // twice, and a cut mid-list. The table above already carries the same facts
+    // in a form an evaluator can score.
+    const profile = clean(
+      proseProfileOrEmpty(withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? ""))),
+      480,
+    );
 
     blocks.push(`### ${expert.fullName} — ${position}`);
 
@@ -68,13 +84,52 @@ export function buildPrincipalQualificationsSection(opts: {
     if (expert.email) tableRows.push(`| Contact | ${expert.email}${expert.phone ? `, ${expert.phone}` : ""} |`);
     blocks.push(tableRows.join("\n"));
 
-    if (profile) {
-      blocks.push(`**Profile.** ${profile}`);
-    } else {
-      blocks.push(`_Source-evidence action: complete the profile narrative for ${expert.fullName} in the company knowledge vault before final submission._`);
-    }
+    // When the vault holds no written profile — or holds the CV's letterhead
+    // rather than a biography — the bio is composed from the record's own
+    // structured fields instead. Run 34039741983 refused every stored profile
+    // as furniture, the internal note below it was stripped as internal, and
+    // the whole Detailed Bios sub-section disappeared from the delivered
+    // proposal. An evaluator scoring team depth needs this section, and every
+    // fact in the composed sentence comes from the same reviewed record.
+    blocks.push(`**Profile.** ${profile || composedProfile(expert, position, disciplines, sectors, certifications, years)}`);
     blocks.push("");
   }
 
   return blocks.join("\n\n");
+}
+
+/**
+ * A factual profile sentence built from the reviewed record's structured
+ * fields. It asserts nothing the record does not carry: position, recorded
+ * years, disciplines, sectors and licences, in that order, and stops when the
+ * record stops.
+ */
+function composedProfile(
+  expert: ExpertRecord,
+  position: string,
+  disciplines: string[],
+  sectors: string[],
+  certifications: string[],
+  years: string | null,
+): string {
+  const opening = years
+    ? `${expert.fullName} is proposed as ${position} and has ${years} recorded in the reviewed specialist record.`
+    : `${expert.fullName} is proposed as ${position} against the reviewed specialist record.`;
+  const sentences = [opening];
+  if (disciplines.length > 0) {
+    sentences.push(`The record covers ${listPhrase(disciplines)}.`);
+  }
+  if (sectors.length > 0) {
+    sentences.push(`Sector experience is recorded in ${listPhrase(sectors)}.`);
+  }
+  if (certifications.length > 0) {
+    sentences.push(`Licences and certifications on file: ${certifications.join("; ")}.`);
+  }
+  return sentences.join(" ");
+}
+
+function listPhrase(items: string[]): string {
+  const shown = items.slice(0, 6);
+  if (shown.length === 1) return shown[0];
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
 }

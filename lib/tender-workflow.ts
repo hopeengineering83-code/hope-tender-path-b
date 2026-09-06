@@ -19,6 +19,9 @@ export const TENDER_STATUSES = [
   "APPROVED",
   "EXPORTED",
   "CLOSED",
+  // Terminal side-branch set by the bid-decision route (not part of the
+  // linear DRAFT→...→CLOSED progression, so it has no NEXT_STATUS entry).
+  "NO_BID",
 ] as const;
 
 export type TenderStatusValue = (typeof TENDER_STATUSES)[number];
@@ -39,6 +42,7 @@ export const TENDER_STATUS_LABELS: Record<TenderStatusValue, string> = {
   APPROVED: "Approved",
   EXPORTED: "Exported",
   CLOSED: "Closed",
+  NO_BID: "No Bid",
 };
 
 export const NEXT_STATUS: Partial<Record<TenderStatusValue, TenderStatusValue>> = {

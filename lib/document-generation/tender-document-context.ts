@@ -10,6 +10,7 @@
 
 import type { Tender as PrismaTender } from "@prisma/client";
 import { classifyTender, type TenderType, type CompanyService } from "../engine/tender-classification";
+import { readFinancialProposalRequirement, statesDocumentObligation } from "../engine/source-driven-tender-text-parser";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -151,8 +152,17 @@ export function buildTenderDocumentContext(
     .map((r) => r.title);
 
   // Required documents
+  // A required-document requirement is one that STATES a document obligation.
+  // The keyword test alone silently dropped every instrument a tender names
+  // itself — "Power of Attorney", "Declaration of Independent Bid
+  // Determination" — because none of those words appear in them. It is kept as
+  // a cheap first signal; the obligation reader catches the rest.
   const requiredDocuments = requirements
-    .filter((r) => /document|annex|attachment|form/i.test(r.title + " " + r.description))
+    .filter(
+      (r) =>
+        /document|annex|attachment|form/i.test(r.title + " " + r.description)
+        || statesDocumentObligation(`${r.title}. ${r.description}`),
+    )
     .map((r) => r.title);
 
   const warnings: string[] = [];
@@ -190,26 +200,20 @@ export function buildTenderDocumentContext(
 }
 
 /**
- * Detect whether a financial proposal is required based on tender text.
+ * Is a financial submission required?
  *
- * Returns false when the tender explicitly states "financial proposal not
- * required", "technical proposal only", or similar. Returns true when the
- * tender uses two-envelope language (financial IS required, just separate).
- * Default is true (financial is required for RFP/RFQ unless stated otherwise).
+ * This used to be a second, independent policy: its own denial vocabulary and a
+ * `return true` at the bottom, so a source that said nothing about money
+ * produced a required Price Schedule. It disagreed with the canonical reader on
+ * real wording in both directions, and the two were consulted by different
+ * parts of the same pipeline.
  *
- * This function is exported so the existing generation pipeline
- * (lib/engine/proposal-intelligence.ts) can use it instead of maintaining
- * a parallel regex.
+ * There is one reader now. This delegates to it and keeps its boolean shape for
+ * existing callers: UNKNOWN is not an obligation, so only an established
+ * requirement returns true. Callers that must tell "the source said no" apart
+ * from "the source said nothing" read readFinancialProposalRequirement()
+ * directly rather than re-deriving it here.
  */
 export function detectFinancialProposalRequired(text: string): boolean {
-  const sample = text.slice(0, 100_000).toLowerCase();
-  // Explicit "not required" signals
-  if (/financial\s+proposal\s+not\s+required/i.test(sample)) return false;
-  if (/do\s+not\s+(?:generate|include|submit)\s+a?\s*financial\s+proposal/i.test(sample)) return false;
-  if (/technical\s+proposal\s+only/i.test(sample)) return false;
-  if (/no\s+financial\s+(?:proposal|offer|bid)/i.test(sample)) return false;
-  // Two-envelope → financial IS required (separately)
-  if (/two\s+envelope|separate\s+envelope/i.test(sample)) return true;
-  // Default: financial is required for RFP/RFQ
-  return true;
+  return readFinancialProposalRequirement(text) === true;
 }

@@ -151,7 +151,7 @@ export function assessExtractionQuality(text: string | null | undefined, fileNam
   }
   if (corruption.corrupted) {
     warnings.push(`Extraction corrupted / OCR required: ${corruption.signals.join("; ")}.`);
-    recommendations.push("Run OCR or upload a cleaner PDF before AI Analyze, Build Plan, or Generate Docs.");
+    recommendations.push("Upload a cleaner, text-based PDF. Extraction and analysis re-run automatically before Build Plan and document generation.");
   }
   if (/\.doc$/i.test(fileName ?? "")) {
     warnings.push("Legacy .doc file detected. Extraction may be incomplete compared with .docx.");

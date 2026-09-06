@@ -168,6 +168,6 @@ export async function POST(
     });
   } catch (error) {
     logger.error("[repair-extraction] Failed", { tenderId, fileId, detail: error });
-    return err("Re-extraction failed. Refresh to retry. If the problem persists, contact admin.", 500, "REPAIR_EXTRACTION_FAILED");
+    return err("Re-extraction failed. If the problem persists, contact admin.", 500, "REPAIR_EXTRACTION_FAILED");
   }
 }

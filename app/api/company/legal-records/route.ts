@@ -5,8 +5,27 @@ import { ensureCompanyForUser } from "../../../../lib/company-workspace";
 import { rateLimit, MUTATION_RATE_LIMIT, API_RATE_LIMIT } from "../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../lib/request-id";
 import { companyRecordRuntimeError } from "../../../../lib/company-record-route-error";
+import { logAction } from "../../../../lib/audit";
+import { manualSupportRecordDraftFields } from "../../../../lib/vault-review-inbox";
 
 export const dynamic = "force-dynamic";
+
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+function parseBoundedInt(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function parsePage(value: string | null): number {
+  return parseBoundedInt(value, 1);
+}
+
+function parseLimit(value: string | null): number {
+  return Math.min(parseBoundedInt(value, DEFAULT_PAGE_SIZE), MAX_PAGE_SIZE);
+}
 
 function str(value: unknown, max = 300): string {
   return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -23,13 +42,22 @@ export async function GET(req: Request) {
     if (!rl.allowed) return NextResponse.json({ error: "Too many requests", code: "RATE_LIMITED" }, { status: 429 });
 
     await prismaReady;
+    const url = new URL(req.url);
+    const page = parsePage(url.searchParams.get("page"));
+    const limit = parseLimit(url.searchParams.get("limit"));
     const company = await ensureCompanyForUser(prisma, actor.id);
-    const records = await prisma.legalRecord.findMany({
-      where: { companyId: company.id },
-      select: { id: true, recordType: true, title: true, authority: true, referenceNumber: true, status: true, issueDate: true, expiryDate: true, createdAt: true },
-      orderBy: { createdAt: "desc" },
-    });
-    return NextResponse.json({ ok: true, records });
+    const where = { companyId: company.id };
+    const [records, total] = await prisma.$transaction([
+      prisma.legalRecord.findMany({
+      where,
+      select: { id: true, recordType: true, title: true, authority: true, referenceNumber: true, status: true, issueDate: true, expiryDate: true, trustLevel: true, createdAt: true },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip: (page - 1) * limit,
+      take: limit,
+    }),
+      prisma.legalRecord.count({ where }),
+    ]);
+    return NextResponse.json({ ok: true, records, page, limit, total, hasMore: page * limit < total });
   } catch (error) {
     return companyRecordRuntimeError({
       route: "company legal-records GET",
@@ -86,6 +114,19 @@ export async function POST(req: Request) {
       expiryDate = parsed;
     }
 
+    // Optional sourceDocumentId — traceable to the uploaded CompanyDocument
+    // it was derived from, mirroring Expert/Project manual creation.
+    let sourceDocumentId: string | null = null;
+    if (typeof body.sourceDocumentId === "string" && body.sourceDocumentId.trim()) {
+      const docId = body.sourceDocumentId.trim();
+      const doc = await prisma.companyDocument.findFirst({ where: { id: docId, companyId: company.id }, select: { id: true } });
+      if (!doc) return NextResponse.json({ error: "sourceDocumentId does not reference a document in your Company Vault." }, { status: 400 });
+      sourceDocumentId = doc.id;
+    }
+
+    // Creation and evidence review are separate authority events. A manual
+    // entry remains an explicit draft until a reviewer approves its current,
+    // owned source bytes through the review route.
     const record = await prisma.legalRecord.create({
       data: {
         companyId: company.id,
@@ -96,7 +137,17 @@ export async function POST(req: Request) {
         status: str(body.status, 50) || "ACTIVE",
         issueDate,
         expiryDate,
+        ...manualSupportRecordDraftFields("LEGAL"),
+        sourceDocumentId,
       },
+    });
+    await logAction({
+      userId: actor.id,
+      action: "LEGAL_RECORD_CREATE",
+      entityType: "LegalRecord",
+      entityId: record.id,
+      description: `Legal record "${record.title}" created`,
+      metadata: { companyId: company.id },
     });
     return NextResponse.json({ ok: true, record }, { status: 201 });
   } catch (error) {

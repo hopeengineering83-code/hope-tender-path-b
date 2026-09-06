@@ -1,5 +1,11 @@
 import type { PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma";
+import {
+  isDurablyReviewed,
+  isDurablySourceVerified,
+  VAULT_REVIEW_CONSUMER_SELECT,
+} from "./vault-review-provenance";
+import { canUseVaultRecordSafely } from "./vault-runtime-authority";
 
 function hasUsefulText(text: string | null | undefined): boolean {
   return (text ?? "").replace(/\s+/g, " ").trim().length >= 80;
@@ -18,8 +24,14 @@ function maxKnown(values: Array<number | null>): number | null {
 }
 
 type ReadinessDoc = { extractedText: string | null; aiExtractionStatus?: string | null; aiExtractionError?: string | null };
-type ReadinessExpert = { trustLevel: string | null };
-type ReadinessProject = { trustLevel: string | null };
+type ReadinessRecord = {
+  trustLevel: string | null;
+  durableGenerationEligibility?: boolean;
+  durableHumanReview?: boolean;
+  durableSourceVerification?: boolean;
+};
+type ReadinessExpert = ReadinessRecord;
+type ReadinessProject = ReadinessRecord;
 
 export type IngestionReadinessSnapshot = {
   docs: ReadinessDoc[];
@@ -29,7 +41,9 @@ export type IngestionReadinessSnapshot = {
 
 export type IngestionReadinessOptions = {
   requireDocuments?: boolean;
+  /** Backward-compatible name: requires durable evidence eligible for all runtime tiers. */
   requireReviewedExperts?: boolean;
+  /** Backward-compatible name: requires durable evidence eligible for all runtime tiers. */
   requireReviewedProjects?: boolean;
 };
 
@@ -46,6 +60,10 @@ export type CompanyIngestionReadiness = {
     projects: number;
     reviewedExperts: number;
     reviewedProjects: number;
+    sourceVerifiedExperts: number;
+    sourceVerifiedProjects: number;
+    humanReviewedExperts: number;
+    humanReviewedProjects: number;
     legalRecords: number;
     financialRecords: number;
     complianceRecords: number;
@@ -56,12 +74,42 @@ export type CompanyIngestionReadiness = {
   };
 };
 
-export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnapshot, opts: IngestionReadinessOptions = {}): CompanyIngestionReadiness {
-  const requireReviewedExperts = opts.requireReviewedExperts !== false;
-  const requireReviewedProjects = opts.requireReviewedProjects !== false;
+function isGenerationEligibleRecord(record: ReadinessRecord): boolean {
+  if (typeof record.durableGenerationEligibility === "boolean") {
+    return record.durableGenerationEligibility;
+  }
+  return record.trustLevel === "REVIEWED" || record.trustLevel === "SOURCE_VERIFIED";
+}
 
-  const reviewedExperts = snapshot.experts.filter((e) => e.trustLevel === "REVIEWED").length;
-  const reviewedProjects = snapshot.projects.filter((p) => p.trustLevel === "REVIEWED").length;
+function isHumanReviewedRecord(record: ReadinessRecord): boolean {
+  return record.durableHumanReview ?? record.trustLevel === "REVIEWED";
+}
+
+function isSourceVerifiedRecord(record: ReadinessRecord): boolean {
+  return record.durableSourceVerification ?? record.trustLevel === "SOURCE_VERIFIED";
+}
+
+function hasRuntimeAuthorityShape(record: unknown): boolean {
+  return Boolean(
+    record &&
+      typeof record === "object" &&
+      Object.prototype.hasOwnProperty.call(record, "sourceDocumentId"),
+  );
+}
+
+export function assessCompanyIngestionReadiness(
+  snapshot: IngestionReadinessSnapshot,
+  opts: IngestionReadinessOptions = {},
+): CompanyIngestionReadiness {
+  const requireEligibleExperts = opts.requireReviewedExperts !== false;
+  const requireEligibleProjects = opts.requireReviewedProjects !== false;
+
+  const eligibleExperts = snapshot.experts.filter(isGenerationEligibleRecord).length;
+  const eligibleProjects = snapshot.projects.filter(isGenerationEligibleRecord).length;
+  const sourceVerifiedExperts = snapshot.experts.filter(isSourceVerifiedRecord).length;
+  const sourceVerifiedProjects = snapshot.projects.filter(isSourceVerifiedRecord).length;
+  const humanReviewedExperts = snapshot.experts.filter(isHumanReviewedRecord).length;
+  const humanReviewedProjects = snapshot.projects.filter(isHumanReviewedRecord).length;
   const usefulDocuments = snapshot.docs.filter((doc) => hasUsefulText(doc.extractedText)).length;
   const pendingDocuments = snapshot.docs.filter((doc) => doc.aiExtractionStatus === "PENDING" || doc.aiExtractionStatus === "EXTRACTING").length;
   const failedDocuments = snapshot.docs.filter((doc) => doc.aiExtractionStatus === "FAILED" || Boolean(doc.aiExtractionError)).length;
@@ -74,16 +122,21 @@ export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnap
   const blockers: string[] = [];
   const warnings: string[] = [];
 
-  if (snapshot.docs.length > 0 && usefulDocuments === 0 && reviewedExperts === 0 && reviewedProjects === 0) blockers.push("Company documents are uploaded but no usable extracted knowledge or reviewed expert/project records are available yet.");
-  if (pendingDocuments > 0 && usefulDocuments === 0 && reviewedExperts === 0 && reviewedProjects === 0) blockers.push("Company knowledge extraction is still pending. Re-import/review the company documents before generation.");
-  if (requireReviewedExperts && reviewedExperts === 0) blockers.push("No REVIEWED experts available.");
-  if (requireReviewedProjects && reviewedProjects === 0) blockers.push("No REVIEWED projects available.");
+  if (opts.requireDocuments && snapshot.docs.length === 0) blockers.push("No Company Vault source documents are available.");
+  if (snapshot.docs.length > 0 && usefulDocuments === 0 && eligibleExperts === 0 && eligibleProjects === 0) {
+    blockers.push("Company documents are uploaded but no usable extracted knowledge or durably source-backed expert/project records are available yet.");
+  }
+  if (pendingDocuments > 0 && usefulDocuments === 0 && eligibleExperts === 0 && eligibleProjects === 0) {
+    blockers.push("Company knowledge extraction is still pending. Reprocess the company documents before matching or generation.");
+  }
+  if (requireEligibleExperts && eligibleExperts === 0) blockers.push("No verified, source-backed experts are available.");
+  if (requireEligibleProjects && eligibleProjects === 0) blockers.push("No verified, source-backed projects are available.");
 
-  if (reviewedExperts === 0) warnings.push("No REVIEWED experts are available. Expert-required tenders will be blocked until at least one relevant expert is reviewed.");
-  if (reviewedProjects === 0) warnings.push("No REVIEWED projects are available. Project-experience tenders will be blocked until at least one relevant project is reviewed.");
-  if (failedDocuments > 0) warnings.push(`${failedDocuments} company document(s) have failed extraction status and should be re-imported or replaced.`);
-  if (missingExperts > 0) warnings.push(`Expert completeness gap: ${missingExperts} expected expert record(s) are not present in the knowledge vault.`);
-  if (missingProjects > 0) warnings.push(`Project completeness gap: ${missingProjects} expected project record(s) are not present in the knowledge vault.`);
+  if (eligibleExperts === 0) warnings.push("No verified expert evidence is available yet. Upload or reprocess source documents so eligible records can be promoted automatically.");
+  if (eligibleProjects === 0) warnings.push("No verified project evidence is available yet. Upload or reprocess source documents so eligible records can be promoted automatically.");
+  if (failedDocuments > 0) warnings.push(`${failedDocuments} company document(s) have failed extraction status and should be reprocessed or replaced.`);
+  if (missingExperts > 0) warnings.push(`Expert completeness gap: ${missingExperts} expected expert record(s) are not present in the Company Vault.`);
+  if (missingProjects > 0) warnings.push(`Project completeness gap: ${missingProjects} expected project record(s) are not present in the Company Vault.`);
 
   return {
     ingestionReady: blockers.length === 0,
@@ -96,8 +149,12 @@ export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnap
       failedDocuments,
       experts: snapshot.experts.length,
       projects: snapshot.projects.length,
-      reviewedExperts,
-      reviewedProjects,
+      reviewedExperts: eligibleExperts,
+      reviewedProjects: eligibleProjects,
+      sourceVerifiedExperts,
+      sourceVerifiedProjects,
+      humanReviewedExperts,
+      humanReviewedProjects,
       legalRecords: 0,
       financialRecords: 0,
       complianceRecords: 0,
@@ -109,8 +166,12 @@ export function assessCompanyIngestionReadiness(snapshot: IngestionReadinessSnap
   };
 }
 
-export async function getCompanyIngestionReadiness(companyId: string, opts: IngestionReadinessOptions = {}, client: PrismaClient = prisma): Promise<CompanyIngestionReadiness> {
-  const [company, docs, experts, projects, legalRecords, financialRecords, complianceRecords] = await Promise.all([
+export async function getCompanyIngestionReadiness(
+  companyId: string,
+  opts: IngestionReadinessOptions = {},
+  client: PrismaClient = prisma,
+): Promise<CompanyIngestionReadiness> {
+  const [company, docs, expertRecords, projectRecords, legalRecords, financialRecords, complianceRecords] = await Promise.all([
     client.company.findUnique({
       where: { id: companyId },
       select: {
@@ -128,44 +189,53 @@ export async function getCompanyIngestionReadiness(companyId: string, opts: Inge
       where: { companyId },
       select: { extractedText: true, aiExtractionStatus: true, aiExtractionError: true },
     }),
-    client.expert.findMany({ where: { companyId, deletedAt: null }, select: { trustLevel: true } }),
-    client.project.findMany({ where: { companyId, deletedAt: null }, select: { trustLevel: true } }),
+    client.expert.findMany({ where: { companyId, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.EXPERT }),
+    client.project.findMany({ where: { companyId, deletedAt: null }, select: VAULT_REVIEW_CONSUMER_SELECT.PROJECT }),
     client.legalRecord.count({ where: { companyId } }),
     client.financialRecord.count({ where: { companyId } }),
     client.companyComplianceRecord.count({ where: { companyId } }),
   ]);
 
-  const hasUsefulTextFn = (text: string | null | undefined): boolean => hasUsefulText(text);
+  const experts: ReadinessExpert[] = expertRecords.map((record) => ({
+    trustLevel: record.trustLevel,
+    durableGenerationEligibility: hasRuntimeAuthorityShape(record) ? canUseVaultRecordSafely(record, "GENERATION") : undefined,
+    durableHumanReview: hasRuntimeAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
+    durableSourceVerification: hasRuntimeAuthorityShape(record) ? isDurablySourceVerified(record) : undefined,
+  }));
+  const projects: ReadinessProject[] = projectRecords.map((record) => ({
+    trustLevel: record.trustLevel,
+    durableGenerationEligibility: hasRuntimeAuthorityShape(record) ? canUseVaultRecordSafely(record, "GENERATION") : undefined,
+    durableHumanReview: hasRuntimeAuthorityShape(record) ? isDurablyReviewed(record) : undefined,
+    durableSourceVerification: hasRuntimeAuthorityShape(record) ? isDurablySourceVerified(record) : undefined,
+  }));
+
   const hasCompanyProfile = Boolean(
     company && (
-      hasUsefulTextFn(company.profileSummary)
-      || hasUsefulTextFn(company.description)
-      || (company.legalName ?? "").trim().length > 0
-      || (company.licenseGrade ?? "").trim().length > 0
-      || (company.serviceLines ?? "[]") !== "[]"
-      || (company.sectors ?? "[]") !== "[]"
-      || company.setupCompletedAt
+      hasUsefulText(company.profileSummary) ||
+      hasUsefulText(company.description) ||
+      (company.legalName ?? "").trim().length > 0 ||
+      (company.licenseGrade ?? "").trim().length > 0 ||
+      (company.serviceLines ?? "[]") !== "[]" ||
+      (company.sectors ?? "[]") !== "[]" ||
+      company.setupCompletedAt
     ),
   );
   const hasAnyKnowledgeSource = Boolean(
-    hasCompanyProfile
-    || docs.filter((doc) => hasUsefulTextFn(doc.extractedText)).length > 0
-    || experts.filter((e) => e.trustLevel === "REVIEWED").length > 0
-    || projects.filter((p) => p.trustLevel === "REVIEWED").length > 0
-    || legalRecords > 0
-    || financialRecords > 0
-    || complianceRecords > 0
+    hasCompanyProfile ||
+    docs.some((doc) => hasUsefulText(doc.extractedText)) ||
+    experts.some(isGenerationEligibleRecord) ||
+    projects.some(isGenerationEligibleRecord) ||
+    legalRecords > 0 ||
+    financialRecords > 0 ||
+    complianceRecords > 0
   );
 
   const result = assessCompanyIngestionReadiness({ docs, experts, projects }, opts);
-
-  // Augment blockers from the full DB query that snapshot-based assess cannot see
   const extraBlockers: string[] = [];
   if (!company) extraBlockers.push("Company profile has not been created.");
-  if (!hasAnyKnowledgeSource) extraBlockers.push("No usable company knowledge source exists. Upload/review the company profile, CVs, project references, legal records, or financial records before generation.");
+  if (!hasAnyKnowledgeSource) extraBlockers.push("No usable Company Vault source exists. Upload the company profile, CVs, project references, legal records, or financial records before matching or generation.");
 
   const mergedBlockers = [...extraBlockers, ...result.blockers];
-
   return {
     ...result,
     ingestionReady: mergedBlockers.length === 0,

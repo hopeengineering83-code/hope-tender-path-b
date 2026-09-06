@@ -47,8 +47,22 @@ describe("AI persistence transaction regression", () => {
 
   it("finalizeJob() catches STALE_JOB_SUPERSEDED and returns SUPERSEDED status", () => {
     const src = read("lib/ai-jobs/analysis-job-service.ts");
-    assert.ok(src.includes("STALE_JOB_SUPERSeded"), "must detect stale-job supersession");
-    assert.ok(src.includes('status: "SUPERSEDED"'), "must return SUPERSEDED for stale jobs");
+    // The sentinel is now a shared exported constant rather than an inline
+    // (previously misspelled) string literal, so assert on the identifier.
+    assert.ok(
+      src.includes("STALE_JOB_SUPERSEDED_SENTINEL"),
+      "must detect stale-job supersession",
+    );
+    assert.ok(
+      src.includes("ANALYSIS_SUPERSEDED_STATUS"),
+      "must return SUPERSEDED for stale jobs",
+    );
+    // Stronger than the original literal check: the supersession branches must
+    // not write a success status alongside a non-promoted outcome.
+    assert.ok(
+      !/status:\s*failed\.length\s*>\s*0\s*\?\s*"PARTIAL_SUCCESS"\s*:\s*"SUCCEEDED",[\s\S]{0,400}?[Ss]uperseded/.test(src),
+      "a superseded job must never be persisted with a success status",
+    );
   });
 
   it("finalizeJob() logs structured fields: correlationId, jobId, tenderId", () => {

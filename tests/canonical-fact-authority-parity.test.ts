@@ -354,6 +354,26 @@ describe("fix area 8 — syncEffectiveFactsToLedger", () => {
     assert.ok(src.includes("SOURCE_GROUNDED_CONFIRMED"), "writes SOURCE_GROUNDED_CONFIRMED when evidence exists");
   });
 
+  it("never calls page + quote evidence grounded without an active source file id", () => {
+    const src = read("lib/engine/tender-facts-ledger-service.ts");
+    assert.match(src, /fact\.sourceFileId[\s\S]*fact\.sourcePage[\s\S]*fact\.sourceQuote/);
+    assert.match(src, /existingState === AUTHORITY_STATE\.SOURCE_GROUNDED_CONFIRMED && !hasEvidence/);
+  });
+
+  it("syncs promoted canonical facts through one ownership-checked, locked ledger path", () => {
+    const service = read("lib/engine/tender-facts-ledger-service.ts");
+    const background = read("lib/ai-jobs/analysis-job-service.ts");
+    const route = read("app/api/tenders/[id]/ai-analyze/route.ts");
+    const effective = read("lib/engine/effective-tender-facts.ts");
+    assert.match(service, /export async function syncPersistedTenderFactsToLedger/);
+    assert.match(service, /where: \{ id: tenderId, userId \}/);
+    assert.match(service, /pg_advisory_xact_lock/);
+    assert.match(service, /locateQuoteProvenPage/);
+    assert.match(background, /syncPersistedTenderFactsToLedger/);
+    assert.match(route, /syncPersistedTenderFactsToLedger/);
+    assert.match(effective, /ledgerKeys: \["projectTitle", "title"\]/);
+  });
+
   it("sync function is idempotent (upsert by tenderId + semanticKey)", () => {
     const src = read("lib/engine/tender-facts-ledger-service.ts");
     assert.ok(src.includes("tenderId_semanticKey"), "uses upsert by tenderId + semanticKey");

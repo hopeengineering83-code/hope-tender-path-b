@@ -3,11 +3,13 @@ import { Document, Packer, Paragraph, TextRun } from "docx";
 import { forbiddenResponse, requireRole, unauthorizedResponse } from "../../../../../lib/auth";
 import { logAction } from "../../../../../lib/audit";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
-import { deriveDocumentOutputState, normalizeStatus } from "../../../../../lib/engine/document-output-state";
+import { normalizeStatus } from "../../../../../lib/engine/document-output-state";
 import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText } from "../../../../../lib/engine/export-readiness";
 import { generatedDocumentHasContent } from "../../../../../lib/generated-document-content";
+import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { MUTATION_RATE_LIMIT, rateLimit } from "../../../../../lib/rate-limit";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 
 // ── DOCX XML hygiene cleaner ──────────────────────────────────────────────────
 // Strips AI traces, placeholders and pricing leakage directly from <w:t> text
@@ -79,6 +81,7 @@ type RepairDoc = {
   generationStatus: string;
   validationStatus: string;
   reviewStatus: string;
+  reviewNotes?: string | null;
   fileContent: string | null;
   storagePath?: string | null;
 };
@@ -105,6 +108,19 @@ function safeTypeFor(name: string, fallback?: string | null): string {
   if (/expert|cv|personnel|staff/.test(label)) return "EXPERT_CV_PACKAGE";
   if (/project|experience|reference|portfolio/.test(label)) return "PROJECT_REFERENCE_PACKAGE";
   if (/legal|registration|licen[cs]e|tax|certificate/.test(label)) return "LEGAL_EVIDENCE";
+  // Checked before the broader /financial/ evidence match below: a financial
+  // or commercial PROPOSAL (the firm's own priced offer) is company-authored
+  // content, not a third-party original like a bank statement or audited
+  // financial statement. This route duplicates lib/engine/export-gap-repair.ts's
+  // safeTypeFor (a pre-existing drift between the HTTP route and the
+  // auto-finalize background worker's copy of the same repair logic) and had
+  // the identical bug: driving the real pipeline end-to-end showed this exact
+  // route resetting an already-correct FINANCIAL_PROPOSAL type back to
+  // FINANCIAL_EVIDENCE on every repair call, which is why fixing the lib copy
+  // alone did not resolve the live 60/100 export block. See the same fix and
+  // rationale there, and in missing-plan-file-generation.ts's documentTypeFor()
+  // and document-type-normalizer.ts's FINANCIAL_PROPOSAL_PATTERNS.
+  if (/financial[\s._-]+proposal|commercial[\s._-]+proposal|price[\s._-]+schedule|rate[\s._-]+card|bill[\s._-]+of[\s._-]+quantities?|\bboq\b/.test(label)) return "FINANCIAL_PROPOSAL";
   if (/financial|audited|bank|turnover|capacity/.test(label)) return "FINANCIAL_EVIDENCE";
   if (/submission|deadline|delivery|method|rules/.test(label)) return "SUBMISSION_RULES";
   return fallback || "TENDER_REQUIRED_FILE";
@@ -129,9 +145,11 @@ function needsSafeRepair(doc: RepairDoc): boolean {
   if (isManualOnly(doc)) return false;
   if (!generatedDocumentHasContent(doc)) return true;
   if (normalizeStatus(doc.generationStatus) !== "GENERATED") return true;
-  if (normalizeStatus(doc.validationStatus) !== "VALIDATED" && normalizeStatus(doc.validationStatus) !== "PASSED") return true;
-  if (normalizeStatus(doc.reviewStatus) !== "READY_FOR_EXPORT") return true;
-  return deriveDocumentOutputState(doc) !== "READY_FOR_EXPORT";
+  // Gap 1: machine repair writes a `machine:safe-export-repair` marker in
+  // reviewNotes. A document carrying this marker has already been content-
+  // repaired. Validation status is the Document Validator's authority.
+  if (typeof doc.reviewNotes === "string" && doc.reviewNotes.startsWith("machine:safe-export-repair")) return false;
+  return true;
 }
 
 async function makeSafeDocx(title: string, tenderTitle: string): Promise<string> {
@@ -169,7 +187,7 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
   const docs = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     orderBy: [{ exactOrder: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, fileContent: true, storagePath: true },
+    select: { id: true, name: true, exactFileName: true, exactOrder: true, documentType: true, format: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewNotes: true, fileContent: true, storagePath: true },
   });
 
   const repaired: string[] = [];
@@ -214,7 +232,23 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         }
       }
 
-      const priorStatus = doc.reviewStatus;
+      // Bind the integrity record to the EXACT bytes about to be stored.
+      //
+      // This route repairs bytes and left contentSha256/contentByteLength
+      // describing the PRE-repair content, so every repaired document failed
+      // the release gate with FILE_BYTES_NOT_VERIFIED:
+      // PERSISTED_BYTE_INTEGRITY_MISMATCH — a technical proposal came out of
+      // repair 13 bytes shorter than its recorded length while still flagged
+      // VERIFIED, and the Final ZIP was refused for a document the repair had
+      // just declared fixed. lib/engine/export-gap-repair.ts performs the same
+      // repair and has always re-derived integrity here; this copy of the
+      // logic did not.
+      const repairedIntegrity = verifiedIntegrityDataFromBase64({
+        fileContent: content,
+        filename: name,
+        claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+
       await tx.generatedDocument.update({
         where: { id: doc.id },
         data: {
@@ -222,19 +256,25 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
           format: "DOCX",
           exactFileName: name,
           fileContent: content,
+          ...repairedIntegrity,
           generationStatus: "GENERATED",
-          validationStatus: "VALIDATED",
-          reviewStatus: "READY_FOR_EXPORT",
-          reviewedBy: actor.id,
-          reviewedAt: new Date(),
-          reviewNotes: "Safe export repair completed. Official-original and not-exportable files are excluded from repair.",
-          contentSummary: `Safe export repair completed for ${name}.`,
+          // Any byte mutation invalidates the previous validation result.
+          // Returning the artifact to PENDING does not approve it — it sends
+          // the new exact bytes back through the canonical validator, which is
+          // what the library copy of this repair has always done. Without it a
+          // rewritten document kept a PASSED verdict earned by bytes that no
+          // longer exist.
+          validationStatus: "PENDING",
+          // Gap 1: automation must never directly mark VALIDATED — that is
+          // the Document Validator's authority (Gap 2). Only machine-safe
+          // content repair runs here. Automation never writes reviewedBy,
+          // reviewedAt, or a human READY_FOR_EXPORT reviewStatus, and never
+          // creates a DocumentReview record.
+          reviewNotes: "machine:safe-export-repair — DOCX hygiene cleaned (AI traces, placeholders, pricing leakage). Awaiting canonical Document Validator.",
+          contentSummary: `Machine export repair completed for ${name}.`,
           updatedAt: new Date(),
         },
       });
-      if (priorStatus !== "READY_FOR_EXPORT") {
-        await tx.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Safe export repair completed; manual-original rows were excluded.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
-      }
       repaired.push(name);
     }
   });
@@ -258,6 +298,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     metadata: { tenderId, repairedCount: repaired.length, skippedCount: skipped.length, manualRequiredCount: manualRequired.length, blockedByHygieneCount: blockedByHygiene.length, letterheadAppliedCount, finalExportReady: readiness.ok, remainingDocumentBlockers: readiness.failures.length, remainingTenderLevelBlockers: readiness.tenderLevelBlockers?.length ?? 0 },
   });
 
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tenderId);
   return NextResponse.json({
     success: true,
     repaired: repaired.length,
@@ -273,5 +315,6 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
     },
     files: { repaired, skipped, manualRequired, blockedByHygiene: blockedByHygiene.map((b) => b.name) },
     hygieneBlockers: blockedByHygiene,
+    canonicalReadiness,
   });
 }

@@ -18,6 +18,7 @@ import {
   validatePdfBytes,
 } from "../lib/engine/workflow/pdf-finalizer";
 import { assembleFinalSubmissionZip } from "../lib/engine/final-zip-assembly";
+import { generatedDocumentVisibleText } from "../lib/engine/generated-document-text";
 
 async function makeDocxBase64(bodyText: string): Promise<string> {
   const JSZip = (await import("jszip")).default;
@@ -106,11 +107,18 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
         assert.equal(result.bytes.subarray(0, 4).toString("latin1"), "%PDF", "bytes must start with %PDF");
         assert.ok(result.extractedCharCount > 100, "must report real extracted text length");
         assert.equal(result.sourceDocumentId, "doc-1");
+        const visibleText = await generatedDocumentVisibleText({
+          fileContent: result.bytes.toString("base64"),
+          exactFileName: result.fileName,
+          contentMimeType: "application/pdf",
+        });
+        assert.match(visibleText ?? "", /water and sanitation infrastructure/i,
+          "the finalized PDF itself must be reopened and expose its visible text");
       }
     });
   });
 
-  describe("source eligibility — validation/approval/current-revision are enforced", () => {
+  describe("source eligibility — validation/current-revision are enforced (Gap 5: VALIDATED is sufficient)", () => {
     it("rejects a superseded source", async () => {
       const result = await finalizeRequiredPdf({
         requiredFileName: "Technical Proposal.pdf",
@@ -131,14 +139,28 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
       if (!result.ok) assert.equal(result.code, "PDF_SOURCE_NOT_VALIDATED");
     });
 
-    it("rejects a validated-but-unapproved source", async () => {
+    it("accepts a validated source without human reviewStatus (Gap 5: VALIDATED is sufficient for automatic PDF path)", async () => {
       const result = await finalizeRequiredPdf({
         requiredFileName: "Technical Proposal.pdf",
         tender: TENDER,
         sourceDocument: sourceDoc({ reviewStatus: "PENDING", fileContent: await makeDocxBase64(GOOD_TEXT) }),
       });
+      // Per Gap 5, the automatic chain may finalize PDFs from VALIDATED sources
+      // without a separate human reviewStatus — the canonical validator is the
+      // machine-safe authority. The human reviewStatus remains required only
+      // where legally mandatory (Gap 6).
+      assert.equal(result.ok, true);
+    });
+
+    it("rejects an unvalidated AND unapproved source", async () => {
+      const result = await finalizeRequiredPdf({
+        requiredFileName: "Technical Proposal.pdf",
+        tender: TENDER,
+        sourceDocument: sourceDoc({ validationStatus: "PENDING", reviewStatus: "PENDING", fileContent: await makeDocxBase64(GOOD_TEXT) }),
+      });
       assert.equal(result.ok, false);
-      if (!result.ok) assert.equal(result.code, "PDF_SOURCE_NOT_APPROVED");
+      // Validation is checked first, so an unvalidated source gets NOT_VALIDATED.
+      if (!result.ok) assert.equal(result.code, "PDF_SOURCE_NOT_VALIDATED");
     });
 
     it("rejects a PLANNED source", async () => {
@@ -262,7 +284,14 @@ describe("pdf-finalizer — fail-closed required-PDF finalization", () => {
     it("assembleFinalSubmissionZip lists the exact PDF filename and the manifest matches the archive", async () => {
       const pdfBytes = Buffer.from("%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF");
       const result = await assembleFinalSubmissionZip(
-        [{ name: "Technical Proposal.pdf", generatedDocId: "d1" } as never],
+        [{
+          name: "Technical Proposal.pdf",
+          source: "GENERATED_DOC",
+          generatedDocId: "d1",
+          order: 1,
+          envelope: "TECHNICAL",
+          format: "PDF",
+        }],
         [{ generatedDocId: "d1", bytes: pdfBytes }],
       );
       assert.deepEqual(result.fileList, ["Technical Proposal.pdf"]);

@@ -162,7 +162,7 @@ function buildNonNarrativeReport(
       requirementCoverageRatio: 1,
       evidenceReferenceCount: 0,
       issues,
-      notes: [`Non-narrative document (category: ${category}). Requires official original attachment — narrative quality gate does not apply.`],
+      notes: [`Non-narrative document (category: ${category}). Tender-issued form — narrative quality gate does not apply.`],
     };
   }
 
@@ -386,7 +386,15 @@ const INTERNAL_TRACEABILITY_PATTERNS: RegExp[] = [
   /\bmatch[-_\s]?score\b/i,
   /\bwin\s+probability\b/i,
   /\bevaluator[-_\s]?score\b/i,
-  /\b(?:internal\s+(?:use|note|review)|reviewer\s+note)\b/i,
+  // Genuine internal-annotation markers only. This was
+  // /\b(?:internal\s+(?:use|note|review)|reviewer\s+note)\b/i, whose bare
+  // "internal review" alternative fired on ordinary QA-process prose — "quality
+  // assurance is applied through independent internal review before any
+  // deliverable is issued" is a description of how the firm works, not a
+  // working note leaking into a submission. It failed a real technical proposal
+  // at HIGH severity, which is a refusal the owner cannot act on because there
+  // is nothing wrong with the sentence.
+  /\b(?:internal\s+use(?:\s+only)?|internal\s+notes?|for\s+internal\s+review|internal\s+review\s+only|reviewer\s+notes?)\b/i,
   /\btraceability\s+map\b/i,
   /\baudit\s+metadata\b/i,
 ];
@@ -397,6 +405,16 @@ const UNSUPPORTED_CLAIM_PATTERNS: RegExp[] = [
   /\bawarded\s+(?:more\s+than|over)\s+\d+\s+contracts?\b/i,
   /\branked\s+(?:first|top|#1)\b/i,
 ];
+
+const UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS: RegExp[] = [
+  /\balready\s+delivered\s+this\s+assignment\b/i,
+  /\bsame\s+project\s+team\b.{0,100}\b(?:available|proposed|zero\s+learning\s+curve)\b/i,
+  /\bdirectly\s+comparable\s+assignment\b/i,
+  /\beach\s+proposed\s+lead\b.{0,120}\bcomparable\s+role\b/i,
+];
+const PHANTOM_ATTACHMENT_CLAIM = /\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.{0,160}\b(?:attached|provided)\b.{0,80}\b(?:appendix|appendices|annex|annexes)\b/i;
+const TRUNCATED_SUBMISSION_METADATA = /^(?:[-*]\s*)?Submission\s+(?:Address|Portal)[^:\n]*:\s*.*\b[a-z]{1,2}\s*$/im;
+const MALFORMED_SUBMISSION_LINE = /^(?:[-*]\s*)?(?:Submission\s+)?Email(?:\(s\))?\s*:[^\n]*(?:[;,]\s*[a-z0-9._%+\-]{1,20}\.?)\s*$|\bSubmission\b[^\n]{0,30}\s;\s[a-z]/im;
 
 const OFFICIAL_ORIGINAL_LABEL_PATTERNS: RegExp[] = [
   /\bbid\s+form\b/i,
@@ -438,17 +456,20 @@ function countSections(text: string): number {
   return count;
 }
 
-function detectDuplicatedSections(text: string): boolean {
+function duplicatedSectionHeadings(text: string): string[] {
   // A document with the same heading repeated ≥3 times has likely been
   // regenerated without dedupe; very likely poor quality.
   const headings = text
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => /^#{1,6}\s+\S/.test(line) || /^(?:[0-9]+\.|[A-Z][A-Z0-9 \-,'/&]{3,})$/.test(line));
+    .filter((line) => /^#{1,6}\s+\S/.test(line) || /^(?:[0-9]+\.)\s+\S/.test(line) || (/^[A-Z][A-Z0-9 \-,'/&]{3,}$/.test(line) && line.split(/\s+/).length >= 2));
   const counts = new Map<string, number>();
   for (const h of headings) counts.set(h, (counts.get(h) ?? 0) + 1);
-  for (const c of counts.values()) if (c >= 3) return true;
-  return false;
+  return [...counts.entries()].filter(([, count]) => count >= 3).map(([heading]) => heading);
+}
+
+function detectDuplicatedSections(text: string): boolean {
+  return duplicatedSectionHeadings(text).length > 0;
 }
 
 function findRequirementCoverage(
@@ -594,10 +615,20 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
   if (text && UNSUPPORTED_CLAIM_PATTERNS.some((rx) => rx.test(text))) {
     issues.push({ code: "UNSUPPORTED_CLAIM_RISK", severity: "MEDIUM", message: "Document may contain unsupported numeric claims (e.g. 'over X projects delivered'). Verify against reviewed evidence." });
   }
+  if (text && UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS.some((rx) => rx.test(text))) {
+    issues.push({ code: "UNSUPPORTED_CLAIM_RISK", severity: "HIGH", message: "Document makes a categorical assignment-equivalence or personnel-continuity claim that requires explicit relationship evidence." });
+  }
+  if (text && PHANTOM_ATTACHMENT_CLAIM.test(text)) {
+    issues.push({ code: "UNSUPPORTED_CLAIM_RISK", severity: "HIGH", message: "Document claims supporting material is attached in an appendix or annex without package-level proof." });
+  }
+  if (text && (TRUNCATED_SUBMISSION_METADATA.test(text) || MALFORMED_SUBMISSION_LINE.test(text))) {
+    issues.push({ code: "PLACEHOLDER", severity: "HIGH", message: "Document contains malformed or visibly truncated submission metadata." });
+  }
 
   // ── Duplicated sections. ────────────────────────────────────────────────
-  if (text && detectDuplicatedSections(text)) {
-    issues.push({ code: "DUPLICATED_SECTIONS", severity: "MEDIUM", message: "Same heading appears ≥3 times — likely regenerated without dedupe." });
+  const repeatedHeadings = text ? duplicatedSectionHeadings(text) : [];
+  if (repeatedHeadings.length > 0) {
+    issues.push({ code: "DUPLICATED_SECTIONS", severity: "MEDIUM", message: `Same heading appears ≥3 times: ${repeatedHeadings.slice(0, 5).join("; ")}.` });
   }
 
   // ── Requirement coverage. ───────────────────────────────────────────────
@@ -623,7 +654,27 @@ export function assessGeneratedDocumentQuality(input: DocumentQualityInput): Doc
 
   // ── Title / cover signal. ───────────────────────────────────────────────
   if (text && wordCount >= 200) {
-    const looksTitleHeavy = /^(?:title|cover|subject|date)\b/im.test(text.slice(0, 600));
+    // The window must clear a letterhead.
+    //
+    // This read text.slice(0, 600), which assumed the title is the first thing
+    // on the page. It is not: applyActiveUploadedLetterheadToTenderDocuments
+    // is a normal automatic stage, and a real Company Vault letterhead —
+    // legal name, address, PO box, phone, email, trade licence, TIN, VAT,
+    // registration lines — runs past 600 characters on its own. Measured on a
+    // realistic letterhead the title "Technical Proposal" began at character
+    // 614, so a document with a perfectly good cover page was reported as
+    // having none.
+    //
+    // That was the MISSING_TITLE_OR_COVER on a real owner run whose cover page
+    // WAS being injected. The fix is to look far enough to see it — roughly
+    // the first page of extracted text — not to inject a second cover.
+    const COVER_SCAN_CHARS = 2_500;
+    const head = text.slice(0, COVER_SCAN_CHARS);
+    const looksTitleHeavy =
+      /^(?:title|cover|subject|date|technical\s+proposal|expression\s+of\s+interest|company\s+profile)\b/im.test(head)
+      // A cover page addresses someone and names what it is. Both are title
+      // signals a letterhead does not produce by itself.
+      || /^(?:submitted\s+(?:to|by)|attention|re:|proposal\s+for|in\s+response\s+to)\b/im.test(head);
     if (!looksTitleHeavy && /technical\s+proposal|methodology|cover\s+letter/i.test(label)) {
       issues.push({ code: "MISSING_TITLE_OR_COVER", severity: "LOW", message: "Document does not begin with a clear title / subject line." });
     }
@@ -686,6 +737,7 @@ export const __testing__ = {
   GENERIC_FILLER_PATTERNS,
   INTERNAL_TRACEABILITY_PATTERNS,
   UNSUPPORTED_CLAIM_PATTERNS,
+  UNPROVEN_RELATIONSHIP_CLAIM_PATTERNS,
   OFFICIAL_ORIGINAL_LABEL_PATTERNS,
   MIN_WORD_COUNTS,
   REQUIRED_SECTIONS_BY_KIND,

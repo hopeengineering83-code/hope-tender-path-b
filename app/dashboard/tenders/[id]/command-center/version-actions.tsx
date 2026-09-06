@@ -6,6 +6,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowRightIcon, CrossIcon } from "../../../../../components/icons";
 
 type VersionMeta = {
   id: string;
@@ -89,7 +90,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
   }
 
   if (versions.length === 0) {
-    return <p className="text-sm text-slate-400 py-2">No proposal versions saved yet. Run the engine to create the first version.</p>;
+    return <p className="text-sm text-slate-400 py-2">No proposal versions saved yet. Versions appear automatically when the canonical workflow reaches generation.</p>;
   }
 
   return (
@@ -97,7 +98,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
       {error && (
         <div className="mb-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
           {error}
-          <button onClick={() => setError(null)} aria-label="Dismiss error" className="ml-2 text-red-400 hover:text-red-600">✕</button>
+          <button onClick={() => setError(null)} aria-label="Dismiss error" className="ml-2 text-red-400 hover:text-red-600"><CrossIcon /></button>
         </div>
       )}
 
@@ -166,7 +167,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
                     ) : (
                       <button
                         onClick={() => setConfirmRestoreId(v.id)}
-                        className="rounded border border-amber-200 px-2 py-0.5 text-xs text-amber-700 hover:bg-amber-50"
+                        className="rounded border border-amber-200 px-2 py-0.5 text-xs text-amber-800 hover:bg-amber-50"
                       >
                         Restore
                       </button>
@@ -202,7 +203,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
           >
             {loadingDiff ? "Loading…" : "Show Diff"}
           </button>
-          <button onClick={() => setDiffBaseId(null)} aria-label="Close diff view" className="text-indigo-400 hover:text-indigo-600">✕</button>
+          <button onClick={() => setDiffBaseId(null)} aria-label="Close diff view" className="text-indigo-400 hover:text-indigo-600"><CrossIcon /></button>
         </div>
       )}
 
@@ -248,7 +249,7 @@ export function VersionActionsTable({ versions, tenderId }: { versions: VersionM
             <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 shrink-0">
               <div>
                 <h3 className="text-base font-semibold text-slate-900">
-                  v{diffResult.baseVersion} → v{diffResult.compareVersion} — What changed
+                  v{diffResult.baseVersion} <ArrowRightIcon /> v{diffResult.compareVersion} — What changed
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">
                   <span className="text-emerald-600 font-medium">+{diffResult.added} added</span>

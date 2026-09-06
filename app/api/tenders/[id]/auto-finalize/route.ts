@@ -8,13 +8,14 @@ import { checkFullExportReadiness, documentHygieneIssues, extractDocxVisibleText
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
 import { generateWithFallback } from "../../../../../lib/ai";
 import { applyActiveUploadedLetterheadToTenderDocuments } from "../../../../../lib/engine/apply-active-letterhead";
+import { applyActiveSignatureAndStampToTenderDocuments } from "../../../../../lib/engine/apply-signature-stamp";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "../../../../../lib/engine/build-plan";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
 import { isExtractionAcceptableForGeneration, isExtractionAcceptableForExport } from "../../../../../lib/engine/extraction-quality-gate";
 import { rateLimit, MUTATION_RATE_LIMIT } from "../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { logAction } from "../../../../../lib/audit";
-import { buildSevenPassGateInput, applySevenPassGateToDocumentState, summarizeSevenPassForReviewNotes, evaluateSevenPassForDocument } from "../../../../../lib/engine/seven-pass-generation-wiring";
+import { summarizeSevenPassForReviewNotes, evaluateSevenPassForDocument } from "../../../../../lib/engine/seven-pass-generation-wiring";
 import { assessGeneratedDocumentQuality } from "../../../../../lib/engine/document-quality-gate";
 import { detectAnalysisSourceWithApproval } from "../../../../../lib/engine/analysis-source";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
@@ -23,6 +24,7 @@ import { validateDocumentQuality } from "../../../../../lib/engine/document-qual
 import { POLISH_TIMEOUT_MS } from "../../../../../lib/timeout-config";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
 import { logger } from "../../../../../lib/observability";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -266,7 +268,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       error: `Auto-finalize blocked: ${centralGate.blockerDetail ?? centralGate.blockerCode}`,
       code: centralGate.blockerCode,
       blockers: [centralGate.blockerDetail ?? "Tender is not ready for finalization."],
-      nextAction: centralGate.blockerCode === "BUILD_PLAN_NOT_CONFIRMED" ? "BUILD_SUBMISSION_PLAN" : "RERUN_AI_ANALYZE",
+      nextAction: centralGate.blockerCode === "BUILD_PLAN_NOT_CONFIRMED" ? "RUN_ENGINE" : "RERUN_AI_ANALYZE",
     }, { status: 422 });
   }
 
@@ -317,17 +319,23 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }, { status: 422 });
   }
 
-  // Reconcile old wrong rows: submission rules + outside-plan supersede
-  for (const doc of tender.generatedDocuments) {
-    const name = (doc.exactFileName ?? doc.name ?? "").toLowerCase();
-    if (/submission formatting|packaging rules|submission method|deadline|delivery rules|submission rules/.test(name)) {
-      await prisma.generatedDocument.update({ where: { id: doc.id }, data: { format: "CONTROL", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Submission control metadata; excluded from final export." } });
-      continue;
+  // Reconcile old wrong rows: submission rules + outside-plan supersede.
+  // Wrap the loop in a transaction so a partial failure cannot leave the
+  // tender with a mix of reconciled and stale document states. The later
+  // per-document finalization at lines 455-461 is separately wrapped in its
+  // own $transaction — this transaction covers only the reconciliation pass.
+  await prisma.$transaction(async (tx) => {
+    for (const doc of tender.generatedDocuments) {
+      const name = (doc.exactFileName ?? doc.name ?? "").toLowerCase();
+      if (/submission formatting|packaging rules|submission method|deadline|delivery rules|submission rules/.test(name)) {
+        await tx.generatedDocument.update({ where: { id: doc.id }, data: { format: "CONTROL", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Submission control metadata; excluded from final export." } });
+        continue;
+      }
+      if (!planEmpty && !plannedNames.has((doc.exactFileName ?? doc.name ?? "").trim().toLowerCase())) {
+        await tx.generatedDocument.update({ where: { id: doc.id }, data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Superseded as outside submission plan." } });
+      }
     }
-    if (!planEmpty && !plannedNames.has((doc.exactFileName ?? doc.name ?? "").trim().toLowerCase())) {
-      await prisma.generatedDocument.update({ where: { id: doc.id }, data: { generationStatus: "SUPERSEDED", validationStatus: "SUPERSEDED", reviewStatus: "NOT_EXPORTABLE", reviewNotes: "Superseded as outside submission plan." } });
-    }
-  }
+  });
 
   // Explicit select — fileContent is included here because the finalization loop
   // calls extractDocxVisibleText(doc.fileContent, ...) to read the existing content
@@ -436,7 +444,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const rebuiltIntegrity = inspectActualFileBytes({ bytes: Buffer.from(rebuilt, "base64"), filename: doc.exactFileName ?? `${fileName}.docx`, claimedMimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
     const ready = hygieneReady && gateEvaluation.finalApprovalAllowed && rebuiltIntegrity.integrityStatus === "VERIFIED";
 
-    const priorStatus = doc.reviewStatus;
     const hygieneNotes = hygieneReady ? "" : `hygiene: ${[...issues, ...(stillHasPricingLeakage ? ["pricing leakage detected"] : [])].join("; ")}`;
     const gateNotes = summarizeSevenPassForReviewNotes(gateEvaluation);
     // If integrity is the only blocker, the notes must say so — otherwise the
@@ -448,22 +455,24 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       ? `Auto-finalized for print/submission. ${gateNotes}`
       : `Auto-finalized but needs review. ${[hygieneNotes, integrityNotes, gateNotes].filter(Boolean).join(" | ")}`;
 
-    // Wrap update + audit in a transaction — if the DocumentReview create
-    // fails, the GeneratedDocument should NOT be marked READY_FOR_EXPORT
-    // without an audit trail (was non-atomic — broken "every approval is
-    // audited" invariant).
+    // Wrap update in a transaction so the byte integrity and status stay
+    // atomic. Gap 1: automation must never write reviewedBy, reviewedAt,
+    // or a human READY_FOR_EXPORT reviewStatus, and never create a
+    // DocumentReview record. The auto-finalize route now only writes
+    // machine-safe state: generationStatus, validationStatus (PENDING —
+    // the Document Validator owns VALIDATED per Gap 2), and reviewNotes
+    // carrying the machine-repair provenance. The human reviewStatus
+    // (READY_FOR_EXPORT / NEEDS_REVIEW) is NOT set by automation.
     await prisma.$transaction(async (tx) => {
-      // Only inline-content rows reach this point (storage-backed rows are
-      // skipped above), so the rebuilt bytes are canonical. storagePath: null
-      // is defensive normalization; the legacy final-ZIP digest columns must
-      // describe the same rebuilt bytes.
-      await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, ...rebuiltIntegrity, sha256: rebuiltIntegrity.contentSha256, byteSize: rebuiltIntegrity.contentByteLength, storagePath: null, format: "DOCX", generationStatus: "GENERATED", validationStatus: ready ? "VALIDATED" : (gateEvaluation.recommendedValidationStatus === "DRAFT" ? "DRAFT" : "PENDING"), reviewStatus: ready ? "READY_FOR_EXPORT" : "NEEDS_REVIEW", reviewedBy: actor.id, reviewedAt: new Date(), reviewNotes: reviewNotes.slice(0, 4000) } });
-      if (ready && priorStatus !== "READY_FOR_EXPORT") await tx.documentReview.create({ data: { documentId: doc.id, reviewerId: actor.id, action: "READY_FOR_EXPORT", notes: "Auto-finalized for print/submission.", priorStatus, newStatus: "READY_FOR_EXPORT" } });
+      await tx.generatedDocument.update({ where: { id: doc.id }, data: { fileContent: rebuilt, ...rebuiltIntegrity, sha256: rebuiltIntegrity.contentSha256, byteSize: rebuiltIntegrity.contentByteLength, storagePath: null, format: "DOCX", generationStatus: "GENERATED", validationStatus: "PENDING", reviewNotes: `machine:auto-finalize — ${reviewNotes.slice(0, 3800)}` } });
+      // No DocumentReview row is created — that is a human-review record.
     });
     processed += 1;
   }
 
   await applyActiveUploadedLetterheadToTenderDocuments(tenderId, actor.id);
+  // Auto-apply company signature and stamp images after letterhead
+  await applyActiveSignatureAndStampToTenderDocuments(tenderId, actor.id);
   // The readiness check verifies actual bytes and persisted integrity
   // (checkExportFileByteReadiness). Fetching without fileContent/integrity
   // columns made it report false MISSING_FILE_BYTES / unverified-integrity
@@ -502,5 +511,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   const warning = planEmpty ? "Submission plan empty; outside-plan supersede skipped." : null;
   await logAction({ userId: actor.id, action: "AUTO_FINALIZE_RUN", entityType: "Tender", entityId: tenderId, description: `Auto-finalize processed ${processed} document(s) for ${tender.title}.`, metadata: { tenderId, processed, remaining: Math.max(0, candidates.length - processed), readinessOk: readiness.ok, warning }, requestId });
-  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: candidates.length - processed > 0 ? "CONTINUE_AUTO_FINALIZE" : "RECHECK_EXPORT_READINESS", readinessOk: readiness.ok, warning });
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  // checkFullExportReadiness above is the byte/hygiene gate; this is the
+  // canonical resolver the UI reads from /readiness. Both must agree.
+  const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tenderId);
+  return NextResponse.json({ success: true, status: readiness.ok ? "COMPLETED" : "IN_PROGRESS", processedCount: processed, remainingCount: Math.max(0, candidates.length - processed), nextAction: readiness.ok ? "EXPORT_READY" : "AUTOMATIC_PROCESSING", readinessOk: readiness.ok, warning, canonicalReadiness });
 }

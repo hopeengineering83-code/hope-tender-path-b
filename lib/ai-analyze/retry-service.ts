@@ -21,31 +21,135 @@
  *   6. Never creates a second active job for the same tender + content hash.
  */
 import { prisma, prismaReady } from "../prisma";
-import { getMinCooldownExpiryMs } from "../ai-provider-health";
-import { isProviderConfigured, CANONICAL_AI_PROVIDER_ORDER } from "../ai-provider-registry";
+import { isBillingLockedOut, isProviderCooledDown } from "../ai-provider-health";
+import {
+  getAutomaticProviderOrder,
+  getProviderModel,
+  providerAutomaticEligibility,
+  type AiUseCase,
+} from "../ai-provider-registry";
 
 // Bounded exponential delay: 30s, 1m, 3m, 10m — then stop.
 export const RETRY_DELAYS_MS = [30_000, 60_000, 180_000, 600_000] as const;
 export const MAX_RETRY_COUNT = RETRY_DELAYS_MS.length;
 
-// Non-retryable categories — NEVER auto-retry (a retry cannot fix these; they
-// need OCR / re-upload / manual confirmation / a fresh run).
-export const NON_RETRYABLE_CATEGORIES = new Set<string>([
+// ─── Two kinds of "do not retry" ─────────────────────────────────────────────
+//
+// These used to be one set, and merging them is what left users permanently
+// locked out of AI Analyze.
+//
+// TERMINAL failures are about the SOURCE or the CALLER: the document changed,
+// the extraction is corrupt, the tender is gone, this user may not touch it.
+// Nothing an operator does to provider configuration makes them retryable,
+// because the thing that failed is not the provider. They stay non-retryable
+// forever, and that is correct.
+//
+// PROVIDER-CLASS failures are about the PROVIDER or its CONFIGURATION: a bad
+// API key, a model that no longer exists, an account that needs paying, a chain
+// with nothing configured. These were in the same set — CONFIGURATION_INVALID
+// and UNAUTHORIZED both sat in the terminal list — so a run that failed because
+// an API key was wrong was recorded with nonRetryable: true, and
+// createAnalysisJob then refused every future attempt on that content hash.
+// Fixing the key changed nothing: the tender stayed dead, permanently, because
+// of a provider fault that had already been repaired.
+//
+// They are separated below. Provider-class failures still stop AUTOMATIC retry
+// — there is no point in a cron re-running a job against a key that is still
+// wrong — but a NEW, AUTHENTICATED, MANUAL retry re-checks provider health and
+// re-arms, provided the source bytes, content hash, ownership and provenance
+// are all unchanged.
+
+/**
+ * Failures caused by the source document or the caller. Never retryable, by
+ * any path, because a retry cannot change what failed.
+ */
+export const TERMINAL_FAILURE_CATEGORIES = new Set<string>([
   "EXTRACTION_CORRUPTED", "EXTRACTION_NOT_READY", "OCR_REQUIRED",
   "TENDER_NOT_FOUND", "OWNERSHIP_REVOKED", "FORBIDDEN",
-  "CONTENT_HASH_CHANGED", "ANALYSIS_VERSION_MISMATCH",
-  "GROUNDING_TOO_WEAK", "EVIDENCE_GATE_FAILED",
-  "CONFIGURATION_INVALID", "UNAUTHORIZED", "INVALID_TENDER_STATE",
+  "CONTENT_HASH_CHANGED", "SOURCE_BYTES_CHANGED", "ANALYSIS_VERSION_MISMATCH",
+  "GROUNDING_TOO_WEAK", "EVIDENCE_GATE_FAILED", "PROVENANCE_INTEGRITY_FAILED",
+  "INVALID_TENDER_STATE",
 ]);
+
+/**
+ * Failures caused by the provider or its configuration. These stop automatic
+ * retry but MUST NOT permanently block a manual one — an operator changing
+ * provider configuration is exactly the event that makes them retryable again.
+ */
+export const PROVIDER_CONFIG_FAILURE_CATEGORIES = new Set<string>([
+  "CONFIGURATION_INVALID", "PROVIDER_UNAUTHORIZED", "PROVIDER_AUTH_FAILED",
+  "MODEL_UNAVAILABLE", "NO_PROVIDER_CONFIGURED",
+]);
+// Deliberately NOT here: AI_PROVIDERS_EXHAUSTED and ALL_PROVIDERS_COOLING.
+// Those describe a moment, not a misconfiguration — every provider happened to
+// be failing or cooling when the run went through. A later attempt genuinely
+// can clear them with nothing changed, so they belong in RETRYABLE_CATEGORIES
+// and keep their automatic backoff. Listing them as provider-config failures
+// would have stopped the cron retrying exactly the case it exists for.
+
+// Everything that must not auto-retry, from either cause.
+export const NON_RETRYABLE_CATEGORIES = new Set<string>([
+  ...TERMINAL_FAILURE_CATEGORIES,
+  ...PROVIDER_CONFIG_FAILURE_CATEGORIES,
+]);
+
+/**
+ * True when the recorded failure is genuinely terminal — the source or the
+ * caller, not the provider. This is the ONLY thing allowed to block a fresh
+ * manual retry.
+ */
+export function isTerminalFailureCategory(category: string | null | undefined): boolean {
+  return category != null && TERMINAL_FAILURE_CATEGORIES.has(category);
+}
+
+/** True when the failure was the provider's or its configuration's fault. */
+export function isProviderConfigFailureCategory(category: string | null | undefined): boolean {
+  return category != null && PROVIDER_CONFIG_FAILURE_CATEGORIES.has(category);
+}
 
 // Retryable categories — transient/provider conditions a later attempt can clear.
 export const RETRYABLE_CATEGORIES = new Set<string>([
   "AI_PROVIDERS_EXHAUSTED", "ATTEMPT_BUDGET_EXHAUSTED", "PROVIDER_EXHAUSTED",
   "RATE_LIMITED", "PROVIDER_5XX", "PROVIDER_TIMEOUT",
   "PARTIAL_SUCCESS", "NETWORK_ERROR", "UNKNOWN",
+  // BILLING_BLOCKED sat in PROVIDER_CONFIG_FAILURE_CATEGORIES while a payment
+  // refusal removed a provider from the chain for good: waiting really could
+  // not help, so stopping automatic retry was right. It is now an ordinary
+  // ten-minute cooldown on one of ten providers, which makes it the same shape
+  // as the two categories above it — a moment, not a misconfiguration. A later
+  // attempt can clear it with nothing changed, so it keeps its automatic
+  // backoff instead of waiting for an operator who has nothing to fix.
+  "BILLING_BLOCKED",
 ]);
 
 export type FailureClassification = { retryable: boolean; category: string; reason: string };
+
+function stagedFallbackState(
+  stagedMergedResult: string | null | undefined,
+  promotedAt?: Date | null,
+): "UNAPPROVED" | "APPROVED" | null {
+  if (!stagedMergedResult) return null;
+  try {
+    const parsed = JSON.parse(stagedMergedResult) as { analysisSource?: unknown };
+    if (parsed.analysisSource !== "FALLBACK_DRAFT") return null;
+    return promotedAt ? "APPROVED" : "UNAPPROVED";
+  } catch {
+    return null;
+  }
+}
+
+/** Re-evaluate only the historical ownership category against current proof. */
+export function reclassifyHistoricalTenderFailure(input: {
+  recordedCategory: string | null;
+  errorMessage?: string;
+  currentOwnershipProven: boolean;
+  jobStatus: string;
+}): string {
+  if (input.recordedCategory !== "TENDER_NOT_FOUND") return input.recordedCategory ?? "UNKNOWN";
+  if (!input.currentOwnershipProven) return "TENDER_NOT_FOUND";
+  const classified = classifyFailure(input.errorMessage, undefined, input.jobStatus).category;
+  return classified === "MODEL_UNAVAILABLE" ? "MODEL_UNAVAILABLE" : "UNKNOWN";
+}
 
 /**
  * Decide whether a stopped run may auto-retry. Category wins first; the message
@@ -61,13 +165,33 @@ export function classifyFailure(
   const cat = failureCategory ?? "UNKNOWN";
   const msg = (errorMessage ?? "").toLowerCase();
 
+  // Provider model errors contain the generic words "not found" too. Match
+  // them before the tender/ownership fallback or a retired/mistyped model will
+  // permanently poison the tender as TENDER_NOT_FOUND.
+  if (/model not found|unknown model|model_not_found|no such model|decommissioned/i.test(msg)) {
+    return { retryable: false, category: "MODEL_UNAVAILABLE", reason: "Configured model is unavailable — fix the model, then retry" };
+  }
   if (NON_RETRYABLE_CATEGORIES.has(cat)) return { retryable: false, category: cat, reason: `Non-retryable: ${cat}` };
   if (/extraction.*corrupt|corrupted.*extraction/i.test(msg)) return { retryable: false, category: "EXTRACTION_CORRUPTED", reason: "Extraction is corrupted — OCR or re-upload required" };
   if (/ocr.*required|requires?\s+ocr/i.test(msg)) return { retryable: false, category: "OCR_REQUIRED", reason: "OCR required before analysis can succeed" };
   if (/not found|access denied|ownership/i.test(msg)) return { retryable: false, category: "TENDER_NOT_FOUND", reason: "Tender not found or access denied" };
   if (/content.*hash.*changed|hash.*mismatch/i.test(msg)) return { retryable: false, category: "CONTENT_HASH_CHANGED", reason: "Tender content changed — re-run analysis" };
   if (/grounding|weak.*grounding|ungrounded/i.test(msg)) return { retryable: false, category: "GROUNDING_TOO_WEAK", reason: "Mandatory requirements lack source grounding" };
-  if (/\b401\b|\b403\b|unauthorized|forbidden/i.test(msg)) return { retryable: false, category: "UNAUTHORIZED", reason: "Authentication/authorization failure" };
+
+  // A provider rejecting OUR API KEY and a user being denied access to SOMEONE
+  // ELSE'S TENDER both used to land here as "UNAUTHORIZED" and both became
+  // permanently non-retryable. They are opposite situations: one is an operator
+  // fixing a key, the other is a user who must never see the record. Provider
+  // auth is matched first, on provider-specific wording, and classified as a
+  // provider-config failure so a manual retry can re-arm it once the key is
+  // fixed. Everything else that says "unauthorized" stays terminal.
+  if (/invalid api key|api key not valid|incorrect api key|invalid_api_key|authentication_error|provider.*(401|403)|(401|403).*provider/i.test(msg)) {
+    return { retryable: false, category: "PROVIDER_AUTH_FAILED", reason: "Provider rejected the API key — fix provider configuration, then retry" };
+  }
+  if (/insufficient.?(balance|quota)|payment required|billing details|credit balance/i.test(msg)) {
+    return { retryable: true, category: "BILLING_BLOCKED", reason: "A provider refused payment and is cooling down — the chain has nine others, and this one is retried automatically once the cooldown expires" };
+  }
+  if (/\b401\b|\b403\b|unauthorized|forbidden/i.test(msg)) return { retryable: false, category: "OWNERSHIP_REVOKED", reason: "Caller is not authorized for this tender" };
 
   // A partial run carries no explicit category — label it PARTIAL_SUCCESS
   // (more meaningful than the generic UNKNOWN bucket) before the catch-all.
@@ -83,10 +207,16 @@ export function classifyFailure(
  * configured AND no provider is cooling down. This is what gates BOTH whether
  * we schedule a retry timer and whether the cron actually re-arms.
  */
-export function isAnyProviderEligible(): boolean {
-  const configured = CANONICAL_AI_PROVIDER_ORDER.filter((p) => isProviderConfigured(p));
-  if (configured.length === 0) return false;
-  return getMinCooldownExpiryMs() === 0;
+export function isAnyProviderEligible(
+  useCase: AiUseCase = "extraction",
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return getAutomaticProviderOrder(env).some((provider) => {
+    if (!providerAutomaticEligibility(provider, env).eligible) return false;
+    const exactModel = getProviderModel(provider, useCase, env);
+    if (isBillingLockedOut(provider) || isProviderCooledDown(provider)) return false;
+    return true;
+  });
 }
 
 /**
@@ -139,10 +269,37 @@ export async function recordRetryStateForJob(
     where: { id: jobId },
     select: {
       id: true, tenderId: true, userId: true, analysisInputHash: true, errorMessage: true,
+      stagedMergedResult: true, promotedAt: true,
       analyzeChunks: { where: { status: "FAILED" }, select: { failureCategory: true }, take: 1 },
     },
   });
   if (!job || !job.tenderId) return null;
+  const fallbackState = stagedFallbackState(job.stagedMergedResult, job.promotedAt);
+  if (fallbackState) {
+    const now = new Date();
+    const category = fallbackState === "APPROVED"
+      ? "HUMAN_APPROVED_FALLBACK"
+      : "FALLBACK_REVIEW_REQUIRED";
+    const reason = fallbackState === "APPROVED"
+      ? "Human-approved fallback is immutable; a later AI attempt requires a new explicit analysis authority"
+      : "Deterministic fallback is staged for review; automatic retry cannot overwrite the review draft";
+    const existing = await prisma.aiAnalyzeRetryState.findUnique({ where: { jobId } });
+    const retryCount = existing?.retryCount ?? 0;
+    await prisma.aiAnalyzeRetryState.upsert({
+      where: { jobId },
+      create: {
+        jobId, tenderId: job.tenderId, userId: job.userId,
+        contentHash: job.analysisInputHash ?? "", retryCount, nextRetryAt: null,
+        retryReason: reason, failureCategory: category, nonRetryable: true,
+        lastProviderAvailable: isAnyProviderEligible(), lastCheckedAt: now,
+      },
+      update: {
+        nextRetryAt: null, retryReason: reason, failureCategory: category,
+        nonRetryable: true, lastProviderAvailable: isAnyProviderEligible(), lastCheckedAt: now,
+      },
+    });
+    return { retryable: false, nextRetryAt: null, retryCount, category };
+  }
   const failureCategory = job.analyzeChunks[0]?.failureCategory ?? undefined;
   return recordRetryState(
     job.id, job.tenderId, job.userId, job.analysisInputHash ?? "",
@@ -197,10 +354,20 @@ export async function rearmJobForRetry(jobId: string): Promise<boolean> {
 
   const job = await prisma.aiJob.findUnique({
     where: { id: jobId },
-    select: { id: true, tenderId: true, userId: true, status: true, analysisInputHash: true },
+    select: {
+      id: true, tenderId: true, userId: true, status: true, analysisInputHash: true,
+      stagedMergedResult: true, promotedAt: true,
+    },
   });
   if (!job || !job.tenderId) return false;
   if (job.status !== "PARTIAL_SUCCESS" && job.status !== "FAILED") return false;
+  // A staged deterministic draft is a human-review artifact, not a disposable
+  // retry checkpoint. Automatic recovery must never make that artifact vanish
+  // or turn an approved fallback back into an ambiguous QUEUED job.
+  if (stagedFallbackState(job.stagedMergedResult, job.promotedAt)) {
+    await recordRetryStateForJob(jobId, job.status);
+    return false;
+  }
 
   // Verify the tender content still hashes to the same value the job ran on.
   const { computeAnalysisContentHash, buildTenderAnalysisContent } = await import("../engine/tender-analysis-content");
@@ -241,5 +408,138 @@ export async function rearmJobForRetry(jobId: string): Promise<boolean> {
     data: { status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null },
   });
   await prisma.aiAnalyzeRetryState.update({ where: { jobId }, data: { nextRetryAt: null } }).catch(() => {});
+  return true;
+}
+
+// ─── Manual retry re-arm ─────────────────────────────────────────────────────
+//
+// A manual "Retry AI Analyze" is a NEW authenticated request from the owner,
+// not a continuation of the old automatic schedule. It therefore asks a
+// different question from the cron: not "has the backoff elapsed?" but "is the
+// reason this stopped still true right now?".
+//
+// A provider-class failure is re-checked against CURRENT provider health,
+// because the operator changing a key or a model is precisely the event that
+// makes the old failure obsolete. A terminal failure is not re-checked, because
+// nothing about provider configuration can undo a changed document.
+//
+// The integrity conditions are unconditional: whatever the failure category,
+// re-arming requires the same owner, the same source bytes, the same content
+// hash and intact provenance. Those are what make resuming from existing
+// SUCCEEDED chunks sound — they are evidence about a specific document, and
+// they may only be reused if it is still that document.
+
+export type ManualRearmDecision = {
+  allowed: boolean;
+  reason:
+    | "OK"
+    | "TERMINAL_FAILURE"
+    | "SOURCE_INTEGRITY_CHANGED"
+    | "NO_PROVIDER_AVAILABLE";
+  category: string | null;
+  /** Operator/user-facing explanation. Safe to surface — no secrets. */
+  message: string;
+  /** True when the block would clear by fixing provider configuration. */
+  clearableByProviderFix: boolean;
+};
+
+export type ManualRearmInput = {
+  /** The recorded failure category from AiAnalyzeRetryState. */
+  failureCategory: string | null | undefined;
+  /** The persisted nonRetryable flag. Advisory here, never the final word. */
+  nonRetryable: boolean;
+  /** Whether source bytes, content hash, ownership and provenance still match. */
+  sourceIntegrityIntact: boolean;
+  /** Whether at least one provider is usable right now. */
+  providerAvailable: boolean;
+};
+
+/**
+ * Decide whether a new manual retry may re-arm a stopped job.
+ *
+ * The persisted `nonRetryable` flag is deliberately NOT consulted as the
+ * decision. It records what was true when the run stopped, which is a fact
+ * about the past; whether a retry can succeed now is a fact about the present.
+ * Treating the stored flag as the answer is what made a repaired provider
+ * fault permanent.
+ */
+export function decideManualRearm(input: ManualRearmInput): ManualRearmDecision {
+  const category = input.failureCategory ?? null;
+
+  // Integrity first. This is the one check that must pass regardless of why the
+  // run stopped, because the SUCCEEDED chunks about to be reused are evidence
+  // about a specific set of bytes.
+  if (!input.sourceIntegrityIntact) {
+    return {
+      allowed: false,
+      reason: "SOURCE_INTEGRITY_CHANGED",
+      category,
+      message:
+        "The tender source has changed since this analysis ran. Start a fresh analysis — the existing partial results describe a different document.",
+      clearableByProviderFix: false,
+    };
+  }
+
+  if (isTerminalFailureCategory(category)) {
+    return {
+      allowed: false,
+      reason: "TERMINAL_FAILURE",
+      category,
+      message: `This analysis cannot be retried: ${category}. It needs a fresh run or corrected source, not another attempt.`,
+      clearableByProviderFix: false,
+    };
+  }
+
+  // Provider-class failure, or an unknown/transient one. Both re-arm — but only
+  // if a provider can actually serve the retry, so the run does not restart
+  // just to fail again in the same place.
+  if (!input.providerAvailable) {
+    return {
+      allowed: false,
+      reason: "NO_PROVIDER_AVAILABLE",
+      category,
+      message:
+        "No AI provider is currently usable. Check the provider diagnostics for the per-provider reason, repair or configure one, then retry — this analysis is still eligible.",
+      clearableByProviderFix: true,
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: "OK",
+    category,
+    message: isProviderConfigFailureCategory(category)
+      ? `Previous failure (${category}) was a provider/configuration fault; a provider is available now, so the analysis is re-armed.`
+      : "Re-armed for another attempt.",
+    clearableByProviderFix: false,
+  };
+}
+
+/**
+ * Clear a stale provider-class block so the job can be re-armed.
+ *
+ * Only touches rows whose failure was provider-class; a terminal row is left
+ * exactly as it is.
+ */
+export async function clearStaleProviderBlock(jobId: string): Promise<boolean> {
+  await prismaReady;
+  const existing = await prisma.aiAnalyzeRetryState.findUnique({
+    where: { jobId },
+    select: { failureCategory: true, nonRetryable: true },
+  });
+  if (!existing) return false;
+  if (!isProviderConfigFailureCategory(existing.failureCategory)) return false;
+
+  await prisma.aiAnalyzeRetryState.update({
+    where: { jobId },
+    data: {
+      nonRetryable: false,
+      retryCount: 0,
+      nextRetryAt: null,
+      retryReason: "Manual retry after provider configuration change — re-armed",
+      lastProviderAvailable: true,
+      lastCheckedAt: new Date(),
+    },
+  });
   return true;
 }

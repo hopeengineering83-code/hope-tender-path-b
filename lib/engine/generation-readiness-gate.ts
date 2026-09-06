@@ -1,4 +1,6 @@
 // Central authoritative generation/export readiness gate.
+import { logger } from "../observability";
+import { getCanonicalTenderWorkflowDecision } from "./canonical-workflow-decision";
 //
 // THE single fail-closed authorization source for every path that can create a
 // GeneratedDocument, regenerate a section, run an AI proposal (interactive or
@@ -45,9 +47,15 @@ import {
 import { assessExtractionQuality } from "../extraction-quality";
 import { hasActiveExtractionOverride } from "./readiness-overrides";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
+import type { MetadataFieldState } from "./metadata-override";
+import { VALIDATION_PASSED_STATUSES } from "./document-output-state";
 
 // Local type stubs for Prisma query result shapes — avoids implicit `any` when
 // @prisma/client types are not yet generated in the current environment.
+// Stubs MUST stay aligned with the columns selected by assertTenderReadyForGenerationAndExport
+// and validateCriticalMetadataEvidenceForBuildPlan. If you add a column to one
+// of those queries, add it here too — otherwise the runtime value reaches the
+// gate via `as any` and TypeScript cannot catch a missing column.
 type _TenderFileRow = {
   id: string;
   originalFileName: string;
@@ -72,11 +80,41 @@ type _RequirementRow = {
 };
 type _MetadataOverrideRow = {
   field: string;
-  fieldState: string;
+  fieldState: MetadataFieldState;
   overrideValue: string | null;
   reason: string | null;
-  overriddenBy: string | null;
-  createdAt: Date;
+  overriddenBy?: string | null;
+  createdAt?: Date;
+  confirmationBasis: string | null;
+  authorityClass: string | null;
+  confirmedAt: Date | null;
+};
+type _TenderRow = {
+  id: string;
+  deadline: Date | null;
+  clientNameSourcePage: number | null;
+  clientNameSourceQuote: string | null;
+  clientNameSourceFileId: string | null;
+  submissionMethodSourcePage: number | null;
+  submissionMethodSourceQuote: string | null;
+  submissionMethodSourceFileId: string | null;
+  submissionAddressSourcePage: number | null;
+  submissionAddressSourceQuote: string | null;
+  submissionAddressSourceFileId: string | null;
+  submissionEmailSourcePage: number | null;
+  submissionEmailSourceFileId: string | null;
+  submissionEmailSourceQuote: string | null;
+  titleSourceFileId: string | null;
+  titleSourcePage: number | null;
+  titleSourceQuote: string | null;
+  deadlineSourceFileId: string | null;
+  deadlineSourcePage: number | null;
+  deadlineSourceQuote: string | null;
+  contactDetailsSourceJson: string | null;
+  metadataContaminated: boolean | null;
+  submissionMethod: string | null;
+  metadataOverrides: _MetadataOverrideRow[] | null;
+  files: _TenderFileRow[];
 };
 
 export type GenerationPurpose =
@@ -91,6 +129,7 @@ export type GenerationPurpose =
   | "generate-missing-plan-files";
 
 export type GenerationBlockerCode =
+  | "MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE"
   | "OWNERSHIP_TENDER_NOT_FOUND"
   | "EXTRACTION_NO_ACTIVE_FILE"
   | "EXTRACTION_CORRUPTED"
@@ -149,6 +188,14 @@ export interface ReadinessRequirement {
 }
 
 export interface GenerationReadinessInput {
+  /**
+   * The canonical release state's mandatory FULL/SUBSTANTIAL coverage verdict.
+   * true = the canonical decision reports MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE.
+   * Supplied for FINAL purposes only; undefined leaves the K3 rule inert, so
+   * draft callers are unaffected.
+   */
+  canonicalMandatoryCoverageBlocked?: boolean;
+  canonicalMandatoryCoverageDetail?: string;
   purpose: GenerationPurpose;
   // A — ownership
   tenderExistsAndOwned: boolean;
@@ -228,10 +275,10 @@ export function evaluateGenerationReadiness(
   }
   for (const file of input.extractionFiles) {
     if (file.corrupted) {
-      return fail("EXTRACTION_CORRUPTED", "At least one tender file has corrupted extraction. Re-upload a clearer document or run OCR — corrupted extraction can never be overridden.");
+      return fail("EXTRACTION_CORRUPTED", "At least one tender file has corrupted extraction. Upload a clearer, text-based document — corrupted extraction can never be overridden.");
     }
     if (file.weak && !file.hasOverride) {
-      return fail("EXTRACTION_WEAK_NO_OVERRIDE", "At least one tender file has weak extraction and no human override on record. Re-extract (run OCR) or record an explicit extraction-quality override before generating/exporting.");
+      return fail("EXTRACTION_WEAK_NO_OVERRIDE", "At least one tender file has weak extraction and no override on record. Upload a clearer, text-based copy, or record an explicit extraction-quality override before generating/exporting.");
     }
   }
 
@@ -365,7 +412,7 @@ export function evaluateGenerationReadiness(
   //     false. Without this, a caller that forgets to pass the field would
   //     silently bypass the confirmed-plan requirement.
   if (input.hasCurrentConfirmedBuildPlan !== true) {
-    return fail("BUILD_PLAN_NOT_CONFIRMED", "No current confirmed Build Plan exists. Build and confirm the Build Plan before any release action.");
+    return fail("BUILD_PLAN_NOT_CONFIRMED", "No current source-verified Build Plan exists. Run Engine creates and verifies it automatically before downstream release processing.");
   }
 
   // K2 — Confirmed BuildPlan items must be valid at runtime. A corrupted, invalid,
@@ -382,6 +429,27 @@ export function evaluateGenerationReadiness(
     if (input.exportReadyDocumentCount < 1) {
       return fail("NO_EXPORT_READY_DOCUMENTS",
         "No export-ready documents exist. Generate and validate real documents before exporting or creating a final ZIP. PLANNED, virtual, and superseded rows do not count.");
+    }
+    // K3 — The canonical release state is the authority on mandatory evidence
+    //      coverage, and nothing on the export path used to consult it.
+    //
+    //      export-readiness.ts carries its own coverage heuristic that blocks
+    //      only under 50% (MEDIUM). The canonical rule requires FULL/SUBSTANTIAL
+    //      coverage on every mandatory requirement, and its own message promises
+    //      "no confirmation click can bypass this gate". Between those two
+    //      thresholds the canonical surface reported BLOCKED while this gate let
+    //      the ZIP out — reproduced on a live drive at exactly 6/12 mandatory
+    //      coverage: /export-readiness returned BLOCKED and POST /export returned
+    //      200 "All preflight gates passed" for the same tender at the same
+    //      moment, offering the archive for download.
+    //
+    //      Enforcing it here rather than in either route is deliberate: export
+    //      and final-zip both converge on this function, so the two cannot drift
+    //      apart again.
+    if (input.canonicalMandatoryCoverageBlocked === true) {
+      return fail("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE",
+        input.canonicalMandatoryCoverageDetail
+          || "The canonical release state reports that mandatory requirements lack FULL/SUBSTANTIAL evidence coverage.");
     }
   }
 
@@ -410,14 +478,9 @@ export async function resolveCurrentAnalysisBinding(
   });
   if (!tender) return { jobId: null, contentHash: null };
   const activeFiles = (tender.files as _TenderFileRow[]).filter((f) => f.deletionStatus === "ACTIVE");
-  const company = await prisma.company.findUnique({
-    where: { userId },
-    select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
-  });
   const contentHash = computeAnalysisContentHash(
     buildTenderAnalysisContent(
       { title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: activeFiles },
-      company ?? undefined,
     ),
   );
   const latestJob = await prisma.aiJob.findFirst({
@@ -552,17 +615,12 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       }),
     );
 
-    // Company vault digest participates in the canonical hash so vault changes
-    // invalidate the analysis exactly as AI Analyze computed it.
-    const company = await prisma.company.findUnique({
-      where: { userId },
-      select: { documents: { select: { originalFileName: true, category: true, extractedText: true } } },
-    });
-
+    // Analysis currentness is bound to tender sources. Run Engine separately
+    // binds the complete Vault revision, so automatic Vault verification cannot
+    // make a just-completed tender analysis stale.
     const currentContentHash = computeAnalysisContentHash(
       buildTenderAnalysisContent(
         { title: tender.title, description: tender.description, intakeSummary: tender.intakeSummary, files: activeFiles },
-        company ?? undefined,
       ),
     );
 
@@ -572,13 +630,15 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       prisma.aiJob.findFirst({
         where: { tenderId, jobType: AI_ANALYZE_JOB_TYPE, tender: { userId } },
         orderBy: { createdAt: "desc" },
-        select: { analysisInputHash: true },
+        select: { id: true, analysisInputHash: true },
       }),
     ]);
 
-    // E — chunk integrity for the CURRENT content hash only.
+    // E — chunk integrity belongs to the immutable provider-input snapshot.
+    // The public analysis currentness hash is tender-source-only, whereas the
+    // provider snapshot may include bounded Vault context.
     const currentHashChunks = await prisma.aiAnalyzeChunk.findMany({
-      where: { tenderId, userId, contentHash: currentContentHash },
+      where: { tenderId, userId, jobId: latestJob?.id ?? "__missing_analysis_job__" },
       select: { status: true, totalChunks: true },
     });
 
@@ -601,7 +661,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         sourceExactQuote: r.sourceExactQuote,
         sourceFileActiveInTender: !!r.sourceTenderFileId && activeFileIds.has(r.sourceTenderFileId),
         sourceFileExtractedText: sourceFile?.extractedText ?? null,
-        sourceFileTotalPages: (sourceFile as any)?.totalPages ?? null,
+        sourceFileTotalPages: sourceFile?.totalPages ?? null,
       };
     });
 
@@ -623,17 +683,17 @@ export async function assertTenderReadyForGenerationAndExport(args: {
         submissionAddressSourceFileId: tender.submissionAddressSourceFileId ?? null,
         submissionEmailSourcePage: tender.submissionEmailSourcePage ?? null,
         submissionEmailSourceFileId: tender.submissionEmailSourceFileId ?? null,
-        submissionEmailSourceQuote: (tender as any).submissionEmailSourceQuote ?? null,
-        titleSourceFileId: (tender as any).titleSourceFileId ?? null,
-        titleSourcePage: (tender as any).titleSourcePage ?? null,
-        titleSourceQuote: (tender as any).titleSourceQuote ?? null,
-        deadlineSourceFileId: (tender as any).deadlineSourceFileId ?? null,
-        deadlineSourcePage: (tender as any).deadlineSourcePage ?? null,
-        deadlineSourceQuote: (tender as any).deadlineSourceQuote ?? null,
+        submissionEmailSourceQuote: tender.submissionEmailSourceQuote ?? null,
+        titleSourceFileId: tender.titleSourceFileId ?? null,
+        titleSourcePage: tender.titleSourcePage ?? null,
+        titleSourceQuote: tender.titleSourceQuote ?? null,
+        deadlineSourceFileId: tender.deadlineSourceFileId ?? null,
+        deadlineSourcePage: tender.deadlineSourcePage ?? null,
+        deadlineSourceQuote: tender.deadlineSourceQuote ?? null,
         contactDetailsSourceJson: tender.contactDetailsSourceJson ?? null,
         metadataContaminated: tender.metadataContaminated ?? false,
       },
-      overrides: ((tender.metadataOverrides ?? []) as any[]).map((o) => ({
+      overrides: ((tender.metadataOverrides ?? []) as _MetadataOverrideRow[]).map((o) => ({
         field: o.field,
         fieldState: o.fieldState,
         overrideValue: o.overrideValue,
@@ -655,7 +715,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       // (quote containment + page <= totalPages) — the same evidence rules
       // validateCriticalMetadataEvidenceForBuildPlan applies below, so this
       // resolver verdict and the validator verdict cannot diverge.
-      activeFiles: activeFiles.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: (f as any).totalPages ?? null })),
+      activeFiles: activeFiles.map((f) => ({ id: f.id, extractedText: f.extractedText, totalPages: f.totalPages ?? null })),
     });
 
     // H — Build/Submission plan prerequisite for GENERATION.
@@ -669,18 +729,17 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     //     extracted requirements has a valid plan by default.
     // Virtual submission plan authority removed — release depends only on
     // persisted confirmed BuildPlan.
-    // I — EXPORT/FINAL-ZIP readiness: count of real current generated files
-    //     with content, validation, and review. PLANNED/SUPERSEDED/virtual/
-    //     missing-content/unvalidated/unreviewed rows never count.
-    //     This is a strict count — only GENERATED rows with fileContent and
-    //     validationStatus/reviewStatus indicating readiness are included.
+    // I — Machine export eligibility: count real current generated files with
+    //     content and successful validation. Human/legal release authority is
+    //     enforced by its own fail-closed gates; routine documents do not need
+    //     a second per-document approval click after validation.
     const exportReadyDocumentCount = await prisma.generatedDocument.count({
       where: {
         tenderId,
         generationStatus: "GENERATED",
         fileContent: { not: null },
-        validationStatus: { in: ["VALIDATED", "APPROVED", "READY_FOR_EXPORT"] },
-        reviewStatus: { in: ["APPROVED", "READY_FOR_EXPORT", "REPLACE_WITH_ORIGINAL"] },
+        validationStatus: { in: [...VALIDATION_PASSED_STATUSES] },
+        reviewStatus: { notIn: ["NOT_EXPORTABLE", "REPLACE_WITH_ORIGINAL"] },
       },
     });
 
@@ -741,8 +800,23 @@ export async function assertTenderReadyForGenerationAndExport(args: {
       }
     }
 
+    // The canonical release state, consulted for FINAL purposes only. Draft work
+    // must never be blocked by evidence coverage, so this is not fetched for
+    // draft purposes and the rule below cannot fire on them.
+    let canonicalMandatoryCoverageBlocked: boolean | undefined;
+    let canonicalMandatoryCoverageDetail: string | undefined;
+    if (purpose === "export" || purpose === "final-zip") {
+      const canonical = await getCanonicalTenderWorkflowDecision(prisma, userId, tenderId);
+      if (canonical?.blockerCodes.includes("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE")) {
+        canonicalMandatoryCoverageBlocked = true;
+        canonicalMandatoryCoverageDetail = canonical.nextRequiredActionReason;
+      }
+    }
+
     return evaluateGenerationReadiness({
       purpose,
+      canonicalMandatoryCoverageBlocked,
+      canonicalMandatoryCoverageDetail,
       tenderExistsAndOwned: true,
       activeFileCount: activeFiles.length,
       extractionFiles,
@@ -800,7 +874,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
             },
           });
           if (!fullTender) return false;
-          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as any, fullTender.files as any[], (fullTender as any).metadataOverrides ?? [], "final");
+          const metaValidation = validateCriticalMetadataEvidenceForBuildPlan(fullTender as unknown as _TenderRow, fullTender.files as _TenderFileRow[], (fullTender.metadataOverrides ?? []) as _MetadataOverrideRow[], "final");
           return metaValidation.ok;
         } catch { return false; }
       })()) : true),
@@ -816,7 +890,7 @@ export async function assertTenderReadyForGenerationAndExport(args: {
     // Fail closed — never let a thrown error read as authorization.
     // Log technical details server-side only; return only stable public-safe code.
     const detail = err instanceof Error ? err.message : "unknown error";
-    console.error("[generation-readiness-gate] GATE_INTERNAL_ERROR:", detail);
+    logger.error("[generation-readiness-gate] GATE_INTERNAL_ERROR", { detail });
     return { ok: false, blockerCode: "GATE_INTERNAL_ERROR", blockerDetail: "Readiness gate failed to evaluate. Check server logs for details.", purpose };
   }
 }

@@ -11,7 +11,9 @@ import {
 } from "./ai-multi-perspective-matcher";
 import { exactSelectionLimit } from "./scope-policy";
 
-const PRE_FILTER_LIMIT = 20;
+// One bounded provider batch per category. Expert and project batches execute
+// in parallel, keeping optional AI reranking inside Vercel's function budget.
+export const PRE_FILTER_LIMIT = 20;
 const PORTFOLIO_ITERATIONS = 20;
 
 type RequirementForLimit = {
@@ -62,15 +64,15 @@ function safeParseJsonArray(value: string | null | undefined): string[] {
 }
 
 function requirementForLimit(requirements: RequirementDraft[]): RequirementForLimit[] {
-  return requirements.map((r) => ({
-    title: r.title,
-    description: r.description,
-    requirementType: r.requirementType,
-    priority: r.priority,
-    requiredQuantity: r.requiredQuantity,
-    exactFileName: r.exactFileName,
-    exactOrder: r.exactOrder,
-    restrictions: r.restrictions,
+  return requirements.map((requirement) => ({
+    title: requirement.title,
+    description: requirement.description,
+    requirementType: requirement.requirementType,
+    priority: requirement.priority,
+    requiredQuantity: requirement.requiredQuantity,
+    exactFileName: requirement.exactFileName,
+    exactOrder: requirement.exactOrder,
+    restrictions: requirement.restrictions,
   }));
 }
 
@@ -107,7 +109,9 @@ function rankForCycle(assessment: CandidateAssessment, cycle: number): number {
   ];
   const activeWeights = weights[cycle % weights.length] ?? {};
   let score = assessment.overallScore * 0.48;
-  for (const key of Object.keys(activeWeights) as MatchPerspective[]) score += perspectiveScore(assessment, key) * (activeWeights[key] ?? 0);
+  for (const key of Object.keys(activeWeights) as MatchPerspective[]) {
+    score += perspectiveScore(assessment, key) * (activeWeights[key] ?? 0);
+  }
   const floor = criticalFloor(assessment);
   if (floor < 3) score -= 0.18;
   else if (floor < 4) score -= 0.10;
@@ -119,7 +123,10 @@ function rankForCycle(assessment: CandidateAssessment, cycle: number): number {
 function setScore(selected: CandidateAssessment[]): number {
   if (selected.length === 0) return 0;
   const averageScore = selected.reduce((sum, assessment) => sum + assessment.overallScore, 0) / selected.length;
-  const coverageScore = PERSPECTIVE_KEYS.reduce((sum, key) => sum + Math.max(...selected.map((assessment) => perspectiveScore(assessment, key))), 0) / PERSPECTIVE_KEYS.length;
+  const coverageScore = PERSPECTIVE_KEYS.reduce(
+    (sum, key) => sum + Math.max(...selected.map((assessment) => perspectiveScore(assessment, key))),
+    0,
+  ) / PERSPECTIVE_KEYS.length;
   const floorAverage = selected.reduce((sum, assessment) => sum + criticalFloor(assessment), 0) / selected.length / 10;
   const weakPenalty = selected.filter((assessment) => criticalFloor(assessment) < 4).length * 0.05;
   return averageScore * 0.50 + coverageScore * 0.30 + floorAverage * 0.20 - weakPenalty;
@@ -130,7 +137,9 @@ function selectBestAvailable(assessments: CandidateAssessment[], limit: number):
   let bestSelection: CandidateAssessment[] = [];
   let bestScore = -Infinity;
   for (let cycle = 0; cycle < PORTFOLIO_ITERATIONS; cycle += 1) {
-    const selected = [...assessments].sort((a, b) => rankForCycle(b, cycle) - rankForCycle(a, cycle)).slice(0, limit);
+    const selected = [...assessments]
+      .sort((left, right) => rankForCycle(right, cycle) - rankForCycle(left, cycle))
+      .slice(0, limit);
     const score = setScore(selected);
     if (score > bestScore) {
       bestScore = score;
@@ -141,11 +150,18 @@ function selectBestAvailable(assessments: CandidateAssessment[], limit: number):
 }
 
 function tenderRequirementsText(requirements: RequirementDraft[]): string {
-  return requirements.map((requirement) => `[${requirement.priority}] ${requirement.requirementType}: ${requirement.title}: ${requirement.description}`).join("\n");
+  return requirements
+    .map((requirement) => `[${requirement.priority}] ${requirement.requirementType}: ${requirement.title}: ${requirement.description}`)
+    .join("\n");
 }
 
 function toScoreBreakdown(assessment: CandidateAssessment): Partial<Record<MatchPerspective, number>> {
-  return Object.fromEntries(PERSPECTIVE_KEYS.map((key) => [key, Math.round(Math.max(0, Math.min(10, assessment.perspectives[key] ?? 0)) * 10)])) as Partial<Record<MatchPerspective, number>>;
+  return Object.fromEntries(
+    PERSPECTIVE_KEYS.map((key) => [
+      key,
+      Math.round(Math.max(0, Math.min(10, assessment.perspectives[key] ?? 0)) * 10),
+    ]),
+  ) as Partial<Record<MatchPerspective, number>>;
 }
 
 export async function applyAIRematchToMainEngine(params: {
@@ -156,8 +172,11 @@ export async function applyAIRematchToMainEngine(params: {
   matching: MatchingResult;
   knowledge: CompanyKnowledgeSnapshot;
 }): Promise<MainEngineAIRematchResult> {
-  const expertMatches = [...params.matching.expertMatches].sort((a, b) => b.score - a.score).slice(0, PRE_FILTER_LIMIT);
-  const projectMatches = [...params.matching.projectMatches].sort((a, b) => b.score - a.score).slice(0, PRE_FILTER_LIMIT);
+  const expertMatches = [...params.matching.expertMatches]
+    .sort((a, b) => b.score - a.score).slice(0, PRE_FILTER_LIMIT);
+  const projectMatches = [...params.matching.projectMatches]
+    .sort((a, b) => b.score - a.score).slice(0, PRE_FILTER_LIMIT);
+
   if (expertMatches.length === 0 && projectMatches.length === 0) {
     return emptyResult(params.matching, "No deterministic matches available for main-engine AI rematch.");
   }
@@ -201,48 +220,76 @@ export async function applyAIRematchToMainEngine(params: {
   });
 
   try {
-    const reqText = tenderRequirementsText(params.requirements);
+    const requirementsText = tenderRequirementsText(params.requirements);
     const [expertBatch, projectBatch] = await Promise.all([
-      expertCandidates.length > 0 ? aiRematchExperts({ tenderTitle: params.tenderTitle, tenderRequirementsText: reqText, evaluationMethodology: params.evaluationMethodology ?? "", candidates: expertCandidates }) : Promise.resolve(null),
-      projectCandidates.length > 0 ? aiRematchProjects({ tenderTitle: params.tenderTitle, tenderRequirementsText: reqText, tenderCategory: params.tenderCategory, candidates: projectCandidates }) : Promise.resolve(null),
+      expertCandidates.length > 0
+        ? aiRematchExperts({
+            tenderTitle: params.tenderTitle,
+            tenderRequirementsText: requirementsText,
+            evaluationMethodology: params.evaluationMethodology ?? "",
+            candidates: expertCandidates,
+          })
+        : Promise.resolve(null),
+      projectCandidates.length > 0
+        ? aiRematchProjects({
+            tenderTitle: params.tenderTitle,
+            tenderRequirementsText: requirementsText,
+            tenderCategory: params.tenderCategory,
+            candidates: projectCandidates,
+          })
+        : Promise.resolve(null),
     ]);
 
     if (!expertBatch && !projectBatch) {
       return emptyResult(params.matching, "AI rematch returned no usable assessments; deterministic main-engine matching was kept.");
     }
 
-    const expertAssessmentsById = new Map((expertBatch?.assessments ?? []).map((assessment) => [assessment.candidateId, assessment]));
-    const projectAssessmentsById = new Map((projectBatch?.assessments ?? []).map((assessment) => [assessment.candidateId, assessment]));
-    const selectedExpertIds = expertBatch ? selectBestAvailable(expertBatch.assessments, selectionLimit(params.requirements, "EXPERT", expertBatch.assessments.length)) : new Set<string>();
-    const selectedProjectIds = projectBatch ? selectBestAvailable(projectBatch.assessments, selectionLimit(params.requirements, "PROJECT_EXPERIENCE", projectBatch.assessments.length)) : new Set<string>();
+    const expertAssessmentsById = new Map(
+      (expertBatch?.assessments ?? []).map((assessment) => [assessment.candidateId, assessment]),
+    );
+    const projectAssessmentsById = new Map(
+      (projectBatch?.assessments ?? []).map((assessment) => [assessment.candidateId, assessment]),
+    );
+    const selectedExpertIds = expertBatch
+      ? selectBestAvailable(
+          expertBatch.assessments,
+          selectionLimit(params.requirements, "EXPERT", expertBatch.assessments.length),
+        )
+      : new Set<string>();
+    const selectedProjectIds = projectBatch
+      ? selectBestAvailable(
+          projectBatch.assessments,
+          selectionLimit(params.requirements, "PROJECT_EXPERIENCE", projectBatch.assessments.length),
+        )
+      : new Set<string>();
 
-    // PR XX-AI-REMATCH-FIX — selection authority semantics.
-    //
-    // BEFORE: `selectedExpertIds.has(id) || match.isSelected` meant the AI
-    // rematch could ONLY ADD selections, never unselect. If the deterministic
-    // engine had force-promoted a warehouse over the 0.55 floor for a
-    // healthcare tender, the AI rematch's 12-perspective view that correctly
-    // rejected the warehouse was IGNORED — the warehouse stayed selected.
-    //
-    // NOW: when the AI returns an assessment for a candidate, the AI's
-    // selection decision is AUTHORITATIVE (replace, not union). When the
-    // AI didn't assess a candidate (not in the pre-filter top-N, or AI
-    // failed for that row), the deterministic isSelected is preserved.
-    // This makes the AI the source of truth WHEN AVAILABLE while
-    // preserving deterministic fallback semantics for the rest.
     const matching: MatchingResult = {
-      expertMatches: params.matching.expertMatches.map((match) => {
-        const assessment = expertAssessmentsById.get(match.expertId);
-        if (!assessment) return match;
-        const selected = selectedExpertIds.has(match.expertId);
-        return { ...match, score: assessment.overallScore, rationale: formatAssessmentRationale({ ...assessment, recommendSelection: selected }), isSelected: selected };
-      }).sort((a, b) => b.score - a.score),
-      projectMatches: params.matching.projectMatches.map((match) => {
-        const assessment = projectAssessmentsById.get(match.projectId);
-        if (!assessment) return match;
-        const selected = selectedProjectIds.has(match.projectId);
-        return { ...match, score: assessment.overallScore, rationale: formatAssessmentRationale({ ...assessment, recommendSelection: selected }), isSelected: selected };
-      }).sort((a, b) => b.score - a.score),
+      expertMatches: params.matching.expertMatches
+        .map((match) => {
+          const assessment = expertAssessmentsById.get(match.expertId);
+          if (!assessment) return match;
+          const selected = selectedExpertIds.has(match.expertId);
+          return {
+            ...match,
+            score: assessment.overallScore,
+            rationale: formatAssessmentRationale({ ...assessment, recommendSelection: selected }),
+            isSelected: selected,
+          };
+        })
+        .sort((a, b) => b.score - a.score),
+      projectMatches: params.matching.projectMatches
+        .map((match) => {
+          const assessment = projectAssessmentsById.get(match.projectId);
+          if (!assessment) return match;
+          const selected = selectedProjectIds.has(match.projectId);
+          return {
+            ...match,
+            score: assessment.overallScore,
+            rationale: formatAssessmentRationale({ ...assessment, recommendSelection: selected }),
+            isSelected: selected,
+          };
+        })
+        .sort((a, b) => b.score - a.score),
     };
 
     return {
@@ -253,8 +300,12 @@ export async function applyAIRematchToMainEngine(params: {
       selectedExpertCount: matching.expertMatches.filter((match) => match.isSelected).length,
       selectedProjectCount: matching.projectMatches.filter((match) => match.isSelected).length,
       warning: null,
-      expertScoreBreakdowns: Object.fromEntries([...expertAssessmentsById].map(([id, assessment]) => [id, toScoreBreakdown(assessment)])),
-      projectScoreBreakdowns: Object.fromEntries([...projectAssessmentsById].map(([id, assessment]) => [id, toScoreBreakdown(assessment)])),
+      expertScoreBreakdowns: Object.fromEntries(
+        [...expertAssessmentsById].map(([id, assessment]) => [id, toScoreBreakdown(assessment)]),
+      ),
+      projectScoreBreakdowns: Object.fromEntries(
+        [...projectAssessmentsById].map(([id, assessment]) => [id, toScoreBreakdown(assessment)]),
+      ),
     };
   } catch (error) {
     return emptyResult(params.matching, error instanceof Error ? error.message : String(error));

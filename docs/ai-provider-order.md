@@ -1,52 +1,52 @@
 # AI provider order
 
-This document is the canonical operator-facing description of the app's current AI provider priority. The single source of truth is the authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`). Every other surface — `lib/ai.ts`, `lib/ai-provider-policy.ts`, `lib/ai-provider-health.ts`, `/api/ai/health`, admin health routes, environment checks, and the AI Health panel — derives its order from that registry. There are no separate hardcoded order arrays.
+This document is the operator-facing description of the app's current AI provider priority. It is NOT the source of truth: `lib/ai-provider-catalog.cjs` (`CANONICAL_AI_PROVIDER_ORDER`) is, re-exported by `lib/ai-provider-registry.ts`. The numbered list below is checked against that catalog by `tests/ai-provider-doc-drift.test.ts`, so this page cannot silently disagree with the runtime again. Every other surface — `lib/ai.ts`, `lib/ai-provider-policy.ts`, `lib/ai-provider-health.ts`, `/api/ai/health`, admin health routes, environment checks, and the AI Health panel — derives its order from that registry. There are no separate hardcoded order arrays.
 
 ## Runtime provider chain
 
 The app uses this canonical fallback order for AI analysis, extraction, proposal generation, validation, fast, and reasoning use cases:
 
-1. Z.ai GLM (`zai`)
-2. Cerebras (`cerebras`)
+1. Gemini (`gemini`)
+2. Groq (`groq`)
 3. Mistral (`mistral`)
-4. Groq (`groq`)
-5. OpenRouter (`openrouter`)
-6. Gemini (`gemini`)
+4. Z.ai GLM (`zai`)
+5. Cerebras (`cerebras`)
+6. OpenRouter (`openrouter`)
 7. OpenAI (`openai`)
 8. Together (`together`)
 9. DeepSeek (`deepseek`)
 10. Anthropic / Claude (`anthropic`)
 11. Deterministic draft fallback — only after every configured AI provider has failed, returned no usable result, or is in cooldown. The deterministic fallback is NOT an AI provider and its output is never exportable as a final proposal.
 
-The currently-working providers are the first five: Z.ai GLM → Cerebras → Mistral → Groq → OpenRouter. The remaining providers (Gemini → OpenAI → Together → DeepSeek → Anthropic) remain fully supported and sit, in that exact order, after OpenRouter.
+Every configured provider participates automatically, in this order. There is no free-only routing mode, no minimum number of free providers, and no exclusion of paid providers; configured model identifiers are used exactly as given and are never silently replaced.
 
 Anthropic / Claude is intentionally the last AI provider in the chain (an emergency-only, last-resort provider) so Anthropic rate limits do not block the app when earlier providers are configured and available. Do not change this order anywhere except in the registry.
 
-## Vercel Hobby attempt budget
+## Outbound attempt budget
 
-The app runs on Vercel Hobby. Per single request or AI Analyze chunk:
+Per single request or AI Analyze chunk:
 
-- A maximum of **3 actual outbound provider attempts** are made (`AI_MAX_PROVIDER_ATTEMPTS`, default 3).
-- Unconfigured providers, cooled-down providers, and OpenRouter with an invalid (non-`:free`) model are **skipped without consuming an attempt**.
+- Up to **10 actual outbound provider attempts** are made (`AI_MAX_PROVIDER_ATTEMPTS`, default 10 — the whole canonical chain). The default is deliberately the full chain length so that "everything failed" is reported as a genuine provider outage (`ALL_PROVIDERS_EXHAUSTED`) rather than as a self-imposed budget limit that left eligible providers untried.
+- Unconfigured and cooled-down providers are **skipped without consuming an attempt**.
 - Only real outbound provider requests count toward the budget.
-- One shared deadline applies per route/chunk; at least 5s is reserved for error handling and DB state updates, and fallback providers never run in parallel.
+- One shared deadline applies per route/chunk; at least 5s is reserved for error handling and DB state updates, every provider adapter aborts at `min(its static timeout, time left before that deadline)`, and fallback providers never run in parallel.
 - Invalid API keys and billing-blocked providers are never retried; rate-limit and transient network failures fail over to the next eligible provider.
-- When the budget is consumed before a provider succeeds, the error code is `ATTEMPT_BUDGET_EXHAUSTED` (distinct from `ALL_PROVIDERS_EXHAUSTED`).
+- `ATTEMPT_BUDGET_EXHAUSTED` is therefore raised only when the shared deadline hits mid-chain, not in the normal exhaustion case.
 
-## OpenRouter free-model policy
+## OpenRouter model policy
 
-OpenRouter must use an explicit free model. `openrouter/auto` is rejected, and any model whose identifier does not end in `:free` is rejected (`CONFIGURATION_INVALID` / `MODEL_UNAVAILABLE`). The app never sends an OpenRouter request that could create paid usage; an invalid OpenRouter configuration is treated as "not configured" and skipped.
+OpenRouter has no default model and the app never guesses one: set `OPENROUTER_PROPOSAL_MODEL` / `OPENROUTER_ANALYSIS_MODEL` / `OPENROUTER_FAST_MODEL` explicitly. There is **no `:free` suffix requirement** — whatever model you configure is the model that is sent, so choose one your OpenRouter account is entitled to. An OpenRouter key with no configured model is treated as not configured and skipped.
 
 ## Preferred provider
 
 The preferred provider is the first CONFIGURED provider in the canonical chain. For example:
 
-- if `ZAI_API_KEY` is configured, preferred provider is `zai`;
-- else if `CEREBRAS_API_KEY` is configured, preferred provider is `cerebras`;
-- else if `MISTRAL_API_KEY` is configured, preferred provider is `mistral`;
+- if `GEMINI_API_KEY` is configured, preferred provider is `gemini`;
 - else if `GROQ_API_KEY` is configured, preferred provider is `groq`;
-- else if `OPENROUTER_API_KEY` is configured (with a valid `:free` model), preferred provider is `openrouter`;
-- else if `GEMINI_API_KEY` is configured, preferred provider is `gemini`;
+- else if `MISTRAL_API_KEY` is configured, preferred provider is `mistral`;
+- else if `ZAI_API_KEY` is configured, preferred provider is `zai`;
+- else if `CEREBRAS_API_KEY` is configured, preferred provider is `cerebras`;
+- else if `OPENROUTER_API_KEY` is configured (with an explicitly configured model), preferred provider is `openrouter`;
 - else if `OPENAI_API_KEY` is configured, preferred provider is `openai`;
 - else if `TOGETHER_API_KEY` is configured, preferred provider is `together`;
 - else if `DEEPSEEK_API_KEY` is configured, preferred provider is `deepseek`;
@@ -74,6 +74,8 @@ The deterministic draft fallback is not a provider health state. It is the final
 
 ## Documentation note
 
-Older README text or comments that say "Mistral is first", "Gemini is first", "Claude is preferred", or that imply any other ordering are stale. The authoritative registry `lib/ai-provider-registry.ts` (`CANONICAL_AI_PROVIDER_ORDER`) is the single source of truth: Z.ai GLM is first, Cerebras second, and Anthropic / Claude remains the last AI provider, followed by the deterministic draft fallback.
+Older text or comments that say "Z.ai is first", "Mistral is first", "Claude is preferred", that require an OpenRouter `:free` model, that describe a zero-paid-only routing mode, that require two free providers, or that exclude paid providers from automatic routing are **stale and withdrawn**. `lib/ai-provider-catalog.cjs` (`CANONICAL_AI_PROVIDER_ORDER`) is the single source of truth: Gemini is first, Groq second, and Anthropic / Claude remains the last AI provider, followed by the deterministic draft fallback.
 
-Do not change provider fallback order anywhere except in the registry, and only via an explicit product decision.
+Historical audits and dated session logs elsewhere in `docs/` record the withdrawn policy as history. They are evidence of what was once true and are deliberately left unedited; this page and the other active operator instructions (`.env.example`, `README.md`, `docs/ai-provider-runbook.md`, `scripts/check-env.mjs`) are the current ones.
+
+Do not change provider fallback order anywhere except in the catalog, and only via an explicit product decision.

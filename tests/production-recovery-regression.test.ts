@@ -1,0 +1,213 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import {
+  assessCanonicalTenderSourceReadiness,
+  selectCanonicalTenderFiles,
+} from "../lib/tender/canonical-source-files";
+import {
+  extractRequirementSources,
+  splitIntoParagraphs,
+} from "../lib/engine/requirement-source-extractor";
+
+const root = process.cwd();
+const source = (relativePath: string) => fs.readFileSync(path.join(root, relativePath), "utf8");
+
+test("pending duplicate representation does not block the verified canonical source", () => {
+  // DIRECTIVE 6: Files with the SAME contentSha256 are duplicates (deduplicated).
+  // Files with DIFFERENT contentSha256 are separate logical sources, even if
+  // they have the same filename. This test has 2 files with the same SHA
+  // (actual duplicate) + 1 with a different SHA (separate source).
+  const files = [
+    {
+      id: "docx-good",
+      originalFileName: "Pharo Tender Document.docx",
+      deletionStatus: "ACTIVE",
+      contentSha256: "a".repeat(64),
+      integrityStatus: "VERIFIED",
+      extractionScore: 90,
+      extractionMethod: "docx",
+      totalPages: 7,
+      extractedPages: 7,
+      failedPages: 0,
+      extractedText: "verified tender text ".repeat(80),
+      createdAt: new Date("2026-08-05T00:00:00Z"),
+    },
+    {
+      id: "pdf-duplicate",
+      originalFileName: "Pharo Tender Document.pdf",
+      deletionStatus: "ACTIVE",
+      contentSha256: "a".repeat(64), // SAME SHA as docx-good → actual duplicate
+      integrityStatus: "VERIFIED",
+      extractionScore: 25,
+      extractionMethod: "pdf",
+      totalPages: 7,
+      extractedPages: 7,
+      failedPages: 0,
+      extractedText: "weak duplicate text ".repeat(80),
+      createdAt: new Date("2026-08-05T01:00:00Z"),
+    },
+    {
+      id: "docx-pending",
+      originalFileName: "Pharo Tender Document (copy).docx",
+      deletionStatus: "ACTIVE",
+      contentSha256: "c".repeat(64), // DIFFERENT SHA → separate logical source
+      integrityStatus: "VERIFIED",
+      extractionScore: null,
+      extractionMethod: null,
+      totalPages: null,
+      extractedPages: null,
+      failedPages: null,
+      extractedText: null,
+      createdAt: new Date("2026-08-05T02:00:00Z"),
+    },
+  ];
+
+  const canonical = selectCanonicalTenderFiles(files);
+  // DIRECTIVE 6: 2 unique SHA-256 values → 2 canonical sources (not 1).
+  // docx-good and pdf-duplicate share SHA "a" → 1 canonical (docx-good wins by rank).
+  // docx-pending has SHA "c" → separate canonical source.
+  assert.equal(canonical.length, 2);
+  assert.equal(canonical[0].id, "docx-good");
+  const readiness = assessCanonicalTenderSourceReadiness(files);
+  // 3 active - 2 canonical = 1 duplicate
+  assert.equal(readiness.duplicateFileCount, 1);
+  // byteIntegrityValid is false because docx-pending has extractionScore=null
+  // and no extractionMethod — it fails the extraction completeness check.
+  // But byte integrity itself IS valid (all have integrityStatus=VERIFIED).
+  assert.equal(readiness.byteIntegrityValid, true);
+});
+
+test("byte integrity and extraction quality remain separate gates", () => {
+  const readiness = assessCanonicalTenderSourceReadiness([{
+    id: "weak",
+    originalFileName: "Tender.pdf",
+    deletionStatus: "ACTIVE",
+    contentSha256: "d".repeat(64),
+    integrityStatus: "VERIFIED",
+    extractionScore: 25,
+    extractionMethod: "pdf",
+    totalPages: 7,
+    extractedPages: 7,
+    failedPages: 0,
+    extractedText: "readable but poor extraction ".repeat(60),
+  }]);
+  assert.equal(readiness.byteIntegrityValid, true);
+  assert.equal(readiness.extractionQualityValid, false);
+  assert.equal(readiness.analysisReady, false);
+});
+
+test("embedded page markers and long text produce a verbatim grounded requirement", () => {
+  const text = [
+    "[page 1]",
+    "REQUEST FOR PROPOSAL",
+    "General introduction and background information.",
+    "[page 2]",
+    "4.2 KEY EXPERT REQUIREMENTS",
+    "The consultant shall submit the curriculum vitae of the Team Leader with at least ten years of relevant professional experience and a signed availability declaration.",
+    "[page 3]",
+    "Other submission information.",
+  ].join("\n");
+
+  const paragraphs = splitIntoParagraphs(text);
+  assert.ok(paragraphs.some((paragraph) => paragraph.pageNumber === 2));
+
+  const [result] = extractRequirementSources({
+    tenderFileId: "file-1",
+    tenderFileText: text,
+    requirements: [{
+      id: "req-1",
+      title: "Team Leader CV and experience",
+      description: "Submit the Team Leader curriculum vitae with at least ten years of experience.",
+    }],
+  });
+
+  assert.equal(result.sourceTenderFileId, "file-1");
+  assert.equal(result.sourcePageNumber, 2);
+  assert.match(result.sourceExactQuote ?? "", /curriculum vitae/i);
+  assert.ok(result.sourceConfidence >= 0.18);
+});
+
+test("manual AI Analyze uses canonical readiness and stops after deletion", () => {
+  const panel = source("components/ai-analyze-panel.tsx");
+  assert.match(panel, /source-readiness/);
+  assert.match(panel, /tender-deletion-started/);
+  assert.match(panel, /manual-ai-analyze/);
+  assert.doesNotMatch(panel, /automatically starts AI Analyze/i);
+});
+
+test("successful AI Analyze terminates at the manual Run Engine boundary", () => {
+  const registry = source("lib/ai-job-handlers.ts");
+  assert.match(registry, /stepName: "manual-engine-required"/);
+  assert.match(registry, /nextAction: "RUN_ENGINE"/);
+  assert.match(registry, /automaticEngineStarted: false/);
+  assert.doesNotMatch(registry, /AUTOMATIC_POST_ANALYSIS_CONTINUATION/);
+  assert.doesNotMatch(registry, /engine\.auto-enqueue/);
+});
+
+test("Run Engine is gated by current canonical analysis", () => {
+  const route = source("app/api/tenders/[id]/engine/route.ts");
+  assert.match(route, /selectCanonicalTenderFiles/);
+  assert.match(route, /contentHashMatch/);
+  assert.match(route, /CURRENT_ANALYSIS_REQUIRED/);
+  assert.match(route, /integrityStatus !== "VERIFIED"/);
+});
+
+test("Engine reuses promoted manual analysis instead of repeating extraction", () => {
+  const engine = source("lib/engine/run-tender-engine.ts");
+  assert.match(engine, /canReusePromotedAnalysis/);
+  assert.match(engine, /no duplicate AI extraction call was made/);
+  assert.match(engine, /requirementsNeedingSourceExtraction/);
+  assert.match(engine, /hasAuthoritativeDeterministicSelection/);
+});
+
+test("matcher requests are bounded and advance through remaining providers", () => {
+  const matcher = source("lib/engine/ai-multi-perspective-matcher.ts");
+  assert.match(matcher, /MAX_CANDIDATES_PER_MATCHER_BATCH = 20/);
+  assert.match(matcher, /MAX_REQUIREMENT_CHARS = 8_000/);
+  // BLOCKER 11: MAX_FALLBACK_PASSES reduced from 3 to 1 to prevent nested
+  // provider retry loops from consuming the whole serverless invocation.
+  assert.match(matcher, /MAX_FALLBACK_PASSES = 1/);
+  assert.match(matcher, /providers attempted in pass one/);
+});
+
+test("stale analysis cannot display a usable 100 score", () => {
+  const panel = source("components/analysis-quality-panel.tsx");
+  assert.match(panel, /contentHashMatch/);
+  assert.match(panel, /Math\.min\(quality\.score, 69\)/);
+  assert.match(panel, /Previous analysis does not match the current canonical source revision/);
+});
+
+test("post-deletion workflow polling is terminal 404 instead of 500", () => {
+  const route = source("app/api/tenders/[id]/workflow-center/route.ts");
+  assert.match(route, /terminal: true/);
+  assert.match(route, /code: "TENDER_NOT_FOUND"/);
+  assert.ok(route.indexOf("ownedTender") < route.indexOf("Promise.all"));
+});
+
+test("permanent deletion controls are present on list/history and detail routes", () => {
+  assert.match(source("app/dashboard/history/duplicate-button.tsx"), /DeleteTenderButton/);
+  assert.match(source("app/dashboard/layout.tsx"), /TenderDetailDeleteControl/);
+  assert.match(source("components/delete-tender-button.tsx"), /Type DELETE to continue/);
+});
+
+test("Plan B finalization reconciles verified source files and deduplicates records", () => {
+  const finalizer = source("app/api/company/plan-b-import/finalize/route.ts");
+  assert.match(finalizer, /reconcilePlanBSourcesByUniqueStem/);
+  assert.match(finalizer, /deduplicateCompanyVaultRecords/);
+  assert.match(finalizer, /usableCounts/);
+
+  const dedupe = source("lib/plan-b-deduplicate.ts");
+  assert.match(dedupe, /tenderExpertMatch/);
+  assert.match(dedupe, /tenderProjectMatch/);
+  assert.match(dedupe, /hasConflictingExpertIdentifiers/);
+});
+
+test("PDF runtime installs geometry globals before extraction", () => {
+  const instrumentation = source("instrumentation.ts");
+  assert.match(instrumentation, /installPdfGeometryGlobals/);
+  assert.match(instrumentation, /DOMMatrix/);
+  assert.match(instrumentation, /ImageData/);
+  assert.match(instrumentation, /Path2D/);
+});

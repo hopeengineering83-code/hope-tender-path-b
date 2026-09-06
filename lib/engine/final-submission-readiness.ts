@@ -3,15 +3,14 @@
 // Single source of truth used by:
 //   - app/api/tenders/[id]/export-readiness/route.ts
 //   - app/api/tenders/[id]/download/route.ts (final ZIP gate)
-//   - components/bid-control-verdict-panel.tsx
-//   - components/final-submission-control-center.tsx (via the API)
+//   - lib/engine/tender-release-state.ts (canonical Tender Release State)
 //   - components/export-readiness-panel.tsx (via the API)
 //   - app/api/admin/generated-proposals/audit/route.ts
 //
 // Why this lives here:
 //   Prior to this helper, every consumer rebuilt its own "is this tender
 //   ready?" logic from raw fields. That caused inconsistent counts across
-//   Bid Control, Export Gate, Final Submission Control Center, and the
+//   Bid Control, Export Gate, and the
 //   ZIP download route — the same tender could read "BID READY" in one
 //   place and "0 of 3 documents ready" in another. This module pulls
 //   the actual user-scoped tender, runs the existing
@@ -37,7 +36,7 @@ import {
 } from "./export-readiness";
 import {
   filterFinalExportCandidateDocuments,
-  isFinalExportCandidateDocument,
+  isExportReady,
   type DocumentLike,
 } from "./document-output-state";
 import {
@@ -49,7 +48,8 @@ import {
 } from "./submission-plan";
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./build-plan";
 import { detectSubmissionPackageMode } from "./submission-package-mode";
-import { assessGeneratedDocumentQuality } from "./document-quality-gate";
+import { assessCurrentDocumentQualityBatch, countQualityFailed } from "./current-document-quality";
+import { logger } from "../observability";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
 import { getTenderFactLedgerSnapshot } from "./tender-facts-ledger-service";
@@ -57,7 +57,7 @@ import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysi
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { isExtractionAcceptableForExport } from "./extraction-quality-gate";
-import { extractDocxVisibleText } from "./export-readiness";
+import { hasSourceEvaluationCriteria } from "./evaluation-criteria-presence";
 
 export type FinalReadinessSeverity = "HIGH" | "MEDIUM" | "LOW";
 
@@ -172,13 +172,13 @@ export type GetFinalSubmissionReadinessOptions = {
 
 function nextActionForReason(reason: string): string {
   if (/ORIGINAL_REQUIRED|REPLACE_WITH_ORIGINAL|tender-issued original/i.test(reason)) {
-    return "Attach or upload the exact tender-issued original form/template for this file. Do not use Repair safe document gaps for official-original rows.";
+    return "Tender-issued forms are sourced automatically from uploaded Tender Intake files. This file is not available in the tender package.";
   }
   if (/NOT_EXPORTABLE/i.test(reason)) {
     return "Manual review required: this row is marked NOT_EXPORTABLE and must not be included in the final package unless replaced by the official source file.";
   }
   if (/PLANNED|CONTROL_RECORD_ONLY|control, placeholder, or text-only/i.test(reason)) {
-    return "Generate the actual final file or attach the official original. Planned/control rows are not exportable files.";
+    return "Generate the actual final file. Planned/control rows are not exportable files.";
   }
   if (/PDF_CONVERSION_REQUIRED|not a real PDF/i.test(reason)) {
     return "Upload the final PDF required by the tender or provide a real PDF file before export.";
@@ -189,7 +189,7 @@ function nextActionForReason(reason: string): string {
   if (/reviewStatus/i.test(reason)) return "Complete human review and mark the document READY_FOR_EXPORT.";
   if (/fileContent|MISSING_CONTENT/i.test(reason)) return "Regenerate or upload the missing DOCX/PDF file content.";
   if (/MARKDOWN|QUICK_DRAFT|DRAFT_ONLY|CONTROL|not a final export/i.test(reason)) {
-    return "Use Generate Docs or attach the tender-issued original; quick drafts, placeholders and control rows cannot be exported.";
+    return "Automatic generation produces the exportable submission files; quick drafts, placeholders and control rows cannot be exported.";
   }
   return "Review and resolve this blocker before final export.";
 }
@@ -227,6 +227,13 @@ function asReadyDoc(doc: {
   fileContent?: string | null;
   storagePath: string | null;
   hasInlineFileContent?: boolean | null;
+  contentSha256?: string | null;
+  contentByteLength?: number | null;
+  contentMimeType?: string | null;
+  detectedFormat?: string | null;
+  integrityStatus?: string | null;
+  integrityVerifiedAt?: Date | null;
+  integrityFailureCode?: string | null;
 }): ExportReadyDocument {
   return {
     id: doc.id,
@@ -241,6 +248,18 @@ function asReadyDoc(doc: {
     fileContent: doc.fileContent ?? null,
     storagePath: doc.storagePath ?? null,
     hasInlineFileContent: doc.hasInlineFileContent ?? null,
+    // Dropping these defeated the persisted-integrity mechanism entirely:
+    // verifyPersistedFileBytes saw integrityStatus undefined, concluded the row
+    // predated integrity tracking, and returned LEGACY_INTEGRITY_UNKNOWN for
+    // documents whose stored status is VERIFIED — so the final ZIP was refused
+    // as unverifiable while the database held a matching hash and byte length.
+    contentSha256: doc.contentSha256 ?? null,
+    contentByteLength: doc.contentByteLength ?? null,
+    contentMimeType: doc.contentMimeType ?? null,
+    detectedFormat: doc.detectedFormat ?? null,
+    integrityStatus: doc.integrityStatus ?? "UNKNOWN",
+    integrityVerifiedAt: doc.integrityVerifiedAt ?? null,
+    integrityFailureCode: doc.integrityFailureCode ?? null,
   };
 }
 
@@ -340,6 +359,38 @@ export function buildAdvisoryGapTitle(code: string): string {
 export function parseAdvisoryGapTitle(title: string): string | null {
   if (!title.startsWith(ADVISORY_GAP_PREFIX)) return null;
   return title.slice(ADVISORY_GAP_PREFIX.length);
+}
+
+/**
+ * Give the quality scorer the bytes it is about to judge.
+ *
+ * A document row selected without `fileContent` has no visible text to
+ * extract, and a scorer handed no text returns QUALITY_FAILED — a verdict
+ * about content quality reached without consulting any content. Rows that
+ * already carry their bytes, or that live in external storage (the scorer
+ * reads those through the storage adapter), are returned untouched.
+ *
+ * Scoped to the final export candidates, which is a handful of rows, so the
+ * reason the projection omits blobs everywhere else still holds.
+ */
+async function loadVisibleTextInputsForQuality<T extends { id: string; fileContent?: string | null; storagePath?: string | null }>(
+  client: PrismaClient,
+  candidates: T[],
+): Promise<T[]> {
+  const needsBytes = candidates.filter(
+    (doc) => !doc.fileContent && !(doc.storagePath && doc.storagePath.trim().length > 0),
+  );
+  if (needsBytes.length === 0) return candidates;
+
+  const loaded = await client.generatedDocument.findMany({
+    where: { id: { in: needsBytes.map((doc) => doc.id) } },
+    select: { id: true, fileContent: true },
+  }).catch(() => [] as Array<{ id: string; fileContent: string | null }>);
+  const byId = new Map(loaded.map((row) => [row.id, row.fileContent]));
+
+  return candidates.map((doc) =>
+    byId.has(doc.id) ? ({ ...doc, fileContent: byId.get(doc.id) ?? null } as T) : doc,
+  );
 }
 
 async function loadAdvisoryResolutions(client: PrismaClient, tenderId: string): Promise<Map<string, { resolved: boolean; note: string | null }>> {
@@ -468,6 +519,17 @@ export async function getFinalSubmissionReadiness(
       preBidChannel: true,
       clientRepresentative: true,
       evaluationCriteriaSourceJson: true,
+      // Unresolved CRITICAL compliance gaps must hard-block final export —
+      // the actual ZIP download route (app/api/tenders/[id]/download/route.ts)
+      // already 409s on any unresolved CRITICAL gap regardless of category.
+      // Without this in the readiness computation, the "Ready for export"
+      // signal shown on Bid Control / Export Hub / Command Center could read
+      // Ready while the real download link still hard-blocks — surfacing the
+      // gap here keeps the badge and the gate in agreement.
+      complianceGaps: {
+        where: { isResolved: false, severity: "CRITICAL" },
+        select: { id: true, title: true },
+      },
       requirements: {
         select: {
           id: true,
@@ -508,12 +570,31 @@ export async function getFinalSubmissionReadiness(
           // metadata instead of loading the full blob from Neon.
           fileContent: shouldLoadFileContent,
           storagePath: true,
+          // Persisted byte-integrity columns. These are small, and without them
+          // every document reaching checkExportFileByteReadiness arrived with
+          // integrityStatus undefined — which reads as legacy/unknown, so
+          // readGeneratedDocumentContent({ requireVerifiedIntegrity: true })
+          // rejected files whose stored integrityStatus is in fact VERIFIED and
+          // the final ZIP was refused with FILE_BYTES_NOT_VERIFIED:
+          // LEGACY_INTEGRITY_UNKNOWN.
+          contentSha256: true,
+          contentByteLength: true,
+          contentMimeType: true,
+          detectedFormat: true,
+          integrityStatus: true,
+          integrityVerifiedAt: true,
+          integrityFailureCode: true,
         },
       },
       // Extraction quality status — consumed by checkTenderLevelExportBlockers to
       // emit the ANALYSIS_FROM_PARTIAL_EXTRACTION blocker when AI analysis ran on
       // partial extraction. Without this field the blocker silently never fires.
       analysisExtractionStatus: true,
+      // Selected evidence, so the quality gate can tell "cites nothing" apart
+      // from "was told nothing to look for". Same population validate.ts uses
+      // (isSelected: true) so the two gates cannot disagree about one document.
+      expertMatches: { where: { isSelected: true }, select: { expert: { select: { fullName: true } } } },
+      projectMatches: { where: { isSelected: true }, select: { project: { select: { name: true } } } },
       // Extraction metrics — needed by isExtractionAcceptableForExport in the
       // export readiness gate so the panel shows the blocker before export.
       files: {
@@ -573,19 +654,35 @@ export async function getFinalSubmissionReadiness(
     requireFileContent: opts.requireFileContent ?? false,
   });
 
-  const documentBlockers: FinalReadinessDocumentBlocker[] = readiness.failures.map((failure) => ({
-    documentId: failure.documentId,
-    name: failure.name,
-    fileName: failure.fileName,
-    reasons: failure.reasons,
-    severity: severityForReasons(failure.reasons),
-    nextActions: Array.from(new Set(failure.reasons.map(nextActionForReason))),
-  }));
+  // checkExportReadiness (which produced readiness.failures) and
+  // checkFullExportReadiness's own tenderLevelBlockers both independently
+  // detect docs.length === 0 -- the former as a synthetic __tender__ entry,
+  // the latter as a NO_ACTIVE_GENERATED_DOCUMENTS blocker -- so the two
+  // always co-occur and double-count the same zero-documents condition.
+  // Confirmed by a real cross-page comparison: the Documents page (which
+  // calls this function via /export-readiness, not through the Tender
+  // Release State wrapper) showed 10 blockers for a tender the tender
+  // workspace/command-center/report showed 9 for. Drop the synthetic
+  // per-document entry here at the source so every direct consumer of
+  // getFinalSubmissionReadiness agrees, not just the wrapper.
+  const hasNoActiveDocumentsTenderBlocker = (readiness.tenderLevelBlockers ?? []).some(
+    (b) => b.category === "NO_ACTIVE_GENERATED_DOCUMENTS",
+  );
+  const documentBlockers: FinalReadinessDocumentBlocker[] = readiness.failures
+    .filter((failure) => !(hasNoActiveDocumentsTenderBlocker && failure.documentId === "__tender__"))
+    .map((failure) => ({
+      documentId: failure.documentId,
+      name: failure.name,
+      fileName: failure.fileName,
+      reasons: failure.reasons,
+      severity: severityForReasons(failure.reasons),
+      nextActions: Array.from(new Set(failure.reasons.map(nextActionForReason))),
+    }));
 
   // Donor advisory persistence: honour user-saved resolutions so re-check
   // does not re-surface advisories the user already triaged.
   const resolutions = await loadAdvisoryResolutions(client, opts.tenderId);
-  const advisoryWarnings = applyAdvisoryResolutions(readiness.advisoryWarnings, resolutions);
+  const advisoryWarnings: FinalReadinessAdvisoryWarning[] = applyAdvisoryResolutions(readiness.advisoryWarnings, resolutions);
   const tenderLevelBlockers: FinalReadinessTenderBlocker[] = (readiness.tenderLevelBlockers ?? []).map((b) => ({
     category: b.category,
     severity: b.severity,
@@ -648,35 +745,73 @@ export async function getFinalSubmissionReadiness(
   // otherwise the scorer would run against base64 gibberish and never
   // match placeholder/AI-trace patterns, silently skipping the quality gate
   // for all generated DOCX files.
-  const qualityReports: Array<{ doc: any; report: ReturnType<typeof assessGeneratedDocumentQuality> }> = [];
-  for (const doc of finalCandidates) {
-    let visible: string | null = null;
-    if (typeof doc.fileContent === "string" && doc.fileContent.length < 2_000_000) {
-      const fileName = doc.exactFileName ?? doc.name ?? "";
-      if (fileName.toLowerCase().endsWith(".docx")) {
-        // Extract visible text from base64 DOCX for accurate quality scoring.
-        visible = await extractDocxVisibleText(doc.fileContent, fileName);
-      }
-      // For non-DOCX files (PDF, etc.), visible stays null — the quality
-      // scorer will skip visible-text checks but the file-signature check
-      // and output-state machine still enforce format correctness.
-      if (!visible && !fileName.toLowerCase().endsWith(".docx")) {
-        // Plain-text content (legacy or markdown) — use as-is.
-        visible = doc.fileContent;
-      }
-    }
-    qualityReports.push({
-      doc,
-      report: assessGeneratedDocumentQuality({
-        doc,
-        visibleText: visible,
-        rawFileContent: doc.fileContent,
-        hasStoragePath: Boolean(doc.storagePath && doc.storagePath.length > 0),
-        requirements: tender.requirements,
-      }),
+  // Scored through lib/engine/current-document-quality.ts so the Document
+  // Validator panel and this gate cannot score the same document differently.
+  //
+  // The bytes must be loaded for exactly these candidates before scoring.
+  //
+  // `fileContent` is selected only when the caller asked for it, and every
+  // readiness-style caller passes requireFileContent=false to avoid pulling
+  // large blobs. The scorer then received rows with no content, extracted no
+  // visible text, and returned QUALITY_FAILED — for having read nothing. So
+  // the export gate reported "3 generated document(s) failed the quality gate"
+  // about documents the Document Validator panel, which loads the bytes,
+  // scores 100/100 PASSED.
+  //
+  // The two surfaces already share the scorer precisely so they cannot
+  // disagree; they were sharing the function and not the input. The
+  // disagreement only appears at the end of the pipeline, once documents are
+  // validated and therefore become final candidates, which is exactly when it
+  // blocks the ZIP — and it blocks with a verdict about content quality that no
+  // content was consulted for.
+  //
+  // This loads only the final candidates, not every generated document, so the
+  // blob-size reason the projection exists for still holds everywhere else.
+  const qualityInputs = await loadVisibleTextInputsForQuality(client, finalCandidates as any[]);
+  const qualityReports = await assessCurrentDocumentQualityBatch(qualityInputs as any[], tender.requirements, {
+    selectedExpertNames: tender.expertMatches.map((match) => match.expert.fullName),
+    selectedProjectNames: tender.projectMatches.map((match) => match.project.name),
+  });
+  const qualityFailed = countQualityFailed(qualityReports);
+
+  // Name what failed, and why.
+  //
+  // This blocker used to reach the operator — and the logs — as nothing but
+  // "N generated document(s) failed the quality gate". A real run stopped at
+  // AUTO_FINALIZE_NOT_CONVERGED with "0 document blocker(s) and 1
+  // tender-level blocker(s): GENERATED_DOCUMENT_QUALITY_FAILED", and that
+  // sentence is the entire evidence trail: not which document, not its score,
+  // not what was wrong with it. Reconstructing it took reading the bytes by
+  // hand, and the actual cause turned out to be environmental — a PDF whose
+  // text could not be extracted on the deployment scores 10/100 for having
+  // read nothing, which is indistinguishable, from the blocker text alone,
+  // from a genuinely poor document.
+  //
+  // Deliberately metadata only: id, filename, score, status, issue CODES and
+  // whether any visible text was recovered. No document content, no source
+  // text, no credentials — the codes say what is wrong without quoting what
+  // the document says.
+  if (qualityFailed > 0) {
+    logger.warn("[final-readiness] documents failed the quality gate", {
+      tenderId: tender.id,
+      failedCount: qualityFailed,
+      documents: qualityReports
+        .filter(({ report }) => report.recommendedStatus === "QUALITY_FAILED")
+        .map(({ doc, report }) => ({
+          documentId: (doc as { id?: string | null }).id ?? null,
+          fileName: (doc as { exactFileName?: string | null }).exactFileName
+            ?? (doc as { name?: string | null }).name
+            ?? null,
+          format: (doc as { format?: string | null }).format ?? null,
+          score: report.score,
+          recommendedStatus: report.recommendedStatus,
+          wordCount: report.wordCount,
+          // The tell for the environmental case above: bytes present, no text.
+          visibleTextRecovered: report.wordCount > 0,
+          issueCodes: report.issues.map((issue) => issue.code),
+        })),
     });
   }
-  const qualityFailed = qualityReports.filter(({ report }) => report.recommendedStatus === "QUALITY_FAILED").length;
 
   // ── Metadata completeness gate (Part 5) ──────────────────────────────────
   const metadata = assessTenderMetadataCompleteness({
@@ -735,6 +870,18 @@ export async function getFinalSubmissionReadiness(
       severity: "HIGH",
       title: `Required Tender Details are incomplete (${metadata.missingCritical.length} critical field(s) missing${metadata.placeholderCount > 0 ? `, ${metadata.placeholderCount} "Bid-Team to confirm" placeholder(s)` : ""}).`,
       recommendedAction: "Fill the missing critical Tender Details — client/procuring entity, deadline, submission method — before final proposal generation.",
+    });
+  }
+  // Unresolved CRITICAL compliance gaps hard-block final export at the
+  // actual download route regardless of category — mirror that here so
+  // this readiness signal cannot show Ready while the download link
+  // still 409s.
+  if (tender.complianceGaps.length > 0) {
+    tenderLevelBlockers.push({
+      category: "CRITICAL_COMPLIANCE_GAPS",
+      severity: "CRITICAL",
+      title: `${tender.complianceGaps.length} unresolved CRITICAL compliance gap(s): ${tender.complianceGaps.map((g) => g.title).join("; ")}`,
+      recommendedAction: "Resolve every CRITICAL compliance gap before final export.",
     });
   }
   // ── Canonical field-state gate (single source of truth) ───────────────────
@@ -864,8 +1011,12 @@ export async function getFinalSubmissionReadiness(
   // Client name gate — an empty/whitespace-only clientName (and no
   // procuringEntityName fallback) must block export so a proposal is
   // never sent without knowing who the procuring entity is.
+  // Only emit when checkFullExportReadiness's own CLIENT_NAME_REQUIRED check
+  // did not already cover it, so we do not double-count the same missing-
+  // client-name condition under two category codes (verified by a real
+  // screenshot showing both blockers rendered together for one issue).
   const effectiveClientName = (tender.clientName ?? "").trim() || (tender.procuringEntityName ?? "").trim();
-  if (!effectiveClientName) {
+  if (!effectiveClientName && !tenderLevelBlockers.some((b) => b.category === "CLIENT_NAME_REQUIRED")) {
     tenderLevelBlockers.push({
       category: "CLIENT_NAME_MISSING",
       severity: "HIGH",
@@ -903,15 +1054,15 @@ export async function getFinalSubmissionReadiness(
       category: "GENERATED_DOCUMENT_QUALITY_FAILED",
       severity: "HIGH",
       title: `${qualityFailed} generated document(s) failed the quality gate (QUALITY_FAILED).`,
-      recommendedAction: "Review the flagged documents in the Export Readiness panel; rewrite or attach official originals before export.",
+      recommendedAction: "Review the flagged documents in the Export Readiness panel; rewrite or regenerate before export.",
     });
   }
   if (!confirmedPlan.ok) {
     tenderLevelBlockers.push({
       category: "NO_CURRENT_CONFIRMED_BUILD_PLAN",
       severity: "HIGH",
-      title: `No current confirmed Build Plan: ${confirmedPlan.blocker}`,
-      recommendedAction: "Build and confirm the submission Build Plan before final export. Derived drafts do not authorize export.",
+      title: `No current source-verified Build Plan: ${confirmedPlan.blocker}`,
+      recommendedAction: "Run Engine to create and source-verify the submission Build Plan automatically. Derived drafts do not authorize export.",
     });
   }
   if (requiredPlanCount > 0 && !hasExplicitPlanScope) {
@@ -985,7 +1136,7 @@ export async function getFinalSubmissionReadiness(
       category: "ANALYSIS_FROM_CORRUPTED_EXTRACTION",
       severity: "HIGH",
       title: "AI Analyze was skipped because tender extraction was corrupted — requirements and metadata may be incomplete.",
-      recommendedAction: "Re-upload a clearer document or run OCR, then re-run AI Analyze before attempting export.",
+      recommendedAction: "Upload a clearer, text-based document. Extraction and analysis re-run automatically before export.",
     });
   }
   if (analysisExtractionStatus === "REGEX_FALLBACK_FROM_WEAK_EXTRACTION") {
@@ -993,7 +1144,7 @@ export async function getFinalSubmissionReadiness(
       category: "ANALYSIS_FROM_WEAK_EXTRACTION",
       severity: "HIGH",
       title: "Tender analysis used regex/deterministic fallback because extraction was too weak — generated documents may be based on incomplete requirements.",
-      recommendedAction: "Run OCR extraction on the tender file, then re-run AI Analyze before exporting.",
+      recommendedAction: "Upload a clearer, text-based copy of the tender file. Extraction and analysis re-run automatically before export.",
     });
   }
   if (analysisExtractionStatus === "PARTIAL_EXTRACTION_AI_ANALYZED") {
@@ -1001,7 +1152,7 @@ export async function getFinalSubmissionReadiness(
       category: "ANALYSIS_FROM_PARTIAL_EXTRACTION",
       severity: "HIGH",
       title: "AI analysis was performed on a partially-extracted tender — some pages were weak or OCR-only. Exported documents may be missing requirements from unread pages.",
-      recommendedAction: "Re-extract the tender file (run OCR if needed), then re-run AI Analyze to obtain a full-extraction analysis before exporting.",
+      recommendedAction: "Upload a clearer, text-based copy of the tender file so a full-extraction analysis can be produced before export.",
     });
   }
   // NOTE: the deadline-in-the-past check lives in export-readiness.ts, which
@@ -1018,7 +1169,7 @@ export async function getFinalSubmissionReadiness(
       category: "EXTRACTION_QUALITY_INSUFFICIENT",
       severity: "HIGH",
       title: "Page extraction quality is insufficient for export (poor coverage, unknown page count, or failed pages).",
-      recommendedAction: "Re-upload a clearer document or run OCR, then re-run AI Analyze before attempting export.",
+      recommendedAction: "Upload a clearer, text-based document. Extraction and analysis re-run automatically before export.",
     });
   }
 
@@ -1040,17 +1191,18 @@ export async function getFinalSubmissionReadiness(
   // When evaluationMethodology is empty/null and no evaluation criteria source
   // JSON is stored, the generated proposal cannot mirror the evaluation
   // criteria — a significant proposal-quality risk. Push as MEDIUM advisory
-  // rather than a hard blocker because some tenders genuinely have no criteria.
-  const hasEvalCriteria = Boolean(
-    (tender.evaluationMethodology ?? "").trim().length > 20 ||
-    tender.evaluationCriteriaSourceJson,
-  );
+  // Per Pillar 6: merged with EVALUATION_CRITERIA_MISSING into one non-blocking
+  // advisory. This is no longer a hard blocker — some tenders genuinely have
+  // no scoring section. Only surface as advisory, not as a tenderLevelBlocker.
+  const hasEvalCriteria = hasSourceEvaluationCriteria(tender);
   if (!hasEvalCriteria) {
-    tenderLevelBlockers.push({
-      category: "EVALUATION_CRITERIA_NOT_EXTRACTED",
-      severity: "MEDIUM",
-      title: "Evaluation criteria were not extracted from the tender — the generated proposal cannot mirror the scoring rubric.",
-      recommendedAction: "Re-run AI Analyze or manually enter evaluation criteria weights so the proposal targets the scoring rubric directly.",
+    // Advisory only — do NOT push to tenderLevelBlockers
+    advisoryWarnings.push({
+      category: "EVALUATION_CRITERIA_ADVISORY",
+      code: "EVALUATION_CRITERIA_ADVISORY",
+      severity: "LOW",
+      title: "Evaluation criteria were not extracted — verify scoring manually.",
+      recommendedAction: "Review the tender for any scoring section. If found, re-run AI Analyze. This is advisory only and does not block final submission.",
     });
   }
 
@@ -1070,7 +1222,17 @@ export async function getFinalSubmissionReadiness(
         !(r.sectionReference ?? "").trim(),
     ).length;
     const missingRatio = missingTraceability / mandatoryRequirements.length;
-    if (missingRatio > 0.1) {
+    // checkFullExportReadiness (seeded into tenderLevelBlockers above) already
+    // pushes SOURCE_REFERENCES_MISSING from the exact same untraced-mandatory-
+    // requirement predicate (sourceConfidence <= 0, no file/page/quote/section)
+    // whenever any such requirement exists at all -- a strict subset of this
+    // 10%-ratio condition, so the two always co-occur once the ratio is
+    // crossed. Confirmed by a real cross-check: the underlying predicate in
+    // lib/engine/export-readiness.ts's ungroundedMandatory filter is
+    // identical to missingTraceability's filter here. Only emit when that
+    // check did not already cover it, so the same untraced-requirements fact
+    // does not render as two separate blockers.
+    if (missingRatio > 0.1 && !tenderLevelBlockers.some((b) => b.category === "SOURCE_REFERENCES_MISSING")) {
       tenderLevelBlockers.push({
         category: "SOURCE_TRACEABILITY_MISSING",
         severity: "MEDIUM",
@@ -1131,7 +1293,7 @@ export async function getFinalSubmissionReadiness(
     outsidePlanDocuments: extraPlan.length,
     qualityFailedDocuments: qualityFailed,
     finalExportCandidatesCount: finalCandidates.length,
-    readyForExportCount: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
+    readyForExportCount: finalCandidates.filter((d) => isExportReady(d)).length,
     finalExportGateOk:
       readiness.ok &&
       documentBlockers.length === 0 &&
@@ -1188,16 +1350,16 @@ export async function getFinalSubmissionReadiness(
     requiredDocumentsTotal: Math.max(requiredPlanCount, generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length),
     // exportReadyDocumentsTotal = docs that are GENERATED, not SUPERSEDED/PLANNED,
     // and pass the export-candidate filter. This is the numerator for the tile.
-    exportReadyDocumentsTotal: finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length,
+    exportReadyDocumentsTotal: finalCandidates.filter((d) => isExportReady(d)).length,
     // ── Primary blocker reason + fix action ──────────────────────────────
     // Priority order: planned-not-generated > no-export-ready > evidence >
     // source-grounding > validation > quality > submission-facts > export-gate
     primaryBlockerReason: (() => {
       const ungenerated = generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length;
       if (ungenerated > 0) return `${ungenerated} required document(s) are planned but not generated.`;
-      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "No export-ready documents. Generate required documents first.";
-      const exportReady = finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length;
-      if (finalCandidates.length > 0 && exportReady === 0) return "No documents are validated and approved for export.";
+      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "No export-ready documents. Follow the canonical blocker; post-Engine generation and validation are automatic.";
+      const exportReady = finalCandidates.filter((d) => isExportReady(d)).length;
+      if (finalCandidates.length > 0 && exportReady === 0) return "No documents have passed machine validation for export.";
       if (documentBlockers.length > 0) return documentBlockers[0]?.name ?? documentBlockers[0]?.reasons?.[0] ?? "Document blockers exist.";
       if (tenderLevelBlockers.length > 0) return tenderLevelBlockers[0]?.title ?? "Tender-level blockers exist.";
       if (!readiness.ok) return "Export gate is not satisfied.";
@@ -1205,10 +1367,10 @@ export async function getFinalSubmissionReadiness(
     })(),
     primaryFixAction: (() => {
       const ungenerated = generatedDocuments.filter((d) => (d.generationStatus ?? "").toUpperCase() === "PLANNED").length;
-      if (ungenerated > 0) return "Generate required documents.";
-      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "Generate required documents.";
-      const exportReady = finalCandidates.filter((d) => /READY_FOR_EXPORT|APPROVED/i.test(d.reviewStatus ?? "")).length;
-      if (finalCandidates.length > 0 && exportReady === 0) return "Validate and approve documents for export.";
+      if (ungenerated > 0) return "Automatic post-Engine document generation is pending.";
+      if (finalCandidates.length === 0 && requiredPlanCount > 0) return "Automatic post-Engine document generation is pending.";
+      const exportReady = finalCandidates.filter((d) => isExportReady(d)).length;
+      if (finalCandidates.length > 0 && exportReady === 0) return "Validate documents and resolve any genuine quality, legal, signature, or authority blocker.";
       if (documentBlockers.length > 0) return documentBlockers[0]?.nextActions?.[0] ?? "Resolve document blockers.";
       if (tenderLevelBlockers.length > 0) return tenderLevelBlockers[0]?.recommendedAction ?? "Resolve tender-level blockers.";
       if (!readiness.ok) return "Resolve all export gate blockers.";

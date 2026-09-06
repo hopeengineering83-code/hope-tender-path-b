@@ -83,7 +83,7 @@ export default function OfflinePage() {
         </div>
       </div>
 
-      <p className="mt-6 text-center text-xs text-slate-400">
+      <p className="mt-6 text-center text-xs text-slate-600">
         Hope Tender Proposal Generator &middot; Offline mode
       </p>
     </div>

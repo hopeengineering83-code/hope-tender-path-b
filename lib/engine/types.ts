@@ -1,6 +1,5 @@
 import type { CompanyComplianceRecord, Expert, FinancialRecord, LegalRecord, Project, Tender } from "@prisma/client";
 
-// Only the fields the analysis engine actually reads from uploaded files
 export type TenderFileForAnalysis = {
   id: string;
   originalFileName: string;
@@ -24,20 +23,18 @@ export type RequirementDraft = {
   exactOrder?: number | null;
   restrictions?: string | null;
   sectionReference?: string | null;
-  // ─── G9: page-level source coordinates ──────────────────────────────
-  // Populated by the requirement extractor when the source tender file's
-  // page index, section heading, and exact verbatim quote are detected.
-  // Powers the audit-grade "where in the tender does this come from?"
-  // workflow.
   sourceTenderFileId?: string | null;
   sourcePageNumber?: number | null;
   sourceSectionHeading?: string | null;
   sourceExactQuote?: string | null;
-  // sourceConfidence is `number | undefined` (no `null`) because the
-  // Prisma column has a non-null default of 0 and the create input
-  // type does not accept null.
   sourceConfidence?: number;
-  sourceExtractionMethod?: "ocr" | "text" | "mixed" | null;
+  /**
+   * Compatibility-only persisted diagnostic label. Historical rows may contain
+   * values outside text/ocr/mixed. No source or generation gate may use this
+   * field as authority; authority always requires current file ID, page, exact
+   * quote, confidence, revision hash, and verified stored bytes.
+   */
+  sourceExtractionMethod?: any;
 };
 
 export type CompanyDocumentSnapshot = {

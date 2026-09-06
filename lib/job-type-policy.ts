@@ -2,13 +2,14 @@ import type { JobType } from "./ai-jobs";
 
 export const SUPPORTED_JOB_TYPES = [
   "PROPOSAL_GENERATION",
-  "AI_REMATCH",
   "EVALUATOR_SIM",
   "COPILOT_DEEP_ANALYSIS",
   "PROFILE_FACT_EXTRACTION",
   "AI_ANALYZE",
   "ENGINE_RUN",
   "EXTRACT_TEXT",
+  "VAULT_INGEST",
+  "AUTO_FINALIZE",
 ] as const satisfies readonly JobType[];
 
 export type ParsedJobType =

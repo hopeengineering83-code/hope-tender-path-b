@@ -1,10 +1,11 @@
+import { toCanonicalSupportLevel } from "./compliance";
 import { logger } from "../observability";
 import { randomUUID } from "crypto";
 import { prisma } from "../prisma";
 import { computeTenderMutationLockKey } from "./advisory-lock-key";
 import { logAction } from "../audit";
-import { analyzeTender, normalizeStrategicRequirements } from "./analysis";
-import { analyzeWithAI, isAIEnabled } from "../ai";
+import type { analyzeTender } from "./analysis";
+import { isAIEnabled } from "../ai";
 import { buildCompliance } from "./compliance";
 import { buildDocumentPlan } from "./documents";
 import { buildMatches } from "./matching";
@@ -15,45 +16,32 @@ import type { MatchPerspective } from "./ai-multi-perspective-matcher";
 import { inferSector } from "./proposal-intelligence";
 import { classifyTenderRequirement } from "./requirement-categories";
 import { REMATCH_TIMEOUT_MS } from "../timeout-config";
+import { canUseVaultRecord, VAULT_SOURCE_DOCUMENT_SELECT } from "../vault-review-provenance";
+import { loadDurableCompanySupportRecords } from "../prisma-schema-compatibility";
+import { selectCanonicalTenderFiles } from "../tender/canonical-source-files";
+import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
+import { normalizeRequirementTypeOrDefault } from "./requirement-type-vocabulary";
 
-// ─── Vercel function-budget reserves ────────────────────────────────────
-// The engine route passes deadlineAt = Date.now() + 50_000 so the whole run
-// stays under Vercel Hobby's 60s cap. AI rematch is wrapped by
-// withRematchTimeout(REMATCH_TIMEOUT_MS) (default 40s, see timeout-config).
-// We must NOT start the rematch unless the remaining budget covers the full
-// rematch timeout PLUS buffers for DB persistence and HTTP response
-// serialization — otherwise Vercel kills the function mid-rematch and the
-// user gets a 504 with no partial result. These reserves are deliberately
-// conservative; they are NOT a perf knob.
-const DB_PERSISTENCE_BUFFER_MS = 8_000; // prisma $transaction + writeEngineRunAudit
-const RESPONSE_SERIALIZATION_BUFFER_MS = 2_000; // NextResponse.json + network egress
-const REMATCH_RESERVE_MS =
-  REMATCH_TIMEOUT_MS + DB_PERSISTENCE_BUFFER_MS + RESPONSE_SERIALIZATION_BUFFER_MS;
+const DB_PERSISTENCE_BUFFER_MS = 8_000;
+const RESPONSE_SERIALIZATION_BUFFER_MS = 2_000;
+const REMATCH_RESERVE_MS = REMATCH_TIMEOUT_MS + DB_PERSISTENCE_BUFFER_MS + RESPONSE_SERIALIZATION_BUFFER_MS;
 
 export type EngineRunOptions = {
   safe?: boolean;
   skipAiRematch?: boolean;
   maxChars?: number;
-  /**
-   * Wall-clock deadline (epoch ms) for the entire engine run. When the deadline
-   * is near, AI rematch is skipped and the engine returns partial results
-   * instead of being hard-killed by Vercel's 60s function limit. The engine
-   * route passes `Date.now() + 50_000` (50s, leaving 10s for DB persistence
-   * + response serialization) so the engine never exceeds the 60s Vercel Hobby
-   * cap.
-   */
   deadlineAt?: number;
 };
 
 export function deduplicatePageText(text: string): string {
-  const chunks = text.split(/---\s*NEXT DOCUMENT\s*---/i);
+  const parts = text.split(/---\s*NEXT DOCUMENT\s*---/i);
   const seen = new Set<string>();
   const deduped: string[] = [];
-  for (const chunk of chunks) {
-    const normalised = chunk.replace(/\s+/g, " ").trim().slice(0, 500);
-    if (normalised.length < 50 || !seen.has(normalised)) {
-      seen.add(normalised);
-      deduped.push(chunk);
+  for (const part of parts) {
+    const key = part.replace(/\s+/g, " ").trim().slice(0, 500);
+    if (key.length < 50 || !seen.has(key)) {
+      seen.add(key);
+      deduped.push(part);
     }
   }
   return deduped.join("\n\n--- NEXT DOCUMENT ---\n\n");
@@ -61,8 +49,18 @@ export function deduplicatePageText(text: string): string {
 
 function chunks<T>(items: T[], size = 100): T[][] {
   const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  for (let index = 0; index < items.length; index += size) out.push(items.slice(index, index + size));
   return out;
+}
+
+function parseStringArray(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
 }
 
 async function writeEngineRunAudit(args: {
@@ -71,15 +69,8 @@ async function writeEngineRunAudit(args: {
   action: "TENDER_ENGINE_RUN_STARTED" | "TENDER_ENGINE_RUN_COMPLETED" | "TENDER_ENGINE_RUN_FAILED" | "TENDER_ENGINE_DOCUMENTS_SUPERSEDED";
   description: string;
   metadata: Record<string, unknown>;
-  // Optional transaction client — when provided, the audit write runs INSIDE
-  // the transaction so it commits/rolls back atomically with the state change
-  // it records. Previously the TENDER_ENGINE_DOCUMENTS_SUPERSEDED audit was
-  // written BEFORE the transaction, so a rolled-back supersede left a false
-  // audit record claiming documents were superseded when they were still active.
   tx?: { auditLog: { create: (args: { data: Record<string, unknown> }) => Promise<unknown> } } | Parameters<Parameters<typeof prisma["$transaction"]>[0]>[0];
 }) {
-  // When a transaction client is provided, write the audit row inside the
-  // transaction so it commits/rolls back atomically.
   if (args.tx) {
     try {
       await args.tx.auditLog.create({
@@ -93,11 +84,18 @@ async function writeEngineRunAudit(args: {
         },
       });
     } catch {
-      // Never let audit logging crash the main flow
+      // Audit failure must not corrupt the engine transaction.
     }
     return;
   }
-  await logAction({ userId: args.userId, action: args.action, entityType: "Tender", entityId: args.tenderId, description: args.description, metadata: args.metadata });
+  await logAction({
+    userId: args.userId,
+    action: args.action,
+    entityType: "Tender",
+    entityId: args.tenderId,
+    description: args.description,
+    metadata: args.metadata,
+  });
 }
 
 type MainEngineAIRematchState = {
@@ -111,15 +109,6 @@ type MainEngineAIRematchState = {
   projectScoreBreakdowns: Record<string, Partial<Record<MatchPerspective, number>>>;
 };
 
-// ─── Progress callback ────────────────────────────────────────────────
-// Optional callback so callers (notably the ENGINE_RUN job handler) can
-// surface granular step progress to the user. Sync function — does NOT
-// block the engine. Caller is responsible for any async fan-out.
-// Pre-fix the ENGINE_RUN handler only emitted "engine.start" /
-// "engine.complete", so users running in background saw a single
-// "Starting engine run for tender X" message for up to 10 minutes,
-// then a binary success/fail. This callback lets the handler emit
-// real progress through the pipeline.
 export type EngineProgressCallback = (stepName: string, message: string) => void;
 
 export async function runTenderEngine(
@@ -129,26 +118,76 @@ export async function runTenderEngine(
   options?: EngineRunOptions,
 ) {
   const progress = onProgress ?? (() => {});
-  progress("engine.load", "Loading tender + files");
+  progress("engine.load", "Loading tender, canonical files, and promoted analysis");
+
   const tender = await prisma.tender.findFirst({
     where: { id: tenderId, userId },
-    include: { files: { select: { id: true, originalFileName: true, mimeType: true, classification: true, extractedText: true } } },
-  });
-  if (!tender) throw new Error("Tender not found");
-  progress("engine.company", "Loading company vault (experts + projects + documents)");
-
-  const company = await prisma.company.findUnique({
-    where: { userId },
     include: {
-      experts: true,
-      projects: true,
-      documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
-      legalRecords: true,
-      financialRecords: true,
-      complianceRecords: true,
+      files: {
+        select: {
+          id: true,
+          fileName: true,
+          originalFileName: true,
+          mimeType: true,
+          classification: true,
+          extractedText: true,
+          deletionStatus: true,
+          contentSha256: true,
+          integrityStatus: true,
+          extractionScore: true,
+          extractionMethod: true,
+          totalPages: true,
+          extractedPages: true,
+          failedPages: true,
+          createdAt: true,
+        },
+      },
+      requirements: { orderBy: { createdAt: "asc" } },
     },
   });
-  if (!company) throw new Error("Company profile required before engine run");
+  if (!tender) throw new Error("Tender not found");
+
+  const canonicalFiles = selectCanonicalTenderFiles(tender.files);
+  if (canonicalFiles.length === 0) throw new Error("No canonical active tender source is available");
+
+  progress("engine.company", "Loading source-verified Company Vault evidence");
+  const companyBase = await prisma.company.findUnique({
+    where: { userId },
+    include: {
+      experts: {
+        where: { deletedAt: null },
+        include: {
+          // Selected through the shared constant, not by hand. This list used
+          // to omit `metadata`, so sourceExtractionRevision() fell back to
+          // "revision:1" while the stored provenance said "revision:6" — the
+          // revision a document reaches after being re-extracted. Every
+          // machine-SOURCE_VERIFIED expert and project therefore failed
+          // checkMatchingEligibility, scored 0, and was never selected: the
+          // engine reported NO_SELECTED_SOURCE_VERIFIED_EXPERTS_AFTER_ENGINE
+          // for a vault full of verified evidence.
+          sourceDocument: { select: VAULT_SOURCE_DOCUMENT_SELECT },
+        },
+      },
+      projects: {
+        where: { deletedAt: null },
+        include: {
+          // Selected through the shared constant, not by hand. This list used
+          // to omit `metadata`, so sourceExtractionRevision() fell back to
+          // "revision:1" while the stored provenance said "revision:6" — the
+          // revision a document reaches after being re-extracted. Every
+          // machine-SOURCE_VERIFIED expert and project therefore failed
+          // checkMatchingEligibility, scored 0, and was never selected: the
+          // engine reported NO_SELECTED_SOURCE_VERIFIED_EXPERTS_AFTER_ENGINE
+          // for a vault full of verified evidence.
+          sourceDocument: { select: VAULT_SOURCE_DOCUMENT_SELECT },
+        },
+      },
+      documents: { select: { id: true, category: true, originalFileName: true, extractedText: true } },
+    },
+  });
+  if (!companyBase) throw new Error("Company profile required before engine run");
+  const supportRecords = await loadDurableCompanySupportRecords(prisma, companyBase.id);
+  const company = { ...companyBase, ...supportRecords };
 
   const engineRunId = randomUUID();
   const startedAt = new Date();
@@ -160,92 +199,113 @@ export async function runTenderEngine(
     metadata: {
       engineRunId,
       startedAt: startedAt.toISOString(),
-      tenderFileCount: tender.files.length,
+      canonicalTenderFileCount: canonicalFiles.length,
+      excludedDuplicateSourceCount: Math.max(0, tender.files.length - canonicalFiles.length),
       companyExpertCount: company.experts.length,
       companyProjectCount: company.projects.length,
       destructiveCurrentStateRefresh: false,
-      note: "Current-state matching/compliance artifacts are refreshed in place; generated document history is preserved by superseding older documents instead of deleting them.",
     },
   });
 
   try {
-    progress("engine.analyze", "Analyzing tender requirements (extracting structured requirements)");
+    progress("engine.analyze", "Loading current-revision manual AI Analyze output");
     let analysis: ReturnType<typeof analyzeTender>;
-    let analysisMethod: "AI" | "REGEX_FALLBACK_AI_DISABLED" | "REGEX_FALLBACK_NO_TEXT" | "REGEX_FALLBACK_AI_ERROR" = "REGEX_FALLBACK_AI_DISABLED";
-    let analysisFallbackReason: string | null = null;
+    // Engine analysis is always the promoted output of manual AI Analyze.
+    // Provider availability may affect bounded matching, never this authority.
+    const analysisMethod = "AI" as const;
+    const analysisFallbackReason: string | null = null;
 
-    if (isAIEnabled()) {
-      let tenderText = tender.files
-        .map((f) => (f.extractedText ?? "").trim())
-        .map((t) => t.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, ""))
-        .filter((t) => t.length > 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(t))
-        .join("\n\n--- NEXT DOCUMENT ---\n\n");
+    const promotedRequirements = tender.requirements.filter((requirement) =>
+      Boolean(
+        requirement.sourceTenderFileId
+        && requirement.sourcePageNumber != null
+        && requirement.sourceExactQuote
+        && requirement.sourceExactQuote.trim().length > 0,
+      ),
+    );
+    // This is the same canonical authority used by POST /engine. The legacy
+    // analysisExtractionStatus field is descriptive metadata and may lag a
+    // successfully promoted analysis; it must not become a second gate.
+    // Re-resolving here also protects the enqueue-to-claim boundary: source or
+    // Company Vault drift after the route returned 202 changes the canonical
+    // content hash and fails closed before any stale analysis is reused.
+    const releaseSnapshot = await getTenderReleaseSnapshot(prisma, tenderId, userId);
+    const canReusePromotedAnalysis = Boolean(releaseSnapshot?.analysis.eligibleForExport);
 
-      if (options?.safe || options?.maxChars) {
-        tenderText = deduplicatePageText(tenderText);
-      }
-      // In safe mode, cap text at 50 000 chars if no explicit limit is set.
-      // analyzeWithAI on an unbounded large tender can take 60-90 s, hitting
-      // Vercel's 60 s function kill. 50 k chars completes in ~20-30 s and
-      // still covers enough context for solid requirement extraction.
-      const effectiveMaxChars = options?.maxChars ?? (options?.safe ? 50_000 : undefined);
-      if (effectiveMaxChars && tenderText.length > effectiveMaxChars) {
-        tenderText = tenderText.slice(0, effectiveMaxChars);
-      }
-
-      if (tenderText.length > 500) {
-        try {
-          progress("engine.analyze", `Analyzing ${Math.round(tenderText.length / 1000)}k chars of tender text with AI (structured requirement extraction)`);
-          const aiMeta = await analyzeWithAI(tenderText);
-          const aiResult = aiMeta.result;
-          const rawRequirements = aiResult.requirements.map((req, idx) => ({
-            title: req.title,
-            description: req.description,
-            requirementType: req.requirementType,
-            priority: req.priority,
-            requiredQuantity: req.requiredQuantity ?? null,
-            pageLimit: req.pageLimit ?? null,
-            exactFileName: req.exactFileName ?? null,
-            exactOrder: idx + 1,
-            restrictions: req.restrictions ?? null,
-            sectionReference: req.sectionReference ?? null,
-          }));
-          const strategicRequirements = normalizeStrategicRequirements(rawRequirements);
-          analysis = {
-            summary: `Senior consultant interpretation: consolidated ${rawRequirements.length} extracted instruction(s) into ${strategicRequirements.length} strategic requirement bundle(s). ${aiResult.summary}`,
-            requirements: strategicRequirements,
-            exactFileNaming: aiResult.exactFileNaming ?? [],
-            exactFileOrder: aiResult.exactFileOrder ?? [],
-          };
-          analysisMethod = "AI";
-        } catch (err) {
-          logger.error("[engine] AI analysis failed — falling back to regex:", { detail: err });
-          analysisMethod = "REGEX_FALLBACK_AI_ERROR";
-          analysisFallbackReason = err instanceof Error ? err.message : String(err);
-          analysis = analyzeTender(tender);
-        }
-      } else {
-        analysisMethod = "REGEX_FALLBACK_NO_TEXT";
-        analysisFallbackReason = `Extracted tender text is only ${tenderText.length} chars; AI analysis needs at least 500.`;
-        analysis = analyzeTender(tender);
-      }
+    if (canReusePromotedAnalysis) {
+      analysis = {
+        summary: tender.analysisSummary
+          || `Reused ${promotedRequirements.length} grounded requirement(s) promoted by the current manual AI Analyze job.`,
+        requirements: tender.requirements.map((requirement) => ({
+          title: requirement.title,
+          description: requirement.description,
+          requirementType: requirement.requirementType,
+          priority: requirement.priority,
+          requiredQuantity: requirement.requiredQuantity,
+          pageLimit: requirement.pageLimit,
+          exactFileName: requirement.exactFileName,
+          exactOrder: requirement.exactOrder,
+          restrictions: requirement.restrictions,
+          sectionReference: requirement.sectionReference,
+          sourceTenderFileId: requirement.sourceTenderFileId,
+          sourcePageNumber: requirement.sourcePageNumber,
+          sourceSectionHeading: requirement.sourceSectionHeading,
+          sourceExactQuote: requirement.sourceExactQuote,
+          sourceConfidence: requirement.sourceConfidence,
+          sourceExtractionMethod: requirement.sourceExtractionMethod,
+        })),
+        exactFileNaming: parseStringArray(tender.exactFileNaming),
+        exactFileOrder: parseStringArray(tender.exactFileOrder),
+      };
+      progress("engine.analyze", `Reused ${promotedRequirements.length} grounded requirement(s); no duplicate AI extraction call was made`);
     } else {
-      analysisMethod = "REGEX_FALLBACK_AI_DISABLED";
-      analysisFallbackReason = "GEMINI_API_KEY is not configured.";
-      analysis = analyzeTender(tender);
+      // FIX 6: Engine must NEVER re-analyze the tender. The previous code
+      // called analyzeWithAI(tenderText) directly when promoted analysis was
+      // absent — bypassing the manual AI Analyze boundary. That created a
+      // second analysis path the user explicitly prohibited.
+      //
+      // Now: fail closed with CURRENT_ANALYSIS_REQUIRED. The user must
+      // manually run AI Analyze again. The Engine may use AI for bounded
+      // candidate reranking/matching (in ai-multi-perspective-matcher.ts),
+      // but it must NOT perform a replacement tender-analysis stage.
+      const tenderText = canonicalFiles
+        .map((file) => (file.extractedText ?? "").trim())
+        .map((text) => text.replace(/^\[(?:PDF text|OCR text)[^\]]*\]\s*\n+/i, ""))
+        .filter((text) => text.length > 100 && !/^\[(?:Scanned PDF|Extraction failed|Image:|Legacy \.doc)/i.test(text))
+        .join("\n\n--- NEXT DOCUMENT ---\n\n");
+      const failureReason = releaseSnapshot?.analysis.blocker
+        ?? "No current promoted analysis exists for this tender — run AI Analyze first";
+      logger.error("[engine] CURRENT_ANALYSIS_REQUIRED — Engine refusing to re-analyze tender", {
+        tenderId,
+        promotedRequirementCount: promotedRequirements.length,
+        canReusePromotedAnalysis,
+        canonicalTextLength: tenderText.length,
+        canonicalAnalysisState: releaseSnapshot?.analysis.state ?? null,
+        canonicalJobId: releaseSnapshot?.analysis.canonicalJobId ?? null,
+        contentHashMatch: releaseSnapshot?.analysis.contentHashMatch ?? false,
+      });
+      throw new Error(`CURRENT_ANALYSIS_REQUIRED: ${failureReason}. Engine never re-analyzes the tender — manual AI Analyze is the single authority.`);
     }
 
-    const reviewedExperts = company.experts.filter((expert) => expert.trustLevel === "REVIEWED");
-    const reviewedProjects = company.projects.filter((project) => project.trustLevel === "REVIEWED");
-    const aiDraftExpertCount = company.experts.filter((e) => e.trustLevel === "AI_DRAFT").length;
-    const aiDraftProjectCount = company.projects.filter((p) => p.trustLevel === "AI_DRAFT").length;
-    const regexDraftExpertCount = company.experts.filter((e) => !e.trustLevel || e.trustLevel === "REGEX_DRAFT").length;
-    const regexDraftProjectCount = company.projects.filter((p) => !p.trustLevel || p.trustLevel === "REGEX_DRAFT").length;
+    const reviewedExperts = company.experts.filter((expert) => canUseVaultRecord(expert, "GENERATION"));
+    const reviewedProjects = company.projects.filter((project) => canUseVaultRecord(project, "GENERATION"));
+    const unsupportedReviewedExpertCount = company.experts.filter((expert) =>
+      (expert.trustLevel === "REVIEWED" || expert.trustLevel === "SOURCE_VERIFIED")
+      && !canUseVaultRecord(expert, "GENERATION"),
+    ).length;
+    const unsupportedReviewedProjectCount = company.projects.filter((project) =>
+      (project.trustLevel === "REVIEWED" || project.trustLevel === "SOURCE_VERIFIED")
+      && !canUseVaultRecord(project, "GENERATION"),
+    ).length;
+    const aiDraftExpertCount = company.experts.filter((expert) => expert.trustLevel === "AI_DRAFT").length;
+    const aiDraftProjectCount = company.projects.filter((project) => project.trustLevel === "AI_DRAFT").length;
+    const regexDraftExpertCount = company.experts.filter((expert) => !expert.trustLevel || expert.trustLevel === "REGEX_DRAFT").length;
+    const regexDraftProjectCount = company.projects.filter((project) => !project.trustLevel || project.trustLevel === "REGEX_DRAFT").length;
 
     const knowledge = {
       companyId: company.id,
-      experts: [...reviewedExperts, ...company.experts.filter((e) => e.trustLevel !== "REVIEWED")],
-      projects: [...reviewedProjects, ...company.projects.filter((p) => p.trustLevel !== "REVIEWED")],
+      experts: [...reviewedExperts, ...company.experts.filter((expert) => !reviewedExperts.includes(expert))],
+      projects: [...reviewedProjects, ...company.projects.filter((project) => !reviewedProjects.includes(project))],
       documents: company.documents,
       legalRecords: company.legalRecords,
       financialRecords: company.financialRecords,
@@ -255,36 +315,28 @@ export async function runTenderEngine(
     const knowledgeReadiness = {
       reviewedExperts: reviewedExperts.length,
       reviewedProjects: reviewedProjects.length,
+      unsupportedReviewedExperts: unsupportedReviewedExpertCount,
+      unsupportedReviewedProjects: unsupportedReviewedProjectCount,
       aiDraftExperts: aiDraftExpertCount,
       aiDraftProjects: aiDraftProjectCount,
       regexDraftExperts: regexDraftExpertCount,
       regexDraftProjects: regexDraftProjectCount,
       hasUsableExperts: reviewedExperts.length > 0,
       hasUsableProjects: reviewedProjects.length > 0,
-      hasBlockingExperts: aiDraftExpertCount + regexDraftExpertCount > 0,
-      hasBlockingProjects: aiDraftProjectCount + regexDraftProjectCount > 0,
+      hasBlockingExperts: aiDraftExpertCount + regexDraftExpertCount + unsupportedReviewedExpertCount > 0,
+      hasBlockingProjects: aiDraftProjectCount + regexDraftProjectCount + unsupportedReviewedProjectCount > 0,
     };
 
-    // PR XX-MATCH-FIX MERGE Fix C — pass the INFERRED sector (from tender
-    // body text) to buildMatches() instead of `tender.category` which
-    // defaults to "General". inferSector() reads the same healthcare /
-    // water / road / urban patterns as proposal-intelligence so the
-    // engine matcher's sectorBoost() finally has a meaningful comparison
-    // string. Then the existing main-engine policy + AI rematch run
-    // on top, getting candidates that are already sector-screened.
     const sectorSignalText = [
       tender.title ?? "",
       tender.description ?? "",
       analysis.summary ?? "",
-      ...analysis.requirements.slice(0, 8).map((r) => `${r.title} ${r.description}`),
+      ...analysis.requirements.slice(0, 8).map((requirement) => `${requirement.title} ${requirement.description}`),
     ].join("\n");
     const inferredSector = inferSector(sectorSignalText);
     const sectorForMatching = inferredSector !== "General Consultancy / Engineering"
       ? inferredSector
       : (tender.category || null);
-    if (inferredSector !== "General Consultancy / Engineering") {
-      logger.info(`[run-tender-engine] Inferred tender sector: "${inferredSector}" (used for matching instead of tender.category="${tender.category}")`);
-    }
 
     progress("engine.match", `Running deterministic matching across ${knowledge.experts.length} expert(s) and ${knowledge.projects.length} project(s)`);
     const initialMatching = buildMatches(analysis.requirements, knowledge, sectorForMatching, tender.title);
@@ -294,7 +346,7 @@ export async function runTenderEngine(
       expertTrust: new Map(knowledge.experts.map((expert) => [expert.id, expert.trustLevel])),
       projectTrust: new Map(knowledge.projects.map((project) => [project.id, project.trustLevel])),
     });
-    progress("engine.match.done", `Deterministic matching done: ${matching.expertMatches.length} expert candidates, ${matching.projectMatches.length} project candidates`);
+    progress("engine.match.done", `Deterministic matching selected ${matching.expertMatches.filter((match) => match.isSelected).length} expert(s) and ${matching.projectMatches.filter((match) => match.isSelected).length} project(s)`);
 
     let mainEngineAIRematch: MainEngineAIRematchState = {
       aiApplied: false,
@@ -307,23 +359,12 @@ export async function runTenderEngine(
       projectScoreBreakdowns: {},
     };
 
-    // ─── Vercel time budget: skip AI rematch when deadline is near ──────
-    // The AI rematch is wrapped by withRematchTimeout(REMATCH_TIMEOUT_MS)
-    // (default 40s). We must NOT start it unless the remaining budget covers
-    // REMATCH_RESERVE_MS (= REMATCH_TIMEOUT_MS + DB_PERSISTENCE_BUFFER_MS +
-    // RESPONSE_SERIALIZATION_BUFFER_MS) so Vercel cannot kill the function
-    // mid-rematch and leave the user with a 504 + no partial result. When the
-    // deadline is near, the engine skips AI rematch, uses deterministic
-    // matching, and ALWAYS returns partial=true (see Blocker 2 fix below —
-    // the deadline skip itself is a blocker even when no fallback rows are
-    // created, so the route reports success=false and the UI surfaces the
-    // real state instead of "engine completed").
-    const deadlineNear = typeof options?.deadlineAt === "number" &&
-      Date.now() + REMATCH_RESERVE_MS >= options.deadlineAt;
+    const deadlineNear = typeof options?.deadlineAt === "number"
+      && Date.now() + REMATCH_RESERVE_MS >= options.deadlineAt;
     let rematchSkippedForDeadline = false;
 
     if (!options?.skipAiRematch && !options?.safe && isAIEnabled() && !deadlineNear) {
-      progress("engine.ai-rematch", "Running AI 12-perspective rematch (DISCIPLINE_FIT, SCOPE_COVERAGE, EVIDENCE_QUALITY, etc.)");
+      progress("engine.ai-rematch", "Running bounded AI multi-perspective reranking");
       const aiRematch = await applyAIRematchToMainEngine({
         tenderTitle: tender.title,
         tenderCategory: tender.category,
@@ -343,168 +384,145 @@ export async function runTenderEngine(
         expertScoreBreakdowns: aiRematch.expertScoreBreakdowns,
         projectScoreBreakdowns: aiRematch.projectScoreBreakdowns,
       };
-      if (aiRematch.warning) logger.warn("[run-tender-engine] main-engine AI rematch warning:", { detail: aiRematch.warning });
     } else if (deadlineNear && !options?.skipAiRematch && !options?.safe && isAIEnabled()) {
       rematchSkippedForDeadline = true;
-      logger.warn("[run-tender-engine] AI rematch skipped — deadline near, insufficient time for 40s rematch within Vercel function budget.");
-      mainEngineAIRematch.warning = "AI rematch skipped — insufficient time remaining in Vercel function budget. Deterministic matching was used; re-run in background mode for AI scoring.";
+      mainEngineAIRematch.warning = "AI reranking skipped to preserve the Vercel function deadline; deterministic source-verified matching was retained.";
+      logger.warn("[run-tender-engine] AI reranking skipped near runtime deadline; deterministic matching retained");
     }
 
-    const filesWithText = tender.files.filter((f) => typeof f.extractedText === "string" && f.extractedText.length > 200);
-    if (filesWithText.length > 0 && analysis.requirements.length > 0) {
+    const validCanonicalFileIds = new Set(canonicalFiles.map((file) => file.id));
+    const requirementsNeedingSourceExtraction = analysis.requirements.filter((requirement) =>
+      !requirement.sourceTenderFileId
+      || !validCanonicalFileIds.has(requirement.sourceTenderFileId)
+      || requirement.sourcePageNumber == null
+      || !requirement.sourceExactQuote
+      || requirement.sourceExactQuote.trim().length === 0,
+    );
+    const filesWithText = canonicalFiles.filter((file) => typeof file.extractedText === "string" && file.extractedText.length > 200);
+
+    if (filesWithText.length > 0 && requirementsNeedingSourceExtraction.length > 0) {
       try {
         const { extractRequirementSources } = await import("./requirement-source-extractor");
-        const draftWithIds: Array<{ id: string; req: typeof analysis.requirements[number] }> = analysis.requirements.map((req) => ({ id: randomUUID(), req }));
-        type Coord = { fileId?: string; pageNumber?: number; sectionHeading?: string; exactQuote?: string; confidence: number };
-        const bestByReqId = new Map<string, Coord>();
+        const draftWithIds = requirementsNeedingSourceExtraction.map((requirement) => ({ id: randomUUID(), requirement }));
+        type Coordinate = { fileId?: string; pageNumber?: number; sectionHeading?: string; exactQuote?: string; confidence: number };
+        const bestByRequirementId = new Map<string, Coordinate>();
+
         for (const file of filesWithText) {
           const found = extractRequirementSources({
             tenderFileId: file.id,
             tenderFileText: file.extractedText ?? "",
-            requirements: draftWithIds.map((d) => ({ id: d.id, title: d.req.title, description: d.req.description })),
+            requirements: draftWithIds.map((item) => ({
+              id: item.id,
+              title: item.requirement.title,
+              description: item.requirement.description,
+            })),
           });
-          for (const f of found) {
-            if (f.sourceConfidence === 0) continue;
-            const prev = bestByReqId.get(f.requirementId);
-            if (!prev || f.sourceConfidence > prev.confidence) {
-              bestByReqId.set(f.requirementId, { fileId: f.sourceTenderFileId, pageNumber: f.sourcePageNumber, sectionHeading: f.sourceSectionHeading, exactQuote: f.sourceExactQuote, confidence: f.sourceConfidence });
+          for (const coordinate of found) {
+            if (coordinate.sourceConfidence <= 0) continue;
+            const previous = bestByRequirementId.get(coordinate.requirementId);
+            if (!previous || coordinate.sourceConfidence > previous.confidence) {
+              bestByRequirementId.set(coordinate.requirementId, {
+                fileId: coordinate.sourceTenderFileId,
+                pageNumber: coordinate.sourcePageNumber,
+                sectionHeading: coordinate.sourceSectionHeading,
+                exactQuote: coordinate.sourceExactQuote,
+                confidence: coordinate.sourceConfidence,
+              });
             }
           }
         }
-        for (const { id, req } of draftWithIds) {
-          const coord = bestByReqId.get(id);
-          if (coord) {
-            req.sourceTenderFileId = coord.fileId ?? null;
-            req.sourcePageNumber = coord.pageNumber ?? null;
-            req.sourceSectionHeading = coord.sectionHeading ?? null;
-            req.sourceExactQuote = coord.exactQuote ?? null;
-            req.sourceConfidence = coord.confidence;
-          }
+
+        for (const item of draftWithIds) {
+          const coordinate = bestByRequirementId.get(item.id);
+          if (!coordinate) continue;
+          item.requirement.sourceTenderFileId = coordinate.fileId ?? null;
+          item.requirement.sourcePageNumber = coordinate.pageNumber ?? null;
+          item.requirement.sourceSectionHeading = coordinate.sectionHeading ?? null;
+          item.requirement.sourceExactQuote = coordinate.exactQuote ?? null;
+          item.requirement.sourceConfidence = coordinate.confidence;
         }
-        logger.info(`[run-tender-engine] requirement source extractor: ${bestByReqId.size}/${analysis.requirements.length} requirements matched to a source paragraph.`);
-      } catch (eErr) {
-        logger.warn("[run-tender-engine] requirement source extractor failed:", { detail: eErr instanceof Error ? eErr.message : eErr });
+        logger.info(`[run-tender-engine] source extractor repaired ${bestByRequirementId.size}/${requirementsNeedingSourceExtraction.length} missing requirement coordinate(s)`);
+      } catch (error) {
+        logger.warn("[run-tender-engine] requirement source extraction failed", { detail: error instanceof Error ? error.message : error });
       }
     }
 
     const createdRequirements = analysis.requirements.map((requirement) => ({ id: randomUUID(), requirement }));
     const requirementRows = createdRequirements.map(({ id, requirement }) => {
-      // Classify the requirement into a category + mandatory level using the
-      // universal requirement-categories module.
-      const reqClassification = classifyTenderRequirement(
-        `${requirement.title ?? ""} ${requirement.description ?? ""}`,
-      );
+      const classification = classifyTenderRequirement(`${requirement.title ?? ""} ${requirement.description ?? ""}`);
       return {
-      id,
-      tenderId,
-      title: requirement.title,
-      description: requirement.description,
-      requirementType: requirement.requirementType,
-      priority: requirement.priority,
-      requiredQuantity: requirement.requiredQuantity ?? null,
-      pageLimit: requirement.pageLimit ?? null,
-      exactFileName: requirement.exactFileName ?? null,
-      exactOrder: requirement.exactOrder ?? null,
-      restrictions: requirement.restrictions ?? null,
-      sectionReference: requirement.sectionReference ?? null,
-      sourceTenderFileId: requirement.sourceTenderFileId ?? null,
-      sourcePageNumber: requirement.sourcePageNumber ?? null,
-      sourceSectionHeading: requirement.sourceSectionHeading ?? null,
-      sourceExactQuote: requirement.sourceExactQuote ?? null,
-      sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
-      // Universal requirement categorization — stored in sectionReference
-      // (reuses existing column; no migration needed). Preserves original
-      // sectionReference text if present.
-      ...(reqClassification.category !== "unknown"
-        ? { sectionReference: `[${reqClassification.category}:${reqClassification.mandatory}]${requirement.sectionReference ? " " + requirement.sectionReference : ""}` }
-        : {}),
+        id,
+        tenderId,
+        title: requirement.title,
+        description: requirement.description,
+        // Same normalization the AI promotion path applies: this is the other
+        // boundary where a requirement type reaches the column, and the
+        // selection policy it feeds matches on exact canonical spellings.
+        requirementType: normalizeRequirementTypeOrDefault(requirement.requirementType),
+        priority: requirement.priority,
+        requiredQuantity: requirement.requiredQuantity ?? null,
+        pageLimit: requirement.pageLimit ?? null,
+        exactFileName: requirement.exactFileName ?? null,
+        exactOrder: requirement.exactOrder ?? null,
+        restrictions: requirement.restrictions ?? null,
+        sectionReference: classification.category !== "unknown"
+          ? `[${classification.category}:${classification.mandatory}]${requirement.sectionReference ? ` ${requirement.sectionReference}` : ""}`
+          : requirement.sectionReference ?? null,
+        sourceTenderFileId: requirement.sourceTenderFileId ?? null,
+        sourcePageNumber: requirement.sourcePageNumber ?? null,
+        sourceSectionHeading: requirement.sourceSectionHeading ?? null,
+        sourceExactQuote: requirement.sourceExactQuote ?? null,
+        sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
       };
     });
 
-    progress("engine.compliance", "Building compliance matrix + gap analysis");
+    progress("engine.compliance", "Building compliance matrix and gap analysis");
     let compliance = buildCompliance(createdRequirements, knowledge, matching);
-
-    // ─── Evidence-matching blocker when AI rematch failed ────────────────
-    // PR #1049 rewrote the fallback-rows module to be diagnostics-only.
-    // PR #1055 further ensures that when AI rematch fails or is skipped,
-    // NO ComplianceMatrix rows are created from tender-source diagnostics.
-    // PR #1060 adds the mergeFallbackRows boundary call to make the
-    // evidence-provenance boundary explicit in the call site.
     let evidenceMatchingBlocker: { code: string; message: string } | null = null;
+
     const aiRematchFailed = (!mainEngineAIRematch.aiApplied && mainEngineAIRematch.warning !== null) || rematchSkippedForDeadline;
-    const hasSourceGroundedRequirements = createdRequirements.some(
-      ({ requirement }) =>
-        requirement.sourceTenderFileId &&
-        requirement.sourcePageNumber != null &&
-        requirement.sourceExactQuote &&
-        requirement.sourceExactQuote.trim().length > 0 &&
-        (typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0) > 0,
+    const hasSourceGroundedRequirements = createdRequirements.some(({ requirement }) =>
+      Boolean(
+        requirement.sourceTenderFileId
+        && requirement.sourcePageNumber != null
+        && requirement.sourceExactQuote
+        && requirement.sourceExactQuote.trim().length > 0
+        && (typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0) > 0,
+      ),
     );
-    if (aiRematchFailed && hasSourceGroundedRequirements) {
-      const fallback = buildDeterministicFallbackRows(
-        createdRequirements.map(({ id, requirement }) => ({
-          id,
-          title: requirement.title,
-          description: requirement.description,
-          requirementType: requirement.requirementType,
-          priority: requirement.priority,
-          sourceTenderFileId: requirement.sourceTenderFileId ?? null,
-          sourcePageNumber: requirement.sourcePageNumber ?? null,
-          sourceExactQuote: requirement.sourceExactQuote ?? null,
-          sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
-        })),
-      );
+    const hasAuthoritativeDeterministicSelection = matching.expertMatches.some((match) => match.isSelected)
+      || matching.projectMatches.some((match) => match.isSelected);
+
+    if (aiRematchFailed && hasSourceGroundedRequirements && !hasAuthoritativeDeterministicSelection) {
+      const fallback = buildDeterministicFallbackRows(createdRequirements.map(({ id, requirement }) => ({
+        id,
+        title: requirement.title,
+        description: requirement.description,
+        requirementType: requirement.requirementType,
+        priority: requirement.priority,
+        sourceTenderFileId: requirement.sourceTenderFileId ?? null,
+        sourcePageNumber: requirement.sourcePageNumber ?? null,
+        sourceExactQuote: requirement.sourceExactQuote ?? null,
+        sourceConfidence: typeof requirement.sourceConfidence === "number" ? requirement.sourceConfidence : 0,
+      })));
       if (fallback.rows.length > 0) {
-        // mergeFallbackRows is a no-op (evidence-provenance boundary). We
-        // call it to make the boundary explicit in the call site — if the
-        // function is ever changed to merge rows, the boundary test in
-        // tests/evidence-provenance-boundary.test.ts will fail.
         compliance = mergeFallbackRows(compliance, fallback.rows);
-        // When the rematch was skipped for deadline (not provider failure),
-        // override the blocker code so the nextAction mapper routes the user
-        // to RETRY_ENGINE_SMALLER_BATCH (re-run in background mode) instead of
-        // REVIEW_MATCHING_INPUTS. The fallback blocker code is
-        // EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED which maps to the wrong
-        // nextAction for a deadline skip.
         evidenceMatchingBlocker = {
           code: rematchSkippedForDeadline ? "EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE" : fallback.blockerCode!,
           message: rematchSkippedForDeadline
-            ? "AI evidence matching was skipped because the remaining Vercel function time could not cover the full rematch timeout. Deterministic matching was used. Re-run in background mode for AI multi-perspective scoring."
+            ? "AI reranking was skipped and deterministic matching found no authoritative selectable evidence. Re-run in background mode for AI multi-perspective scoring."
             : fallback.blockerMessage!,
         };
-        logger.info(`[run-tender-engine] Set ${evidenceMatchingBlocker.code} blocker for ${fallback.rows.length} source-grounded requirement(s) (diagnostic rows not persisted as compliance evidence — mergeFallbackRows is fail-closed no-op).`);
       }
-    } else if (aiRematchFailed) {
-      // AI rematch failed but no source-grounded requirements — still set blocker
+    } else if (aiRematchFailed && !hasSourceGroundedRequirements) {
       evidenceMatchingBlocker = {
         code: "AI_REMATCH_FAILED_ZERO_EVIDENCE",
-        message: mainEngineAIRematch.warning ?? "AI multi-perspective rematch failed. Zero Company Vault evidence matched."
+        message: "No mandatory requirement could be tied to an active canonical source quote.",
       };
-      logger.info(`[run-tender-engine] AI rematch failed: zero requirement source matches, zero ComplianceMatrix rows created. Reason: ${mainEngineAIRematch.warning}`);
-    }
-
-    // ─── Blocker 2: deadline-skipped rematch is ALWAYS partial ───────────
-    // When the engine deliberately skipped the 12-perspective AI rematch
-    // because the Vercel function budget could not cover REMATCH_RESERVE_MS,
-    // the run MUST be reported as partial regardless of whether the
-    // requirement source extractor produced source-grounded requirements
-    // (and therefore whether fallback rows were created). Previously, a
-    // deadline-skipped run with no source-grounded requirements left
-    // evidenceMatchingBlocker = null, so the route reported success=true
-    // and downstream callers proceeded as if the 12-perspective rematch
-    // had completed. That hid a deliberate skip from the user. The skip
-    // itself is the blocker. (When aiRematchFailed is true for a non-deadline
-    // reason — provider error/timeout — and there are no source-grounded
-    // requirements, we intentionally do NOT synthesize a blocker here: the
-    // existing null warning path correctly reflects "no evidentiary state
-    // to review", and the route's analysisMethod guard already surfaces
-    // REGEX_FALLBACK_AI_ERROR via nextAction RETRY_ENGINE_SMALLER_BATCH.)
-    if (rematchSkippedForDeadline && evidenceMatchingBlocker === null) {
-      evidenceMatchingBlocker = {
-        code: "EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE",
-        message: "AI evidence matching was skipped because the remaining Vercel function time could not cover the full rematch timeout. Deterministic matching was used. Re-run in background mode for AI multi-perspective scoring.",
-      };
-      logger.warn("[run-tender-engine] Deadline-skipped rematch reported as partial even without fallback rows (EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE).");
+    } else if (aiRematchFailed && hasAuthoritativeDeterministicSelection) {
+      logger.warn("[run-tender-engine] optional AI reranking failed or was skipped; authoritative deterministic selection remains valid", {
+        detail: mainEngineAIRematch.warning,
+      });
     }
 
     const hasDraftKnowledge = aiDraftExpertCount + regexDraftExpertCount + aiDraftProjectCount + regexDraftProjectCount > 0;
@@ -512,12 +530,31 @@ export async function runTenderEngine(
     const hardGaps = compliance.gaps.filter((gap) => gap.severity === "CRITICAL").length;
     const reviewGaps = compliance.gaps.filter((gap) => gap.severity === "HIGH").length + (hasDraftKnowledge ? 1 : 0);
     const reviewNeeded = hardGaps > 0 || reviewGaps > 0;
-    const supportedOrReviewableCount = compliance.matrices.filter((m) => ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(m.supportStatus)).length;
-    const readinessScore = Math.max(0, Math.min(100, Math.round((supportedOrReviewableCount / Math.max(compliance.matrices.length, 1)) * 100)));
+    const supportedOrReviewableCount = compliance.matrices.filter((matrix) =>
+      ["SUPPORTED", "EVIDENCE_PENDING_REVIEW", "PARTIAL"].includes(matrix.supportStatus),
+    ).length;
+    const readinessScore = Math.max(0, Math.min(100, Math.round(
+      (supportedOrReviewableCount / Math.max(compliance.matrices.length, 1)) * 100,
+    )));
 
     const activeGeneratedDocuments = await prisma.generatedDocument.findMany({
       where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
-      select: { id: true, name: true, documentType: true, exactFileName: true, exactOrder: true, generationStatus: true, validationStatus: true, reviewStatus: true, reviewedBy: true, reviewedAt: true, createdAt: true, updatedAt: true, _count: { select: { reviews: true, comments: true } } },
+      select: {
+        id: true,
+        name: true,
+        documentType: true,
+        exactFileName: true,
+        exactOrder: true,
+        format: true,
+        generationStatus: true,
+        validationStatus: true,
+        reviewStatus: true,
+        reviewedBy: true,
+        reviewedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        _count: { select: { reviews: true, comments: true } },
+      },
     });
     const existingCounts = await Promise.all([
       prisma.tenderRequirement.count({ where: { tenderId } }),
@@ -528,106 +565,177 @@ export async function runTenderEngine(
       prisma.generatedDocument.count({ where: { tenderId, generationStatus: { not: "SUPERSEDED" } } }),
     ]);
 
-    // NOTE: The TENDER_ENGINE_DOCUMENTS_SUPERSEDED audit is now written INSIDE
-    // the transaction below (passing tx) so it commits/rolls back atomically
-    // with the actual supersede. Previously it was written here (before the
-    // transaction), so a rolled-back supersede left a false audit record
-    // claiming documents were superseded when they were still active.
-
-    progress("engine.persist", `Persisting ${requirementRows.length} requirement(s), ${matching.expertMatches.length} expert match(es), ${matching.projectMatches.length} project match(es) to DB`);
-
-    // Pre-compute all row arrays before entering the transaction
-    const expertMatchRows = matching.expertMatches.map((match) => ({ tenderId, expertId: match.expertId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
-    const projectMatchRows = matching.projectMatches.map((match) => ({ tenderId, projectId: match.projectId, score: match.score, rationale: match.rationale, isSelected: match.isSelected }));
+    progress("engine.persist", `Persisting ${requirementRows.length} requirements and selected evidence`);
+    const expertMatchRows = matching.expertMatches.map((match) => ({
+      tenderId,
+      expertId: match.expertId,
+      score: match.score,
+      rationale: match.rationale,
+      isSelected: match.isSelected,
+    }));
+    const projectMatchRows = matching.projectMatches.map((match) => ({
+      tenderId,
+      projectId: match.projectId,
+      score: match.score,
+      rationale: match.rationale,
+      isSelected: match.isSelected,
+    }));
 
     try {
       const { writeScoreBreakdown, deterministicScoreBreakdown } = await import("./score-breakdown-writer");
       const tenderTextForScoring = [tender.title, tender.description ?? "", analysis.summary ?? ""].join("\n").slice(0, 8_000);
-      const evalText = (tender as { evaluationMethodology?: string | null }).evaluationMethodology ?? "";
+      const evaluationText = tender.evaluationMethodology ?? "";
 
-      for (const m of matching.expertMatches) {
-        const expert = knowledge.experts.find((e) => e.id === m.expertId);
+      for (const match of matching.expertMatches) {
+        const expert = knowledge.experts.find((candidate) => candidate.id === match.expertId);
         if (!expert) continue;
-        const aiPerspectives = mainEngineAIRematch.expertScoreBreakdowns[m.expertId];
+        const aiPerspectives = mainEngineAIRematch.expertScoreBreakdowns[match.expertId];
         const candidateText = [expert.fullName ?? "", expert.title ?? "", expert.profile ?? "", expert.disciplines ?? "", expert.sectors ?? ""].join(" ");
-        const perspectives = aiPerspectives ?? deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText: evalText });
+        const perspectives = aiPerspectives ?? deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText });
         await writeScoreBreakdown({ tenderId, entityType: "EXPERT", entityId: expert.id, perspectives, source: aiPerspectives ? "AI_REMATCH" : "ENGINE_MATCH" });
       }
-
-      for (const m of matching.projectMatches) {
-        const project = knowledge.projects.find((p) => p.id === m.projectId);
+      for (const match of matching.projectMatches) {
+        const project = knowledge.projects.find((candidate) => candidate.id === match.projectId);
         if (!project) continue;
-        const aiPerspectives = mainEngineAIRematch.projectScoreBreakdowns[m.projectId];
+        const aiPerspectives = mainEngineAIRematch.projectScoreBreakdowns[match.projectId];
         const candidateText = [project.name ?? "", project.clientName ?? "", project.summary ?? "", project.sector ?? "", project.country ?? ""].join(" ");
-        const perspectives = aiPerspectives ?? deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText: evalText });
+        const perspectives = aiPerspectives ?? deterministicScoreBreakdown({ candidateText, tenderText: tenderTextForScoring, evaluationText });
         await writeScoreBreakdown({ tenderId, entityType: "PROJECT", entityId: project.id, perspectives, source: aiPerspectives ? "AI_REMATCH" : "ENGINE_MATCH" });
       }
-    } catch (sErr) {
-      logger.warn("[run-tender-engine] score breakdown write failed:", { detail: sErr instanceof Error ? sErr.message : sErr });
+    } catch (error) {
+      logger.warn("[run-tender-engine] score breakdown write failed", { detail: error instanceof Error ? error.message : error });
     }
 
-    const matrixRows = compliance.matrices.map((matrix) => ({ tenderId, requirementId: matrix.requirementId, evidenceType: matrix.evidenceType, evidenceSource: matrix.evidenceSource, evidenceReference: matrix.evidenceReference ?? null, supportLevel: matrix.supportStatus, notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null }));
-    const gapRows = compliance.gaps.map((gap) => ({ tenderId, requirementId: gap.requirementId ?? null, severity: gap.severity, title: gap.title, description: gap.description, mitigationPlan: gap.mitigationPlan ?? null }));
+    const matrixRows = compliance.matrices.map((matrix) => ({
+      tenderId,
+      requirementId: matrix.requirementId,
+      evidenceType: matrix.evidenceType,
+      evidenceSource: matrix.evidenceSource,
+      evidenceReference: matrix.evidenceReference ?? null,
+      // Persist in the vocabulary the gates count. Without this the Engine's
+      // strongest verdict, SUPPORTED, was invisible to every coverage check.
+      supportLevel: toCanonicalSupportLevel(matrix.supportStatus),
+      notes: [matrix.evidenceSummary, matrix.notes].filter(Boolean).join(" | ") || null,
+    }));
+    const gapRows = compliance.gaps.map((gap) => ({
+      tenderId,
+      requirementId: gap.requirementId ?? null,
+      severity: gap.severity,
+      title: gap.title,
+      description: gap.description,
+      mitigationPlan: gap.mitigationPlan ?? null,
+    }));
     if (hasDraftKnowledge) {
-      gapRows.push({ tenderId, requirementId: null, severity: "HIGH", title: "Draft company knowledge requires review", description: `The company knowledge base contains ${aiDraftExpertCount} AI_DRAFT expert(s), ${regexDraftExpertCount} REGEX_DRAFT expert(s), ${aiDraftProjectCount} AI_DRAFT project(s), and ${regexDraftProjectCount} REGEX_DRAFT project(s). Draft records are not used as final submission evidence until marked REVIEWED.`, mitigationPlan: "Open Company Knowledge Review, verify source evidence, correct fields, and mark valid expert/project records as REVIEWED before final generation." });
+      gapRows.push({
+        tenderId,
+        requirementId: null,
+        severity: "HIGH",
+        title: "Draft company knowledge is excluded from final evidence",
+        description: `${aiDraftExpertCount + regexDraftExpertCount} expert and ${aiDraftProjectCount + regexDraftProjectCount} project record(s) remain draft.`,
+        mitigationPlan: "Upload or reconcile genuine source documents so eligible records become SOURCE_VERIFIED.",
+      });
     }
-    const documentRows = documentPlan.documents.map((document) => ({ tenderId, name: document.name, documentType: document.documentType, exactFileName: document.exactFileName ?? null, exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null, contentSummary: document.contentSummary }));
+    const documentRows = documentPlan.documents.map((document) => ({
+      tenderId,
+      name: document.name,
+      documentType: document.documentType,
+      exactFileName: document.exactFileName ?? null,
+      exactOrder: typeof document.exactOrder === "number" ? document.exactOrder : null,
+      contentSummary: document.contentSummary,
+    }));
 
-    // ─── Atomic supersede + create in one transaction ──────────────────────
-    // Previously: supersede ran OUTSIDE the transaction (line 390), then create
-    // ran INSIDE the transaction (line 443). If the transaction failed, the
-    // prior active documents were already SUPERSEDED — the tender had ZERO
-    // active documents. Now: supersede + create are in the SAME transaction,
-    // so a failure rolls back the supersede too (prior docs stay active).
+    // Every Engine run used to supersede EVERY active GeneratedDocument
+    // unconditionally, whether or not the requirement-derived document plan
+    // it just recomputed still names them — including a document that was
+    // already GENERATED, VALIDATED, and (for a required PDF) already
+    // byte-verified by the auto-finalize PDF conversion step. documentRows
+    // above is never persisted here (only its count is), so nothing rebuilt
+    // what this step just destroyed until a later stage (/generate or
+    // generate-missing-plan-files) started over from empty. A tender whose
+    // requirements did not meaningfully change — a routine re-run, an
+    // AUTO_FINALIZE-triggered rearm, an operator re-clicking Run Engine —
+    // paid for that with a full regenerate-then-reconvert cycle every time,
+    // repeatedly burning AI provider quota and never letting AUTO_FINALIZE
+    // converge on a package it had just finished assembling correctly.
     //
-    // The transaction also acquires a pg_advisory_xact_lock to serialize
-    // concurrent engine runs for the same tender — prevents two runs from
-    // both superseding + both creating, which would violate the partial
-    // unique index on (tenderId, exactFileName) WHERE non-SUPERSEDED.
+    // Superseding only the documents this fresh plan no longer names — by
+    // exact, case-insensitive file name, the same identity export readiness
+    // and package reconciliation already key on — keeps the destructive path
+    // for genuine drift (a renamed or removed required file) while leaving an
+    // already-correct document alone. This mirrors the KEEP_AS_PLANNED /
+    // MARK_SUPERSEDED distinction reconcile-generated-docs.ts already applies
+    // on the manual reconciliation route, just inline here where the engine
+    // recomputes its own plan.
+    const currentPlanFileKeys = new Set(
+      documentPlan.documents
+        .map((document) => (document.exactFileName ?? "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    // A plan item requiring "Technical Proposal.pdf" is generated to
+    // "Technical Proposal.docx" — generate-elite.ts writes the proposal in
+    // the format it actually produces and leaves PDF conversion to the
+    // canonical finalizer, naming the source by the format it is rather than
+    // the format the plan ultimately needs (see its own comment on
+    // proposalFileName for why: a .docx row cannot carry the .pdf name
+    // without failing artifact-identity validation). Matching plan file keys
+    // by exact name alone made this legitimate, necessary DOCX source
+    // "no longer named by the plan" the moment a PDF-format item existed for
+    // it, so it was superseded on every Engine rerun before AUTO_FINALIZE's
+    // PDF-finalization step ever got to convert it — the exact
+    // regenerate-then-reconvert loop this function was fixed to stop, just
+    // one file-extension away from the case already covered.
+    const currentPlanBaseNameKeys = new Set(
+      documentPlan.documents
+        .map((document) => (document.exactFileName ?? "").trim().toLowerCase().replace(/\.[a-z0-9]{2,5}$/, ""))
+        .filter(Boolean),
+    );
+    const documentsToSupersede = activeGeneratedDocuments.filter((document) => {
+      const key = (document.exactFileName ?? document.name ?? "").trim().toLowerCase();
+      if (!key) return true;
+      if (currentPlanFileKeys.has(key)) return false;
+      const baseKey = key.replace(/\.[a-z0-9]{2,5}$/, "");
+      if (document.format === "DOCX" && currentPlanBaseNameKeys.has(baseKey)) return false;
+      return true;
+    });
+
     await prisma.$transaction(async (tx) => {
-      // Serialize concurrent engine runs for this tender.
-      // The lock is transaction-scoped (released on commit/rollback).
       const tenderMutationLock = computeTenderMutationLockKey(tenderId);
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${tenderMutationLock})`;
 
-      // Supersede active documents INSIDE the transaction.
-      if (activeGeneratedDocuments.length > 0) {
+      if (documentsToSupersede.length > 0) {
         await tx.generatedDocument.updateMany({
-          where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
+          where: { tenderId, id: { in: documentsToSupersede.map((document) => document.id) } },
           data: {
             generationStatus: "SUPERSEDED",
             validationStatus: "SUPERSEDED",
             reviewStatus: "SUPERSEDED",
-            reviewNotes: `Superseded by tender engine run ${engineRunId}. Review/comment history preserved on this historical document record.`,
+            reviewNotes: `Superseded by tender engine run ${engineRunId}: no longer named by the current requirement-derived document plan. Review and comment history was preserved.`,
             updatedAt: new Date(),
           },
         });
-        // Write the supersede audit INSIDE the transaction so it commits/rolls
-        // back atomically with the supersede. Previously this was written before
-        // the transaction — a rolled-back supersede left a false audit record.
         await writeEngineRunAudit({
           userId,
           tenderId,
           action: "TENDER_ENGINE_DOCUMENTS_SUPERSEDED",
-          description: `Superseded ${activeGeneratedDocuments.length} generated document(s) before engine rerun for "${tender.title}"`,
+          description: `Superseded ${documentsToSupersede.length} generated document(s) no longer named by the current document plan before engine rerun for "${tender.title}"`,
           metadata: {
             engineRunId,
             supersededAt: new Date().toISOString(),
-            preservedGeneratedDocuments: activeGeneratedDocuments.map((doc) => ({
-              id: doc.id,
-              name: doc.name,
-              documentType: doc.documentType,
-              exactFileName: doc.exactFileName,
-              exactOrder: doc.exactOrder,
-              generationStatus: doc.generationStatus,
-              validationStatus: doc.validationStatus,
-              reviewStatus: doc.reviewStatus,
-              reviewedBy: doc.reviewedBy,
-              reviewedAt: doc.reviewedAt?.toISOString() ?? null,
-              reviewCount: doc._count.reviews,
-              commentCount: doc._count.comments,
-              createdAt: doc.createdAt.toISOString(),
-              updatedAt: doc.updatedAt.toISOString(),
+            preservedGeneratedDocuments: documentsToSupersede.map((document) => ({
+              id: document.id,
+              name: document.name,
+              documentType: document.documentType,
+              exactFileName: document.exactFileName,
+              exactOrder: document.exactOrder,
+              generationStatus: document.generationStatus,
+              validationStatus: document.validationStatus,
+              reviewStatus: document.reviewStatus,
+              reviewedBy: document.reviewedBy,
+              reviewedAt: document.reviewedAt?.toISOString() ?? null,
+              reviewCount: document._count.reviews,
+              commentCount: document._count.comments,
+              createdAt: document.createdAt.toISOString(),
+              updatedAt: document.updatedAt.toISOString(),
             })),
           },
           tx,
@@ -639,16 +747,12 @@ export async function runTenderEngine(
       await tx.complianceGap.deleteMany({ where: { tenderId } });
       await tx.complianceMatrix.deleteMany({ where: { tenderId } });
       await tx.tenderRequirement.deleteMany({ where: { tenderId } });
-      for (const batch of chunks(requirementRows, 100)) await tx.tenderRequirement.createMany({ data: batch });
-      for (const batch of chunks(expertMatchRows, 100)) await tx.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
-      for (const batch of chunks(projectMatchRows, 100)) await tx.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
-      for (const batch of chunks(matrixRows, 100)) await tx.complianceMatrix.createMany({ data: batch });
-      for (const batch of chunks(gapRows, 100)) await tx.complianceGap.createMany({ data: batch });
-      // GeneratedDocument rows represent actual output artifacts only.
-      // The submission plan lives in BuildPlan; the engine must not create
-      // placeholder GeneratedDocument rows before the transactional generation
-      // gate authorizes real bytes. documentRows remains an in-memory preview
-      // for diagnostics and Build Plan construction.
+      for (const batch of chunks(requirementRows)) await tx.tenderRequirement.createMany({ data: batch });
+      for (const batch of chunks(expertMatchRows)) await tx.tenderExpertMatch.createMany({ data: batch, skipDuplicates: true });
+      for (const batch of chunks(projectMatchRows)) await tx.tenderProjectMatch.createMany({ data: batch, skipDuplicates: true });
+      for (const batch of chunks(matrixRows)) await tx.complianceMatrix.createMany({ data: batch });
+      for (const batch of chunks(gapRows)) await tx.complianceGap.createMany({ data: batch });
+
       await tx.tender.update({
         where: { id: tenderId },
         data: {
@@ -661,24 +765,21 @@ export async function runTenderEngine(
           stage: reviewNeeded ? "COMPLIANCE" : "MATCHING",
           notes: [
             `Engine run ID: ${engineRunId}`,
-            activeGeneratedDocuments.length > 0 ? `${activeGeneratedDocuments.length} previous generated document(s) were superseded and preserved for audit/review history.` : null,
-            "Senior consultant mode: broad-fit matching uses capability families, sector/service equivalence, and professional judgment instead of exact wording only.",
-            "Main engine selection: reviewed best-available evidence below 90% can be selected when no selected safe evidence exists for a required class; draft knowledge remains excluded from final evidence.",
-            mainEngineAIRematch.aiApplied ? `Main engine AI multi-perspective scoring applied automatically: ${mainEngineAIRematch.expertAssessments} expert assessment(s), ${mainEngineAIRematch.projectAssessments} project assessment(s), ${mainEngineAIRematch.selectedExpertCount} selected expert(s), ${mainEngineAIRematch.selectedProjectCount} selected project(s).` : null,
-            mainEngineAIRematch.warning ? `Main engine AI multi-perspective scoring fallback: ${mainEngineAIRematch.warning}` : null,
-            analysisMethod === "AI" ? "Analysis source: AI (chunked multi-call when tender > 60K chars)." : `Analysis source: regex fallback (${analysisMethod}). ${analysisFallbackReason ?? ""}`.trim(),
-            hardGaps > 0 ? `${hardGaps} hard evidence gap(s) remain.` : null,
-            reviewGaps > 0 ? `${reviewGaps} senior review item(s) remain; these are not automatic fatal blockers.` : null,
-            knowledgeReadiness.hasBlockingExperts ? `${knowledgeReadiness.aiDraftExperts + knowledgeReadiness.regexDraftExperts} expert record(s) are draft and excluded from final evidence until REVIEWED.` : null,
-            knowledgeReadiness.hasBlockingProjects ? `${knowledgeReadiness.aiDraftProjects + knowledgeReadiness.regexDraftProjects} project record(s) are draft and excluded from final evidence until REVIEWED.` : null,
-            !knowledgeReadiness.hasUsableExperts ? "No REVIEWED experts found — review extracted CV records before final generation." : null,
-            !knowledgeReadiness.hasUsableProjects ? "No REVIEWED projects found — review extracted project records before final generation." : null,
-            knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} REVIEWED expert(s) available for final generation.` : null,
-            knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} REVIEWED project(s) available for final generation.` : null,
+            canReusePromotedAnalysis ? "Engine reused the current manual AI Analyze output; requirement extraction was not repeated." : null,
+            Math.max(0, tender.files.length - canonicalFiles.length) > 0 ? `${tender.files.length - canonicalFiles.length} duplicate or alternate source representation(s) were excluded.` : null,
+            documentsToSupersede.length > 0 ? `${documentsToSupersede.length} previous generated document(s) no longer named by the current plan were superseded and preserved.` : null,
+            "Deterministic matching uses source-verified Company Vault evidence and broad capability/sector equivalence.",
+            mainEngineAIRematch.aiApplied ? `Bounded AI reranking assessed ${mainEngineAIRematch.expertAssessments} expert and ${mainEngineAIRematch.projectAssessments} project candidate(s).` : null,
+            mainEngineAIRematch.warning ? `AI reranking warning: ${mainEngineAIRematch.warning}` : null,
+            "Analysis source: current AI Analyze output.",
+            hardGaps > 0 ? `${hardGaps} critical evidence gap(s) remain.` : null,
+            reviewGaps > 0 ? `${reviewGaps} review item(s) remain.` : null,
+            knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} SOURCE_VERIFIED/REVIEWED expert(s) are eligible.` : null,
+            knowledgeReadiness.reviewedProjects > 0 ? `${knowledgeReadiness.reviewedProjects} SOURCE_VERIFIED/REVIEWED project(s) are eligible.` : null,
           ].filter(Boolean).join("\n") || null,
         },
       });
-    }, { timeout: 60000 });
+    }, { timeout: 60_000 });
 
     await writeEngineRunAudit({
       userId,
@@ -692,8 +793,27 @@ export async function runTenderEngine(
         durationMs: Date.now() - startedAt.getTime(),
         analysisMethod,
         analysisFallbackReason,
-        previousStateCounts: { requirements: existingCounts[0], expertMatches: existingCounts[1], projectMatches: existingCounts[2], complianceRows: existingCounts[3], gaps: existingCounts[4], activeGeneratedDocuments: existingCounts[5] },
-        newStateCounts: { requirements: requirementRows.length, expertMatches: expertMatchRows.length, projectMatches: projectMatchRows.length, complianceRows: matrixRows.length, gaps: gapRows.length, generatedDocuments: 0, plannedDocuments: documentRows.length, supersededGeneratedDocuments: activeGeneratedDocuments.length },
+        reusedPromotedAnalysis: canReusePromotedAnalysis,
+        canonicalTenderFileCount: canonicalFiles.length,
+        excludedDuplicateSourceCount: Math.max(0, tender.files.length - canonicalFiles.length),
+        previousStateCounts: {
+          requirements: existingCounts[0],
+          expertMatches: existingCounts[1],
+          projectMatches: existingCounts[2],
+          complianceRows: existingCounts[3],
+          gaps: existingCounts[4],
+          activeGeneratedDocuments: existingCounts[5],
+        },
+        newStateCounts: {
+          requirements: requirementRows.length,
+          expertMatches: expertMatchRows.length,
+          projectMatches: projectMatchRows.length,
+          complianceRows: matrixRows.length,
+          gaps: gapRows.length,
+          generatedDocuments: 0,
+          plannedDocuments: documentRows.length,
+          supersededGeneratedDocuments: activeGeneratedDocuments.length,
+        },
         readinessScore,
         hardGapCount: hardGaps,
         reviewGapCount: reviewGaps,
@@ -706,52 +826,72 @@ export async function runTenderEngine(
     const tenderResult = await prisma.tender.findUnique({
       where: { id: tenderId },
       include: {
-        files: { select: { id: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true } },
+        files: {
+          select: { id: true, originalFileName: true, mimeType: true, size: true, classification: true, extractedText: true, createdAt: true },
+        },
         requirements: true,
         expertMatches: { orderBy: { score: "desc" }, include: { expert: true } },
         projectMatches: { orderBy: { score: "desc" }, include: { project: true } },
         complianceGaps: { orderBy: { createdAt: "desc" } },
         complianceMatrix: { orderBy: { createdAt: "asc" } },
-        generatedDocuments: { where: { generationStatus: { not: "SUPERSEDED" } }, orderBy: { exactOrder: "asc" }, select: { id: true, name: true, documentType: true, generationStatus: true, validationStatus: true, reviewStatus: true, exactFileName: true, exactOrder: true, contentSummary: true } },
+        generatedDocuments: {
+          where: { generationStatus: { not: "SUPERSEDED" } },
+          orderBy: { exactOrder: "asc" },
+          select: {
+            id: true,
+            name: true,
+            documentType: true,
+            generationStatus: true,
+            validationStatus: true,
+            reviewStatus: true,
+            exactFileName: true,
+            exactOrder: true,
+            contentSummary: true,
+          },
+        },
       },
     });
 
-    // ─── Engine response honesty ──────────────────────────────────────────
-    // The engine must NOT return a misleading success if AI matching failed.
-    // Return partial:true + blockers[] + nextAction when AI matching failed
-    // but deterministic extraction succeeded. The UI uses these fields to
-    // surface the real state instead of a misleading "engine completed" green.
     const partial = evidenceMatchingBlocker !== null;
     const blockers = evidenceMatchingBlocker ? [evidenceMatchingBlocker.message] : [];
-    // nextAction per blocker code:
-    //   EVIDENCE_MATCHING_AI_FAILED_REVIEW_REQUIRED (provider error/timeout +
-    //     source-grounded requirements → fallback rows created) → review the
-    //     matching inputs before re-running.
-    //   EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE (Vercel budget could not cover
-    //     REMATCH_RESERVE_MS) → re-run in background mode (smaller batch /
-    //     escapes the 60s cap) so the 12-perspective rematch can complete.
-    //   REGEX_FALLBACK_AI_ERROR (analysis fell back to regex on AI error, no
-    //     evidence blocker) → retry with a smaller tender / batch.
     const nextAction = evidenceMatchingBlocker
       ? (evidenceMatchingBlocker.code === "EVIDENCE_MATCHING_AI_SKIPPED_DEADLINE"
         ? "RETRY_ENGINE_SMALLER_BATCH"
         : "REVIEW_MATCHING_INPUTS")
-      : analysisMethod === "REGEX_FALLBACK_AI_ERROR"
-        ? "RETRY_ENGINE_SMALLER_BATCH"
-        : null;
+      : null;
+
     return Object.assign(tenderResult ?? {}, {
       partial,
       blockers,
       nextAction,
       analysisMethod,
       evidenceMatchingBlocker,
+      reusedPromotedAnalysis: canReusePromotedAnalysis,
     });
   } catch (error) {
-    await writeEngineRunAudit({ userId, tenderId, action: "TENDER_ENGINE_RUN_FAILED", description: `Tender engine run failed for "${tender.title}"`, metadata: { engineRunId, startedAt: startedAt.toISOString(), failedAt: new Date().toISOString(), durationMs: Date.now() - startedAt.getTime(), error: error instanceof Error ? error.message : String(error) } });
+    await writeEngineRunAudit({
+      userId,
+      tenderId,
+      action: "TENDER_ENGINE_RUN_FAILED",
+      description: `Tender engine run failed for "${tender.title}"`,
+      metadata: {
+        engineRunId,
+        startedAt: startedAt.toISOString(),
+        failedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAt.getTime(),
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
     try {
-      await prisma.tender.update({ where: { id: tenderId }, data: { status: "ERROR", notes: `Engine run failed at ${new Date().toISOString()}: ${error instanceof Error ? error.message : String(error)}` } });
+      await prisma.tender.update({
+        where: { id: tenderId },
+        data: {
+          status: "ERROR",
+          notes: `Engine run failed at ${new Date().toISOString()}: ${error instanceof Error ? error.message : String(error)}`,
+        },
+      });
     } catch {
-      // best-effort — don't mask the original error
+      // Best effort; preserve the original error.
     }
     throw error;
   }

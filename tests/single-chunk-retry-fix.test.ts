@@ -45,7 +45,10 @@ describe("Single-chunk retry fix (ported from PR #888)", () => {
   });
 
   it("ai-job-handlers propagates retryable and correlationId", () => {
-    const src = read("lib/ai-job-handlers.ts");
+    // AI_ANALYZE's implementation lives in ai-job-handlers-legacy.ts —
+    // lib/ai-job-handlers.ts now only re-exports it and locally overrides
+    // EXTRACT_TEXT's getHandler branch.
+    const src = read("lib/ai-job-handlers-legacy.ts");
     assert.ok(
       src.includes("finalizeRetryable") && src.includes("finalizeCorrelationId"),
       "ai-job-handlers must extract retryable and correlationId from finalize result",

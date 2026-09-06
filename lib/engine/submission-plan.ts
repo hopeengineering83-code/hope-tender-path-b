@@ -146,6 +146,18 @@ function inferFormat(fileName: string, fallback?: string | null): SubmissionPlan
   return "DOCX";
 }
 
+/**
+ * Canonical format inference shared by the submission-plan producer and the
+ * final-package manifest. Keeping one classifier prevents the plan and the
+ * exported ZIP from recording contradictory formats for the same filename.
+ */
+export function inferSubmissionPlanFormat(
+  fileName: string,
+  fallback?: string | null,
+): SubmissionPlanFormat {
+  return inferFormat(fileName, fallback);
+}
+
 function fileNameWithExtension(fileName: string, format: SubmissionPlanFormat): string {
   const trimmed = fileName.trim();
   if (/\.[a-z0-9]{2,5}$/i.test(trimmed)) return trimmed;
@@ -186,6 +198,12 @@ export function inferEnvelope(
 
   const financialRx = /\bfinancial\b|commercial[\s-]+offer|price[\s-]+(schedule|proposal|form)|bill[\s-]+of[\s-]+quantit|rate[\s-]+card|cost[\s-]+proposal|budget[\s-]+proposal|pricing|fee[\s-]+schedule|boq\b|b\.o\.q\b|lump[\s-]+sum[\s-]+offer|schedule[\s-]+of[\s-]+rates/i;
   if (financialRx.test(text)) return "FINANCIAL";
+
+  // Explicit technical deliverables outrank a generic FORM requirement type.
+  // Otherwise "Technical Proposal.pdf" extracted as requirementType=FORM is
+  // incorrectly classified into the ADMIN envelope.
+  const technicalRx = /\btechnical[\s-]+proposal\b|\btechnical[\s-]+offer\b|\bmethodology\b|\btechnical[\s-]+approach\b|\bwork[\s-]+plan\b|\bimplementation[\s-]+plan\b|\bteam[\s-]+(?:cv|curriculum)|\bkey[\s-]+experts?\b/i;
+  if (technicalRx.test(`${fileName} ${description ?? ""}`.toLowerCase())) return "TECHNICAL";
 
   const adminRx = /\bregistration\b|\bdeclaration\b|\beligibility\b|\bbid\s+bond\b|\bbid\s+security\b|\bbank\s+guarantee\b|\btax\s+clearance\b|\bvat\s+cert|\btin\s+cert|\bincorporation\b|\bundertaking\b|\bintegrity\s+pact\b|\bannex\b|\bschedule\b|\bform\b|\bcompliance\s+(matrix|certif)|\bpower\s+of\s+attorney\b|\baudited\s+financial\b|\bbank\s+statement\b|\bbusiness\s+licen\b/i;
   if (adminRx.test(text)) return "ADMIN";
@@ -365,15 +383,91 @@ export function buildSubmissionPlan(tender: TenderLike): SubmissionPlan {
   const files = new Map<string, SubmissionPlanFile>();
   const restrictions = restrictionText(requirements);
 
+  // The tender's own list of file names is the authority on WHAT the
+  // deliverables are; a requirement title is a description of one.
+  //
+  // A requirement row that elaborates a deliverable the tender has already
+  // named must not become a SECOND file. The Pharo tender names exactly one —
+  // exactFileNaming ["Technical Proposal.pdf"] — and also carries a MANDATORY
+  // FORMAT requirement titled "Technical Proposal Structure", which says how
+  // that proposal must be structured. The planner turned the second into its
+  // own deliverable, "Technical Proposal Structure.docx"; generation then
+  // wrote the entire 11,590-word technical proposal into THAT file and
+  // superseded the correctly named one, so the package simultaneously reported
+  // EXTRA_FILES and "MISSING_REQUIRED_FILES: technical proposal.pdf" — the
+  // required deliverable existed, under a name the tender never asked for.
+  //
+  // Folding is by name containment against the declared list and applies only
+  // to rows with no exactFileName of their own, so a row that names its own
+  // file still gets one, and a genuinely different deliverable (an annex, a
+  // financial offer) is untouched: its base name neither contains nor is
+  // contained by a declared name. The row's requirement ids move to the file it
+  // describes, so nothing loses its provenance.
+  const declaredBaseNames = parseStringArray(tender.exactFileNaming)
+    .concat(parseStringArray(tender.exactFileOrder))
+    .map((name) => normalize(name.trim().replace(/\.[a-z0-9]+$/i, "")))
+    .filter(Boolean);
+  const elaboratesDeclaredFile = (requirement: TenderRequirementLike, file: SubmissionPlanFile): string | null => {
+    if ((requirement.exactFileName ?? "").trim()) return null;
+    const base = normalize(file.exactFileName.replace(/\.[a-z0-9]+$/i, ""));
+    if (!base) return null;
+    return declaredBaseNames.find((declared) => declared !== base && (base.includes(declared) || declared.includes(base))) ?? null;
+  };
+  const foldedRequirementIds = new Map<string, string[]>();
+
   requirements.forEach((requirement, index) => {
     const file = buildFileFromRequirement(requirement, index);
-    if (file) addFile(files, file);
+    if (!file) return;
+    const declaredBase = elaboratesDeclaredFile(requirement, file);
+    if (declaredBase) {
+      foldedRequirementIds.set(declaredBase, [...(foldedRequirementIds.get(declaredBase) ?? []), ...file.sourceRequirementIds]);
+      return;
+    }
+    addFile(files, file);
   });
 
-  buildFilesFromExactNames(tender, files.size + 1).forEach((file) => addFile(files, file));
+  buildFilesFromExactNames(tender, files.size + 1).forEach((file) => {
+    const base = normalize(file.exactFileName.replace(/\.[a-z0-9]+$/i, ""));
+    const folded = foldedRequirementIds.get(base) ?? [];
+    addFile(files, folded.length > 0
+      ? { ...file, sourceRequirementIds: Array.from(new Set([...file.sourceRequirementIds, ...folded])) }
+      : file);
+  });
+
+  // ── The tender's stated attachment order is authoritative ────────────────
+  //
+  // Files are contributed in two passes: one per requirement (ordered by the
+  // requirement's own position) and one for any remaining names in
+  // exactFileNaming/exactFileOrder. Sorting purely on the resulting exactOrder
+  // let requirement iteration order decide the package order, so a tender that
+  // says "Attachments must be named and ordered exactly as follows: 1.
+  // 01-Expression-Of-Interest.docx 2. 02-Company-Profile.docx 3.
+  // 03-Capability-Statement.docx" produced a confirmed Build Plan ordered
+  // 03, 01, 02 — whichever requirement happened to mention a file first.
+  //
+  // Generated documents copy the plan's exactOrder, so the package was
+  // assembled in the wrong order and the export gate refused it with
+  // FILE_ORDER ("Generated file order does not match tender order"). The
+  // ordering the client asked for is not a preference the planner may
+  // reinterpret, so when the tender declares one it decides the sequence;
+  // files it does not name keep their existing relative order behind it.
+  const declaredOrder = parseStringArray(tender.exactFileOrder).length > 0
+    ? parseStringArray(tender.exactFileOrder)
+    : parseStringArray(tender.exactFileNaming);
+  const declaredRank = new Map<string, number>();
+  declaredOrder.forEach((name, index) => {
+    const withExtension = fileNameWithExtension(name, inferFormat(name));
+    declaredRank.set(normalize(withExtension), index);
+    declaredRank.set(normalize(name), index);
+  });
+  const rankOf = (file: SubmissionPlanFile): number =>
+    declaredRank.get(normalize(file.exactFileName)) ?? Number.MAX_SAFE_INTEGER;
 
   const sortedFiles = Array.from(files.values())
-    .sort((a, b) => a.exactOrder - b.exactOrder || a.exactFileName.localeCompare(b.exactFileName))
+    .sort((a, b) =>
+      rankOf(a) - rankOf(b)
+      || a.exactOrder - b.exactOrder
+      || a.exactFileName.localeCompare(b.exactFileName))
     .map((file, index) => ({ ...file, exactOrder: index + 1 }));
 
   const warnings: string[] = [];

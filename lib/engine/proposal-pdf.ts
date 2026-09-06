@@ -1,4 +1,6 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, PDFHexString, rgb, type PDFPage } from "pdf-lib";
+import { createHash } from "node:crypto";
+import { createPdfFontSetFor, sanitizePdfText, type PdfFontSet, type PdfFontStyle } from "./pdf-unicode-fonts";
 
 const PAGE_MARGIN = 56; // points (approx 20mm)
 const PAGE_WIDTH = 595.28; // A4
@@ -26,9 +28,16 @@ const TABLE_HEADER_BG: [number, number, number] = [0.94, 0.95, 0.97];
 
 interface RenderContext {
   doc: PDFDocument;
-  bold: PDFFont;
-  regular: PDFFont;
-  italic: PDFFont;
+  /**
+   * Faces resolved per string rather than fixed per document.
+   *
+   * The three Helvetica faces were held directly here, and Helvetica is
+   * WinAnsi-only, so the first Ethiopic character in a tender ended the export
+   * with "WinAnsi cannot encode". Styles are now names and the set decides
+   * which face can actually draw a given string, so measuring and drawing
+   * always agree and no layout code has to know about scripts.
+   */
+  fonts: PdfFontSet;
   pages: PDFPage[];
   y: number;
   /** Branding header text — set after first content page is added. */
@@ -45,20 +54,27 @@ function addPage(ctx: RenderContext): PDFPage {
   const page = ctx.doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   ctx.pages.push(page);
   ctx.y = PAGE_HEIGHT - PAGE_MARGIN;
-  drawHeaderFooter(ctx);
   return page;
 }
 
-function drawHeaderFooter(ctx: RenderContext): void {
-  const page = currentPage(ctx);
+function fitTextToWidth(text: string, fonts: PdfFontSet, size: number, maxWidth: number): string {
+  if (fonts.widthOf(text, size) <= maxWidth) return text;
+  const ellipsis = "...";
+  let fitted = text;
+  while (fitted.length > 1 && fonts.widthOf(`${fitted}${ellipsis}`, size) > maxWidth) fitted = fitted.slice(0, -1);
+  return `${fitted.trimEnd()}${ellipsis}`;
+}
+
+function drawHeaderFooter(ctx: RenderContext, page: PDFPage, pageIndex: number, totalPages: number): void {
   // Branded header — right-aligned small text
   if (ctx.headerText) {
-    const hw = ctx.regular.widthOfTextAtSize(ctx.headerText, FONT_SIZE_SMALL);
-    page.drawText(ctx.headerText, {
+    const headerText = fitTextToWidth(sanitizePdfText(ctx.headerText), ctx.fonts, FONT_SIZE_SMALL, CONTENT_WIDTH);
+    const hw = ctx.fonts.widthOf(headerText, FONT_SIZE_SMALL);
+    page.drawText(headerText, {
       x: PAGE_WIDTH - PAGE_MARGIN - hw,
       y: PAGE_HEIGHT - 30,
       size: FONT_SIZE_SMALL,
-      font: ctx.regular,
+      font: ctx.fonts.fontFor(headerText),
       color: rgb(...BRAND_COLOR),
     });
     page.drawLine({
@@ -70,24 +86,23 @@ function drawHeaderFooter(ctx: RenderContext): void {
   }
   // Contact strip footer — left-aligned
   if (ctx.footerContact) {
-    const fc = ctx.footerContact.slice(0, 110);
+    const fc = fitTextToWidth(sanitizePdfText(ctx.footerContact), ctx.fonts, FONT_SIZE_SMALL - 1, CONTENT_WIDTH - 75);
     page.drawText(fc, {
       x: PAGE_MARGIN,
       y: 28,
       size: FONT_SIZE_SMALL - 1,
-      font: ctx.regular,
+      font: ctx.fonts.fontFor(fc),
       color: rgb(...MUTED_COLOR),
     });
   }
   // Page number — right-aligned
-  const idx = ctx.pages.length - 1;
-  const num = `Page ${idx} of ${ctx.pages.length - 1}`;
-  const nw = ctx.regular.widthOfTextAtSize(num, FONT_SIZE_SMALL);
+  const num = `Page ${pageIndex + 1} of ${totalPages}`;
+  const nw = ctx.fonts.widthOf(num, FONT_SIZE_SMALL);
   page.drawText(num, {
     x: PAGE_WIDTH - PAGE_MARGIN - nw,
     y: 28,
     size: FONT_SIZE_SMALL,
-    font: ctx.regular,
+    font: ctx.fonts.fontFor(num),
     color: rgb(...MUTED_COLOR),
   });
   // Footer rule
@@ -103,13 +118,26 @@ function ensureSpace(ctx: RenderContext, needed: number): void {
   if (ctx.y - needed < PAGE_MARGIN + 30) addPage(ctx);
 }
 
-function wrapText(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
-  const words = text.split(" ");
+function wrapText(text: string, fonts: PdfFontSet, style: PdfFontStyle, fontSize: number, maxWidth: number): string[] {
+  // Split on any whitespace run, not on the space character alone.
+  //
+  // A newline used to stay inside a "word" and reach the font as a glyph:
+  // pdf-lib answered `WinAnsi cannot encode "\n" (0x000a)` and the export
+  // died. Titles carry newlines routinely — a tender title extracted from a
+  // document that wraps across two source lines keeps the break — so an
+  // ordinary Latin tender could not produce its required PDFs. Breaking on
+  // whitespace is also simply what wrapping means.
+  //
+  // Sanitised first so no control character can reach a font from here or
+  // from any caller that measures with these lines.
+  const words = sanitizePdfText(text).split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
     const test = current ? `${current} ${word}` : word;
-    const width = font.widthOfTextAtSize(test, fontSize);
+    // Measured with the face that will draw this exact text, so a line cannot
+    // be laid out against Helvetica metrics and then rendered in Noto.
+    const width = fonts.widthOf(test, fontSize, style);
     if (width > maxWidth && current) {
       lines.push(current);
       current = word;
@@ -186,11 +214,15 @@ function drawInlineParagraph(
     }
   }
 
-  const fontFor = (w: Word): PDFFont => {
-    if (w.bold && w.italic) return ctx.bold;
-    if (w.bold) return ctx.bold;
-    if (w.italic) return ctx.italic;
-    return ctx.regular;
+  // Body text reaches the font one word at a time, so it is sanitised here
+  // rather than at each draw call. A control character anywhere in a paragraph
+  // is the same hard export failure as one in the cover.
+  for (const word of words) word.text = sanitizePdfText(word.text);
+
+  const styleFor = (w: Word): PdfFontStyle => {
+    if (w.bold) return "bold";
+    if (w.italic) return "italic";
+    return "regular";
   };
 
   // Greedy line fill
@@ -198,9 +230,10 @@ function drawInlineParagraph(
   ensureSpace(ctx, opts.lineHeight);
   for (let i = 0; i < words.length; i++) {
     const w = words[i];
-    const font = fontFor(w);
-    const wordWidth = font.widthOfTextAtSize(w.text, opts.size);
-    const spaceWidth = i < words.length - 1 ? ctx.regular.widthOfTextAtSize(" ", opts.size) : 0;
+    const style = styleFor(w);
+    const font = ctx.fonts.fontFor(w.text, style);
+    const wordWidth = ctx.fonts.widthOf(w.text, opts.size, style);
+    const spaceWidth = i < words.length - 1 ? ctx.fonts.widthOf(" ", opts.size) : 0;
     if (x + wordWidth > PAGE_MARGIN + indent + maxW && x > PAGE_MARGIN + indent) {
       // wrap
       ctx.y -= opts.lineHeight;
@@ -222,19 +255,19 @@ function drawInlineParagraph(
 function drawText(
   ctx: RenderContext,
   text: string,
-  opts: { font: PDFFont; size: number; lineHeight: number; indent?: number; color?: [number, number, number] },
+  opts: { style: PdfFontStyle; size: number; lineHeight: number; indent?: number; color?: [number, number, number] },
 ): void {
   // Legacy single-font draw — used for headings (no inline bold/italic needed).
   const indent = opts.indent ?? 0;
   const maxW = CONTENT_WIDTH - indent;
-  const lines = wrapText(text, opts.font, opts.size, maxW);
+  const lines = wrapText(text, ctx.fonts, opts.style, opts.size, maxW);
   for (const line of lines) {
     ensureSpace(ctx, opts.lineHeight);
     currentPage(ctx).drawText(line, {
       x: PAGE_MARGIN + indent,
       y: ctx.y - opts.lineHeight + 3,
       size: opts.size,
-      font: opts.font,
+      font: ctx.fonts.fontFor(line, opts.style),
       color: opts.color ? rgb(...opts.color) : rgb(0, 0, 0),
     });
     ctx.y -= opts.lineHeight;
@@ -334,7 +367,7 @@ function drawTable(ctx: RenderContext, rows: string[][]): void {
         // as plain text (same as before), preserving content parity at the
         // cost of inline-style parity in tables.
         const clean = cell.replace(/\*\*\*([^*]+)\*\*\*/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/\*([^*]+)\*/g, "$1");
-        return wrapText(clean, ctx.regular, FONT_SIZE_TABLE, colWidth - cellPad * 2);
+        return wrapText(clean, ctx.fonts, "regular", FONT_SIZE_TABLE, colWidth - cellPad * 2);
       });
   });
   const rowHeights = wrappedRows.map((wr) => Math.max(...wr.map((lines) => lines.length), 1) * LINE_HEIGHT_TABLE + cellPad * 2);
@@ -368,12 +401,12 @@ function drawTable(ctx: RenderContext, rows: string[][]): void {
       const lines = wrappedRows[ri][ci] ?? [""];
       let ty = yTop - cellPad - LINE_HEIGHT_TABLE + 3;
       for (const ln of lines) {
-        const font = ri === 0 ? ctx.bold : ctx.regular;
+        const cellStyle: PdfFontStyle = ri === 0 ? "bold" : "regular";
         currentPage(ctx).drawText(ln, {
           x: xLeft + cellPad,
           y: ty,
           size: FONT_SIZE_TABLE,
-          font,
+          font: ctx.fonts.fontFor(ln, cellStyle),
           color: rgb(...TEXT_COLOR),
         });
         ty -= LINE_HEIGHT_TABLE;
@@ -423,35 +456,42 @@ async function buildCoverPage(
   // Dark header band
   page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 120, width: PAGE_WIDTH, height: 120, color: rgb(...BRAND_COLOR) });
 
-  const titleLines = wrapText(opts.title, ctx.bold, 18, CONTENT_WIDTH - 20);
+  const titleLines = wrapText(opts.title, ctx.fonts, "bold", 18, CONTENT_WIDTH - 20);
   let ty = PAGE_HEIGHT - 60;
   for (const ln of titleLines.slice(0, 3)) {
-    const tw = ctx.bold.widthOfTextAtSize(ln, 18);
-    page.drawText(ln, { x: cx - tw / 2, y: ty, size: 18, font: ctx.bold, color: rgb(1, 1, 1) });
+    const tw = ctx.fonts.widthOf(ln, 18, "bold");
+    page.drawText(ln, { x: cx - tw / 2, y: ty, size: 18, font: ctx.fonts.fontFor(ln, "bold"), color: rgb(1, 1, 1) });
     ty -= 24;
   }
 
   // Sub-line block — match DOCX cover block parity (reference, client, date,
   // company name, contact, email subject).
   let sy = PAGE_HEIGHT - 155;
-  const drawCentered = (text: string, font: PDFFont, size: number, color: [number, number, number]) => {
-    const w = font.widthOfTextAtSize(text, size);
-    page.drawText(text, { x: cx - w / 2, y: sy, size, font, color: rgb(...color) });
-    sy -= size + 6;
+  // Every sub-line here is external tender or company text — client name,
+  // reference, submission subject — so it is sanitised once and then measured
+  // and drawn as the same string. A newline in any of them used to end the
+  // export at the font layer.
+  const drawCentered = (raw: string, style: PdfFontStyle, size: number, color: [number, number, number]) => {
+    const lines = wrapText(sanitizePdfText(raw), ctx.fonts, style, size, CONTENT_WIDTH);
+    for (const text of lines) {
+      const w = ctx.fonts.widthOf(text, size, style);
+      page.drawText(text, { x: cx - w / 2, y: sy, size, font: ctx.fonts.fontFor(text, style), color: rgb(...color) });
+      sy -= size + 6;
+    }
   };
-  if (opts.companyName) drawCentered(opts.companyName, ctx.bold, FONT_SIZE_H2, BRAND_COLOR);
-  if (opts.reference) drawCentered(`Reference: ${opts.reference}`, ctx.regular, FONT_SIZE_BODY, MUTED_COLOR);
-  if (opts.clientName) drawCentered(`Client: ${opts.clientName}`, ctx.regular, FONT_SIZE_BODY, MUTED_COLOR);
-  if (opts.companyAddress) drawCentered(opts.companyAddress, ctx.regular, FONT_SIZE_SMALL, MUTED_COLOR);
-  if (opts.companyContact) drawCentered(opts.companyContact, ctx.regular, FONT_SIZE_SMALL, MUTED_COLOR);
-  if (opts.submissionEmailSubject) drawCentered(`Subject: ${opts.submissionEmailSubject}`, ctx.italic, FONT_SIZE_SMALL, MUTED_COLOR);
+  if (opts.companyName) drawCentered(opts.companyName, "bold", FONT_SIZE_H2, BRAND_COLOR);
+  if (opts.reference) drawCentered(`Reference: ${opts.reference}`, "regular", FONT_SIZE_BODY, MUTED_COLOR);
+  if (opts.clientName) drawCentered(`Client: ${opts.clientName}`, "regular", FONT_SIZE_BODY, MUTED_COLOR);
+  if (opts.companyAddress) drawCentered(opts.companyAddress, "regular", FONT_SIZE_SMALL, MUTED_COLOR);
+  if (opts.companyContact) drawCentered(opts.companyContact, "regular", FONT_SIZE_SMALL, MUTED_COLOR);
+  if (opts.submissionEmailSubject) drawCentered(`Subject: ${opts.submissionEmailSubject}`, "italic", FONT_SIZE_SMALL, MUTED_COLOR);
   const dateStr = `Generated: ${opts.generatedAt.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}`;
-  drawCentered(dateStr, ctx.regular, FONT_SIZE_SMALL, MUTED_COLOR);
+  drawCentered(dateStr, "regular", FONT_SIZE_SMALL, MUTED_COLOR);
 
   // Confidentiality note
   const conf = "CONFIDENTIAL — Commercial-in-confidence. Not for redistribution.";
-  const cfw = ctx.italic.widthOfTextAtSize(conf, FONT_SIZE_SMALL);
-  page.drawText(conf, { x: cx - cfw / 2, y: PAGE_MARGIN + 20, size: FONT_SIZE_SMALL, font: ctx.italic, color: rgb(0.55, 0.55, 0.55) });
+  const cfw = ctx.fonts.widthOf(conf, FONT_SIZE_SMALL, "italic");
+  page.drawText(conf, { x: cx - cfw / 2, y: PAGE_MARGIN + 20, size: FONT_SIZE_SMALL, font: ctx.fonts.fontFor(conf, "italic"), color: rgb(0.55, 0.55, 0.55) });
 
   // Footer line
   page.drawLine({
@@ -474,30 +514,41 @@ export async function generateProposalPdf(opts: {
   submissionEmailSubject?: string | null;
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
-  const [bold, regular, italic] = await Promise.all([
-    doc.embedFont(StandardFonts.HelveticaBold),
-    doc.embedFont(StandardFonts.Helvetica),
-    doc.embedFont(StandardFonts.HelveticaOblique),
-  ]);
+  // The font set is built from everything this document will contain — cover
+  // fields, header, footer and body — so the decision to embed a Unicode face
+  // is made once, from the real text, before a single glyph is measured. A
+  // face chosen per draw call would embed nothing until the first Ethiopic
+  // string and then measure earlier lines against different metrics.
+  const fonts = await createPdfFontSetFor(doc, [
+    opts.title,
+    opts.clientName ?? "",
+    opts.reference ?? "",
+    opts.companyName ?? "",
+    opts.companyAddress ?? "",
+    opts.companyContact ?? "",
+    opts.submissionEmailSubject ?? "",
+    opts.markdown,
+  ].join("\n"));
 
-  // Header text — tender title or company name, right-aligned on every page.
-  const headerText = opts.companyName
-    ? `${opts.companyName} | ${opts.title}`
-    : opts.title;
+  // Repeating the full company name plus tender title cannot fit an A4 header
+  // and previously ended every page in a visible ellipsis. The cover already
+  // carries the complete tender title; the running header identifies the
+  // bidder without clipping or silently abbreviating client-facing text.
+  const headerText = opts.companyName ?? opts.title;
 
   // Footer contact strip — composed from any provided branding fields.
   const footerParts: string[] = [];
-  if (opts.companyAddress) footerParts.push(opts.companyAddress);
+  // Prefer the concise contact strip. The full address remains on the cover;
+  // combining both here overflowed the footer on every page.
   if (opts.companyContact) footerParts.push(opts.companyContact);
+  else if (opts.companyAddress) footerParts.push(opts.companyAddress);
   const footerContact = footerParts.length ? footerParts.join("  |  ") : null;
 
   // Cover page (page 0 — not numbered)
   const coverPage = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   const ctx: RenderContext = {
     doc,
-    bold,
-    regular,
-    italic,
+    fonts,
     pages: [coverPage],
     y: PAGE_HEIGHT - PAGE_MARGIN,
     headerText,
@@ -530,15 +581,15 @@ export async function generateProposalPdf(opts: {
       if (prevType && prevType !== "blank") ctx.y -= SECTION_GAP;
       ensureSpace(ctx, LINE_HEIGHT_H1 + 4);
       drawHRule(ctx, BRAND_COLOR);
-      drawText(ctx, tok.text, { font: bold, size: FONT_SIZE_H1, lineHeight: LINE_HEIGHT_H1, color: TEXT_COLOR });
+      drawText(ctx, tok.text, { style: "bold", size: FONT_SIZE_H1, lineHeight: LINE_HEIGHT_H1, color: TEXT_COLOR });
       ctx.y -= 4;
     } else if (tok.type === "h2") {
       if (prevType && prevType !== "blank") ctx.y -= PARAGRAPH_GAP * 2;
-      drawText(ctx, tok.text, { font: bold, size: FONT_SIZE_H2, lineHeight: LINE_HEIGHT_H2, color: BRAND_COLOR });
+      drawText(ctx, tok.text, { style: "bold", size: FONT_SIZE_H2, lineHeight: LINE_HEIGHT_H2, color: BRAND_COLOR });
       ctx.y -= 2;
     } else if (tok.type === "h3") {
       if (prevType && prevType !== "blank") ctx.y -= PARAGRAPH_GAP;
-      drawText(ctx, tok.text, { font: bold, size: FONT_SIZE_H3, lineHeight: LINE_HEIGHT_H3, color: TEXT_COLOR });
+      drawText(ctx, tok.text, { style: "bold", size: FONT_SIZE_H3, lineHeight: LINE_HEIGHT_H3, color: TEXT_COLOR });
     } else if (tok.type === "bullet") {
       // Bullets may carry inline bold/italic — use the inline paragraph
       // renderer with a bullet glyph prefix and indent.
@@ -547,7 +598,7 @@ export async function generateProposalPdf(opts: {
         x: PAGE_MARGIN + 4,
         y: ctx.y - LINE_HEIGHT_BODY + 3,
         size: FONT_SIZE_BODY,
-        font: regular,
+        font: ctx.fonts.fontFor("•"),
         color: rgb(...TEXT_COLOR),
       });
       drawInlineParagraph(ctx, tok.text, {
@@ -571,6 +622,26 @@ export async function generateProposalPdf(opts: {
     prevType = tok.type;
   }
 
-  // Header/footer already drawn on every content page as it was added.
+  // Give the file the trailer /ID the PDF specification asks every document to
+  // carry. pdf-lib emits none, so every proposal this app produced was
+  // identity-less, and a reader that keys anything on document identity sees
+  // two different proposals as the same file. Measured: pdf2json, one of the
+  // three text-layer extractors, returned the FIRST document's text when asked
+  // to parse a second, structurally similar one — so a validator could judge a
+  // regenerated proposal against the bytes of the previous version. Two
+  // obviously different PDFs (different page counts and sizes) did not
+  // collide, which is what made this invisible until two near-identical
+  // proposals were read in one process.
+  //
+  // The identity is derived from the document's own content, so identical
+  // bytes keep an identical id and a changed document gets a new one.
+  const identitySource = [opts.title, opts.clientName ?? "", opts.reference ?? "", opts.companyName ?? "", opts.markdown].join("\u0000");
+  const documentId = PDFHexString.of(createHash("sha256").update(identitySource, "utf8").digest("hex").slice(0, 32).toUpperCase());
+  doc.context.trailerInfo.ID = doc.context.obj([documentId, documentId]);
+
+  const totalPages = ctx.pages.length;
+  ctx.pages.forEach((page, pageIndex) => drawHeaderFooter(ctx, page, pageIndex, totalPages));
   return doc.save();
 }
+
+export const __testing__ = { fitTextToWidth };

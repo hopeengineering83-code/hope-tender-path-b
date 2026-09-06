@@ -13,12 +13,15 @@
 // All panels must consume this decision object — no panel may compute its
 // own competing "next action" or stage truth.
 
+import { publicJobFailureMessage } from "../prisma-schema-compatibility";
+
 export type WorkflowBlockerPriority =
   | "NO_TENDER_FILE"
   | "EXTRACTION_UNSAFE"
   | "PARTIAL_AI_ANALYSIS"
   | "STALE_ANALYSIS"
   | "AI_ANALYZE_NOT_RUN"
+  | "ENGINE_RUN_FAILED"
   | "CRITICAL_TENDER_DETAILS_INVALID"
   | "REQUIREMENTS_NOT_SOURCE_GROUNDED"
   | "NO_CONFIRMED_BUILD_PLAN"
@@ -61,6 +64,25 @@ export type CanonicalWorkflowDecision = {
   mandatoryTracedCount: number;
   mandatoryComplianceRowsCount: number;
   mandatoryFullOrSubstantialCoverageCount: number;
+  /**
+   * Mandatory requirements whose outstanding evidence is a planned output this
+   * workflow will generate, and which are not otherwise covered.
+   *
+   * These are the requirements that made the tender unsatisfiable. A submission
+   * requirement is answered by a document the app generates, so its only
+   * automatic evidence is the confirmed Build Plan row for that exact file. A
+   * plan row is correctly never FULL or SUBSTANTIAL — the bytes do not exist —
+   * so the requirement stayed uncovered, and the coverage blocker refused to
+   * let generation start. The app declined to generate a file until the file
+   * already existed, and no Company Vault upload could resolve it, because the
+   * missing item was an output rather than a source.
+   *
+   * Counted toward the GENERATION gate only. Nothing here touches export: the
+   * bytes still do not exist, and MISSING_PLANNED_FILES,
+   * NO_ACTIVE_GENERATED_DOCUMENTS, package reconciliation and the ZIP byte
+   * gates remain independent and still fire.
+   */
+  mandatoryAwaitingPlannedOutputCount?: number;
 
   // Documents
   requiredDocumentsTotal: number;
@@ -102,6 +124,7 @@ export function buildCanonicalWorkflowDecision(input: {
   mandatoryTracedCount: number;
   mandatoryComplianceRowsCount: number;
   mandatoryFullOrSubstantialCoverageCount: number;
+  mandatoryAwaitingPlannedOutputCount?: number;
 
   // Build plan
   confirmedBuildPlanExists: boolean;
@@ -133,7 +156,7 @@ export function buildCanonicalWorkflowDecision(input: {
   if (input.hasFiles && input.extractionUnsafe) {
     blockerCodes.push("EXTRACTION_UNSAFE");
     blockerDetails.push(input.extractionCorrupted
-      ? "Extraction is corrupted. Run OCR or re-upload a clearer scan."
+      ? "Extraction is corrupted. Upload a clearer, text-based copy of the source."
       : input.ocrRequired
         ? "OCR is required — the PDF appears to be scanned."
         : "Extraction quality is too low for analysis.");
@@ -176,8 +199,8 @@ export function buildCanonicalWorkflowDecision(input: {
     if (!input.requirementsTrusted) {
       blockerCodes.push("REQUIREMENTS_NOT_SOURCE_GROUNDED");
       blockerDetails.push(input.requirementsExist
-        ? "Requirements exist but lack source tracing. Review and confirm source grounding."
-        : "No requirements available. Run AI Analyze.");
+        ? "Requirements exist but lack verified source tracing. Attempt automatic source grounding; if the source cannot prove them, re-run AI Analyze, upload a better source, or correct the requirement from the genuine source."
+        : "No requirements available. Re-run AI Analyze against the verified source.");
     }
   }
 
@@ -185,7 +208,12 @@ export function buildCanonicalWorkflowDecision(input: {
   const requirementsOK = analysisOK && input.criticalTenderDetailsValid && input.requirementsTrusted;
   if (requirementsOK && !input.confirmedBuildPlanExists) {
     blockerCodes.push("NO_CONFIRMED_BUILD_PLAN");
-    blockerDetails.push("No current confirmed Build Plan. Build and confirm the submission plan.");
+    // Run Engine uses the verified source and current AI analysis to create and verify the Build Plan (the ENGINE_RUN
+    // handler calls buildAndVerifyBuildPlan). Naming a manual "build and
+    // confirm" step invented a third required action, and contradicted the
+    // very next blocker below, which correctly says "Run Engine to link
+    // evidence".
+    blockerDetails.push("No current confirmed Build Plan for this revision. Run Engine uses the verified source and current AI analysis to create and verify it.");
   }
 
   // ── Priority 9: Mandatory no compliance rows ─────────────────────────
@@ -197,16 +225,23 @@ export function buildCanonicalWorkflowDecision(input: {
   }
 
   // ── Priority 10: Mandatory no FULL/SUBSTANTIAL coverage ──────────────
+  // Requirements waiting only on a file this workflow generates count as
+  // satisfied HERE, at the generation gate, and nowhere else. See
+  // mandatoryAwaitingPlannedOutputCount for why: without it the tender is
+  // unsatisfiable by construction, because the evidence it demands is an
+  // output the same gate is preventing.
+  const mandatoryCoveredForGeneration =
+    input.mandatoryFullOrSubstantialCoverageCount + (input.mandatoryAwaitingPlannedOutputCount ?? 0);
   if (requirementsOK && input.confirmedBuildPlanExists && input.mandatoryRequirementCount > 0 && input.mandatoryComplianceRowsCount > 0) {
-    if (input.mandatoryFullOrSubstantialCoverageCount < input.mandatoryRequirementCount) {
+    if (mandatoryCoveredForGeneration < input.mandatoryRequirementCount) {
       blockerCodes.push("MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE");
-      blockerDetails.push(`${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have FULL/SUBSTANTIAL coverage. Confirm more evidence.`);
+      blockerDetails.push(`${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have release-qualified FULL/SUBSTANTIAL coverage. Strengthen partial evidence or add eligible source-backed evidence for requirements with no adequate evidence.`);
     }
   }
 
   // ── Priority 11: PDF required but unavailable ────────────────────────
   const complianceOK = requirementsOK && input.confirmedBuildPlanExists &&
-    (input.mandatoryRequirementCount === 0 || (input.mandatoryComplianceRowsCount > 0 && input.mandatoryFullOrSubstantialCoverageCount >= input.mandatoryRequirementCount));
+    (input.mandatoryRequirementCount === 0 || (input.mandatoryComplianceRowsCount > 0 && mandatoryCoveredForGeneration >= input.mandatoryRequirementCount));
   if (complianceOK && input.pdfRequiredButUnavailable) {
     blockerCodes.push("PDF_REQUIRED_UNAVAILABLE");
     blockerDetails.push("Required PDF output is unavailable. Finalize the required PDF or upload the tender-issued PDF.");
@@ -226,15 +261,14 @@ export function buildCanonicalWorkflowDecision(input: {
     blockerDetails.push("Generated documents have not been validated.");
   }
 
-  // ── Priority 14: Docs not approved/export-ready ──────────────────────
+  // ── Priority 14: Machine export eligibility ─────────────────────────
+  // Validation is the machine authority for routine downstream processing.
+  // `reviewStatus` is retained as human/legal release audit state, but a
+  // per-document approval click must not deadlock DOCX/PDF/ZIP production.
   const docsValidated = docsGenerated && input.documentsValidated;
-  if (docsValidated && !input.documentsApproved) {
-    blockerCodes.push("DOCS_NOT_APPROVED_EXPORT_READY");
-    blockerDetails.push("Documents are validated but not approved for export.");
-  }
 
   // ── Priority 15: Authority or quality blockers ───────────────────────
-  const docsApproved = docsValidated && input.documentsApproved;
+  const docsApproved = docsValidated;
   if (docsApproved && input.authorityOrQualityBlockers) {
     blockerCodes.push("AUTHORITY_OR_QUALITY_BLOCKERS");
     blockerDetails.push("Authority review or document quality blockers remain.");
@@ -256,6 +290,7 @@ export function buildCanonicalWorkflowDecision(input: {
     "PARTIAL_AI_ANALYSIS",
     "STALE_ANALYSIS",
     "AI_ANALYZE_NOT_RUN",
+    "ENGINE_RUN_FAILED",
     "CRITICAL_TENDER_DETAILS_INVALID",
     "REQUIREMENTS_NOT_SOURCE_GROUNDED",
     "NO_CONFIRMED_BUILD_PLAN",
@@ -285,15 +320,18 @@ export function buildCanonicalWorkflowDecision(input: {
     PARTIAL_AI_ANALYSIS: { action: "RESUME_AI_ANALYZE", label: "Resume AI Analyze", reason: "A previous AI Analyze run has saved partial progress. Resume it to complete the missing chunks." },
     STALE_ANALYSIS: { action: "RUN_AI_ANALYZE", label: "Re-run AI Analyze", reason: "Tender content changed since the last analysis. Re-run AI Analyze for the current content." },
     AI_ANALYZE_NOT_RUN: { action: "RUN_AI_ANALYZE", label: "Run AI Analyze", reason: "AI Analyze has not been run or is untrusted." },
+    ENGINE_RUN_FAILED: { action: "REPAIR_SOURCE_REFERENCES", label: "Repair title source evidence", reason: "The current-revision Engine run failed. Resolve its first recorded fail-closed cause before retrying Run Engine." },
     CRITICAL_TENDER_DETAILS_INVALID: { action: "EDIT_TENDER_METADATA", label: "Edit Tender Details", reason: "Critical Tender Details are missing, invalid, or ungrounded." },
-    REQUIREMENTS_NOT_SOURCE_GROUNDED: { action: "REVIEW_REQUIREMENTS", label: "Review requirements", reason: "Requirements exist but lack source tracing. Review and confirm source grounding." },
-    NO_CONFIRMED_BUILD_PLAN: { action: "BUILD_SUBMISSION_PLAN", label: "Build submission plan", reason: "No current confirmed Build Plan. Build and confirm the submission plan." },
+    REQUIREMENTS_NOT_SOURCE_GROUNDED: input.requirementsExist
+      ? { action: "REPAIR_SOURCE_GROUNDING", label: "Ground requirements from source", reason: "The system must verify each requirement against the active source. If it cannot, re-run AI Analyze, upload a better source, or make a genuine source correction; review or confirmation cannot promote unsupported provenance." }
+      : { action: "RUN_AI_ANALYZE", label: "Re-run AI Analyze", reason: "No source-grounded requirements are available for the current verified source." },
+    NO_CONFIRMED_BUILD_PLAN: { action: "RUN_ENGINE", label: "Run Engine", reason: "Run Engine uses the current verified source and current AI analysis, then starts matching and automatic Build Plan creation." },
     MANDATORY_NO_COMPLIANCE_ROWS: { action: "LINK_VAULT_EVIDENCE", label: "Link evidence to requirements", reason: `${input.mandatoryRequirementCount} mandatory requirements have no compliance matrix rows. Run Engine to link evidence.` },
-    MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Confirm evidence coverage", reason: `${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements have FULL/SUBSTANTIAL coverage.` },
+    MANDATORY_NO_FULL_SUBSTANTIAL_COVERAGE: { action: "LINK_VAULT_EVIDENCE", label: "Source evidence required", reason: `Automatic matching found release-qualified FULL/SUBSTANTIAL coverage for ${input.mandatoryFullOrSubstantialCoverageCount}/${input.mandatoryRequirementCount} mandatory requirements. Strengthen partial evidence or add eligible source-backed evidence where none is adequate; no confirmation click can bypass this gate.` },
     PDF_REQUIRED_UNAVAILABLE: { action: "FINALIZE_REQUIRED_PDF", label: "Finalize required PDF", reason: "Required PDF output is unavailable. Finalize the required PDF (from the approved DOCX source) or upload the tender-issued PDF." },
     REQUIRED_DOCS_NOT_GENERATED: { action: "GENERATE_DOCUMENTS", label: "Generate proposal documents", reason: `${input.generatedDocumentsTotal}/${input.requiredDocumentsTotal} required documents generated.` },
     DOCS_NOT_VALIDATED: { action: "FIX_EXPORT_BLOCKERS", label: "Validate documents", reason: "Generated documents have not been validated." },
-    DOCS_NOT_APPROVED_EXPORT_READY: { action: "FIX_EXPORT_BLOCKERS", label: "Approve documents for export", reason: "Documents are validated but not approved for export." },
+    DOCS_NOT_APPROVED_EXPORT_READY: { action: "AUTOMATIC_PROCESSING", label: "Checking machine export eligibility", reason: "The durable worker verifies document validation, byte integrity, format and package eligibility without impersonating human release authority." },
     AUTHORITY_OR_QUALITY_BLOCKERS: { action: "FIX_EXPORT_BLOCKERS", label: "Fix authority/quality blockers", reason: "Authority review or document quality blockers remain." },
     EXPORT_BLOCKED: { action: "FIX_EXPORT_BLOCKERS", label: "Resolve export blockers", reason: "Export gate is not satisfied. Resolve the remaining export blockers before downloading the final ZIP." },
     EXPORT_ZIP_READY: { action: "EXPORT_READY", label: "Export ready", reason: "All gates pass. Review the final package manifest and export the submission ZIP." },
@@ -351,7 +389,9 @@ export function buildCanonicalWorkflowDecision(input: {
     stageAvailability["CONFIRM_REQUIREMENTS"] = false;
   } else if (!input.requirementsTrusted) {
     stageStates["CONFIRM_REQUIREMENTS"] = "BLOCKED";
-    stageAvailability["CONFIRM_REQUIREMENTS"] = true;
+    // Historical stage key retained for response compatibility only. It is
+    // deliberately not actionable: confirmation cannot promote provenance.
+    stageAvailability["CONFIRM_REQUIREMENTS"] = false;
   } else {
     stageStates["CONFIRM_REQUIREMENTS"] = "COMPLETE";
     stageAvailability["CONFIRM_REQUIREMENTS"] = false;
@@ -373,7 +413,11 @@ export function buildCanonicalWorkflowDecision(input: {
   if (isSuppressed("MANDATORY_NO_COMPLIANCE_ROWS")) {
     stageStates["MATCH_EVIDENCE"] = "BLOCKED_BY_PRIOR_STEP";
     stageAvailability["MATCH_EVIDENCE"] = false;
-  } else if (input.mandatoryRequirementCount > 0 && input.mandatoryFullOrSubstantialCoverageCount < input.mandatoryRequirementCount) {
+  } else if (
+    input.mandatoryRequirementCount > 0
+    && input.mandatoryFullOrSubstantialCoverageCount + (input.mandatoryAwaitingPlannedOutputCount ?? 0)
+       < input.mandatoryRequirementCount
+  ) {
     stageStates["MATCH_EVIDENCE"] = "BLOCKED";
     stageAvailability["MATCH_EVIDENCE"] = true;
   } else {
@@ -397,7 +441,7 @@ export function buildCanonicalWorkflowDecision(input: {
   if (isSuppressed("DOCS_NOT_VALIDATED")) {
     stageStates["VALIDATE_DOCS"] = "BLOCKED_BY_PRIOR_STEP";
     stageAvailability["VALIDATE_DOCS"] = false;
-  } else if (!input.documentsValidated || !input.documentsApproved) {
+  } else if (!input.documentsValidated) {
     stageStates["VALIDATE_DOCS"] = "READY";
     stageAvailability["VALIDATE_DOCS"] = true;
   } else {
@@ -435,6 +479,7 @@ export function buildCanonicalWorkflowDecision(input: {
     mandatoryTracedCount: input.mandatoryTracedCount,
     mandatoryComplianceRowsCount: input.mandatoryComplianceRowsCount,
     mandatoryFullOrSubstantialCoverageCount: input.mandatoryFullOrSubstantialCoverageCount,
+    mandatoryAwaitingPlannedOutputCount: input.mandatoryAwaitingPlannedOutputCount ?? 0,
     requiredDocumentsTotal: input.requiredDocumentsTotal,
     generatedDocumentsTotal: input.generatedDocumentsTotal,
     exportReadyDocumentsTotal: input.exportReadyDocumentsTotal,
@@ -454,6 +499,8 @@ export function buildCanonicalWorkflowDecision(input: {
 
 import type { PrismaClient } from "@prisma/client";
 import { getTenderReleaseSnapshot } from "./tender-release-snapshot";
+import { computeEngineSourceRevision } from "./engine-source-revision";
+import { filterFinalExportCandidateDocuments, isValidationPassed } from "./document-output-state";
 
 export async function getCanonicalTenderWorkflowDecision(
   prisma: PrismaClient,
@@ -492,7 +539,21 @@ export async function getCanonicalTenderWorkflowDecision(
   // ─── Tender Details authority ─────────────────────────────────────────
   // Pre-generation workflow stages use the canonical DRAFT authority signal.
   // Final-only source/audit authority is deliberately not applied here; it is
-  // already enforced by snapshot.finalZipEligible at the export boundary.
+  // enforced at the export boundary by assertTenderReadyForGenerationAndExport,
+  // which resolves criticalMetadataOk from fieldStates.hasExportBlocker for
+  // purpose "export"/"final-zip" and fails TENDER_FACTS_INVALID.
+  //
+  // Named precisely on purpose. This comment used to credit
+  // `snapshot.finalZipEligible`, which is computed in
+  // release-snapshot-eligibility.ts and consumed by the snapshot, the release
+  // state and the UI sync — but is referenced in NO route under app/. It is a
+  // reporting flag, not the export gate. A reader who trusted the old wording
+  // could delete the real check here believing a gate covered it that the
+  // request never consults; that is exactly how the Tender Facts gate was
+  // removed once before (see the PR #1002 note in generation-readiness-gate.ts).
+  // The real enforcer is pinned by tests/screenshot-export-gates-003-server.ts
+  // and four other suites that assert the download route calls it with
+  // purpose "final-zip".
   const criticalTenderDetailsValid = !snapshot.metadata.hasGenerationBlocker;
 
   // ─── Requirements ───────────────────────────────────────────────────────
@@ -515,6 +576,34 @@ export async function getCanonicalTenderWorkflowDecision(
     return anyRowCount;
   })();
   const mandatoryFullOrSubstantialCoverageCount = snapshot.evidence.covered;
+
+  // Mandatory requirements whose outstanding evidence is a file this workflow
+  // will generate. This asks exactly: is this requirement waiting on
+  // generation, and on nothing else?
+  //
+  // AUTO_PLANNED_ARTIFACT is written to `evidenceSource`, not `evidenceType`.
+  // automatic-requirement-coverage persists a confirmed Build Plan row as
+  // `evidenceType: candidate.recordType` ("BUILD_PLAN_ITEM") and
+  // `evidenceSource: automaticEvidenceSource(recordType)`
+  // ("AUTO_PLANNED_ARTIFACT"). Filtering evidenceType for that value therefore
+  // matched no row ever written, so this count was permanently 0 and the
+  // allowance below was dead code — producing precisely the deadlock its own
+  // comment warns about: the Requirements and Evidence panel showed both
+  // outstanding requirements as PARTIAL "planned output pending generated
+  // bytes", while the generation gate refused to produce those bytes because
+  // coverage was 2/4. Neither side could move first.
+  //
+  // The NOT clause keeps it from double counting a requirement that is already
+  // covered by real evidence, so the sum with evidence.covered can never exceed
+  // the mandatory total.
+  const mandatoryAwaitingPlannedOutputCount = await prisma.tenderRequirement.count({
+    where: {
+      tenderId,
+      priority: { in: ["MANDATORY", "CRITICAL"] },
+      complianceMatrixRows: { some: { evidenceSource: "AUTO_PLANNED_ARTIFACT" } },
+      NOT: { complianceMatrixRows: { some: { supportLevel: { in: ["FULL", "SUBSTANTIAL"] } } } },
+    },
+  }).catch(() => 0);
   const requirementsTrusted =
     snapshot.requirements.total > 0 &&
     snapshot.requirements.allMandatoryGrounded;
@@ -527,20 +616,39 @@ export async function getCanonicalTenderWorkflowDecision(
 
   // ─── Generated Documents ────────────────────────────────────────────────
   // Fetch generated docs (non-SUPERSEDED) with validation + review status.
-  const generatedDocs = await prisma.generatedDocument.findMany({
+  const generatedDocRows = await prisma.generatedDocument.findMany({
     where: { tenderId, generationStatus: { not: "SUPERSEDED" } },
     select: {
       id: true,
+      name: true,
       generationStatus: true,
       validationStatus: true,
       reviewStatus: true,
       exactFileName: true,
+      // Required by the canonical selection below — without them a CONTROL
+      // row or a SUBMISSION_CONTROL row cannot be recognised and is counted
+      // as a current export-ready output.
+      format: true,
+      documentType: true,
     },
-  }).catch(() => [] as { id: string; generationStatus: string; validationStatus: string | null; reviewStatus: string | null; exactFileName: string | null }[]);
+  }).catch(() => [] as Array<{ id: string; name: string; generationStatus: string; validationStatus: string | null; reviewStatus: string | null; exactFileName: string | null; format: string | null; documentType: string | null }>);
 
-  const generatedDocumentsTotal = generatedDocs.filter(
-    (d) => d.generationStatus === "GENERATED",
-  ).length;
+  // CANONICAL current-document selection — the same predicate the export gate,
+  // the Final Package Manifest, the Document Validator and readiness use.
+  //
+  // This was `d.generationStatus === "GENERATED"`, a private sixth copy of the
+  // rule, and it disagreed with the gate in the dangerous direction: on a set
+  // of seven rows it reported SIX export-ready documents where the export gate
+  // accepts ONE. It counted a row the owner had explicitly marked
+  // NOT_EXPORTABLE, a row still awaiting its tender-issued original
+  // (REPLACE_WITH_ORIGINAL), a CONTROL-format row, a SUBMISSION_CONTROL row and
+  // an internal quick draft — every one of which the final package refuses.
+  // exportReadyDocumentsTotal is surfaced by /api/tenders/[id]/workflow-status,
+  // so the workflow told the owner the package was ready while the gate
+  // declined it.
+  const generatedDocs = filterFinalExportCandidateDocuments(generatedDocRows);
+
+  const generatedDocumentsTotal = generatedDocs.length;
 
   // Required documents total: derive from the build plan items (count where required).
   // Fall back to generatedDocs.length when no plan exists yet.
@@ -565,23 +673,16 @@ export async function getCanonicalTenderWorkflowDecision(
   // Documents validated: every generated doc has validationStatus PASSED/VALIDATED.
   const documentsValidated =
     generatedDocumentsTotal > 0 &&
-    generatedDocs
-      .filter((d) => d.generationStatus === "GENERATED")
-      .every((d) => d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED");
+    generatedDocs.every((d) => isValidationPassed(d.validationStatus));
 
-  // Documents approved / export-ready: every generated doc has reviewStatus APPROVED or READY_FOR_EXPORT.
-  const documentsApproved =
-    documentsValidated &&
-    generatedDocs
-      .filter((d) => d.generationStatus === "GENERATED")
-      .every((d) => d.reviewStatus === "APPROVED" || d.reviewStatus === "READY_FOR_EXPORT");
+  // Routine machine eligibility is established by successful validation.
+  // Human reviewStatus remains available for genuine legal/signature/owner
+  // release controls, but it is not a second per-document pipeline gate.
+  const documentsApproved = documentsValidated;
 
-  // Export-ready count: generated + validated + approved.
+  // Machine-export-eligible count: generated + validated.
   const exportReadyDocumentsTotal = generatedDocs.filter(
-    (d) =>
-      d.generationStatus === "GENERATED" &&
-      (d.validationStatus === "PASSED" || d.validationStatus === "VALIDATED") &&
-      (d.reviewStatus === "APPROVED" || d.reviewStatus === "READY_FOR_EXPORT"),
+    (d) => isValidationPassed(d.validationStatus),
   ).length;
 
   // ─── PDF required but unavailable ───────────────────────────────────────
@@ -634,7 +735,7 @@ export async function getCanonicalTenderWorkflowDecision(
   // It already incorporates generation + export + final ZIP gates.
   const finalExportAllowed = snapshot.finalZipEligible;
 
-  return buildCanonicalWorkflowDecision({
+  const decision = buildCanonicalWorkflowDecision({
     hasFiles: snapshot.extraction.activeFileCount > 0,
     extractionUnsafe: !snapshot.extraction.overallOk,
     extractionCorrupted: snapshot.extraction.files.some((f) => f.corrupted),
@@ -651,6 +752,11 @@ export async function getCanonicalTenderWorkflowDecision(
     mandatoryTracedCount,
     mandatoryComplianceRowsCount,
     mandatoryFullOrSubstantialCoverageCount,
+    // Computed above and previously dropped here. Because the field is
+    // optional, omitting it silently resolved to `?? 0`, so the planned-output
+    // allowance was inert no matter what the query returned — the whole reason
+    // the generation deadlock survived a fix to the query itself.
+    mandatoryAwaitingPlannedOutputCount,
     confirmedBuildPlanExists,
     requiredDocumentsTotal,
     generatedDocumentsTotal,
@@ -661,4 +767,51 @@ export async function getCanonicalTenderWorkflowDecision(
     finalExportAllowed,
     authorityOrQualityBlockers,
   });
+
+  // A terminal failure from the latest Engine attempt for these exact inputs
+  // is current workflow truth. It outranks secondary consequences such as an
+  // absent Build Plan or requirement links that the failed stage never reached.
+  const revision = await computeEngineSourceRevision(prisma, { tenderId, userId }).catch(() => null);
+  const latestEngine = revision
+    ? await prisma.aiJob.findFirst({
+        where: { tenderId, userId, jobType: "ENGINE_RUN", analysisInputHash: revision.sourceRevision },
+        orderBy: [{ createdAt: "desc" }, { analysisVersion: "desc" }],
+        select: {
+          id: true,
+          status: true,
+          errorMessage: true,
+          steps: {
+            where: { status: "FAILED" },
+            orderBy: { stepIndex: "asc" },
+            select: { stepName: true, message: true },
+          },
+        },
+      }).catch(() => null)
+    : null;
+  if (latestEngine && ["FAILED", "CANCELED"].includes(latestEngine.status)) {
+    const cause = latestEngine.steps.find((step) => step.stepName === "build-plan.blocked")
+      ?? latestEngine.steps[0];
+    // A failed stage is preferred, but older jobs (including Preview failure
+    // 03b9c928) stored the validator's concrete blocker only on errorMessage.
+    // Combine both for internal classification, then pass the result through
+    // the fixed public mapper so no raw exception crosses the API boundary.
+    const recordedDetail = `${cause?.message ?? ""} ${latestEngine.errorMessage ?? ""}`.trim();
+    const titleProvenance = /TENDER_FACTS_INVALID|metadata field title|title.*source page/i.test(recordedDetail);
+    const reference = latestEngine.id.slice(0, 8);
+    const safeDetail = publicJobFailureMessage(recordedDetail || "ENGINE_RUN_FAILED", reference);
+    return {
+      ...decision,
+      currentBlockingStage: "ENGINE_RUN_FAILED",
+      blockingStageCode: titleProvenance ? "TITLE_SOURCE_PROVENANCE_INVALID" : "ENGINE_RUN_FAILED",
+      blockerCodes: [titleProvenance ? "TITLE_SOURCE_PROVENANCE_INVALID" : "ENGINE_RUN_FAILED"],
+      blockerDetails: [safeDetail],
+      nextRequiredAction: titleProvenance ? "REPAIR_SOURCE_REFERENCES" : "RUN_ENGINE",
+      nextRequiredActionLabel: titleProvenance ? "Repair title source evidence" : "Retry Run Engine",
+      nextRequiredActionReason: titleProvenance
+        ? safeDetail
+        : `${safeDetail} Open Diagnostics for the recorded stage, then retry only after its stated cause is resolved.`,
+      downstreamSuppressedBy: "ENGINE_RUN_FAILED",
+    };
+  }
+  return decision;
 }

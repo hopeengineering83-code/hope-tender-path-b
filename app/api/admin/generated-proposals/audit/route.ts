@@ -21,13 +21,12 @@ import {
   deriveDocumentOutputState,
   isFinalExportCandidateDocument,
   isValidationPassed,
-  isReviewReadyForExport,
   isGenerated,
 } from "../../../../../lib/engine/document-output-state";
 import {
   documentHygieneIssues,
-  extractDocxVisibleText,
 } from "../../../../../lib/engine/export-readiness";
+import { generatedDocumentVisibleText } from "../../../../../lib/engine/generated-document-text";
 import { validateFileSignature } from "../../../../../lib/engine/export-format-policy";
 import { containsPricingLeakage } from "../../../../../lib/engine/pricing-hygiene";
 import { inferEnvelope } from "../../../../../lib/engine/submission-plan";
@@ -58,7 +57,10 @@ type AuditRow = {
   hasStoragePath: boolean;
   storageReadable: boolean | null;
   byteSignatureOk: boolean | null;
-  docxVisibleTextInspectable: boolean;
+  /** Persisted artifact identity. A release surface that cannot name the
+   *  revision it judged cannot be reconciled with the surfaces that shipped it. */
+  contentSha256: string | null;
+  visibleTextInspectable: boolean;
   wordCount: number;
   sectionCount: number;
   requiredSectionsPresent: string[];
@@ -66,6 +68,8 @@ type AuditRow = {
   requirementCoverageRatio: number;
   qualityScore: number;
   qualityRecommendedStatus: string;
+  /** Why the score is what it is. A verdict without its reasons cannot be acted on. */
+  qualityIssues: Array<{ code: string; severity: string; message: string }>;
   aiTraceIssue: boolean;
   placeholderIssue: boolean;
   bidTeamToConfirmIssue: boolean;
@@ -131,10 +135,10 @@ function why(row: AuditRow): { recommendedAction: string; severity: Severity } {
   }
   if (!row.finalExportCandidate) {
     const reason = row.excludedReason ?? "Workspace-only row";
-    return { recommendedAction: `${reason} — not a final-export file. Use Generate Docs to produce the actual submission file.`, severity: "LOW" };
+    return { recommendedAction: `${reason} — not a final-export file. The automatic generation stage produces the actual submission file.`, severity: "LOW" };
   }
   if (!row.readyForExport) {
-    return { recommendedAction: "Document is not yet READY_FOR_EXPORT. Complete validation + reviewer approval.", severity: "MEDIUM" };
+    return { recommendedAction: "Document is not yet READY_FOR_EXPORT. Automatic validation and PDF finalization have not both completed for this revision.", severity: "MEDIUM" };
   }
   return { recommendedAction: "OK — ready for final export.", severity: "LOW" };
 }
@@ -219,17 +223,42 @@ export async function GET(req: Request) {
         reviewStatus: true,
         fileContent: true,
         storagePath: true,
+        contentSha256: true,
         createdAt: true,
         updatedAt: true,
       },
     });
 
     const tenderIds = Array.from(new Set(docs.map((document) => document.tenderId)));
+    // The selected expert and project names come along with the title, because
+    // the quality rubric needs them to answer its evidence question at all.
+    // countEvidenceReferences(text, names) returns 0 both when a document cites
+    // none of the selected evidence and when it was handed no names to look
+    // for, so calling the rubric without them raised MISSING_EVIDENCE_REFERENCE
+    // against every technical proposal regardless of how well it cited its
+    // evidence — the pitfall current-document-quality.ts documents, which
+    // validate.ts and final-submission-readiness.ts already avoid by passing
+    // the same two lists. This audit was scoring the same document on poorer
+    // input than the gate that validated it, and losing points for it.
     const tenders = await prisma.tender.findMany({
       where: { id: { in: tenderIds } },
-      select: { id: true, title: true },
+      select: {
+        id: true,
+        title: true,
+        expertMatches: { where: { isSelected: true }, select: { expert: { select: { fullName: true } } } },
+        projectMatches: { where: { isSelected: true }, select: { project: { select: { name: true } } } },
+      },
     });
     const tenderTitleById = new Map(tenders.map((tender) => [tender.id, tender.title]));
+    const tenderEvidenceById = new Map(
+      tenders.map((tender) => [
+        tender.id,
+        {
+          selectedExpertNames: tender.expertMatches.map((match) => match.expert.fullName),
+          selectedProjectNames: tender.projectMatches.map((match) => match.project.name),
+        },
+      ]),
+    );
 
     const rows: AuditRow[] = [];
     for (const document of docs) {
@@ -245,16 +274,29 @@ export async function GET(req: Request) {
         byteSignatureOk = validateFileSignature(fileName, document.fileContent).ok;
       }
 
+      // Read through the canonical reader, which opens DOCX *and* PDF bytes.
+      // This used to call extractDocxVisibleText, whose maybeBase64Docx() guard
+      // returns null for anything that is not an OPC package — so for a
+      // finalized PDF, the deliverable this audit exists to judge, it saw no
+      // text at all. quality came back null, the score defaulted to 0 and the
+      // status to DRAFT_ONLY, while export-readiness (which does read the PDF)
+      // reported READY with zero blockers and shipped the ZIP. The audit now
+      // reads the same bytes as every other release surface.
       let visibleText: string | null = null;
-      let docxVisibleTextInspectable = false;
+      let visibleTextInspectable = false;
       let storageReadable: boolean | null = null;
       const inlineBase64 = document.fileContent ?? null;
       if (inlineBase64 && inlineBase64.length > 0 && inlineBase64.length < 2_000_000) {
         try {
-          visibleText = await extractDocxVisibleText(inlineBase64, fileName);
-          docxVisibleTextInspectable = visibleText !== null;
+          visibleText = await generatedDocumentVisibleText({
+            fileContent: inlineBase64,
+            exactFileName: document.exactFileName ?? null,
+            name: document.name ?? null,
+            contentMimeType: null,
+          });
+          visibleTextInspectable = visibleText !== null;
         } catch {
-          docxVisibleTextInspectable = false;
+          visibleTextInspectable = false;
         }
       } else if (hasStoragePath && document.storagePath) {
         try {
@@ -268,8 +310,13 @@ export async function GET(req: Request) {
           storageReadable = true;
           if (buffer.length < 2_000_000) {
             const base64FromStorage = buffer.toString("base64");
-            visibleText = await extractDocxVisibleText(base64FromStorage, fileName).catch(() => null);
-            docxVisibleTextInspectable = visibleText !== null;
+            visibleText = await generatedDocumentVisibleText({
+              fileContent: base64FromStorage,
+              exactFileName: document.exactFileName ?? null,
+              name: document.name ?? null,
+              contentMimeType: null,
+            }).catch(() => null);
+            visibleTextInspectable = visibleText !== null;
             if (byteSignatureOk === null) {
               byteSignatureOk = validateFileSignature(fileName, base64FromStorage).ok;
             }
@@ -293,6 +340,7 @@ export async function GET(req: Request) {
             visibleText,
             rawFileContent: inlineBase64,
             hasStoragePath,
+            ...(tenderEvidenceById.get(document.tenderId) ?? {}),
           })
         : null;
       const wordCount = quality?.wordCount ?? 0;
@@ -312,9 +360,30 @@ export async function GET(req: Request) {
 
       const generated = isGenerated(document.generationStatus);
       const validated = isValidationPassed(document.validationStatus);
-      const reviewed = isReviewReadyForExport(document.reviewStatus);
       const state = deriveDocumentOutputState(document);
-      const readyForExport = candidate && generated && validated && reviewed && state === "READY_FOR_EXPORT";
+      // Export eligibility is decided by the canonical resolver, exactly as it
+      // is on every other surface (final-submission-readiness, export-readiness,
+      // final-package-readiness-model, the tender route). This audit used to add
+      // `&& isReviewReadyForExport(document.reviewStatus)` on top of it, which
+      // made it the only surface demanding a reviewer approval status. The
+      // automatic pipeline is contractually forbidden from writing that status:
+      // auto-finalize-continuation-service.ts records "Per Gap 1, automation does
+      // not write reviewStatus=READY_FOR_EXPORT; per Gap 5, VALIDATED is
+      // sufficient for the automatic PDF path", and OWNER_AUTOMATION_CONTRACT.md
+      // lists ZIP export as automatic with "no additional routine approvals or
+      // buttons". So every document the automatic path produced reported
+      // readyForExport=false here while export-readiness reported READY and
+      // POST /export shipped the ZIP — the two surfaces contradicting each other
+      // about the same bytes, which is the defect this audit exists to catch.
+      //
+      // This removes an approval requirement, not a quality requirement. The
+      // resolver still requires validation to have passed, real bytes of the
+      // declared format, consistent artifact identity, and not qualityBlocked /
+      // ORIGINAL_REQUIRED / NEEDS_REVALIDATION — and zipEligible keeps its own
+      // content, byte-signature and original-form conjuncts below. `validated`
+      // is retained as an explicit local assertion of the same fact the resolver
+      // already enforces, so a future change to either one is visible here.
+      const readyForExport = candidate && generated && validated && state === "READY_FOR_EXPORT";
       const zipEligible = readyForExport
         && !missingContentIssue
         && byteSignatureOk !== false
@@ -342,7 +411,8 @@ export async function GET(req: Request) {
         hasStoragePath,
         storageReadable,
         byteSignatureOk,
-        docxVisibleTextInspectable,
+        contentSha256: document.contentSha256 ?? null,
+        visibleTextInspectable,
         wordCount,
         sectionCount,
         requiredSectionsPresent,
@@ -350,6 +420,7 @@ export async function GET(req: Request) {
         requirementCoverageRatio,
         qualityScore,
         qualityRecommendedStatus,
+        qualityIssues: quality?.issues ?? [],
         aiTraceIssue,
         placeholderIssue,
         bidTeamToConfirmIssue,

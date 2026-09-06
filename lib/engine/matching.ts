@@ -1,6 +1,9 @@
 import type { CompanyKnowledgeSnapshot, MatchingResult, RequirementDraft } from "./types";
 import { exactSelectionLimit } from "./scope-policy";
 import { deriveRequirementConstraintProfile } from "./requirement-constraints";
+import { checkMatchingEligibility } from "./matching-eligibility";
+import { effectiveReviewTrustLevel, type ReviewRecordState } from "../vault-review-provenance";
+import { domainTagMatchScore } from "./domain-signals";
 
 // Per-record lexical interpretation cycles. For each candidate expert /
 // project, the matcher runs MATCHING_CYCLES different tokenization
@@ -25,6 +28,18 @@ const PORTFOLIO_OPTIMIZATION_CYCLES = 20;
 // A floor of 3 matches is enforced downstream so the evidence library is
 // never empty when candidates exist.
 const SELECTION_THRESHOLD = 0.75;
+
+// Floor for the discipline-coverage completion pass (experts only).
+//
+// SELECTION_THRESHOLD answers "is this record strong enough to auto-select on
+// its own merits?". It is not a provenance gate — provenance is enforced
+// separately by checkMatchingEligibility, which scores an ungrounded record 0,
+// so nothing below that gate can be reached from here at any floor.
+//
+// 0.55 is the same floor lib/engine/main-engine-selection-policy.ts already
+// uses for "best available authoritative evidence", reused rather than
+// invented so the two mechanisms cannot drift apart.
+const COVERAGE_COMPLETION_FLOOR = 0.55;
 
 type KnowledgeWithOptionalTrust = { trustLevel?: string | null };
 
@@ -74,6 +89,14 @@ const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   // Word boundary on WASH — bare /WASH/i matched "Washington" /
   // "washroom" / "washable", causing matching false-positives on
   // non-water projects with Washington-state clients.
+  // /plumbing/ is deliberately NOT here. It was added and backed out: building
+  // services name the discipline "mechanical, electrical, plumbing", which
+  // ELECTRO_MECHANICAL already covers as MEP. Treating that mention as a
+  // WATER_SUPPLY requirement made a hospital tender require a water family its
+  // own hospital records do not carry, and genuine hospital evidence fell from
+  // >=0.50 to 0.4375 against it — below the comparable-experience bar, as
+  // tests/evidence-relevance-ranking.test.ts caught. WATER_SUPPLY belongs to
+  // tenders that ask for water or sanitation works.
   WATER_SUPPLY: [/water/i, /supply/i, /sanitary/i, /hydraulic/i, /pipeline/i, /pipe/i, /borehole/i, /well/i, /drilling/i, /reservoir/i, /pump/i, /irrigation/i, /woreda/i, /kebele/i, /\bWASH\b/i, /sanitation/i],
   SOLAR_PUMPING: [/solar/i, /\bpv\b/i, /photovoltaic/i, /pump/i, /pumping/i, /electromechanical/i, /electro[\s-]mechanical/i],
   FEASIBILITY_DESIGN: [/feasibility/i, /\bfsdd\b/i, /detailed[\s-]+design/i, /\bddp\b/i, /assessment/i, /investigation/i, /drawing/i, /specification/i, /bill[\s-]+of[\s-]+quantit/i, /\bboq\b/i],
@@ -81,7 +104,7 @@ const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   URBAN_MUNICIPAL: [/urban\s+plan/i, /master\s+plan/i, /municipal/i, /spatial\s+plan/i, /land[-\s]?use\s+(?:plan|study)/i, /zoning\s+(?:plan|regulation|code|by-?law)/i, /city\s+plan/i, /town\s+plan/i, /settlement\s+plan/i, /urban\s+design/i],
   // PR XX-MATCH-FIX MERGE — stricter than remote: drop /building/i, /construction/i,
   // /structure/i (too generic — warehouse projects matched these for healthcare tenders).
-  CIVIL_INFRASTRUCTURE: [/road\s+(?:design|construction|rehabilitation)/i, /\bbridge\s+(?:design|construction)/i, /highway/i, /pavement/i, /drainage\s+system/i, /culvert/i, /\bRCC\b/i, /civil\s+(?:engineering|works)/i, /infrastructure\s+(?:design|project)/i],
+  CIVIL_INFRASTRUCTURE: [/road\s+(?:design|construction|rehabilitation)/i, /\bbridge\s+(?:design|construction)/i, /highway/i, /pavement/i, /drainage\s+system/i, /culvert/i, /\bRCC\b/i, /civil\s+(?:engineering|works)/i, /infrastructure\s+(?:design|project)/i, /structural\s+(?:engineer|design|analysis|adequacy)/i],
   ELECTRO_MECHANICAL: [/electrical/i, /mechanical/i, /electro/i, /\bmep\b/i, /pump/i, /generator/i, /motor/i, /\bHVAC\b/i, /cooling/i],
   GEOTECH_HYDROGEOLOGY: [/geotech/i, /geological/i, /hydrogeology/i, /soil/i, /foundation/i, /investigation/i, /drilling/i, /groundwater/i, /aquifer/i],
   ENVIRONMENT_SOCIAL: [/environment/i, /social/i, /safeguard/i, /climate/i, /\besmp\b/i, /\besia\b/i, /impact/i, /resettlement/i, /biodiversity/i, /ESS\d/i, /\bESF\b/i],
@@ -89,7 +112,23 @@ const CAPABILITY_KEYWORDS: Record<CapabilityFamily, RegExp[]> = {
   // PR XX-MATCH-FIX MERGE — stricter: require "architectural design"/"interior design"
   // signature words. /building/i, /residential/i, /housing/i moved here for residential
   // projects to match but require a residential-distinctive token, not just "building".
-  ARCHITECTURE_BUILDINGS: [/architectural\s+design/i, /interior\s+design/i, /floor\s+plan/i, /space\s+planning/i, /furniture\s+layout/i, /3D\s+(?:visualization|rendering)/i, /BIM\b/i, /Revit/i, /ArchiCAD/i, /SketchUp/i, /AutoCAD/i, /\bG\+\d/i, /residential\s+(?:design|building)/i, /housing\s+(?:project|design)/i],
+  // The role nouns were missing, so the family could be detected on a RECORD
+  // but never REQUIRED by a tender that asks for it in the words tenders
+  // actually use. Measured: capabilityFamilies("Architectural Consultancy
+  // Services for <…> Specialty Medical Center") returned only
+  // HEALTHCARE_FACILITIES, and the personnel requirement naming "a
+  // multidisciplinary group including architects, engineers, a biomedical
+  // engineer, MEP experts" returned only ELECTRO_MECHANICAL — so an
+  // ARCHITECTURAL consultancy assignment never required architecture and
+  // fielded no architect.
+  //
+  // Both additions are deliberately narrow so they do not undo the earlier
+  // tightening that moved /building/, /residential/ and /housing/ out of this
+  // family: `\barchitects?\b` does not match "Architectural" (the word
+  // continues past the boundary), and the phrase form requires a following
+  // service noun, so neither fires on a firm name such as "… Architectural and
+  // Engineering Consultancy".
+  ARCHITECTURE_BUILDINGS: [/\barchitects?\b/i, /architectural\s+(?:consultanc|service|work|drawing)/i, /architectural\s+design/i, /interior\s+design/i, /floor\s+plan/i, /space\s+planning/i, /furniture\s+layout/i, /3D\s+(?:visualization|rendering)/i, /BIM\b/i, /Revit/i, /ArchiCAD/i, /SketchUp/i, /AutoCAD/i, /\bG\+\d/i, /residential\s+(?:design|building)/i, /housing\s+(?:project|design)/i],
   FINANCIAL_LEGAL: [/financial/i, /audit/i, /turnover/i, /registration/i, /license/i, /certificate/i, /tax/i, /legal/i, /\bvat\b/i, /\btin\b/i, /procurement/i, /\bKYC\b/i, /\bAML\b/i, /\bBasel\b/i, /\bIFRS\b/i, /core\s+banking/i, /credit\s+risk/i, /microfinance/i, /prudential/i],
   // Universal families — added so the portfolio optimizer can match any
   // tender sector, not only the construction / consulting cluster.
@@ -272,23 +311,9 @@ function strictFamilyRequired(requiredFamilies: CapabilityFamily[]): boolean {
   return requiredFamilies.some((family) => strictFamilies.includes(family));
 }
 
-function domainTagMatchScore(domainTags: string[], recordText: string): number {
-  if (domainTags.length === 0) return 0;
-  const text = recordText.toLowerCase();
-  const checks: Record<string, RegExp> = {
-    healthcare: /hospital|healthcare|medical|clinic|ward|pharmacy|laboratory|patient/i,
-    telecom: /telecom|telecommunication|fiber|fibre|broadband|5g|4g|tower|bts/i,
-    ict: /ict|digital|software|platform|information\s+system|database|api|cloud/i,
-    mining: /mining|extractive|quarry|mineral|ore|tailings/i,
-    education: /school|education|university|college|campus|classroom/i,
-    oil_gas: /hazop|p&id|pipeline.*design|refinery|petrochemical|wellhead|upstream.*petroleum/i,
-    energy: /power.*plant|solar.*farm|wind.*farm|grid.*code|substation|generation.*capacity/i,
-    port: /berth.*design|dredging|harbour|maritime.*infra|isps|nautical/i,
-    financial: /kyc|aml|core.*banking|microfinance|ifrs|basel|prudential/i,
-  };
-  const matches = domainTags.filter((tag) => checks[tag]?.test(text));
-  return matches.length / domainTags.length;
-}
+// domainTagMatchScore now lives in ./domain-signals, shared with the
+// requirement-constraint derivation that produces the tags it scores against.
+
 
 function minimumFamilyDiversity(requiredFamilies: CapabilityFamily[]): number {
   if (strictFamilyRequired(requiredFamilies)) return Math.min(3, Math.max(2, requiredFamilies.length));
@@ -304,13 +329,26 @@ export function capabilityScore(queryText: string, recordText: string, type: "ex
   const depth = shared.length / Math.max(rFamilies.length, 1);
   let score = coverage * 0.75 + depth * 0.25;
 
+  // GLM-A2 Issue #1135 Gap #4: Score calibration — 100% must require
+  // exceptional, fully source-grounded coverage and must NOT result from
+  // clamping or bonus stacking. Bonuses are capped so the raw score
+  // cannot exceed 0.95 from bonuses alone. The remaining 0.05 is only
+  // achievable when coverage = 1.0 (every required family is shared).
+  // This prevents the "all 28 experts get 100%" scenario shown in the
+  // screenshots.
+  const MAX_BONUS_TOTAL = 0.20;
+  let bonusTotal = 0;
+
   // Senior-consultant equivalence: a firm with design/supervision/water/infra
   // experience can be strongly relevant even when wording is not identical.
   const broadInfra = ["WATER_SUPPLY", "FEASIBILITY_DESIGN", "SUPERVISION_CONTRACT", "CIVIL_INFRASTRUCTURE"] as CapabilityFamily[];
   const sharedBroadInfra = broadInfra.filter((family) => qFamilies.includes(family) && rFamilies.includes(family)).length;
-  if (sharedBroadInfra >= 2) score += type === "project" ? 0.18 : 0.14;
-  if (qFamilies.includes("SOLAR_PUMPING") && rFamilies.some((f) => ["ELECTRO_MECHANICAL", "WATER_SUPPLY", "SOLAR_PUMPING"].includes(f))) score += 0.16;
-  if (qFamilies.includes("GEOTECH_HYDROGEOLOGY") && rFamilies.some((f) => ["GEOTECH_HYDROGEOLOGY", "WATER_SUPPLY", "FEASIBILITY_DESIGN"].includes(f))) score += 0.10;
+  if (sharedBroadInfra >= 2) bonusTotal += type === "project" ? 0.18 : 0.14;
+  if (qFamilies.includes("SOLAR_PUMPING") && rFamilies.some((f) => ["ELECTRO_MECHANICAL", "WATER_SUPPLY", "SOLAR_PUMPING"].includes(f))) bonusTotal += 0.16;
+  if (qFamilies.includes("GEOTECH_HYDROGEOLOGY") && rFamilies.some((f) => ["GEOTECH_HYDROGEOLOGY", "WATER_SUPPLY", "FEASIBILITY_DESIGN"].includes(f))) bonusTotal += 0.10;
+
+  // Cap total bonuses so score cannot reach 1.0 from stacking alone
+  score += Math.min(bonusTotal, MAX_BONUS_TOTAL);
 
   // ─── PR XX-MATCH-FIX Fix B — dominant-family penalty ─────────────────────
   // When the tender has a strong sector signal (e.g., HEALTHCARE_FACILITIES
@@ -324,6 +362,13 @@ export function capabilityScore(queryText: string, recordText: string, type: "ex
   const dominant = detectDominantFamily(queryText);
   if (dominant && !rFamilies.includes(dominant)) {
     score *= 0.30;
+  }
+
+  // GLM-A2 Issue #1135 Gap #4: 100% requires full coverage (all required
+  // families shared). If coverage < 1.0, cap at 0.95 so no score can
+  // reach 1.0 without complete family coverage.
+  if (coverage < 1.0) {
+    score = Math.min(score, 0.95);
   }
 
   return Math.max(0, Math.min(1, score));
@@ -341,6 +386,21 @@ const SECTOR_CONFLICT_GROUPS: RegExp[] = [
   /road|bridge|highway|pavement|transport(?!ation.?planning)/,
   /school|university|campus|education|classroom/,
   /industrial|manufacturing|factory/,
+  // GLM-A2 Issue #1135: abattoir / livestock / slaughter is a confirmed
+  // off-sector domain for healthcare, residential, commercial, and office
+  // tenders. Without this group, "Moyale Abattoir Rehabilitation" scored
+  // 83% and was SELECTED for a healthcare tender.
+  /abattoir|slaughter|livestock|butcher|meat.?process/,
+  // GLM-A2 Issue #1135: residential / housing / apartment is a confirmed
+  // off-sector domain for healthcare, industrial, warehouse, and
+  // infrastructure tenders. "Mohammed Seid (G+2 Residential)" scored 75%
+  // and was SELECTED for a healthcare tender.
+  /residential|housing|apartment|condo|villa|dormitor/,
+  // GLM-A2 Issue #1135: commercial / retail / office-building is a
+  // confirmed off-sector domain for healthcare, residential, industrial,
+  // and warehouse tenders. "B+G+10 TERRACE COMMERCIAL BUILDING" scored
+  // 57% and was SELECTED for a healthcare tender.
+  /commercial|retail|shop|mall|office.?building|storefront/,
   // New high-distinction sectors: items from these domains never belong in
   // a competing sector's shortlist regardless of lexical overlap.
   /\bport\b.*\b(design|master.*plan|infrastructure|facilit|terminal|study)\b|\b(berth|quay.*wall|dredging.*scheme|maritime.*infrastructure|harbour.*develop|ISPS.*audit)\b/,
@@ -381,16 +441,52 @@ function sectorBoost(tenderSector: string | null | undefined, items: string[]): 
   return 0;
 }
 
-function trustLevelAdjustment(trustLevel: string | null | undefined): number {
-  if (trustLevel === "REVIEWED") return 0.18;
-  if (trustLevel === "AI_DRAFT") return -0.03;
-  return -0.10;
+/**
+ * Trust contribution to the match score.
+ *
+ * Flat, because scoring only ever reaches a record that already passed
+ * checkMatchingEligibility — an ineligible record is forced to score 0 at the
+ * call site, so there is no draft tier left here to penalise. This used to be
+ * written as `if (true) return 0.18;` above two unreachable draft branches,
+ * which read as though drafts were still being scored down. They were not.
+ */
+const ELIGIBLE_TRUST_ADJUSTMENT = 0.18;
+
+/**
+ * How the record's provenance is described in the rationale the user reads.
+ *
+ * This must not say "Reviewed" unless a person actually reviewed it.
+ * checkMatchingEligibility deliberately accepts a durably machine
+ * SOURCE_VERIFIED record on equal terms with a human REVIEWED one — and
+ * isDurablySourceVerified requires reviewedBy and reviewedAt to be null, so
+ * those records provably have no reviewer. The old code returned "✓ Reviewed"
+ * for every eligible record, which stated a human judgement that never
+ * happened. Both are legitimate evidence; only one of them was reviewed.
+ *
+ * Derived from effectiveReviewTrustLevel rather than the raw trustLevel
+ * column, so a record whose stored level is not backed by durable provenance
+ * cannot claim either status.
+ */
+const HUMAN_REVIEWED_LABEL = "✓ Reviewed";
+
+function trustProvenanceLabel(record: ReviewRecordState): string {
+  switch (effectiveReviewTrustLevel(record)) {
+    case "REVIEWED": return HUMAN_REVIEWED_LABEL;
+    case "SOURCE_VERIFIED": return "✓ Source-verified against uploaded document (not human-reviewed)";
+    default: return "⚠ Provenance required";
+  }
 }
 
-function trustLevelLabel(trustLevel: string | null | undefined): string {
-  if (trustLevel === "REVIEWED") return "✓ Reviewed";
-  if (trustLevel === "AI_DRAFT") return "⚠ AI draft — review before final use";
-  return "⚠ Regex draft — review required";
+/**
+ * Rank a result by whether a person reviewed its source record.
+ *
+ * Reads the label through the same constant the label is written from. While
+ * every eligible record was labelled "✓ Reviewed" this comparison was a
+ * constant and the sort silently degraded to score-only — rewording the label
+ * must not be able to do that again.
+ */
+function humanReviewedRank(rationale: string): number {
+  return rationale.includes(HUMAN_REVIEWED_LABEL) ? 1 : 0;
 }
 
 function cycleQueryTokens(baseTokens: string[], cycle: number): string[] {
@@ -438,43 +534,9 @@ function selectedLimit(requirements: RequirementDraft[], type: string, available
   return Math.min(available, type === "EXPERT" ? 6 : 8);
 }
 
-function selectAboveThreshold<T extends { score: number; isSelected: boolean }>(matches: T[], limit: number): T[] {
-  if (limit <= 0) return matches.map((m) => ({ ...m, isSelected: false }));
-
-  let selected = 0;
-  const result = matches.map((m) => {
-    if (m.score >= SELECTION_THRESHOLD && selected < limit) {
-      selected += 1;
-      return { ...m, isSelected: true };
-    }
-    return { ...m, isSelected: false };
-  });
-
-  // Floor guarantee: always select the top 3 by score when they fall just
-  // below threshold — but only when the candidate is borderline-relevant
-  // (score >= 0.55). Raised from 0.40 to 0.55 so only items with meaningful
-  // overlap are force-promoted. Confirmed off-sector items (warehouse
-  // projects for water tenders score ≈ 0.10–0.40 after the sector and
-  // mismatch penalties) no longer slip through.
-  const MIN_FLOOR_SCORE = 0.55;
-  const MIN_SELECTED = Math.min(3, limit, matches.length);
-  if (selected < MIN_SELECTED) {
-    let forcedCount = selected;
-    return result.map((m) => {
-      if (!m.isSelected && forcedCount < MIN_SELECTED && m.score >= MIN_FLOOR_SCORE) {
-        forcedCount += 1;
-        return { ...m, isSelected: true };
-      }
-      return m;
-    });
-  }
-  return result;
-}
-
-// ─── Portfolio optimization (Stage 2 selection) ──────────────────────────────
+// ─── Portfolio optimization (authoritative selection) ──────────────────────────────
 //
-// `selectAboveThreshold` (Stage 1) just picks top-N by individual score.
-// That can over-concentrate: e.g., for a healthcare tender it might pick
+// A simple top-N selection can over-concentrate: e.g., for a healthcare tender it might pick
 // 5 experts who all duplicate "structural engineer" capability and miss
 // MEP, biomedical, or healthcare-planning experts that the evaluator
 // specifically wants. Stage 2 below evaluates multiple candidate sets
@@ -588,62 +650,54 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
   limit: number,
   requiredFamilies: CapabilityFamily[],
   requiredDisciplines: Set<string>,
+  options: { completeRequiredCoverage?: boolean } = {},
 ): T[] {
   if (limit <= 0 || candidates.length === 0) {
     return matches.map((m) => ({ ...m, isSelected: false }));
   }
 
-  // PR XX-MATCH-FIX MERGE: combine remote's "strict family gate" (only
-  // candidates whose families include a strict-required family qualify
-  // when a strict family is required) with my "below-threshold fallback"
-  // (select top-N below threshold and tag rationale, so the engine never
-  // produces an empty selection set that leaves the cover letter
-  // unanchored).
+  // Strict-family gate: when the tender requires a strict family
+  // (healthcare, education, mining, telecoms, oil/gas, etc.), only
+  // candidates that BOTH (a) clear the canonical SELECTION_THRESHOLD
+  // (0.75) AND (b) carry at least one of the required families are
+  // eligible. If no candidate clears both filters, we fall back to
+  // candidates that clear the threshold alone (without the family
+  // restriction) — but the strict-family coverage rescue pass below
+  // will still prefer family-carrying candidates during set assembly.
+  //
+  // Fail-closed: if NO candidate clears SELECTION_THRESHOLD, the
+  // eligible set is empty and the function returns zero selections
+  // (see the empty-eligible guard below). The previous below-threshold
+  // fallback that promoted borderline candidates was removed because it
+  // violated fail-closed evidence rules and could select irrelevant
+  // candidates in strict sectors.
   const hardFamilyGate = strictFamilyRequired(requiredFamilies);
   const strictEligible = candidates.filter((c) => {
     if (c.match.score < SELECTION_THRESHOLD) return false;
     if (!hardFamilyGate) return true;
     return c.capabilityFamilies.some((family) => requiredFamilies.includes(family));
   });
-  let eligible = strictEligible.length > 0
+  const eligible = strictEligible.length > 0
     ? strictEligible
     : candidates.filter((c) => c.match.score >= SELECTION_THRESHOLD);
 
-  // PR XX-MATCH-FIX Fix D — soft fallback when zero candidates clear
-  // the threshold. Without this, a sector-mismatched vault produces an
-  // empty selection set that leaves the cover letter with nothing to
-  // anchor. Below-threshold rows are tagged so downstream consumers can
-  // shift to transferable-competency framing.
+  // GLM-A2 Issue #1135 Gap #2:
+  // Fail-closed selection: only candidates that meet the canonical
+  // SELECTION_THRESHOLD are ever selected. The previous
+  // code had a below-threshold fallback that promoted
+  // candidates when zero cleared the threshold. This violated fail-closed
+  // evidence rules. The fallback has been removed.
   //
-  // Respects the same MIN_FLOOR_SCORE=0.55 invariant the Stage 1
-  // selector uses: confirmed off-sector items (warehouse for water,
-  // logistics for healthcare) that score below 0.55 must remain
-  // unselected. The fallback only promotes candidates that are
-  // borderline-relevant (≥ 0.55) but missed the 0.90 auto-select bar.
-  const FALLBACK_MIN_SCORE = 0.55;
-  if (eligible.length === 0 && candidates.length > 0) {
-    const fallbackPool = [...candidates]
-      .filter((c) => c.match.score >= FALLBACK_MIN_SCORE)
-      .sort((a, b) => b.match.score - a.match.score)
-      .slice(0, Math.min(limit, candidates.length));
-    if (fallbackPool.length > 0) {
-      eligible = fallbackPool.map((c) => {
-        const m = c.match as T & { rationale?: string };
-        return {
-          ...c,
-          match: {
-            ...c.match,
-            rationale: `[Below-threshold fallback: no candidate cleared the ${SELECTION_THRESHOLD} sector-fit threshold for this tender — selected by best-available rank (≥ ${FALLBACK_MIN_SCORE}). Bid-team to flag transferable-competency framing in the cover letter and surface "no comparable sector experience in vault" gap to the client.] ${m.rationale ?? ""}`,
-          } as T,
-        };
-      });
-    } else {
-      // No candidates even meet the 0.55 floor — leave selection empty
-      // so the engine surfaces "no comparable sector experience" rather
-      // than promoting confirmed off-sector projects.
-      return matches.map((m) => ({ ...m, isSelected: false }));
-    }
-  } else if (eligible.length === 0) {
+  // When zero candidates clear the SELECTION_THRESHOLD (0.75), the selection
+  // set is empty. The caller must:
+  //   1. Create a blocking evidence gap ("no comparable sector experience in vault")
+  //   2. Lock generation (no proposal output without source-grounded evidence)
+  //   3. Surface the gap to the user for manual evidence linking
+  //
+  // This is the correct fail-closed behavior for strict sectors (healthcare,
+  // education, mining, telecoms, oil/gas) where promoting irrelevant
+  // candidates would produce misleading proposals.
+  if (eligible.length === 0) {
     return matches.map((m) => ({ ...m, isSelected: false }));
   }
 
@@ -657,7 +711,7 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     // exploration that catches alternative seeds we'd otherwise miss.
     const seedIdx = cycle % eligible.length;
     const seed = eligible[seedIdx];
-    const remaining = eligible.filter((c, i) => i !== seedIdx);
+    const remaining = eligible.filter((_, i) => i !== seedIdx);
     const set: PortfolioCandidate<T>[] = [seed];
 
     while (set.length < limit && remaining.length > 0) {
@@ -744,6 +798,49 @@ function optimizePortfolioSelection<T extends { score: number; isSelected: boole
     }
   }
 
+  // Discipline-coverage completion (experts only).
+  //
+  // Both passes above can only SWAP members of `eligible`, and `eligible` is
+  // already filtered to score >= SELECTION_THRESHOLD. So a discipline the
+  // tender explicitly requires can never be covered when its only
+  // representatives score below that threshold, and because the passes preserve
+  // set size, a partially covered team is never extended either. Coverage is
+  // therefore a tie-breaker among candidates that already qualified — never a
+  // reason for a candidate to qualify.
+  //
+  // Measured on a real hospital tender that asks in its own words for "a
+  // multidisciplinary group including architects, engineers, a biomedical
+  // engineer, MEP experts", against the firm's 28 source-verified experts: the
+  // selected team was an electrical engineer at 100% and the general manager at
+  // 77%, with both architects sitting at 74% and 73% — so an ARCHITECTURAL
+  // consultancy assignment fielded no architect. That is not a stricter
+  // proposal than one which includes them; it is a wrong one.
+  //
+  // This pass therefore ADDS, up to the same limit, the highest-scoring
+  // candidate carrying a required family that nobody selected covers. It
+  // changes nothing about provenance (an ineligible record scores 0 and is
+  // unreachable at any floor), invents nobody, and cannot conjure a discipline
+  // the vault does not hold — a required family with no candidate simply stays
+  // uncovered and is reported as an evidence gap downstream.
+  if (options.completeRequiredCoverage && requiredFamilies.length > 0 && bestSet.length < limit) {
+    const coveredFamilies = (): Set<CapabilityFamily> => {
+      const covered = new Set<CapabilityFamily>();
+      for (const candidate of bestSet) for (const family of candidate.capabilityFamilies) covered.add(family);
+      return covered;
+    };
+    for (const family of requiredFamilies) {
+      if (bestSet.length >= limit) break;
+      if (coveredFamilies().has(family)) continue;
+      const addition = candidates
+        .filter((candidate) =>
+          candidate.match.score >= COVERAGE_COMPLETION_FLOOR &&
+          candidate.capabilityFamilies.includes(family) &&
+          !bestSet.includes(candidate))
+        .sort((a, b) => b.match.score - a.match.score)[0];
+      if (addition) bestSet.push(addition);
+    }
+  }
+
   // Mark the winning set as selected on the final returned matches.
   const selectedIds = new Set(bestSet.map((c) => (c.match as unknown as { expertId?: string; projectId?: string }).expertId ?? (c.match as unknown as { projectId?: string }).projectId));
   return matches.map((m) => {
@@ -824,7 +921,7 @@ export function buildMatches(
         : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
       const effectiveCap = Math.max(capability, weightedCapability);
       const sector = sectorBoost(tenderSector, parseArr(expert.sectors));
-      const trust = trustLevelAdjustment(trustLevel);
+      const trust = ELIGIBLE_TRUST_ADJUSTMENT;
       const experience = Math.min(0.18, Math.max(0, (expert.yearsExperience ?? 0) * 0.008));
       const mismatchPenalty = criticalFamilyMismatchPenalty(queryText, recordText);
       const domainScore = domainTagMatchScore(constraintProfile.domainTags, recordText);
@@ -834,12 +931,33 @@ export function buildMatches(
       // not reach the 0.75 auto-select threshold on pure lexical similarity alone.
       const capCeiling = effectiveCap < 0.15 ? 0.58 : 1.0;
       const computedScore = Math.max(0, Math.min(capCeiling, seniorScore({ cosine: bestScore, capability: effectiveCap, sector, trust, experience, valueOrRecency: 0, hasRealText: docTokens.length > 8 }) + mismatchPenalty + domainPenalty));
-      const score = isHardExcluded ? 0 : computedScore;
+      const rawScore = isHardExcluded ? 0 : computedScore;
+      // GLM-A2 Issue #1135 Gap #3: Enforce durable provenance eligibility.
+      // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
+      // reviewedBy, or reviewedAt) scores zero and cannot be selected.
+      const eligibilityRecord = {
+        id: expert.id,
+        companyId: (expert as { companyId?: string }).companyId ?? knowledge.companyId,
+        trustLevel,
+        sourceDocumentId: (expert as { sourceDocumentId?: string | null }).sourceDocumentId ?? null,
+        reviewedBy: (expert as { reviewedBy?: string | null }).reviewedBy ?? null,
+        reviewedAt: (expert as { reviewedAt?: Date | string | null }).reviewedAt ?? null,
+        reviewNotes: (expert as { reviewNotes?: string | null }).reviewNotes ?? null,
+        sourceDocument: (expert as { sourceDocument?: never }).sourceDocument ?? null,
+        fullName: expert.fullName,
+        title: expert.title,
+        yearsExperience: expert.yearsExperience,
+        disciplines: expert.disciplines,
+        sectors: expert.sectors,
+        certifications: expert.certifications,
+      };
+      const matchingEligibility = checkMatchingEligibility(eligibilityRecord);
+      const score = matchingEligibility.eligible ? rawScore : 0;
       const evidence = [expert.title, ...parseArr(expert.disciplines), ...parseArr(expert.sectors)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;
       const families = recordFamilies.join(", ");
-      const trustLabel = trustLevelLabel(trustLevel);
+      const trustLabel = matchingEligibility.eligible ? trustProvenanceLabel(eligibilityRecord as never) : "⚠ Provenance required";
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       const domainLabel = constraintProfile.strictDomain
         ? (domainScore > 0 ? `Domain-tag overlap ${(domainScore * 100).toFixed(0)}%.` : "No strict-domain overlap; hard-excluded.")
@@ -853,8 +971,8 @@ export function buildMatches(
       };
     })
     .sort((a, b) => {
-      const aReviewed = a.rationale.includes("✓ Reviewed") ? 1 : 0;
-      const bReviewed = b.rationale.includes("✓ Reviewed") ? 1 : 0;
+      const aReviewed = humanReviewedRank(a.rationale);
+      const bReviewed = humanReviewedRank(b.rationale);
       if (aReviewed !== bReviewed) return bReviewed - aReviewed;
       return b.score - a.score;
     });
@@ -879,7 +997,7 @@ export function buildMatches(
         : requiredFamiliesWeighted.filter((family) => recordFamilies.includes(family)).length / requiredFamiliesWeighted.length;
       const effectiveCap = Math.max(capability, weightedCapability);
       const sector = sectorBoost(tenderSector, [project.sector ?? "", ...parseArr(project.serviceAreas)]);
-      const trust = trustLevelAdjustment(trustLevel);
+      const trust = ELIGIBLE_TRUST_ADJUSTMENT;
       let recency = 0;
       if (project.endDate) {
         const ageYears = (Date.now() - new Date(project.endDate).getTime()) / (365.25 * 24 * 3600 * 1000);
@@ -895,12 +1013,34 @@ export function buildMatches(
       // not reach the 0.75 auto-select threshold on pure lexical similarity alone.
       const capCeiling = effectiveCap < 0.15 ? 0.58 : 1.0;
       const computedScore = Math.max(0, Math.min(capCeiling, seniorScore({ cosine: bestScore, capability: effectiveCap, sector, trust, experience: 0, valueOrRecency: recency, hasRealText: docTokens.length > 8 }) + mismatchPenalty + domainPenalty));
-      const score = isHardExcluded ? 0 : computedScore;
+      const rawScore = isHardExcluded ? 0 : computedScore;
+      // GLM-A2 Issue #1135 Gap #3: Enforce durable provenance eligibility.
+      // A reviewed-but-ungrounded record (REVIEWED but no sourceDocumentId,
+      // reviewedBy, or reviewedAt) scores zero and cannot be selected.
+      const eligibilityRecord = {
+        id: project.id,
+        companyId: (project as { companyId?: string }).companyId ?? knowledge.companyId,
+        trustLevel,
+        sourceDocumentId: (project as { sourceDocumentId?: string | null }).sourceDocumentId ?? null,
+        reviewedBy: (project as { reviewedBy?: string | null }).reviewedBy ?? null,
+        reviewedAt: (project as { reviewedAt?: Date | string | null }).reviewedAt ?? null,
+        reviewNotes: (project as { reviewNotes?: string | null }).reviewNotes ?? null,
+        sourceDocument: (project as { sourceDocument?: never }).sourceDocument ?? null,
+        name: project.name,
+        clientName: project.clientName,
+        country: project.country,
+        sector: project.sector,
+        serviceAreas: project.serviceAreas,
+        contractValue: project.contractValue,
+        currency: project.currency,
+      };
+      const matchingEligibility = checkMatchingEligibility(eligibilityRecord);
+      const score = matchingEligibility.eligible ? rawScore : 0;
       const evidence = [project.sector, ...parseArr(project.serviceAreas)].filter(Boolean).join(" · ");
       const topMatches = [...new Set(docTokens.filter((t) => baseQueryTokens.includes(t)))].slice(0, 8).join(", ");
       const requiredFamilyHits = requiredFamiliesUnique.filter((family) => recordFamilies.includes(family)).length;
       const families = recordFamilies.join(", ");
-      const trustLabel = trustLevelLabel(trustLevel);
+      const trustLabel = matchingEligibility.eligible ? trustProvenanceLabel(eligibilityRecord as never) : "⚠ Provenance required";
       const thresholdLabel = score >= SELECTION_THRESHOLD ? "Auto-selected ≥75%." : "Below 75%; review only.";
       const domainLabel = constraintProfile.strictDomain
         ? (domainScore > 0 ? `Domain-tag overlap ${(domainScore * 100).toFixed(0)}%.` : "No strict-domain overlap; hard-excluded.")
@@ -908,14 +1048,14 @@ export function buildMatches(
       return {
         projectId: project.id,
         score,
-        rationale: `[${trustLabel}] 100-expert style broad-fit score using ${MATCHING_CYCLES} interpretation cycles; winning lexical cycle ${bestCycle}. ${thresholdLabel} ${domainLabel} Required-family coverage: ${requiredFamilyHits}/${Math.max(requiredFamiliesUnique.length, 1)}. Capability families: ${families || "general project profile"}. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency ?? "USD"} ${project.contractValue.toLocaleString()}.` : ""}`,
+        rationale: `[${trustLabel}] 100-expert style broad-fit score using ${MATCHING_CYCLES} interpretation cycles; winning lexical cycle ${bestCycle}. ${thresholdLabel} ${domainLabel} Required-family coverage: ${requiredFamilyHits}/${Math.max(requiredFamiliesUnique.length, 1)}. Capability families: ${families || "general project profile"}. Keywords: ${topMatches || evidence || "general project profile"}.${project.contractValue ? ` Contract: ${project.currency?.trim() ? project.currency : "Currency unresolved"} ${project.contractValue.toLocaleString()}.` : ""}`,
         evidenceSummary: evidence || "No service areas recorded — review the project record",
         isSelected: false,
       };
     })
     .sort((a, b) => {
-      const aReviewed = a.rationale.includes("✓ Reviewed") ? 1 : 0;
-      const bReviewed = b.rationale.includes("✓ Reviewed") ? 1 : 0;
+      const aReviewed = humanReviewedRank(a.rationale);
+      const bReviewed = humanReviewedRank(b.rationale);
       if (aReviewed !== bReviewed) return bReviewed - aReviewed;
       return b.score - a.score;
     });
@@ -978,6 +1118,12 @@ export function buildMatches(
       selectedLimit(requirements, "EXPERT", expertMatches.length),
       requiredFamilies,
       requiredDisciplines,
+      // Experts only. A person is proposed for the ROLE the tender asks them to
+      // fill; prior sector experience ranks them within that role. A project is
+      // offered as COMPARABLE EXPERIENCE, where sector fit is the claim itself,
+      // so admitting a below-threshold off-sector project would misrepresent
+      // the portfolio. That asymmetry is deliberate.
+      { completeRequiredCoverage: true },
     ),
     projectMatches: optimizePortfolioSelection(
       projectMatches,

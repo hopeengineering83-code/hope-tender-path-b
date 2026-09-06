@@ -9,15 +9,13 @@ import {
   getCanonicalProviderEntries,
   getProviderModel,
   isProviderConfigured,
-  providerDisplayName,
   openRouterModelValidity,
-  CANONICAL_AI_FALLBACK_CHAIN_DISPLAY,
+  automaticChainDisplay,
+  getAutomaticProviderOrder,
 } from "../lib/ai-provider-registry";
 import { AIHealthTestButton } from "./ai-health-test-button";
 
-// Mirrors app/api/ai/health/route.ts AI_FALLBACK_CHAIN — generated directly
-// from the registry. The deterministic draft fallback is the final non-AI step.
-const AI_FALLBACK_CHAIN = `Canonical: ${CANONICAL_AI_FALLBACK_CHAIN_DISPLAY}. Anthropic / Claude is the last AI provider. The deterministic draft fallback is NOT an AI provider and runs only after every configured AI provider has failed or is unavailable.`;
+const AI_FALLBACK_CHAIN = `Canonical: ${automaticChainDisplay()}. The deterministic draft fallback is NOT an AI provider and runs only after every configured AI provider has failed or is unavailable.`;
 
 type ProviderCardData = {
   key: string;
@@ -41,6 +39,119 @@ type AIHealthResponse = {
   blockers: string[];
   warnings: string[];
   providers: ProviderCardData[];
+};
+
+// ─── Status presentation: one row per status, no fall-through ────────────────
+//
+// This replaces a nested ternary ladder that handled six of the fifteen
+// statuses and let the rest land on "Unknown — not yet verified". A provider
+// whose ANALYSIS capability had been proven by a real structured-output call
+// was therefore displayed as unverified, which is the opposite of what the
+// runtime knew — and BILLING_BLOCKED rendered as a generic "Unavailable",
+// hiding the one cause an operator can actually act on.
+//
+// The map is typed as Record<AiProviderStatus, …>, so adding a status to the
+// union without giving it a presentation is a compile error rather than a
+// silent fall-through to "Unknown".
+//
+//   healthy — a real call really succeeded.
+//   neutral — nothing has failed; nothing has been proven either.
+//   (neither) — something is wrong, and the label says what.
+type StatusPresentation = {
+  label: (p: ProviderCardData) => string;
+  className: string;
+  healthy: boolean;
+  neutral: boolean;
+};
+
+const OK_PILL = "bg-emerald-100 text-emerald-700";
+const WARN_PILL = "bg-amber-100 text-amber-800";
+const BAD_PILL = "bg-red-100 text-red-700";
+const NEUTRAL_PILL = "bg-slate-100 text-slate-600";
+
+function cooldownSuffix(p: ProviderCardData): string {
+  return p.runtime.cooldownUntil
+    ? ` until ${new Date(p.runtime.cooldownUntil).toLocaleTimeString()}`
+    : "";
+}
+
+const STATUS_PRESENTATION: Record<AiProviderStatus, StatusPresentation> = {
+  GENERATION_VERIFIED: {
+    label: () => "Generation verified",
+    className: OK_PILL, healthy: true, neutral: false,
+  },
+  ANALYSIS_VERIFIED: {
+    label: () => "Analysis verified",
+    className: OK_PILL, healthy: true, neutral: false,
+  },
+  CONNECTIVITY_VERIFIED: {
+    // Deliberately not green. Reaching the provider proves the key and the
+    // route; it does not prove the provider can return the structured analysis
+    // the workflow depends on. Calling this "available" is what let diagnostics
+    // report success on a provider AI Analyze could not actually use.
+    label: () => "Connectivity verified — analysis not yet proven",
+    className: WARN_PILL, healthy: false, neutral: true,
+  },
+  RATE_LIMITED: {
+    label: (p) => `Rate-limited${cooldownSuffix(p)}`,
+    className: WARN_PILL, healthy: false, neutral: false,
+  },
+  PROVIDER_OVERLOAD: {
+    label: (p) => `Provider overloaded — retrying${cooldownSuffix(p)}`,
+    className: WARN_PILL, healthy: false, neutral: false,
+  },
+  BILLING_BLOCKED: {
+    label: () => "Billing refused — cooling down, will be retried",
+    className: BAD_PILL, healthy: false, neutral: false,
+  },
+  AUTH_FAILED: {
+    label: () => "Auth failed — fix API key",
+    className: BAD_PILL, healthy: false, neutral: false,
+  },
+  MODEL_UNAVAILABLE: {
+    label: (p) => `Model unavailable${p.model ? ` (${p.model})` : ""}`,
+    className: BAD_PILL, healthy: false, neutral: false,
+  },
+  CONFIGURATION_INVALID: {
+    label: () => "Configuration invalid",
+    className: BAD_PILL, healthy: false, neutral: false,
+  },
+  REQUEST_TOO_LARGE: {
+    label: () => "Request exceeded model capacity — provider remains healthy",
+    className: WARN_PILL, healthy: false, neutral: true,
+  },
+  NOT_CONFIGURED: {
+    label: () => "Not configured",
+    className: NEUTRAL_PILL, healthy: false, neutral: true,
+  },
+  CONFIGURED: {
+    label: () => "Configured — not yet tested on this instance",
+    className: NEUTRAL_PILL, healthy: false, neutral: true,
+  },
+  TIMEOUT: {
+    label: () => "Timeout — retrying shortly",
+    className: WARN_PILL, healthy: false, neutral: false,
+  },
+  NETWORK_ERROR: {
+    label: () => "Network error — provider unreachable",
+    className: WARN_PILL, healthy: false, neutral: false,
+  },
+  PROVIDER_ERROR: {
+    label: () => "Provider error (5xx) — their side",
+    className: WARN_PILL, healthy: false, neutral: false,
+  },
+  MALFORMED_RESPONSE: {
+    label: () => "Responded, but the output was unusable",
+    className: WARN_PILL, healthy: false, neutral: false,
+  },
+  COOLING_DOWN: {
+    label: (p) => `Cooling down${cooldownSuffix(p)}`,
+    className: WARN_PILL, healthy: false, neutral: false,
+  },
+  UNKNOWN: {
+    label: () => "Unknown — not yet verified",
+    className: NEUTRAL_PILL, healthy: false, neutral: true,
+  },
 };
 
 function present(value: string | undefined) {
@@ -103,9 +214,13 @@ function getAIHealth(): AIHealthResponse {
         consecutiveFailures: 0,
         coolingDown: false,
         rateLimited: false,
+        billingBlocked: false,
         runtimeVerified: false,
+        analysisUsable: false,
         available: true,
         status: "UNKNOWN",
+        latestRealExtractionResult: null,
+        latestRealProposalResult: null,
       },
       status: "UNKNOWN",
       isAi: false,
@@ -137,7 +252,7 @@ function getAIHealth(): AIHealthResponse {
   const anyHasRecentSuccess = configuredProviders.some((p) => p.runtime.lastSuccessAt);
   const allConfiguredCooling = anyConfigured && configuredProviders.every((p) => p.runtime.coolingDown);
   if (allConfiguredCooling) warnings.push("All configured AI providers are currently in cooldown. AI Analyze will fall back to regex (UNAPPROVED) until a provider's cooldown expires.");
-  if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this instance yet — runtime availability is not verified. Run AI Analyze or Generate Docs to confirm.");
+  if (anyConfigured && !anyHasRecentSuccess) warnings.push("AI providers are configured but no successful response has been recorded on this instance yet — runtime availability is not verified. The first analysis or document generation on this instance will confirm it.");
 
   const nextAction = blockers.length > 0
     ? "CONFIGURE_AI_KEYS"
@@ -166,7 +281,7 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
   if (!p.isAi) {
     return (
       <div className="rounded-xl bg-slate-50 p-3 shadow-sm border border-slate-200">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
           <p className="font-semibold text-slate-900">{p.label}</p>
           <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700">Final fallback (non-AI)</span>
         </div>
@@ -176,38 +291,48 @@ function ProviderCard({ p }: { p: ProviderCardData }) {
       </div>
     );
   }
-  // AI providers render the unified `status` field as the pill colour.
-  // Only `runtime_verified` is shown as green. `configured` / `unknown`
-  // are neutral. `rate_limited` / `unauthorized` / `timeout` / `unavailable`
-  // are amber/red depending on whether operator action is required.
-  const pill = p.status === "NOT_CONFIGURED"
-    ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Not configured</span>
-    : p.status === "GENERATION_VERIFIED"
-      ? <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">Available (runtime verified)</span>
-      : p.status === "RATE_LIMITED"
-        ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Rate-limited{p.runtime.cooldownUntil ? ` until ${new Date(p.runtime.cooldownUntil).toLocaleTimeString()}` : ""}</span>
-        : p.status === "UNAUTHORIZED"
-          ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Unauthorized — fix API key</span>
-          : p.status === "TIMEOUT"
-            ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Timeout — retrying shortly</span>
-            : p.status === "BILLING_BLOCKED"
-              ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Unavailable{p.runtime.lastErrorCategory ? ` (${p.runtime.lastErrorCategory})` : ""}</span>
-              : p.status === "CONFIGURED"
-                ? <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Configured — not yet tested on this instance</span>
-                : <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Unknown — not yet verified</span>;
-  const failing = p.configured && p.status !== "GENERATION_VERIFIED" && p.status !== "CONFIGURED" && p.status !== "NOT_CONFIGURED";
+  const presentation = STATUS_PRESENTATION[p.status];
+  const pill = (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${presentation.className}`}>
+      {presentation.label(p)}
+    </span>
+  );
+  // "Last response failed" is only true when something actually failed. It used
+  // to fire for every status except GENERATION_VERIFIED, so a provider whose
+  // ANALYSIS capability had just been verified was told it had failed.
+  const failing = p.configured && !presentation.healthy && !presentation.neutral;
+  const resultLine = (
+    label: string,
+    model: string,
+    result: ProviderRuntimeSnapshot["latestRealExtractionResult"],
+  ) => (
+    <p className="mt-1 text-xs text-slate-600">
+      <span className="font-medium">{label}:</span> {model} — {result
+        ? `${result.outcome}${result.category ? ` (${result.category})` : ""} at ${new Date(result.observedAt).toLocaleString()}`
+        : "no real workload result recorded on this instance"}
+    </p>
+  );
   return (
     <div className="rounded-xl bg-white p-3 shadow-sm">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <p className="font-semibold text-slate-900">{p.label}</p>
         {pill}
       </div>
       <p className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Fallback rank {p.rank}</p>
       {!p.configured && <p className="mt-1 text-xs text-slate-600">Not configured — set {p.envVar} in Vercel Production environment.</p>}
-      {p.configured && <p className="mt-1 text-xs text-slate-600">Model: {p.model ?? "provider default"}</p>}
+      {p.configured && resultLine(
+        "Extraction model / latest real extraction",
+        getProviderModel(p.key as Parameters<typeof getProviderModel>[0], "extraction"),
+        p.runtime.latestRealExtractionResult,
+      )}
+      {p.configured && resultLine(
+        "Proposal model / latest real proposal",
+        getProviderModel(p.key as Parameters<typeof getProviderModel>[0], "proposal"),
+        p.runtime.latestRealProposalResult,
+      )}
       {p.configured && p.detail && <p className="mt-1 text-xs text-slate-500">{p.detail}</p>}
       {p.configured && failing && !p.runtime.coolingDown && (
-        <p className="mt-1 text-xs text-amber-700">
+        <p className="mt-1 text-xs text-amber-800">
           Last response failed or returned empty{p.runtime.lastErrorCategory ? ` (${p.runtime.lastErrorCategory})` : ""}. Check {p.label} model access or retry after cooldown.
         </p>
       )}
@@ -226,7 +351,7 @@ export async function AIHealthPanel() {
   const verified = health.nextAction === "READY";
   const degraded = health.nextAction === "RUNTIME_NOT_VERIFIED" || health.nextAction === "REVIEW_AI_CONFIGURATION" || health.nextAction === "ALL_PROVIDERS_COOLING";
   const sectionTone = verified ? "border-emerald-200 bg-emerald-50" : degraded ? "border-amber-200 bg-amber-50" : "border-red-200 bg-red-50";
-  const labelTone = verified ? "text-emerald-700" : degraded ? "text-amber-700" : "text-red-700";
+  const labelTone = verified ? "text-emerald-700" : degraded ? "text-amber-800" : "text-red-700";
   const pillTone = verified ? "bg-emerald-100 text-emerald-800" : degraded ? "bg-amber-100 text-amber-800" : "bg-red-100 text-red-800";
   return (
     <section className={`mb-4 rounded-2xl border p-5 shadow-sm ${sectionTone}`}>

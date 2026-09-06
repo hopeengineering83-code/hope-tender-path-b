@@ -1,3 +1,4 @@
+import { recordTypeForDisplay } from "./vault-prose";
 /**
  * Bid Compliance Mapping — for each detected tender requirement, name the
  * proposal section that addresses it. This is different from the existing
@@ -78,7 +79,7 @@ export function buildBidComplianceMapping(opts: { requirements: TenderRequiremen
   const rows = sorted.slice(0, 30).map((req) => {
     const reqText = (req.title || (req.description ?? "").slice(0, 100)).trim();
     const pageRef = req.sourcePageNumber != null ? `p.${req.sourcePageNumber}` : "—";
-    return `| ${escCell(req.priority || "—")} | ${escCell(req.requirementType || "GENERAL")} | ${escCell(reqText)} | ${pageRef} | ${escCell(inferProposalLocation(req))} |`;
+    return `| ${escCell(req.priority || "—")} | ${escCell(recordTypeForDisplay(req.requirementType) || "General")} | ${escCell(reqText)} | ${pageRef} | ${escCell(inferProposalLocation(req))} |`;
   });
 
   return [

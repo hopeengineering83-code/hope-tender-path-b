@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { CheckIcon, CrossIcon } from "../../../components/icons";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 type UploadState = { name: string; status: "uploading" | "done" | "error"; error?: string };
@@ -272,7 +273,7 @@ export default function SetupWizard() {
               aria-current={step === item.n ? "step" : undefined}
               className={`min-h-11 rounded-full border px-3 py-2 text-xs font-medium ${step === item.n ? "border-slate-900 bg-slate-900 text-white" : step > item.n ? "border-green-300 bg-green-50 text-green-700" : "border-slate-200 bg-white text-slate-600"}`}
             >
-              {step > item.n ? "✓ " : `${item.n}. `}{item.label}
+              {step > item.n ? <><CheckIcon /> </> : `${item.n}. `}{item.label}
             </button>
           </li>
         ))}
@@ -316,7 +317,7 @@ export default function SetupWizard() {
               <input type="file" accept=".pdf,.docx,.xlsx,.csv,.txt" multiple disabled={uploading} className="hidden" onChange={(event) => void handleDocumentUpload(event.target.files)} />
             </label>
           </div>
-          {uploadedDocs.length > 0 && <ul className="max-h-64 space-y-2 overflow-y-auto">{uploadedDocs.map((item, index) => <li key={`${item.name}-${index}`} className={`min-w-0 rounded-lg border px-3 py-2 text-xs ${item.status === "done" ? "border-green-200 bg-green-50" : item.status === "error" ? "border-red-200 bg-red-50" : "border-blue-200 bg-blue-50"}`}><div className="flex min-w-0 items-center justify-between gap-2"><span className="min-w-0 break-all font-medium text-slate-700">{item.name}</span><span className="shrink-0">{item.status === "done" ? "✓ Accepted" : item.status === "error" ? "✕ Failed" : "Uploading…"}</span></div>{item.error && <p className="mt-1 text-red-700">{item.error}</p>}</li>)}</ul>}
+          {uploadedDocs.length > 0 && <ul className="max-h-64 space-y-2 overflow-y-auto">{uploadedDocs.map((item, index) => <li key={`${item.name}-${index}`} className={`min-w-0 rounded-lg border px-3 py-2 text-xs ${item.status === "done" ? "border-green-200 bg-green-50" : item.status === "error" ? "border-red-200 bg-red-50" : "border-blue-200 bg-blue-50"}`}><div className="flex min-w-0 items-center justify-between gap-2"><span className="min-w-0 break-all font-medium text-slate-700">{item.name}</span><span className="shrink-0">{item.status === "done" ? <><CheckIcon /> Accepted</> : item.status === "error" ? <><CrossIcon /> Failed</> : "Uploading…"}</span></div>{item.error && <p className="mt-1 text-red-700">{item.error}</p>}</li>)}</ul>}
           <div className="grid gap-2 sm:flex"><button type="button" onClick={() => setStep(3)} className={`${actionClass} bg-black text-white hover:bg-slate-800`}>Continue</button><button type="button" onClick={() => setStep(1)} className={`${actionClass} border text-slate-700 hover:bg-slate-50`}>Back</button></div>
         </section>
       )}
@@ -357,7 +358,7 @@ export default function SetupWizard() {
 
       {step === 5 && (
         <section className="space-y-5 rounded-2xl border bg-white p-5 text-center shadow-sm" aria-busy={saving}>
-          <div className="flex justify-center"><div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 text-3xl" aria-hidden="true">✓</div></div>
+          <div className="flex justify-center"><div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-100 text-3xl"><CheckIcon /></div></div>
           <h2 className="text-xl font-semibold text-slate-900">Review complete</h2>
           <p className="mx-auto max-w-lg text-sm text-slate-500">Completing setup records only that this company profile review finished. It does not authorize tender claims, matching, generation, or export.</p>
           <div className="grid gap-2 sm:grid-cols-2"><button type="button" onClick={() => void completeSetup()} disabled={saving} className={`${actionClass} bg-black text-white hover:bg-slate-800`}>{saving ? "Confirming…" : "Complete and open dashboard"}</button><button type="button" onClick={() => router.push("/dashboard/tenders/new")} disabled={saving} className={`${actionClass} border text-slate-700 hover:bg-slate-50`}>Create tender</button></div>

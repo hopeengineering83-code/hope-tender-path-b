@@ -41,6 +41,7 @@ import {
   MIN_CRITICAL_REASON_LENGTH,
 } from "./tender-fact-authority";
 import type { TenderPolicyContext } from "./tender-policy-registry";
+import { INDISPENSABLE_FINAL_DELIVERY_FIELDS } from "./tender-applicability";
 import {
   deriveSourceDrivenTenderDetail,
   isFactRequiredForFinal,
@@ -92,7 +93,8 @@ export type CanonicalFieldStatus =
   | "INVALID_FORMAT"           // Format validation failed
   | "SOURCE_CONFLICT"          // Multiple contradictory source values detected
   | "INVALID"                  // No value, no override
-  | "BLOCKED";                 // Field is blocked from all gates
+  | "BLOCKED"                  // Field is blocked from all gates
+  | "CONDITIONAL_OR_UNSCHEDULED"; // Source states this fact conditionally or as not-yet-scheduled (e.g. "site visit by arrangement", "pre-bid meeting TBD") -- not a firm value
 
 /**
  * Shared metadata status type. Both the Client & Submission Details panel
@@ -289,19 +291,12 @@ function normalizeFieldValue(fieldKey: string, value: string): string {
   return v;
 }
 
-/**
- * Format a Date object as a human-readable string (e.g. 12 Dec 2026).
- */
-export function formatDateUnambiguous(value: string | Date | null): string | null {
-  if (!value) return null;
-  const d = value instanceof Date ? value : new Date(value);
-  if (isNaN(d.getTime())) return null;
-  return d.toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
+// Note: formatDateUnambiguous was previously exported here but never imported
+// externally. The canonical implementation lives at
+// lib/engine/metadata-validators.ts:formatDateUnambiguous — every consumer
+// (tests/metadata-field-state.test.ts, app routes, lib files) imports from
+// there. The dead duplicate was removed on 2026-07-19 during post-#1175
+// gap closure.
 
 function validateFieldFormat(fieldKey: string, value: string | null): { valid: boolean; reason: string | null } {
   if (!value) return { valid: true, reason: null };
@@ -499,19 +494,20 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     //   4. CANDIDATE_NEEDS_REVIEW      — use ledger value as candidate
     //   5. (fall through to scalar rawValue)
     //   6. REJECTED_EXTRACTION / SUPERSEDED — ignore ledger, fall through to scalar
+    //   7. CONDITIONAL_OR_UNSCHEDULED  — source states this conditionally; show
+    //      it but never treat it as a firm grounded value (e.g. "site visit
+    //      by arrangement", "pre-bid meeting to be scheduled")
     const ledgerFact = input.ledgerFacts?.find((f) =>
       f.semanticKey === fieldKey
       || (fieldKey === "evaluationCriteria" && f.semanticKey === "evaluationMethodology")
     );
     let ledgerAuthorityState: string | null = null;
-    let ledgerOverridesValue = false;
     if (ledgerFact) {
       const ls = ledgerFact.authorityState.toUpperCase();
       if (ls === "SOURCE_GROUNDED_CONFIRMED" || ls === "HUMAN_CONFIRMED_OPERATIONAL" || ls === "CANDIDATE_NEEDS_REVIEW") {
         // Ledger provides the authoritative value
         if (ledgerFact.normalizedValue !== null) {
           rawValue = ledgerFact.normalizedValue;
-          ledgerOverridesValue = true;
         }
         ledgerAuthorityState = ls;
       } else if (ls === "NOT_APPLICABLE") {
@@ -521,6 +517,15 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
       } else if (ls === "REJECTED_EXTRACTION" || ls === "SUPERSEDED") {
         // Ledger rejected this fact — don't use ledger value; fall through to scalar
         // but mark so we know the ledger rejected it
+        ledgerAuthorityState = ls;
+      } else if (ls === "CONDITIONAL_OR_UNSCHEDULED") {
+        // The source addresses this fact but conditionally / without a firm
+        // schedule or value. Keep the conditional text visible (it is real
+        // source content, not a missing fact) but never let it read as a
+        // grounded, ready value -- see the status branch below.
+        if (ledgerFact.normalizedValue !== null) {
+          rawValue = ledgerFact.normalizedValue;
+        }
         ledgerAuthorityState = ls;
       }
     }
@@ -546,19 +551,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
     const isGrounded = (validation.valid && isGroundedEvidence(evidence, activeTenderFileIds, activeFiles) && !override) || overrideMatchesGroundedSourceCheck();
 
-    // Value-driven evidence-mandatory fields: the BuildPlan validator
-    // (validateCriticalMetadataEvidenceForBuildPlan, build-plan.ts) enforces
-    // full source evidence whenever these fields carry a VALUE, regardless of
-    // criticality. The resolver must mirror this or the panel shows green
-    // while the gate blocks. reference is always value-driven when present;
-    // submissionEmailSubject is value-driven only when the method is email/portal
-    // (matching the validator's branches).
-    const valueDrivenEvidenceMandatory = !!effectiveStr?.trim() && (
-      fieldKey === "reference" ||
-      (fieldKey === "submissionEmailSubject" &&
-        (isEmailSubmissionMethod(policyCtx.submissionMethod) ||
-         (isPortalSubmissionMethod(policyCtx.submissionMethod) && portalHasEmailCandidate)))
-    );
+    // Value-driven fields are handled by the final-export authority model below;
+    // they do not independently hard-block draft work.
 
     // Determine status
     let status: CanonicalFieldStatus;
@@ -589,6 +583,20 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
         blockerReason = `Field "${label}" is critical. Ledger Not Applicable cannot unblock it. Record a candidate value or resolve from an active tender source.`;
       } else {
         status = "NOT_APPLICABLE";
+      }
+    } else if (ledgerAuthorityState === "CONDITIONAL_OR_UNSCHEDULED" && !override) {
+      // The source states this conditionally or without a firm schedule
+      // (e.g. "site visit by arrangement", "pre-bid meeting TBD"). Real
+      // source content, so it is shown -- but it is never a firm, ready
+      // value, so it must not read as EXTRACTED_AND_GROUNDED/complete.
+      //
+      // Guarded by `!override`: a human override (edit/confirm/not-applicable/
+      // ignore) always represents the user's latest, more authoritative
+      // decision and must take priority over an earlier ledger classification
+      // of the same field.
+      status = "CONDITIONAL_OR_UNSCHEDULED";
+      if (isCritical) {
+        blockerReason = `Field "${label}" is stated conditionally or without a firm schedule in the tender source. Critical fields remain blocked until confirmed with a firm value.`;
       }
     } else if (tender.metadataContaminated === true && ENTITY_IDENTITY_FIELDS.has(fieldKey) && effectiveStr) {
       if (overrideMatchesGroundedSourceCheck()) {
@@ -666,8 +674,9 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
 
     const contaminated = status === "PORTAL_CONTAMINATION";
     const candidateUnconfirmed = status === "MANUAL_OVERRIDE_CONFIRMATION_REQUIRED";
-    const effectiveValid = validation.valid && !contaminated && !candidateUnconfirmed;
-    const effectiveGrounded = isGrounded && !contaminated;
+    const conditionalOrUnscheduled = status === "CONDITIONAL_OR_UNSCHEDULED";
+    const effectiveValid = validation.valid && !contaminated && !candidateUnconfirmed && !conditionalOrUnscheduled;
+    const effectiveGrounded = isGrounded && !contaminated && !conditionalOrUnscheduled;
 
     // ─── Authority model (manual tender facts flexibility) ──────────────
     // DRAFT work (analysis, extraction, matching, BuildPlan, draft proposal)
@@ -679,9 +688,8 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     // FINAL export requires SOURCE_GROUNDED OR HUMAN_CONFIRMED_OPERATIONAL
     // (with sufficient audit) on every submission-critical field.
     //
-    // The `valueDrivenEvidenceMandatory` flag (reference, submissionEmailSubject)
-    // previously made these optional fields hard blockers the moment they had
-    // ANY value. Under the authority model, these are operational-warning
+    // Reference and submissionEmailSubject previously became hard blockers
+    // the moment they had ANY value. Under the authority model, these are operational-warning
     // fields — they NEVER block draft work, and only block final export when
     // they have a value but no grounding AND no audit. This removes the
     // "reference number becomes a hard blocker merely because it exists
@@ -690,9 +698,7 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     const isManualValuePresent = isManualOverride && !!effectiveStr?.trim();
 
     // Value-driven fields no longer hard-block draft work. They may still
-    // block FINAL export if ungrounded AND unaudited — but that's handled
-    // by the exportEligible flag below, not by valueDrivenUngroundedBlock.
-    const valueDrivenUngroundedBlock = false; // Disabled — authority model handles this
+    // block FINAL export if ungrounded AND unaudited through exportEligible below.
 
     // Determine gate eligibility
     const isBlocked = blockerReason !== null;
@@ -710,14 +716,24 @@ export function resolveCanonicalFieldState(input: CanonicalResolverInput): Canon
     // FINAL: blocked by missing critical field, manual value without
     // sufficient audit, contamination, placeholder, invalid format, or
     // BLOCKED status. Only FINAL_SUBMISSION_CHECK uses this gate.
+    // Per Pillar 5: use applicability-aware blocking. Only block when the
+    // field is genuinely indispensable for final delivery (deadline,
+    // submissionMethod, clientName, title) or when the field has a BLOCKED
+    // status (contamination, placeholder, invalid format). Non-indispensable
+    // critical fields that are simply absent (NOT_STATED) do NOT block.
+    const isIndispensable = INDISPENSABLE_FINAL_DELIVERY_FIELDS.has(fieldKey);
     const exportHardBlockReasons =
       status === "PORTAL_CONTAMINATION" ||
       status === "INTERNAL_PLACEHOLDER" ||
       status === "GENERIC_FIELD_LABEL" ||
       status === "INVALID_FORMAT" ||
       status === "BLOCKED" ||
+      // A conditional/unscheduled critical field never counts as grounded
+      // for export purposes, regardless of whether the tender's own scalar
+      // source-evidence columns happen to be populated for this field key.
+      (status === "CONDITIONAL_OR_UNSCHEDULED" && isCritical) ||
       (isCritical && !isManualValuePresent && isBlocked && !isGrounded) ||
-      (isCritical && !effectiveStr?.trim() && !override) || // missing critical, no override
+      (isIndispensable && !effectiveStr?.trim() && !override) || // only indispensable fields block when empty
       (isCritical && isManualValuePresent && !isGrounded && !(auditSufficientForFinal(override, fieldKey, policyCtx)));
 
     const generationEligible = !draftHardBlockReasons && (!isBlocked || (!isCritical && status !== "BLOCKED") || isManualValuePresent);
@@ -859,7 +875,8 @@ export type ClientChipStatus =
   | "INVALID_VALUE"
   | "CONTAMINATED"
   | "BLOCKED"
-  | "NOT_DETECTED";
+  | "NOT_DETECTED"
+  | "CONDITIONAL_OR_UNSCHEDULED";
 
 export function canonicalToClientChip(state: CanonicalFieldState): ClientChipStatus {
   // A user "Retry on next AI Analyze" override is stored as MISSING.
@@ -880,6 +897,7 @@ export function canonicalToClientChip(state: CanonicalFieldState): ClientChipSta
     case "INVALID_FORMAT": return "INVALID_VALUE";
     case "BLOCKED": return "BLOCKED";
     case "INVALID": return "NOT_DETECTED";
+    case "CONDITIONAL_OR_UNSCHEDULED": return "CONDITIONAL_OR_UNSCHEDULED";
     default: return "NOT_DETECTED";
   }
 }

@@ -12,7 +12,7 @@
  *     (enforced inside finalizeRequiredPdf),
  *   • the rendered bytes are %PDF-validated before persisting,
  *   • the persisted PDF starts at validationStatus=PENDING /
- *     reviewStatus=PENDING — it must pass the same validation + approval
+ *     reviewStatus=PENDING — it must pass the same machine validation
  *     pipeline as every other document before it can reach the final ZIP,
  *   • when no eligible source exists the response is the structured
  *     PDF_REQUIRED_CONVERSION_UNAVAILABLE blocker, never a fake success.
@@ -23,6 +23,7 @@ import { requireRole, forbiddenResponse, unauthorizedResponse } from "../../../.
 import { prisma, prismaReady } from "../../../../../lib/prisma";
 import { logAction } from "../../../../../lib/audit";
 import { assertTenderReadyForGenerationAndExport } from "../../../../../lib/engine/generation-readiness-gate";
+import { getCanonicalReadinessSummary } from "../../../../../lib/canonical-tender-readiness";
 import { verifiedIntegrityDataFromBase64 } from "../../../../../lib/engine/persisted-byte-integrity";
 import { withTransactionalGenerationGate } from "../../../../../lib/engine/transactional-generation-gate";
 import { detectTenderFormatPolicy } from "../../../../../lib/engine/export-format-policy";
@@ -91,7 +92,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // enforces ownership, extraction, analysis hash/state, requirement
     // grounding, and a confirmed valid Build Plan; final-level assurance is
     // preserved because the finalizer requires a validated + approved source
-    // and the produced PDF must itself pass validation + approval + the
+    // and the produced PDF must itself pass validation + the
     // final-zip gate before it can be exported.
     const gate = await assertTenderReadyForGenerationAndExport({ prisma, tenderId: tender.id, userId: actor.id, purpose: "generate-missing-plan-files" });
     if (!gate.ok) return err(`PDF finalization blocked: ${gate.blockerDetail}`, 409, { code: gate.blockerCode });
@@ -196,7 +197,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         blocked.push({
           requiredFileName: requiredName,
           code: "PDF_REQUIRED_CONVERSION_UNAVAILABLE",
-          message: `No approved generated source document matches "${requiredName}". Generate, validate, and approve the matching document first, or upload the tender-issued PDF.`,
+          message: `No machine-validated generated source document matches "${requiredName}". Automatic post-Engine generation and validation must produce the matching source, or the tender-issued PDF must be uploaded when the tender requires an original.`,
         });
         continue;
       }
@@ -338,6 +339,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }).catch((error) => logger.warn(`finalize-pdf: failed to log action: ${error instanceof Error ? error.constructor.name : "UnknownError"}`));
 
     const ok = blocked.length === 0;
+    // Gap 4: re-query the canonical final-export authority after the mutation.
+    const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tender.id);
     return NextResponse.json(
       {
         ok,
@@ -345,8 +348,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         created,
         blocked,
         requiredPdfFiles: requiredPdfNames,
+        canonicalReadiness,
         ...(created.length
-          ? { nextStep: "Run Validate and approve the finalized PDF before final export." }
+          ? { nextStep: "Canonical validation runs next; a passing machine validation makes the finalized PDF export-eligible without impersonating human/legal release approval." }
           : {}),
       },
       { status: ok ? 200 : 422 },

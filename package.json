@@ -6,9 +6,9 @@
     "node": ">=22 <23"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "prisma migrate deploy && next dev",
     "build": "node scripts/check-env.mjs && prisma generate && next build",
-    "vercel-build": "node scripts/check-env.mjs && prisma generate && node scripts/migrate-deploy-safe.mjs && next build",
+    "vercel-build": "node scripts/vercel-build.mjs",
     "audit:release-integrity": "node scripts/audit-release-integrity.mjs && node scripts/audit-safe-api-errors.mjs && node scripts/audit-no-user-facing-metadata.mjs && node scripts/reconcile-gap-closure.mjs",
     "db:check-critical-schema": "node scripts/check-critical-schema.mjs",
     "db:verify-retroactive-init": "node scripts/verify-retroactive-init.mjs",
@@ -46,15 +46,16 @@
     "@anthropic-ai/sdk": "^0.65.0",
     "@e965/xlsx": "^0.20.3",
     "@google/generative-ai": "^0.24.1",
+    "@pdf-lib/fontkit": "^1.1.1",
     "@prisma/client": "^6.19.3",
     "@swc/helpers": "^0.5.23",
     "@types/nodemailer": "^8.0.0",
-    "@vercel/blob": "^2.4.0",
+    "@vercel/blob": "^2.6.1",
     "bcryptjs": "^2.4.3",
     "docx": "^9.5.1",
     "jszip": "^3.10.1",
     "mammoth": "^1.12.0",
-    "next": "15.5.19",
+    "next": "15.5.22",
     "next-intl": "^4.13.0",
     "nodemailer": "9.0.1",
     "pdf-lib": "^1.17.1",
@@ -63,7 +64,7 @@
     "pdfjs-dist": "5.4.296",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "undici": "^8.5.0",
+    "undici": "^8.10.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
@@ -86,8 +87,13 @@
     "typescript": "^6.0.3"
   },
   "overrides": {
-    "postcss": "8.5.10",
+    "postcss": "8.5.23",
     "rimraf": "^5.0.5",
-    "glob": "^13.0.6"
+    "glob": "^13.0.6",
+    "sharp": "0.35.3",
+    "nanoid": "^5.1.16",
+    "js-yaml": ">=4.3.1",
+    "deepmerge-ts": "^8.0.1",
+    "@xmldom/xmldom": "^0.8.15"
   }
 }

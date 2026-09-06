@@ -63,7 +63,12 @@ function collectExactFilenames(tender: TenderLike): string[] {
   return Array.from(out);
 }
 
-function formatFromExtension(filename: string): RequiredExportFormat | null {
+/**
+ * Exported so lib/engine/artifact-identity.ts can read the extension label
+ * from the one place that defines it, instead of adding a fourth private copy
+ * of the extension→format mapping.
+ */
+export function formatFromExtension(filename: string): RequiredExportFormat | null {
   const lower = filename.toLowerCase().trim();
   if (lower.endsWith(".pdf")) return "pdf";
   if (lower.endsWith(".docx") || lower.endsWith(".doc")) return "docx";
@@ -151,7 +156,7 @@ export function checkTenderFormatCoverage(
     return { ok: false, code: "DOCX_REQUIRED_BUT_MISSING", missing: policy.perFile.filter((p) => p.format === "docx").map((p) => p.exactFileName), reason: "Tender requires DOCX output but the generated set has no DOCX file." };
   }
   if (missingFormats.includes("xlsx")) {
-    return { ok: false, code: "XLSX_REQUIRED_BUT_MISSING", missing: policy.perFile.filter((p) => p.format === "xlsx").map((p) => p.exactFileName), reason: "Tender requires an Excel workbook. Attach the exact tender-issued XLS/XLSX original before export." };
+    return { ok: false, code: "XLSX_REQUIRED_BUT_MISSING", missing: policy.perFile.filter((p) => p.format === "xlsx").map((p) => p.exactFileName), reason: "Tender requires an Excel workbook. Upload the complete tender package containing the required XLS/XLSX file." };
   }
   return { ok: true };
 }

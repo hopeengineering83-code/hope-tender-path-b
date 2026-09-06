@@ -38,23 +38,70 @@ function sliceFunction(name: string): string {
   return src.slice(start, end);
 }
 
-describe("proposal-generation provider chains include Z.ai/Cerebras (canonical ranks 1-2)", () => {
-  it("generateOneSection tries Z.ai and Cerebras before Gemini/OpenAI/Mistral/Together/DeepSeek/Claude", () => {
-    const body = sliceFunction("generateOneSection");
-    const zaiIdx = body.indexOf("isZaiEnabled()");
-    const cerebrasIdx = body.indexOf("isCerebrasEnabled()");
-    const geminiIdx = body.indexOf('isProviderCooledDown("gemini")');
-    const openaiIdx = body.indexOf("isOpenAIEnabled()");
-    const claudeIdx = body.indexOf("isClaudeEnabled()");
+describe("every proposal path derives its provider order from one place", () => {
+  // This block used to assert the opposite, and in doing so kept the defect
+  // alive. It required generateOneSection to contain `isZaiEnabled()` before
+  // `isCerebrasEnabled()` before the Gemini check — pinning BOTH a hand-rolled
+  // chain and an order that had since been superseded. The owner's chain leads
+  // with Gemini and places Z.ai fourth, so a test enforcing "Z.ai first" made
+  // the correct order impossible to adopt: fixing the code would have failed
+  // the suite.
+  //
+  // Worth stating plainly, because it is the general lesson: a test that pins
+  // an implementation's SHAPE rather than its PROPERTY becomes an argument for
+  // keeping the shape. The property here is "one order, defined once".
 
-    assert.ok(zaiIdx >= 0, "generateOneSection must check isZaiEnabled()");
-    assert.ok(cerebrasIdx >= 0, "generateOneSection must check isCerebrasEnabled()");
-    assert.ok(zaiIdx < cerebrasIdx, "Z.ai must be attempted before Cerebras (canonical rank 1 before 2)");
-    assert.ok(cerebrasIdx < geminiIdx, "Cerebras must be attempted before Gemini");
-    assert.ok(geminiIdx < openaiIdx, "Gemini must be attempted before OpenAI (existing tuned order preserved)");
-    assert.ok(openaiIdx < claudeIdx, "Claude (Anthropic) must remain last");
-    assert.ok(body.includes('source: "zai"'), "a successful Z.ai section result must be labeled source: zai");
-    assert.ok(body.includes('source: "cerebras"'), "a successful Cerebras section result must be labeled source: cerebras");
+  it("generateOneSection resolves the chain at call time instead of hand-rolling it", () => {
+    const body = sliceFunction("generateOneSection");
+    assert.match(
+      body,
+      /for \(const provider of getAutomaticProviderOrder\(\)\)/,
+      "per-section generation must walk the canonical order",
+    );
+    assert.match(
+      body,
+      /callProvider\(provider,/,
+      "…and dispatch through the shared adapter, not per-provider helpers",
+    );
+  });
+
+  it("names no provider in generateOneSection's routing", () => {
+    // The strongest available statement that the order is not duplicated here:
+    // the function should not mention a specific provider at all, except for
+    // the one label mapping kept for historical records.
+    const body = sliceFunction("generateOneSection");
+    for (const helper of [
+      "isZaiEnabled()", "isCerebrasEnabled()", "isMistralEnabled()",
+      "isGroqEnabled()", "isOpenRouterEnabled()", "isOpenAIEnabled()",
+      "isTogetherEnabled()", "isDeepSeekEnabled()", "isClaudeEnabled()",
+      "generateWithZai(", "generateWithCerebras(", "generateWithClaude(",
+      "generateWithBestModel(",
+    ]) {
+      assert.ok(
+        !body.includes(helper),
+        `generateOneSection must not reach for ${helper} — that is a second chain`,
+      );
+    }
+  });
+
+  it("still bounds each section's output budget", () => {
+    // The per-section cap is what keeps four concurrent calls inside the
+    // serverless timeout. Routing through the shared adapter must not silently
+    // adopt the whole-proposal budget, which is up to 16K tokens.
+    //
+    // The bound is now the MINIMUM of the section's own cap and what preflight
+    // says the chosen provider can emit, which is strictly tighter. The
+    // section cap must still appear — dropping it in favour of the provider's
+    // headroom would let a generous provider pull one section past its share
+    // of the concurrent budget.
+    const body = sliceFunction("generateOneSection");
+    assert.match(body, /maxOutputTokens: Math\.min\(spec\.maxOutputTokens \?\? 4096, preflight\.maxOutputTokens/);
+  });
+
+  it("keeps Anthropic last, by position in the order rather than by a special case", () => {
+    const { getAutomaticProviderOrder } = require("../lib/ai-provider-registry");
+    const order = getAutomaticProviderOrder();
+    assert.equal(order[order.length - 1], "anthropic");
   });
 
   it("critiqueProposalWithAI delegates to generateWithFallback (the canonical iterator) for the proposal useCase", () => {

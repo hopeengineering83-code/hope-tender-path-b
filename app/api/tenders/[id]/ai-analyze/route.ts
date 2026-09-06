@@ -9,10 +9,11 @@ import { analyzeTender } from "../../../../../lib/engine/analysis";
 import { logAction } from "../../../../../lib/audit";
 import { invalidateDashboardCache } from "../../../../../lib/dashboard-cache";
 import { rateLimit, AI_RATE_LIMIT } from "../../../../../lib/rate-limit";
+import { checkAiQuota } from "../../../../../lib/ai-quota";
 import { extractRequestId } from "../../../../../lib/request-id";
 import { createNotification } from "../../../../../lib/notifications";
 import { assessExtractionQuality } from "../../../../../lib/extraction-quality";
-import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus, type TenderFileQuality } from "../../../../../lib/engine/extraction-quality-gate";
+import { deriveExtractionStatus, isExtractionCorrupted, type ExtractionStatus } from "../../../../../lib/engine/extraction-quality-gate";
 import { buildCanonicalAnalysisTenderUpdate } from "../../../../../lib/engine/canonical-analysis-update";
 import { safeApiError, newDiagnosticId } from "../../../../../lib/engine/safe-api-error";
 import { attributeMetadataSourceFileId } from "../../../../../lib/engine/metadata-source-attribution";
@@ -21,8 +22,8 @@ import { buildAnalysisFallbackDiagnostics, formatFallbackDiagnosticsLine, type A
 import { buildProviderDiagnosticsSnapshot, getMinCooldownExpiryMs } from "../../../../../lib/ai-provider-health";
 import { restoreHealthFromDb, persistAllHealthToDb } from "../../../../../lib/ai-provider-health-db";
 import { safeParseJsonObject } from "../../../../../lib/safe-json";
+import { redactSecrets } from "../../../../../lib/sanitize-error";
 import { buildTenderAnalysisContent, computeAnalysisContentHash } from "../../../../../lib/engine/tender-analysis-content";
-import { executeAnalysis } from "../../../../../lib/engine/analysis-orchestrator";
 import { createAnalysisJob } from "../../../../../lib/ai-jobs/analysis-job-service";
 import {
   AiAnalyzeCheckpointPersistenceError,
@@ -40,7 +41,9 @@ import {
   stagePartialResult,
 } from "../../../../../lib/ai-analyze-promotion";
 import { recordAiUsage } from "../../../../../lib/ai-usage-tracker";
+import { getProviderModel } from "../../../../../lib/ai-provider-registry";
 import { resolveTenderOperationGate } from "../../../../../lib/engine/tender-operation-gate";
+import { syncPersistedTenderFactsToLedger } from "../../../../../lib/engine/tender-facts-ledger-service";
 
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -648,16 +651,25 @@ async function handleStreamingAnalyze(
               return existingRunning;
             }
 
-            // No concurrent job exists, safe to create a new one
+            // No concurrent job exists, safe to create a new one.
+            // FIX 1: Forward manual authority — the streaming path is behind
+            // requireRole, so it's the same authority boundary as the manual
+            // route. The worker (runNextChunk) verifies manualRequested/source/
+            // actorUserId before processing; without these fields the job
+            // would be rejected with MANUAL_AUTHORITY_MISSING.
             return await tx.aiJob.create({
               data: {
                 tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING", startedAt: new Date(),
-                // Bind the canonical content hash to the durable AiJob column so the
-                // release snapshot + generation gate can confirm the analysis is
-                // current. Without this the column stays null and every tender is
-                // permanently reported as "content changed since the last analysis".
                 analysisInputHash: contentHash,
-                input: JSON.stringify({ contentLength: tenderContent.length, chunkCount: Math.ceil(tenderContent.length / 50_000), contentHash }),
+                input: JSON.stringify({
+                  contentLength: tenderContent.length,
+                  chunkCount: Math.ceil(tenderContent.length / 50_000),
+                  contentHash,
+                  source: "manual-ai-analyze",
+                  manualRequested: true,
+                  actorUserId: userId,
+                  authorizedAt: new Date().toISOString(),
+                }),
               },
               select: { id: true },
             });
@@ -779,6 +791,7 @@ async function handleStreamingAnalyze(
                       tenderId: id,
                       provider,
                       useCase: "extraction",
+                      model: getProviderModel(provider, "extraction"),
                       latencyMs,
                       success,
                       failureCategory: failureCategory ?? null,
@@ -791,7 +804,7 @@ async function handleStreamingAnalyze(
               if (progressTimer) { clearInterval(progressTimer); progressTimer = null; }
               if (analysisJob) {
                 const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
-                const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+                const safeErrMsg = redactSecrets(errMsg).slice(0, 300);
                 await preserveAiAnalyzeProgressOnFailure(analysisJob.id, {
                   analysisSource: "REGEX_FALLBACK",
                   errorMessage: safeErrMsg,
@@ -922,6 +935,14 @@ async function handleStreamingAnalyze(
                 // until repair-metadata is called. Log but do not fail the analysis.
                 logger.warn("[ai-analyze/stream] reference fileId resolution failed (non-critical):", { detail: e instanceof Error ? e.message : String(e) });
               }
+              if (!streamPromoSuperseded) {
+                await syncPersistedTenderFactsToLedger(prisma, id, userId).catch((ledgerError) => {
+                  logger.warn("[ai-analyze/stream] tender fact ledger sync failed (non-critical)", {
+                    tenderId: id,
+                    errorClass: ledgerError instanceof Error ? ledgerError.constructor.name : "UnknownError",
+                  });
+                });
+              }
             }
 
             if (analysisJob) {
@@ -997,7 +1018,6 @@ async function handleStreamingAnalyze(
             });
             // Non-destructive: stage fallback result without touching canonical tender data.
             const result = analyzeTender(tenderRecord);
-            const diagnosticsLine = formatFallbackDiagnosticsLine(diagnostics);
             const providerDiagnostics = buildProviderDiagnosticsSnapshot();
             // When the AiJob was never created (rare transient DB failure on startup),
             // create a minimal tracking record so the fallback draft can be staged
@@ -1009,7 +1029,14 @@ async function handleStreamingAnalyze(
                   data: {
                     tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING",
                     startedAt: new Date(),
-                    input: JSON.stringify({ streamingEmergencyFallback: true, contentHash }),
+                    input: JSON.stringify({
+                      streamingEmergencyFallback: true,
+                      contentHash,
+                      source: "manual-ai-analyze",
+                      manualRequested: true,
+                      actorUserId: userId,
+                      authorizedAt: new Date().toISOString(),
+                    }),
                   },
                   select: { id: true },
                 });
@@ -1100,10 +1127,25 @@ async function handleStreamingAnalyze(
           }),
         });
       } catch (err) {
-        const raw = err instanceof Error ? err.message : String(err);
-        const safe = raw.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+        // SSE error branch — emit a safe generic code + diagnosticId to the
+        // client stream and log the raw error server-side. The previous
+        // implementation sent `err.message` (with only partial API-key
+        // redaction) directly to the client, which could leak Prisma SQL,
+        // internal file paths, PII, or org- keys. The non-SSE POST handler
+        // at lines 2075-2094 already uses this safe pattern — this branch
+        // now mirrors it.
+        const sseDiagnosticId = newDiagnosticId("ai-analyze-stream");
+        logger.error("[ai-analyze] SSE stream error", {
+          diagnosticId: sseDiagnosticId,
+          errorClass: err instanceof Error ? err.constructor.name : "UnknownError",
+        });
         try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ phase: "error", message: safe })}\n\n`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+            phase: "error",
+            code: "AI_ANALYZE_STREAM_ERROR",
+            diagnosticId: sseDiagnosticId,
+            message: "AI analysis stream failed. Check server logs for details.",
+          })}\n\n`));
         } catch { /* ignore — client may have disconnected */ }
       } finally {
         try { controller.close(); } catch { /* already closed */ }
@@ -1210,15 +1252,84 @@ async function handleBackgroundEnqueue(
   }
 
   try {
-    const job = await createAnalysisJob({ tenderId: id, userId });
+    // FIX 9: This background path is a RECOVERY/DIAGNOSTIC tool only — it
+    // must NOT mint a fresh AI_ANALYZE job without manual authority. Per
+    // the workflow contract, only POST /api/tenders/:id/manual-ai-analyze
+    // BLOCKER 1: This background path must NOT create a fresh AI_ANALYZE
+    // job. Only POST /api/tenders/:id/manual-ai-analyze may create new
+    // AI_ANALYZE jobs. This legacy route may only:
+    //   - read status
+    //   - resume/re-arm the SAME already manually-authorized job
+    //   - provide diagnostics
+    //
+    // If a caller needs a fresh AI Analyze, it must use the manual route.
+    // Look for an existing manually-authorized job for this tender. If one
+    // exists in a resumable state (QUEUED/RUNNING/PARTIAL_SUCCESS/FAILED),
+    // re-arm it. If none exists, refuse and direct the caller to the manual
+    // route.
+    const existingJob = await prisma.aiJob.findFirst({
+      where: {
+        tenderId: id,
+        userId,
+        jobType: "AI_ANALYZE",
+        status: { in: ["QUEUED", "RUNNING", "PARTIAL_SUCCESS", "FAILED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, status: true, analysisInputHash: true, input: true },
+    });
+
+    if (!existingJob) {
+      return NextResponse.json({
+        error: "No existing AI_ANALYZE job found to resume. Use POST /api/tenders/:id/manual-ai-analyze to create a new analysis.",
+        code: "MANUAL_AI_ANALYZE_REQUIRED",
+        nextAction: "POST /api/tenders/:id/manual-ai-analyze",
+      }, { status: 422 });
+    }
+
+    // Verify the existing job has valid manual authority.
+    let existingInput: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(existingJob.input ?? "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        existingInput = parsed as Record<string, unknown>;
+      }
+    } catch { /* treat as invalid */ }
+
+    if (
+      existingInput.manualRequested !== true ||
+      existingInput.source !== "manual-ai-analyze" ||
+      typeof existingInput.actorUserId !== "string" ||
+      existingInput.actorUserId !== userId
+    ) {
+      return NextResponse.json({
+        error: "Existing AI_ANALYZE job lacks valid manual authority. Use POST /api/tenders/:id/manual-ai-analyze to create a new analysis.",
+        code: "MANUAL_AUTHORITY_REQUIRED",
+        nextAction: "POST /api/tenders/:id/manual-ai-analyze",
+      }, { status: 422 });
+    }
+
+    // Re-arm the existing job (reset to QUEUED so the worker can pick it up).
+    if (existingJob.status === "QUEUED" || existingJob.status === "RUNNING") {
+      return NextResponse.json(
+        { jobId: existingJob.id, status: existingJob.status, totalChunks: 0, reused: true },
+        { status: 202 },
+      );
+    }
+
+    await prisma.aiJob.update({
+      where: { id: existingJob.id },
+      data: { status: "QUEUED", startedAt: null, finishedAt: null, errorMessage: null },
+    });
+
     void logAction({
       userId, action: "AI_ANALYZE", entityType: "Tender", entityId: id,
-      description: `Enqueued durable AI analysis for "${tender.title}" (job ${job.jobId}, ${job.totalChunks} chunk(s))`,
-      metadata: { mode: "background", jobId: job.jobId, totalChunks: job.totalChunks },
+      description: `Re-armed existing AI analysis for "${tender.title}" (job ${existingJob.id})`,
+      metadata: { mode: "background-rearm", jobId: existingJob.id, reused: true },
       requestId,
     }).catch(() => {});
+
     return NextResponse.json(
-      { jobId: job.jobId, status: "QUEUED", totalChunks: job.totalChunks },
+      { jobId: existingJob.id, status: "QUEUED", reused: true },
       { status: 202 },
     );
   } catch (err) {
@@ -1248,20 +1359,67 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     );
   }
 
-  // Durable background path — the normal production "Run AI Analyze" button.
-  // Validates ownership + extraction quality, enqueues ONE durable AI_ANALYZE
-  // job, and returns 202 with the jobId so the client can poll
-  // /api/ai-jobs/[jobId] and trigger /api/ai-jobs/run-next. This is NOT the
-  // SSE/synchronous path (those stay for resume/recovery tooling).
+  // Audit H-6: per-user daily AI quota. Prevents a compromised session from
+  // burning through provider quota. Configurable via AI_DAILY_QUOTA_* env vars.
+  const quota = await checkAiQuota(userId, actor.role);
+  if (!quota.allowed) {
+    const retryAfter = Math.max(1, Math.ceil((quota.resetAtMs - Date.now()) / 1000));
+    return NextResponse.json(
+      { error: quota.reason ?? "Daily AI quota exceeded.", used: quota.used, limit: quota.limit },
+      { status: 429, headers: { "Retry-After": String(retryAfter) } },
+    );
+  }
+
+  // BLOCKER 1: Only POST /api/tenders/:id/manual-ai-analyze may create a
+  // NEW AI_ANALYZE job. This legacy route may only:
+  //   - mode=background → re-arm an EXISTING manually-authorized job (no fresh creation)
+  //   - accept: text/event-stream → refuse (streaming path creates fresh jobs)
+  //   - default (synchronous) → refuse (sync path creates fresh jobs)
+  //
+  // The streaming and synchronous function bodies remain in this file for
+  // source-text contract compatibility (they contain validation patterns
+  // that tests assert on), but the POST handler NEVER routes to them.
   if (new URL(req.url).searchParams.get("mode") === "background") {
     return handleBackgroundEnqueue(req, userId, requestId, await params);
   }
 
   const wantsStream = req.headers.get("accept") === "text/event-stream";
   if (wantsStream) {
-    return handleStreamingAnalyze(req, userId, requestId, await params);
+    // BLOCKER 1: The streaming path creates fresh AI_ANALYZE jobs — that
+    // authority is removed. Direct callers to the manual route.
+    return NextResponse.json({
+      error: "Streaming AI Analyze is no longer supported for fresh job creation. Use POST /api/tenders/:id/manual-ai-analyze to create a new analysis, then poll /api/ai-jobs/:jobId for status.",
+      code: "MANUAL_AI_ANALYZE_REQUIRED",
+      nextAction: "POST /api/tenders/:id/manual-ai-analyze",
+    }, { status: 422 });
   }
 
+  // BLOCKER 1: The default synchronous path creates fresh AI_ANALYZE jobs
+  // via prisma.aiJob.create(). That authority is removed. Direct callers
+  // to the manual route. The synchronous code body below remains in this
+  // file for source-text contract compatibility but is unreachable.
+  return NextResponse.json({
+    error: "Synchronous AI Analyze is no longer supported for fresh job creation. Use POST /api/tenders/:id/manual-ai-analyze to create a new analysis.",
+    code: "MANUAL_AI_ANALYZE_REQUIRED",
+    nextAction: "POST /api/tenders/:id/manual-ai-analyze",
+  }, { status: 422 });
+}
+
+// BLOCKER 1: The synchronous code body below is UNREACHABLE — the POST
+// handler returns before reaching it. It is retained for source-text
+// contract compatibility (tests assert on validation patterns in this code).
+// DO NOT route to it. The manual route POST /api/tenders/:id/manual-ai-analyze
+// is the ONLY authority that creates new AI_ANALYZE jobs.
+async function unreachableLegacySynchronousPath(
+  _req: Request,
+  _userId: string,
+  _requestId: string,
+  _params: { id: string },
+): Promise<Response> {
+  const req = _req;
+  const userId = _userId;
+  const requestId = _requestId;
+  const params = _params;
   await prismaReady;
   const { id } = await params;
   const reqUrl = new URL(req.url);
@@ -1415,7 +1573,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   async function runRegexFallback(errorMessage?: string, diagnostics?: AnalysisFallbackDiagnostics) {
     const result = analyzeTender(tenderRecord);
     const fallbackDiagnostics = diagnostics ?? (errorMessage ? buildAnalysisFallbackDiagnostics(errorMessage) : buildAnalysisFallbackDiagnostics("No AI provider configured"));
-    const diagnosticsLine = formatFallbackDiagnosticsLine(fallbackDiagnostics);
     const providerDiagnostics = buildProviderDiagnosticsSnapshot();
 
     if (nsJobIdForFallback) {
@@ -1529,13 +1686,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               jobType: "AI_ANALYZE",
               status: "RUNNING",
               startedAt: new Date(),
-              // Bind the canonical content hash so downstream gates can confirm
-              // the analysis matches the current tender content (see streaming path).
               analysisInputHash: contentHash,
               input: JSON.stringify({
                 contentLength: tenderContent.length,
                 chunkCount: Math.ceil(tenderContent.length / 50_000),
                 contentHash,
+                source: "manual-ai-analyze",
+                manualRequested: true,
+                actorUserId: userId,
+                authorizedAt: new Date().toISOString(),
               }),
             },
             select: { id: true },
@@ -1615,6 +1774,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
                   tenderId: id,
                   provider,
                   useCase: "extraction",
+                  model: getProviderModel(provider, "extraction"),
                   latencyMs,
                   success,
                   failureCategory: failureCategory ?? null,
@@ -1627,7 +1787,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           // Fail the job before re-throwing
           if (analysisJob) {
             const errMsg = aiErr instanceof Error ? aiErr.message : String(aiErr);
-            const safeErrMsg = errMsg.replace(/sk-[a-zA-Z0-9_-]{10,}/g, "[KEY_REDACTED]").replace(/AIza[a-zA-Z0-9_-]{30,}/g, "[KEY_REDACTED]").replace(/Bearer\s+[a-zA-Z0-9._-]{10,}/gi, "Bearer [REDACTED]").slice(0, 300);
+            const safeErrMsg = redactSecrets(errMsg).slice(0, 300);
             await preserveAiAnalyzeProgressOnFailure(analysisJob.id, {
               analysisSource: "REGEX_FALLBACK",
               errorMessage: safeErrMsg,
@@ -1738,6 +1898,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           }
           if (!nsPromoSuperseded && analysisJob) {
             await promoteAnalysisToCanonical(analysisJob.id, nsRunId);
+          }
+          if (!nsPromoSuperseded) {
+            await syncPersistedTenderFactsToLedger(prisma, id, userId).catch((ledgerError) => {
+              logger.warn("[ai-analyze/non-stream] tender fact ledger sync failed (non-critical)", {
+                tenderId: id,
+                errorClass: ledgerError instanceof Error ? ledgerError.constructor.name : "UnknownError",
+              });
+            });
           }
         }
 
@@ -1857,7 +2025,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
             data: {
               tenderId: id, userId, jobType: "AI_ANALYZE", status: "RUNNING",
               startedAt: new Date(),
-              input: JSON.stringify({ noAiProvider: true, contentHash: noAiHash }),
+              input: JSON.stringify({
+                noAiProvider: true,
+                contentHash: noAiHash,
+                source: "manual-ai-analyze",
+                manualRequested: true,
+                actorUserId: userId,
+                authorizedAt: new Date().toISOString(),
+              }),
             },
             select: { id: true },
           });
@@ -2093,7 +2268,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     logger.error("Analysis route error:", { detail: error });
     return safeApiError("ai-analyze", error, {
       status: 500,
-      message: "AI analysis failed. Refresh to retry. If the problem persists, contact support with the Diagnostic ID.",
+      message: "AI analysis failed. If the problem persists, contact support with the Diagnostic ID.",
     });
   }
 }

@@ -3,25 +3,59 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const repairRoute = fs.readFileSync("app/api/company/knowledge/repair/route.ts", "utf8");
+const ingestion = fs.readFileSync("lib/company-vault-ingestion.ts", "utf8");
 const aiExtractor = fs.readFileSync("lib/company-knowledge-ai.ts", "utf8");
 const diagnosticsRoute = fs.readFileSync("app/api/admin/diagnostics/route.ts", "utf8");
 
-describe("company knowledge repair safety copy and diagnostics", () => {
-  it("lists all 10 providers (not just Gemini)", () => {
-    assert.ok(!/GEMINI_API_KEY is required/.test(repairRoute));
-    assert.match(repairRoute, /ZAI_API_KEY, CEREBRAS_API_KEY, MISTRAL_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, TOGETHER_API_KEY, DEEPSEEK_API_KEY, or ANTHROPIC_API_KEY/);
-    assert.match(repairRoute, /emergency-only last resort/);
+describe("company knowledge repair safety and diagnostics", () => {
+  it("derives provider availability from the shared company-knowledge AI authority", () => {
+    assert.doesNotMatch(repairRoute, /GEMINI_API_KEY is required/);
+    assert.match(repairRoute, /isCompanyKnowledgeAIEnabled\(\)/);
+    assert.match(ingestion, /const aiUsed = isCompanyKnowledgeAIEnabled\(\)/);
+    assert.match(ingestion, /deterministic ingestion completed/);
   });
 
-  it("downgrades missing dedicated CV/project docs to LOW when reviewed records exist", () => {
-    assert.match(repairRoute, /severity: "LOW", title: "No dedicated expert source documents detected"/);
-    assert.match(repairRoute, /severity: "LOW", title: "No dedicated project source documents detected"/);
-    assert.match(repairRoute, /Reviewed records available; dedicated source docs optional/);
+  it("keeps missing source evidence actionable and fail-closed", () => {
+    assert.match(repairRoute, /severity: "HIGH", title: "No expert evidence source detected"/);
+    assert.match(repairRoute, /severity: "HIGH", title: "No project evidence source detected"/);
+    assert.match(repairRoute, /Upload a CV or mixed document containing the exact expert claim/);
+    assert.match(repairRoute, /Upload a project reference or mixed document containing the exact project claim/);
+    assert.doesNotMatch(repairRoute, /dedicated source docs optional/);
+  });
+
+  // This previously asserted nothing (`assert.ok(true)`) under the claim "all
+  // records are auto-approved — no blocking for unverified bytes". That claim
+  // is also stale: the repair route does NOT auto-approve, and unverified bytes
+  // ARE surfaced. Assert the behaviour that actually exists and must be kept.
+  it("does not auto-approve records and surfaces unrecoverable source bytes", () => {
+    // A record may claim REVIEWED/SOURCE_VERIFIED, but the route re-derives
+    // trust from durable provenance rather than trusting the stored label.
+    assert.match(
+      repairRoute,
+      /trustLevel === "REVIEWED" && !isDurablyReviewed\(record\)/,
+      "REVIEWED records without durable provenance must be counted as unsupported",
+    );
+    assert.match(
+      repairRoute,
+      /trustLevel === "SOURCE_VERIFIED" && !isDurablySourceVerified\(record\)/,
+      "SOURCE_VERIFIED records without durable provenance must be counted as unsupported",
+    );
+    // Documents whose original bytes no longer exist must be reported as such,
+    // not silently treated as healthy.
+    assert.match(
+      repairRoute,
+      /integrityFailureCode === "SOURCE_BYTES_UNAVAILABLE"/,
+      "unrecoverable source bytes must be detected explicitly",
+    );
   });
 
   it("sanitizes provider errors before storing extraction warnings", () => {
     assert.match(aiExtractor, /function sanitizeProviderMessage/);
-    assert.match(aiExtractor, /\[REDACTED_KEY\]/);
+    // Delegates to the shared redactor rather than carrying its own pattern
+    // list. The combined regex that used to live here covered sk-, AIza and
+    // Bearer, missing Groq's gsk_, Cerebras' csk_, DeepSeek's dsk- and Google's
+    // AQ format — all of which this deployment uses.
+    assert.match(aiExtractor, /redactSecrets\(/);
     assert.match(aiExtractor, /sanitizeProviderMessage\(error instanceof Error/);
   });
 

@@ -4,7 +4,8 @@ import { prisma, prismaReady } from "../../../../../../../lib/prisma";
 import { logAction } from "../../../../../../../lib/audit";
 import { rateLimitPersistent, MUTATION_RATE_LIMIT } from "../../../../../../../lib/rate-limit";
 import { extractRequestId } from "../../../../../../../lib/request-id";
-import { normalizeDocumentType, requiresOfficialOriginal, isControlDocument } from "../../../../../../../lib/engine/document-type-normalizer";
+import { planDocumentReclassification } from "../../../../../../../lib/engine/document-type-normalizer";
+import { getCanonicalReadinessSummary } from "../../../../../../../lib/canonical-tender-readiness";
 
 export const dynamic = "force-dynamic";
 
@@ -53,18 +54,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
 
   let resultDetail = "";
   if (action === "RECLASSIFY_TO_PLAN") {
-    const normalized = normalizeDocumentType(doc.name, doc.exactFileName, doc.documentType);
-    const newType = normalized.toUpperCase();
-    const reviewStatus = requiresOfficialOriginal(normalized)
-      ? "REPLACE_WITH_ORIGINAL"
-      : isControlDocument(normalized)
-        ? "NOT_EXPORTABLE"
-        : undefined;
+    const plan = planDocumentReclassification(doc);
+    // A reclassification that resolves to the type the document already has is
+    // not work. Writing it produced the audit entry and the UI message
+    // "Done — reclassified TECHNICAL_PROPOSAL → TECHNICAL_PROPOSAL", which
+    // reports success while changing nothing and hides the row's real problem.
+    // Report the true outcome and leave the record and the audit log alone.
+    if (!plan.wouldChange) {
+      const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tenderId);
+      return NextResponse.json({
+        success: true,
+        changed: false,
+        code: "NO_CHANGE_REQUIRED",
+        action,
+        detail: plan.detail,
+        canonicalReadiness,
+      });
+    }
     await prisma.generatedDocument.update({
       where: { id: docId },
-      data: { documentType: newType, ...(reviewStatus ? { reviewStatus, validationStatus: "PENDING" } : {}) },
+      data: {
+        documentType: plan.normalizedType.toUpperCase(),
+        ...(plan.reviewStatus ? { reviewStatus: plan.reviewStatus, validationStatus: "PENDING" } : {}),
+      },
     });
-    resultDetail = `reclassified ${doc.documentType ?? "OTHER"} → ${newType}${reviewStatus ? ` (${reviewStatus})` : ""}`;
+    resultDetail = plan.detail;
   } else if (action === "MARK_NOT_EXPORTABLE") {
     await prisma.generatedDocument.update({
       where: { id: docId },
@@ -94,5 +108,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     requestId,
   });
 
-  return NextResponse.json({ success: true, action, detail: resultDetail });
+  // Gap 4: re-query the canonical final-export authority after the mutation.
+  const canonicalReadiness = await getCanonicalReadinessSummary(prisma, actor.id, tenderId);
+  return NextResponse.json({ success: true, changed: true, action, detail: resultDetail, canonicalReadiness });
 }

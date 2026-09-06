@@ -12,8 +12,33 @@
  *   - Required sections that have no matching generated document
  *
  * All detection is deterministic regex — no AI calls, no external I/O.
+ *
+ * SCOPE — read this before trusting a result.
+ *
+ * This module inspects `contentSummary` and `reviewNotes` ONLY. It never sees a
+ * document's bytes or its rendered text. `contentSummary` is a short sentence
+ * the app writes about a document ("Professional CV for …", "Machine export
+ * repair completed for …", truncated to 500 chars on at least one path), so a
+ * clean result here says nothing about what the delivered file contains. The
+ * blocker names read as if they cover document content — `TODO_FIXME_IN_CONTENT`
+ * says so outright — and they do not.
+ *
+ * Real document content IS gated, by a different pair of checks, and those are
+ * the ones that carry the guarantee:
+ *   - lib/engine/workflow/pdf-finalizer.ts extracts the DOCX text and runs
+ *     validateDocumentQuality + hygiene + internal-artifact scans BEFORE a PDF
+ *     is produced, so failing content never becomes a deliverable;
+ *   - the ZIP route (app/api/tenders/[id]/download) re-extracts each DOCX's
+ *     visible text and re-runs validateDocumentQuality, returning 409 on
+ *     BLOCKED.
+ *
+ * So this module is a metadata-level layer on top of those, not a substitute
+ * for them. Do not "simplify" the export path by dropping the content checks
+ * because Authority Review appears to cover the same categories — it does not,
+ * and the export would silently stop inspecting anything a client will read.
  */
 
+import { containsPricingLeakage } from "./pricing-hygiene";
 import { AI_TRACE_PATTERNS, PLACEHOLDER_PATTERNS } from "./detection-patterns";
 
 export type AuthorityBlockerCode =
@@ -70,6 +95,22 @@ export interface DocumentInput {
   contentSummary?: string | null;
   reviewNotes?: string | null;
   exactFileName?: string | null;
+  /**
+   * The document's own visible text, read from the stored bytes.
+   *
+   * The content checks below decide whether the FILE THE CLIENT RECEIVES
+   * carries a placeholder, an internal note or an AI trace. Only the document
+   * can answer that. When this is supplied it is the text those checks read.
+   *
+   * Callers with no bytes fall back to the metadata fields, which is the
+   * historical behaviour — but that fallback answers a different question, and
+   * is why it must not be the primary source. `contentSummary` is an audit
+   * string the generator writes ABOUT the run, so a run reporting "missing
+   * critical sections were auto-injected ... to be confirmed" blocked export as
+   * though the proposal itself said it, while a real placeholder in the DOCX
+   * body was never looked at.
+   */
+  documentText?: string | null;
 }
 
 export interface ManifestEntry {
@@ -89,14 +130,33 @@ function firstPatternMatch(patterns: RegExp[], text: string): string {
   return "pattern match";
 }
 
+// "to be confirmed by bid team" is the phrase proposal-benchmark-guard's
+// normalizeWeakText() substitutes in for every placeholder, TBD, TODO, template
+// variable and AI refusal it cannot resolve. It is the same unresolved stub as
+// "Bid-Team to confirm" — the normalizer simply emits it in two phrasings, and
+// only one of them was listed here. So the rarer wording
+// ("Bid-team to confirm before submission.") blocked export as a CRITICAL
+// stub while the dominant wording travelled all the way into a client-facing
+// tender submission untouched. Both must fail closed.
 const INTERNAL_NOTE_RE =
-  /Bid-Team to confirm|MISSING_SOURCE|\[Bid-Team[^\]]*\]|Source-evidence action/i;
+  /Bid-Team to confirm|to be confirmed by bid[-\s]team|MISSING_SOURCE|\[Bid-Team[^\]]*\]|Source-evidence action/i;
 
 const TODO_FIXME_RE =
   /\bTODO\b|\bFIXME\b|\bHACK\b|\bNOTE:\s/;
 
-const PRICING_IN_TECHNICAL_RE =
-  /\$\s*[\d,]+|\bprice\b|\bunit cost\b|\bbid price\b|\bfinancial offer\b/i;
+// Pricing leakage is NOT decided here. lib/engine/pricing-hygiene.ts is the
+// canonical decision and document-quality-validator.ts already defers to it;
+// a second, cruder rule in this module meant the same document could pass one
+// gate and be refused by the other.
+//
+// The rule that stood here was
+//   /\$\s*[\d,]+|\bprice\b|\bunit cost\b|\bbid price\b|\bfinancial offer\b/i
+// whose bare `\bprice\b` fires on any use of the word, so a technical proposal
+// naming price volatility as a project RISK — which a good one does — was
+// refused at download for carrying a financial offer it does not contain.
+// pricing-hygiene reads sentences, requires an actual commercial amount or
+// commitment, and exempts safe no-price wording and historical reference
+// values, so it answers the question this check is actually asking.
 
 const METHODOLOGY_IN_FINANCIAL_RE =
   /technical approach|work methodology|implementation methodology|technical methodology/i;
@@ -135,7 +195,11 @@ function analyseDocument(
 ): { blockers: AuthorityBlocker[]; warnings: string[] } {
   const blockers: AuthorityBlocker[] = [];
   const warnings: string[] = [];
-  const text = [doc.contentSummary ?? "", doc.reviewNotes ?? ""].join(" ");
+  // Judge the document by its own text when the caller supplies it. The
+  // metadata join remains only for callers that have no bytes to read.
+  const text = typeof doc.documentText === "string"
+    ? doc.documentText
+    : [doc.contentSummary ?? "", doc.reviewNotes ?? ""].join(" ");
   const dtype = (doc.documentType ?? "").toUpperCase();
 
   // AI trace — uses shared AI_TRACE_PATTERNS for comprehensive coverage
@@ -165,7 +229,7 @@ function analyseDocument(
   // Internal notes / Bid-Team stubs (check both INTERNAL_NOTE and BID_TEAM)
   if (INTERNAL_NOTE_RE.test(text)) {
     const match = text.match(INTERNAL_NOTE_RE);
-    const isBidTeam = /Bid-Team to confirm|\[Bid-Team[^\]]*\]/i.test(text);
+    const isBidTeam = /Bid-Team to confirm|to be confirmed by bid[-\s]team|\[Bid-Team[^\]]*\]/i.test(text);
     blockers.push({
       code: isBidTeam ? "BID_TEAM_STUB" : "INTERNAL_NOTE",
       severity: "CRITICAL",
@@ -190,14 +254,13 @@ function analyseDocument(
   }
 
   // Pricing in technical envelope
-  if ((dtype === "TECHNICAL" || dtype === "TECHNICAL_PROPOSAL") && PRICING_IN_TECHNICAL_RE.test(text)) {
-    const match = text.match(PRICING_IN_TECHNICAL_RE);
+  if (containsPricingLeakage(text, { name: doc.name, exactFileName: doc.exactFileName ?? null, documentType: doc.documentType, format: null } as never)) {
     blockers.push({
       code: "PRICING_IN_TECHNICAL",
       severity: "CRITICAL",
       documentId: doc.id,
       documentName: doc.name,
-      detail: `Pricing content found in TECHNICAL document: "${match?.[0] ?? "pattern match"}"`,
+      detail: "Financial pricing content detected in a TECHNICAL document.",
       recoveryAction: "Move all pricing, unit costs, and financial offers to the FINANCIAL document.",
     });
   }
@@ -268,13 +331,26 @@ export function runAuthorityReview(
   }
 
   // Missing required sections — a required section has no matching document
+  // Compare on the BASE name (extension stripped) and include the document's
+  // own exactFileName: generated rows are named without the extension
+  // ("01-Expression-Of-Interest"), so a required section of
+  // "01-Expression-Of-Interest.docx" matched neither `name` nor `documentType`
+  // and a correctly generated file was reported as a CRITICAL
+  // MISSING_REQUIRED_SECTION.
+  const stripExtension = (value: string) => value.replace(/\.[a-z0-9]{2,5}$/i, "").trim().toLowerCase();
   for (const section of tenderRequiredSections) {
     const sectionLower = section.toLowerCase();
-    const hasMatch = documents.some(
-      (d) =>
-        d.name.toLowerCase().includes(sectionLower) ||
-        d.documentType.toLowerCase().includes(sectionLower),
-    );
+    const sectionBase = stripExtension(section);
+    const hasMatch = documents.some((d) => {
+      const candidates = [d.name, d.exactFileName ?? "", d.documentType]
+        .filter((value) => value && value.trim().length > 0)
+        .map((value) => value.toLowerCase());
+      return candidates.some(
+        (candidate) =>
+          candidate.includes(sectionLower) ||
+          (sectionBase.length > 0 && stripExtension(candidate).includes(sectionBase)),
+      );
+    });
     if (!hasMatch) {
       allBlockers.push({
         code: "MISSING_REQUIRED_SECTION",

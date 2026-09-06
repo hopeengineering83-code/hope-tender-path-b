@@ -1,3 +1,4 @@
+import { realBytesFor } from "./helpers/real-artifact-bytes";
 import { describe, it } from "node:test";
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
@@ -31,10 +32,35 @@ const tenderScope = {
   ],
 };
 
-const contents = generatedDocs.map((doc) => ({
-  generatedDocId: doc.id,
-  bytes: Buffer.from(`approved final bytes for ${doc.exactFileName}`),
-}));
+// Real artifact bytes, not placeholder strings: assembly now verifies that an
+// entry's bytes match its name and declared format, and a .docx holding plain
+// text is genuinely mislabelled.
+// Built lazily: the transform used for tests is cjs, which has no top-level
+// await, and real bytes are produced asynchronously.
+async function buildContents() {
+  return Promise.all(
+    generatedDocs.map(async (doc) => ({
+      generatedDocId: doc.id,
+      bytes: await realBytesFor(doc.exactFileName),
+    })),
+  );
+}
+
+function entry(
+  name: string,
+  generatedDocId: string,
+  order = 1,
+  envelope: "TECHNICAL" | "FINANCIAL" | "ADMIN" = "TECHNICAL",
+) {
+  return {
+    name,
+    source: "GENERATED_DOC" as const,
+    generatedDocId,
+    order,
+    envelope,
+    format: name.toLowerCase().endsWith(".xlsx") ? "XLSX" as const : "DOCX" as const,
+  };
+}
 
 describe("final ZIP integration", () => {
   it("creates a valid reopened archive with exact names, order, and no internal extras", async () => {
@@ -45,7 +71,7 @@ describe("final ZIP integration", () => {
     );
     assert.ok(scope.exclusions.some((entry) => entry.docId === "internal"));
 
-    const result = await assembleFinalSubmissionZip(scope.entries, contents);
+    const result = await assembleFinalSubmissionZip(scope.entries, await buildContents());
     assert.equal(result.buffer[0], 0x50);
     assert.equal(result.buffer[1], 0x4b);
     assert.deepEqual(result.fileList, [
@@ -58,7 +84,14 @@ describe("final ZIP integration", () => {
     const actualNames = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
     assert.deepEqual(actualNames, result.fileList);
     assert.equal(zip.file("Win-Probability-Report.docx"), null);
-    assert.match(await zip.file("01-Technical-Proposal.docx")!.async("string"), /approved final bytes/);
+    // The entry must round-trip as the REAL artifact it was given, not as a
+    // placeholder string: a .docx in the package has to be an actual OOXML
+    // package, or the evaluator cannot open it.
+    const technical = await zip.file("01-Technical-Proposal.docx")!.async("nodebuffer");
+    assert.equal(technical.subarray(0, 2).toString("latin1"), "PK", "the packaged .docx must be a real OOXML zip");
+    const inner = await JSZip.loadAsync(technical);
+    assert.ok(inner.file("word/document.xml"), "the packaged .docx must contain a document part");
+    assert.match(await inner.file("word/document.xml")!.async("string"), /Content for 01-Technical-Proposal\.docx/);
   });
 
   it("produces a technical envelope without financial content", async () => {
@@ -66,19 +99,37 @@ describe("final ZIP integration", () => {
       inferEnvelope(doc.documentType, doc.exactFileName) === "TECHNICAL",
     );
     const scope = buildFinalZipEntries({ tender: tenderScope, generatedDocs: technicalDocs });
-    const result = await assembleFinalSubmissionZip(scope.entries, contents);
+    const result = await assembleFinalSubmissionZip(scope.entries, await buildContents());
     const zip = await JSZip.loadAsync(result.buffer, { checkCRC32: true });
     const names = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
     assert.ok(names.includes("01-Technical-Proposal.docx"));
     assert.ok(!names.some((name) => /financial/i.test(name)));
   });
 
+  it("produces independently executable financial and admin envelopes", async () => {
+    const expected: Array<{ envelope: "FINANCIAL" | "ADMIN"; fileName: string; excluded: RegExp }> = [
+      { envelope: "FINANCIAL", fileName: "03-Financial-Proposal.xlsx", excluded: /technical|eligibility/i },
+      { envelope: "ADMIN", fileName: "02-Eligibility-Declaration.docx", excluded: /technical|financial/i },
+    ];
+    for (const item of expected) {
+      const envelopeDocs = generatedDocs.filter((doc) =>
+        inferEnvelope(doc.documentType, doc.exactFileName) === item.envelope,
+      );
+      const scope = buildFinalZipEntries({ tender: tenderScope, generatedDocs: envelopeDocs });
+      const result = await assembleFinalSubmissionZip(scope.entries, await buildContents());
+      const zip = await JSZip.loadAsync(result.buffer, { checkCRC32: true });
+      const names = Object.keys(zip.files).filter((name) => !zip.files[name].dir);
+      assert.deepEqual(names, [item.fileName]);
+      assert.ok(names.every((name) => !item.excluded.test(name)));
+    }
+  });
+
   it("rejects duplicate filenames instead of silently overwriting", async () => {
     await assert.rejects(
       assembleFinalSubmissionZip([
-        { name: "Proposal.docx", source: "GENERATED_DOC", generatedDocId: "technical" },
-        { name: "proposal.docx", source: "GENERATED_DOC", generatedDocId: "admin" },
-      ], contents),
+        entry("Proposal.docx", "technical"),
+        entry("proposal.docx", "admin", 2, "ADMIN"),
+      ], await buildContents()),
       /Duplicate filename/i,
     );
   });
@@ -86,9 +137,9 @@ describe("final ZIP integration", () => {
   it("rejects one generated document being included more than once", async () => {
     await assert.rejects(
       assembleFinalSubmissionZip([
-        { name: "Proposal.docx", source: "GENERATED_DOC", generatedDocId: "technical" },
-        { name: "Proposal-Copy.docx", source: "GENERATED_DOC", generatedDocId: "technical" },
-      ], contents),
+        entry("Proposal.docx", "technical"),
+        entry("Proposal-Copy.docx", "technical", 2),
+      ], await buildContents()),
       /included more than once/i,
     );
   });
@@ -97,8 +148,8 @@ describe("final ZIP integration", () => {
     for (const unsafeName of ["../secret.docx", "/absolute.docx", "folder//blank.docx", "C:/drive.docx"]) {
       await assert.rejects(
         assembleFinalSubmissionZip([
-          { name: unsafeName, source: "GENERATED_DOC", generatedDocId: "technical" },
-        ], contents),
+          entry(unsafeName, "technical"),
+        ], await buildContents()),
         /unsafe path|absolute path/i,
       );
     }
@@ -107,13 +158,13 @@ describe("final ZIP integration", () => {
   it("rejects missing or empty document bytes", async () => {
     await assert.rejects(
       assembleFinalSubmissionZip([
-        { name: "Missing.docx", source: "GENERATED_DOC", generatedDocId: "missing" },
-      ], contents),
+        entry("Missing.docx", "missing"),
+      ], await buildContents()),
       /no document bytes/i,
     );
     await assert.rejects(
       assembleFinalSubmissionZip([
-        { name: "Empty.docx", source: "GENERATED_DOC", generatedDocId: "empty" },
+        entry("Empty.docx", "empty"),
       ], [{ generatedDocId: "empty", bytes: Buffer.alloc(0) }]),
       /no document bytes/i,
     );

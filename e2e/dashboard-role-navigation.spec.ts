@@ -39,6 +39,17 @@ const OWNED_RESTRICTED_ROUTES: readonly OwnedRoute[] = [
   { path: "/dashboard/users", heading: "User Management", dataPath: "/api/users", allowedRoles: ["ADMIN"] },
 ] as const;
 
+// Post-consolidation (see lib/dashboard-navigation.ts), none of these routes
+// is its own literal sidebar link anymore — each is a memberHref reached via
+// its parent destination's own sub-nav tab bar. The parent destination is
+// what actually appears/disappears from the rendered nav per role.
+const OWNED_ROUTE_PARENT_HREF: Record<(typeof OWNED_RESTRICTED_ROUTES)[number]["path"], string> = {
+  "/dashboard/settings": "/dashboard/company",
+  "/dashboard/assets": "/dashboard/company",
+  "/dashboard/setup": "/dashboard/company",
+  "/dashboard/users": "/dashboard/activity",
+};
+
 function roleCanAccess(role: Role, route: OwnedRoute): boolean {
   return route.allowedRoles.includes(role);
 }
@@ -182,7 +193,14 @@ test.describe("dashboard role navigation and direct-route authorization", () => 
         await expect(navigation.locator('[aria-current="page"]'), `${role} dashboard active item`).toHaveCount(1);
 
         for (const route of OWNED_RESTRICTED_ROUTES) {
-          expect(hrefs.includes(route.path), `${role} owned navigation route ${route.path}`).toBe(roleCanAccess(role, route));
+          // The route itself is never a literal sidebar link (it's a
+          // memberHref) — its parent destination is what's actually
+          // advertised or hidden per role.
+          expect(hrefs.includes(route.path), `${role} must never see ${route.path} itself as a literal sidebar link`).toBe(false);
+          expect(
+            hrefs.includes(OWNED_ROUTE_PARENT_HREF[route.path]),
+            `${role} owned navigation parent ${OWNED_ROUTE_PARENT_HREF[route.path]} for ${route.path}`,
+          ).toBe(roleCanAccess(role, route));
         }
         expect(hrefs).not.toContain("/dashboard/admin");
 

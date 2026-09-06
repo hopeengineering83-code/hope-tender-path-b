@@ -68,11 +68,20 @@ describe("generate route — regex fallback gate", () => {
 });
 
 describe("generation-readiness route — canonical analysis-source helper", () => {
-  it("imports detectAnalysisSourceWithApproval, not a local regex", async () => {
+  it("resolves the analysis source through the canonical helper, not a local regex", async () => {
     const { readFileSync } = await import("node:fs");
     const source = readFileSync("app/api/tenders/[id]/generation-readiness/route.ts", "utf8");
-    // Must use the canonical helper that checks the ComplianceGap approval row.
-    assert.match(source, /detectAnalysisSourceWithApproval/);
+    // resolveCanonicalAnalysisSource is the canonical helper: it reads the
+    // AiJob/AiAnalyzeChunk resolver first and delegates to
+    // detectAnalysisSourceWithApproval — which is what checks the
+    // ANALYSIS_APPROVAL:REGEX_FALLBACK ComplianceGap row — for every state the
+    // resolver does not establish. The approval distinction this test was
+    // written for is therefore preserved.
+    //
+    // The route previously called the notes-only detector directly, so an AI
+    // Analyze proven only by job rows read as UNKNOWN and the route told the
+    // owner their analysed tender had never been analysed.
+    assert.match(source, /resolveCanonicalAnalysisSource/);
     // Must NOT use the old ad-hoc regex against tender.notes only.
     assert.doesNotMatch(source, /hasRegexFallbackSource/);
   });
