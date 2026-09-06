@@ -120,12 +120,20 @@ function readsAsProse(text: string, minLength: number): boolean {
   return !(labelPairs >= 2 && labelPairs > sentenceEnds);
 }
 
-/** Does any run of `size` consecutive words occur more than once? */
+/**
+ * Does any run of `size` consecutive words occur more than once?
+ *
+ * "and" is dropped before comparing, because a CV header card writes the firm
+ * one way in the letterhead and another in the body — "Hope Architectural and
+ * Engineering Consultancy PLC" against "Hope Architectural & Engineering
+ * Consultancy PLC" — and those are the same repetition to a reader.
+ */
 function hasRepeatedPhrase(words: string[], size: number): boolean {
-  if (words.length < size * 2) return false;
+  const significant = words.filter((word) => word.toLowerCase() !== "and");
+  if (significant.length < size * 2) return false;
   const seen = new Set<string>();
-  for (let i = 0; i + size <= words.length; i += 1) {
-    const phrase = words.slice(i, i + size).join(" ").toLowerCase();
+  for (let i = 0; i + size <= significant.length; i += 1) {
+    const phrase = significant.slice(i, i + size).join(" ").toLowerCase();
     if (seen.has(phrase)) return true;
     seen.add(phrase);
   }
@@ -188,7 +196,10 @@ export function factualCardOrEmpty(text: string | null | undefined): string {
   const cleaned = withoutSourceProvenance(text);
   if (!cleaned) return "";
   const words = cleaned.match(/\b[A-Za-z][A-Za-z&.'’\-]*\b/g) ?? [];
-  if (hasRepeatedPhrase(words, 4)) return "";
+  // A facts column is short, so a three-word echo is already the header card
+  // saying the person's title or the firm's name twice. The prose gate uses a
+  // wider window, where a three-word coincidence is ordinary English.
+  if (hasRepeatedPhrase(words, 3)) return "";
   const shouted = words.filter((word) => word.length > 1 && word === word.toUpperCase()).length;
   if (words.length > 0 && shouted / words.length > 0.25) return "";
   return cleaned;

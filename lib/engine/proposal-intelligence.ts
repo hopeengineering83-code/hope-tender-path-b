@@ -1,5 +1,5 @@
 import { logger } from "../observability";
-import { tidyTruncation, withoutSourceProvenance } from "./vault-prose";
+import { tidyTruncation, factualCardOrEmpty } from "./vault-prose";
 import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
 export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
@@ -1597,7 +1597,7 @@ export function expertProofLine(expert: ExpertLite): string {
   // that is the source document's furniture rather than a profile is dropped;
   // the structured fields on either side of it carry the same facts.
   const profile = truncateAtWordBoundary(
-    withoutSourceProvenance(withoutCvDocumentFurniture(withoutPersonalCvFields(clean(expert.profile)))),
+    factualCardOrEmpty(withoutCvDocumentFurniture(withoutPersonalCvFields(clean(expert.profile)))),
     600,
   );
   return [

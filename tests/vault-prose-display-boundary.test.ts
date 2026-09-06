@@ -32,9 +32,10 @@ import { strict as assert } from "node:assert";
 import {
   withoutSourceProvenance,
   proseProfileOrEmpty,
+  factualCardOrEmpty,
   tidyTruncation,
 } from "../lib/engine/vault-prose";
-import { truncateAtWordBoundary } from "../lib/engine/proposal-intelligence";
+import { truncateAtWordBoundary, expertProofLine } from "../lib/engine/proposal-intelligence";
 import { buildPrincipalQualificationsSection } from "../lib/engine/principal-qualifications";
 
 const DELIVERED_CV_DUMP =
@@ -177,5 +178,59 @@ describe("a bio is composed from the record when the vault has no prose", () => 
     const section = buildPrincipalQualificationsSection({ experts: [withProse] })!;
     assert.match(section, /Ahmed leads the firm's structural and geotechnical practice/);
     assert.ok(!/is proposed as Senior Environmental/.test(section), "the composed fallback is not used when prose exists");
+  });
+});
+
+// ── The proof line is a facts line, and a CV card is not facts ───────────────
+//
+// Run 34041093363 still shipped this into "Proposed Team and Expert
+// Contributions" and the PER 02 profile cards, after the bios and the A.4 table
+// had been cleaned:
+//
+//   Daniel Getachew Tadesse — Senior Electrical Engineer | 11+ years experience
+//   | Disciplines: … | Sectors: … | (M.SC.) 11+ Years Professional Experience
+//   Specialized in Electrical Systems & Renewable Energy Senior Electrical
+//   Engineer Hope Architectural and Engineering Consultancy PLC Daniel Getachew
+//   Tadesse English: Fluent (Professional); Amharic: Native; Dutch: Basic ETAP,
+//   AutoCAD Electrical, DIALux, SAM, MATLAB/Simulink, MS Project Ethiopia,
+//   Djibouti, Netherlands …
+//
+// The title, the firm and the person's name each appear twice, because the CV's
+// header card is being read as though it were a profile. The structured fields
+// in front of it already say everything the card says.
+describe("the expert proof line drops a CV card", () => {
+  const DELIVERED_CARD =
+    "(M.SC.) 11+ Years Professional Experience Specialized in Electrical Systems & Renewable Energy "
+    + "Senior Electrical Engineer Hope Architectural and Engineering Consultancy PLC Daniel Getachew "
+    + "Tadesse English: Fluent (Professional); Amharic: Native; Dutch: Basic ETAP, AutoCAD Electrical, "
+    + "DIALux, SAM, MATLAB/Simulink, MS Project Ethiopia, Djibouti, Netherlands Hope Architectural & "
+    + "Engineering Consultancy PLC October 2023 – Present Senior Electrical Engineer & Renewable "
+    + "Energy Specialist";
+
+  it("refuses a card that repeats the person's own title and firm", () => {
+    assert.equal(factualCardOrEmpty(DELIVERED_CARD), "");
+  });
+
+  it("keeps a short factual card that says something new", () => {
+    const card = "MSc Electrical Engineering; hospital MEP design; medical gas reticulation";
+    assert.equal(factualCardOrEmpty(card), card);
+  });
+
+  it("keeps the structured facts in the proof line either way", () => {
+    const line = expertProofLine({
+      fullName: "Daniel Getachew Tadesse",
+      title: "Senior Electrical Engineer",
+      yearsExperience: 11,
+      disciplines: JSON.stringify(["Electrical Engineering", "Environmental Engineering"]),
+      sectors: JSON.stringify(["Healthcare", "Infrastructure"]),
+      certifications: JSON.stringify([]),
+      profile: DELIVERED_CARD,
+    } as unknown as Parameters<typeof expertProofLine>[0]);
+
+    assert.match(line, /Daniel Getachew Tadesse — Senior Electrical Engineer/);
+    assert.match(line, /Disciplines: Electrical Engineering, Environmental Engineering/);
+    assert.match(line, /Sectors: Healthcare, Infrastructure/);
+    assert.ok(!/DR\. ENG\.|M\.SC\.\) 11\+ Years/.test(line), `no CV card: ${line}`);
+    assert.ok(!/Hope Architectural and Engineering Consultancy PLC/.test(line), `no letterhead: ${line}`);
   });
 });

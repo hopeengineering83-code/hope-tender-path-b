@@ -38,7 +38,7 @@
  */
 
 import type { ExpertRecord, ProjectRecord } from "./benchmark-tables";
-import { withoutSourceProvenance } from "./vault-prose";
+import { factualCardOrEmpty } from "./vault-prose";
 import { truncateAtWordBoundary } from "./proposal-intelligence";
 
 const MARKER_LOADING = "<!-- personnel:per-01-loading -->";
@@ -423,7 +423,7 @@ function buildOneExpertCard(e: ExpertRecord, idx: number, projects: ProjectRecor
     // profile fallback is cut at a word boundary like every other evidence line.
     { label: "Sectors of Practice", value: safeArr(e.sectors).join(", ") || "Recorded against the reviewed specialist record" },
     { label: "Key Project References", value: expertProjectsLine(e, projects) },
-    { label: "Core Competencies", value: safeArr(e.disciplines).join(", ") || (e.profile ? truncateAtWordBoundary(withoutSourceProvenance(e.profile), 200) : "Recorded against the reviewed specialist record") },
+    { label: "Core Competencies", value: safeArr(e.disciplines).join(", ") || (e.profile ? truncateAtWordBoundary(factualCardOrEmpty(e.profile), 200) : "Recorded against the reviewed specialist record") },
     { label: "Availability for This Assignment", value: "CONFIRMED AVAILABLE — signed availability declaration filed in Appendix C of this submission" },
   ];
   lines.push("| Field | Detail |");
