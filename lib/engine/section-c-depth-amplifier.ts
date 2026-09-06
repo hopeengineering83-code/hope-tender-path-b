@@ -369,25 +369,43 @@ function buildAddendum(opts: {
       const tokens = c.toLowerCase().match(/[a-z]{5,}/g) ?? [];
       return tokens.some((t) => CANONICAL_TOKENS.has(t));
     };
+    // A criterion string is drafting guidance, not a heading. The internal
+    // fallback list reads "Relevant project experience — lead with
+    // highest-value comparable projects by sector"; only the label before the
+    // dash is client-facing, and the guidance tail must never reach the page.
+    //
+    // Three of these labels — relevant project experience, team
+    // qualifications, company capacity — are the subjects of Sections B, A.4
+    // and A.7. A delivered proposal carried them here as C.13, C.14 and C.15
+    // with the guidance stripped and nothing put in its place: three contents
+    // entries promising sections that had no text at all. A criterion already
+    // answered elsewhere in the proposal belongs in the Compliance Matrix
+    // mapping, not in a second empty sub-section of its own.
+    const ANSWERED_ELSEWHERE_RX =
+      /^(?:relevant\s+project\s+experience|quality\s+and\s+relevance\s+of\s+project\s+portfolio|team\s+qualifications|strength\s+of\s+professional\s+team|company\s+(?:capacity|profile)|compliance\s+with\s+all\s+submission)/i;
     const unmapped = opts.evaluationCriteria
       .map((c) => c.replace(/\s*[-:]\s*\d+\s*(?:%|points?|marks?|pts).*$/i, "").trim())
-      .filter((c) => c.length >= 8 && !criterionIsMapped(c));
+      .map((c) => c.split(/\s+[—–]\s+/)[0].trim())
+      .filter((c) => c.length >= 8 && !criterionIsMapped(c) && !ANSWERED_ELSEWHERE_RX.test(c));
     const seen = new Set<string>();
     let dynIdx = 5;
     for (const criterion of unmapped.slice(0, 3)) {
       const key = criterion.toLowerCase().slice(0, 40);
       if (seen.has(key)) continue;
       seen.add(key);
-      const anchor = opts.projects[dynIdx % Math.max(1, opts.projects.length)]
-        ? projectAnchor(opts.projects[dynIdx % opts.projects.length], "demonstrated on")
-        : `Bid-Team Action: confirm ${criterion} evidence anchor before submission.`;
+      const project = opts.projects[dynIdx % Math.max(1, opts.projects.length)];
+      // Without a reviewed project to anchor it, the sub-section's only body
+      // used to be an internal "Bid-Team Action" line — which the client-facing
+      // sanitiser then deleted, leaving the heading standing over nothing.
+      // Say nothing rather than promise a section with no content.
+      if (!project) continue;
       blocks.push(
         `## C.${dynIdx} ${criterion}`,
         "",
         // Not "approach to <criterion>": the heading already states the
         // criterion, and repeating it verbatim in the first sentence reads as
         // filler to an evaluator who has just read it.
-        `${opts.companyName}'s response to this criterion is grounded in the firm's reviewed portfolio of ${opts.primarySector.toLowerCase()} assignments. ${anchor}`,
+        `${opts.companyName}'s response to this criterion is grounded in the firm's reviewed portfolio of ${opts.primarySector.toLowerCase()} assignments. ${projectAnchor(project, "demonstrated on")}`,
       );
       dynIdx++;
     }

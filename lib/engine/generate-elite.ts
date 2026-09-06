@@ -77,6 +77,7 @@ import { stripPlaceholders } from "./placeholder-stripper";
 import { stripInternalReviewSections, stripInternalDiagnosticContent } from "./internal-review-stripper";
 import { reorderSectionsAndRebuildToc } from "./section-orderer-and-toc";
 import { normalizeSectionC } from "./section-c-authority";
+import { sealDocumentStructure, sectionCHeadingsOf } from "./document-structure-seal";
 import { enforceClientName } from "./client-name-enforcer";
 import { suppressDuplicateSectionHeadings } from "./duplicate-section-suppressor";
 import { injectPersonnelDeep } from "./personnel-deep";
@@ -2879,11 +2880,33 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   }
   humanizedMarkdown = sectionCFirst.markdown;
 
+  // The authority names the sub-sections Section C is meant to deliver. A dozen
+  // sanitising passes run between here and the render, and hosted run
+  // 34035620990 proved one of them silently drops a heading: the authority
+  // logged C.1 … C.20, the delivered PDF's contents page skipped C.7, and the
+  // Risk Register's tables were left sitting under C.6 Sector-Specific
+  // Technical Standards with nothing to say they were a different sub-section.
+  // Recording the expected set here lets the seal report exactly which
+  // sub-section was lost, and which pass lost it, instead of the loss reaching
+  // a client unremarked.
+  const sectionCExpected = sectionCHeadingsOf(humanizedMarkdown)
+    .map((heading) => heading.replace(/^C\.\d+[a-z]?\s*/i, "").trim());
+  const noteSectionCLoss = (checkpoint: string, markdown: string): void => {
+    const present = new Set(
+      sectionCHeadingsOf(markdown).map((heading) => heading.replace(/^C\.\d+[a-z]?\s*/i, "").trim()),
+    );
+    const lost = sectionCExpected.filter((title) => !present.has(title));
+    if (lost.length > 0) {
+      logger.warn(`[generate-elite] Section C sub-section(s) lost by ${checkpoint}: ${lost.join("; ")}.`);
+    }
+  };
+
   const sectionOrderResult = reorderSectionsAndRebuildToc(humanizedMarkdown);
   if (sectionOrderResult.reorderedSectionCount > 0) {
     logger.info(`[generate-elite] Section orderer: reordered ${sectionOrderResult.reorderedSectionCount} section(s); rebuilt TOC with ${sectionOrderResult.tocEntries} entries.`);
   }
   humanizedMarkdown = sectionOrderResult.markdown;
+  noteSectionCLoss("the section orderer", humanizedMarkdown);
 
   // ─── Placeholder stripper (PR J) — LAST post-pass before DOCX render ────
   // Removes "Bid-Team Action: confirm X" lines and italic placeholder
@@ -2896,6 +2919,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     logger.info(`[generate-elite] Placeholder stripper: removed ${stripped.removedLines} line(s), ${stripped.removedParagraphs} paragraph(s); blanked ${stripped.blankedCells} table cell(s).`);
   }
   humanizedMarkdown = stripped.markdown;
+  noteSectionCLoss("the placeholder stripper", humanizedMarkdown);
 
   // ─── Markdown cover page + RFP meta bar (PR EE + PR II) ─────────────────
   // PR EE: Inject a formal markdown cover page at the very top of the proposal
@@ -2939,6 +2963,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // or a QA review table with identical headers. Keep the LAST occurrence
   // (deterministic builders run last, so the structured version survives).
   const dedupedTables = deduplicateTables(humanizedMarkdown);
+  noteSectionCLoss("the table de-duplicator", dedupedTables.markdown);
   if (dedupedTables.removed > 0) {
     logger.info(`[generate-elite] Duplicate table deduplicator removed ${dedupedTables.removed} line(s) from ${Math.floor(dedupedTables.removed / 3)} duplicate table block(s) (PR HH).`);
   }
@@ -3493,6 +3518,25 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   workingMarkdown = diagnosticSweep.markdown;
 
   workingMarkdown = disambiguateRepeatedHeadings(workingMarkdown);
+
+  // ─── The last word on heading structure ─────────────────────────────────
+  // Everything above this line may still add or remove a heading; nothing
+  // below it may. The seal drops headings whose bodies the sanitisers emptied,
+  // derives every sub-section number over what actually survived, and points
+  // title-bearing cross-references at the number their section really has.
+  // Numbering derived any earlier describes a document that no longer exists
+  // by the time it is rendered — which is how a delivered contents page came
+  // to skip C.7 and D.4 while advertising four sub-sections that had no text
+  // under them at all.
+  noteSectionCLoss("the render boundary", workingMarkdown);
+  const structureSeal = sealDocumentStructure(workingMarkdown);
+  if (structureSeal.droppedEmpty.length > 0) {
+    logger.info(`[generate-elite] Structure seal dropped ${structureSeal.droppedEmpty.length} heading(s) left with no content: ${structureSeal.droppedEmpty.join("; ")}.`);
+  }
+  if (structureSeal.renumbered > 0 || structureSeal.resolvedCrossReferences > 0) {
+    logger.info(`[generate-elite] Structure seal renumbered ${structureSeal.renumbered} sub-heading(s) and repointed ${structureSeal.resolvedCrossReferences} cross-reference(s); Section C delivers ${structureSeal.sectionCHeadings.length} sub-section(s).`);
+  }
+  workingMarkdown = structureSeal.markdown;
 
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;

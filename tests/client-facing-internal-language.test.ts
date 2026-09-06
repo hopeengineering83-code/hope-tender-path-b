@@ -530,3 +530,34 @@ describe("Section G rows are distinct propositions", () => {
     assert.doesNotMatch(markdown, /we have (?:already )?(?:delivered|completed|built) (?:this|these)/i);
   });
 });
+
+// ── Section G must answer the requirement it names ───────────────────────────
+//
+// A delivered Section G answered "ICT systems, digital platforms and
+// information management" with the firm's biomedical-equipment capability:
+// "Licensed biomedical engineering specialist engaged for equipment spatial
+// planning, electrical load calculation, and radiation shielding…". The claim
+// is true and well-evidenced — about a different subject. The theme map's
+// "ct\b" pattern had no leading word boundary, so it matched the tail of "ICT".
+describe("Section G answers the requirement it names", () => {
+  const build = (theme: string) => injectWinThemesTable("# Proposal\n\n# Section E: Compliance Matrix\n", {
+    primarySector: "Healthcare / Medical Facility Design",
+    projects: [],
+    themes: [theme],
+    evaluationCriteria: [],
+    companyName: "Hope Urban Planning Architectural and Engineering Consultancy PLC",
+  }).markdown;
+
+  it("does not answer an ICT requirement with the biomedical capability", () => {
+    const markdown = build("ICT systems, digital platforms and information management");
+    const ictRow = markdown.split("\n").find((line) => /^\|.*\bICT\b/.test(line));
+    assert.ok(
+      !ictRow || !/biomedical/i.test(ictRow),
+      `an ICT requirement must not be answered with the biomedical capability: ${ictRow}`,
+    );
+  });
+
+  it("still answers a genuine imaging requirement with the biomedical capability", () => {
+    assert.match(build("CT and MRI imaging suite planning with radiation shielding"), /biomedical/i);
+  });
+});

@@ -185,7 +185,7 @@ export function normalizeSectionC(markdown: string): SectionCNormalizationResult
       const identity = identifySectionCHeading(rawTitle);
       const bareTitle = identity
         ? sectionCTitle(identity)
-        : rawTitle.replace(/^\s*C\.\d+[a-z]?(?:\.\d+)?\s*[:.\-–—]?\s*/i, "").trim();
+        : rawTitle.replace(/^\s*[A-Z]\.\d+[a-z]?(?:\.\d+)?\s*[:.\-–—]?\s*/i, "").trim();
       const order = identity
         ? CANONICAL_SECTION_C.findIndex((entry) => entry.identity === identity)
         : Number.MAX_SAFE_INTEGER;

@@ -358,7 +358,7 @@ function defaultRows(sector: string): ThemeRow[] {
  */
 const THEME_CAPABILITY_MAP: Array<{ match: RegExp; capability: string; clientValue: string }> = [
   {
-    match: /infection|ipc\b|clean.{0,12}dirty|isolation|sterili|cross[- ]contamination/i,
+    match: /infection|\bipc\b|clean.{0,12}dirty|isolation|sterili|cross[- ]contamination/i,
     capability: "Infection-prevention zoning applied from schematic design: clean/dirty separation, isolation-room circulation and staff/patient/supply flows resolved before layouts are frozen",
     clientValue: "IPC compliance is designed in rather than retrofitted, so clinical commissioning is not held up by circulation rework",
   },
@@ -378,7 +378,12 @@ const THEME_CAPABILITY_MAP: Array<{ match: RegExp; capability: string; clientVal
     clientValue: "MEP coordination is internal rather than contractual, so interface issues are resolved by the team instead of between sub-consultants",
   },
   {
-    match: /biomedical|medical.{0,10}equipment|imaging|radiation|shielding|ct\b|mri\b|x-?ray/i,
+    // The abbreviations carry a leading word boundary. Without one, "ct\\b"
+    // matched the tail of "ICT", and a delivered Section G answered the
+    // requirement "ICT systems, digital platforms and information management"
+    // with the firm's biomedical-equipment capability — a specific,
+    // well-evidenced claim about the wrong subject.
+    match: /biomedical|medical.{0,10}equipment|imaging|radiation|shielding|\bct\b|\bmri\b|\bx-?ray\b/i,
     capability: "Licensed biomedical engineering specialist engaged for equipment spatial planning, electrical load calculation, and radiation shielding and licensing where the confirmed equipment brief requires it",
     clientValue: "Equipment-driven requirements are settled at design stage, so imaging and laboratory rooms do not need structural or shielding rework",
   },
@@ -403,7 +408,7 @@ const THEME_CAPABILITY_MAP: Array<{ match: RegExp; capability: string; clientVal
     clientValue: "Progress and quality are evidenced in writing throughout, so certification decisions rest on records rather than recollection",
   },
   {
-    match: /quality|qa\b|qc\b|review.{0,10}gate|peer.{0,10}review/i,
+    match: /quality|\bqa\b|\bqc\b|review.{0,10}gate|peer.{0,10}review/i,
     capability: "Three formal design gates at 30%, 60% and 100% with an independent reviewer who is not on the delivery team",
     clientValue: "Errors are caught by fresh eyes before issuance rather than by the client at review",
   },
