@@ -123,6 +123,76 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-06 UTC — Claude Code (17-dimension assessment on the delivered PDF: 78/100, FAIL)
+
+**Branch / PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, base
+`integration/controlled-recovery`). **Head assessed:** `461c7949`, hosted run
+34051697101, artifact sha256 `54d9402a95d775d0`, regeneration proven.
+
+**THE SCORE. Overall 78/100. Seven dimensions below 85. This FAILS the stated
+bar (>= 90 overall AND no dimension < 85).** Scored against the delivered PDF,
+not against any internal rubric. The app's own 10-axis scorer reported 68 -> 78
+on the same run, which corroborates the number but is not what produced it.
+
+| # | Dimension | Score | Reason from the delivered text |
+|---|---|---|---|
+| 1 | Tender understanding | 86 | C.2 names the real scope chain — premises advice before selection, design to Health Authority standards, MEP including medical gas and radiation safety, approvals, supervision to operational readiness — and says a generic building consultancy is not sufficient. |
+| 2 | Evaluator alignment | 82 | E.1 maps each detected requirement to a section with source quotes and page refs; Section F answers each published criterion. Two criteria map to "Compliance Matrix annex (cross-referenced to proposal sections)", which is circular. |
+| 3 | Executive-summary strength | 62 | Opens "brings relevant reviewed experience", restates the one project record twice, then two bulleted lists. An inventory, not a thesis; it never says what the evaluator should conclude. |
+| 4 | Competitive thesis | 70 | Section G rows are now distinct and specific, and D.1 Value Framework (Facility Intelligence / Workflow Engineering / Revenue-Based Zoning) is the strongest writing in the document — but the case is never assembled into an argument at the front. |
+| 5 | Evidence density | 68 | One reviewed project and three specialists. Evidence lands where it belongs and no longer pads; density is limited by the vault, not by the writing. |
+| 6 | Comparable-project relevance | 60 | A single hospital record (G+6, 7,000 m2, ETB 7m) carries the portfolio, the mapping and Section G. Relevant, but there is no second comparable. |
+| 7 | Expert-role-project mapping | 62 | A.6 maps all three specialists to the same project. Honest, and shallow: a mapping table where every row names one project proves little. |
+| 8 | Healthcare technical depth | 88 | MoH functional programming, IPC clean/dirty separation, HEPA, Legionella, HTM 02-01, PACS-ready cabling, lead shielding, medical-gas reticulation, and a biomedical-specialist engagement plan with named scope. |
+| 9 | Methodology actionability | 85 | Six phases with named leads, artefacts and exit gates; RACI; communication protocol; QA hold, witness and review points with named authorities. |
+| 10 | Deliverables / implementation | 84 | Work-plan table with milestones, roles, deliverables and durations, phase-by-phase narrative, deliverable QA checklist. |
+| 11 | QA/QC | 87 | Three gates at 30/60/100 with named sign-off authority and independent peer review; ITP-style table with IPC flow audit and medical-gas routing hold points. |
+| 12 | Regulatory / compliance | 76 | Health Authority licensing pack, approvals pathway, World Bank ESF, ethics declaration citing Proclamations 433/2005 and 657/2009. **D.3 Professional Certifications and Affiliations is absent** — its body is stripped upstream and the seal drops the empty heading. An evaluator notices a missing certifications section. |
+| 13 | Risk / mitigation | 84 | C.7 carries a scored register with impact and likelihood and mitigations tied to specific gates, plus a tender-specific obstacles table. |
+| 14 | Tender-specific language | 85 | Client named correctly throughout, exact submission emails and subject line, explicit "Technical Proposal only, no financial offer" note, tender-specifics sub-section. |
+| 15 | Narrative coherence | 64 | Sections are individually coherent; the document does not build. Cover letter to executive summary to A to B to C reads as assembly. Some fallback prose is generic ("draws on established delivery templates"). |
+| 16 | Professional structure | 92 | Gapless numbering across every section, contents page matching the body exactly and in order, 36/36 pages, consistent tables, no layout fault. |
+| 17 | Factual grounding | 90 | Every claim traces to a reviewed record or is stated as a methodology commitment. No invented projects, no strengthened claims; the "QA framework delivered on <project>" overclaim was removed this session. |
+
+**Why it fails, and what would move it.** The seven low dimensions have two
+causes and neither is a defect in the code that remains:
+
+1. **The writer.** Dimensions 3, 4 and 15 are executive summary, competitive
+   thesis and narrative coherence — exactly what a language model contributes
+   and a deterministic template cannot. Every hosted run in this session
+   generated all four proposal sections from the deterministic fallback:
+   Gemini rate-limited, Groq over its TPM budget, Z.ai timing out or 429,
+   Mistral tier-blocked, Together holding an invalid key, and Cerebras,
+   OpenRouter, DeepSeek and Anthropic all returning payment or credit errors.
+2. **The vault.** Dimensions 5, 6 and 7 are evidence density, comparable-project
+   relevance and expert-to-project mapping. The tender's vault holds one
+   reviewed project. No amount of writing turns one comparable into several,
+   and inventing a second is exactly what this codebase refuses to do.
+
+Dimension 12 is the one with an engineering cause: D.3 Professional
+Certifications and Affiliations has its body stripped upstream, the seal drops
+the empty heading, and the delivered proposal has no certifications section.
+That is the next code defect to chase and is not yet root-caused.
+
+**Owner actions, in the order they would move the score:**
+
+1. Restore AI provider credit — Anthropic, DeepSeek, Cerebras and OpenRouter all
+   report payment errors; Together's key is invalid; Mistral's model is not in
+   the subscription tier. This unblocks dimensions 3, 4 and 15.
+2. Add reviewed healthcare project records to the vault. This unblocks 5, 6, 7.
+
+**Mechanical state of the delivered artifact: clean, and verified on it.**
+34 numbered headings, contents page identical to the body in content and order;
+A.0-A.8, B.1-B.2, C.1-C.17, D.1-D.3, E.1 gapless with no duplicates; 36/36 pages
+numbered correctly; export-readiness ok=True status=READY blockers=0; POST
+/export 200; ZIP valid. Zero hits for CV letterhead, CV furniture,
+reference-letter provenance, internal notes, AI traces, evaluator simulation,
+placeholders, financial leakage, BOQ, source markers, dangling brackets,
+dangling conjunctions, mid-word cuts and HTML sentinels.
+
+**Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+
 ### 2026-09-06 UTC — Claude Code (editorial structure: one numbering authority, sealed at the render)
 
 **Branch / PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`).
