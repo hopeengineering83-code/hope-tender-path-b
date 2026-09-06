@@ -123,6 +123,82 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-06 UTC — Claude Code (editorial structure: one numbering authority, sealed at the render)
+
+**Branch / PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`).
+**Heads:** `f5f7c229` → `8dfa1e2e` → `fc4f5d06`.
+
+**Scope.** The four structural editorial defects in the delivered Pharo Technical
+Proposal, measured against artifacts each hosted run proved it had regenerated
+(runs 34035620990 and 34037370200; baseline → current sha256 differed on both).
+
+**Confirmed fixed in the delivered PDF.**
+
+- Evidence placement — the A.1 address block carries no citation; no anchor lands
+  on contact details, submission metadata, page furniture or a signature block.
+- Local repetition — all four repeated proof-sentence templates are gone, while
+  project evidence still appears in the cover letter, portfolio, team-to-project
+  mapping and compliance matrix.
+- Section G — every row carries a distinct capability, client value and evidence
+  type; the boilerplate proposition is gone.
+- Section C, Section D and Section A numbering — gapless and suffix-free in the
+  body of run 34037370200: A.0–A.8, B.1–B.2, C.1–C.16, D.1–D.3, E.1.
+
+**Root cause of the numbering defect, for the record.** The Section C authority
+was correct and ran too early. A dozen sanitising passes run between it and the
+render and any of them may delete a heading or empty a body, so numbering
+derived before them describes a document that no longer exists. `lib/engine/
+document-structure-seal.ts` now derives every sub-section number once,
+immediately before the render, drops headings whose bodies were emptied, and
+rebuilds the contents page from the sealed body.
+
+**OPEN — content stripped from legitimate sections, upstream of the seal.**
+
+Run 34037370200 delivered `C.15 Phase-by-Phase Methodology Narrative` containing
+Phase 3 and Phase 5 with Phase 4's body gone, and one of three innovation
+entries where three were built. The seal removed the resulting empty headings
+and logs each one it drops, so the symptom no longer reaches the reader as an
+empty promise — but the content loss itself is unfixed.
+
+The same family of defect deletes the `Risk Register and Mitigation Strategy`
+heading. The tripwire in `generate-elite.ts` reports no loss at the section
+orderer, the placeholder stripper or the table de-duplicator, and reports it at
+the render boundary, so the pass responsible is one of the six between them;
+four more checkpoints were added in `fc4f5d06` to name it. The seal restores
+that heading from the opening line the authority records, so the delivered
+document is correct while the upstream cause is still logged as a warning.
+
+Each of the following was tested directly against the real section and does NOT
+remove it: the placeholder stripper, table de-duplicator, internal-review
+stripper, internal-diagnostic sweep, benchmark output polisher, section orderer,
+duplicate-section suppressor, heading disambiguator, price-leakage guard.
+
+**BLOCKED ON AN OWNER ACTION — AI provider capacity.** In run 34037370200 all
+four proposal sections came from the deterministic fallback writer. Gemini
+rate-limited, Groq over its TPM budget, Z.ai 429, Mistral tier-blocked, Together
+holding an invalid key, and Cerebras, OpenRouter, DeepSeek and Anthropic all
+returning payment/credit errors. The 17-dimension narrative target cannot be met
+by code while the writer is deterministic; restoring provider credit is an owner
+action.
+
+**Tests.** `npx tsc --noEmit` clean. `npx next lint` — no ESLint warnings or
+errors. Full suite with `RUN_DB_INTEGRATION=true` against local PostgreSQL:
+**11,391 pass / 0 fail**. New: `tests/document-structure-seal.test.ts` (18),
+`tests/section-c-authority.test.ts` (13),
+`tests/evidence-placement-and-repetition.test.ts` (20), plus Section G cases in
+`tests/client-facing-internal-language.test.ts`.
+
+**Deployment.** Preview READY and release-matched at each head; `/api/health`
+`ok:true`, `schemaMatchesDeployedCode:true`, `databaseFingerprint d74f2ac75c88`.
+Hosted acceptance passed every gate on `8dfa1e2e`: regeneration proven,
+export-readiness `ok=True status=READY blockers=0`, POST /export 200, ZIP valid.
+
+**Next action.** Run hosted acceptance on `fc4f5d06`; read the checkpoint
+warnings to name the pass that deletes the heading, and fix it at source.
+
+**Merge status:** not reviewed. Do not merge. Do not promote Production.
+
+
 ### 2026-09-06 UTC — Claude Code (generation regression, harness honesty, artifact verified clean)
 
 - **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
