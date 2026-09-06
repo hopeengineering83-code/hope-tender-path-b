@@ -67,6 +67,7 @@ import {
 import { reorderToCanonicalSequence } from "./section-reorderer";
 import { renderDynamicTableOfContents } from "./dynamic-toc";
 import { humanize, humanizeDeterministic, humanizeOpeningSections } from "./humanize";
+import { recordTypeForDisplay } from "./vault-prose";
 import { injectEvidenceMarkers } from "./evidence-marker-injector";
 import { amplifySectionCDepth } from "./section-c-depth-amplifier";
 import { injectMethodologyTables } from "./methodology-tables";
@@ -696,10 +697,10 @@ function fallbackProposalMarkdown(params: {
   const legalRecs = params.companyLegalRecords ?? [];
   const complianceRecs = params.companyComplianceRecords ?? [];
   if (legalRecs.length > 0) {
-    lines.push(...legalRecs.slice(0, 3).map((r) => `- ${r.title}${r.recordType ? ` (${r.recordType})` : ""}${r.authority ? ` — ${r.authority}` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
+    lines.push(...legalRecs.slice(0, 3).map((r) => `- ${r.title}${recordTypeForDisplay(r.recordType) ? ` (${recordTypeForDisplay(r.recordType)})` : ""}${r.authority ? ` — ${r.authority}` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
   }
   if (complianceRecs.length > 0) {
-    lines.push(...complianceRecs.slice(0, 3).map((r) => `- ${r.title}${r.complianceType ? ` (${r.complianceType})` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
+    lines.push(...complianceRecs.slice(0, 3).map((r) => `- ${r.title}${recordTypeForDisplay(r.complianceType) ? ` (${recordTypeForDisplay(r.complianceType)})` : ""}${r.referenceNumber ? ` Ref: ${r.referenceNumber}` : ""}${r.status ? ` [${r.status}]` : ""}`));
   }
   if (legalRecs.length === 0 && complianceRecs.length === 0 && params.companyEvidenceLines.length > 0) {
     lines.push(...params.companyEvidenceLines.slice(0, 6).map((x) => `- ${x}`));

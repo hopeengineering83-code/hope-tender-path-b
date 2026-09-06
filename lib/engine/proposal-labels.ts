@@ -264,3 +264,42 @@ export function safeFileBaseName(value?: string | null, fallback = "submission-p
     .slice(0, 90);
   return cleaned || fallback;
 }
+
+/**
+ * A requirement line with its provenance tags removed, for a page a client reads.
+ *
+ * THE DELIVERED DEFECT
+ * --------------------
+ * formatRequirementLine() appends `[p.N] (§ SECTION) (quote: "…")` because the
+ * writer needs to know where a requirement came from. truncateDisplayLine()
+ * drops those tags when they would not fit — but returns the line untouched
+ * when it does fit, tags and all. Hosted run 34052912750 shipped the result
+ * into "Section E: Compliance Matrix" of the submitted proposal:
+ *
+ *   Proposal in PDF format, strictly named 'Technical Proposal.pdf'. No
+ *   financial proposal should be generated or submitted at this stage. [p.4]
+ *   (§ REQUIRED DOCUMENTS / MANDATORY DOCUMENTS) (quote: "Required Documents:
+ *   Technical Proposal.pdf Mandatory Document: …")
+ *
+ * The client is being shown our own citation apparatus, and the quote repeats
+ * back to them a passage from the tender they wrote.
+ *
+ * Fitting in a cell is not what decides whether a citation belongs on a client
+ * page — the page does. So the renderers that build client-facing tables call
+ * this, and the grounding tags stay where they are useful: in the text handed
+ * to the writer. Tags are removed wholesale wherever they appear, never
+ * partially, and the requirement's own words are untouched.
+ */
+const ANY_QUOTE_TAG = /\s*\(quote:\s*"[^"]*"?\)?/gi;
+const ANY_SECTION_TAG = /\s*\(§[^)]*\)?/g;
+const ANY_PAGE_TAG = /\s*\[p\.\s*\d+\]/gi;
+
+export function withoutProvenanceTags(value: string): string {
+  return value
+    .replace(ANY_QUOTE_TAG, "")
+    .replace(ANY_SECTION_TAG, "")
+    .replace(ANY_PAGE_TAG, "")
+    .replace(/\s+/g, " ")
+    .replace(/[\s,;:]+$/, "")
+    .trim();
+}

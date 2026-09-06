@@ -1,6 +1,6 @@
 import { clientSafeComplianceNote } from "./automatic-requirement-coverage";
 import { filterCleanLines } from "./pattern-filter";
-import { truncateDisplayLine } from "./proposal-labels";
+import { truncateDisplayLine, withoutProvenanceTags } from "./proposal-labels";
 import { classifyUniversalTender, universalProfileSummary } from "./universal-tender-taxonomy";
 
 export type BlueprintEvidenceInput = {
@@ -190,7 +190,7 @@ export function renderTenderResponseBlueprint(input: BlueprintEvidenceInput): st
     "|---|---|---|---|---|---|---|",
   ];
   for (const item of buildTenderResponseBlueprint(input)) {
-    rows.push(`| ${item.id} | ${clean(item.requirement)} | ${item.responseSection} | ${item.serviceCapability}<br>${item.evaluatorConcern} | ${item.evidenceSupport} | ${clean(item.evidenceLine)} | ${item.riskControl} |`);
+    rows.push(`| ${item.id} | ${withoutProvenanceTags(clean(item.requirement))} | ${item.responseSection} | ${item.serviceCapability}<br>${item.evaluatorConcern} | ${item.evidenceSupport} | ${clean(item.evidenceLine)} | ${item.riskControl} |`);
   }
   return [
     "## Tender Response Blueprint",

@@ -123,6 +123,57 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-06 UTC — Claude Code (D.3 confirmed on the artifact; two display defects it exposed)
+
+**Branch / PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, base
+`integration/controlled-recovery`). **Head verified:** `6d291e4a`, hosted run
+34052912750, Preview `/api/health` release `6d291e4a…`, `ok:true`,
+`schemaMatchesDeployedCode:true`, `databaseFingerprint d74f2ac75c88`.
+
+**Regeneration proven, not reused.** Baseline artifact sha256 `54d9402a95d775d0`
+→ current `75082a538b39a15d`. ENGINE_RUN, PROPOSAL_GENERATION and AUTO_FINALIZE
+all created after the run started and all SUCCEEDED, no FAILED or CANCELED job in
+the chain; export-readiness `ok=True status=READY blockers=0`; POST /export 200;
+ZIP valid, one entry, hash matching the persisted document identity; 36/36 pages
+with no clipping, overflow, footer collision or pagination fault.
+
+**D.3 is fixed and confirmed on the delivered PDF.** The section is present in
+both the contents page and the body, carrying twelve of the firm's own reviewed
+records with reference numbers and status. The structure seal no longer reports
+it among dropped headings. Dimension 12's engineering cause is closed.
+
+**Two client-facing defects the same artifact exposed, both fixed in this head.**
+
+1. *Storage codes printed to the client.* A.3 and the new D.3 table printed the
+   record's type verbatim — `SUPPLIER_REGISTRATION`, `TAX_CLEARANCE`,
+   `FINANCIAL_AUDIT`, `COMMERCIAL_REGISTRATION`, `BUSINESS_LICENSE`,
+   `QUALITY_ASSURANCE`. A.3 has done this all along; D.3 inherited it. Fixed at
+   the rendering boundary (`recordTypeForDisplay` in `lib/engine/vault-prose.ts`):
+   a value that is unambiguously a code is respelled, a type already written for
+   a reader is returned exactly as stored. No record is touched.
+
+2. *Citation apparatus printed to the client.* Section E's compliance matrix
+   carried our own grounding tags into the submitted proposal:
+   `… at this stage. [p.4] (§ REQUIRED DOCUMENTS / MANDATORY DOCUMENTS)
+   (quote: "Required Documents: Technical Proposal.pdf …")`. `formatRequirementLine`
+   appends those tags for the writer, and `truncateDisplayLine` drops them only
+   when they would not fit — so a line that fit shipped them. Fitting in a cell
+   is not what decides whether a citation belongs on a client page. The four
+   client-facing renderers now call `withoutProvenanceTags`; the tags stay in the
+   text handed to the writer.
+
+**A correction to the previous entry.** That entry reported the delivered
+artifact clean of "source markers". It was not: the `[p.N] (§ …) (quote: "…")`
+tags above were in the Section E table of that same artifact. The mechanical
+checklist's marker pattern did not reach inside table cells, so a real leak was
+reported as clean. The claim was wrong, not merely imprecise.
+
+**Unchanged:** the 17-dimension assessment still fails. Dimension 12's cause is
+now closed, but 3, 4, 5, 6, 7 and 15 remain bounded by the two owner actions —
+AI provider credit, and more reviewed project records in the vault.
+
+**Merge status:** not reviewed. Do not merge. Do not promote Production.
+
 ### 2026-09-06 UTC — Claude Code (17-dimension assessment on the delivered PDF: 78/100, FAIL)
 
 **Branch / PR:** `release/consolidated-recovery-20260717` (PR #1175, draft, base

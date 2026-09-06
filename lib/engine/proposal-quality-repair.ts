@@ -1,6 +1,6 @@
 import { filterCleanLines } from "./pattern-filter";
 import { CLIENT_FACING_SECTION_F_HEADING, CLIENT_FACING_SECTION_G_HEADING, SECTION_F_HEADING_RX, SECTION_G_HEADING_RX } from "./client-facing-section-titles";
-import { truncateDisplayLine } from "./proposal-labels";
+import { truncateDisplayLine, withoutProvenanceTags } from "./proposal-labels";
 import type { EvaluatorMatrixInput } from "./proposal-evaluator-matrix";
 import { buildTenderResponseBlueprint } from "./tender-response-blueprint";
 
@@ -42,7 +42,7 @@ function sectionE(input: EvaluatorMatrixInput): string {
     "|---|---|---|---|",
   ];
   for (const item of blueprint) {
-    rows.push(`| ${clean(item.requirement)} | ${statusForRequirement(item.requirement, item.evidenceSupport)} | ${item.responseSection} | ${clean(item.evidenceLine)} |`);
+    rows.push(`| ${withoutProvenanceTags(clean(item.requirement))} | ${statusForRequirement(item.requirement, item.evidenceSupport)} | ${item.responseSection} | ${clean(item.evidenceLine)} |`);
   }
   return [
     "## Section E: Compliance Matrix",
@@ -69,7 +69,7 @@ function sectionF(input: EvaluatorMatrixInput): string {
       ? "Mandatory / pass-fail"
       : "Scored criterion (no weight stated in tender)";
     // "TRB-1" was an internal trace label with no meaning to the reader.
-    rows.push(`| ${clean(item.requirement)} | ${priority} | Section ${item.responseSection} | ${item.evidenceSupport} |`);
+    rows.push(`| ${withoutProvenanceTags(clean(item.requirement))} | ${priority} | Section ${item.responseSection} | ${item.evidenceSupport} |`);
   }
   return [
     `## ${CLIENT_FACING_SECTION_F_HEADING}`,

@@ -1,3 +1,4 @@
+import { recordTypeForDisplay } from "./vault-prose";
 /**
  * Five evaluator-facing additions packaged into one module:
  *
@@ -291,7 +292,7 @@ export function buildCertificationsSection(opts: {
     "|---|---|---|---|",
     ...corporate.map((record) => {
       const cell = (value?: string | null) => (value ?? "").replace(/\|/g, "/").trim() || "—";
-      return `| ${cell(record.title)} | ${cell(record.recordType ?? record.complianceType)} | ${cell(record.referenceNumber)} | ${cell(record.status)} |`;
+      return `| ${cell(record.title)} | ${cell(recordTypeForDisplay(record.recordType ?? record.complianceType))} | ${cell(record.referenceNumber)} | ${cell(record.status)} |`;
     }),
   ].join("\n");
 }

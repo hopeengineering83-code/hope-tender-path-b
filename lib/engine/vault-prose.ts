@@ -204,3 +204,40 @@ export function factualCardOrEmpty(text: string | null | undefined): string {
   if (words.length > 0 && shouted / words.length > 0.25) return "";
   return cleaned;
 }
+
+/**
+ * A stored record's type code, rendered for a reader rather than for a schema.
+ *
+ * THE DELIVERED DEFECT
+ * --------------------
+ * Hosted run 34052912750 shipped the firm's compliance records into two
+ * client-facing places — "A.3 Evidence of Compliance" and the D.3
+ * certifications table — with the storage code printed verbatim:
+ *
+ *   PPA Supplier Registration Evidence (SUPPLIER_REGISTRATION) [ACTIVE]
+ *   Audited Financial Statements 2020-2025 (FINANCIAL_AUDIT) …
+ *   Quality Assurance and Review Procedures (QUALITY_ASSURANCE) Ref: HAEC/052/22
+ *
+ * An evaluator reading a submitted proposal is being shown an enum. The value
+ * is correct — it is the type the record genuinely carries — but SCREAMING_SNAKE
+ * is how the database spells it, not how a document says it.
+ *
+ * Records are source-verified and immutable, so nothing here changes one: this
+ * is the rendering boundary deciding how a stored code is spelled on the page.
+ *
+ * Only a value that is unambiguously a code is respelled — all upper case, and
+ * carrying an underscore or no space at all. A type already written for a
+ * reader ("tax compliance", "Certificate of Competence") is returned exactly as
+ * stored, because respelling it would be rewriting the record's own words.
+ */
+export function recordTypeForDisplay(value: string | null | undefined): string {
+  const raw = (value ?? "").trim();
+  if (!raw) return "";
+  const looksLikeCode = raw === raw.toUpperCase() && (raw.includes("_") || !/\s/.test(raw));
+  if (!looksLikeCode) return raw;
+  return raw
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
+    .join(" ");
+}
