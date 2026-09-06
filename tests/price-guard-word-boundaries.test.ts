@@ -78,3 +78,39 @@ describe("the guard leaves the whole document alone when it is not armed", () =>
     assert.equal(enforceTechnicalPriceSeparation(line, openTender).trim(), line);
   });
 });
+
+// ── Technical content must not be written in commercial words ────────────────
+//
+// Run 34045764622 delivered a phase narrative whose own opening says "delivered
+// across 6 phases" and then lists Phases 1, 2, 3, 5 and 6, and an innovation
+// section that introduces "the following" hooks and lists one of three. Each
+// missing block had a body the price guard correctly deleted, because the
+// producer had written a priced term into a technical-only proposal:
+//
+//   Phase 4      "… specifications, BOQ, design report, 60% gate sign-off pack"
+//   Innovation 3 "… one 60-minute call per month at no fee …"
+//
+// The guard was right and the producers were wrong. Weakening the guard would
+// have let a real fee through; these are technical deliverables and belong in
+// technical words.
+//
+// The third gap had a different cause and is covered in
+// tests/innovation-hook-numbering.test.ts: the hooks wrote their own numbers
+// into their titles, and hook 2 is conditional, so a proposal listed
+// "Innovation 1" and then "Innovation 3".
+describe("phase and innovation content survives a price-separated tender", () => {
+  for (const line of [
+    "Detailed design drawings (architectural / structural / MEP / civil as applicable), specifications, quantity schedules, design report, 60% gate sign-off pack",
+    "Concept design at the 30% gate carries an explicit brand-alignment review item. Revision rounds for brand-driven adjustments are planned into the engagement programme.",
+    "The bidder retains a 6-month post-handover advisory window, one 60-minute call per month, so the client has continuity support through early implementation.",
+  ]) {
+    it(`keeps ${JSON.stringify(line.slice(0, 44))}`, () => {
+      assert.ok(survives(line), `a technical deliverable was deleted as commercial: ${line}`);
+    });
+  }
+
+  it("still deletes the commercial phrasing these replaced", () => {
+    assert.ok(!survives("… specifications, BOQ, design report, 60% gate sign-off pack"));
+    assert.ok(!survives("The bidder retains one 60-minute call per month at no fee."));
+  });
+});

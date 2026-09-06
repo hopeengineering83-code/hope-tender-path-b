@@ -165,25 +165,32 @@ carries a boundary on both sides; `tests/price-guard-word-boundaries.test.ts`
 pins both directions. The structure seal's restoration is now a safety net
 rather than the fix.
 
-**OPEN — two further silent content losses, same family, cause not yet found.**
+**CLOSED — the phase-narrative and innovation-hook gaps. Both fixed in the same
+commit, and they had two different causes.**
 
-Run 34045764622 delivered:
+Run 34045764622 delivered `C.16 Phase-by-Phase Methodology Narrative` whose own
+opening says "delivered across 6 phases" and then lists Phases 1, 2, 3, 5 and 6,
+and `C.17 Tender-Specific Innovation Hooks` introducing "the following" hooks
+and listing one.
 
-- `C.16 Phase-by-Phase Methodology Narrative` — its own text says "delivered
-  across 6 phases", and it lists Phases 1, 2, 3, 5 and 6. Phase 4 (Detailed
-  Design / Methodology Execution — Weeks 7-11) has no body, so the structure
-  seal drops the heading and the reader sees the gap. Phases 5 and 6 have also
-  lost their "Phase lead:" line, which Phases 1-3 still carry.
-- `C.17 Tender-Specific Innovation Hooks` — introduces "the following"
-  innovation hooks and lists one. Innovation 3's heading is dropped as empty by
-  the seal; Innovation 2 is gone entirely, heading included.
+- Phase 4 and the third innovation hook lost their bodies to the price guard,
+  correctly: the producers had written priced terms into a technical-only
+  proposal — Phase 4's artefacts listed "BOQ", and the hook offered "one
+  60-minute call per month at no fee". Weakening the guard would have let a real
+  fee through, so the phrasing was fixed instead: a quantity schedule is called
+  a quantity schedule, and the advisory window is stated without a fee clause.
+- The second innovation hook was never deleted. Each hook wrote its own number
+  into its title, and hook 2 is emitted only when the tender names a brand or a
+  website, so its absence left the reader counting 1, 3. Hook numbers are now
+  derived from position — the same rule the Section C authority applies.
 
-Neither is the price guard: both headings survive it in test. The structure
-seal logs every heading it drops, so the symptom is visible in the run log
-(`Structure seal dropped N heading(s) left with no content`), and the Section C
-tripwire covers Section C sub-sections only — these are `###` blocks inside one.
-Widening the tripwire to any heading whose body empties between the authority
-and the render is the obvious next step.
+`tests/price-guard-word-boundaries.test.ts` and
+`tests/innovation-hook-numbering.test.ts` pin both.
+
+**A note on method.** The first draft of this entry asserted the price guard had
+deleted the second hook. It had not — the guard's own test showed that line has
+no digit and is never matched — and the claim was corrected before the entry was
+pushed. Where a cause is not established, say so.
 
 **BLOCKED ON AN OWNER ACTION — AI provider capacity.** In run 34037370200 all
 four proposal sections came from the deterministic fallback writer. Gemini

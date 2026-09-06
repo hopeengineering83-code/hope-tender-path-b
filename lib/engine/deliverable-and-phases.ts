@@ -253,7 +253,13 @@ function phaseSpecsForSector(sector: string, totalDays: number): PhaseSpec[] {
       title: "Phase 4: Detailed Design / Methodology Execution",
       durationLabel: fmt(split(0.50) + 1, split(0.80)),
       picksKeyword: ["lead", "senior", "engineer", "specialist"],
-      artefacts: "Detailed design drawings (architectural / structural / MEP / civil as applicable), specifications, BOQ, design report, 60% gate sign-off pack",
+      // "BOQ" is a priced term. In a tender that separates the technical and
+      // financial envelopes the price guard drops any line carrying one, which
+      // deleted this phase's whole body and left the narrative reading
+      // "Phases 1, 2, 3, 5, 6" under its own claim of six phases. The
+      // deliverable itself is a quantity schedule; the rest of the app already
+      // calls it that.
+      artefacts: "Detailed design drawings (architectural / structural / MEP / civil as applicable), specifications, quantity schedules, design report, 60% gate sign-off pack",
       sectorVocab: (s) => /health/.test(s.toLowerCase())
         ? "fully coordinated MEP + medical-gas drawings, structural sizing, IPC-compliant detail design, clinical-equipment integration"
         : /water/.test(s.toLowerCase())
@@ -387,7 +393,7 @@ export function buildBrandedInnovationHooks(opts: {
 
   // Hook 1: Always — the firm's project dashboard offered to client
   hooks.push({
-    title: `Innovation 1: ${opts.companyName} Project Dashboard for Client Real-Time Visibility`,
+    title: `${opts.companyName} Project Dashboard for Client Real-Time Visibility`,
     description: `A read-only project workspace shared with the client throughout the engagement. The dashboard carries: live decision log, drawing version history, deliverable status against each tender requirement, weekly look-ahead, and risk register. The client tracks progress without waiting for a status meeting; the bidder retains a defensible audit trail.`,
   });
 
@@ -396,15 +402,15 @@ export function buildBrandedInnovationHooks(opts: {
     const brandLabel = brand || (clientName ? `${clientName}` : "Client") || "Client";
     const websiteLabel = website ? ` from ${website}` : "";
     hooks.push({
-      title: `Innovation 2: ${brandLabel} Brand Integration from Day One`,
-      description: `Concept design at the 30% gate carries an explicit brand-alignment review item. Brand guidelines are downloaded${websiteLabel} (or requested at inception). Every design output — drawings, specifications, presentation pack, signage proposals — reflects the client visual standard. Revision rounds budgeted into the engagement fee for any brand-driven adjustments.`,
+      title: `${brandLabel} Brand Integration from Day One`,
+      description: `Concept design at the 30% gate carries an explicit brand-alignment review item. Brand guidelines are downloaded${websiteLabel} (or requested at inception). Every design output — drawings, specifications, presentation pack, signage proposals — reflects the client visual standard. Revision rounds for brand-driven adjustments are planned into the engagement programme.`,
     });
   }
 
   // Hook 3: Lessons-learned + post-handover advisory
   hooks.push({
-    title: `Innovation 3: Lessons-Learned Memo and Post-Handover Advisory Window`,
-    description: `Engagement closes with a structured lessons-learned session co-authored with the client team and a written memo handed over with the deliverable. The bidder retains a 6-month post-handover advisory window (one 60-minute call per month at no fee) so the client gets continuity support during early implementation without re-engaging on commercial terms.`,
+    title: `Lessons-Learned Memo and Post-Handover Advisory Window`,
+    description: `Engagement closes with a structured lessons-learned session co-authored with the client team and a written memo handed over with the deliverable. The bidder retains a 6-month post-handover advisory window, one 60-minute call per month, so the client has continuity support through early implementation.`,
   });
 
   if (hooks.length === 0) return "";
@@ -416,12 +422,16 @@ export function buildBrandedInnovationHooks(opts: {
     "Beyond the standard innovation and value-engineering proposals, the bidder offers the following tender-specific innovation hooks. Each is named, described, and tied to a measurable client benefit.",
     "",
   ];
-  for (const h of hooks) {
-    blocks.push(`### ${h.title}`);
+  // The hook numbers are derived from the hooks actually emitted, not written
+  // into each title. Hook 2 only appears when the tender names a brand or a
+  // website, so hard-coded labels shipped a proposal that listed "Innovation 1"
+  // and then "Innovation 3" — a reader counts that as a missing item.
+  hooks.forEach((h, index) => {
+    blocks.push(`### Innovation ${index + 1}: ${h.title}`);
     blocks.push("");
     blocks.push(h.description);
     blocks.push("");
-  }
+  });
   return blocks.join("\n");
 }
 
