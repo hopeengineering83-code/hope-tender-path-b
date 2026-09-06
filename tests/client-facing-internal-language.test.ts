@@ -413,3 +413,53 @@ describe("expert bios read as prose, not as a pasted CV file", () => {
     );
   });
 });
+
+// The last two producers that shipped raw source text to the client.
+//
+// Hosted run 34031758896 delivered a genuinely regenerated PDF (the first the
+// harness could prove was new). It was clean of dangling separators and of
+// "Bid-Team Action" entirely, but still carried the CV letterhead in "Proposed
+// Team and Expert Contributions" — expertProofLine() stripped the personal
+// fields and never the document furniture — and two differentiator bullets
+// still stopped mid-word ("… and applicable aut", "… for due-diligence spe")
+// because the win-themes builder cut them with a raw slice.
+describe("the last raw-source producers are cleaned too", () => {
+  it("keeps the CV document's furniture out of the expert proof line", async () => {
+    const { expertProofLine } = await import("../lib/engine/proposal-intelligence");
+    const line = expertProofLine({
+      fullName: "Ahmed Kebede Tekaw",
+      title: "General Manager",
+      yearsExperience: 11,
+      disciplines: JSON.stringify(["Architecture"]),
+      sectors: JSON.stringify(["Healthcare"]),
+      certifications: JSON.stringify([]),
+      profile: "HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC "
+        + "CURRICULUM VITAE ENG. AHMED KEBEDE TEKAW General Manager 1. PERSONNEL INFORMATION "
+        + "Proposed Position General Manager Name of Firm Hope Urban Planning "
+        + "and has led the structural design of multi-storey hospital buildings.",
+    } as never);
+
+    for (const furniture of [/CURRICULUM\s+VITAE/i, /PERSONNEL\s+INFORMATION/i, /Name of Firm/i]) {
+      assert.doesNotMatch(line, furniture, `document furniture survived: ${line.slice(0, 200)}`);
+    }
+    assert.match(line, /structural design of multi-storey hospital buildings/);
+  });
+
+  it("cuts differentiator bullets at a word boundary", async () => {
+    const { injectWinThemesTable } = await import("../lib/engine/win-themes-table");
+    const long = "Healthcare-specific methodology addresses IPC, clinical zone segregation and "
+      + "medical-gas coordination; radiation shielding and licensing activities are included only "
+      + "where the confirmed equipment brief and applicable authority require them.";
+    const { markdown } = injectWinThemesTable("# Proposal\n\n# Section E: Compliance Matrix\n", {
+      primarySector: "Healthcare / Medical Facility Design",
+      projects: [],
+      themes: ["Infection prevention"],
+      evaluationCriteria: ["Relevant healthcare experience"],
+      companyName: "Hope Engineering",
+      differentiators: [long],
+    } as never);
+
+    assert.ok(!/applicable aut$/m.test(markdown), "a bullet must not stop mid-word");
+    assert.ok(!/\baut\b\s*$/m.test(markdown), "a bullet must not end on a word fragment");
+  });
+});

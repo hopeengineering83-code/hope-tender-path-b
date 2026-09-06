@@ -47,6 +47,7 @@
  */
 
 import type { ProjectRecord } from "./benchmark-tables";
+import { truncateAtWordBoundary } from "./proposal-intelligence";
 import { CLIENT_FACING_SECTION_G_HEADING } from "./client-facing-section-titles";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -351,7 +352,7 @@ function tenderSpecificRows(opts: {
   // what the evaluator can be nudged on.
   for (const t of opts.themes ?? []) {
     if (out.length >= 5) break;
-    const trimmed = t.trim().slice(0, 110);
+    const trimmed = truncateAtWordBoundary(t.trim(), 110);
     if (!trimmed) continue;
     const key = `theme:${trimmed.toLowerCase()}`;
     if (seen.has(key)) continue;
@@ -409,7 +410,9 @@ function buildTable(opts: BuildOpts): string {
   if ((opts.differentiators ?? []).length > 0) {
     diffBullets.push("", "**Further strengths we bring to this assignment:**");
     for (const d of (opts.differentiators ?? []).slice(0, 5)) {
-      const trimmed = String(d).trim().slice(0, 220);
+      // Cut at a word boundary — this shipped "… and applicable aut" and
+      // "… for due-diligence spe" to the client.
+      const trimmed = truncateAtWordBoundary(String(d).trim(), 220);
       if (!trimmed) continue;
       diffBullets.push(`- ${trimmed}`);
     }

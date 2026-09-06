@@ -1580,7 +1580,14 @@ export function expertProofLine(expert: ExpertLite): string {
   const disciplines = safeParseArr(expert.disciplines).slice(0, 6).join(", ");
   const certs = safeParseArr(expert.certifications).slice(0, 6).join(", ");
   const sectors = safeParseArr(expert.sectors).slice(0, 4).join(", ");
-  const profile = truncateAtWordBoundary(withoutPersonalCvFields(clean(expert.profile)), 600);
+  // Also strip the CV document's own furniture. This line reaches the client
+  // through "Proposed Team and Expert Contributions", where it was printing
+  // "… CURRICULUM VITAE ENG. AHMED KEBEDE TEKAW … 1. PERSONNEL INFORMATION
+  // Proposed Position … Name of Firm …" verbatim from the source file.
+  const profile = truncateAtWordBoundary(
+    withoutCvDocumentFurniture(withoutPersonalCvFields(clean(expert.profile))),
+    600,
+  );
   return [
     `${expert.fullName}${expert.title ? ` — ${expert.title}` : ""}`,
     expert.yearsExperience ? `${expert.yearsExperience}+ years experience` : null,
