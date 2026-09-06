@@ -1,4 +1,5 @@
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
+import { withoutSourceProvenance } from "./vault-prose";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
 
@@ -211,7 +212,11 @@ export function buildTeamToProjectMappingTable(experts: ExpertRecord[], projects
     const previousRole = expert.title?.toLowerCase().includes("lead") || expert.title?.toLowerCase().includes("principal")
       ? expert.title
       : `Senior ${expert.title || "Specialist"}`;
-    const contribution = truncateAtWordBoundary((matchedProject.summary ?? "").replace(/\s+/g, " ").trim(), 200) ||
+    // The stored summary runs into the reference letter's own bookkeeping —
+    // "Ref: …/1591/18 Date: 19/01/2018 E.C. Author: Tariku Abebaw (Building
+    // Officer, Gimba…" reached a client-facing cell. That is provenance the app
+    // keeps to prove the record, not a technical contribution.
+    const contribution = truncateAtWordBoundary(withoutSourceProvenance(matchedProject.summary), 200) ||
       `${safeArr(expert.disciplines).join(", ") || "Discipline-led"} contribution covering ${safeArr(matchedProject.serviceAreas).join(", ") || matchedProject.sector || "scope-relevant works"}.`;
 
     return `| ${escCell(`${expert.fullName}, ${expert.title || "Specialist"}`)} | ${escCell(previousRole || "Specialist Lead")} | ${escCell(projectLabel)} | ${escCell(contribution)} |`;

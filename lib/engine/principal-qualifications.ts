@@ -16,6 +16,7 @@
 
 import type { ExpertRecord } from "./benchmark-tables";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
+import { proseProfileOrEmpty } from "./vault-prose";
 
 function safeArr(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -60,7 +61,17 @@ export function buildPrincipalQualificationsSection(opts: {
     const sectors = safeArr(expert.sectors);
     const certifications = safeArr(expert.certifications);
     const years = expert.yearsExperience ? `${expert.yearsExperience} years experience` : null;
-    const profile = clean(withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? "")), 480);
+    // A stored profile that is the CV's letterhead rather than a biography is
+    // not printed. A delivered proposal opened this bio with "HOPE URBAN
+    // PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC ENG. AHMED KEBEDE
+    // TEKAW General Manager & Practicing Professional Engineer … Languages
+    // Amharic (Excellent), English…" — the firm's name twice, the person's name
+    // twice, and a cut mid-list. The table above already carries the same facts
+    // in a form an evaluator can score.
+    const profile = clean(
+      proseProfileOrEmpty(withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? ""))),
+      480,
+    );
 
     blocks.push(`### ${expert.fullName} — ${position}`);
 

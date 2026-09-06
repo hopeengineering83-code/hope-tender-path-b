@@ -1,4 +1,5 @@
 import { logger } from "../observability";
+import { tidyTruncation, withoutSourceProvenance } from "./vault-prose";
 import { detectFinancialProposalRequiredFromText, buildTenderDocumentTypeAdvisory, type TenderDocumentTypeAdvisory } from "../document-generation/generation-integration";
 export type TenderRequirementLite = { title: string; description: string; priority: string; requirementType: string };
 export type TenderLite = { title: string; reference?: string | null; clientName?: string | null; procuringEntityName?: string | null; country?: string | null; description?: string | null; intakeSummary?: string | null; analysisSummary?: string | null; evaluationMethodology?: string | null; deadline?: Date | string | null; submissionMethod?: string | null; submissionAddress?: string | null; clientContactName?: string | null };
@@ -1573,7 +1574,11 @@ export function truncateAtWordBoundary(text: string, max: number): string {
   const window = text.slice(0, max);
   const lastSpace = window.lastIndexOf(" ");
   const cut = lastSpace > Math.floor(max * 0.5) ? window.slice(0, lastSpace) : window;
-  return `${cut.replace(/[\s,;:—–-]+$/, "")}…`;
+  // Cutting on a word boundary is not enough on its own. A delivered proposal
+  // ended cells at "(Building Officer, Gimba…", "2. EDUCATION, TRAINING &…" and
+  // "Sectors: …" — each cut is between words, and each still reads as a broken
+  // document rather than a shortened one.
+  return tidyTruncation(cut.replace(/[\s,;:—–-]+$/, ""));
 }
 
 export function expertProofLine(expert: ExpertLite): string {
@@ -1584,8 +1589,15 @@ export function expertProofLine(expert: ExpertLite): string {
   // through "Proposed Team and Expert Contributions", where it was printing
   // "… CURRICULUM VITAE ENG. AHMED KEBEDE TEKAW … 1. PERSONNEL INFORMATION
   // Proposed Position … Name of Firm …" verbatim from the source file.
+  // Stripping the CV's named fields and headings was not enough: run
+  // 34038487418 still printed the letterhead card — "HOPE URBAN PLANNING
+  // ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC ENG. AHMED KEBEDE TEKAW …
+  // Major Projects | 5 International | 11+ Years Experience … Languages Amharic
+  // (Excellent), English…" — into the client-facing team table. A stored value
+  // that is the source document's furniture rather than a profile is dropped;
+  // the structured fields on either side of it carry the same facts.
   const profile = truncateAtWordBoundary(
-    withoutCvDocumentFurniture(withoutPersonalCvFields(clean(expert.profile))),
+    withoutSourceProvenance(withoutCvDocumentFurniture(withoutPersonalCvFields(clean(expert.profile)))),
     600,
   );
   return [
