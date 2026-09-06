@@ -180,6 +180,15 @@ as `TIN`; and a third site — the E.1 Bid Compliance Mapping type column — wa
 printing `SUBMISSION_RULE` and `PROJECT_EXPERIENCE`, which the earlier
 artifact's tag noise had hidden.
 
+**Both residual items confirmed fixed.** Run 34055279600 on head `513ef972`
+(baseline `4bfd2e7f6bce834b` → current `bc52d33141eeabab`, READY, 0 blockers,
+38/38 pages, no layout fault) delivers a PDF with **zero** provenance tags and
+**zero** storage codes anywhere in its text. D.3 reads "Taxpayer Registration /
+TIN — TIN — 0064637886 — ACTIVE"; the E.1 type column no longer carries
+`SUBMISSION_RULE` or `PROJECT_EXPERIENCE`. Numbering is gapless and unique
+across A.0-A.8, B.1-B.2, C.1-C.17, D.1-D.4, E.1, and the contents page matches
+the body exactly and in order (35 headings each).
+
 **Unchanged:** the 17-dimension assessment still fails. Dimension 12's cause is
 now closed, but 3, 4, 5, 6, 7 and 15 remain bounded by the two owner actions —
 AI provider credit, and more reviewed project records in the vault.
