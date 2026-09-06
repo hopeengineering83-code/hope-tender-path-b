@@ -309,35 +309,6 @@ function clean(text?: string | null): string {
 // extracted source text reach the client through the experience tables, and a
 // mid-word slice shipped "Author: Tariku Abebaw (Building Officer, Gimba Ci" in
 // a delivered proposal. Same budget, same ellipsis, cut moved to the last word.
-/**
- * Normalise the vault text fields that reach client-facing output.
- *
- * Vault values carry whatever punctuation whoever typed them left behind. One
- * reviewed project's country is stored as "Gimba City, South Wollo Zone, Amhara
- * Region," — with a trailing comma — and roughly a dozen producers interpolate
- * these values straight into client-facing prose and tables. A delivered
- * Technical Proposal therefore read "… Amhara Region,)" seven times, in seven
- * different sentences, from seven different builders.
- *
- * Trimming edge separators in each producer is the version of this fix that
- * never finishes: the next builder added starts the count again. The values are
- * normalised once, where the reviewed records enter the generation context, so
- * every downstream consumer gets clean text by construction. Only leading and
- * trailing separator characters go — internal punctuation is part of the value
- * and is untouched.
- */
-function tidyVaultText<T>(record: T, fields: readonly string[]): T {
-  const source = record as Record<string, unknown>;
-  const patched: Record<string, unknown> = { ...source };
-  for (const field of fields) {
-    const value = source[field];
-    if (typeof value !== "string") continue;
-    const cleaned = value.replace(/\s+/g, " ").trim().replace(/^[\s,;:|/–—-]+/, "").replace(/[\s,;:|/–—-]+$/, "");
-    if (cleaned !== value) patched[field] = cleaned;
-  }
-  return patched as T;
-}
-
 function shortText(text?: string | null, max = 700): string {
   return truncateAtWordBoundary(clean(text), max);
 }
@@ -1242,8 +1213,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     }
   }
 
-  const allSelectedExperts = tender.expertMatches.map((m) => tidyVaultText(m.expert, ["fullName", "title"]));
-  const allSelectedProjects = tender.projectMatches.map((m) => tidyVaultText(m.project, ["name", "country", "clientName", "sector"]));
+  // NEVER rewrite these records' field values — not even to trim punctuation.
+  // They are source-verified: provenanceMatchesCurrentRecord() hashes each
+  // verified field and requires it to still equal what was verified against the
+  // source document. One changed character makes the record unusable and the
+  // zero-evidence guard below throws. Trim for display instead; see
+  // tests/vault-records-are-never-rewritten.test.ts.
+  const allSelectedExperts = tender.expertMatches.map((m) => m.expert);
+  const allSelectedProjects = tender.projectMatches.map((m) => m.project);
   let experts = allSelectedExperts.filter((e) => canUseVaultRecord(e, "GENERATION"));
   let projects = allSelectedProjects.filter((p) => canUseVaultRecord(p, "GENERATION"));
 

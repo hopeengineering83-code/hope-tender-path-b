@@ -14,6 +14,7 @@
  */
 
 import type { ProjectRecord } from "./benchmark-tables";
+import { inlineEvidenceValue } from "./proposal-intelligence";
 
 function normalize(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -97,9 +98,14 @@ export function enforceNarrativeThroughline(opts: {
     for (const project of top) {
       if (projectMentioned(sectionText, project)) continue;
       // Project not mentioned in this section — schedule an anchor sentence.
+      // Vault values keep their own punctuation and must not be rewritten on
+      // the record — they are hashed against their source provenance. Trim for
+      // display only, so a client stored as "… Amhara Region," does not render
+      // as "(… Amhara Region,)".
+      const clientLabel = inlineEvidenceValue(project.clientName);
       const value = project.contractValue
-        ? ` (${project.currency || "ETB"} ${Math.round(project.contractValue).toLocaleString("en-US")}${project.clientName ? `, ${project.clientName}` : ""})`
-        : project.clientName ? ` (${project.clientName})` : "";
+        ? ` (${project.currency || "ETB"} ${Math.round(project.contractValue).toLocaleString("en-US")}${clientLabel ? `, ${clientLabel}` : ""})`
+        : clientLabel ? ` (${clientLabel})` : "";
       const sentence = `_Relevant reference anchor:_ ${project.name}${value} is a reviewed project record whose applicable lessons inform this engagement.`;
       injections.push({
         sectionIdx: section.headingLine,

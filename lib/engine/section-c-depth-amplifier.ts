@@ -45,6 +45,7 @@
  */
 
 import type { ProjectRecord } from "./benchmark-tables";
+import { inlineEvidenceValue } from "./proposal-intelligence";
 
 // Canonical Section C sub-section structure. Each entry includes
 // the heading text + a deterministic depth-paragraph generator.
@@ -74,7 +75,12 @@ function projectAnchor(project: ProjectRecord, fallbackVerb = "demonstrated on")
     const y = new Date(project.endDate as Date | string).getFullYear();
     if (Number.isFinite(y)) parts.push(`completed ${y}`);
   }
-  const detail = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+  // Vault values carry their own punctuation and must not be rewritten on the
+  // record — they are hashed against their source provenance, so an edit there
+  // makes the record unusable. Trim for display instead, or a client stored as
+  // "… Amhara Region," renders as "(… Amhara Region,)".
+  const cleanedParts = parts.map((part) => inlineEvidenceValue(part)).filter(Boolean);
+  const detail = cleanedParts.length > 0 ? ` (${cleanedParts.join(", ")})` : "";
   return `Approach ${fallbackVerb} ${project.name}${detail}.`;
 }
 

@@ -98,6 +98,9 @@ jobs:
       BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
       TENDER_ID: ${{ inputs.tender_id }}
     steps:
+      - name: Stamp the moment this run began
+        run: echo "RUN_STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" >> "$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -240,6 +243,38 @@ jobs:
 
       - name: Wait for ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE to settle
         run: bash scripts/tmp-await-tender-jobs.sh 120
+
+      - name: Fail if any job in this run's chain failed
+        run: |
+          # The settle loop exits when nothing is QUEUED or RUNNING. A FAILED
+          # job is terminal, so it satisfies that condition perfectly — and the
+          # old, still-valid document then goes on satisfying every gate below.
+          # That is how run 33996268451 reported a fully green walkthrough while
+          # PROPOSAL_GENERATION had failed 1.3 seconds after ENGINE_RUN handed
+          # off to it. The failure has to be read out explicitly.
+          curl -sS --connect-timeout 15 --max-time 45 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/ai-jobs?tenderId=$TENDER_ID&take=12" > /tmp/jobs-final.json
+          python3 - <<'PYEOF'
+          import json, os, datetime
+          started = os.environ['RUN_STARTED_AT']
+          payload = json.load(open('/tmp/jobs-final.json', encoding='utf-8'))
+          jobs = payload.get('jobs') or payload.get('data') or (payload if isinstance(payload, list) else [])
+          failed = []
+          for job in jobs:
+              created = str(job.get('createdAt') or '')
+              status = str(job.get('status') or '')
+              if created >= started and status in ('FAILED', 'CANCELED'):
+                  failed.append(f"{job.get('jobType')} {status} id={job.get('id')} created={created} error={job.get('errorMessage')}")
+          for line in failed:
+              print(line)
+          if failed:
+              raise SystemExit(
+                  f"{len(failed)} job(s) in this run's chain did not succeed. The pipeline did not "
+                  "complete, and any readiness or export result below refers to a document an "
+                  "earlier run produced."
+              )
+          print("every job created by this run reached a successful terminal state")
+          PYEOF
 
       - name: Snapshot final workflow-center and export-readiness state
         run: |
