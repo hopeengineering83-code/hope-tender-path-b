@@ -115,6 +115,51 @@ function anchorOnce(
   return null;
 }
 
+/**
+ * Append a closing sentence only when it adds something the paragraph does not
+ * already say.
+ *
+ * The written alternatives exist for when no project can be anchored, but they
+ * are appended to a sector paragraph that may already cover the same ground. A
+ * delivered C.3 read "Quality gates at 30% Schematic, 60% Design Development,
+ * and 100% Pre-Issue. Each gate signed off by Project Principal + Technical
+ * Director. Independent peer review at 100%." and then immediately "The
+ * three-gate quality framework (30% / 60% / 100%) is applied on every
+ * engagement. Each gate is signed off by Project Principal and Technical
+ * Director …" — the same three facts twice in a row.
+ */
+function joinWithoutEcho(paragraph: string, closing: string): string {
+  if (!closing) return paragraph;
+  // Word overlap is too blunt here — two paragraphs about quality assurance
+  // share quality words without restating each other. A shared four-word run is
+  // the sentence saying the same thing again, which is what the delivered text
+  // did: "Each gate signed off by Project Principal + Technical Director"
+  // followed by "Each gate is signed off by Project Principal and Technical
+  // Director before client submission".
+  return sharesPhrase(paragraph, closing, 4) ? paragraph : `${paragraph} ${closing}`;
+}
+
+/** Do these two texts share a run of `size` consecutive substantive words? */
+function sharesPhrase(left: string, right: string, size: number): boolean {
+  const runs = (text: string): Set<string> => {
+    const words = (text.toLowerCase().match(/[a-z][a-z-]*/g) ?? []).filter((w) => !ECHO_FILLER.has(w));
+    const out = new Set<string>();
+    for (let i = 0; i + size <= words.length; i += 1) out.add(words.slice(i, i + size).join(" "));
+    return out;
+  };
+  const leftRuns = runs(left);
+  for (const run of runs(right)) if (leftRuns.has(run)) return true;
+  return false;
+}
+
+/** Words that differ between two phrasings of the same sentence. */
+const ECHO_FILLER = new Set([
+  "a", "an", "the", "is", "are", "was", "were", "be", "been", "and", "or",
+  "of", "to", "in", "on", "at", "by", "for", "with", "that", "this", "each",
+  "every", "its", "it",
+]);
+
+
 // Sector-aware methodology vocabulary blocks. Each returns a paragraph
 // rich in sector-specific terminology — feeds the sectorVocabulary axis.
 function sectorMethodologyParagraph(sector: string, subSection: string): string {
@@ -247,7 +292,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
       const anchor = anchorOnce([projects[0]], anchored, "validated on")
         ?? "The team brings validated delivery experience across comparable assignment types and applies a structured inception process — site orientation, document review, and stakeholder mapping — in the opening week to confirm scope before any technical work begins.";
       const para = sectorMethodologyParagraph(primarySector, "C.1");
-      return `${para} ${anchor}`;
+      return joinWithoutEcho(para, anchor);
     },
   },
   {
@@ -258,7 +303,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
       const anchor = anchorOnce([projects[1], projects[0]], anchored, "demonstrated on")
         ?? "The methodology has been developed and refined through repeat delivery of comparable-scope assignments and is calibrated to the specific deliverable schedule, client reporting cadence, and stakeholder engagement requirements of this engagement.";
       const para = sectorMethodologyParagraph(primarySector, "C.2");
-      return `${para} ${anchor}`;
+      return joinWithoutEcho(para, anchor);
     },
   },
   {
@@ -269,7 +314,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
       const anchor = anchorOnce([projects[2], projects[1], projects[0]], anchored, "demonstrated on")
         ?? "The phased work programme draws on established delivery templates refined across comparable assignments. Each phase produces a formal deliverable with client sign-off before the next phase commences, ensuring predictable progress milestones and no scope creep between stages.";
       const para = sectorMethodologyParagraph(primarySector, "C.3");
-      return `${para} ${anchor}`;
+      return joinWithoutEcho(para, anchor);
     },
   },
   {
@@ -280,7 +325,7 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
       const anchor = anchorOnce([projects[3], projects[0]], anchored, "applied on")
         ?? "The three-gate quality framework (30% / 60% / 100%) is applied on every engagement. Each gate is signed off by Project Principal and Technical Director before client submission; an independent peer reviewer — not a member of the delivery team — validates the 100% deliverable package.";
       const para = sectorMethodologyParagraph(primarySector, "C.4");
-      return `${para} ${anchor}`;
+      return joinWithoutEcho(para, anchor);
     },
   },
 ];

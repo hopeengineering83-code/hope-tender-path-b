@@ -62,14 +62,16 @@ describe("a single reviewed project is anchored once per Section C block", () =>
       companyName: "Hope Urban Planning Architectural and Engineering Consultancy PLC",
     });
     // The sub-sections that cannot anchor fall back to their written
-    // alternative rather than to silence.
+    // alternative rather than to silence — except where the sector paragraph
+    // already says the same thing, which the quality sub-section does.
     for (const fallback of [
       /methodology has been developed and refined/,
       /phased work programme draws on established delivery templates/,
-      /three-gate quality framework/,
     ]) {
       assert.match(markdown, fallback);
     }
+    // The quality gates are still stated — once, by the sector paragraph.
+    assert.match(markdown, /Quality gates at 30% Schematic, 60% Design Development, and 100% Pre-Issue/);
   });
 
   it("does not claim the QA framework was delivered on a project record", () => {
@@ -95,5 +97,42 @@ describe("a single reviewed project is anchored once per Section C block", () =>
     for (const name of ["Alpha Hospital", "Beta Clinic", "Gamma Medical Centre"]) {
       assert.equal((markdown.match(new RegExp(name, "g")) ?? []).length, 1, `${name} once`);
     }
+  });
+});
+
+// ── A closing sentence must add something ────────────────────────────────────
+//
+// Run 34049716090 delivered C.3 reading:
+//
+//   "Quality gates at 30% Schematic, 60% Design Development, and 100%
+//    Pre-Issue. Each gate signed off by Project Principal + Technical Director.
+//    Independent peer review at 100%. The three-gate quality framework
+//    (30% / 60% / 100%) is applied on every engagement. Each gate is signed off
+//    by Project Principal and Technical Director before client submission; an
+//    independent peer reviewer — not a member of the delivery team — validates
+//    the 100% deliverable package."
+//
+// The written alternative is appended to a sector paragraph that already
+// covered the same three facts, so the reader gets them twice in a row.
+describe("a closing sentence that restates the paragraph is not appended", () => {
+  it("does not state the three quality gates twice", () => {
+    const { markdown } = amplifySectionCDepth(EMPTY_SECTION_C, {
+      primarySector: "Healthcare / Medical Facility Design",
+      projects: ONE_PROJECT,
+      companyName: "Hope Engineering",
+    });
+    const qaBlock = markdown.split(/^##\s+/m).find((block) => /^C\.4 Quality Assurance/.test(block)) ?? markdown;
+    const signOffs = (qaBlock.match(/signed off by Project Principal/gi) ?? []).length;
+    assert.ok(signOffs <= 1, `the sign-off rule is stated once, got ${signOffs}:\n${qaBlock}`);
+  });
+
+  it("still appends a closing sentence that genuinely adds something", () => {
+    const { markdown } = amplifySectionCDepth(EMPTY_SECTION_C, {
+      primarySector: "Healthcare / Medical Facility Design",
+      projects: ONE_PROJECT,
+      companyName: "Hope Engineering",
+    });
+    // The project anchor says something the sector paragraph cannot, so it stays.
+    assert.match(markdown, /Approach (?:validated|demonstrated|applied) on G\+6 General Hospital/);
   });
 });
