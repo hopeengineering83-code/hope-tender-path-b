@@ -152,26 +152,38 @@ document-structure-seal.ts` now derives every sub-section number once,
 immediately before the render, drops headings whose bodies were emptied, and
 rebuilds the contents page from the sealed body.
 
-**OPEN — content stripped from legitimate sections, upstream of the seal.**
+**CLOSED — the Risk Register heading. Root cause found and fixed in `db5b3193`.**
 
-Run 34037370200 delivered `C.15 Phase-by-Phase Methodology Narrative` containing
-Phase 3 and Phase 5 with Phase 4's body gone, and one of three innovation
-entries where three were built. The seal removed the resulting empty headings
-and logs each one it drops, so the symptom no longer reaches the reader as an
-empty promise — but the content loss itself is unfixed.
+`lib/engine/proposal-price-leakage-guard.ts` drops any line carrying a priced
+term within forty characters of a number, and its term list had no word
+boundaries. "rate" matched inside "St(rate)gy", the heading's own number — C.7 —
+supplied the digit, and `## C.7 Risk Register and Mitigation Strategy` was
+deleted from every generated proposal. The risk tables stayed and read as part
+of C.6. The same unanchored match reaches "corpo(rate)", "accu(rate)",
+"sepa(rate)", "gene(rate)", "ope(rate)" and "mode(rate)". Every priced term now
+carries a boundary on both sides; `tests/price-guard-word-boundaries.test.ts`
+pins both directions. The structure seal's restoration is now a safety net
+rather than the fix.
 
-The same family of defect deletes the `Risk Register and Mitigation Strategy`
-heading. The tripwire in `generate-elite.ts` reports no loss at the section
-orderer, the placeholder stripper or the table de-duplicator, and reports it at
-the render boundary, so the pass responsible is one of the six between them;
-four more checkpoints were added in `fc4f5d06` to name it. The seal restores
-that heading from the opening line the authority records, so the delivered
-document is correct while the upstream cause is still logged as a warning.
+**OPEN — two further silent content losses, same family, cause not yet found.**
 
-Each of the following was tested directly against the real section and does NOT
-remove it: the placeholder stripper, table de-duplicator, internal-review
-stripper, internal-diagnostic sweep, benchmark output polisher, section orderer,
-duplicate-section suppressor, heading disambiguator, price-leakage guard.
+Run 34045764622 delivered:
+
+- `C.16 Phase-by-Phase Methodology Narrative` — its own text says "delivered
+  across 6 phases", and it lists Phases 1, 2, 3, 5 and 6. Phase 4 (Detailed
+  Design / Methodology Execution — Weeks 7-11) has no body, so the structure
+  seal drops the heading and the reader sees the gap. Phases 5 and 6 have also
+  lost their "Phase lead:" line, which Phases 1-3 still carry.
+- `C.17 Tender-Specific Innovation Hooks` — introduces "the following"
+  innovation hooks and lists one. Innovation 3's heading is dropped as empty by
+  the seal; Innovation 2 is gone entirely, heading included.
+
+Neither is the price guard: both headings survive it in test. The structure
+seal logs every heading it drops, so the symptom is visible in the run log
+(`Structure seal dropped N heading(s) left with no content`), and the Section C
+tripwire covers Section C sub-sections only — these are `###` blocks inside one.
+Widening the tripwire to any heading whose body empties between the authority
+and the render is the obvious next step.
 
 **BLOCKED ON AN OWNER ACTION — AI provider capacity.** In run 34037370200 all
 four proposal sections came from the deterministic fallback writer. Gemini

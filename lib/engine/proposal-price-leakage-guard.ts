@@ -29,15 +29,23 @@ function containsCommercialAmount(line: string): boolean {
   const value = clean(line);
   if (!value || isAllowedControlLine(value)) return false;
   const currencyAmount = /(?:ETB|USD|EUR|GBP|AED|SAR|KES|UGX|TZS|ZAR|NGN|\$|€|£)\s*\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s*(?:ETB|USD|EUR|GBP|AED|SAR|KES|UGX|TZS|ZAR|NGN)/i.test(value);
-  const pricedTermWithNumber = /(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)\D{0,40}\d[\d,]*(?:\.\d+)?/i.test(value);
-  const numberWithPricedTerm = /\d[\d,]*(?:\.\d+)?\D{0,40}(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)/i.test(value);
+  // The priced terms carry word boundaries on both sides. Without them "rate"
+  // matched inside "St(rate)gy", and because a heading like "C.7 Risk Register
+  // and Mitigation Strategy" also supplies a digit, this guard silently deleted
+  // it from every generated proposal — the Risk Register's tables were left
+  // sitting under the previous sub-section with nothing to say they were a
+  // different one. The same unanchored match reaches "corpo(rate)",
+  // "accu(rate)", "sepa(rate)", "gene(rate)", "ope(rate)" and "mode(rate)",
+  // all ordinary words in a methodology beside an ordinary number.
+  const pricedTermWithNumber = /\b(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)\b\D{0,40}\d[\d,]*(?:\.\d+)?/i.test(value);
+  const numberWithPricedTerm = /\d[\d,]*(?:\.\d+)?\D{0,40}\b(?:fee|fees|price|pricing|priced|quotation|quote|quoted|rate|rates|unit\s+rate|amount|grand\s+total|subtotal|discount|commercial\s+offer|financial\s+offer|boq)\b/i.test(value);
   return currencyAmount || pricedTermWithNumber || numberWithPricedTerm;
 }
 
 function containsCommercialCommitment(line: string): boolean {
   const value = clean(line);
   if (!value || isAllowedControlLine(value)) return false;
-  return /(?:our|the)\s+(?:fee|price|rate|quotation|quote|commercial\s+offer|financial\s+offer)\s+(?:is|shall\s+be|will\s+be)|we\s+quote|we\s+offer\s+(?:a\s+)?(?:fee|price|rate)/i.test(value);
+  return /(?:our|the)\s+\b(?:fee|price|rate|quotation|quote|commercial\s+offer|financial\s+offer)\b\s+(?:is|shall\s+be|will\s+be)|we\s+quote\b|we\s+offer\s+(?:a\s+)?\b(?:fee|price|rate)\b/i.test(value);
 }
 
 /**
