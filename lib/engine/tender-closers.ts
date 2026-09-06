@@ -181,7 +181,7 @@ function detectObstacles(tenderText: string, clientName?: string | null): Obstac
     out.push({
       category: "Brand alignment",
       obstacle: `${identityClause} Designs that ignore the client's visual standard are routinely rejected at design-review.`,
-      mitigation: `Brand guidelines will be downloaded from the client website / requested at inception. Concept design at 30% gate carries an explicit brand-alignment review item. Revision rounds budgeted into fee for any brand-driven adjustments.`,
+      mitigation: `Brand guidelines will be downloaded from the client website / requested at inception. Concept design at 30% gate carries an explicit brand-alignment review item. Revision rounds for brand-driven adjustments are planned into the engagement programme.`,
     });
   }
 
@@ -317,7 +317,10 @@ function detectCommercialDetails(
     out.push({
       field: "Revision Rounds",
       detected: revisions[1] + " rounds",
-      acknowledgement: `The fixed fee includes the deliverable plus up to ${revisions[1]} revision rounds based on consolidated client feedback. Out-of-scope revisions are flagged in writing before any work commences.`,
+      // The technical envelope acknowledges the scope rule, not its price: a
+      // "fixed fee" sentence beside a number is commercial content, and the
+      // price-leakage guard removes it — taking the acknowledgement with it.
+      acknowledgement: `The proposed scope includes the deliverable plus up to ${revisions[1]} revision rounds based on consolidated client feedback. Out-of-scope revisions are flagged in writing before any work commences.`,
     });
   }
 
