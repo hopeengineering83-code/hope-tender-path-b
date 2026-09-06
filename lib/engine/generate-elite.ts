@@ -2257,7 +2257,12 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     round2Sections.push(buildValueAddedServices({ primarySector: intelligence.primarySector, companyName: company.name }));
   }
   if (!upstreamCheck("D.3 Professional Certifications and Affiliations") && !upstreamCheck("Professional Certifications") && !upstreamCheck("Certifications and Affiliations")) {
-    round2Sections.push(buildCertificationsSection({ experts: experts as ExpertRecord[], companyName: company.name }));
+    round2Sections.push(buildCertificationsSection({
+      experts: experts as ExpertRecord[],
+      companyName: company.name,
+      legalRecords: company.legalRecords ?? [],
+      complianceRecords: company.complianceRecords ?? [],
+    }));
   }
   if (!upstreamCheck("A.7 In-House Capabilities") && !upstreamCheck("In-House Capabilities")) {
     round2Sections.push(buildInHouseCapabilitiesSection({

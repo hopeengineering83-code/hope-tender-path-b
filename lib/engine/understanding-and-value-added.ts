@@ -230,7 +230,21 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
 // D.3 Professional Certifications and Affiliations (aggregated from experts)
 // ───────────────────────────────────────────────────────────────────────────
 
-export function buildCertificationsSection(opts: { experts: ExpertRecord[]; companyName: string }): string {
+export interface CompanyRecordForCertification {
+  title?: string | null;
+  recordType?: string | null;
+  complianceType?: string | null;
+  authority?: string | null;
+  referenceNumber?: string | null;
+  status?: string | null;
+}
+
+export function buildCertificationsSection(opts: {
+  experts: ExpertRecord[];
+  companyName: string;
+  legalRecords?: CompanyRecordForCertification[];
+  complianceRecords?: CompanyRecordForCertification[];
+}): string {
   const allCerts = new Set<string>();
   for (const expert of opts.experts) {
     safeArr(expert.certifications).forEach((c) => {
@@ -239,20 +253,46 @@ export function buildCertificationsSection(opts: { experts: ExpertRecord[]; comp
   }
   const sortedCerts = Array.from(allCerts).sort();
 
-  if (sortedCerts.length === 0) {
+  if (sortedCerts.length > 0) {
     return [
       "## D.3 Professional Certifications and Affiliations",
-      `_Source-evidence action: ensure each reviewed expert record carries the full list of professional certifications, licenses, and registrations before final submission._`,
-    ].join("\n\n");
+      `${opts.companyName} maintains documented professional certifications and registrations across the proposed team. Original certificates are attached as Appendix C alongside the curricula vitae.`,
+      "",
+      "| Certification / License / Registration |",
+      "|---|",
+      ...sortedCerts.map((c) => `| ${c.replace(/\|/g, "/")} |`),
+    ].join("\n");
   }
+
+  // No expert record carries certifications. This used to emit the heading over
+  // an internal "Source-evidence action: ensure each reviewed expert record
+  // carries …" note; the internal-content stripper removed the note, the
+  // structure seal then dropped the heading with nothing under it, and the
+  // delivered proposal had no certifications section at all — a gap an
+  // evaluator scoring compliance notices immediately.
+  //
+  // The firm's own certifications are held as reviewed legal and compliance
+  // records — PPA supplier registration, tax clearance, competency certificate,
+  // quality-management manual — and A.3 already prints them. D.3 is where an
+  // evaluator looks for them, so the section is composed from the same records
+  // rather than left absent. Nothing is invented: each row is one reviewed
+  // record, with the reference number it carries.
+  const corporate = [...(opts.legalRecords ?? []), ...(opts.complianceRecords ?? [])]
+    .filter((record) => (record.title ?? "").trim().length > 2)
+    .slice(0, 12);
+
+  if (corporate.length === 0) return "";
 
   return [
     "## D.3 Professional Certifications and Affiliations",
-    `${opts.companyName} maintains documented professional certifications and registrations across the proposed team. Original certificates are attached as Appendix C alongside the curricula vitae.`,
+    `${opts.companyName} holds the following registrations, certifications and compliance records. Copies are attached as Appendix A alongside the company registration documents.`,
     "",
-    "| Certification / License / Registration |",
-    "|---|",
-    ...sortedCerts.map((c) => `| ${c.replace(/\|/g, "/")} |`),
+    "| Certification / License / Registration | Type | Reference | Status |",
+    "|---|---|---|---|",
+    ...corporate.map((record) => {
+      const cell = (value?: string | null) => (value ?? "").replace(/\|/g, "/").trim() || "—";
+      return `| ${cell(record.title)} | ${cell(record.recordType ?? record.complianceType)} | ${cell(record.referenceNumber)} | ${cell(record.status)} |`;
+    }),
   ].join("\n");
 }
 
