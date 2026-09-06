@@ -84,13 +84,52 @@ export function buildPrincipalQualificationsSection(opts: {
     if (expert.email) tableRows.push(`| Contact | ${expert.email}${expert.phone ? `, ${expert.phone}` : ""} |`);
     blocks.push(tableRows.join("\n"));
 
-    if (profile) {
-      blocks.push(`**Profile.** ${profile}`);
-    } else {
-      blocks.push(`_Source-evidence action: complete the profile narrative for ${expert.fullName} in the company knowledge vault before final submission._`);
-    }
+    // When the vault holds no written profile — or holds the CV's letterhead
+    // rather than a biography — the bio is composed from the record's own
+    // structured fields instead. Run 34039741983 refused every stored profile
+    // as furniture, the internal note below it was stripped as internal, and
+    // the whole Detailed Bios sub-section disappeared from the delivered
+    // proposal. An evaluator scoring team depth needs this section, and every
+    // fact in the composed sentence comes from the same reviewed record.
+    blocks.push(`**Profile.** ${profile || composedProfile(expert, position, disciplines, sectors, certifications, years)}`);
     blocks.push("");
   }
 
   return blocks.join("\n\n");
+}
+
+/**
+ * A factual profile sentence built from the reviewed record's structured
+ * fields. It asserts nothing the record does not carry: position, recorded
+ * years, disciplines, sectors and licences, in that order, and stops when the
+ * record stops.
+ */
+function composedProfile(
+  expert: ExpertRecord,
+  position: string,
+  disciplines: string[],
+  sectors: string[],
+  certifications: string[],
+  years: string | null,
+): string {
+  const opening = years
+    ? `${expert.fullName} is proposed as ${position} and has ${years} recorded in the reviewed specialist record.`
+    : `${expert.fullName} is proposed as ${position} against the reviewed specialist record.`;
+  const sentences = [opening];
+  if (disciplines.length > 0) {
+    sentences.push(`The record covers ${listPhrase(disciplines)}.`);
+  }
+  if (sectors.length > 0) {
+    sentences.push(`Sector experience is recorded in ${listPhrase(sectors)}.`);
+  }
+  if (certifications.length > 0) {
+    sentences.push(`Licences and certifications on file: ${certifications.join("; ")}.`);
+  }
+  return sentences.join(" ");
+}
+
+function listPhrase(items: string[]): string {
+  const shown = items.slice(0, 6);
+  if (shown.length === 1) return shown[0];
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
 }

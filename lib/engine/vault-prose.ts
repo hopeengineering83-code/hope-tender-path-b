@@ -171,3 +171,25 @@ export function tidyTruncation(text: string): string {
     .trimEnd();
   return value ? `${value}…` : "";
 }
+
+/**
+ * A stored value shown in a facts column rather than as a paragraph.
+ *
+ * A table cell listing qualifications does not need to read as prose — "MSc
+ * Electrical Engineering, hospital MEP design" is exactly what an evaluator
+ * wants there. What it must not carry is the source document's letterhead, its
+ * provenance, or the header card's habit of repeating the person's own name and
+ * title back at itself, which is what put "— DR. ENG. KEMAL MOHAMMED ZEINU
+ * Senior Environmental & Electrical Expert (PhD) HOPE URBAN PLANNING … Senior
+ * Environmental & Electrical Expert Hope Urban Planning Architectural and
+ * Engineering…" into a delivered sector-experience column.
+ */
+export function factualCardOrEmpty(text: string | null | undefined): string {
+  const cleaned = withoutSourceProvenance(text);
+  if (!cleaned) return "";
+  const words = cleaned.match(/\b[A-Za-z][A-Za-z&.'’\-]*\b/g) ?? [];
+  if (hasRepeatedPhrase(words, 4)) return "";
+  const shouted = words.filter((word) => word.length > 1 && word === word.toUpperCase()).length;
+  if (words.length > 0 && shouted / words.length > 0.25) return "";
+  return cleaned;
+}

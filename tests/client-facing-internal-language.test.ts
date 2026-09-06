@@ -396,11 +396,19 @@ describe("expert bios read as prose, not as a pasted CV file", () => {
     assert.ok(section, "the section should build");
     assert.ok(!section!.includes("Consultan "), "a bio must not stop mid-word");
     assert.ok(!/\bConsultan$/m.test(section!), "a bio must not end mid-word");
-    // A cut bio is marked as shortened rather than simply stopping.
+
     const profileLine = section!.split("\n").find((line) => line.startsWith("**Profile.**")) ?? "";
-    if (profileLine.length > 0 && !profileLine.includes("Amhara Region")) {
-      assert.match(profileLine, /…$/, "a shortened bio ends with an ellipsis");
-    }
+    assert.ok(profileLine.length > 0, "the bio must carry a profile line");
+    // This stored value is a CV header card with one real clause buried in it:
+    // shown as written it would print "General Manager & Practicing Professional
+    // Engineer Structural Engineer · Geotechnical Engineer · Project Manager |
+    // 5 International | …" to the client. The bio is composed from the record's
+    // structured fields instead, and asserts only what the record carries.
+    assert.ok(!/CURRICULUM VITAE|PERSONNEL INFORMATION|Name of Firm/i.test(profileLine), profileLine);
+    assert.ok(!/·|\|/.test(profileLine), `a bio is prose, not a header card: ${profileLine}`);
+    // Either a real written profile, marked as shortened when it was cut, or a
+    // composed sentence ending in a full stop. Never a bare stop mid-phrase.
+    assert.match(profileLine, /(?:…|\.)$/, `a bio ends cleanly: ${profileLine}`);
   });
 
   it("does not tell the client what the bid desk should confirm", async () => {

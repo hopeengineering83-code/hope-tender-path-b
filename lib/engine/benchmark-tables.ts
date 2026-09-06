@@ -1,5 +1,5 @@
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
-import { withoutSourceProvenance } from "./vault-prose";
+import { withoutSourceProvenance, factualCardOrEmpty } from "./vault-prose";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
 
@@ -159,8 +159,17 @@ export function buildProposedTeamTable(experts: ExpertRecord[], assignmentRoleHi
     const sectors = safeArr(expert.sectors).join(", ");
     // Same defect as the Principal Qualifications bios: the CV file's own
     // furniture reaching the client, and a hard slice stopping mid-word.
+    // Stripping named CV fields was not enough — run 34039741983 still put
+    // "— DR. ENG. KEMAL MOHAMMED ZEINU Senior Environmental & Electrical Expert
+    // (PhD) HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC …"
+    // in this table's sector-experience column. A stored value that is the
+    // source document's letterhead is not shown; the sectors beside it say what
+    // this column is for.
+    // This column lists facts rather than reading as a paragraph, so a short
+    // factual card is welcome here — what is not is the CV's letterhead or its
+    // habit of repeating the person's own name and title back at itself.
     const profile = truncateAtWordBoundary(
-      withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? "")).replace(/\s+/g, " ").trim(),
+      factualCardOrEmpty(withoutCvDocumentFurniture(withoutPersonalCvFields(expert.profile ?? ""))),
       280,
     );
     const sectorExp = [sectors, profile].filter(Boolean).join(" — ");

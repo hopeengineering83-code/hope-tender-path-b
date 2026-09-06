@@ -35,6 +35,7 @@ import {
   tidyTruncation,
 } from "../lib/engine/vault-prose";
 import { truncateAtWordBoundary } from "../lib/engine/proposal-intelligence";
+import { buildPrincipalQualificationsSection } from "../lib/engine/principal-qualifications";
 
 const DELIVERED_CV_DUMP =
   "HOPE URBAN PLANNING ARCHITECTURAL AND ENGINEERING CONSULTANCY PLC ENG. AHMED KEBEDE TEKAW "
@@ -126,5 +127,55 @@ describe("a shortened value must read as shortened, not broken", () => {
 
   it("leaves a short value alone", () => {
     assert.equal(truncateAtWordBoundary("Short value", 200), "Short value");
+  });
+});
+
+// ── The bios section must survive a vault with no written profiles ───────────
+//
+// Run 34039741983 refused every stored profile as document furniture — correctly
+// — and the whole "A.5.1 Principal Qualifications — Detailed Bios" sub-section
+// then disappeared from the delivered proposal: the only remaining content was
+// an internal source-evidence note, which the internal-content stripper removed,
+// and the structure seal dropped the empty headings that were left. An evaluator
+// scoring team depth needs that section.
+describe("a bio is composed from the record when the vault has no prose", () => {
+  const expert = {
+    fullName: "Eng. Kemal Mohammed Zeinu",
+    title: "Senior Environmental & Electrical Expert",
+    yearsExperience: 14,
+    disciplines: JSON.stringify(["Electrical Engineering", "Environmental Engineering", "Hydraulic / Water Resources"]),
+    sectors: JSON.stringify(["Healthcare", "Infrastructure"]),
+    certifications: JSON.stringify(["PhD, Huazhong University of Science & Technology"]),
+    profile: DELIVERED_CV_DUMP,
+  } as unknown as Parameters<typeof buildPrincipalQualificationsSection>[0]["experts"][number];
+
+  it("keeps the section and states only what the record carries", async () => {
+    const section = buildPrincipalQualificationsSection({ experts: [expert] });
+    assert.ok(section, "the section must not disappear");
+    assert.match(section!, /Principal Qualifications/);
+    assert.match(section!, /\*\*Profile\.\*\*/);
+    assert.match(section!, /Eng\. Kemal Mohammed Zeinu is proposed as Senior Environmental & Electrical Expert/);
+    assert.match(section!, /14 years experience recorded in the reviewed specialist record/);
+    assert.match(section!, /Electrical Engineering, Environmental Engineering and Hydraulic \/ Water Resources/);
+    assert.match(section!, /Healthcare and Infrastructure/);
+  });
+
+  it("does not print the letterhead it refused", () => {
+    const section = buildPrincipalQualificationsSection({ experts: [expert] })!;
+    assert.ok(!/HOPE URBAN PLANNING ARCHITECTURAL/.test(section), `no letterhead: ${section.slice(0, 400)}`);
+    assert.ok(!/Languages Amharic/.test(section));
+  });
+
+  it("does not leave an internal instruction in the client document", () => {
+    const section = buildPrincipalQualificationsSection({ experts: [expert] })!;
+    assert.ok(!/Source-evidence action/i.test(section));
+    assert.ok(!/knowledge vault/i.test(section));
+  });
+
+  it("still prefers a real written profile when the vault has one", () => {
+    const withProse = { ...(expert as object), profile: REAL_PROSE_PROFILE } as typeof expert;
+    const section = buildPrincipalQualificationsSection({ experts: [withProse] })!;
+    assert.match(section, /Ahmed leads the firm's structural and geotechnical practice/);
+    assert.ok(!/is proposed as Senior Environmental/.test(section), "the composed fallback is not used when prose exists");
   });
 });
