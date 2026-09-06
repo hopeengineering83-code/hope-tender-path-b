@@ -123,6 +123,66 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-06 UTC — Claude Code (generation regression, harness honesty, artifact verified clean)
+
+- **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
+- **HEAD:** `0e903f4f` → … → `89ce1b28`. No new lane, no merge, no Production deploy.
+
+**A regression I introduced, and the harness that hid it.** `1029f6ad` normalised
+vault text centrally — trimming the trailing comma from a project's stored
+country. That broke `PROPOSAL_GENERATION` on every hosted run, about a second
+after `ENGINE_RUN` handed off, because these are source-verified records:
+`provenanceMatchesCurrentRecord()` hashes each verified field and requires it to
+still equal what was verified against the source document. One character made
+`isDurablySourceVerified()` false, `canUseVaultRecord(…, "GENERATION")` rejected
+every project, and the zero-evidence hard block threw. **The gate was correct;
+the edit was the defect.** I first misread this as Run Engine idempotency.
+
+The acceptance harness reported those broken runs as fully green, because a
+FAILED job is terminal — so the settle loop moved on and the previous, still
+valid document went on satisfying every readiness, audit, export and layout
+gate. Two gates now close that: one proves the artifact's `contentSha256`
+actually moved, the other reads out any job created during the run that reached
+FAILED or CANCELED. `tests/vault-records-are-never-rewritten.test.ts` pins the
+rule so the next attempt to tidy a vault value fails in CI, not in production.
+
+**Verified on a proven-regenerated artifact** (run 34032686793, `89ce1b28`,
+`sha256 8f619eb9…`, baseline `d2ae4485…`, "regeneration confirmed"):
+
+| check | result |
+|---|---|
+| dangling `Region,)` | 0 (was 7) |
+| CV document furniture | 0 (was 12) |
+| `Bid-Team Action` in client tables | 0 (was 11) |
+| mid-word truncations | 0 (was 8) |
+| financial-submission contradiction | 0 |
+| `Deliverable Format` | PDF |
+| AI traces / internal diagnostics / evaluator simulation / source markers | 0 |
+| placeholders, Moyale leakage, zero-learning-curve, team-continuity claims | 0 |
+| Pharo facts, deadline, both emails, exact subject, PDF submission, biomedical plan | all present |
+| pages / pagination / layout | 36, 36/36 labelled, no clipping, overflow, footer collision |
+| export-readiness · audit | ok/READY/0 blockers · score 100 PASSED, readyForExport, zipEligible |
+
+The two "pricing" regex hits are the tender-required statements that *no*
+pricing is included, not leakage.
+
+**Still open — the 17-dimension target is NOT met.** The audit's 100/100 is the
+internal 10-axis rubric, not that assessment. The delivered PDF still splices
+evidence-marker sentences onto unrelated paragraphs (including an address line),
+cites its single reviewed project repeatedly through different templates, carries
+an out-of-order table of contents (C.0, C.1, C.3, C.4, C.6, C.2, C.5a), and
+repeats identical Section G rows. Those are content-generation problems and need
+their own session.
+
+**Tests run.** `npx tsc --noEmit` clean; `npx next lint` no warnings or errors;
+full `RUN_DB_INTEGRATION` suite 11335 pass / 0 fail against local PostgreSQL.
+
+**Next action.** Address evidence-marker padding, section ordering and Section G
+repetition; then attempt the 17-dimension assessment. Remove the temporary
+acceptance tooling once that passes.
+
+**Merge status:** not reviewed — do not merge.
+
 ### 2026-09-05 UTC — Claude Code (client-facing language, deliverable format, audit/export agreement)
 
 - **TOOL:** Claude Code · **BRANCH:** `release/consolidated-recovery-20260717` · **PR:** #1175
