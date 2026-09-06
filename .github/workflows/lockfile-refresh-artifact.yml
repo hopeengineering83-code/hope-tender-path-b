@@ -196,6 +196,30 @@ jobs:
           curl -sS --connect-timeout 15 --max-time 30 -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/tenders/$TENDER_ID/workflow-center" | tee /tmp/workflow-center-after-analyze.json
 
+      - name: Record the artifact this run starts from
+        run: |
+          # Run 33996268451 passed every gate below while regenerating nothing:
+          # it delivered a ZIP whose contentSha256, byte size and defect counts
+          # were identical to the run before it. Run Engine is idempotent
+          # against an unchanged analysis revision, so re-triggering it enqueued
+          # no job at all — the newest ENGINE_RUN/PROPOSAL_GENERATION/
+          # AUTO_FINALIZE rows were two runs old and the document's updatedAt
+          # had not moved. A green result like that says nothing about whether a
+          # generation-path code change reached the client's document.
+          #
+          # So the hash of the artifact this run starts from is recorded here,
+          # and compared after the chain settles.
+          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
+            "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" > /tmp/audit-before.json
+          python3 - <<'PYEOF'
+          import json
+          audit = json.load(open('/tmp/audit-before.json', encoding='utf-8'))
+          rows = [r for r in audit.get('documents', []) if r.get('finalExportCandidate')]
+          sha = (rows[0].get('contentSha256') or '') if rows else ''
+          print(f"baseline artifact sha256: {sha[:16] or '(none)'}")
+          open('/tmp/baseline-sha.txt', 'w').write(sha)
+          PYEOF
+
       - name: Trigger Run Engine (manual, owner-authorized)
         run: |
           resp=$(curl -sS --connect-timeout 15 --max-time 60 -X POST -w "\n---STATUS:%{http_code}---" \
@@ -210,6 +234,9 @@ jobs:
             echo "::error::Run Engine failed (HTTP $status)."
             exit 1
           fi
+          # reusedActiveJob and the returned jobId are the route's own account of
+          # whether this enqueued work or handed back an earlier job.
+          echo "$resp" | grep -oE '"(jobId|reusedActiveJob|sourceRevision)":[^,}]*' || true
 
       - name: Wait for ENGINE_RUN -> PROPOSAL_GENERATION -> AUTO_FINALIZE to settle
         run: bash scripts/tmp-await-tender-jobs.sh 120
@@ -224,6 +251,34 @@ jobs:
           echo
           curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
             "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" | tee /tmp/generated-proposal-audit.json
+
+      - name: Prove this run actually regenerated the artifact
+        run: |
+          # Guards the trap described in "Record the artifact this run starts
+          # from". If the hash has not moved, the pipeline handed back the
+          # document an earlier run produced, and nothing below can tell you
+          # anything about a generation-path change in this commit.
+          python3 - <<'PYEOF'
+          import json, sys
+          baseline = open('/tmp/baseline-sha.txt', encoding='utf-8').read().strip()
+          audit = json.load(open('/tmp/generated-proposal-audit.json', encoding='utf-8'))
+          rows = [r for r in audit.get('documents', []) if r.get('finalExportCandidate')]
+          if not rows:
+              raise SystemExit('Audit returned no final-export candidate rows')
+          current = (rows[0].get('contentSha256') or '').strip()
+          print(f"baseline sha256: {baseline[:16] or '(none)'}")
+          print(f"current  sha256: {current[:16] or '(none)'}")
+          if not current:
+              raise SystemExit('The final artifact has no contentSha256 to compare')
+          if baseline and baseline == current:
+              raise SystemExit(
+                  'This run regenerated nothing: the final artifact is byte-identical to the one '
+                  'it started from. Run Engine is idempotent against an unchanged analysis revision, '
+                  'so a green result here would prove nothing about generation-path changes in this '
+                  'commit. Change the source revision (or the analysis) before re-running.'
+              )
+          print('regeneration confirmed: the delivered artifact is new')
+          PYEOF
 
       - name: Require real final readiness with zero blockers
         run: |
