@@ -177,9 +177,29 @@ their own session.
 **Tests run.** `npx tsc --noEmit` clean; `npx next lint` no warnings or errors;
 full `RUN_DB_INTEGRATION` suite 11335 pass / 0 fail against local PostgreSQL.
 
-**Next action.** Address evidence-marker padding, section ordering and Section G
-repetition; then attempt the 17-dimension assessment. Remove the temporary
-acceptance tooling once that passes.
+**Root cause of the out-of-order table of contents, for whoever takes it next.**
+`section-orderer-and-toc.ts` is the active reorderer (`section-reorderer.ts` is
+imported but not the one called). Its own header states the scope: "Walk all
+level-1 headings (`# X`) and reorder them… Each level-1 block carries its
+level-2 sub-sections with it as a unit." So `## C.x` sub-sections are never
+sorted — they keep whatever order the injectors happened to emit, which is how
+the delivered TOC reads C.0, C.1, C.3, C.4, C.6, C.2, C.5a, C.6a, C.7.
+
+**Sorting them is NOT the fix, and would make things worse.** The numbers
+themselves collide: the AI prompt in rubric-driven-sections defines C.3 as "Work
+Plan and Deliverables" and C.4 as "Quality Assurance", while the delivered
+document has C.3 "Quality Assurance: Three-Stage Review", C.4 "Sector-Specific
+Technical Standards Applied" and C.6 "Work Plan and Schedule". Several
+independent injectors assign C.x numbers with no shared authority. Sorting a set
+whose numbering is inconsistent yields a tidy-looking document that is still
+wrong. The real fix is to give Section C sub-numbering a single authority the
+way `client-facing-section-titles.ts` did for Sections F and G — a design change
+that deserves its own session, not a late patch.
+
+**Next action.** Give C.x numbering one authority, then address evidence-marker
+padding (anchor sentences are appended to non-prose paragraphs, including an
+address line) and Section G row repetition. Only then attempt the 17-dimension
+assessment. Remove the temporary acceptance tooling once that passes.
 
 **Merge status:** not reviewed — do not merge.
 
