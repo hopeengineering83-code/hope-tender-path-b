@@ -76,6 +76,7 @@ import { injectMobilizationAndChecklist } from "./mobilization-and-checklist";
 import { stripPlaceholders } from "./placeholder-stripper";
 import { stripInternalReviewSections, stripInternalDiagnosticContent } from "./internal-review-stripper";
 import { reorderSectionsAndRebuildToc } from "./section-orderer-and-toc";
+import { normalizeSectionC } from "./section-c-authority";
 import { enforceClientName } from "./client-name-enforcer";
 import { suppressDuplicateSectionHeadings } from "./duplicate-section-suppressor";
 import { injectPersonnelDeep } from "./personnel-deep";
@@ -2865,6 +2866,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Then drop any AI-emitted Table of Contents (which won't reflect the
   // post-pass mutations) and emit a fresh one at the very top derived
   // from the actual final headings.
+  // Section C numbering is decided in exactly one place. Eight producers each
+  // assigned their own C.x and the numbers collided semantically — "Work Plan"
+  // was C.3 in one and C.6 in another, "Quality Assurance" C.4 in one and C.3
+  // in another — which is how a delivered contents page read C.0, C.1, C.3,
+  // C.4, C.6, C.2, C.5a, C.6a, C.7. This runs after every producer and after
+  // duplicate suppression, and before the TOC is rebuilt from the body's
+  // headings, so the contents page and the body agree by construction.
+  const sectionCFirst = normalizeSectionC(humanizedMarkdown);
+  if (sectionCFirst.renumbered > 0 || sectionCFirst.reordered) {
+    logger.info(`[generate-elite] Section C authority: ${sectionCFirst.numbers.length} sub-section(s) as ${sectionCFirst.numbers.join(", ")}; renumbered ${sectionCFirst.renumbered}, reordered=${sectionCFirst.reordered}.`);
+  }
+  humanizedMarkdown = sectionCFirst.markdown;
+
   const sectionOrderResult = reorderSectionsAndRebuildToc(humanizedMarkdown);
   if (sectionOrderResult.reorderedSectionCount > 0) {
     logger.info(`[generate-elite] Section orderer: reordered ${sectionOrderResult.reorderedSectionCount} section(s); rebuilt TOC with ${sectionOrderResult.tocEntries} entries.`);
@@ -3344,6 +3358,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       logger.info(`[generate-elite] Post-refinement internal-review stripper removed ${reStrip.removedSections.length} bid-team section(s) re-introduced by refinement.`);
     }
     workingMarkdown = reStrip.markdown;
+
+    // Refinement can reintroduce or reword a Section C heading, so the
+    // authority runs again before the TOC is rebuilt from the body.
+    const sectionCAgain = normalizeSectionC(workingMarkdown);
+    if (sectionCAgain.renumbered > 0 || sectionCAgain.reordered) {
+      logger.info(`[generate-elite] Post-refinement Section C authority: ${sectionCAgain.numbers.join(", ")}.`);
+    }
+    workingMarkdown = sectionCAgain.markdown;
 
     const reOrder = reorderSectionsAndRebuildToc(workingMarkdown);
     if (reOrder.reorderedSectionCount > 0) {

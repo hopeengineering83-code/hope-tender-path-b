@@ -36,6 +36,8 @@
  */
 
 import type { ProjectRecord } from "./benchmark-tables";
+import { isClaimBearingDestination, evidenceSupportsProposition, type EvidenceLike } from "./claim-bearing-destination";
+import { EvidenceRepetitionWindow } from "./evidence-repetition-control";
 
 // Same evidence-marker patterns as proposal-quality-scorer.ts —
 // kept in sync because we test paragraphs against the SAME criteria
@@ -231,6 +233,13 @@ export function injectEvidenceMarkers(
   let injected = 0;
   let cursorIdx = 0;
 
+  // A reviewed record introduced a moment ago must not be re-introduced as
+  // fresh proof: a delivered proposal cited one project four times in ten
+  // lines through four different templates. The window is seeded from the text
+  // already written so earlier generators' citations count too.
+  const repetition = new EvidenceRepetitionWindow();
+  repetition.seedFromMarkdown(markdown, candidates.map((c) => c.name));
+
   let charsScanned = 0;
   for (let i = 0; i < blocks.length && injected < INJECTION_CAP; i += 1) {
     const block = blocks[i];
@@ -241,13 +250,31 @@ export function injectEvidenceMarkers(
     const trimmed = block.trim();
     if (shouldSkipParagraph(trimmed)) continue;
     if (paragraphHasEvidence(trimmed)) continue;
+    // The structural skip list above understands shape, not meaning: an address
+    // block is over eighty characters, has no bullet, no pipe and no evidence
+    // marker, so a delivered proposal appended a hospital citation to the
+    // firm's postal address. Meaning is judged here instead.
+    if (!isClaimBearingDestination(trimmed).eligible) continue;
 
     // Skip if this paragraph falls inside Cover Letter / Exec
     // Summary / Why Us / Letter of Transmittal protected zones.
     const startLine = paragraphStartLine(blockChars);
     if (protectedLineRanges.some((r) => startLine >= r.start && startLine < r.end)) continue;
 
-    const project = candidates[cursorIdx % candidates.length];
+    // Condition B: the anchor must bear on what this paragraph claims. Rotate
+    // through the candidates looking for one that genuinely does; if none
+    // relates to this paragraph, leave it un-cited rather than pad it to lift
+    // an evidence-density score.
+    let project: ProjectRecord | null = null;
+    for (let probe = 0; probe < candidates.length; probe += 1) {
+      const candidate = candidates[(cursorIdx + probe) % candidates.length];
+      if (!evidenceSupportsProposition(trimmed, candidate as EvidenceLike)) continue;
+      if (!repetition.canIntroduce(candidate.name, blockChars)) continue;
+      project = candidate;
+      cursorIdx += probe;
+      break;
+    }
+    if (!project) continue;
     // PR #256 — pass the cursor as templateIndex so consecutive
     // injections rotate through different sentence shapes. Avoids
     // the 10x-repetition problem where every anchor read identically.
@@ -259,6 +286,7 @@ export function injectEvidenceMarkers(
     // Append anchor as a continuation sentence so it reads naturally
     // — same paragraph, separated by a single space.
     blocks[i] = `${block.trimEnd()} ${anchor}`;
+    repetition.record(project.name, blockChars);
     injected += 1;
     cursorIdx += 1;
   }

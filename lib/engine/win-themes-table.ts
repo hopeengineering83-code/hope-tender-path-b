@@ -340,12 +340,92 @@ function defaultRows(sector: string): ThemeRow[] {
 // internally; it simply is not client-facing content, and no amount of
 // per-phrase filtering downstream can make an internal instruction into a
 // client sentence. The channel is cut here, at the boundary.
+/**
+ * What the firm actually commits to do about a stated tender requirement, and
+ * what that means for the client.
+ *
+ * Every entry is a methodology commitment made in this proposal — never a claim
+ * of past delivery. Rows are emitted only for requirements this map recognises;
+ * a requirement it cannot answer specifically is left to the Compliance Matrix
+ * and Section C rather than padded with a generic row.
+ *
+ * The previous version gave every requirement the same three sentences —
+ * "Mapped to a specific firm capability and a project anchor in our
+ * methodology" / "Addressed directly in our methodology — see Section C" —
+ * so a delivered proposal's Section G carried four consecutive rows whose
+ * value proposition was word-for-word identical. Repeating one sentence
+ * five times does not make five propositions.
+ */
+const THEME_CAPABILITY_MAP: Array<{ match: RegExp; capability: string; clientValue: string }> = [
+  {
+    match: /infection|ipc\b|clean.{0,12}dirty|isolation|sterili|cross[- ]contamination/i,
+    capability: "Infection-prevention zoning applied from schematic design: clean/dirty separation, isolation-room circulation and staff/patient/supply flows resolved before layouts are frozen",
+    clientValue: "IPC compliance is designed in rather than retrofitted, so clinical commissioning is not held up by circulation rework",
+  },
+  {
+    match: /patient.{0,10}flow|clinical.{0,12}(?:workflow|zoning|planning)|circulation|department.{0,10}adjacen|functional.{0,10}program/i,
+    capability: "Departmental adjacency and patient-flow planning driven by the clinical brief, with Emergency, Outpatient, Imaging, Laboratory and Pharmacy zoned against projected throughput",
+    clientValue: "Layouts reflect how the centre will actually operate, reducing walking distances and avoiding late clinical objections",
+  },
+  {
+    match: /medical.{0,10}gas|oxygen|vacuum|nitrous|piped.{0,10}gas/i,
+    capability: "Medical gas reticulation designed with the MEP and structural grids in one coordinated model: outlet schedules, alarm panels and plant sizing set against the equipment brief",
+    clientValue: "Gas services are coordinated before construction, avoiding the late service clashes that typically drive variation orders",
+  },
+  {
+    match: /mep|mechanical|electrical|plumbing|hvac|ventilation|power|ups|generator/i,
+    capability: "Single in-house multidisciplinary MEP team covering electrical, mechanical and sanitary design, with load calculations tied to the confirmed equipment schedule",
+    clientValue: "MEP coordination is internal rather than contractual, so interface issues are resolved by the team instead of between sub-consultants",
+  },
+  {
+    match: /biomedical|medical.{0,10}equipment|imaging|radiation|shielding|ct\b|mri\b|x-?ray/i,
+    capability: "Licensed biomedical engineering specialist engaged for equipment spatial planning, electrical load calculation, and radiation shielding and licensing where the confirmed equipment brief requires it",
+    clientValue: "Equipment-driven requirements are settled at design stage, so imaging and laboratory rooms do not need structural or shielding rework",
+  },
+  {
+    match: /regulat|approval|licens|permit|authority|code.{0,10}complian|standard/i,
+    capability: "Approvals pathway mapped at inception against the applicable national and municipal authorities, with each submission package and its evidence listed in the work plan",
+    clientValue: "The client sees which approval is needed when, so authority review is scheduled rather than discovered",
+  },
+  {
+    match: /accessib|universal.{0,10}design|disab|crpd|iso 21542|mobility/i,
+    capability: "Universal-design review at every gate against the national accessibility standard, with an accessibility audit signed off before 100% issuance",
+    clientValue: "Accessibility is evidenced at handover rather than raised as a defect after construction",
+  },
+  {
+    match: /structur|geotech|soil|foundation|seismic/i,
+    capability: "In-house structural and geotechnical capability — drilling rigs and a soils laboratory — so site investigation feeds the structural model directly",
+    clientValue: "Site-assessment findings reach the design team without a sub-contractor hand-off, protecting the programme",
+  },
+  {
+    match: /supervis|construction.{0,12}(?:phase|stage|admin)|site.{0,10}monitor|contract.{0,10}admin/i,
+    capability: "Construction-stage supervision with defined hold-points, site instruction records and monthly progress reporting against the approved programme",
+    clientValue: "Progress and quality are evidenced in writing throughout, so certification decisions rest on records rather than recollection",
+  },
+  {
+    match: /quality|qa\b|qc\b|review.{0,10}gate|peer.{0,10}review/i,
+    capability: "Three formal design gates at 30%, 60% and 100% with an independent reviewer who is not on the delivery team",
+    clientValue: "Errors are caught by fresh eyes before issuance rather than by the client at review",
+  },
+  {
+    match: /handover|commission|testing|as.?built|o&m|operation.{0,10}manual|training/i,
+    capability: "Structured handover: as-built documentation, O&M manuals, commissioning records and operator training delivered as one pack",
+    clientValue: "The facility can be operated and maintained from the handover pack without returning to the designer",
+  },
+  {
+    match: /team|personnel|staffing|expert|multidisciplin|coordinat/i,
+    capability: "Named experts mapped to each discipline with a written back-up per role and a 48-hour mobilisation commitment",
+    clientValue: "Continuity is contractual, so the loss of one specialist does not stall the assignment",
+  },
+];
+
 function tenderSpecificRows(opts: {
   themes?: string[];
   evaluationCriteria?: string[];
 }): ThemeRow[] {
   const out: ThemeRow[] = [];
   const seen = new Set<string>();
+  const usedCapability = new Set<string>();
 
   // Tender themes are the client's own stated priorities, so they read as
   // requirements — not as "hot-buttons", which is bid-desk shorthand for
@@ -356,16 +436,43 @@ function tenderSpecificRows(opts: {
     if (!trimmed) continue;
     const key = `theme:${trimmed.toLowerCase()}`;
     if (seen.has(key)) continue;
+
+    const matched = THEME_CAPABILITY_MAP.find((entry) => entry.match.test(trimmed));
+    // A requirement this map cannot answer specifically is covered by the
+    // Compliance Matrix and Section C. Emitting a generic row for it would add
+    // a line without adding a proposition.
+    if (!matched) continue;
+    // Two requirements can legitimately point at the same capability; say it
+    // once rather than twice.
+    if (usedCapability.has(matched.capability)) continue;
+
     seen.add(key);
+    usedCapability.add(matched.capability);
     out.push({
       pain: trimmed,
-      strength: "Mapped to a specific firm capability and a project anchor in our methodology",
-      discriminator: "Addressed directly in our methodology — see Section C and the Compliance Matrix",
+      strength: matched.capability,
+      discriminator: matched.clientValue,
       evidenceFallback: "Written commitment in this proposal — Section C (Technical Methodology)",
     });
   }
 
   return out;
+}
+
+/**
+ * Fold a row into the proposition it actually makes, so two rows that say the
+ * same thing in different words can be recognised as one.
+ */
+function normalizedProposition(row: ThemeRow): string {
+  return [row.strength, row.discriminator]
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(" ")
+    .filter((w) => w.length > 3)
+    .slice(0, 14)
+    .join(" ");
 }
 
 // ─── Builder ─────────────────────────────────────────────────────────────
@@ -388,7 +495,20 @@ function buildTable(opts: BuildOpts): string {
 
   // Tender-specific rows come first; generic rows fill the remainder.
   // Cap at 10 rows so the table covers complex tenders without becoming unwieldy.
-  const all = [...tenderRows, ...sectorRows].slice(0, 10);
+  // Semantic de-duplication across every source of rows. Exact-string equality
+  // is not enough: the defect was rows whose requirement text differed while
+  // their capability and client value were identical, which is one proposition
+  // wearing several hats. The first occurrence wins — tender-derived rows come
+  // first, so a tender-specific statement is kept over a generic one.
+  const all: ThemeRow[] = [];
+  const propositions = new Set<string>();
+  for (const row of [...tenderRows, ...sectorRows]) {
+    if (all.length >= 10) break;
+    const proposition = normalizedProposition(row);
+    if (proposition && propositions.has(proposition)) continue;
+    if (proposition) propositions.add(proposition);
+    all.push(row);
+  }
 
   // Column labels are the client's vocabulary, not the bid desk's. The
   // underlying row fields keep their original internal names; only what is

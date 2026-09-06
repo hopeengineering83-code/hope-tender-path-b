@@ -463,3 +463,70 @@ describe("the last raw-source producers are cleaned too", () => {
     assert.ok(!/\baut\b\s*$/m.test(markdown), "a bullet must not end on a word fragment");
   });
 });
+
+// Section G rows must each make a distinct, source-supported proposition.
+//
+// A delivered proposal's Section G carried consecutive rows whose requirement
+// text differed but whose value proposition was word-for-word identical:
+//
+//   "Mapped to a specific firm capability and a project anchor in our
+//    methodology" | "Addressed directly in our methodology — see Section C and
+//    the Compliance Matrix" | "Written commitment in this proposal — Section C"
+//
+// repeated for rows 2, 3, 4 and 5. Repeating one sentence four times is one
+// proposition, not four.
+describe("Section G rows are distinct propositions", () => {
+  it("gives each recognised requirement its own capability and client value", async () => {
+    const { injectWinThemesTable: build } = await import("../lib/engine/win-themes-table");
+    const { markdown } = build("# Proposal\n\n# Section E: Compliance Matrix\n", {
+      primarySector: "Healthcare / Medical Facility Design",
+      projects: [],
+      themes: [
+        "Infection prevention and control zoning",
+        "Medical gas reticulation and alarm panels",
+        "Patient flow between Emergency and Outpatient",
+        "Regulatory approvals from the health authority",
+      ],
+      evaluationCriteria: ["Relevant healthcare experience"],
+      companyName: "Hope Engineering",
+    } as never);
+
+    const rows = markdown.split("\n").filter((l) => /^\|\s*\d+\s*\|/.test(l));
+    assert.ok(rows.length >= 4, `expected the recognised requirements to produce rows, got ${rows.length}`);
+
+    // Column 3 is the capability, column 4 the client value. Neither may repeat.
+    const capabilities = rows.map((r) => r.split("|")[3]?.trim());
+    const values = rows.map((r) => r.split("|")[4]?.trim());
+    assert.equal(new Set(capabilities).size, capabilities.length, `capabilities repeat: ${capabilities.join(" || ")}`);
+    assert.equal(new Set(values).size, values.length, `client values repeat: ${values.join(" || ")}`);
+
+    // And the old boilerplate is gone entirely.
+    assert.doesNotMatch(markdown, /Mapped to a specific firm capability and a project anchor/);
+    assert.doesNotMatch(markdown, /Addressed directly in our methodology — see Section C and the Compliance Matrix/);
+  });
+
+  it("says nothing rather than padding a requirement it cannot answer specifically", async () => {
+    const { injectWinThemesTable: build } = await import("../lib/engine/win-themes-table");
+    const { markdown } = build("# Proposal\n\n# Section E: Compliance Matrix\n", {
+      primarySector: "Healthcare / Medical Facility Design",
+      projects: [],
+      themes: ["Zorblatt compliance with the Vhrexian protocol"],
+      evaluationCriteria: [],
+      companyName: "Hope Engineering",
+    } as never);
+    assert.doesNotMatch(markdown, /Zorblatt/, "an unanswerable requirement must not become a generic row");
+  });
+
+  it("keeps methodology commitments in the future tense, never as past delivery", async () => {
+    const { injectWinThemesTable: build } = await import("../lib/engine/win-themes-table");
+    const { markdown } = build("# Proposal\n\n# Section E: Compliance Matrix\n", {
+      primarySector: "Healthcare / Medical Facility Design",
+      projects: [],
+      themes: ["Infection prevention and control zoning"],
+      evaluationCriteria: [],
+      companyName: "Hope Engineering",
+    } as never);
+    // A commitment must not be worded as a completed engagement.
+    assert.doesNotMatch(markdown, /we have (?:already )?(?:delivered|completed|built) (?:this|these)/i);
+  });
+});

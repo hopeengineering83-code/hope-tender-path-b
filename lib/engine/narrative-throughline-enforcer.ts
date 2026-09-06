@@ -15,6 +15,8 @@
 
 import type { ProjectRecord } from "./benchmark-tables";
 import { inlineEvidenceValue } from "./proposal-intelligence";
+import { isClaimBearingDestination, evidenceSupportsProposition, type EvidenceLike } from "./claim-bearing-destination";
+import { spanAlreadyCites } from "./evidence-repetition-control";
 
 function normalize(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -93,10 +95,22 @@ export function enforceNarrativeThroughline(opts: {
   const sections = locateSections(lines);
   const injections: { sectionIdx: number; insertAfter: number; sentence: string; section: string; project: string }[] = [];
 
+  const topNames = top.map((p) => p.name);
   for (const section of sections) {
     const sectionText = lines.slice(section.headingLine + 1, section.nextHeadingLine).join("\n");
+    // One anchor per section at most. This pass used to add a sentence for
+    // every top project absent from every section, which is how the same
+    // record ended up re-introduced repeatedly down a single page.
+    if (spanAlreadyCites(sectionText, topNames)) continue;
+    // A section made only of contact details, submission metadata or a
+    // signature block carries no proposition for evidence to support.
+    if (!isClaimBearingDestination(sectionText, 120).eligible) continue;
+    let anchoredThisSection = false;
     for (const project of top) {
+      if (anchoredThisSection) break;
       if (projectMentioned(sectionText, project)) continue;
+      // The record must bear on what this section actually argues.
+      if (!evidenceSupportsProposition(sectionText, project as EvidenceLike)) continue;
       // Project not mentioned in this section — schedule an anchor sentence.
       // Vault values keep their own punctuation and must not be rewritten on
       // the record — they are hashed against their source provenance. Trim for
@@ -114,6 +128,7 @@ export function enforceNarrativeThroughline(opts: {
         section: section.label,
         project: project.name,
       });
+      anchoredThisSection = true;
     }
   }
 
