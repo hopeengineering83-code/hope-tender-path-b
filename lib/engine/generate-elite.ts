@@ -2889,13 +2889,15 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // Recording the expected set here lets the seal report exactly which
   // sub-section was lost, and which pass lost it, instead of the loss reaching
   // a client unremarked.
-  const sectionCExpected = sectionCHeadingsOf(humanizedMarkdown)
-    .map((heading) => heading.replace(/^C\.\d+[a-z]?\s*/i, "").trim());
+  const sectionCExpected = sectionCFirst.titles.map((title, index) => ({
+    title,
+    anchor: sectionCFirst.anchors[index] ?? "",
+  }));
   const noteSectionCLoss = (checkpoint: string, markdown: string): void => {
     const present = new Set(
       sectionCHeadingsOf(markdown).map((heading) => heading.replace(/^C\.\d+[a-z]?\s*/i, "").trim()),
     );
-    const lost = sectionCExpected.filter((title) => !present.has(title));
+    const lost = sectionCExpected.map((entry) => entry.title).filter((title) => !present.has(title));
     if (lost.length > 0) {
       logger.warn(`[generate-elite] Section C sub-section(s) lost by ${checkpoint}: ${lost.join("; ")}.`);
     }
@@ -3441,6 +3443,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
       logger.info(`[generate-elite] Final internal-review sweep removed ${finalInternalStrip.removedSections.length} repair diagnostic section(s).`);
     }
     workingMarkdown = finalInternalStrip.markdown;
+    noteSectionCLoss("the final internal-review sweep", workingMarkdown);
   }
 
   // Later deterministic methodology/quality addenda can introduce phrases
@@ -3448,6 +3451,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // separation pass. Apply the same canonical separation one final time to
   // the exact markdown that will be rendered; this removes leakage rather
   // than weakening the validator that detects it.
+  noteSectionCLoss("the quality-repair addenda", workingMarkdown);
   workingMarkdown = enforceTechnicalPriceSeparation(workingMarkdown, evaluatorMatrixInput);
   workingMarkdown = workingMarkdown
     .replace(/\b(?:preliminary\s+)?cost\s+estimate(?:s)?\b/gi, "design quantity and resource schedule")
@@ -3490,6 +3494,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // The placeholder sweep deliberately replaces unsafe cells with an internal
   // Bid-Team action marker. That marker must not be rendered into the final
   // client document (or become a false third manual workflow action).
+  noteSectionCLoss("the client-language cleaner", workingMarkdown);
   workingMarkdown = cleanClientLanguage(workingMarkdown);
   workingMarkdown = enforceTechnicalPriceSeparation(
     workingMarkdown.replace(/\bBid-Team\b/gi, "proposal team"),
@@ -3516,6 +3521,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     logger.info(`[generate-elite] Internal-diagnostic content sweep removed ${diagnosticSweep.removedLines.length} line(s)/row(s) before render.`);
   }
   workingMarkdown = diagnosticSweep.markdown;
+  noteSectionCLoss("the internal-diagnostic sweep", workingMarkdown);
 
   workingMarkdown = disambiguateRepeatedHeadings(workingMarkdown);
 
@@ -3529,7 +3535,10 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // to skip C.7 and D.4 while advertising four sub-sections that had no text
   // under them at all.
   noteSectionCLoss("the render boundary", workingMarkdown);
-  const structureSeal = sealDocumentStructure(workingMarkdown);
+  const structureSeal = sealDocumentStructure(workingMarkdown, sectionCExpected);
+  if (structureSeal.restored.length > 0) {
+    logger.warn(`[generate-elite] Structure seal restored ${structureSeal.restored.length} sub-section heading(s) a downstream pass deleted: ${structureSeal.restored.join("; ")}.`);
+  }
   if (structureSeal.droppedEmpty.length > 0) {
     logger.info(`[generate-elite] Structure seal dropped ${structureSeal.droppedEmpty.length} heading(s) left with no content: ${structureSeal.droppedEmpty.join("; ")}.`);
   }
@@ -3537,6 +3546,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     logger.info(`[generate-elite] Structure seal renumbered ${structureSeal.renumbered} sub-heading(s) and repointed ${structureSeal.resolvedCrossReferences} cross-reference(s); Section C delivers ${structureSeal.sectionCHeadings.length} sub-section(s).`);
   }
   workingMarkdown = structureSeal.markdown;
+
+  // The contents page is built from the body's headings, so it has to be built
+  // from the sealed body. Run 34037370200 rebuilt it before the seal and
+  // shipped a contents page listing A.4a, a C.8 that followed C.6, and a D.5
+  // with no D.4 — none of which the body it described still contained.
+  const sealedOrder = reorderSectionsAndRebuildToc(workingMarkdown);
+  logger.info(`[generate-elite] Contents page rebuilt from the sealed body: ${sealedOrder.tocEntries} entries.`);
+  workingMarkdown = sealedOrder.markdown;
 
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;

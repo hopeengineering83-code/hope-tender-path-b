@@ -263,3 +263,100 @@ describe("cross-references point at the number the section really has", () => {
     assert.equal(sealDocumentStructure(md).resolvedCrossReferences, 0);
   });
 });
+
+describe("a sub-section a downstream pass deleted is put back", () => {
+  // Hosted run 34037370200: the Risk Register's heading was gone by the render
+  // and its tables were left reading as part of C.6 Sector-Specific Technical
+  // Standards. The authority named the sub-section and recorded the line its
+  // body opens with, so the content can be found again with no heading above
+  // it.
+  const anchor = "Top delivery risks identified for this assignment, with named mitigations grounded in "
+    + "the client's engagement and the firm's institutional controls.";
+  const orphaned = [
+    "# Section C: Technical Approach",
+    "",
+    "## C.6 Sector-Specific Technical Standards Applied",
+    "",
+    "HEPA filtration is specified for theatres and isolation rooms.",
+    "",
+    anchor,
+    "",
+    "| Risk | Mitigation |",
+    "|---|---|",
+    "| Licensing delay | Donor-standard documentation |",
+    "",
+  ].join("\n");
+
+  it("restores the heading immediately above its orphaned body", () => {
+    const result = sealDocumentStructure(orphaned, [
+      { title: "Sector-Specific Technical Standards Applied", anchor: "HEPA filtration is specified for theatres and isolation rooms." },
+      { title: "Risk Register and Mitigation Strategy", anchor },
+    ]);
+    assert.deepEqual(result.restored, ["Risk Register and Mitigation Strategy"]);
+    const out = sectionCHeadingsOf(result.markdown);
+    assert.deepEqual(out, [
+      "C.1 Sector-Specific Technical Standards Applied",
+      "C.2 Risk Register and Mitigation Strategy",
+    ]);
+    assert.match(result.markdown, /## C\.2 Risk Register and Mitigation Strategy\n\nTop delivery risks/);
+  });
+
+  it("does nothing when the sub-section is already there", () => {
+    const intact = orphaned.replace(anchor, `## C.7 Risk Register and Mitigation Strategy\n\n${anchor}`);
+    const result = sealDocumentStructure(intact, [
+      { title: "Risk Register and Mitigation Strategy", anchor },
+    ]);
+    assert.deepEqual(result.restored, []);
+  });
+
+  it("does not restore a sub-section whose body is gone too", () => {
+    const md = "# Section C: Technical Approach\n\n## C.1 Quality Assurance\n\nThree design gates.\n";
+    const result = sealDocumentStructure(md, [
+      { title: "Risk Register and Mitigation Strategy", anchor: "Top delivery risks identified for this assignment, with named mitigations." },
+    ]);
+    assert.deepEqual(result.restored, [], "the seal restores a heading, never content");
+  });
+
+  it("does not insert a heading above text that already has one", () => {
+    const md = [
+      "# Section C: Technical Approach",
+      "",
+      "## C.1 Work Plan and Deliverables",
+      "",
+      "Top delivery risks identified for this assignment, with named mitigations grounded in the client's engagement.",
+      "",
+    ].join("\n");
+    assert.deepEqual(sealDocumentStructure(md, [{ title: "Risk Register and Mitigation Strategy", anchor }]).restored, []);
+  });
+});
+
+describe("cross-references written without parentheses", () => {
+  it("repoints a compliance-matrix reference at the number the section now has", () => {
+    const md = [
+      "# Section A: Company Profile",
+      "",
+      "## A.4 Key Personnel",
+      "",
+      "The proposed personnel.",
+      "",
+      "## A.4a Proposed Project Team",
+      "",
+      "The assigned team.",
+      "",
+      "# Section E: Compliance Matrix",
+      "",
+      "## E.1 Bid Compliance Mapping",
+      "",
+      "Multidisciplinary team — Section A.4 Proposed Project Team, evidenced by the CVs.",
+      "",
+    ].join("\n");
+    const result = sealDocumentStructure(md);
+    assert.match(result.markdown, /Section A\.5 Proposed Project Team/);
+    assert.equal(result.resolvedCrossReferences, 1);
+  });
+
+  it("leaves a reference to a title this document does not carry", () => {
+    const md = "# Section A: Company Profile\n\n## A.1 Company Overview\n\nOverview.\n\nSee Section Z.9 Some Other Document for detail.\n";
+    assert.equal(sealDocumentStructure(md).resolvedCrossReferences, 0);
+  });
+});

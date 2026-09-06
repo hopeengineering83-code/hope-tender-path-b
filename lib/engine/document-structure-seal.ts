@@ -66,6 +66,12 @@ interface HeadingNode {
   descendants: number[];
 }
 
+/** A sub-section the Section C authority named, and the line its body opens with. */
+export interface ExpectedSubSection {
+  title: string;
+  anchor: string;
+}
+
 export interface StructureSealResult {
   markdown: string;
   /** Headings dropped because nothing was left under them. */
@@ -76,6 +82,8 @@ export interface StructureSealResult {
   sectionCHeadings: string[];
   /** Cross-references repointed at the number their named section really has. */
   resolvedCrossReferences: number;
+  /** Sub-sections whose heading a downstream pass deleted, and the seal put back. */
+  restored: string[];
 }
 
 /** The `##`-level headings inside Section C, exactly as a reader would read them. */
@@ -140,10 +148,38 @@ function carriesContent(nodes: HeadingNode[], index: number): boolean {
  * Runs once, immediately before the render, after every pass that can add or
  * remove a heading.
  */
-export function sealDocumentStructure(markdown: string): StructureSealResult {
+export function sealDocumentStructure(
+  markdown: string,
+  expected: ExpectedSubSection[] = [],
+): StructureSealResult {
+  // ── 0. Put back a sub-section heading a downstream pass deleted ─────────
+  //
+  // Hosted run 34037370200 lost "Risk Register and Mitigation Strategy"
+  // between the table de-duplicator and the render: the heading went, the
+  // register's own tables stayed, and they were left reading as part of
+  // C.6 Sector-Specific Technical Standards. The authority named that
+  // sub-section and recorded the line its body opens with, so the content can
+  // be found again even with no heading above it. Restoring the heading here
+  // enforces the authority's contract on the document that is actually
+  // rendered; the loss is still reported upstream, so the pass responsible is
+  // not hidden by the repair.
+  const restored: string[] = [];
+  let working = markdown;
+  if (expected.length > 0) {
+    const present = new Set(sectionCHeadingsOf(working).map((heading) => normalizeTitle(stripNumber(heading))));
+    for (const { title, anchor } of expected) {
+      if (!anchor || present.has(normalizeTitle(title))) continue;
+      const restoredMarkdown = insertHeadingBeforeAnchor(working, title, anchor);
+      if (restoredMarkdown) {
+        working = restoredMarkdown;
+        restored.push(title);
+      }
+    }
+  }
+
   // Section C order and identity first — the seal derives numbers over
   // whatever it is handed, so the canonical order has to be in place already.
-  const sectionC = normalizeSectionC(markdown);
+  const sectionC = normalizeSectionC(working);
   let lines = sectionC.markdown.split("\n");
 
   // ── 1. Drop headings that no longer carry anything ──────────────────────
@@ -219,16 +255,36 @@ export function sealDocumentStructure(markdown: string): StructureSealResult {
   });
 
   // ── 3. Point cross-references at the number their named section really has ──
+  //
+  // Producers write these numbers by hand — "addressed below in Section C.2
+  // (Technical Methodology)", "Section A.4 Proposed Project Team and A.4.1
+  // Principal Qualifications" — before the final ordering is known. A
+  // reference is only rewritten when the title it names is a heading in this
+  // document and that heading carries a different number, so a reference to
+  // something the seal does not know about is left exactly as written.
   let resolvedCrossReferences = 0;
-  const sealed = lines.join("\n").replace(
-    /\bSection\s+([A-Z])\.(\d+(?:\.\d+)?)\s*\(([^)\n]{3,80})\)/g,
-    (whole, refLetter: string, refNumber: string, refTitle: string) => {
-      const actual = titleToNumber.get(normalizeTitle(refTitle));
-      if (!actual || actual === `${refLetter}.${refNumber}`) return whole;
-      resolvedCrossReferences += 1;
-      return `Section ${actual} (${refTitle})`;
-    },
-  );
+  const repoint = (refLetter: string, refNumber: string, refTitle: string): string | null => {
+    const actual = titleToNumber.get(normalizeTitle(refTitle));
+    if (!actual || actual === `${refLetter}.${refNumber}`) return null;
+    resolvedCrossReferences += 1;
+    return actual;
+  };
+  const sealed = lines
+    .join("\n")
+    .replace(
+      /\bSection\s+([A-Z])\.(\d+(?:\.\d+)?)\s*\(([^)\n]{3,80})\)/g,
+      (whole, refLetter: string, refNumber: string, refTitle: string) => {
+        const actual = repoint(refLetter, refNumber, refTitle);
+        return actual ? `Section ${actual} (${refTitle})` : whole;
+      },
+    )
+    .replace(
+      /\bSection\s+([A-Z])\.(\d+(?:\.\d+)?)\s+([A-Z][^,.;:\n]{3,60}?)(?=\s+and\s+[A-Z]\.\d|[,.;:\n]|$)/g,
+      (whole, refLetter: string, refNumber: string, refTitle: string) => {
+        const actual = repoint(refLetter, refNumber, refTitle);
+        return actual ? `Section ${actual} ${refTitle}` : whole;
+      },
+    );
 
   return {
     markdown: sealed,
@@ -236,7 +292,39 @@ export function sealDocumentStructure(markdown: string): StructureSealResult {
     renumbered,
     sectionCHeadings: sectionCHeadingsOf(sealed),
     resolvedCrossReferences,
+    restored,
   };
+}
+
+function stripNumber(heading: string): string {
+  return heading.replace(/^\s*[A-Z]\.\d+[a-z]?(?:\.\d+)?\s*[:.\-–—]?\s*/i, "").trim();
+}
+
+/**
+ * Put `## <title>` back immediately above the line its body opens with, inside
+ * Section C. Returns null when the anchor cannot be found, or when the line
+ * above it is already a heading — in which case the content is not orphaned
+ * and nothing needs restoring.
+ */
+function insertHeadingBeforeAnchor(markdown: string, title: string, anchor: string): string | null {
+  const lines = markdown.split("\n");
+  const start = lines.findIndex((line) => /^#\s+Section\s+C\b/i.test(line));
+  if (start === -1) return null;
+  // Sanitisers rewrite words inside a line, so match on its opening rather
+  // than on the whole of it.
+  const probe = normalizeTitle(anchor).slice(0, 60);
+  if (probe.length < 20) return null;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (ANY_TOP_LEVEL_RX.test(lines[i])) break;
+    if (!normalizeTitle(lines[i]).startsWith(probe)) continue;
+    let previous = i - 1;
+    while (previous > start && lines[previous].trim() === "") previous -= 1;
+    if (SUB_HEADING_RX.test(lines[previous])) return null;
+    const rebuilt = [...lines];
+    rebuilt.splice(i, 0, `## ${title}`, "");
+    return rebuilt.join("\n");
+  }
+  return null;
 }
 
 function normalizeTitle(title: string): string {

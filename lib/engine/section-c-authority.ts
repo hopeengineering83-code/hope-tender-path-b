@@ -145,6 +145,12 @@ export interface SectionCNormalizationResult {
   titles: string[];
   reordered: boolean;
   renumbered: number;
+  /**
+   * The first line of prose under each sub-section, in the same order as
+   * `titles`. A sub-section whose heading is deleted downstream can still be
+   * found by its opening line, which is how the seal restores it.
+   */
+  anchors: string[];
 }
 
 /**
@@ -159,7 +165,7 @@ export function normalizeSectionC(markdown: string): SectionCNormalizationResult
   const lines = markdown.split("\n");
   const startIdx = lines.findIndex((line) => SECTION_C_HEADING_RX.test(line));
   if (startIdx === -1) {
-    return { markdown, numbers: [], titles: [], reordered: false, renumbered: 0 };
+    return { markdown, numbers: [], titles: [], reordered: false, renumbered: 0, anchors: [] };
   }
 
   // Section C ends at the next level-1 heading.
@@ -206,7 +212,7 @@ export function normalizeSectionC(markdown: string): SectionCNormalizationResult
   }
 
   if (blocks.length === 0) {
-    return { markdown, numbers: [], titles: [], reordered: false, renumbered: 0 };
+    return { markdown, numbers: [], titles: [], reordered: false, renumbered: 0, anchors: [] };
   }
 
   // Two producers can both emit the same canonical sub-section (for example
@@ -235,6 +241,7 @@ export function normalizeSectionC(markdown: string): SectionCNormalizationResult
 
   const numbers: string[] = [];
   const titles: string[] = [];
+  const anchors: string[] = [];
   let renumbered = 0;
   const rebuilt: string[] = [];
 
@@ -244,6 +251,7 @@ export function normalizeSectionC(markdown: string): SectionCNormalizationResult
     if (heading !== block.headingLine) renumbered += 1;
     numbers.push(number);
     titles.push(block.bareTitle);
+    anchors.push(block.body.find((line) => line.trim().length > 0)?.trim() ?? "");
     rebuilt.push(heading, ...block.body);
     if (rebuilt[rebuilt.length - 1]?.trim() !== "") rebuilt.push("");
   });
@@ -261,5 +269,6 @@ export function normalizeSectionC(markdown: string): SectionCNormalizationResult
     titles,
     reordered,
     renumbered,
+    anchors,
   };
 }
