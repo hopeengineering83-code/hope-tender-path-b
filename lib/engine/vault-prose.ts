@@ -235,6 +235,10 @@ export function recordTypeForDisplay(value: string | null | undefined): string {
   if (!raw) return "";
   const looksLikeCode = raw === raw.toUpperCase() && (raw.includes("_") || !/\s/.test(raw));
   if (!looksLikeCode) return raw;
+  // A short single word in caps is an acronym, not a code: the delivered D.3
+  // printed "Tin 0064637886" for a record stored as TIN, which is worse than
+  // leaving it alone. An acronym is already how a document says it.
+  if (!raw.includes("_") && raw.length <= 5) return raw;
   return raw
     .split(/[_\s]+/)
     .filter(Boolean)

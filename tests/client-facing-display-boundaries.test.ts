@@ -17,6 +17,15 @@ test("a storage code is respelled for the page, not left as an enum", () => {
   assert.equal(recordTypeForDisplay("QUALITY_ASSURANCE"), "Quality Assurance");
 });
 
+test("a short acronym is left alone, not title-cased into a word", () => {
+  // The delivered D.3 printed "Tin 0064637886" for a record stored as TIN.
+  assert.equal(recordTypeForDisplay("TIN"), "TIN");
+  assert.equal(recordTypeForDisplay("VAT"), "VAT");
+  assert.equal(recordTypeForDisplay("PPA"), "PPA");
+  // A code is still a code, acronym-shaped segments included.
+  assert.equal(recordTypeForDisplay("VAT_REGISTRATION"), "Vat Registration");
+});
+
 test("a type already written for a reader is returned exactly as stored", () => {
   assert.equal(recordTypeForDisplay("tax compliance"), "tax compliance");
   assert.equal(recordTypeForDisplay("Certificate of Competence"), "Certificate of Competence");

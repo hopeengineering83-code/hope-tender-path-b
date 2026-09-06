@@ -168,6 +168,18 @@ tags above were in the Section E table of that same artifact. The mechanical
 checklist's marker pattern did not reach inside table cells, so a real leak was
 reported as clean. The claim was wrong, not merely imprecise.
 
+**Confirmed on the next artifact.** Run 34054301749 on head `c8be51e7`
+(baseline `75082a538b39a15d` → current `4bfd2e7f6bce834b`, READY, 0 blockers,
+38/38 pages, no layout fault) has zero `[p.N]`, `(§ …)` and `(quote: …)` tags
+anywhere in the PDF, and A.3 and D.3 read "PPA Supplier Registration Evidence
+(Supplier Registration)" and "Quality Assurance … Ref: HAEC/052/22".
+
+That artifact showed two residual items in the same class, fixed in the commit that records this entry:
+the helper title-cased an acronym, printing "Tin 0064637886" for a record stored
+as `TIN`; and a third site — the E.1 Bid Compliance Mapping type column — was
+printing `SUBMISSION_RULE` and `PROJECT_EXPERIENCE`, which the earlier
+artifact's tag noise had hidden.
+
 **Unchanged:** the 17-dimension assessment still fails. Dimension 12's cause is
 now closed, but 3, 4, 5, 6, 7 and 15 remain bounded by the two owner actions —
 AI provider credit, and more reviewed project records in the vault.
