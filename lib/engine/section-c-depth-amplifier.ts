@@ -57,7 +57,7 @@ interface SubSectionSpec {
   heading: string;      // full heading
   matchPatterns: RegExp[]; // patterns used to detect existing presence
   // Generates a multi-paragraph depth block tailored to the sector.
-  buildDepth(opts: { primarySector: string; projects: ProjectRecord[]; companyName: string }): string;
+  buildDepth(opts: { primarySector: string; projects: ProjectRecord[]; companyName: string; anchored: Set<string> }): string;
 }
 
 // Helper: emit a single evidence-anchor sentence from a project record.
@@ -82,6 +82,37 @@ function projectAnchor(project: ProjectRecord, fallbackVerb = "demonstrated on")
   const cleanedParts = parts.map((part) => inlineEvidenceValue(part)).filter(Boolean);
   const detail = cleanedParts.length > 0 ? ` (${cleanedParts.join(", ")})` : "";
   return `Approach ${fallbackVerb} ${project.name}${detail}.`;
+}
+
+/**
+ * The first of these projects that has not already been cited in this Section C
+ * block, or null when they have all been used.
+ *
+ * Each sub-section falls back to projects[0] when it has no project of its own,
+ * so a firm with one reviewed record had every sub-section anchor on it: a
+ * delivered C.3 Technical Methodology carried "Approach demonstrated on G+6
+ * General Hospital – Dr Abdul Seid (…)" three times in three consecutive
+ * paragraphs, the third varied to "Approach delivered on". Template variety
+ * makes that worse rather than better — the reader sees one fact restated and
+ * correctly reads it as padding.
+ *
+ * This is local to one Section C block, not a rule against citing a project
+ * more than once in the proposal: the same record still belongs in the
+ * portfolio, the team-to-project mapping and the compliance matrix.
+ */
+function anchorOnce(
+  candidates: Array<ProjectRecord | undefined>,
+  anchored: Set<string>,
+  verb: string,
+): string | null {
+  for (const project of candidates) {
+    if (!project?.name) continue;
+    const key = project.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (anchored.has(key)) continue;
+    anchored.add(key);
+    return projectAnchor(project, verb);
+  }
+  return null;
 }
 
 // Sector-aware methodology vocabulary blocks. Each returns a paragraph
@@ -212,10 +243,9 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     number: "C.1",
     heading: "C.1 Understanding of the Assignment",
     matchPatterns: [/^##\s+C\.1\b/im, /^##\s+Understanding\s+of\s+the\s+Assignment/im],
-    buildDepth: ({ primarySector, projects }) => {
-      const anchor = projects[0]
-        ? projectAnchor(projects[0], "validated on")
-        : "The team brings validated delivery experience across comparable assignment types and applies a structured inception process — site orientation, document review, and stakeholder mapping — in the opening week to confirm scope before any technical work begins.";
+    buildDepth: ({ primarySector, projects, anchored }) => {
+      const anchor = anchorOnce([projects[0]], anchored, "validated on")
+        ?? "The team brings validated delivery experience across comparable assignment types and applies a structured inception process — site orientation, document review, and stakeholder mapping — in the opening week to confirm scope before any technical work begins.";
       const para = sectorMethodologyParagraph(primarySector, "C.1");
       return `${para} ${anchor}`;
     },
@@ -224,12 +254,9 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     number: "C.2",
     heading: "C.2 Technical Methodology",
     matchPatterns: [/^##\s+C\.2\b/im, /^##\s+Technical\s+Methodology/im, /^##\s+Methodology/im],
-    buildDepth: ({ primarySector, projects }) => {
-      const anchor = projects[1]
-        ? projectAnchor(projects[1])
-        : projects[0]
-          ? projectAnchor(projects[0])
-          : "The methodology has been developed and refined through repeat delivery of comparable-scope assignments and is calibrated to the specific deliverable schedule, client reporting cadence, and stakeholder engagement requirements of this engagement.";
+    buildDepth: ({ primarySector, projects, anchored }) => {
+      const anchor = anchorOnce([projects[1], projects[0]], anchored, "demonstrated on")
+        ?? "The methodology has been developed and refined through repeat delivery of comparable-scope assignments and is calibrated to the specific deliverable schedule, client reporting cadence, and stakeholder engagement requirements of this engagement.";
       const para = sectorMethodologyParagraph(primarySector, "C.2");
       return `${para} ${anchor}`;
     },
@@ -238,12 +265,9 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     number: "C.3",
     heading: "C.3 Work Plan and Deliverables",
     matchPatterns: [/^##\s+C\.3\b/im, /^##\s+Work\s+Plan/im, /^##\s+Deliverables/im],
-    buildDepth: ({ primarySector, projects }) => {
-      const anchor = projects[2]
-        ? projectAnchor(projects[2])
-        : projects[0]
-          ? projectAnchor(projects[0])
-          : "The phased work programme draws on established delivery templates refined across comparable assignments. Each phase produces a formal deliverable with client sign-off before the next phase commences, ensuring predictable progress milestones and no scope creep between stages.";
+    buildDepth: ({ primarySector, projects, anchored }) => {
+      const anchor = anchorOnce([projects[2], projects[1], projects[0]], anchored, "demonstrated on")
+        ?? "The phased work programme draws on established delivery templates refined across comparable assignments. Each phase produces a formal deliverable with client sign-off before the next phase commences, ensuring predictable progress milestones and no scope creep between stages.";
       const para = sectorMethodologyParagraph(primarySector, "C.3");
       return `${para} ${anchor}`;
     },
@@ -252,10 +276,9 @@ const CANONICAL_SUB_SECTIONS: SubSectionSpec[] = [
     number: "C.4",
     heading: "C.4 Quality Assurance",
     matchPatterns: [/^##\s+C\.4\b/im, /^##\s+Quality\s+Assurance/im, /^##\s+QA\b/im],
-    buildDepth: ({ primarySector, projects }) => {
-      const anchor = projects[0]
-        ? projectAnchor(projects[0], "delivered on")
-        : "The three-gate quality framework (30% / 60% / 100%) is applied on every engagement. Each gate is signed off by Project Principal and Technical Director before client submission; an independent peer reviewer — not a member of the delivery team — validates the 100% deliverable package.";
+    buildDepth: ({ primarySector, projects, anchored }) => {
+      const anchor = anchorOnce([projects[3], projects[0]], anchored, "applied on")
+        ?? "The three-gate quality framework (30% / 60% / 100%) is applied on every engagement. Each gate is signed off by Project Principal and Technical Director before client submission; an independent peer reviewer — not a member of the delivery team — validates the 100% deliverable package.";
       const para = sectorMethodologyParagraph(primarySector, "C.4");
       return `${para} ${anchor}`;
     },
@@ -345,15 +368,18 @@ function buildAddendum(opts: {
   evaluationCriteria?: string[];
 }): string {
   const blocks: string[] = [];
+  // One set for the whole Section C block, so a project cited under one
+  // sub-section is not re-introduced as fresh proof under the next.
+  const anchored = new Set<string>();
   for (const spec of CANONICAL_SUB_SECTIONS) {
     const isPresent = opts.presentNumbers.has(spec.number);
     const isThin = opts.thinNumbers.has(spec.number);
     if (!isPresent) {
-      const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName });
+      const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName, anchored });
       if (depth.length === 0) continue;
       blocks.push(`## ${spec.heading}`, "", depth);
     } else if (isThin) {
-      const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName });
+      const depth = spec.buildDepth({ primarySector: opts.primarySector, projects: opts.projects, companyName: opts.companyName, anchored });
       if (depth.length === 0) continue;
       blocks.push(`<!-- section-c-amplifier:${spec.number} -->`, depth);
     }
