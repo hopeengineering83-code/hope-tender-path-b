@@ -22,6 +22,7 @@ import { strict as assert } from "node:assert";
 
 import { enforceTechnicalPriceSeparation } from "../lib/engine/proposal-price-leakage-guard";
 import type { EvaluatorMatrixInput } from "../lib/engine/proposal-evaluator-matrix";
+import { buildWorkPlanTable } from "../lib/engine/work-plan-timeline";
 
 // A tender that states the technical and financial envelopes are separate, so
 // the guard is armed.
@@ -113,4 +114,49 @@ describe("phase and innovation content survives a price-separated tender", () =>
     assert.ok(!survives("… specifications, BOQ, design report, 60% gate sign-off pack"));
     assert.ok(!survives("The bidder retains one 60-minute call per month at no fee."));
   });
+});
+
+// ── No sector's work plan may lose a phase to the guard ──────────────────────
+//
+// The healthcare timeline's fourth phase was titled "Phase 4: Working Drawings
+// + BOQ" and listed "BOQ" among its deliverables, so on a tender that separates
+// the envelopes the guard deleted the row and the delivered work-plan table
+// read Phase 1, 2, 3, 5, 6. Twelve rows across nine sector timelines had the
+// same shape.
+//
+// "BOQ" was simply the wrong word: the deliverable is a quantity schedule, and
+// the rest of the app already calls it that. This walks every sector's own
+// timeline rather than a fixture, so a phase added later cannot reintroduce the
+// defect unnoticed.
+describe("every sector's work plan survives a price-separated tender", () => {
+  const SECTORS = [
+    "Healthcare / Medical Facility Design",
+    "Water and Sanitation",
+    "Roads and Bridges",
+    "Environmental / ESIA",
+    "ICT and Digital Systems",
+    "Education Facilities",
+    "Power Systems",
+    "Mining",
+    "Irrigation",
+    "Ports and Marine",
+    "Contract Administration",
+    "Interior Design",
+    "Heritage Conservation",
+    "Industrial Facilities",
+    "High-Rise Buildings",
+    "Hospitality and Tourism",
+    "Urban Planning",
+  ];
+
+  for (const sector of SECTORS) {
+    it(`keeps every phase row for ${sector}`, () => {
+      const table = buildWorkPlanTable({ primarySector: sector });
+      const rows = table.split("\n").filter((line) => /^\|\s*Phase\s*\d/.test(line));
+      assert.ok(rows.length > 0, `no phase rows built for ${sector}`);
+      for (const row of rows) {
+        assert.ok(survives(row), `a work-plan phase was deleted as commercial content:\n${row}`);
+      }
+    });
+  }
 });
