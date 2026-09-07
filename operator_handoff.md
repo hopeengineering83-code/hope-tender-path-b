@@ -50,7 +50,27 @@ application fixes belong on #1175 alone.
 
 | Owner tool | Branch / PR | Scope | Locked files or areas | Status | Next action |
 |---|---|---|---|---|---|
-| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Exact-head CI green; Preview READY and release-matched | **OWNER ACTION REQUIRED** — one authenticated "Run AI Analyze" on the exact-head Preview. Do not merge; do not promote Production. |
+| Codex → Claude Code | `release/consolidated-recovery-20260717` (PR #1175, draft, base `integration/controlled-recovery`) | Consolidated release recovery: 10-provider fallback chain, provider-diversity request planning, durable fallback staging, canonical readiness/export convergence, artifact identity, real DOCX/PDF/ZIP bytes | `lib/ai.ts`, `lib/ai-jobs/analysis-job-service.ts`, `lib/ai-analyze/retry-service.ts`, `lib/engine/*`, `app/api/tenders/[id]/*`, `docs/pr1175-frozen-regression-ledger.md` | Open (draft). Head `5465023f`; exact-head CI green; Preview READY and release-matched; acceptance green | **BLOCKED — OWNER ACTION** (see the two blockers below). Do not merge; do not promote Production. |
+
+#### BLOCKED — two owner actions, as of 2026-09-07T23:45Z (head `5465023f`)
+
+1. **Every AI provider is failing, so the deterministic fallback wrote the whole
+   proposal.** Six failures are credential/billing, not transient: Mistral 403
+   tier, Cerebras 402, OpenRouter 402, Together 401 invalid key, DeepSeek 402,
+   Anthropic 400 credit. **The 17-dimension benchmark cannot be honestly scored
+   until at least one provider generates** — a score taken now measures the
+   deterministic template, not the product. Do not quote a number.
+
+2. **A fallback-authored proposal is currently treated as final-export
+   authority**, contradicting the stated policy. `auto-finalize/route.ts` never
+   passes `deterministicFallbackUsed` to a gate that already implements the rule
+   correctly. Fix needs no migration (`ProposalVersion.mode` records
+   authorship). **Deliberately not applied**: while every provider is down it
+   would block all export. Needs a yes/no from Hope.
+
+Full evidence, including the verbatim provider errors and a warning that PDF
+text extraction produced three false findings this session, is in the newest
+Session Log entry. Read it before touching the export gate or quoting a score.
 
 ### Closed as superseded
 
@@ -122,6 +142,40 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 - Avoid unnecessary Vercel previews; run local checks before pushing work.
 
 ## Session Log
+
+### 2026-09-07T23:45Z — Claude Code (Opus 5)
+
+- **Branch / PR**: `release/consolidated-recovery-20260717` / PR #1175 (draft, base `integration/controlled-recovery`). **Not merged. Production untouched. Preview `DATABASE_URL` unchanged (fingerprint `5f9645fb34f5`).**
+- **Head at end of session**: `5465023f`. Eleven commits, each verified on a regenerated artifact from a real Preview run.
+- **Scope**: continued generic quality work on the delivered proposal, then two blockers found.
+
+- **Shipped and verified on delivered artifacts** (acceptance runs 34163782163, 34165079501, 34166886114, 34168694984, 34170503877 — all green):
+  - **One work plan, not three.** `work-plan-timeline.ts` owned a private six-phase list while `canonical-work-plan.ts` had five; the same proposal stated both. It now renders the canonical spine and stamps the phasing marker, so exactly one phase table is emitted. Document 36 → 34 pages.
+  - **20 phase rows were deletable by the price guard.** The spine said "BOQ" in 20 rows across 15 sectors; on a two-envelope tender the guard deletes any line pairing a priced term with a number, and every phase row carries one in its duration cell. Renamed to "quantity schedules"; a test walks every sector.
+  - **The Section B evidence card.** Three delivered PDFs carried `Location & Scale  Ethiopia — —`, `Services Provided  —`, and a bare address under "Client". New `portfolio-card-repair.ts` repairs each card against the verified record it is about — filling only from the record's own words, removing rows the record cannot answer, relabelling a consultancy fee rather than printing it as "Contract Value", and moving a location asserted as a client into the location row.
+  - **Executive summary.** Was "brings relevant reviewed experience … provides a reference point for the proposed delivery approach". Now states the closest comparable assignment with its scale, location and the services performed.
+  - **Engine vocabulary out of the client document.** `reviewed` 28 → 9 uses (survivors are the firm's genuine QA process); `vault` 1 → 0.
+  - **Nobody is named for a role they do not hold.** The phase-lead lookup appended a generic seniority tail and then fell back to "first unused expert", so a Senior Electrical Engineer was named as the Architect. Keywords are now the role's own words only.
+  - **No invented programme.** The narrative defaulted to a 90-day window nobody stated and rescaled every phase to days, so one phase read "Weeks 1-2" in the table and "Days 1-13" eight pages later.
+
+- **Tests**: `npx tsc --noEmit` clean; `npx next lint` no warnings or errors; `npm test` with `RUN_DB_INTEGRATION=true` — **11,597 pass, 0 fail** (last full run at `a9591065`; `5465023f` is CI-only).
+
+- **BLOCKER 1 — OWNER ACTION: every AI provider is failing.** The delivered proposal was written *entirely by the deterministic fallback*. From the app's own runtime log:
+  `[ai] section-parallel generation (deep) finished in 1.8s — cover-and-summary=fallback company-and-experience=fallback technical-approach=fallback additional-and-declaration=fallback`
+  Six are credential/billing failures, not transient limits: Mistral 403 "not available in your subscription tier", Cerebras 402 "Payment required", OpenRouter 402 "requires more credits", Together 401 "Invalid API key", DeepSeek 402 "Insufficient Balance", Anthropic 400 "credit balance is too low". Gemini, Groq, Z.ai and OpenAI were rate-limited.
+  **Consequence: the 17-dimension benchmark cannot be honestly scored** — it would measure the deterministic template, not the product. Do not report a score until at least one provider generates.
+
+- **BLOCKER 2 — OWNER DECISION: a fallback-authored proposal is treated as final-export authority.** `CLAUDE.md` says the deterministic draft "remains non-final-export authority", and `seven-pass-generation.ts` implements exactly that — but `app/api/tenders/[id]/auto-finalize/route.ts` calls `evaluateSevenPassForDocument({...})` **without passing `deterministicFallbackUsed`**, so it defaults to `false`. The gate is correct; nobody tells it. Both existing tests exercise the flag; none tests that the caller supplies it.
+  No migration is needed — `ProposalVersion.mode` already records authorship (`"deterministic benchmark fallback + …"` vs `"Gemini elite bid-writer + …"`, `generate-elite.ts:1810`/`2238`).
+  **Not applied deliberately**: with every provider down, applying it takes the product from "produces a downloadable ZIP" to "blocks all export" until a provider is restored. That is what policy demands but it is a business decision, and it would remove the owner's export capability while they are mid-blocker on the same root cause.
+
+- **Settled, both NON-defects** (do not "fix" these): signature and stamp are correctly withheld — `[generate-elite] Tender does not explicitly require signature/stamp — declaration will use printed-name-only sign-off`. Letterhead is a **DOCX template, not an image**, so it can never appear as an embedded image in the PDF; the real signal is `[export-gap-repair] letterheadAppliedCount: 0`. **There is no logo asset** — the store holds exactly three: STAMP (JPEG 103,155 B), SIGNATURE (JPEG 3,246 B), LETTERHEAD (DOCX).
+
+- **Method warning for the next agent — PDF text extraction lies.** It produced three false findings this session and I acted on two before catching them: (a) literal `####`/`**` "in the PDF" that were really CI log tail past the end of the extract; (b) `"Ahmed Kebede Tekaw , General Manager"` reported as a spacing defect when the markdown is `**Ahmed Kebede Tekaw**, General Manager` — extractors insert a space at a font-run boundary (I had a DOCX-extractor change written and tested before confirming the source, and reverted it); (c) a portfolio card shown byte-identical across two fixes, which was true and said nothing about which builder produced it. **Bound the extract to the declared character count, and confirm any symptom against the producing source before changing shipped behaviour.** `scripts/tmp-inspect-pdf-typography-and-assets.mjs` reads the PDF's object graph instead and is validated both ways (0 for a PDF with no images; correct count and byte sizes for one with a signature and stamp).
+
+- **Risks / assumptions**: the 17-dimension gate is **not met** and no number should be quoted until a model-backed artifact exists. Temporary acceptance tooling (`temporary-preview-*` jobs, `scripts/tmp-*`) stays in place — the cleanup gate has not been reached.
+- **Next action**: restore credit or a valid key on any one provider, then re-run acceptance and score all 17 dimensions against a model-written artifact. Separately, a yes/no on enforcing the fallback export gate (BLOCKER 2).
+- **Merge status**: **not reviewed — do not merge.**
 
 ### 2026-09-07T18:15Z — Claude Code (Opus 5)
 
