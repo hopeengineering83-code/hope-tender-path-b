@@ -176,6 +176,33 @@ print(json.dumps(get("/api/ai-providers/diagnostics"), indent=2)[:6000])
 # workload observation — a stronger signal than a synthetic probe, and it costs
 # no additional quota.
 
+print("\n########## BRAND ASSETS — STORAGE vs APPLICATION ##########")
+# ACTIVE metadata is not proof the bytes reached the artifact. This reports
+# what the asset store holds; whether those bytes are embedded in the delivered
+# DOCX/PDF is checked separately against the artifact itself.
+_assets = get("/api/company/assets")
+if isinstance(_assets, dict):
+    _rows = None
+    for key in ("assets", "items", "data", "results"):
+        if isinstance(_assets.get(key), list):
+            _rows = _assets[key]
+            break
+    if _rows is None:
+        print(f"  !! unexpected payload; keys={list(_assets.keys())[:10]}")
+    else:
+        print(f"assets: {len(_rows)}")
+        for a in _rows:
+            # storagePath vs inline bytes matters: the signature/stamp applier
+            # skips storage-backed rows, so an ACTIVE asset held only in
+            # storage never reaches the document.
+            print(f"  type={a.get('assetType')} active={a.get('isActive')} "
+                  f"name={a.get('originalFileName')} mime={a.get('mimeType')} "
+                  f"size={a.get('size')} inlineBytes={a.get('fileContentLength')} "
+                  f"storagePath={'yes' if a.get('storagePath') else 'no'} "
+                  f"integrity={a.get('integrityStatus')} id={a.get('id')}")
+else:
+    print(f"  !! {str(_assets)[:200]}")
+
 print("\n########## PIPELINE STATE AFTER AI ANALYZE + RUN ENGINE ##########")
 show("TENDER RECORD", f"/api/tenders/{TENDER}", 8000)
 show("WORKFLOW STATUS", f"/api/tenders/{TENDER}/workflow-status", 8000)
