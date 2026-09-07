@@ -4090,7 +4090,7 @@ Scan the project evidence. Identify the two projects most directly comparable to
 Scan the expert evidence. Identify the two most relevant experts by discipline and comparable previous role. Note their names, titles, licences, and the specific previous project where they did comparable work.
 
 **Top evaluation driver:**
-What single criterion, if answered convincingly, wins this tender? (e.g., healthcare facility experience, team composition, technical methodology depth, donor compliance)
+What single criterion, if answered convincingly, wins this tender? Derive it from the tender's own evaluation criteria — comparable sector experience, team composition, technical methodology depth, donor compliance, or whatever this tender actually weights.
 
 **Key differentiator:**
 What one fact makes this firm clearly better than a generic competitor for this specific assignment?
@@ -4103,12 +4103,31 @@ Keep these four anchors in mind. They must appear — by name, value, and role �
 
 ### EXAMPLES: Strong vs. Weak Proposal Writing
 
+**READ THIS FIRST — the examples below are SHAPE, never CONTENT.** Every name,
+project, value, licence and sector in the examples belongs to an invented firm
+and exists only to show sentence structure. None of it is this firm's evidence.
+Never copy a project name, contract value, expert name, licence, client or date
+out of an example into the proposal. Take those ONLY from the EVIDENCE sections.
+The examples deliberately span different sectors to show the same shape works
+for any assignment — a road tender, a water tender, a geotechnical tender and a
+building tender are all written this way.
+
 **WEAK (never write like this):**
-> "Our company has extensive experience in healthcare facility design. We have successfully completed many hospital projects across the region. Our qualified team of professionals is ready to deliver quality results."
+> "Our company has extensive experience in this field. We have successfully completed many projects across the region. Our qualified team of professionals is ready to deliver quality results."
 
-**STRONG (write like this):**
-> "Hope Engineering's 2023 design of the St. Paul's Hospital Millennium Medical College specialist wing (ETB 312M, Addis Ababa) demonstrates our capacity for exactly this assignment — a multi-floor clinical facility with dedicated radiology, pharmacy, ICU, and full MEP integration, completed within a 14-month design programme. Dr. Almaz Tadesse (Lead Architect, EIASC Grade A), who led that project, is proposed as Principal Architect for this engagement. We are not learning on the client's time; we are repeating a proven delivery."
+**STRONG — note the shape, not the subject (illustrative firm, road sector):**
+> "[EXAMPLE FIRM]'s 2023 detailed design of the [EXAMPLE ROAD] 42 km rural
+> upgrade ([EXAMPLE VALUE], [EXAMPLE REGION]) demonstrates capacity for exactly
+> this assignment — realignment across seven watercourses with box-culvert
+> hydraulic design and full pavement structure, delivered within an 11-month
+> programme. [EXAMPLE EXPERT] (Lead Highway Engineer, [EXAMPLE LICENCE]), who
+> led that work, is proposed as Team Leader here. We are not learning on the
+> client's time; we are repeating a proven delivery."
 
+The shape is: named assignment + measurable scale + contract value + the
+specific technical content that makes it comparable + the named expert who did
+it + their proposed role now. Apply that shape to whatever sector THIS tender
+is in, using only verified evidence.
 **WEAK:**
 > "We are committed to delivering high-quality services that meet international standards and client expectations."
 
@@ -4154,7 +4173,7 @@ Tables are mandatory for the sections marked TABLE below. Use standard Markdown 
 \`\`\`
 | # | Expert & Position | Qualifications & Licenses | Comparable Sector Experience | Role on This Assignment |
 |---|---|---|---|---|
-| 1 | Eng. Ahmed Kebede, Project Principal | B.Sc. Civil (AAIT 2015), PPE Structural IPSTE/6884 valid 2030 | G+6 Hospital (ETB 550M); Eco-Park (ETB 27.5B WB ESF) | Project leadership, client liaison, final design sign-off |
+| 1 | [EXAMPLE EXPERT], [role] | [degree, institution, year], [licence + validity] | [comparable assignment 1 + value]; [comparable assignment 2 + value] | [what they own on THIS assignment] |
 | 2 | … | … | … | … |
 \`\`\`
 
@@ -4162,22 +4181,22 @@ Tables are mandatory for the sections marked TABLE below. Use standard Markdown 
 \`\`\`
 | Expert & Role on This Project | Role Previously Performed | Previous Comparable Project | Key Technical Contribution |
 |---|---|---|---|
-| Daniel Getachew, MEP Lead | Lead Electrical Engineer | Dr. Abdul Seid Hospital (ETB 550M) | Medical-grade power, UPS for life-critical loads, imaging room power |
+| [EXAMPLE EXPERT], [role here] | [role previously performed] | [comparable assignment + value] | [the specific technical contribution, in this tender's discipline] |
 \`\`\`
 
 **B.2 / B.3 Featured Project Cards — TABLE per project (2-column metadata):**
 \`\`\`
-### G+6 General Hospital, Dr. Abdul Seid
+### [EXAMPLE PROJECT NAME]
 
 | Field | Detail |
 |---|---|
-| Client | Gimba City Administration, South Wollo Zone |
-| Location & Scale | South Wollo, Ethiopia — 7,000 m² built-up |
-| Duration | 2015–2018 (Completed) |
-| Contract Value | ETB 550,074,678 |
-| Testimony Reference | Ref ጂ/ከ/መ/ል/1591/18, dated 19/01/2018 E.C. — Tariku Abebaw, Building Officer |
-| Services Provided | Feasibility, geotechnical, full architectural/structural/MEP design, BOQ, supervision |
-| Relevance to This Assignment | All six clinical departments required by this tender were included; same proposed team |
+| Client | [client as the evidence states it] |
+| Location & Scale | [location] — [measurable scale in this sector's own unit: m², km, l/s, boreholes, ha] |
+| Duration | [start–end, status] |
+| Contract Value | [value and currency as stated] |
+| Testimony Reference | [reference number, date, signatory as stated] |
+| Services Provided | [the services actually delivered] |
+| Relevance to This Assignment | [what this tender requires that this assignment demonstrably covered] |
 \`\`\`
 
 **C.4 Three-Stage Quality Review — TABLE:**
@@ -4195,7 +4214,7 @@ For any tender involving site selection, premises identification, beneficiary se
 \`\`\`
 | Project / Client | Reference Contact & Title | Contact Details & Reference | Contract Value |
 |---|---|---|---|
-| G+6 Dr. Abdul Seid Hospital — Gimba City Administration | Tariku Abebaw, Building Officer | South Wollo, Ref ጂ/ከ/መ/ል/1591/18 dated 19/01/2018 E.C. | ETB 550,074,678 |
+| [EXAMPLE PROJECT] — [client] | [reference contact and title] | [location, reference number and date] | [contract value] |
 \`\`\`
 
 **A.6 Specialist Engagement Plan — only emit when the tender requires a discipline NOT covered by the proposed core team (e.g., biomedical engineer, telecoms specialist, QHSE auditor):**
@@ -4292,8 +4311,8 @@ For EVERY mandatory and scored requirement listed in CONSOLIDATED REQUIREMENTS /
 \`\`\`
 | # | Requirement (verbatim or close paraphrase from tender) | Where Addressed in This Proposal (section + sub-section) | Supporting Evidence (project name / expert name / appendix letter) | Compliance Status |
 |---|---|---|---|---|
-| 1 | "Minimum 10 years' experience in healthcare facility design" | Section A.1 + B.2 | 12 years; G+6 Dr. Abdul Seid Hospital (ETB 550M, 2018) | FULLY MET |
-| 2 | "Lead Architect must hold EIASC Grade A licence" | Section A.4 | Dr. Almaz Tadesse, EIASC Grade A IPSTE/6884 valid 2030 | FULLY MET |
+| 1 | "[requirement quoted in the tender's own wording]" | Section A.1 + B.2 | [the evidence that satisfies it, with value and date] | FULLY MET |
+| 2 | "[a licence or eligibility requirement, quoted]" | Section A.4 | [the named holder and licence reference from evidence] valid 2030 | FULLY MET |
 | 3 | "Submit 3 client reference letters with seal" | Appendix D | [Reference Client 1], [Reference Client 2], [Reference Client 3] reference letters | PARTIALLY MET — Bid-Team Action: confirm third seal before submission |
 \`\`\`
 
@@ -4305,8 +4324,8 @@ The evaluator will score this proposal against the criteria listed in EVALUATION
 \`\`\`
 | Evaluation Criterion (in the tender's wording) | Weight (if stated) | Where This Proposal Answers It | Supporting Evidence |
 |---|---|---|---|
-| "Relevant healthcare facility experience" | 25% | Section B.2, B.3 + Cover Letter para 1 | G+6 Dr. Abdul Seid Hospital (ETB 550M, 2018) — same scope, same team |
-| "Strength of proposed multidisciplinary team" | 20% | Section A.4, A.5 (Team-to-Project mapping) | 12-expert team incl. Dr. Almaz Tadesse, EIASC Grade A |
+| "[criterion in the tender's exact wording]" | [weight if stated] | Section B.2, B.3 + Cover Letter para 1 | [the comparable assignment that answers it, with value and date] |
+| "[a second criterion, quoted]" | [weight if stated] | Section A.4, A.5 (Team-to-Project mapping) | [team size and the licensed lead named in evidence] |
 \`\`\`
 
 If the tender lists weights, populate the Weight column verbatim. If weights are not stated, leave blank — do not invent. Quote each criterion in the tender's own wording so the evaluator can check it directly against the response. This table is mandatory. Never explain scoring tactics in the client-facing text.
@@ -4319,8 +4338,8 @@ Open with one paragraph (60–120 words) framing the firm's overall positioning 
 \`\`\`
 | Capability | What This Means for the Client | Linked Evaluation Criterion | Supporting Evidence |
 |---|---|---|---|
-| Proven hospital delivery track record | Design decisions are informed by two completed G+6 hospitals, so clinical adjacency and phasing questions are settled from experience rather than first principles | Relevant healthcare experience (25%) | Dr. Abdul Seid Hospital ETB 550M; St. Paul's specialist wing ETB 312M |
-| In-house geotechnical capability | Investigation is scheduled and supervised directly by the firm, so ground data reaches the design team without a subcontractor interface | Quality of methodology (15%) | 8 boreholes self-supervised on Eco-Park assignment 2022 |
+| [a capability this firm actually holds] | [what it means for THIS client in practice, in this tender's sector] | [the evaluation criterion it addresses] | [the verified assignments that support it] |
+| [a second capability] | [its practical consequence for the client] | [linked criterion] | [supporting verified evidence] |
 \`\`\`
 
 ### SECTION H: PROPOSAL SELF-SCORE (mandatory — TABLE)
@@ -4329,7 +4348,7 @@ After completing all sections above, evaluate this proposal against the stated c
 \`\`\`
 | Evaluation Criterion | Weight | Self-Score (0–10) | Rationale (1 short sentence with evidence) | Risk to Score / Mitigation |
 |---|---|---|---|---|
-| Relevant healthcare experience | 25% | 9 | Two named comparable hospitals (ETB 550M + ETB 312M) with same team | Mitigation: client letters in Appendix D confirm performance |
+| [criterion as the tender words it] | [weight if stated] | [0-10] | [the named comparable evidence behind that score] | [the honest risk to the score, and its mitigation] |
 | Methodology depth | 20% | 8 | Section C.2 covers all 7 clinical zones + MEP integration | Risk: biomedical engineer named as engagement, not on staff |
 | Financial capacity | 15% | 6 | Bid-Team Action: confirm latest audited turnover before submission | Mitigation: bank reference letter to be attached |
 \`\`\`
