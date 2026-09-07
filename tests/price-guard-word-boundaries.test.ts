@@ -152,7 +152,10 @@ describe("every sector's work plan survives a price-separated tender", () => {
   for (const sector of SECTORS) {
     it(`keeps every phase row for ${sector}`, () => {
       const table = buildWorkPlanTable({ primarySector: sector });
-      const rows = table.split("\n").filter((line) => /^\|\s*Phase\s*\d/.test(line));
+      // The canonical work plan numbers its phases "1. Inception", "2. ..." —
+      // this used to match the private "Phase 1: ..." list that work-plan-
+      // timeline.ts owned before every representation moved onto one spine.
+      const rows = table.split("\n").filter((line) => /^\|\s*\d+\.\s/.test(line));
       assert.ok(rows.length > 0, `no phase rows built for ${sector}`);
       for (const row of rows) {
         assert.ok(survives(row), `a work-plan phase was deleted as commercial content:\n${row}`);

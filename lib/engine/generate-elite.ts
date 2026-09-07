@@ -48,6 +48,8 @@ import { buildPrincipalQualificationsSection } from "./principal-qualifications"
 import { buildRisksMitigationsTable } from "./risks-mitigations";
 import { buildWhyUsSummary } from "./why-us-summary";
 import { buildWorkPlanTable } from "./work-plan-timeline";
+import { tenderTotalDays } from "./canonical-work-plan";
+import { repairPortfolioCards } from "./portfolio-card-repair";
 import { buildBidComplianceMapping } from "./bid-compliance-mapping";
 import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./compliance-matrix-builder";
 import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
@@ -2352,7 +2354,13 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     round2Sections.push(buildRisksMitigationsTable({ primarySector: intelligence.primarySector, clientName: intelligence.clientName }));
   }
   if (!upstreamCheck("C.6 Work Plan and Schedule") && !upstreamCheck("Work Plan") && !upstreamCheck("Schedule")) {
-    round2Sections.push(buildWorkPlanTable({ primarySector: intelligence.primarySector }));
+    // Same day count the phasing narrative uses, from the one parser, so the
+    // table and the narrative cannot label the same phase "Weeks 3-6" here and
+    // "Days 14-39" nine pages later.
+    round2Sections.push(buildWorkPlanTable({
+      primarySector: intelligence.primarySector,
+      totalDays: tenderTotalDays(tenderText),
+    }));
   }
   if (!upstreamCheck("E.1 Bid Compliance Mapping — Tender Requirements to Proposal Sections") && !upstreamCheck("Bid Compliance Mapping") && !upstreamCheck("Tender Requirements Mapping")) {
     const mapping = buildBidComplianceMapping({ requirements: tender.requirements });
@@ -2670,9 +2678,8 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // from signed contract" or "delivered within 45 days", parse the
   // number and pass it so the phasing table renders day-numbered rows
   // ("Days 1–3", "Days 4–8") instead of generic "Weeks 1–2".
-  const totalDaysMatch = tenderText.match(/\b(\d{1,3})\s*(?:calendar\s+|working\s+|business\s+)?days?\b(?!\s*(?:after|before|prior|notice|advance))/i);
-  const totalDays = totalDaysMatch ? Number(totalDaysMatch[1]) : undefined;
-  if (totalDays && totalDays >= 7 && totalDays <= 1000) {
+  const totalDays = tenderTotalDays(tenderText);
+  if (totalDays) {
     logger.info(`[generate-elite] Detected total project duration: ${totalDays} days — phasing table will use day-numbered rows.`);
   }
 
@@ -2680,7 +2687,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     primarySector: intelligence.primarySector,
     experts: allSelectedExperts as unknown as Parameters<typeof injectMethodologyTables>[1]["experts"],
     projects: evidenceLibrary,
-    totalDays: totalDays && totalDays >= 7 && totalDays <= 1000 ? totalDays : undefined,
+    totalDays,
   });
   humanizedMarkdown = methodologyTables.markdown;
 
@@ -3690,6 +3697,20 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   // stem. No deterministic rule produced that, so nothing deterministic can
   // prevent it; this removes the fragment rather than completing it, because
   // completing it would put an unsourced sentence in front of an evaluator.
+  // Section B's project cards are the most checkable evidence in the document.
+  // Repair each one against the verified record it is about BEFORE prose
+  // hygiene runs, so a cell the writer left as an em dash is either filled
+  // from that record's own words or its row is removed. See
+  // portfolio-card-repair.ts for why this is a repair pass rather than a third
+  // attempt to make the writer produce it.
+  const cardRepair = repairPortfolioCards(workingMarkdown, projects as unknown as Parameters<typeof repairPortfolioCards>[1]);
+  if (cardRepair.filled.length > 0 || cardRepair.removed.length > 0) {
+    logger.info(
+      `[generate-elite] Portfolio card repair: filled ${cardRepair.filled.length} cell(s) from the record (${[...new Set(cardRepair.filled)].join(", ")}); removed ${cardRepair.removed.length} row(s) the record does not state (${[...new Set(cardRepair.removed)].join(", ")}).`,
+    );
+    workingMarkdown = cardRepair.markdown;
+  }
+
   const proseHygiene = repairClientTextHygiene(workingMarkdown);
   if (proseHygiene.removedLines > 0) {
     logger.warn(`[generate-elite] Client-text hygiene removed ${proseHygiene.removedLines} unfinished line(s) before render.`);
