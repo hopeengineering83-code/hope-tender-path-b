@@ -353,6 +353,37 @@ function cleanClientLanguage(text: string): string {
     .trim());
 }
 
+/**
+ * A signature rule is not a placeholder.
+ *
+ * The underscore strip above exists to remove stray "Signature: ____" lines a
+ * writer emits mid-document, which read as unfilled placeholders. It also
+ * removed the declaration's own block, which tender-closers.ts emits
+ * deliberately as
+ *
+ *   Signature: ____________   Stamp: ____________   Date: ____________
+ *
+ * The delivered proposal therefore ended
+ *
+ *   Signed for and on behalf of Hope Urban Planning ... PLC
+ *   Signatory: General Manager
+ *
+ * with nowhere to sign and no signature image — the PDF carries 36 XObject
+ * references and not one of them is an image, so nothing was applied on top
+ * either. A proposal that says it is signed for and on behalf of a firm, and
+ * then offers neither a signature nor a place for one, is worse than one that
+ * simply carries the rule.
+ *
+ * The deliberate block is the one carrying all three labels together; a lone
+ * "Signature: ____" is still a stray placeholder and is still removed.
+ */
+export function keepDeclarationSignatureRule(line: string): string {
+  const hasAllThree = /\bSignature\s*:/i.test(line)
+    && /\bStamp\s*:/i.test(line)
+    && /\bDate\s*:/i.test(line);
+  return hasAllThree ? line : "";
+}
+
 export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfContents)[] {
   const out: (Paragraph | Table | TableOfContents)[] = [];
   let h1Count = 0;
@@ -3135,7 +3166,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     .replace(/Submission\s+Address\s*\/\s*Portal:\s*No\s+physical\s+address\s+or\s+portal\s+i\b/gi, "Email submission only")
     .replace(/^.*\b(?:filed|listed|provided|presented|included|detail)\b.*\b(?:Appendix|Appendices|Annex|Annexes)\b.*$/gim, "")
     .replace(/^Appendix\s+[A-Z](?::|\b).*$/gim, "")
-    .replace(/^.*\b(?:Signature|Company Stamp|Stamp|Date)\s*:\s*_+.*$/gim, "")
+    .replace(/^.*\b(?:Signature|Company Stamp|Stamp|Date)\s*:\s*_+.*$/gim, keepDeclarationSignatureRule)
     .replace(/\[\s*\]/g, "—")
     .replace(/\n{3,}/g, "\n\n");
   humanizedMarkdown = stripPlaceholders(humanizedMarkdown).markdown;
@@ -3569,7 +3600,7 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     .replace(/\bdirectly\s+comparable\b/gi, "relevant")
     .replace(/^.*\b(?:credentials|contracts|testimony letters|certificates|supporting documents)\b.*\b(?:attached|provided)\b.*\b(?:appendix|appendices|annex|annexes)\b.*$/gim, "")
     .replace(/^(?:[-*]\s*)?Submission\s+(?:Address|Portal)[^:\n]*:\s*.*\b[a-z]{1,2}\s*$/gim, "")
-    .replace(/^.*\b(?:Signature|Company Stamp|Stamp|Date)\s*:\s*_+.*$/gim, "")
+    .replace(/^.*\b(?:Signature|Company Stamp|Stamp|Date)\s*:\s*_+.*$/gim, keepDeclarationSignatureRule)
     .replace(/\[\s*\]/g, "—")
     .replace(/\n{3,}/g, "\n\n");
 
