@@ -14,8 +14,10 @@ on:
           TEMPORARY, owner-authorized. Type "accept" to run the one final
           hosted AI-Analyze -> Run-Engine -> ZIP acceptance against the
           Preview deployment. Type "inspect" to run the READ-ONLY vault and
-          selection inspection instead (no generation, no writes). Any other
-          value (including blank) runs only the ordinary lockfile-refresh job.
+          selection inspection instead (no generation, no writes). Type
+          "provision" to migrate a freshly created Preview database and create
+          the owner account on it. Any other value (including blank) runs only
+          the ordinary lockfile-refresh job.
         required: false
         default: ""
       tender_id:
@@ -541,3 +543,73 @@ jobs:
           path: /tmp/vault-inspection.txt
           if-no-files-found: error
           retention-days: 3
+
+  # ─── TEMPORARY — owner-authorized, runs only on a NEW empty database ────────
+  #
+  # A new Neon database arrives with no tables and no accounts. The Preview
+  # build cannot fix that: scripts/migrate-deploy-safe.mjs deliberately skips
+  # migrations on every non-production Vercel environment, so a Preview deploy
+  # leaves the schema uncreated. And with no owner account there is no way to
+  # sign in, so neither the vault upload nor the acceptance harness can run.
+  #
+  # This job applies the committed migrations and creates exactly one owner. It
+  # inserts no tender, project or expert — evidence is uploaded through the real
+  # UI so every record carries genuine source provenance.
+  #
+  # prisma migrate deploy is additive: it applies the migrations already in
+  # prisma/migrations and never drops or resets. Remove this job once the
+  # database swap is done.
+  temporary-preview-db-provision:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'provision'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      # The migration URL, not the pooled one. Migrations serialise themselves
+      # with a SESSION-scoped advisory lock and a transaction pooler answers
+      # consecutive statements from different backends, so the lock is never
+      # observed and Prisma fails P1002. resolve-migration-url.mjs also strips a
+      # "-pooler." marker if one is present, so either form works here.
+      DATABASE_URL: ${{ secrets.PREVIEW_DATABASE_URL_MIGRATION }}
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
+      OWNER_COMPANY_NAME: Hope Urban Planning Architectural and Engineering Consultancy PLC
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify secrets are present
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "::error::PREVIEW_DATABASE_URL_MIGRATION is not set. Update it to the new Neon URL before running this job."
+            exit 1
+          fi
+          if [ -z "$OWNER_EMAIL" ] || [ -z "$OWNER_PASSWORD" ]; then
+            echo "::error::PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD must be set so the seeded owner matches the account the acceptance harness signs in as."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Show migration status before applying
+        run: npx prisma migrate status || true
+
+      - name: Apply committed migrations (additive; never resets)
+        run: npx prisma migrate deploy
+
+      - name: Confirm every migration is applied
+        run: npx prisma migrate status
+
+      - name: Provision the owner account
+        run: node scripts/tmp-provision-preview-owner.mjs
