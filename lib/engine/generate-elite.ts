@@ -50,6 +50,7 @@ import { buildWhyUsSummary } from "./why-us-summary";
 import { buildWorkPlanTable } from "./work-plan-timeline";
 import { tenderTotalDays } from "./canonical-work-plan";
 import { reconcilePortfolioReadingGuide, repairPortfolioCards } from "./portfolio-card-repair";
+import { applyClientRegister } from "./client-register";
 import { buildBidComplianceMapping } from "./bid-compliance-mapping";
 import { buildComplianceMatrixSection, hasComplianceMatrixHeading } from "./compliance-matrix-builder";
 import { buildEvaluatorMirrorSection, hasEvaluatorMirrorHeading } from "./evaluator-mirror-builder";
@@ -3720,6 +3721,16 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   if (guideReconciled.promiseRemoved) {
     logger.info("[generate-elite] Portfolio reading guide promised a per-card Relevance statement that no card carries; the promise was removed.");
     workingMarkdown = guideReconciled.markdown;
+  }
+
+  // The document speaks to the client, not about its own evidence store. This
+  // rewrites the app's internal verification vocabulary into the register a
+  // client document uses, without changing what any sentence claims. See
+  // client-register.ts.
+  const register = applyClientRegister(workingMarkdown);
+  if (register.rewrites > 0 || register.caveatsRemoved > 0) {
+    logger.info(`[generate-elite] Client register: ${register.rewrites} provenance phrasing(s) rewritten, ${register.caveatsRemoved} internal caveat sentence(s) removed.`);
+    workingMarkdown = register.text;
   }
 
   const proseHygiene = repairClientTextHygiene(workingMarkdown);

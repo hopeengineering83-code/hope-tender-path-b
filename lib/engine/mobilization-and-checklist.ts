@@ -60,7 +60,11 @@ interface MobilizationRow {
 
 function mobilizationRows(experts: ExpertRecord[]): MobilizationRow[] {
   const teamSize = experts.length;
-  const teamLabel = teamSize > 0 ? `${teamSize} reviewed expert(s) from the firm's vault` : "Bid-Team Action: confirm team selection before mobilization";
+  // "the firm's vault" is this application's internal name for the evidence
+  // store. It reached a delivered client proposal as "3 reviewed expert(s)
+  // from the firm's supervision vault", which tells an evaluator nothing about
+  // the team and reveals how the document was assembled.
+  const teamLabel = teamSize > 0 ? `${teamSize} named specialist(s) from the firm's permanent staff` : "Bid-Team Action: confirm team selection before mobilization";
 
   return [
     {

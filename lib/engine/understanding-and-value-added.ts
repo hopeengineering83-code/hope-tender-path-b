@@ -213,7 +213,10 @@ export function buildValueAddedServices(opts: { primarySector: string; companyNa
   ];
   else bullets = [
     `**Three-stage internal review** — schematic, developed, pre-issue review by named senior reviewers, beyond the contractual deliverable scope.`,
-    `**Source-evidence verification on every claim** — every named project, expert, certification, or capability is verified against original source evidence in the firm's vault before publication.`,
+    // Same internal-name leak as mobilization-and-checklist.ts: the control is
+    // real and worth stating, but "the firm's vault" is this application's word
+    // for its evidence store, not the bidder's word for its records.
+    `**Source-evidence verification on every claim** — every named project, expert, certification, or capability is verified against the original source document before it appears in this proposal.`,
     `**Final compliance pass** — pre-submission compliance audit against the tender's exact file naming, ordering, and format rules.`,
     `**Documented institutional knowledge** — handover documentation including process maps, decision records, and lessons learned.`,
     `**Post-handover advisory** — 30-day post-handover advisory window at no extra cost.`,
