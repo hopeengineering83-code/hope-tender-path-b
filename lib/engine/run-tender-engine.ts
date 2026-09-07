@@ -771,7 +771,13 @@ export async function runTenderEngine(
             "Deterministic matching uses source-verified Company Vault evidence and broad capability/sector equivalence.",
             mainEngineAIRematch.aiApplied ? `Bounded AI reranking assessed ${mainEngineAIRematch.expertAssessments} expert and ${mainEngineAIRematch.projectAssessments} project candidate(s).` : null,
             mainEngineAIRematch.warning ? `AI reranking warning: ${mainEngineAIRematch.warning}` : null,
-            "Analysis source: current AI Analyze output.",
+            // "Analysis source: AI" is the canonical prefix
+            // lib/engine/analysis-source.ts matches on (^analysis source:\s*ai\b).
+            // This line previously read "Analysis source: current AI Analyze
+            // output.", which begins with "current" and so matched neither the
+            // AI nor the regex-fallback pattern — every successful engine run
+            // resolved to UNKNOWN.
+            "Analysis source: AI (current AI Analyze output).",
             hardGaps > 0 ? `${hardGaps} critical evidence gap(s) remain.` : null,
             reviewGaps > 0 ? `${reviewGaps} review item(s) remain.` : null,
             knowledgeReadiness.reviewedExperts > 0 ? `${knowledgeReadiness.reviewedExperts} SOURCE_VERIFIED/REVIEWED expert(s) are eligible.` : null,

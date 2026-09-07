@@ -25,7 +25,7 @@
  */
 import { logger } from "../../observability";
 import { generateProposalPdf } from "../proposal-pdf";
-import { extractDocxVisibleText, extractDocxMarkdownText, documentHygieneIssues } from "../export-readiness";
+import { extractDocxVisibleText, extractDocxMarkdownText, documentHygieneIssues, renderedArtifactHygieneIssues } from "../export-readiness";
 import { validateDocumentQuality } from "../document-quality-validator";
 import {
   isFinalExportCandidateDocument,
@@ -317,12 +317,17 @@ export async function finalizeRequiredPdf(input: {
     storagePath: doc.storagePath ?? null,
     visibleText: text,
   });
-  const hygiene = documentHygieneIssues(text, {
-    name: doc.name ?? label,
-    exactFileName: doc.exactFileName ?? null,
-    documentType: doc.documentType ?? null,
-    format: doc.format ?? null,
-  });
+  const hygiene = [
+    ...documentHygieneIssues(text, {
+      name: doc.name ?? label,
+      exactFileName: doc.exactFileName ?? null,
+      documentType: doc.documentType ?? null,
+      format: doc.format ?? null,
+    }),
+    // `text` here is the visible text of the finished PDF, so raw Markdown
+    // syntax in it is unambiguously a rendering failure the reader would see.
+    ...renderedArtifactHygieneIssues(text),
+  ];
   const internalIssues = internalArtifactIssues(text);
   if (quality.status === "BLOCKED" || hygiene.length > 0 || internalIssues.length > 0) {
     const categories = Array.from(

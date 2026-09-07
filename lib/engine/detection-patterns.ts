@@ -112,7 +112,15 @@ export const AI_TRACE_PATTERNS: RegExp[] = [
   /\bpreparation\s+trace\b/i,
   // Round 4 expansion items from scorer
   /\bI have prepared\b/i,
-  /\bBelow is\b/i,
+  // NOT a bare /\bBelow is\b/: "below" is an ordinary adverb and the bare
+  // pattern condemned correct English — "The methodology below is tailored to
+  // the following identified service streams", "The table below is
+  // indicative". The AI tell is the PREAMBLE shape, which the precise
+  // /\bbelow is (?:a|the|my)\b/ further down already matches; the bare
+  // duplicate added nothing but false positives. It cost a delivered proposal
+  // a real sentence: a rewrite existed only to satisfy this pattern, and it
+  // turned that sentence into "The methodology the following provides
+  // tailored to the following identified service streams".
   /\bPlease find\b/i,
   /\bat the end of the day\b/i,
   /\bgoing forward\b/i,

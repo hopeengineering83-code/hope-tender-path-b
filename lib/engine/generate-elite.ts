@@ -98,6 +98,7 @@ import type { TenderSourceDocument } from "./source-grounded-requirement-map";
 import { getTenderDomainInstructions } from "./tender-domain-instructions";
 import { classifyTender } from "./tender-classification";
 import { buildServiceStreamMethodologyBlock } from "../document-generation/generation-integration";
+import { repairClientTextHygiene } from "./client-text-hygiene";
 
 const BRAND_BLUE = "1F4E79";
 const BRAND_GRAY = "595959";
@@ -210,21 +211,44 @@ function para(text: string, bold = false): Paragraph {
   });
 }
 
-function heading(text: string, level: 1 | 2 | 3 = 1, pageBreak = false): Paragraph {
-  const headingLevel = level === 1 ? HeadingLevel.HEADING_1 : level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
+// Markdown allows six heading levels and any producer may emit any of them.
+// This renderer previously understood only "# ", "## " and "### ": a "#### "
+// line fell through to the paragraph branch and the reader saw the literal
+// hashes. A real delivered proposal carried ten of them —
+// "#### Site and Context Analysis", "#### MEP System Design" and so on —
+// because the service-stream methodology builder writes its subsections at h4.
+// Handling every level here fixes it for every producer at once rather than
+// forcing each one to know this renderer's ceiling.
+type HeadingLevel1To6 = 1 | 2 | 3 | 4 | 5 | 6;
+
+const DOCX_HEADING_LEVEL: Record<HeadingLevel1To6, (typeof HeadingLevel)[keyof typeof HeadingLevel]> = {
+  1: HeadingLevel.HEADING_1,
+  2: HeadingLevel.HEADING_2,
+  3: HeadingLevel.HEADING_3,
+  4: HeadingLevel.HEADING_4,
+  5: HeadingLevel.HEADING_5,
+  6: HeadingLevel.HEADING_6,
+};
+
+// H1 = 16 pt (32 half-points), H2 = 14 pt (28), H3 = 12 pt (24), H4-H6 = 11 pt
+// (22) so a deep subsection reads as a subsection rather than as body text.
+const HEADING_FONT_SIZE: Record<HeadingLevel1To6, number> = { 1: 32, 2: 28, 3: 24, 4: 22, 5: 22, 6: 22 };
+const HEADING_SPACING_BEFORE: Record<HeadingLevel1To6, number> = { 1: 360, 2: 240, 3: 180, 4: 160, 5: 160, 6: 160 };
+
+function heading(text: string, level: HeadingLevel1To6 = 1, pageBreak = false): Paragraph {
+  const headingLevel = DOCX_HEADING_LEVEL[level];
   // Strip ** (heading style already applies bold) but keep *italic* so
   // parseInlineRuns can render it correctly in the heading TextRuns.
   const stripped = text.replace(/\*\*/g, "");
   // Explicit font sizes per level so Word's default heading style (which
   // varies by theme) does not collapse all headings to the same size.
-  // H1 = 16 pt (32 half-points), H2 = 14 pt (28), H3 = 12 pt (24).
-  const fontSize = level === 1 ? 32 : level === 2 ? 28 : 24;
-  const headingColor = level === 3 ? BRAND_GRAY : BRAND_BLUE;
+  const fontSize = HEADING_FONT_SIZE[level];
+  const headingColor = level >= 3 ? BRAND_GRAY : BRAND_BLUE;
   return new Paragraph({
     children: parseInlineRuns(stripped, { size: fontSize, color: headingColor }),
     heading: headingLevel,
     pageBreakBefore: level === 1 ? pageBreak : false,
-    spacing: { before: level === 1 ? 360 : level === 2 ? 240 : 180, after: level === 1 ? 140 : 100 },
+    spacing: { before: HEADING_SPACING_BEFORE[level], after: level === 1 ? 140 : 100 },
     border: level === 1 ? { bottom: { color: LIGHT_BLUE, space: 1, style: BorderStyle.SINGLE, size: 8 } } : undefined,
   });
 }
@@ -429,9 +453,12 @@ export function markdownToDocx(markdown: string): (Paragraph | Table | TableOfCo
       out.push(new Paragraph({ spacing: { before: 120, after: 120 }, border: { bottom: { color: "CCCCCC", style: BorderStyle.SINGLE, size: 6, space: 1 } }, children: [new TextRun("")] }));
       continue;
     }
-    if (trimmed.startsWith("### ")) out.push(heading(trimmed.slice(4), 3));
-    else if (trimmed.startsWith("## ")) out.push(heading(trimmed.slice(3), 2));
-    else if (trimmed.startsWith("# ")) { h1Count++; out.push(heading(trimmed.slice(2), 1, h1Count > 1)); }
+    const atxHeading = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+    if (atxHeading) {
+      const level = atxHeading[1].length as HeadingLevel1To6;
+      if (level === 1) h1Count++;
+      out.push(heading(atxHeading[2], level, level === 1 && h1Count > 1));
+    }
     else if (trimmed.startsWith("> ")) out.push(new Paragraph({ children: parseInlineRuns(trimmed.slice(2), { color: "795B00", size: 20 }), indent: { left: 360, right: 360 }, spacing: { after: 80, line: 260 }, border: { left: { color: "F59E0B", style: BorderStyle.SINGLE, size: 12, space: 4 } } }))
     else if (/^[-*•]\s+/.test(trimmed)) {
       // Detect nesting by leading whitespace (2 spaces per level)
@@ -3470,7 +3497,14 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
     .replace(/\boperating cost\b/gi, "operational resource use")
     .replace(/\bsubject to client agreement\b/gi, "optional upon client authorization")
     .replace(/^.*\bbids?[\s-]*team(?:\s+action|\s+to\s+confirm)\b.*$/gim, "")
-    .replace(/\bbelow is\b/gi, "the following provides")
+    // Narrowed to the AI-tell shape detection-patterns.ts actually flags
+    // (/\bbelow is (?:a|the|my)\b/), so the rewrite is grammatical. The old
+    // blind /\bbelow is\b/ also caught "below" used as an ordinary adverb and
+    // turned "The methodology below is tailored to the following identified
+    // service streams" into "The methodology the following provides tailored
+    // to the following identified service streams" — which the client read.
+    .replace(/\bBelow is (a|the|my)\b/g, "The following provides $1")
+    .replace(/\bbelow is (a|the|my)\b/g, "the following provides $1")
     .replace(/\btotal\s+price\b/gi, "total resource allocation")
     .replace(/\bunit\s+price\b/gi, "unit allocation")
     .replace(/\brate\s+card\b/gi, "resource schedule")
@@ -3560,6 +3594,19 @@ export async function generateTenderDocuments(tenderId: string, userId: string):
   const sealedOrder = reorderSectionsAndRebuildToc(workingMarkdown);
   logger.info(`[generate-elite] Contents page rebuilt from the sealed body: ${sealedOrder.tocEntries} entries.`);
   workingMarkdown = sealedOrder.markdown;
+
+  // Producer-side net for machine-writing failures, applied to the exact
+  // markdown that will be rendered. A refinement pass can truncate a sentence
+  // at any point — a delivered proposal read "All deliverables will undergo"
+  // where the model had removed an unsupported ISO 9001 claim and left the
+  // stem. No deterministic rule produced that, so nothing deterministic can
+  // prevent it; this removes the fragment rather than completing it, because
+  // completing it would put an unsourced sentence in front of an evaluator.
+  const proseHygiene = repairClientTextHygiene(workingMarkdown);
+  if (proseHygiene.removedLines > 0) {
+    logger.warn(`[generate-elite] Client-text hygiene removed ${proseHygiene.removedLines} unfinished line(s) before render.`);
+    workingMarkdown = proseHygiene.text;
+  }
 
   // Re-render the DOCX from the (possibly refined) markdown.
   const finalChildren = (refinementApplied || repairAddendaApplied) ? markdownToDocx(workingMarkdown) : children;

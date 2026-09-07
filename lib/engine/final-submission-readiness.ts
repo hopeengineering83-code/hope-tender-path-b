@@ -53,7 +53,7 @@ import { logger } from "../observability";
 import { assessTenderMetadataCompleteness } from "./tender-metadata-completeness";
 import { resolveCanonicalFieldState } from "./canonical-field-state";
 import { getTenderFactLedgerSnapshot } from "./tender-facts-ledger-service";
-import { detectAnalysisSourceWithApproval, type AnalysisSource } from "./analysis-source";
+import { resolveCanonicalAnalysisSource, type AnalysisSource } from "./analysis-source";
 import { computeReadinessScore } from "./readiness-scoring";
 import { isStrongSupportLevel, normalizeSupportLevel } from "./requirement-evidence-profile";
 import { isExtractionAcceptableForExport } from "./extraction-quality-gate";
@@ -855,7 +855,12 @@ export async function getFinalSubmissionReadiness(
   });
 
   // ── Analysis-source detection (Part 4) ───────────────────────────────────
-  const analysisSource: AnalysisSource = await detectAnalysisSourceWithApproval(client, opts.tenderId, tender);
+  // Resolver-first: the notes-only detector cannot see an AI analysis that is
+  // proven by AiJob rows but whose notes line predates the canonical wording,
+  // and reports UNKNOWN for it. resolveCanonicalAnalysisSource applies the same
+  // authority (only AI_SUCCEEDED maps to "AI") and falls back to the notes
+  // detector, which fails closed.
+  const analysisSource: AnalysisSource = await resolveCanonicalAnalysisSource(client, opts.tenderId, tender);
 
   // ── Source-reference coverage (used by the readiness score). ────────────
   const sourceReferenceCoverage = tender.requirements.length === 0

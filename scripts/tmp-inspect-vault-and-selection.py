@@ -131,6 +131,18 @@ for x in em:
     print(f"  selected={str(x.get('isSelected')):5} score={x.get('score')} "
           f"trust={e.get('trustLevel')} | {e.get('fullName')} | sectors={e.get('sectors')}")
 
+# A compact, always-first selection table. The full-record dump below is
+# valuable but long enough that it pushed this table off the retrievable end of
+# the job log last time, which is how "which two projects were selected?" went
+# unanswered while every other number was in hand.
+print("\n########## SELECTION TABLE (compact) ##########")
+_ranked = sorted(pm, key=lambda x: -(x.get("score") or 0))
+print(f"selected projects: {[ (x.get('project') or {}).get('name') for x in pm if x.get('isSelected') ]}")
+for x in [y for y in pm if y.get("isSelected")] + _ranked[:15]:
+    p_ = x.get("project", {}) or {}
+    print(f"  sel={str(x.get('isSelected')):5} score={x.get('score'):.4f} | {p_.get('name')}")
+print(f"selected experts: {[ (x.get('expert') or {}).get('fullName') for x in em if x.get('isSelected') ]}")
+
 print("\n########## FULL RECORDS + RATIONALES FOR THE CONTESTED PROJECTS ##########")
 # The three healthcare records and every project match that scored above 0.4,
 # with NOTHING truncated. The previous pass cut rationales at 300 characters,

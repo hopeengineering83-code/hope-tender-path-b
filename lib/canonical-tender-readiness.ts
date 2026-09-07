@@ -7,7 +7,7 @@ import { filterFinalExportCandidateDocuments } from "./engine/document-output-st
 import { getCurrentConfirmedBuildPlan, type BuildPlanItem } from "./engine/build-plan";
 import { computeTenderReadinessState } from "./tender-readiness-state";
 import { buildCanonicalModulePayload, computeCanonicalModuleStates, type CanonicalModuleStatePayload } from "./engine/canonical-readiness-state";
-import { detectAnalysisSourceWithApproval } from "./engine/analysis-source";
+import { resolveCanonicalAnalysisSource } from "./engine/analysis-source";
 import { canUseVaultRecord, VAULT_REVIEW_CONSUMER_SELECT, type ReviewRecordState } from "./vault-review-provenance";
 import { getCanonicalTenderWorkflowDecision } from "./engine/canonical-workflow-decision";
 
@@ -167,7 +167,7 @@ export async function getCanonicalTenderReadiness(client: PrismaClient, userId: 
   const reviewedSelectedProjects = tender.projectMatches.filter((m) => m.isSelected && canUseVaultRecord(m.project as ReviewRecordState, "GENERATION")).length;
   const unresolvedCriticalGaps = tender.complianceGaps.filter((g) => !g.isResolved && g.severity === "CRITICAL").length;
 
-  const analysisSource = await detectAnalysisSourceWithApproval(client, tenderId, tender);
+  const analysisSource = await resolveCanonicalAnalysisSource(client, tenderId, tender);
   const baseState = computeTenderReadinessState({
     analysisExtractionStatus: tender.analysisExtractionStatus,
     analysisSource,

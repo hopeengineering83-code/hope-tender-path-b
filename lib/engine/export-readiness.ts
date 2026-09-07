@@ -1,4 +1,5 @@
 import { looksLikeEncodedBytes } from "./encoded-content";
+import { findRenderedArtifactHygieneFailures } from "./client-text-hygiene";
 import { prisma, prismaReady } from "../prisma";
 import { getStorageAdapter } from "../storage";
 import { isValidClientName, containsMetadataPlaceholder } from "./metadata-validators";
@@ -356,6 +357,26 @@ export function documentHygieneIssues(text: string | null | undefined, doc?: Pic
   return issues;
 }
 
+/**
+ * Machine-writing failures in the text of a FINISHED artifact.
+ *
+ * Deliberately NOT part of documentHygieneIssues: that function is called both
+ * on rendered visible text and on Markdown source, and "# Technical Proposal"
+ * is a defect in the first and correct syntax in the second. Only callers that
+ * know they hold rendered bytes may apply this.
+ *
+ * A delivered proposal carried ten literal "#### ..." lines because the DOCX
+ * renderer understood only three heading levels. No existing rule saw them:
+ * every one of them looks for forbidden VOCABULARY, and this is a failure of
+ * SYNTAX.
+ */
+export function renderedArtifactHygieneIssues(text: string | null | undefined): string[] {
+  if (!text || looksLikeEncodedBytes(text) || !looksLikePlainText(text)) return [];
+  return findRenderedArtifactHygieneFailures(text).map(
+    (finding) => `Machine-writing failure (${finding.kind}) in client-facing text: "${finding.excerpt}"`,
+  );
+}
+
 export function isReadyForFinalExport(doc: ExportReadyDocument): boolean {
   // Canonical machine validation is the authority for the automatic path; a
   // per-document human reviewStatus is NOT additionally required.
@@ -441,7 +462,8 @@ export async function checkDocxHygieneReadiness(docs: ExportReadyDocument[]): Pr
       }
     }
     const text = await extractDocxVisibleText(content, fileName);
-    const reasons = documentHygieneIssues(text, doc).map((issue) => `${issue} inside DOCX visible text`);
+    const reasons = [...documentHygieneIssues(text, doc), ...renderedArtifactHygieneIssues(text)]
+      .map((issue) => `${issue} inside DOCX visible text`);
     if (reasons.length > 0) failures.push({ documentId: doc.id, name: doc.name, fileName, reasons });
   }
   return failures;
