@@ -13,8 +13,9 @@ on:
         description: >-
           TEMPORARY, owner-authorized. Type "accept" to run the one final
           hosted AI-Analyze -> Run-Engine -> ZIP acceptance against the
-          Preview deployment. Any other value (including blank) runs only
-          the ordinary lockfile-refresh job.
+          Preview deployment. Type "inspect" to run the READ-ONLY vault and
+          selection inspection instead (no generation, no writes). Any other
+          value (including blank) runs only the ordinary lockfile-refresh job.
         required: false
         default: ""
       tender_id:
@@ -448,4 +449,95 @@ jobs:
             /tmp/final-pdf-text.txt
             /tmp/pdf-pages/
           if-no-files-found: warn
+          retention-days: 3
+
+  # ─── TEMPORARY — owner-authorized, read-only ───────────────────────────────
+  #
+  # Answers "what does the live Preview vault actually contain, and what did
+  # the selection pipeline do with it?" without generating anything. Every
+  # call is a GET. No AiJob is created, no document is written, and the
+  # provider section reads the DURABLE usage snapshot rather than probing a
+  # provider, so it costs no quota.
+  #
+  # This exists because the vault counts were previously inferred from the
+  # generated PDF's own summary line rather than read from the database.
+  # Remove it with the acceptance job.
+  temporary-preview-vault-inspection:
+    if: github.event_name == 'workflow_dispatch' && inputs.confirm == 'inspect'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      OWNER_EMAIL: ${{ secrets.PREVIEW_OWNER_EMAIL }}
+      OWNER_PASSWORD: ${{ secrets.PREVIEW_OWNER_PASSWORD }}
+      BASE_URL: https://hope-tender-path-b-git-0db72a-hopeengineering83-codes-projects.vercel.app
+      TENDER_ID: ${{ inputs.tender_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify secrets and inputs are present
+        run: |
+          if [ -z "$OWNER_EMAIL" ] || [ -z "$OWNER_PASSWORD" ]; then
+            echo "::error::PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD secrets are not set."
+            exit 1
+          fi
+          if [ -z "$TENDER_ID" ]; then
+            echo "::error::tender_id input is required."
+            exit 1
+          fi
+
+      - name: Sign in through the real /api/auth/login endpoint
+        run: |
+          # Same request shape e2e/global-setup.ts uses: JSON credentials with
+          # the Origin and Referer a same-origin browser form would send, so
+          # strict CSRF stays enabled. Credentials go in a --data-binary file
+          # rather than argv so they never reach the process table.
+          umask 077
+          printf '{"email":%s,"password":%s}' \
+            "$(printf '%s' "$OWNER_EMAIL" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            "$(printf '%s' "$OWNER_PASSWORD" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')" \
+            > /tmp/login-body.json
+          status=$(curl -sS --connect-timeout 15 --max-time 45 \
+            -o /tmp/login-body-response.json -D /tmp/login-headers.txt \
+            -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -H "Origin: $BASE_URL" \
+            -H "Referer: $BASE_URL/login" \
+            --data-binary @/tmp/login-body.json \
+            "$BASE_URL/api/auth/login")
+          rm -f /tmp/login-body.json
+          echo "login status: $status"
+          if [ "$status" != "200" ]; then
+            echo "::error::Login against the Preview app failed (HTTP $status). Check PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD."
+            rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+            exit 1
+          fi
+          cookie=$(grep -i '^set-cookie:' /tmp/login-headers.txt \
+            | grep -o 'hope_session=[^;]*' \
+            | head -1 \
+            | cut -d= -f2-)
+          rm -f /tmp/login-headers.txt /tmp/login-body-response.json
+          if [ -z "$cookie" ]; then
+            echo "::error::Login succeeded but no hope_session cookie was returned."
+            exit 1
+          fi
+          # Register the session value as a masked secret BEFORE it is used, so
+          # it can never surface in a later log line.
+          echo "::add-mask::$cookie"
+          echo "SESSION_COOKIE=$cookie" >> "$GITHUB_ENV"
+          echo "Signed in; session captured and masked."
+
+      - name: Read the live vault, the selection pipeline and provider state
+        run: python3 scripts/tmp-inspect-vault-and-selection.py 2>&1 | tee /tmp/vault-inspection.txt
+
+      - name: Upload inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-vault-inspection
+          path: /tmp/vault-inspection.txt
+          if-no-files-found: error
           retention-days: 3
