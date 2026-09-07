@@ -20,6 +20,14 @@ on:
           the ordinary lockfile-refresh job.
         required: false
         default: ""
+      expected_fingerprint:
+        description: >-
+          TEMPORARY, required with confirm=provision. The databaseFingerprint
+          /api/health reports for the database being rebuilt. The rebuild
+          re-checks it and refuses to run against anything else, so the target
+          can never be implicit or inherited from a stale secret.
+        required: false
+        default: ""
       tender_id:
         description: >-
           TEMPORARY, paired with confirm=accept. The Preview tender ID
@@ -589,6 +597,10 @@ jobs:
             echo "::error::PREVIEW_OWNER_EMAIL / PREVIEW_OWNER_PASSWORD must be set so the seeded owner matches the account the acceptance harness signs in as."
             exit 1
           fi
+          if [ -z "${{ inputs.expected_fingerprint }}" ]; then
+            echo "::error::expected_fingerprint is required. Read it from /api/health on the Preview being rebuilt. Without it the rebuild has no way to prove which database it is about to change."
+            exit 1
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -636,8 +648,43 @@ jobs:
             echo "::warning::The live schema does NOT match prisma/schema.prisma; baselining would leave drift."
           fi
 
-      - name: Apply committed migrations (additive; never resets)
-        run: npx prisma migrate deploy
+      - name: Install PostgreSQL 18 client tools (matches the Neon server version)
+        # pg_dump refuses to read from a server newer than itself, and Ubuntu
+        # ships v16 while Neon runs 18. The schema-only backup taken as rollback
+        # evidence in the next step depends on this.
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends postgresql-client-18
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+
+      # This repeats the procedure used for the first Neon switch on
+      # 2026-09-03 (commit 25de5cc7), because the new database reproduced that
+      # switch's signature exactly. Root cause then and now: lib/prisma.ts's
+      # legacy isRuntimeSchemaBootstrapEnabled()/bootstrap() path builds the
+      # schema ad-hoc rather than from prisma/migrations, so it carries no
+      # _prisma_migrations history and drifts from schema.prisma, and it seeds
+      # the 4 canonical Role rows that are this database's only data. That path
+      # runs whenever NODE_ENV is not "production", which is how a Preview
+      # process touching a brand-new database creates its schema.
+      #
+      # The rebuild is gated rather than blind. The script re-verifies the
+      # fingerprint against EXPECTED_FINGERPRINT, requires every business table
+      # to be empty, requires any Role rows to match the repository's canonical
+      # set exactly, and takes a schema-only pg_dump as rollback evidence before
+      # it changes anything — exiting 1 if any gate fails.
+      - name: Gated verified rebuild (proceeds only if every gate passes)
+        env:
+          EXPECTED_FINGERPRINT: ${{ inputs.expected_fingerprint }}
+        run: node scripts/tmp-verified-clean-rebuild.mjs
+
+      - name: Apply the full repository migration history from empty
+        run: npm run prisma:migrate:safe
+
+      - name: Restore the 4 canonical Role rows and verify migration history
+        run: node scripts/tmp-restore-canonical-roles-and-verify.mjs
 
       - name: Confirm every migration is applied
         run: npx prisma migrate status
