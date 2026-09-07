@@ -612,6 +612,30 @@ jobs:
       - name: Show migration status before applying
         run: npx prisma migrate status || true
 
+      - name: Does the live schema already match prisma/schema.prisma?
+        # Decides between baselining and rebuilding without touching anything.
+        # An empty diff means the schema the database has is exactly the schema
+        # the migrations produce, so marking them applied is safe. A non-empty
+        # diff means baselining would leave silent drift, and the schema must be
+        # rebuilt instead. Read-only: --script only prints SQL.
+        run: |
+          echo "--- SQL that would be needed to bring the DATABASE up to schema.prisma ---"
+          npx prisma migrate diff \
+            --from-schema-datasource prisma/schema.prisma \
+            --to-schema-datamodel prisma/schema.prisma \
+            --script | tee /tmp/schema-drift.sql
+          echo "--- end ---"
+          # Comments and blank lines do not count as drift.
+          drift=$(grep -vE '^\s*(--.*)?$' /tmp/schema-drift.sql | wc -l)
+          echo "drift statements: $drift"
+          if [ "$drift" -eq 0 ]; then
+            echo "SCHEMA_MATCHES=true" >> "$GITHUB_ENV"
+            echo "The live schema already matches. Baselining is safe."
+          else
+            echo "SCHEMA_MATCHES=false" >> "$GITHUB_ENV"
+            echo "::warning::The live schema does NOT match prisma/schema.prisma; baselining would leave drift."
+          fi
+
       - name: Apply committed migrations (additive; never resets)
         run: npx prisma migrate deploy
 
