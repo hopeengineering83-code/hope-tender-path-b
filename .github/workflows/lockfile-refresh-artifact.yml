@@ -454,6 +454,14 @@ jobs:
           ls -la /tmp/zip-extract/
           node scripts/tmp-render-pdf-pages.mjs "/tmp/zip-extract/Technical Proposal.pdf" /tmp/pdf-pages 2>&1 | tee /tmp/pdf-page-report.txt
 
+      - name: Audit the delivered PDF for embedded brand-asset bytes
+        run: |
+          # ACTIVE metadata in the asset store is not proof the bytes reached
+          # the client. This reads the PDF's own object graph, because text
+          # extraction cannot see an image and has already produced three false
+          # findings in this workstream.
+          node scripts/tmp-inspect-pdf-typography-and-assets.mjs "/tmp/zip-extract/Technical Proposal.pdf" 2>&1 | tee /tmp/pdf-asset-audit.txt
+
       - name: Dump the final PDF's visible text for claim-by-claim review
         run: |
           # The 17-dimension assessment and the factual/compliance review have
@@ -478,6 +486,7 @@ jobs:
             /tmp/export-response.json
             /tmp/preview-final.zip
             /tmp/pdf-page-report.txt
+            /tmp/pdf-asset-audit.txt
             /tmp/final-pdf-text.txt
             /tmp/pdf-pages/
           if-no-files-found: warn
