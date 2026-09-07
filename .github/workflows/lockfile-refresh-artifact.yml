@@ -397,8 +397,25 @@ jobs:
             exit 1
           fi
           unzip -t /tmp/preview-final.zip
-          curl -sS --connect-timeout 15 --max-time 90 -H "Cookie: hope_session=$SESSION_COOKIE" \
-            "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" > /tmp/generated-proposal-audit-post-export.json
+          # Run 34161170459 lost a whole acceptance cycle here to
+          # "curl: (35) SSL_ERROR_SYSCALL" — a dropped TLS handshake on this one
+          # request, after the ZIP had already downloaded and verified. A
+          # transport hiccup must not read as a product failure, so this is
+          # retried; a genuinely unreachable endpoint still fails the step.
+          for attempt in 1 2 3 4; do
+            if curl -sS --connect-timeout 15 --max-time 90 --retry 2 --retry-connrefused \
+              -H "Cookie: hope_session=$SESSION_COOKIE" \
+              "$BASE_URL/api/admin/generated-proposals/audit?tenderId=$TENDER_ID&includeReady=true" \
+              > /tmp/generated-proposal-audit-post-export.json; then
+              break
+            fi
+            if [ "$attempt" = "4" ]; then
+              echo "::error::Post-export audit fetch failed after 4 attempts."
+              exit 1
+            fi
+            echo "Post-export audit fetch attempt $attempt failed; retrying."
+            sleep $((attempt * 5))
+          done
           python3 - <<'PYEOF'
           import hashlib, json, zipfile
           with zipfile.ZipFile('/tmp/preview-final.zip') as archive:
