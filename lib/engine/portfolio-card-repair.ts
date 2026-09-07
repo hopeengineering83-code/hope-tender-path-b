@@ -146,7 +146,10 @@ export function recordFactsFor(project: PortfolioCardProject): RecordFacts {
 
   return {
     location: tidy(project.country || derived.country || derived.location || "") || undefined,
-    scale: scaleMatch ? tidy(scaleMatch[0]) : undefined,
+    // tidy() collapses runs of whitespace but not the newlines the source text
+    // wraps on: "5\nkm" reached an Executive Summary sentence as a line break
+    // mid-phrase.
+    scale: scaleMatch ? tidy(scaleMatch[0].replace(/\s+/g, " ")) : undefined,
     duration: formatYearRange(derived.startDate, derived.endDate),
     services: services.length > 0 ? services.join(", ") : undefined,
     // The three amounts are never merged. The consultancy fee is this firm's

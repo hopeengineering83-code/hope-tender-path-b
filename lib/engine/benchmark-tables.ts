@@ -1,5 +1,6 @@
 import { safeParseJsonArray, safeParseJsonObject } from "../safe-json";
 import { extractProjectFacts, extractProjectAmounts, extractServicesProvided } from "./project-fact-extractor";
+import { recordFactsFor } from "./portfolio-card-repair";
 import { withoutSourceProvenance, factualCardOrEmpty } from "./vault-prose";
 import { inlineEvidenceValue } from "./proposal-intelligence";
 import { withoutPersonalCvFields, withoutCvDocumentFurniture, truncateAtWordBoundary } from "./proposal-intelligence";
@@ -1075,18 +1076,77 @@ export function buildExecutiveSummaryOpener(opts: {
 
   if (top.length === 0) {
     const expertStr = opts.reviewedExpertCount > 0
-      ? `${opts.reviewedExpertCount} reviewed expert${opts.reviewedExpertCount !== 1 ? "s" : ""}${opts.topExpertName ? `, including **${opts.topExpertName}**${opts.topExpertTitle ? `, ${opts.topExpertTitle}` : ""}` : ""}`
+      ? `${opts.reviewedExpertCount} specialist${opts.reviewedExpertCount !== 1 ? "s" : ""}${opts.topExpertName ? `, including **${opts.topExpertName}**${opts.topExpertTitle ? `, ${opts.topExpertTitle}` : ""}` : ""}`
       : "a specialist technical team";
-    return `**${opts.companyName}** brings ${expertStr} to this assignment, each with prior comparable delivery experience confirmed through the firm's knowledge vault. The firm's sector expertise and evidence-mapped technical methodology — detailed in Sections A and C — directly address ${opts.clientName}'s evaluation criteria.`;
+    // "confirmed through the firm's knowledge vault" named this application's
+    // evidence store to the client. What the evaluator can act on is that the
+    // experience is documented and available, not where this app filed it.
+    return `**${opts.companyName}** brings ${expertStr} to this assignment, each with prior comparable delivery experience documented in the firm's records. The firm's sector expertise and evidence-mapped technical methodology — detailed in Sections A and C — directly address ${opts.clientName}'s evaluation criteria.`;
   }
 
-  if (top.length === 1) {
-    const p = top[0];
-    return `**${opts.companyName} brings relevant reviewed experience to this assignment.** ${fmtProjectInline(p)} provides a reference point for the proposed delivery approach for ${opts.clientName}.${expertClause}`.trim();
-  }
+  // THE SUMMARY MAKES THE CASE; IT DOES NOT INTRODUCE THE APPENDIX.
+  //
+  // This used to open:
+  //
+  //   "Hope ... brings relevant reviewed experience to this assignment.
+  //    G+6 General Hospital – Dr Abdul Seid (Gimba City, South Wollo Zone,
+  //    Amhara Region) provides a reference point for the proposed delivery
+  //    approach for Pharo Ventures."
+  //
+  // Every word of that is true and none of it argues anything. "Relevant
+  // experience" is what every bidder claims; "provides a reference point for
+  // the proposed delivery approach" says only that a later section exists. The
+  // first paragraph an evaluator reads spent itself saying nothing.
+  //
+  // The overlap between what the client is buying and what the firm has
+  // actually built is the argument, and it is already in hand: the record's own
+  // words give the scale, the location and the services performed, and the
+  // matcher already ranked which record is closest. Naming those is not a
+  // stronger claim than the old sentence — it is the same evidence, stated.
+  // The lead sentence asserts comparability — which the matcher computed and
+  // Section B evidences — and NOT identity of scope. "has delivered the scope
+  // the client is procuring" was the first phrasing here and it is false the
+  // moment the closest record is from a different sector, which is exactly the
+  // case this app must survive.
+  const lead = projectEvidenceClause(top[0], `**${opts.companyName}'s closest comparable assignment is`);
+  if (top.length === 1) return `${lead}${expertClause}`.trim();
+  return `${lead} ${projectEvidenceClause(top[1], "The firm also delivered")}${expertClause}`.trim();
+}
 
-  const [a, b] = top;
-  return `**${opts.companyName} brings relevant reviewed experience to this assignment.** ${fmtProjectInline(a)} and ${fmtProjectInline(b)} provide reference points for the proposed delivery approach for ${opts.clientName}.${expertClause}`.trim();
+/**
+ * One sentence of concrete, record-grounded evidence about a single project:
+ * what it was, how big, where, and what this firm did on it.
+ *
+ * Only facts the record itself states. Where the record is silent the clause
+ * simply gets shorter — it never fills a gap with a generality.
+ */
+function projectEvidenceClause(project: ProjectRecord, opener: string): string {
+  const facts = recordFactsFor({
+    name: project.name,
+    summary: project.summary ?? null,
+    clientName: project.clientName ?? null,
+    country: project.country ?? null,
+    sector: project.sector ?? null,
+    serviceAreas: (project.serviceAreas as string | null) ?? null,
+    contractValue: project.contractValue ?? null,
+    currency: project.currency ?? null,
+  });
+
+  const descriptors = [facts.scale, project.sector || undefined].filter(Boolean).join(" ");
+  const where = facts.location ? ` in ${facts.location}` : "";
+  const what = descriptors ? `, a ${descriptors} project${where}` : where ? `${where}` : "";
+
+  // Cap the service list: a summary sentence carrying eleven services stops
+  // being a sentence. The full list is on the card in Section B.
+  const services = (facts.services ?? "").split(", ").filter(Boolean);
+  const shown = services.slice(0, 5).join(", ");
+  const did = shown
+    ? `, on which the firm performed ${shown}${services.length > 5 ? " and further design and supervision services" : ""}`
+    : "";
+
+  const bolded = opener.startsWith("**");
+  const head = `${opener} ${project.name}${what}`;
+  return `${bolded ? `${head}**` : head}${did}.`;
 }
 
 // ─── D.4 Declaration with GM name + license ──────────────────────────────────
@@ -1106,7 +1166,10 @@ export function buildDeclaration(opts: {
     "## D.4 Declaration of Eligibility",
     `We, ${opts.companyName}, hereby declare that this Technical Proposal has been prepared specifically in response to ${opts.tenderTitle} for ${opts.clientName}. All information provided is accurate and supported by documentary evidence available on request. The firm meets all eligibility requirements stated in the tender and confirms the absence of any debarment, conflict of interest, or compliance condition that would prevent the firm from participating in this procurement.`,
     "",
-    `This proposal has been prepared using reviewed evidence and senior bid-review controls. We commit to delivering the assigned scope with the proposed team, methodology, and schedule.`,
+    // "reviewed evidence and senior bid-review controls" is this application's
+    // description of its own pipeline, inside the bidder's signed declaration.
+    // The commitment is what the client is being asked to rely on.
+    `Every claim in this proposal is supported by the firm's own project and personnel records, which are available for verification on request. We commit to delivering the assigned scope with the proposed team, methodology, and schedule.`,
     "",
     signatureLine,
   ].join("\n");
