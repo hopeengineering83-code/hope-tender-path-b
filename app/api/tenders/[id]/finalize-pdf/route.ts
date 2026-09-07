@@ -245,6 +245,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
               website: (tender as any).user.company.website ?? null,
             }
           : null,
+        // Resolves the active signature/stamp images for the renderer to draw.
+        ownerUserId: actor.id,
         sourceDocument: {
           id: String(source.id),
           name: source.name ?? null,

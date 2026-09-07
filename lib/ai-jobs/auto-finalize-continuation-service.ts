@@ -988,6 +988,8 @@ async function runPdfFinalization(
           submissionEmailSubject: tender.submissionEmailSubject,
         },
         company: tender.user?.company,
+        // Resolves the active signature/stamp images for the renderer to draw.
+        ownerUserId: userId,
         sourceDocument: {
           id: sourceDoc.id,
           name: sourceDoc.name,

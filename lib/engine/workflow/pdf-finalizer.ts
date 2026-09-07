@@ -26,6 +26,7 @@
 import { logger } from "../../observability";
 import { generateProposalPdf } from "../proposal-pdf";
 import { extractDocxVisibleText, extractDocxMarkdownText, documentHygieneIssues, renderedArtifactHygieneIssues } from "../export-readiness";
+import type { PdfBrandImage } from "../proposal-pdf";
 import { validateDocumentQuality } from "../document-quality-validator";
 import {
   isFinalExportCandidateDocument,
@@ -214,6 +215,64 @@ export function internalArtifactIssues(text: string): string[] {
  * Render the required PDF from an approved generated source document.
  * Fail-closed at every step; see module doc for the guarantees.
  */
+
+/**
+ * The active signature and stamp images this PDF may carry.
+ *
+ * Mirrors apply-signature-stamp.ts exactly on authority: the tender's branding
+ * policy can forbid either, the company's own settings can disable either, and
+ * only ACTIVE assets with real image bytes are used. Tender requirements
+ * override brand preference, never the other way round.
+ *
+ * Returns nulls rather than throwing: a proposal must still be produced when
+ * the assets are missing, and the declaration's signature rule then gives the
+ * signatory somewhere to sign by hand.
+ */
+async function resolveBrandImages(
+  ownerUserId: string | null,
+  tenderText: string,
+): Promise<{ signature: PdfBrandImage | null; stamp: PdfBrandImage | null }> {
+  const none = { signature: null, stamp: null };
+  if (!ownerUserId) return none;
+  try {
+    const { detectBrandingPolicy } = await import("../export-format-policy");
+    const { prisma } = await import("../../prisma");
+    const policy = detectBrandingPolicy(tenderText);
+
+    const company = await prisma.company.findUnique({
+      where: { userId: ownerUserId },
+      select: {
+        settings: { select: { allowSignatureDefault: true, allowStampDefault: true } },
+        assets: {
+          where: { assetType: { in: ["SIGNATURE", "STAMP"] }, isActive: true },
+          select: { assetType: true, fileContent: true, mimeType: true },
+        },
+      },
+    });
+    if (!company) return none;
+
+    const signatureAllowed = policy.signatureAllowed && company.settings?.allowSignatureDefault !== false;
+    const stampAllowed = policy.stampAllowed && company.settings?.allowStampDefault !== false;
+
+    const pick = (assetType: string, allowed: boolean): PdfBrandImage | null => {
+      if (!allowed) return null;
+      const asset = company.assets.find((a: { assetType: string }) => a.assetType === assetType);
+      if (!asset?.fileContent) return null;
+      const bytes = Buffer.from(asset.fileContent, "base64");
+      // Only real image bytes; a mislabelled row must not reach pdf-lib.
+      const isPng = bytes.length > 4 && bytes[0] === 0x89 && bytes[1] === 0x50;
+      const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+      if (!isPng && !isJpeg) return null;
+      return { bytes: new Uint8Array(bytes), mimeType: isPng ? "image/png" : "image/jpeg" };
+    };
+
+    return { signature: pick("SIGNATURE", signatureAllowed), stamp: pick("STAMP", stampAllowed) };
+  } catch (error) {
+    logger.warn("pdf-finalizer: could not resolve brand images", { detail: error });
+    return none;
+  }
+}
+
 export async function finalizeRequiredPdf(input: {
   requiredFileName: string;
   tender: {
@@ -230,9 +289,19 @@ export async function finalizeRequiredPdf(input: {
     email?: string | null;
     website?: string | null;
   } | null;
+  /**
+   * The tender owner, used to resolve the active signature and stamp images.
+   *
+   * The PDF is rendered from the DOCX's extracted TEXT, so the images
+   * apply-signature-stamp.ts embeds into the DOCX cannot survive into the PDF.
+   * A delivered proposal therefore carried 36 XObject references and not one
+   * image, while the vault held an ACTIVE, integrity-VERIFIED signature and
+   * stamp. The renderer draws them itself; this is where it learns which.
+   */
+  ownerUserId?: string | null;
   sourceDocument: PdfFinalizerSourceDocument;
 }): Promise<PdfFinalizationResult> {
-  const { requiredFileName, tender, company, sourceDocument: doc } = input;
+  const { requiredFileName, tender, company, ownerUserId, sourceDocument: doc } = input;
 
   const nameProblem = validateRequiredFileName(requiredFileName);
   if (nameProblem) return blocker("PDF_INVALID_REQUIRED_FILENAME", nameProblem);
@@ -360,6 +429,10 @@ export async function finalizeRequiredPdf(input: {
     if (company?.phone) contactParts.push(company.phone);
     if (company?.email) contactParts.push(company.email);
     if (company?.website) contactParts.push(company.website);
+    const brandImages = await resolveBrandImages(
+      ownerUserId ?? null,
+      [tender.title ?? "", tender.clientName ?? "", renderText].join("\n"),
+    );
     pdfBytes = await generateProposalPdf({
       title: tender.title?.trim() || "Technical Proposal",
       clientName: tender.clientName ? cleanClientName(tender.clientName) : null,
@@ -369,6 +442,8 @@ export async function finalizeRequiredPdf(input: {
       companyName: company?.name ?? null,
       companyAddress: company?.address ?? null,
       companyContact: contactParts.length ? contactParts.join("  |  ") : null,
+      signature: brandImages.signature,
+      stamp: brandImages.stamp,
     });
   } catch (error) {
     logger.error("pdf-finalizer: PDF rendering failed", { documentId: doc.id, detail: error });

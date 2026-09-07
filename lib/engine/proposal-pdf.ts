@@ -502,6 +502,87 @@ async function buildCoverPage(
   });
 }
 
+
+/**
+ * The authorised signature and company stamp, drawn where a signature belongs.
+ *
+ * WHY THIS IS HERE AND NOT IN THE DOCX APPLIER
+ * --------------------------------------------
+ * apply-signature-stamp.ts embeds both images into the generated DOCX and does
+ * it correctly. pdf-finalizer then renders the delivered PDF from the DOCX's
+ * extracted markdown TEXT rather than by converting the DOCX bytes, so images
+ * cannot survive that step: the delivered proposal carried 36 XObject
+ * references and not one of them was an image, while the vault held an ACTIVE,
+ * integrity-VERIFIED signature (3,246 bytes) and stamp (103,155 bytes). No
+ * tender of any sector could deliver a signed or stamped PDF.
+ *
+ * The renderer therefore draws them itself, anchored to the declaration's own
+ * signature rule so they land on whatever page the declaration reaches and
+ * cannot overlap the text around them.
+ */
+export interface PdfBrandImage {
+  readonly bytes: Uint8Array;
+  readonly mimeType: string;
+}
+
+/** Height in points for a drawn brand image; width follows the aspect ratio. */
+const SIGNATURE_HEIGHT = 46;
+const STAMP_HEIGHT = 74;
+
+async function embedBrandImage(doc: PDFDocument, image: PdfBrandImage) {
+  const isPng = /png/i.test(image.mimeType);
+  return isPng ? doc.embedPng(image.bytes) : doc.embedJpg(image.bytes);
+}
+
+async function drawSignatureAndStamp(
+  ctx: RenderContext,
+  signature: PdfBrandImage | null,
+  stamp: PdfBrandImage | null,
+): Promise<void> {
+  if (!signature && !stamp) return;
+
+  const drawn: Array<{ embedded: Awaited<ReturnType<typeof embedBrandImage>>; height: number }> = [];
+  for (const [image, height] of [[signature, SIGNATURE_HEIGHT], [stamp, STAMP_HEIGHT]] as const) {
+    if (!image) continue;
+    try {
+      drawn.push({ embedded: await embedBrandImage(ctx.doc, image), height });
+    } catch {
+      // A corrupt or unsupported image must never cost the client the whole
+      // proposal. The signature rule below still gives somewhere to sign.
+    }
+  }
+  if (drawn.length === 0) return;
+
+  const blockHeight = Math.max(...drawn.map((d) => d.height));
+  ensureSpace(ctx, blockHeight + 12);
+  const page = currentPage(ctx);
+  let x = PAGE_MARGIN;
+  for (const { embedded, height } of drawn) {
+    const width = (embedded.width / embedded.height) * height;
+    // Never let a wide asset run into the margin.
+    const scale = Math.min(1, (CONTENT_WIDTH / 2 - 12) / width);
+    page.drawImage(embedded, {
+      x,
+      y: ctx.y - height * scale,
+      width: width * scale,
+      height: height * scale,
+    });
+    x += width * scale + 28;
+  }
+  ctx.y -= blockHeight + 12;
+}
+
+/**
+ * The declaration's own signature rule — the line carrying all three labels.
+ * Matches keepDeclarationSignatureRule in generate-elite.ts, which is what
+ * decides that this line survives sanitisation.
+ */
+function isDeclarationSignatureRule(text: string): boolean {
+  return /\bSignature\s*:/i.test(text)
+    && /\bStamp\s*:/i.test(text)
+    && /\bDate\s*:/i.test(text);
+}
+
 export async function generateProposalPdf(opts: {
   title: string;
   clientName?: string | null;
@@ -512,6 +593,10 @@ export async function generateProposalPdf(opts: {
   companyAddress?: string | null;
   companyContact?: string | null;
   submissionEmailSubject?: string | null;
+  /** Authorised signature image, when the tender permits one. */
+  signature?: PdfBrandImage | null;
+  /** Company stamp/seal image, when the tender permits one. */
+  stamp?: PdfBrandImage | null;
 }): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   // The font set is built from everything this document will contain — cover
@@ -612,6 +697,11 @@ export async function generateProposalPdf(opts: {
       drawTable(ctx, tok.rows);
       ctx.y -= PARAGRAPH_GAP;
     } else {
+      // The signature and stamp go immediately above the declaration's own
+      // signature rule, so they land wherever the declaration lands.
+      if (isDeclarationSignatureRule(tok.text)) {
+        await drawSignatureAndStamp(ctx, opts.signature ?? null, opts.stamp ?? null);
+      }
       // body — use inline renderer so **bold** and *italic* survive
       drawInlineParagraph(ctx, tok.text, {
         size: FONT_SIZE_BODY,

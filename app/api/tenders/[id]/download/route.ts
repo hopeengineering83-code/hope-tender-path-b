@@ -685,6 +685,8 @@ async function proposalPdf(userId: string, tender: any, docId: string | null) {
           website: (tender as any).user.company.website ?? null,
         }
       : null,
+    // Resolves the active signature/stamp images for the renderer to draw.
+    ownerUserId: userId,
     sourceDocument: {
       id: String(target.id),
       name: target.name ?? null,
