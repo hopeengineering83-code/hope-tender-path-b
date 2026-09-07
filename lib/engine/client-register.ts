@@ -94,9 +94,14 @@ const RULES: readonly RegisterRule[] = [
     rationale: "'completed' is what the record is; 'reviewed' is how this app classified it",
   },
   {
-    pattern: /\breviewed (hospital and medical-centre|project|company|specialist) records\b/gi,
-    replacement: "$1 records",
-    rationale: "drops the internal verification adjective only",
+    pattern: /\breviewed ((?:[A-Za-z&'’-]+ ){0,6}records)\b/gi,
+    replacement: "$1",
+    rationale: "drops the internal verification adjective only, whatever the records are",
+  },
+  {
+    pattern: /\breviewed ((?:project|company|specialist) references?(?:\(s\))?)\b/gi,
+    replacement: "$1",
+    rationale: "same references; 'reviewed' is how this app classified them",
   },
 ];
 
@@ -140,9 +145,17 @@ export function applyClientRegister(text: string): ClientRegisterResult {
   for (const rule of RULES) {
     out = out.replace(rule.pattern, (...args) => {
       rewrites += 1;
-      // Build the replacement with $1 semantics preserved.
+      const matched = args[0] as string;
       const groups = args.slice(1, -2) as string[];
-      return rule.replacement.replace(/\$(\d)/g, (_, index) => groups[Number(index) - 1] ?? "");
+      const built = rule.replacement.replace(/\$(\d)/g, (_, index) => groups[Number(index) - 1] ?? "");
+      // Dropping a sentence's first word must not leave the sentence starting
+      // in lower case. The first attempt at this pass turned an Executive
+      // Summary bullet into "hospital and medical-centre records inform the
+      // healthcare-specific delivery approach" — the fix for one presentation
+      // defect creating another, on the page an evaluator reads first.
+      const startedCapitalised = /^[A-Z]/.test(matched);
+      if (startedCapitalised && /^[a-z]/.test(built)) return built.charAt(0).toUpperCase() + built.slice(1);
+      return built;
     });
   }
 

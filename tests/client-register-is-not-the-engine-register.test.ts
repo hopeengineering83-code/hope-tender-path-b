@@ -135,3 +135,35 @@ test("this application's internal names never reach the client", () => {
     assert.ok(!/firm's vault/.test(emitted), "the internal store name is still emitted to the client");
   }
 });
+
+test("dropping a sentence's first word does not leave it lower case", () => {
+  // The first version of this pass did exactly that, and the delivered
+  // Executive Summary carried the result: a bullet reading "hospital and
+  // medical-centre records inform the healthcare-specific delivery approach".
+  const cases: Array<[string, string]> = [
+    [
+      "Reviewed hospital and medical-centre records inform the healthcare-specific delivery approach described in this proposal.",
+      "Hospital and medical-centre records inform the healthcare-specific delivery approach described in this proposal.",
+    ],
+    [
+      "Reviewed World Bank ESF and British Council records inform the proposal's documentation and review controls.",
+      "World Bank ESF and British Council records inform the proposal's documentation and review controls.",
+    ],
+  ];
+  for (const [before, expected] of cases) {
+    assert.equal(applyClientRegister(before).text, expected);
+  }
+
+  // Mid-sentence, the case of the following word is left alone.
+  assert.equal(
+    applyClientRegister("The firm holds reviewed hospital records for this sector.").text,
+    "The firm holds hospital records for this sector.",
+  );
+});
+
+test("Section B's count sentence is a count, not a verification report", () => {
+  assert.equal(
+    applyClientRegister("Hope PLC presents 1 reviewed project reference(s) directly relevant to this assignment:").text,
+    "Hope PLC presents 1 project reference(s) directly relevant to this assignment:",
+  );
+});
