@@ -602,6 +602,40 @@ jobs:
       - name: Generate Prisma client
         run: npx prisma generate
 
+      - name: Inspect what the target database already contains
+        # P3005 ("schema is not empty") means prisma found objects in public but
+        # no _prisma_migrations history. Before deciding anything, print what is
+        # actually there: baselining an empty-but-dirty schema and baselining a
+        # schema with real data need opposite treatments, and only this listing
+        # tells them apart. Read-only.
+        run: |
+          node -e '
+            const { PrismaClient } = require("@prisma/client");
+            const p = new PrismaClient();
+            (async () => {
+              const tables = await p.$queryRawUnsafe(
+                "select table_name from information_schema.tables where table_schema = \'public\' order by table_name"
+              );
+              const views = await p.$queryRawUnsafe(
+                "select table_name from information_schema.views where table_schema = \'public\'"
+              );
+              const types = await p.$queryRawUnsafe(
+                "select t.typname from pg_type t join pg_namespace n on n.oid = t.typnamespace where n.nspname = \'public\' and t.typtype = \'e\'"
+              );
+              const exts = await p.$queryRawUnsafe(
+                "select extname from pg_extension"
+              );
+              console.log("TABLES in public:", tables.length);
+              for (const t of tables) console.log("  -", t.table_name);
+              console.log("VIEWS in public:", views.length);
+              for (const v of views) console.log("  -", v.table_name);
+              console.log("ENUM TYPES in public:", types.length);
+              for (const t of types) console.log("  -", t.typname);
+              console.log("EXTENSIONS:", exts.map((e) => e.extname).join(", "));
+              await p.$disconnect();
+            })().catch(async (e) => { console.error(e.message); await p.$disconnect(); process.exit(1); });
+          '
+
       - name: Show migration status before applying
         run: npx prisma migrate status || true
 
