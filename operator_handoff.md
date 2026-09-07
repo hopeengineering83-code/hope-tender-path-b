@@ -123,6 +123,67 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-07 UTC — Claude Code (second Neon switch: rebuilt, owner provisioned)
+
+The Neon project behind Preview was replaced after the previous one hit its
+monthly limit. The new database reproduced the first switch's signature exactly,
+so the 2026-09-03 procedure (commit `25de5cc7`) was reused rather than a second
+one invented.
+
+**Root cause, unchanged from the first switch.** `lib/prisma.ts`'s legacy
+`isRuntimeSchemaBootstrapEnabled()` / `bootstrap()` path builds a schema ad-hoc
+with `CREATE TABLE IF NOT EXISTS`, missing later-migration columns and writing no
+`_prisma_migrations` bookkeeping, and it seeds exactly 4 canonical Role rows. It
+runs whenever `NODE_ENV !== "production"`, so the first Preview process to touch
+a brand-new database creates the schema itself. Observed here: 54 tables, no
+migration history, **430 drift statements** against `schema.prisma`, and Role as
+the only table with rows. `prisma migrate deploy` therefore refused with P3005.
+
+**This has now happened on two consecutive Neon switches.** Disabling that
+bootstrap path would prevent a third. Left alone deliberately — it changes
+startup behaviour and was outside what the owner asked for.
+
+**What was done.** `confirm=provision` on the acceptance workflow, gated at every
+step: fingerprint re-check, every-business-table-empty check, canonical-Role
+check, schema-only `pg_dump` as rollback evidence, then rebuild → all 52
+migrations from empty → 4 Role rows restored → `prisma migrate status` clean →
+owner created. No `db push`, no `migrate reset`, no manual schema patching, no
+Production involvement.
+
+**The fingerprint gate earned its place.** The first attempt refused:
+
+```
+Re-confirmed target database fingerprint: 7b8b6c7dbd97
+REFUSING TO RESET: fingerprint 7b8b6c7dbd97 does not match expected 5f9645fb34f5.
+```
+
+The fingerprint is `sha256(host/dbname)`, and the migration secret holds the
+direct host while Vercel holds the pooled one, so the same database hashes two
+ways. Confirmed by reproducing both locally:
+`ep-damp-wind-aeyooyel…` → `7b8b6c7dbd97`, `ep-damp-wind-aeyooyel-pooler…` →
+`5f9645fb34f5`. **Anyone re-running this must pass the fingerprint of the
+connection the rebuild uses (the migration URL), not the one `/api/health`
+prints.** The old database is a different endpoint entirely (`d74f2ac75c88`) and
+was never reachable by this run.
+
+**Result.**
+
+| | |
+|---|---|
+| `/api/health` | `ok:true`, `healthy`, all 8 tables true, `schemaMatchesDeployedCode:true` |
+| `databaseFingerprint` | `5f9645fb34f5` (was `d74f2ac75c88`) |
+| Migration history | clean, "Database schema is up to date!" |
+| Owner | `ac1be558-deb9-49cc-9d2b-0307b4ed4e09`, role ADMIN |
+| Company | `2fdc7b7a-8214-4660-8ef8-a0b62f4cd812`, Hope Urban Planning Architectural and Engineering Consultancy PLC |
+| Vault baseline | users 1, projects 0, experts 0, tenders 0 |
+
+**The vault is empty and must be re-uploaded by the owner** — Company Vault
+documents and Brand Assets first, then the tender files. The previous database
+still holds the 114 source-verified projects and 28 experts; it was not touched
+and remains available if recovery from it is ever preferred to re-uploading.
+
+**Merge status:** not reviewed. Do not merge. Do not promote Production.
+
 ### 2026-09-07 UTC — Claude Code (benchmark scope: two generic defects the Pharo case exposed)
 
 Pharo is the acceptance benchmark, not the product. Both defects below were
