@@ -1108,7 +1108,10 @@ export function buildExecutiveSummaryOpener(opts: {
   // the client is procuring" was the first phrasing here and it is false the
   // moment the closest record is from a different sector, which is exactly the
   // case this app must survive.
-  const lead = projectEvidenceClause(top[0], `**${opts.companyName}'s closest comparable assignment is`);
+  // No bold. Closing a bold run mid-sentence put the run boundary immediately
+  // before a comma, and the delivered PDF read "a 7,000 m² project in Ethiopia
+  // , on which the firm performed ...". The sentence carries its own weight.
+  const lead = projectEvidenceClause(top[0], `${opts.companyName}'s closest comparable assignment is`);
   if (top.length === 1) return `${lead}${expertClause}`.trim();
   return `${lead} ${projectEvidenceClause(top[1], "The firm also delivered")}${expertClause}`.trim();
 }
@@ -1144,9 +1147,7 @@ function projectEvidenceClause(project: ProjectRecord, opener: string): string {
     ? `, on which the firm performed ${shown}${services.length > 5 ? " and further design and supervision services" : ""}`
     : "";
 
-  const bolded = opener.startsWith("**");
-  const head = `${opener} ${project.name}${what}`;
-  return `${bolded ? `${head}**` : head}${did}.`;
+  return `${opener} ${project.name}${what}${did}.`;
 }
 
 // ─── D.4 Declaration with GM name + license ──────────────────────────────────

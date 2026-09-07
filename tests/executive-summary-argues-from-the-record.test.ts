@@ -148,3 +148,20 @@ test("no project at all still avoids naming this app's evidence store", () => {
   assert.ok(!/knowledge vault|firm's vault/i.test(opener));
   assert.match(opener, /Ahmed Kebede Tekaw/);
 });
+
+test("no bold run closes immediately before punctuation", () => {
+  // Closing a bold run mid-sentence put the run boundary right before a comma,
+  // and the delivered PDF read "a 7,000 m² project in Ethiopia , on which the
+  // firm performed ...".
+  for (const projects of [[HOSPITAL], [HOSPITAL, ROAD], []]) {
+    const opener = buildExecutiveSummaryOpener({
+      companyName: "Hope PLC",
+      clientName: "A Client",
+      projects,
+      reviewedExpertCount: 2,
+      topExpertName: "Ahmed Kebede Tekaw",
+    });
+    assert.ok(!/\*\*\s*[,.;:]/.test(opener), `a bold run closes before punctuation:\n  ${opener}`);
+    assert.ok(!/\s+[,.;:]/.test(opener), `a space precedes punctuation:\n  ${opener}`);
+  }
+});
