@@ -123,6 +123,76 @@ Frozen / quarantined, unchanged: **PR #937 is FROZEN** and **PR #957 is QUARANTI
 
 ## Session Log
 
+### 2026-09-07 UTC — Claude Code (model-backed artifact rescored: 80/100, still FAIL)
+
+**Head:** `d2ac44a6`. **Run 34116601631.** Baseline artifact `bc52d33141eeabab`
+→ current `7202508ea0748d4f`; regeneration proven, every job in the chain
+SUCCEEDED, export-readiness `ok=True status=READY blockers=0`, audit score 95
+PASSED, 38/38 pages with no layout fault.
+
+**A real writer wrote this one.** Gemini was GENERATION_VERIFIED at run time and
+the prose changed accordingly — the executive summary moved from the
+deterministic "provides a reference point for the proposed delivery approach" to
+"serves as our primary reference point, guiding our delivery approach for Pharo
+Ventures", in first person and active voice. This is the first artifact in the
+sequence not written by the deterministic fallback.
+
+**THE SCORE: 80/100. Still FAIL** (bar is >= 90 overall AND no dimension < 85).
+Scored on the delivered PDF.
+
+| # | Dimension | Was | Now | Note |
+|---|---|---|---|---|
+| 1 | Tender understanding | 86 | 87 | |
+| 2 | Evaluator alignment | 82 | 84 | E.1 no longer carries citation apparatus |
+| 3 | Executive-summary strength | 62 | **72** | model writer; still an inventory — "our evidence inventory ... includes 3 reviewed specialist records" counts records instead of making a case |
+| 4 | Competitive thesis | 70 | **75** | bullets are sharper; still assembled, not argued |
+| 5 | Evidence density | 68 | **68** | unchanged — 1 project, 3 specialists |
+| 6 | Comparable-project relevance | 60 | **60** | unchanged, and see below |
+| 7 | Expert-role-project mapping | 62 | **62** | unchanged — 3 experts to 1 project |
+| 8 | Healthcare technical depth | 88 | 88 | |
+| 9 | Methodology actionability | 85 | 85 | |
+| 10 | Deliverables / implementation | 84 | 84 | |
+| 11 | QA/QC | 87 | 87 | |
+| 12 | Regulatory / compliance | 76 | **86** | D.3 now present with the firm's records |
+| 13 | Risk / mitigation | 84 | 84 | |
+| 14 | Tender-specific language | 85 | 85 | |
+| 15 | Narrative coherence | 64 | **70** | model openings help; body still reads as assembly |
+| 16 | Professional structure | 92 | 92 | gapless, contents matches body, 38/38 |
+| 17 | Factual grounding | 90 | 90 | no overclaim introduced by the model |
+
+**What moved and what did not.** The live writer lifted 3, 4 and 15 by 5-10
+points each — real but not decisive. Dimension 12 rose on the D.3 fix. **5, 6
+and 7 did not move at all**, because they are not writer-limited.
+
+**The empty structured fields are now visible to the client.** B.2 Project
+Portfolio renders the one selected project as:
+
+```
+G+6 General Hospital – Dr Abdul Seid
+Client             Gimba City, South Wollo Zone, Amhara Region,
+Location & Scale   —
+Duration           Dates on file
+```
+
+The record's own verified summary states "(7,000 m²)" and "2015-2018 E.C.", but
+`contractValue`, `startDate` and `endDate` are null, so an evaluator reads a
+portfolio card with no scale and no duration. This is the same root cause as
+Dessie's 0.7496: it does not only suppress a second project, it hollows out the
+one project that is shown.
+
+Those values were deliberately NOT lifted out of the summary text into the card.
+The card states facts about a source-verified record; parsing them from OCR prose
+would put an unverified inference where a verified claim belongs.
+
+**Mechanical state of the delivered artifact: clean.** Zero `[p.N]`, `(§ …)` and
+`(quote: …)` tags; zero storage codes; no fee or price leakage; A.0-A.8,
+B.1-B.2, C.1-C.17, D.1-D.4, E.1 gapless and unique; contents page matches the
+body; 38/38 pages numbered correctly with no clipping, overflow, footer
+collision or pagination fault.
+
+**Merge status:** not reviewed. Do not merge. Do not promote Production.
+Temporary acceptance and inspection tooling stays.
+
 ### 2026-09-07 UTC — Claude Code (project-selection truth: the vault was never the problem)
 
 **Read from the database, not from the PDF.** Read-only inspection runs
